@@ -21,14 +21,14 @@ pub type MatmulPlan = BoxedPlan<MatmulCall, TensorHandle>;
 pub struct MatmulCall {
     pub hw: Hardware,
     pub client: Client,
-    /// The device's identity, which a table keys its measurements by.
+    /// The device's identity, which an autotune keys its measurements by.
     pub tune_id: CubeTuneId,
     pub lhs: MatmulCallInput,
     pub rhs: MatmulCallInput,
     /// The element the product is written in.
     pub out: ElemType,
     /// Where each lhs row reads the slabs of a stacked rhs its routes name: the routed product
-    /// they state, read as stored once for every candidate of a table.
+    /// they state, read as stored once for every candidate of an autotune.
     pub routes: Option<RoutedMatmulTensors>,
     /// The buffer the product is written into, where the caller allocated it at the product's
     /// shape; a launch allocates one otherwise.
@@ -36,7 +36,7 @@ pub struct MatmulCall {
 }
 
 impl MatmulCall {
-    /// The key a table measures the product under: its extents, the element it is written in,
+    /// The key an autotune measures the product under: its extents, the element it is written in,
     /// and each input as it lies.
     pub fn key(&self) -> MatmulTuneKey {
         if let Some(routes) = &self.routes {

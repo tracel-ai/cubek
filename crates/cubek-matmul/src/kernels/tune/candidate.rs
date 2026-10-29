@@ -1,4 +1,4 @@
-//! The tune candidate the many-rows and few-rows tables race a float routine as.
+//! The tune candidate the many-rows and few-rows autotunes race a float routine as.
 
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{CubeBlock, MaskedCells, MatmulTuneKey};
@@ -15,8 +15,8 @@ use cubek_std::routine::{PreparedLaunches, Routine};
 use cubek_std::{Hardware, Instructions, manual_mma};
 use std::sync::Arc;
 
-/// One candidate of a matmul table's autotune: a float routine at one of its settings,
-/// prepared for the device the table is built for.
+/// One candidate of a matmul autotune's autotune: a float routine at one of its settings,
+/// prepared for the device the autotune is built for.
 ///
 /// Its priority is the matmul family's one rule, the output block one cube covers against the
 /// key's extents ([`MatmulShape::priority`](crate::kernels::tune::key::MatmulShape::priority)).

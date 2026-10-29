@@ -1,6 +1,6 @@
 use super::base::{
-    MatmulTableGroups, MatmulTunables, RoutineIdentity, activation_decoded_candidate,
-    activation_decoded_identity, decoded_floor, many_rows_roofline, measured_table,
+    MatmulAutotuneGroups, MatmulTunables, RoutineIdentity, activation_decoded_candidate,
+    activation_decoded_identity, candidate_list, decoded_floor, many_rows_roofline,
     microkernel_candidate, packed_candidate,
 };
 use crate::kernels::tune::{MatmulPackedCandidate, MatmulRoutineCandidate};
@@ -9,7 +9,7 @@ use crate::kernels::{
 };
 use cubek_std::Hardware;
 
-/// The many-rows table's candidates on `hw`: the cube staged routine, the last-arrival hypercube
+/// The many-rows autotune's candidates on `hw`: the cube staged routine, the last-arrival hypercube
 /// routine and the unit routine, in that order; against a packed input the staged routine reading
 /// it as stored, in rows or in tiles, decoding it into its stages, the same with a packed activation
 /// decoded first ([`activation_decoded_candidate`]), and the last-arrival routine reading it as
@@ -17,12 +17,12 @@ use cubek_std::Hardware;
 ///
 /// The unit routine prepares everywhere, though a round orders the candidates by priority and its
 /// small block often tiles a key the others mask. The last-arrival routine sizes its grid by the
-/// device's workers and declines where it cannot. The relay hypercube routine is on no table: its
+/// device's workers and declines where it cannot. The relay hypercube routine is on no autotune: its
 /// cubes wait on each other.
-pub(super) fn table(hw: Hardware, groups: MatmulTableGroups) -> MatmulTunables {
-    let mut table = measured_table();
-    let microkernel = table.group("microkernel", groups.many_rows);
-    table
+pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTunables {
+    let mut autotune = candidate_list();
+    let microkernel = autotune.group("microkernel", groups.many_rows);
+    autotune
         .bounded(many_rows_roofline)
         .identified(
             &microkernel,

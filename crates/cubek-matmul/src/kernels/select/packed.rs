@@ -1,6 +1,6 @@
 //! What the selection ([`super::selector::select`]) asks of a packed input: the
 //! schemes the kernels stream ([`matmul_supported`]), and the line between a packed product's
-//! few-rows and many-rows tables ([`MatmulTable::packed`](super::selector::MatmulTable::packed)),
+//! few-rows and many-rows autotunes ([`MatmulAutotune::packed`](super::selector::MatmulAutotune::packed)),
 //! [`QUANTIZED_FEW_ROWS`], a **rule** rather than a measurement, for the reason the float bound
 //! is one.
 
@@ -19,12 +19,12 @@ fn scheme_operand(scheme: &QuantScheme, input: MatmulOperand) -> Option<Operand>
     Operand::of_scheme(scheme, Operand::axis_of(scheme, axes)?, axes)
 }
 
-/// The most rows a packed product goes to the few-rows table with. Past it the staged routines win on
+/// The most rows a packed product goes to the few-rows autotune with. Past it the staged routines win on
 /// arithmetic, and measuring a routine that does not stage at prefill widths would cost minutes of first-touch tuning for
 /// a candidate that cannot win there.
 pub const QUANTIZED_FEW_ROWS: usize = 32;
 
-/// Whether a packed product of `rows` rows goes to the few-rows table: up to [`QUANTIZED_FEW_ROWS`],
+/// Whether a packed product of `rows` rows goes to the few-rows autotune: up to [`QUANTIZED_FEW_ROWS`],
 /// no rows included, the packed candidates' own admission answering every width below the bound.
 pub fn quantized_few_rows(rows: usize) -> bool {
     rows <= QUANTIZED_FEW_ROWS

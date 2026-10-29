@@ -1,6 +1,6 @@
 use super::base::{
-    MatmulTableGroups, MatmulTunables, RoutineIdentity, activation_decoded_candidate,
-    activation_decoded_identity, decoded_floor, few_rows_roofline, measured_table,
+    MatmulAutotuneGroups, MatmulTunables, RoutineIdentity, activation_decoded_candidate,
+    activation_decoded_identity, candidate_list, decoded_floor, few_rows_roofline,
     microkernel_candidate, packed_candidate,
 };
 use crate::kernels::tune::{MatmulPackedCandidate, MatmulRoutineCandidate};
@@ -10,19 +10,19 @@ use crate::kernels::{
 };
 use cubek_std::Hardware;
 
-/// The few-rows table's candidates on `hw`. Against float inputs the plane and cube shuffles and
+/// The few-rows autotune's candidates on `hw`. Against float inputs the plane and cube shuffles and
 /// the unit whole-K routine at their own settings; against a packed input the shuffles at the
 /// settings worth trying against it, reading it as stored, and the packed staged routine at a
 /// decode's settings; against a packed activation, the same again with the activation decoded first
 /// ([`activation_decoded_candidate`]).
 ///
-/// Keyed by the power of two at or above the call's rows, as the many-rows table is: a routine
+/// Keyed by the power of two at or above the call's rows, as the many-rows autotune is: a routine
 /// that does not stage holds that many rows whatever the call's count inside it, so it serves or
 /// declines every count of a key alike, and the one kernel it compiles serves them all.
-pub(super) fn table(hw: Hardware, groups: MatmulTableGroups) -> MatmulTunables {
-    let mut table = measured_table();
-    let microkernel = table.group("microkernel", groups.few_rows);
-    table
+pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTunables {
+    let mut autotune = candidate_list();
+    let microkernel = autotune.group("microkernel", groups.few_rows);
+    autotune
         .bounded(few_rows_roofline)
         .identified(
             &microkernel,

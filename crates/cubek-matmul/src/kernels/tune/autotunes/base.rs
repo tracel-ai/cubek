@@ -1,6 +1,6 @@
 use super::{block_scaled, few_rows, many_rows};
 use crate::kernels::plan::{Decoded, MatmulCall, MatmulPlan};
-use crate::kernels::select::selector::MatmulTable;
+use crate::kernels::select::selector::MatmulAutotune;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulBatching, MatmulTuneKey};
 use crate::kernels::tune::{
@@ -23,18 +23,18 @@ use cubek_std::plan::{Fastest, Step};
 use cubek_std::routine::Routine;
 use std::sync::Arc;
 
-/// The priority each table's routines ship at: a caller's to set, since which group a device
-/// measures first is a deployment's call, and fixed for the process once a table is first built.
-/// The NVFP4 table races one kernel's settings in a group of its own.
+/// The priority each autotune's routines ship at: a caller's to set, since which group a device
+/// measures first is a deployment's call, and fixed for the process once an autotune is first built.
+/// The block-scaled autotune races one kernel's settings in a group of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MatmulTableGroups {
-    /// The few-rows table's.
+pub struct MatmulAutotuneGroups {
+    /// The few-rows autotune's.
     pub few_rows: GroupPriority,
-    /// The many-rows table's.
+    /// The many-rows autotune's.
     pub many_rows: GroupPriority,
 }
 
-impl Default for MatmulTableGroups {
+impl Default for MatmulAutotuneGroups {
     fn default() -> Self {
         Self {
             few_rows: GroupPriority::DEFAULT,
@@ -43,19 +43,18 @@ impl Default for MatmulTableGroups {
     }
 }
 
-/// What a candidate of every table is identified by: a routine by its setting, which something
-/// other than the tuner can launch again ([`MatmulTable::fastest_routine`]), every other by its
+/// What a candidate of every autotune is identified by: a routine by its setting, which something
+/// other than the tuner can launch again ([`MatmulAutotune::fastest_routine`]), every other by its
 /// name.
 pub type RoutineIdentity = CandidateIdentity<MatmulRoutineSettings>;
 
-/// Any table's candidates.
+/// Any autotune's candidates.
 pub type MatmulTunables = TunableSet<MatmulTuneKey, MatmulCall, MatmulProduct, RoutineIdentity>;
 
-/// A table being built.
-pub(super) type CandidateTable =
-    Autotune<MatmulTuneKey, MatmulCall, MatmulProduct, RoutineIdentity>;
+/// An autotune being built.
+pub(super) type CandidateList = Autotune<MatmulTuneKey, MatmulCall, MatmulProduct, RoutineIdentity>;
 
-/// What a table's candidate hands back: the product, and the client it lives on, which the
+/// What an autotune's candidate hands back: the product, and the client it lives on, which the
 /// autotune checks read two candidates' products through.
 #[derive(Clone)]
 pub struct MatmulProduct {
@@ -74,8 +73,8 @@ static FEW_ROWS_TUNER: LocalTuner<MatmulTuneKey, CubeTuneId> = local_tuner!("few
 static MANY_ROWS_TUNER: LocalTuner<MatmulTuneKey, CubeTuneId> = local_tuner!("many-rows");
 static BLOCK_SCALED_TUNER: LocalTuner<MatmulTuneKey, CubeTuneId> = local_tuner!("block-scaled");
 
-impl MatmulTable {
-    /// What [`PlanTree`](cubek_std::plan::PlanTree) calls this table.
+impl MatmulAutotune {
+    /// What [`PlanTree`](cubek_std::plan::PlanTree) calls this autotune.
     pub fn name(self) -> &'static str {
         match self {
             Self::FewRows => "few-rows",
@@ -84,29 +83,29 @@ impl MatmulTable {
         }
     }
 
-    /// This table as a plan: its fastest candidate for the call's key, its groups at `groups`.
-    pub fn plan(self, groups: MatmulTableGroups) -> MatmulPlan {
+    /// This autotune as a plan: its fastest candidate for the call's key, its groups at `groups`.
+    pub fn plan(self, groups: MatmulAutotuneGroups) -> MatmulPlan {
         Box::new(Fastest::new(self.name(), move |call: &MatmulCall| {
             self.launch(call, groups)
         }))
     }
 
-    /// `call` through this table's fastest candidate, measuring first where no winner is settled
+    /// `call` through this autotune's fastest candidate, measuring first where no winner is settled
     /// for its key.
-    pub fn launch(self, call: &MatmulCall, groups: MatmulTableGroups) -> TensorHandle {
+    pub fn launch(self, call: &MatmulCall, groups: MatmulAutotuneGroups) -> TensorHandle {
         let (tuner, tunables) = self.tunables(call, groups);
         tuner
             .execute(&call.tune_id, &call.client, tunables, call.clone())
             .handle
     }
 
-    /// The routine, at its setting, this table settled as the fastest for `call`, and the key it
+    /// The routine, at its setting, this autotune settled as the fastest for `call`, and the key it
     /// was settled under: `None` until the tuner has settled one for the key, and where the winner
     /// is no routine. What a caller that launches the routine itself, into a sink of its own, asks.
     pub fn fastest_routine(
         self,
         call: &MatmulCall,
-        groups: MatmulTableGroups,
+        groups: MatmulAutotuneGroups,
     ) -> Option<(MatmulRoutineSettings, MatmulTuneKey)> {
         let (tuner, tunables) = self.tunables(call, groups);
         let key = tunables.generate_key(call);
@@ -116,33 +115,33 @@ impl MatmulTable {
         Some((settings, key))
     }
 
-    /// This table's tuner and its candidates on `call`'s device, built on first touch.
+    /// This autotune's tuner and its candidates on `call`'s device, built on first touch.
     ///
     /// The one place each set is built: a tuner caches a set per initializer type, so a second
     /// `init` site would build a second set.
     fn tunables(
         self,
         call: &MatmulCall,
-        groups: MatmulTableGroups,
+        groups: MatmulAutotuneGroups,
     ) -> (
         &'static LocalTuner<MatmulTuneKey, CubeTuneId>,
         Arc<MatmulTunables>,
     ) {
         let hw = call.hw.clone();
-        let (tuner, candidates): (_, fn(Hardware, MatmulTableGroups) -> MatmulTunables) = match self
-        {
-            Self::FewRows => (&FEW_ROWS_TUNER, few_rows::table),
-            Self::ManyRows => (&MANY_ROWS_TUNER, many_rows::table),
-            Self::BlockScaled => (&BLOCK_SCALED_TUNER, block_scaled::table),
-        };
+        let (tuner, candidates): (_, fn(Hardware, MatmulAutotuneGroups) -> MatmulTunables) =
+            match self {
+                Self::FewRows => (&FEW_ROWS_TUNER, few_rows::candidates),
+                Self::ManyRows => (&MANY_ROWS_TUNER, many_rows::candidates),
+                Self::BlockScaled => (&BLOCK_SCALED_TUNER, block_scaled::candidates),
+            };
         let tunables = tuner.init(&call.tune_id, move || candidates(hw.clone(), groups));
         (tuner, tunables)
     }
 }
 
-/// A table measured on representative inputs, its candidates keyed as the call keys them.
-pub(super) fn measured_table() -> CandidateTable {
-    CandidateTable::measured_on(MatmulCall::key, "as-keyed", MatmulCall::representative)
+/// An autotune measured on representative inputs, its candidates keyed as the call keys them.
+pub(super) fn candidate_list() -> CandidateList {
+    CandidateList::measured_on(MatmulCall::key, "as-keyed", MatmulCall::representative)
 }
 
 /// A float routine at `candidate`'s setting, or the reason it did not run.
@@ -259,7 +258,7 @@ where
     CandidateIdentity::Named(format!("{} activation decoded", candidate.strategy()))
 }
 
-/// Both tables' floor: the unit routine at its default, every packed input decoded first
+/// Both autotunes' floor: the unit routine at its default, every packed input decoded first
 /// ([`Decoded`]). It asks nothing of the device, so it serves what no other candidate binds: an
 /// input laid out no body can describe, or two packed inputs whose scales group `k` apart, which
 /// every routine reading packed inputs as stored declines. A float input passes through as it is.
@@ -303,7 +302,7 @@ fn work(key: &MatmulTuneKey, call: &MatmulCall) -> Work {
     }
 }
 
-/// The few-rows table's roofline: the bus, read. A routine that does not stage streams its rhs
+/// The few-rows autotune's roofline: the bus, read. A routine that does not stage streams its rhs
 /// past a handful of lhs rows and writes a fraction of what it reads, so its ceiling is the read
 /// bandwidth at the product's footprint.
 pub(super) fn few_rows_roofline(key: &MatmulTuneKey, call: &MatmulCall) -> Roofline {
@@ -314,10 +313,10 @@ pub(super) fn few_rows_roofline(key: &MatmulTuneKey, call: &MatmulCall) -> Roofl
     }
 }
 
-/// The many-rows table's roofline: both walls, and the key picks. Past the few-rows line the rhs
+/// The many-rows autotune's roofline: both walls, and the key picks. Past the few-rows line the rhs
 /// is reused across the rows, so the arithmetic starts to bind, but not on every key a prompt
 /// makes: a product's flops per byte is roughly its rows, and the device's own balance sits
-/// among them. So the table names the largest matrix instruction the device offers at the
+/// among them. So the autotune names the largest matrix instruction the device offers at the
 /// product's element accumulating in `f32`, plain arithmetic where it offers none, and the read
 /// bus, and argues the stop from whichever is higher for the key ([`Ceiling::Either`]).
 pub(super) fn many_rows_roofline(key: &MatmulTuneKey, call: &MatmulCall) -> Roofline {
@@ -356,7 +355,7 @@ pub(super) fn reads_no_routes(call: &MatmulCall) -> Result<(), String> {
     }
 }
 
-/// The kind of product a candidate is listed for: one table holds both, and a candidate declines
+/// The kind of product a candidate is listed for: one autotune holds both, and a candidate declines
 /// the other kind before compiling anything.
 #[derive(Clone, Copy, Debug)]
 enum Product {

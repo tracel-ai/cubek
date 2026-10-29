@@ -1,10 +1,10 @@
 use super::packed::*;
 use super::problem::{MatmulProblem, OperandKind};
 use super::selector::{
-    BLOCK_SCALED_TENSOR_CORES_UNSERVED, FLOAT_FEW_ROWS, MatmulTable, measured_table,
+    BLOCK_SCALED_TENSOR_CORES_UNSERVED, FLOAT_FEW_ROWS, MatmulAutotune, measured_autotune,
 };
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
-use crate::kernels::tune::MatmulTableGroups;
+use crate::kernels::tune::MatmulAutotuneGroups;
 use MatmulKernel as K;
 use MatmulKernelHeuristic as H;
 use MatmulOpStrategy::*;
@@ -74,13 +74,13 @@ fn select(
     problem: &MatmulProblem,
     hw: &Hardware,
 ) -> Result<String, Refusal> {
-    super::selector::select(strategy, problem, hw, MatmulTableGroups::default())
+    super::selector::select(strategy, problem, hw, MatmulAutotuneGroups::default())
         .map(|plan| plan.tree().to_string())
 }
 
-/// The fastest candidate of `table`.
-fn fastest(table: MatmulTable) -> String {
-    format!("fastest({})", table.name())
+/// The fastest candidate of `autotune`.
+fn fastest(autotune: MatmulAutotune) -> String {
+    format!("fastest({})", autotune.name())
 }
 
 /// `kernel` alone over float inputs: what a pin of it runs.
@@ -101,7 +101,7 @@ fn float_rule() -> String {
 fn packed_pin(kernel: K) -> String {
     match kernel {
         K::PlaneShuffle => "plane-shuffle(packed as stored)".to_string(),
-        K::BlockScaledTensorCores => fastest(MatmulTable::BlockScaled),
+        K::BlockScaledTensorCores => fastest(MatmulAutotune::BlockScaled),
         K::UnitRegisters => unreachable!("a packed selection runs it on the decoded inputs"),
     }
 }
@@ -211,29 +211,29 @@ fn which_input_is_packed_never_changes_the_selection() {
     }
 }
 
-/// The table a caller asks which routine won is the one its plan is: autotune's, on the table
+/// The autotune a caller asks which routine won is the one its plan is: autotune's, on the autotune
 /// the inputs go to, and none where the plan is anything else.
 #[test]
-fn the_measured_table_is_the_plan_where_it_is_one_table() {
+fn the_measured_autotune_is_the_plan_where_it_is_one_autotune() {
     let hw = block_scaled();
-    let measured = |strategy, problem: &MatmulProblem| measured_table(strategy, problem, &hw);
+    let measured = |strategy, problem: &MatmulProblem| measured_autotune(strategy, problem, &hw);
     assert_eq!(
         measured(Autotune, &quantized(1, q4())),
-        Some(MatmulTable::FewRows)
+        Some(MatmulAutotune::FewRows)
     );
     assert_eq!(
         measured(Autotune, &quantized(QUANTIZED_FEW_ROWS + 1, q4())),
-        Some(MatmulTable::ManyRows)
+        Some(MatmulAutotune::ManyRows)
     );
     assert_eq!(
         measured(Autotune, &with_float_rhs(quantized(512, q4()))),
-        Some(MatmulTable::ManyRows)
+        Some(MatmulAutotune::ManyRows)
     );
     assert_eq!(measured(Autotune, &quantized(1, per_tensor())), None);
     assert_eq!(measured(Heuristic(H::Tile), &quantized(1, q4())), None);
     for problem in [quantized(1, q4()), with_float_rhs(quantized(4, q4()))] {
-        let table = measured(Autotune, &problem).expect("autotune measures");
-        assert_eq!(select(Autotune, &problem, &hw), Ok(fastest(table)));
+        let autotune = measured(Autotune, &problem).expect("autotune measures");
+        assert_eq!(select(Autotune, &problem, &hw), Ok(fastest(autotune)));
     }
 }
 
@@ -253,16 +253,16 @@ fn an_unread_scheme_on_either_input_is_dequantized_by_the_framework() {
 }
 
 /// Autotune never sends two NVFP4 inputs to the 4-bit tensor cores, whatever the device: the
-/// few-rows table at the decode rows, the many-rows table past them, on a GPU with the 4-bit
-/// instruction as on one without. Only its pin runs the NVFP4 table.
+/// few-rows autotune at the decode rows, the many-rows autotune past them, on a GPU with the 4-bit
+/// instruction as on one without. Only its pin runs the block-scaled autotune.
 #[test]
 fn autotune_never_names_the_4_bit_kernel() {
     for hw in [block_scaled(), devices::h100()] {
-        for (rows, table) in [
-            (1, MatmulTable::FewRows),
-            (QUANTIZED_FEW_ROWS, MatmulTable::FewRows),
-            (QUANTIZED_FEW_ROWS + 1, MatmulTable::ManyRows),
-            (2048, MatmulTable::ManyRows),
+        for (rows, autotune) in [
+            (1, MatmulAutotune::FewRows),
+            (QUANTIZED_FEW_ROWS, MatmulAutotune::FewRows),
+            (QUANTIZED_FEW_ROWS + 1, MatmulAutotune::ManyRows),
+            (2048, MatmulAutotune::ManyRows),
         ] {
             assert_eq!(
                 select(
@@ -270,7 +270,7 @@ fn autotune_never_names_the_4_bit_kernel() {
                     &with_packed_lhs(quantized(rows, nvfp4_along_k()), nvfp4_lhs()),
                     &hw
                 ),
-                Ok(fastest(table)),
+                Ok(fastest(autotune)),
                 "{rows} rows on {hw:?}"
             );
         }
@@ -405,12 +405,12 @@ fn autotuned_and_pinned_quantized_rules() {
         (
             Autotune,
             quantized(1, q4()),
-            Ok(fastest(MatmulTable::FewRows)),
+            Ok(fastest(MatmulAutotune::FewRows)),
         ),
         (
             Autotune,
             quantized(512, q4()),
-            Ok(fastest(MatmulTable::ManyRows)),
+            Ok(fastest(MatmulAutotune::ManyRows)),
         ),
         (
             Specific(K::UnitRegisters),
@@ -531,30 +531,30 @@ fn a_narrow_scale_dtype_reaches_the_plane_routine() {
     );
 }
 
-/// The bound's edges: a packed product reaches the few-rows table from no rows to the bound.
+/// The bound's edges: a packed product reaches the few-rows autotune from no rows to the bound.
 #[test]
 fn the_quantized_bound_holds_its_edges() {
     assert!(quantized_few_rows(0) && quantized_few_rows(QUANTIZED_FEW_ROWS));
     assert!(!quantized_few_rows(QUANTIZED_FEW_ROWS + 1));
 }
 
-/// A packed input reaches its few-rows table by its own row ceiling, past the float one: the packed
+/// A packed input reaches its few-rows autotune by its own row ceiling, past the float one: the packed
 /// kernels stream to [`QUANTIZED_FEW_ROWS`], a float one to [`FLOAT_FEW_ROWS`].
 ///
 /// The two being different numbers is the property. Routing a float width past the float bound to
-/// the few-rows table would put it on a table whose every candidate declines it, and the widths between
+/// the few-rows autotune would put it on an autotune whose every candidate declines it, and the widths between
 /// the bounds would be answered by the floor rather than a kernel.
 #[test]
-fn a_packed_input_reaches_its_table_by_its_own_row_ceiling() {
+fn a_packed_input_reaches_its_autotune_by_its_own_row_ceiling() {
     let hw = devices::strix_halo();
     const { assert!(FLOAT_FEW_ROWS < QUANTIZED_FEW_ROWS, "the ceilings coincide") };
     assert_eq!(
         select(Autotune, &quantized(QUANTIZED_FEW_ROWS, q4()), &hw),
-        Ok(fastest(MatmulTable::FewRows))
+        Ok(fastest(MatmulAutotune::FewRows))
     );
     assert_eq!(
         select(Autotune, &quantized(QUANTIZED_FEW_ROWS + 1, q4()), &hw),
-        Ok(fastest(MatmulTable::ManyRows))
+        Ok(fastest(MatmulAutotune::ManyRows))
     );
 }
 
@@ -623,7 +623,7 @@ mod strategy {
         assert_eq!(MatmulOpStrategy::default(), MatmulOpStrategy::Autotune);
     }
 
-    /// No pin names a framework op. The tables are built from kernels, and the
+    /// No pin names a framework op. The autotunes are built from kernels, and the
     /// pin vocabulary is what a benchmark drives one of them with — a variant
     /// reaching burn's `matmul` would be a candidate whose winner is another
     /// tuner's answer.
@@ -687,14 +687,18 @@ mod float {
         }
     }
 
-    /// Every row of the float table: a float product never asks the hardware anything, so its
+    /// Every row of the float autotune: a float product never asks the hardware anything, so its
     /// selection is asked of no device.
     #[test]
     fn float_rules() {
         for (strategy, problem, expected) in [
-            // Rows pick the table, and nothing else does.
-            (Autotune, float(1, 1), Ok(fastest(MatmulTable::FewRows))),
-            (Autotune, float(512, 1), Ok(fastest(MatmulTable::ManyRows))),
+            // Rows pick the autotune, and nothing else does.
+            (Autotune, float(1, 1), Ok(fastest(MatmulAutotune::FewRows))),
+            (
+                Autotune,
+                float(512, 1),
+                Ok(fastest(MatmulAutotune::ManyRows)),
+            ),
             // No heuristic measures: the answer is this crate's routines,
             // resolved at the launch by the strides.
             (Heuristic(H::Tile), float(1, 1), Ok(float_rule())),
@@ -723,7 +727,7 @@ mod float {
     }
 
     /// The float bound is what every float few-rows candidate holds: the plane shuffle compiles at most
-    /// that many rows in, so a wider float width routed to the few-rows table would meet a candidate
+    /// that many rows in, so a wider float width routed to the few-rows autotune would meet a candidate
     /// that declines it and be answered by the fallback.
     #[test]
     fn the_float_bound_is_what_the_plane_shuffle_holds() {
@@ -731,7 +735,7 @@ mod float {
         assert_eq!(FLOAT_FEW_ROWS, PlaneShuffleMicrokernel::MAX_ROWS);
     }
 
-    /// The bound's edges: a float product reaches the few-rows table from one row to the bound.
+    /// The bound's edges: a float product reaches the few-rows autotune from one row to the bound.
     #[test]
     fn the_float_bound_holds_its_edges() {
         assert!(!float_few_rows(0));
@@ -739,21 +743,21 @@ mod float {
         assert!(!float_few_rows(FLOAT_FEW_ROWS + 1));
     }
 
-    /// A row count picks the table, and nothing else does: no rhs layout narrows what reaches
-    /// the few-rows table.
+    /// A row count picks the autotune, and nothing else does: no rhs layout narrows what reaches
+    /// the few-rows autotune.
     #[test]
-    fn the_row_count_alone_picks_the_table() {
+    fn the_row_count_alone_picks_the_autotune() {
         for rows in 1..=FLOAT_FEW_ROWS {
             assert_eq!(
                 select(Autotune, &float(rows, 1)),
-                Ok(fastest(MatmulTable::FewRows)),
+                Ok(fastest(MatmulAutotune::FewRows)),
                 "{rows} float rows"
             );
         }
         for rows in [0, FLOAT_FEW_ROWS + 1, 512] {
             assert_eq!(
                 select(Autotune, &float(rows, 1)),
-                Ok(fastest(MatmulTable::ManyRows)),
+                Ok(fastest(MatmulAutotune::ManyRows)),
                 "{rows} float rows"
             );
         }
@@ -765,7 +769,7 @@ mod float {
     /// `[b, m, k] @ [1, k, n]` is one product of `b·m` rows to every memory-bound
     /// candidate — they all merge the leading extents and read the rhs once.
     /// Routing on `m` alone calls a 512-row product an 8-row one and sends it
-    /// to a table on which the float kernel rejects the plane shuffle, cubek's vec-mats
+    /// to an autotune on which the float kernel rejects the plane shuffle, cubek's vec-mats
     /// reject anything past one row, and the answer is whatever is left. This
     /// reaches the attention score product and every backward.
     #[test]
@@ -778,14 +782,14 @@ mod float {
         assert_eq!(merged.streamed_rows, Some(512));
         assert_eq!(
             select(Autotune, &merged),
-            Ok(fastest(MatmulTable::ManyRows))
+            Ok(fastest(MatmulAutotune::ManyRows))
         );
 
         // An rhs per batch merges nothing, at any row count.
         for problem in [batched_rhs(1, 64), batched_rhs(8, 64)] {
             assert_eq!(
                 select(Autotune, &problem),
-                Ok(fastest(MatmulTable::ManyRows)),
+                Ok(fastest(MatmulAutotune::ManyRows)),
                 "{problem:?}"
             );
         }

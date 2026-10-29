@@ -7,7 +7,7 @@
 //! A line reads:
 //! - `name`: a routine at the first of its settings that serves; `name@default` at its default.
 //! - `name(packed as stored)`: the routine reading the packed inputs as they are stored.
-//! - `fastest(table)`: the fastest candidate of an autotune table.
+//! - `fastest(autotune)`: the fastest candidate of an autotune.
 //! - `decoded(..)`: every packed input decoded into floats first, by this crate's decode, or by the
 //!   framework's dequantize where the decode declines.
 //! - `framework-dequantized(..)`: every packed input dequantized by the framework first.
@@ -19,7 +19,7 @@ use super::MatmulOpStrategy;
 use super::packed::{QUANTIZED_FEW_ROWS, nvfp4_scheme};
 use super::problem::{MatmulProblem, OperandKind};
 use super::selector::{FLOAT_FEW_ROWS, select};
-use crate::kernels::tune::MatmulTableGroups;
+use crate::kernels::tune::MatmulAutotuneGroups;
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_std::plan::Plan;
@@ -50,7 +50,7 @@ fn render_all() -> String {
     for product in Product::all() {
         out.push_str(&format!("# {}\n", product.name));
         for strategy in MatmulOpStrategy::all() {
-            let groups = MatmulTableGroups::default();
+            let groups = MatmulAutotuneGroups::default();
             let plan = select(strategy, &product.problem, &product.hw, groups)
                 .map(|plan| plan.tree().to_string())
                 .unwrap_or_else(|refusal| format!("refused: {refusal}"));
@@ -69,7 +69,7 @@ struct Product {
 }
 
 impl Product {
-    /// Each row count either side of the tables' lines, for float inputs, for packed inputs the
+    /// Each row count either side of the autotunes' lines, for float inputs, for packed inputs the
     /// kernels read, for packed inputs none reads, and for two NVFP4 inputs on a GPU with the
     /// 4-bit instruction and on one without.
     fn all() -> Vec<Self> {

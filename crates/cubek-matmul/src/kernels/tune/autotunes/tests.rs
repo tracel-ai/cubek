@@ -1,12 +1,12 @@
-use super::base::MatmulTableGroups;
+use super::base::MatmulAutotuneGroups;
 use super::{block_scaled, few_rows, many_rows};
 use cubek_std::{Hardware, devices};
 
-/// Every table on every device holds the candidates `autotunes.txt` records: as many, under the same
+/// Every autotune on every device holds the candidates `autotunes.txt` records: as many, under the same
 /// names, which is what a persisted winner is checksummed by.
 ///
-/// A line that moves is a table that races a candidate it did not, or stops racing one it did, and
-/// every cached measurement of it is taken again: a change to a table rewrites the file on
+/// A line that moves is an autotune that races a candidate it did not, or stops racing one it did, and
+/// every cached measurement of it is taken again: a change to an autotune rewrites the file on
 /// purpose. Rewrite it with `CUBEK_WRITE_PLANS=1` and review the diff.
 #[test]
 fn every_table_holds_the_candidates_written_down() {
@@ -22,23 +22,23 @@ fn every_table_holds_the_candidates_written_down() {
     assert_eq!(
         written,
         include_str!("autotunes.txt"),
-        "a table changed; rewrite autotunes.txt with CUBEK_WRITE_PLANS=1 and review the diff"
+        "an autotune changed; rewrite autotunes.txt with CUBEK_WRITE_PLANS=1 and review the diff"
     );
 }
 
-/// Every table on every device, one line each: its candidate count and its names' checksum.
+/// Every autotune on every device, one line each: its candidate count and its names' checksum.
 fn render_all() -> String {
-    let groups = MatmulTableGroups::default();
+    let groups = MatmulAutotuneGroups::default();
     let mut out = String::new();
     for (device, hw) in devices_listed() {
         out.push_str(&format!("# {device}\n"));
-        for (table, built) in [
-            ("few-rows", few_rows::table(hw.clone(), groups)),
-            ("many-rows", many_rows::table(hw.clone(), groups)),
-            ("block-scaled", block_scaled::table(hw.clone(), groups)),
+        for (autotune, built) in [
+            ("few-rows", few_rows::candidates(hw.clone(), groups)),
+            ("many-rows", many_rows::candidates(hw.clone(), groups)),
+            ("block-scaled", block_scaled::candidates(hw.clone(), groups)),
         ] {
             out.push_str(&format!(
-                "{table}: {} candidates, checksum {}\n",
+                "{autotune}: {} candidates, checksum {}\n",
                 built.len(),
                 built.compute_checksum()
             ));

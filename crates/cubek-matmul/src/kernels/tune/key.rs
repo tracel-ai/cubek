@@ -1,10 +1,10 @@
-//! How a product is told apart from another, for the tables — and what a table
+//! How a product is told apart from another, for the autotunes — and what an autotune
 //! reads off it when it prioritizes its candidates.
 //!
 //! The key is a description of the *problem* — what the operands are, how big
 //! they are, how they are laid out — so it lives beside the plans rather than
-//! beside the tables that consume it. A caller builds the tables; it is the
-//! kernels that know what makes two products the same product, and the fused matmul asks the many-rows table's tuner for its election
+//! beside the autotunes that consume it. A caller builds the autotunes; it is the
+//! kernels that know what makes two products the same product, and the fused matmul asks the many-rows autotune's tuner for its election
 //! under this key too.
 //!
 //! [`MatmulShape`] is the second half: the key read as extents, which is what a
@@ -467,7 +467,7 @@ mod tests {
     }
 
     /// The keys of a decode projection against a float col rhs and against a q4 rhs
-    /// packed along `k`, as they stand: a key is what a saved table is looked up by, so a change
+    /// packed along `k`, as they stand: a key is what a saved autotune is looked up by, so a change
     /// that moves one re-tunes every machine, and is made on purpose or not at all.
     #[test]
     fn a_projections_keys_are_pinned() {

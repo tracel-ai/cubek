@@ -1,5 +1,5 @@
 //! Which kernel runs a product: what the selector is asked about ([`problem`]), the rules
-//! ([`selector`]) and the strategy that pins or measures. The tuning key the tables measure by is
+//! ([`selector`]) and the strategy that pins or measures. The tuning key the autotunes measure by is
 //! [`tune`](super::tune)'s.
 
 pub mod packed;

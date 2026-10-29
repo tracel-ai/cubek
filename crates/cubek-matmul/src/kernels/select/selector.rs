@@ -1,40 +1,40 @@
 //! How a [`MatmulOpStrategy`] runs a product on a device ([`select`]): what becomes of its packed
 //! inputs, and the kernel that reads them. Pure, so the rules are unit-tested against
 //! [`Hardware`] fixtures with no GPU. The selector runs first; measuring is one of its answers,
-//! and for it the answer is a *table*, not a kernel.
+//! and for it the answer is a *autotune*, not a kernel.
 //!
-//! # The tables, and the line between them
+//! # The autotunes, and the line between them
 //!
-//! A product races on a **few-rows** table or a **many-rows** one, the [`MatmulTable`]s, whatever its
-//! inputs. The few-rows and many-rows tables share no candidate but the unit routine, their floor:
-//! the two regimes are different kernel bodies, so a single table would be one whose rows mostly
-//! decline, paying a compile each to say so. Within a table a
+//! A product races on a **few-rows** autotune or a **many-rows** one, the [`MatmulAutotune`]s, whatever its
+//! inputs. The few-rows and many-rows autotunes share no candidate but the unit routine, their floor:
+//! the two regimes are different kernel bodies, so a single autotune would be one whose rows mostly
+//! decline, paying a compile each to say so. Within an autotune a
 //! float product and a packed one race the same list: each candidate is listed for one kind of
 //! product and declines the other before compiling anything, so a key races what its inputs are
 //! listed for. A packed product races the settings worth trying on its packed inputs, and the
 //! float routines on them decoded first.
 //!
-//! # The block-scaled table
+//! # The block-scaled autotune
 //!
-//! A third table, [`MatmulTable::BlockScaled`], is reached only by naming
+//! A third autotune, [`MatmulAutotune::BlockScaled`], is reached only by naming
 //! [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores). Its kernel
 //! multiplies two packed inputs as they are stored on the device's block-scaled instruction of
 //! their format: NVFP4's 4-bit by 4-bit, or any other the device has. Autotune never sends a
 //! product there: a packed product under a policy goes where every other packed product goes. The
-//! table races only that kernel's settings, which all give the same numbers.
+//! autotune races only that kernel's settings, which all give the same numbers.
 //!
 //! The line is [`FLOAT_FEW_ROWS`] for a float product and
 //! [`QUANTIZED_FEW_ROWS`](super::packed::QUANTIZED_FEW_ROWS) for a
 //! packed one, each a **rule** rather than a measurement: a staged kernel can be competitive on
 //! time at a handful of rows while reading a whole input through a tiling nobody needed, so
-//! which table a row count belongs to is decided by what the kernels do. A rule tuned to one
+//! which autotune a row count belongs to is decided by what the kernels do. A rule tuned to one
 //! device's sweep instead is a number every other device has to live with.
 
 use super::packed::{matmul_supported, quantized_few_rows};
 use super::problem::{MatmulProblem, OperandKind};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
 use crate::kernels::plan::{Decoded, FrameworkDequantized, MatmulPlan, RoutinePlan};
-use crate::kernels::tune::MatmulTableGroups;
+use crate::kernels::tune::MatmulAutotuneGroups;
 use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings,
@@ -47,10 +47,10 @@ use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::K;
 use cubek_std::plan::{InOrder, Then};
 
-/// The autotune tables a product races on, split by the rows a routine that does not stage would stream: each holds the
+/// The autotunes a product races on, split by the rows a routine that does not stage would stream: each holds the
 /// candidates for a float product and for a packed one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MatmulTable {
+pub enum MatmulAutotune {
     /// A handful of rows, each read once: the routines that do not stage, on packed inputs at the
     /// settings worth trying on them, reading them as stored.
     FewRows,
@@ -63,8 +63,8 @@ pub enum MatmulTable {
     BlockScaled,
 }
 
-impl MatmulTable {
-    /// Which table a float product goes to, by [`float_few_rows`], so no width reaches a table whose
+impl MatmulAutotune {
+    /// Which autotune a float product goes to, by [`float_few_rows`], so no width reaches an autotune whose
     /// every candidate declines it. Packed inputs decoded first make a float product here.
     pub fn new(problem: &MatmulProblem) -> Self {
         match problem.streamed_rows.is_some_and(float_few_rows) {
@@ -73,8 +73,8 @@ impl MatmulTable {
         }
     }
 
-    /// Which table a product reading packed inputs as stored goes to, by the rows alone
-    /// ([`quantized_few_rows`]): the few-rows table's candidates decline what they do not close,
+    /// Which autotune a product reading packed inputs as stored goes to, by the rows alone
+    /// ([`quantized_few_rows`]): the few-rows autotune's candidates decline what they do not close,
     /// and its floor, the packed inputs decoded, answers there.
     pub fn packed(problem: &MatmulProblem) -> Self {
         match problem.streamed_rows.is_some_and(quantized_few_rows) {
@@ -84,10 +84,10 @@ impl MatmulTable {
     }
 }
 
-/// How `problem` runs under `strategy` on `hw`: the plan its launch tries, the tables it names
+/// How `problem` runs under `strategy` on `hw`: the plan its launch tries, the autotunes it names
 /// shipping their groups at `groups`.
 ///
-/// `Autotune` measures, on the table the rows go to. `Heuristic` picks by rule, on the tiled
+/// `Autotune` measures, on the autotune the rows go to. `Heuristic` picks by rule, on the tiled
 /// routines, and never measures. A `Specific` names its kernel.
 ///
 /// Float inputs are read by the kernel the strategy chooses. Packed inputs under schemes the
@@ -102,23 +102,23 @@ impl MatmulTable {
 /// A pin that cannot serve the problem: `BlockScaledTensorCores` but on two NVFP4 inputs its GPU's
 /// 4-bit instruction takes. The launch panics on it: a pin is a contract with the caller, not a
 /// preference.
-/// The table `strategy`'s plan for `problem` on `hw` is, where its plan is one table alone: what a
-/// caller that launches the table's winner itself asks the table about
-/// ([`MatmulTable::fastest_routine`]). `None` where the plan is anything else, a packed input the
+/// The autotune `strategy`'s plan for `problem` on `hw` is, where its plan is one autotune alone: what a
+/// caller that launches the autotune's winner itself asks the autotune about
+/// ([`MatmulAutotune::fastest_routine`]). `None` where the plan is anything else, a packed input the
 /// framework dequantizes first among them.
-pub fn measured_table(
+pub fn measured_autotune(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
     hw: &Hardware,
-) -> Option<MatmulTable> {
+) -> Option<MatmulAutotune> {
     if strategy != MatmulOpStrategy::Autotune {
         return None;
     }
     let mut packed = problem.packed_inputs().peekable();
     if packed.peek().is_none() {
-        Some(MatmulTable::new(problem))
+        Some(MatmulAutotune::new(problem))
     } else if packed.all(|(input, scheme)| matmul_supported(hw, &scheme, input)) {
-        Some(MatmulTable::packed(problem))
+        Some(MatmulAutotune::packed(problem))
     } else {
         None
     }
@@ -128,7 +128,7 @@ pub fn select(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
     hw: &Hardware,
-    groups: MatmulTableGroups,
+    groups: MatmulAutotuneGroups,
 ) -> Result<MatmulPlan, Refusal> {
     let mut packed = problem.packed_inputs().peekable();
     if packed.peek().is_none() {
@@ -141,7 +141,7 @@ pub fn select(
     }
 }
 
-/// How `strategy` runs float inputs, or packed ones decoded first: a table, a rule's kernel and then
+/// How `strategy` runs float inputs, or packed ones decoded first: an autotune, a rule's kernel and then
 /// the fixed routines that serve what it declines, or a pin's kernel alone.
 ///
 /// The rules read the shape, not the strides the caller arrived with, and a rule may not fail a
@@ -151,13 +151,13 @@ pub fn select(
 fn float_plan(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
-    groups: MatmulTableGroups,
+    groups: MatmulAutotuneGroups,
 ) -> Result<MatmulPlan, Refusal> {
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
     use MatmulOpStrategy::*;
     match strategy {
-        Autotune => Ok(MatmulTable::new(problem).plan(groups)),
+        Autotune => Ok(MatmulAutotune::new(problem).plan(groups)),
         // Nothing to measure: the tiled float routines are the whole pool, and which of them
         // serves a call is a question about strides, answered at the launch.
         Heuristic(H::Tile) => Ok(Box::new(InOrder::new(vec![
@@ -178,7 +178,7 @@ fn packed_plan(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
     hw: &Hardware,
-    groups: MatmulTableGroups,
+    groups: MatmulAutotuneGroups,
 ) -> Result<MatmulPlan, Refusal> {
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
@@ -190,7 +190,7 @@ fn packed_plan(
     // What every narrow candidate counts, which is not the trailing extent.
     let single_row = problem.streamed_rows == Some(1);
     match strategy {
-        Autotune => Ok(MatmulTable::packed(problem).plan(groups)),
+        Autotune => Ok(MatmulAutotune::packed(problem).plan(groups)),
         // The packed plane routine with the heuristic's own fallback behind it, since it can still
         // decline a contraction its steps do not close, which no rule here sees.
         Heuristic(H::Tile) if single_row => Ok(Box::new(InOrder::new(vec![
@@ -201,7 +201,7 @@ fn packed_plan(
         Heuristic(H::Tile) | Specific(K::UnitRegisters) => decoded(),
         Specific(K::PlaneShuffle) => Ok(packed_plane_shuffle()),
         Specific(K::BlockScaledTensorCores) if block_scaled_tensor_cores_serve(problem, hw) => {
-            Ok(MatmulTable::BlockScaled.plan(groups))
+            Ok(MatmulAutotune::BlockScaled.plan(groups))
         }
         Specific(K::BlockScaledTensorCores) => Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED),
     }
@@ -232,14 +232,14 @@ fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bo
             .any(|instruction| (instruction.shape.k as usize).is_multiple_of(lhs_block))
 }
 
-/// The most rows a float product goes to the few-rows table with: the rows every float few-rows candidate
+/// The most rows a float product goes to the few-rows autotune with: the rows every float few-rows candidate
 /// holds whole, each one more accumulator line per cell of its register block (the plane shuffle's
 /// `MAX_ROWS` is held to it by a test). Past it, a body that reuses each column's values across rows is the
 /// better shape anyway.
 pub const FLOAT_FEW_ROWS: usize = 8;
 
-/// Whether a float product of `rows` rows goes to the few-rows table: from one row to
-/// [`FLOAT_FEW_ROWS`]. A float product of no rows goes to the many-rows table, which has a candidate
+/// Whether a float product of `rows` rows goes to the few-rows autotune: from one row to
+/// [`FLOAT_FEW_ROWS`]. A float product of no rows goes to the many-rows autotune, which has a candidate
 /// for it.
 pub fn float_few_rows(rows: usize) -> bool {
     (1..=FLOAT_FEW_ROWS).contains(&rows)

@@ -1,5 +1,5 @@
 //! One routine of the matmul at one of its settings, named so that something other than autotune
-//! can launch it again: what a table's winner is identified by.
+//! can launch it again: what an autotune's winner is identified by.
 
 use crate::kernels::plan::MatmulCall;
 use crate::kernels::{
@@ -54,8 +54,8 @@ impl MatmulRoutineSettings {
 
     /// The routine at these settings, prepared on `call`'s inputs for a sink and handed to
     /// `visitor` ([`MatmulRoutine::sink_launch_on`]): what a caller storing the product through a
-    /// sink of its own launches, once a table named the routine
-    /// ([`MatmulTable::fastest_routine`](crate::kernels::select::selector::MatmulTable::fastest_routine)).
+    /// sink of its own launches, once an autotune named the routine
+    /// ([`MatmulAutotune::fastest_routine`](crate::kernels::select::selector::MatmulAutotune::fastest_routine)).
     pub fn sink_launch<V: SinkLaunchVisitor>(self, call: &MatmulCall, visitor: V) -> V::Output {
         match self {
             Self::UnitRegisters(settings) => {
