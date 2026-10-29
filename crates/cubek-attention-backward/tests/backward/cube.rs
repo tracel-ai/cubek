@@ -2,11 +2,9 @@
 //! instruction.
 
 use super::reference::{Case, Reference};
-use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubek_attention_backward::kernels::{
     AttentionBackwardRoutine, CubeStagedAttentionBackwardRoutine,
-    CubeStagedAttentionBackwardRoutineSettings,
 };
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;

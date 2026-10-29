@@ -2,11 +2,9 @@
 //! instruction and `f32` atomic adds.
 
 use super::reference::{Case, Reference};
-use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubek_attention_backward::kernels::{
     AttentionBackwardRoutine, HypercubeAttentionBackwardRoutine,
-    HypercubeAttentionBackwardRoutineSettings,
 };
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
