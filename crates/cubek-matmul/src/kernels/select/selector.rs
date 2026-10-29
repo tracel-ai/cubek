@@ -20,6 +20,25 @@ use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::K;
 use cubek_std::plan::{InOrder, Then};
 
+/// The autotune `strategy`'s plan for `problem` on `hw` is, where its plan is one autotune alone:
+/// what a caller that launches the autotune's winner itself asks the autotune about
+/// ([`MatmulAutotune::fastest_routine`]). `None` where the plan is anything else, a packed input
+/// the framework dequantizes first among them.
+pub fn measured_autotune(
+    strategy: MatmulOpStrategy,
+    problem: &MatmulProblem,
+    hw: &Hardware,
+) -> Option<MatmulAutotune> {
+    if strategy != MatmulOpStrategy::Autotune {
+        return None;
+    }
+    match Inputs::of(problem, hw) {
+        Inputs::Float => Some(MatmulAutotune::new(problem)),
+        Inputs::Streamed => Some(MatmulAutotune::packed(problem)),
+        Inputs::Unread => None,
+    }
+}
+
 /// How `problem` runs under `strategy` on `hw`: the plan its launch tries, the autotunes it names
 /// shipping their groups at `groups`.
 ///
@@ -38,47 +57,47 @@ use cubek_std::plan::{InOrder, Then};
 /// A pin that cannot serve the problem: `BlockScaledTensorCores` but on two NVFP4 inputs its GPU's
 /// 4-bit instruction takes. The launch panics on it: a pin is a contract with the caller, not a
 /// preference.
-/// The autotune `strategy`'s plan for `problem` on `hw` is, where its plan is one autotune alone: what a
-/// caller that launches the autotune's winner itself asks the autotune about
-/// ([`MatmulAutotune::fastest_routine`]). `None` where the plan is anything else, a packed input the
-/// framework dequantizes first among them.
-pub fn measured_autotune(
-    strategy: MatmulOpStrategy,
-    problem: &MatmulProblem,
-    hw: &Hardware,
-) -> Option<MatmulAutotune> {
-    if strategy != MatmulOpStrategy::Autotune {
-        return None;
-    }
-    let mut packed = problem.packed_inputs().peekable();
-    if packed.peek().is_none() {
-        Some(MatmulAutotune::new(problem))
-    } else if packed.all(|(input, scheme)| matmul_supported(hw, &scheme, input)) {
-        Some(MatmulAutotune::packed(problem))
-    } else {
-        None
-    }
-}
-
 pub fn select(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
     hw: &Hardware,
     groups: MatmulAutotuneGroups,
 ) -> Result<MatmulPlan, Refusal> {
-    let mut packed = problem.packed_inputs().peekable();
-    if packed.peek().is_none() {
-        float_plan(strategy, problem, groups)
-    } else if packed.all(|(input, scheme)| matmul_supported(hw, &scheme, input)) {
-        packed_plan(strategy, problem, hw, groups)
-    } else {
-        let plan = float_plan(strategy, problem, groups)?;
-        Ok(Box::new(Then::new(FrameworkDequantized, plan)))
+    match Inputs::of(problem, hw) {
+        Inputs::Float => float_plan(strategy, problem, groups),
+        Inputs::Streamed => packed_plan(strategy, problem, hw, groups),
+        Inputs::Unread => {
+            let plan = float_plan(strategy, problem, groups)?;
+            Ok(Box::new(Then::new(FrameworkDequantized, plan)))
+        }
     }
 }
 
-/// How `strategy` runs float inputs, or packed ones decoded first: an autotune, a rule's kernel and then
-/// the fixed routines that serve what it declines, or a pin's kernel alone.
+/// What a product's inputs are, as the selection tells them apart.
+enum Inputs {
+    /// Every input is float.
+    Float,
+    /// Every packed input is under a scheme the kernels stream ([`matmul_supported`]).
+    Streamed,
+    /// A packed input is under a scheme no kernel here reads.
+    Unread,
+}
+
+impl Inputs {
+    fn of(problem: &MatmulProblem, hw: &Hardware) -> Self {
+        let mut packed = problem.packed_inputs().peekable();
+        if packed.peek().is_none() {
+            Self::Float
+        } else if packed.all(|(input, scheme)| matmul_supported(hw, &scheme, input)) {
+            Self::Streamed
+        } else {
+            Self::Unread
+        }
+    }
+}
+
+/// How `strategy` runs float inputs, or packed ones decoded first: an autotune, a rule's kernel and
+/// then the fixed routines that serve what it declines, or a pin's kernel alone.
 ///
 /// The rules read the shape, not the strides the caller arrived with, and a rule may not fail a
 /// launch over a question it could not ask: whether the plane shuffle binds the strides. So a rule
@@ -98,7 +117,11 @@ fn float_plan(
         // serves a call is a question about strides, answered at the launch.
         Heuristic(H::Tile) => Ok(Box::new(InOrder::new(vec![
             plane_shuffle(),
-            cube_staged_at_default(),
+            Box::new(RoutinePlan::at(
+                CubeStagedMatmulRoutine,
+                "cube-staged@default",
+                CubeStagedMatmulRoutineSettings::DEFAULT,
+            )),
             unit_registers_at_default(),
         ]))),
         Specific(K::UnitRegisters) => Ok(unit_registers_at_default()),
@@ -188,15 +211,6 @@ fn packed_plane_shuffle() -> MatmulPlan {
     Box::new(RoutinePlan::first_served(
         PlaneShuffleMatmulRoutine,
         "plane-shuffle(packed as stored)",
-    ))
-}
-
-/// The staged routine at its default: a rule's first fallback.
-fn cube_staged_at_default() -> MatmulPlan {
-    Box::new(RoutinePlan::at(
-        CubeStagedMatmulRoutine,
-        "cube-staged@default",
-        CubeStagedMatmulRoutineSettings::DEFAULT,
     ))
 }
 
