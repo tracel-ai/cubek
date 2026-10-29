@@ -74,8 +74,8 @@ impl core::fmt::Display for HypercubeAttentionBackwardRoutineSettings {
 
 impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
     type Settings = HypercubeAttentionBackwardRoutineSettings;
-    type QueryGradient = PlaneDeltaMicrokernel;
-    type KeyGradient = HypercubeKeyGradientMicrokernel;
+    type QueryMicrokernel = PlaneDeltaMicrokernel;
+    type KeyMicrokernel = HypercubeKeyGradientMicrokernel;
     /// The settings' ring as this device holds a cube's stages; the first walk holds none.
     type SharedMemory = StageRing;
 
@@ -161,8 +161,8 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             _ => width,
         });
         Ok(AttentionBackwardBlueprint {
-            query_gradient: queries,
-            key_gradient: AttentionBackwardWalk::new(
+            query_walk: queries,
+            key_walk: AttentionBackwardWalk::new(
                 hw,
                 problem,
                 key_gradient,
@@ -193,7 +193,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             gradient_shape,
             AttentionBackwardProblem::SUM,
         ));
-        let walk = &blueprint.query_gradient;
+        let walk = &blueprint.query_walk;
         let binding = tensors.bind(walk);
         let operands = binding.operands;
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -212,7 +212,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             );
         }
         let elements = [AttentionBackwardProblem::SUM, problem.element];
-        let key_walk = blueprint.key_gradient;
+        let key_walk = blueprint.key_walk;
         let key_binding = tensors.bind(&key_walk);
         let summed = tensors.bind_beside(
             &key_binding,
