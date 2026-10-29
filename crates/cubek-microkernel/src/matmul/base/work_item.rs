@@ -235,13 +235,6 @@ impl MatmulWorkItem {
         self.elements.lhs == e2m1 && self.elements.rhs == e2m1
     }
 
-    /// Whether a stage of this item keeps an operand's block scales beside its values: an operand
-    /// stored in `e2m1`, staged as its words are stored with the words of its scales.
-    pub fn stages_scales_beside(&self) -> bool {
-        let e2m1 = ElemType::Float(FloatKind::E2M1);
-        self.elements.lhs == e2m1 || self.elements.rhs == e2m1
-    }
-
     /// The elements a kernel of every matmul product defines, in the order it names them: the sum,
     /// the lhs, the rhs, the output.
     pub fn kernel_elements(&self) -> [ElemType; 4] {

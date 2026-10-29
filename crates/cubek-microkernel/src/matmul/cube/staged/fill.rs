@@ -148,10 +148,6 @@ pub enum CubeStagedFillingRefusal {
     /// The planes split `K` and merge in shared memory behind a cube barrier, which the filling
     /// planes never reach.
     SplitAlongK,
-    /// An operand's block scales are staged beside its words by every unit of the cube, which
-    /// planes set aside would leave partly unwritten: an NVFP4 operand's, whichever instruction
-    /// reads them.
-    ScalesCopiedByUnits,
 }
 
 impl CubeStagedTmaRefusal {
@@ -323,21 +319,18 @@ impl CubeStagedTmaRefusal {
 }
 
 impl CubeStagedFillingRefusal {
-    /// Why a stage `delivery` fills through `ring` for `item`, its fragments draining
+    /// Why a stage `delivery` fills through `ring`, its fragments draining
     /// through `scratch` and its planes split `planes_along_k` ways along `K`, keeps every plane
     /// contracting; `None` where planes may be set aside to fill it. The barriers the two sets
     /// meet on are the TMA engine's, which a TMA delivery already asked of the device.
     pub fn new(
         delivery: CubeStagedDelivery,
-        item: &MatmulWorkItem,
         ring: &StageRing,
         scratch: Scratch,
         planes_along_k: NonZeroUsize,
     ) -> Option<Self> {
         if delivery != CubeStagedDelivery::Tma {
             Some(Self::CopiedByUnits)
-        } else if item.stages_scales_beside() {
-            Some(Self::ScalesCopiedByUnits)
         } else if ring.stages_in_flight.get() < 2 {
             Some(Self::OneStage)
         } else if scratch != Scratch::None {
@@ -399,7 +392,7 @@ impl CubeStagedFill {
             CubeStagedDelivery::Copy => CubeStagedDelivery::Copy,
         };
         let filling_planes =
-            match CubeStagedFillingRefusal::new(delivery, item, ring, scratch, planes_along_k) {
+            match CubeStagedFillingRefusal::new(delivery, ring, scratch, planes_along_k) {
                 None => self.filling_planes,
                 Some(_) => 0,
             };

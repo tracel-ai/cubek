@@ -1061,9 +1061,6 @@ mod base {
         assert_eq!(
             CubeStagedFillingRefusal::new(
                 CubeStagedDelivery::Tma,
-                &MatmulView::of::<CubeStagedMicrokernel>(&problem())
-                    .expect(MatmulView::PREPARED)
-                    .work_item(),
                 &StageRing::DOUBLE,
                 Scratch::OneTile,
                 NonZeroUsize::MIN
@@ -1126,9 +1123,6 @@ mod base {
         assert_eq!(
             CubeStagedFillingRefusal::new(
                 CubeStagedDelivery::AsyncCopy,
-                &MatmulView::of::<CubeStagedMicrokernel>(&problem())
-                    .expect(MatmulView::PREPARED)
-                    .work_item(),
                 &StageRing::DOUBLE,
                 Scratch::None,
                 NonZeroUsize::MIN

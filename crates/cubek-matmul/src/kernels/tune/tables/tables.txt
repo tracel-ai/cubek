@@ -5,12 +5,12 @@ nvfp4: 2 candidates, checksum f8c51f2d1b95411bd331f60e2c3ba20e
 
 # h100
 few-rows: 71 candidates, checksum 23f2e4abbbc346717949d30ad18281df
-many-rows: 236 candidates, checksum 2e36dad489d4bd483c11c7db1700f494
+many-rows: 230 candidates, checksum 51aca05687cc60527ffde65b0d16e390
 nvfp4: 2 candidates, checksum f8c51f2d1b95411bd331f60e2c3ba20e
 
 # h100 with nvfp4
 few-rows: 71 candidates, checksum 23f2e4abbbc346717949d30ad18281df
-many-rows: 236 candidates, checksum 2e36dad489d4bd483c11c7db1700f494
+many-rows: 230 candidates, checksum 51aca05687cc60527ffde65b0d16e390
 nvfp4: 18 candidates, checksum 708733718e6b3dca4dee921b7198e992
 
 # wgpu without subgroups
