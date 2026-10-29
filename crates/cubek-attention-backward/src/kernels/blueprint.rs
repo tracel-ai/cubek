@@ -7,13 +7,13 @@ use crate::kernels::{AttentionBackwardRoutine, AttentionBackwardWalk};
 /// products and writes the keys' and the values' gradients.
 #[derive(Debug, Clone)]
 pub struct AttentionBackwardBlueprint<QM, KM, SM = ()> {
-    pub query_gradient: AttentionBackwardWalk<QM, SM>,
-    pub key_gradient: AttentionBackwardWalk<KM, SM>,
+    pub query_walk: AttentionBackwardWalk<QM, SM>,
+    pub key_walk: AttentionBackwardWalk<KM, SM>,
 }
 
 /// What routine `R` compiles.
 pub type AttentionBackwardRoutineBlueprint<R> = AttentionBackwardBlueprint<
-    <R as AttentionBackwardRoutine>::QueryGradient,
-    <R as AttentionBackwardRoutine>::KeyGradient,
+    <R as AttentionBackwardRoutine>::QueryMicrokernel,
+    <R as AttentionBackwardRoutine>::KeyMicrokernel,
     <R as AttentionBackwardRoutine>::SharedMemory,
 >;
