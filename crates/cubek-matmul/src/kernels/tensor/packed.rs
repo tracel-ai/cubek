@@ -464,8 +464,10 @@ impl PackedTensor {
     /// `BlockScales::Fields`, served `width` values wide, its words moved by the TMA engine
     /// through a descriptor over the tiles they are stored in
     /// ([`tile_order::words_in_tiles`]): a box of `stage_lines` lines by `stage_k` values of `k`,
-    /// landing row by row, swizzled as `swizzle` says. Its block scales are bound for the units to
-    /// keep beside the words.
+    /// landing row by row, swizzled as `swizzle` says. Its block scales, kept beside the words, are
+    /// handed to the copy engine: a stage's row of them is a few bytes, short of the 16 a
+    /// descriptor's row lands, so the units that fill issue them beside the descriptors rather
+    /// than loading and storing them.
     ///
     /// # Panics
     ///
@@ -553,7 +555,8 @@ impl PackedTensor {
                     .build()
                     .scales_per(blocks_axis),
             )
-            .vectorize(operand.scale_read_values());
+            .vectorize(operand.scale_read_values())
+            .delivery(Delivery::AsyncPerUnit);
         let fields = self
             .scheme
             .block_scale()
