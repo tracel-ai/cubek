@@ -43,18 +43,16 @@ Information that is already captured by the kernel signature or runtime argument
 Routines should not make hard decisions about hardware specifics, instead they should adapt to them.
 
 **The Adaptation Workflow**
-The launch logic determines the optimal constraints like vectorization based on the hardware and input shape/strides.
-The routine then receives these settings and calculates how to map the algorithm to them.
-For example, if the launch logic mandates a vector size of 4, the routine does not decide this.
-Instead, it calculates the necessary `cube_dim` and `cube_count` to fully solve the problem.
-This results in the generation of a `Blueprint` for the compiler and `LaunchSettings` for the runtime.
+The routine's prepare step derives the plan from the hardware and the operands' shapes and strides: each operand's vector width, the tiling, and from them the `cube_dim` and `cube_count` that solve the problem.
+The widths are decisions, so the `Blueprint` carries them, next to the rest of what the compiler needs; `LaunchSettings` carry what the runtime needs.
+The launch then binds each operand at the width its blueprint names and never reads a second one off the tensors.
 
 ## Kernel Implementation
 
 The kernel entry point should rely on the blueprint for structural logic.
 You can derive a comprehensive configuration type inside the kernel using a `comptime` block.
 
-This process acts as "uncompressing" the minimal blueprint, combined with implicit information like vector size and hardware properties, into an easy-to-use structure.
+This process acts as "uncompressing" the minimal blueprint, widths included, combined with the hardware's properties, into an easy-to-use structure.
 
 ### Example Kernel Signature
 
@@ -65,12 +63,12 @@ pub fn my_kernel<F: Float>(
     output: &mut Tensor<Vector<F>>,
     #[comptime] blueprint: MyBlueprint,
 ) {
-    let vector_size = input.vector_size();
     let device_properties = comptime::device_properties();
 
     let config = comptime! {
-        // Create a derived configuration struct for internal use
-        MyKernelConfig::new(blueprint, vector_size, device_properties)
+        // Create a derived configuration struct for internal use: the blueprint already
+        // holds each operand's width, which the operands were bound at.
+        MyKernelConfig::new(blueprint, device_properties)
     };
 
     // 1. Comptime Validation
@@ -117,7 +115,7 @@ pub fn my_tile_kernel(
   `tile(space)` projects the one space onto those axes in-kernel, so operands cannot disagree about extents or partitioning, and a tensor can never pair with another operand's spec.
 - **Problem sizes stay runtime.** The `Launcher` ships the space with `Extent::Dynamic` top-level extents, resolved in-kernel from the tensor's own shape.
   What forks the compiled kernel is structure only: the partitioner's cuts, each spec's axes, the widths.
-- **Element and width ride the argument.** The argument declares its buffer at what it holds, as many a line as the width it is bound at: the operand's element, or the `u32` words a packed binding stores its fields in. Both are part of the argument's compilation key, never a type of the kernel's and never a blueprint field: a tile reads them off its buffer. A packed operand is decoded where it is read, into `f32` unless the kernel names another element with `Tile::dequantized`.
+- **Element and width ride the argument.** The argument declares its buffer at what it holds, as many a line as the width it is bound at: the operand's element, or the `u32` words a packed binding stores its fields in. Both are part of the argument's compilation key, never a type of the kernel's and never a `#[comptime]` argument beside it: the routine's blueprint names the width, the launch binds the argument at it, and a tile reads it off its buffer. A packed operand is decoded where it is read, into `f32` unless the kernel names another element with `Tile::dequantized`.
 - **The wrapper is comptime-thin.** `launcher.arg(binding).subspace(..).batches(..).vectorize(v).build().arg()` yields a `TileArgLaunch`: one ordinary tensor binding plus hashed comptime data, so it launches at raw-tensor cost (proven by compiled-kernel diff: an NVFP4-shaped copy of values, block scales and a global through one argument compiles to the MSL three arguments did).
 - **An operand need not be a tensor.** The interesting destinations are not memory: a value handed to a generated epilogue rather than stored, or taken from a generated producer rather than loaded.
   Such an operand has no address and so no `TileArg`: it rides a `cubecl` `ErasedTensor`, whose visibility marker carries the direction (`WriteOnly` for fuse-on-write, `ReadOnly` for fuse-on-read), and the kernel builds its tile with [`Tile::of_sink`] / [`Tile::of_source`].
