@@ -14,12 +14,13 @@
 //! listed for. A packed product races the settings worth trying on its packed inputs, and the
 //! float routines on them decoded first.
 //!
-//! # The NVFP4 table
+//! # The block-scaled table
 //!
-//! A third table, [`MatmulTable::Nvfp4`], is reached only by naming
-//! [`Nvfp4TensorCores`](crate::kernels::MatmulKernel::Nvfp4TensorCores). Its kernel multiplies two
-//! NVFP4 inputs, 4-bit by 4-bit, on the device's block-scaled instruction. Autotune never sends a
-//! product there: an NVFP4 product under a policy goes where every other packed product goes. The
+//! A third table, [`MatmulTable::BlockScaled`], is reached only by naming
+//! [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores). Its kernel
+//! multiplies two packed inputs as they are stored on the device's block-scaled instruction of
+//! their format: NVFP4's 4-bit by 4-bit, or any other the device has. Autotune never sends a
+//! product there: a packed product under a policy goes where every other packed product goes. The
 //! table races only that kernel's settings, which all give the same numbers.
 //!
 //! The line is [`FLOAT_FEW_ROWS`] for a float product and
@@ -29,7 +30,7 @@
 //! which table a row count belongs to is decided by what the kernels do. A rule tuned to one
 //! device's sweep instead is a number every other device has to live with.
 
-use super::packed::{NVFP4_SCALE_WORD_SPAN, matmul_supported, nvfp4_scheme, quantized_few_rows};
+use super::packed::{matmul_supported, quantized_few_rows};
 use super::problem::{MatmulProblem, OperandKind};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
 use crate::kernels::plan::{Decoded, FrameworkDequantized, MatmulPlan, RoutinePlan};
@@ -38,14 +39,13 @@ use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings,
 };
-use cubecl::quant::scheme::QuantScheme;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
+use cubek_std::block_scaled_for;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::K;
 use cubek_std::plan::{InOrder, Then};
-use cubek_std::{NVFP4_BLOCK, block_scaled_nvfp4};
 
 /// The autotune tables a product races on, split by the rows a routine that does not stage would stream: each holds the
 /// candidates for a float product and for a packed one.
@@ -57,9 +57,10 @@ pub enum MatmulTable {
     /// Everything past the few-rows bound: the staged routines, and on packed inputs the packed
     /// staged routine reading them as stored and the float routines on them decoded first.
     ManyRows,
-    /// Two NVFP4 inputs multiplied on a GPU's 4-bit tensor cores, at each of [`Nvfp4TensorCores`](crate::kernels::MatmulKernel::Nvfp4TensorCores)'s
+    /// Two packed inputs multiplied on a GPU's block-scaled tensor cores, at each of
+    /// [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores)'s
     /// settings: what that pin runs, and nothing else.
-    Nvfp4,
+    BlockScaled,
 }
 
 impl MatmulTable {
@@ -98,7 +99,7 @@ impl MatmulTable {
 ///
 /// # Errors
 ///
-/// A pin that cannot serve the problem: `Nvfp4TensorCores` but on two NVFP4 inputs its GPU's
+/// A pin that cannot serve the problem: `BlockScaledTensorCores` but on two NVFP4 inputs its GPU's
 /// 4-bit instruction takes. The launch panics on it: a pin is a contract with the caller, not a
 /// preference.
 /// The table `strategy`'s plan for `problem` on `hw` is, where its plan is one table alone: what a
@@ -166,7 +167,7 @@ fn float_plan(
         ]))),
         Specific(K::UnitRegisters) => Ok(unit_registers_at_default()),
         Specific(K::PlaneShuffle) => Ok(plane_shuffle()),
-        Specific(K::Nvfp4TensorCores) => Err(NVFP4_TENSOR_CORES_UNSERVED),
+        Specific(K::BlockScaledTensorCores) => Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED),
     }
 }
 
@@ -199,36 +200,36 @@ fn packed_plan(
         // Past one row the packed inputs are decoded and run on the tiled routines.
         Heuristic(H::Tile) | Specific(K::UnitRegisters) => decoded(),
         Specific(K::PlaneShuffle) => Ok(packed_plane_shuffle()),
-        Specific(K::Nvfp4TensorCores) if nvfp4_tensor_cores_serve(problem, hw) => {
-            Ok(MatmulTable::Nvfp4.plan(groups))
+        Specific(K::BlockScaledTensorCores) if block_scaled_tensor_cores_serve(problem, hw) => {
+            Ok(MatmulTable::BlockScaled.plan(groups))
         }
-        Specific(K::Nvfp4TensorCores) => Err(NVFP4_TENSOR_CORES_UNSERVED),
+        Specific(K::BlockScaledTensorCores) => Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED),
     }
 }
 
-/// Whether the 4-bit tensor cores serve this product, on a GPU whose 4-bit instruction takes it:
-/// both inputs in NVFP4 ([`nvfp4_scheme`]), `e2m1` values under a `ue4m3` scale every
-/// [`NVFP4_BLOCK`] of `k` and one `f32` over the whole of it, their words along `k`, `k` whole
-/// words of block scales.
-fn nvfp4_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bool {
-    let nvfp4 = nvfp4_scheme();
-    let format = |scheme: &QuantScheme| {
-        (scheme.value, scheme.block_scale().map(|block| block.dtype))
-            == (nvfp4.value, nvfp4.block_scale().map(|block| block.dtype))
-            && scheme.tensor_scale() == nvfp4.tensor_scale()
+/// Whether the block-scaled tensor cores serve this product, on a GPU whose block-scaled
+/// instruction takes it: both inputs packed with their words along `k` under block scales along
+/// `k` ([`block_scaled_for`]), a step of the instruction a word of each input's block scales, and
+/// `k` whole such words. A per-tensor scale above the blocks, or none, is the product's to apply.
+fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bool {
+    let input = |input: MatmulOperand| match problem.operands.get(input) {
+        OperandKind::Quantized(scheme) if Operand::axis_of(&scheme, input.axes()) == Some(K) => {
+            let operand = Operand::of_scheme(&scheme, K, input.axes())?;
+            let block = operand.scale(K)?;
+            Some((scheme, block, block * operand.scales_per_word()))
+        }
+        OperandKind::Quantized(_) | OperandKind::Float => None,
     };
-    let along_k = |scheme: &QuantScheme, input: MatmulOperand| {
-        Operand::axis_of(scheme, input.axes()) == Some(K)
-            && Operand::of_scheme(scheme, K, input.axes())
-                .is_some_and(|operand| operand.scale(K) == Some(NVFP4_BLOCK))
+    let (Some((lhs, lhs_block, lhs_word)), Some((rhs, rhs_block, rhs_word))) =
+        (input(MatmulOperand::Lhs), input(MatmulOperand::Rhs))
+    else {
+        return false;
     };
-    let nvfp4_input = |input: MatmulOperand| match problem.operands.get(input) {
-        OperandKind::Quantized(scheme) => format(&scheme) && along_k(&scheme, input),
-        OperandKind::Float => false,
-    };
-    MatmulOperand::INPUTS.into_iter().all(nvfp4_input)
-        && problem.k.is_multiple_of(NVFP4_SCALE_WORD_SPAN)
-        && block_scaled_nvfp4(hw)
+    // The instruction takes one word of each input's scales a step.
+    lhs_word == rhs_word
+        && problem.k.is_multiple_of(lhs_word)
+        && block_scaled_for(hw, (&lhs, lhs_block), (&rhs, rhs_block))
+            .any(|instruction| instruction.shape.k as usize == lhs_word)
 }
 
 /// The most rows a float product goes to the few-rows table with: the rows every float few-rows candidate
@@ -244,10 +245,11 @@ pub fn float_few_rows(rows: usize) -> bool {
     (1..=FLOAT_FEW_ROWS).contains(&rows)
 }
 
-/// `Nvfp4TensorCores` named for a product it does not serve.
-pub const NVFP4_TENSOR_CORES_UNSERVED: Refusal = Refusal::Declined {
-    why: "Nvfp4TensorCores multiplies two NVFP4 inputs, their words along k, on a GPU with a 4-bit \
-              tensor-core instruction; take autotune or a policy for any other product",
+/// `BlockScaledTensorCores` named for a product it does not serve.
+pub const BLOCK_SCALED_TENSOR_CORES_UNSERVED: Refusal = Refusal::Declined {
+    why: "BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a \
+              block-scaled tensor-core instruction of their format whose step is a word of their \
+              scales; take autotune or a policy for any other product",
 };
 
 /// The memory-bound plane routine, at the first of its settings that serves.

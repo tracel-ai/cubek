@@ -4,7 +4,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Space};
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::{K, M, N};
-use cubek_std::{Hardware, Instructions, TMA_ROW_BYTES, block_scaled_nvfp4, manual_mma};
+use cubek_std::{Hardware, Instructions, TMA_ROW_BYTES, block_scaled_mma};
 
 /// What a launch of this kind declines whatever the routine: a packed input a read of which
 /// straddles two scale tiles, or an `n` or a `k` that is not a whole number of
@@ -119,10 +119,11 @@ impl MatmulStep {
     /// where `hw` has one. The decode routines take no instruction, and their step is a whole
     /// number of times inside this one, so one stored tile serves both.
     ///
-    /// NVFP4 values on a device that contracts them as stored take the block-scaled instruction:
-    /// `128 × 8`. Under an `8 × 8 × 8` instruction NVFP4 against an `f16` input takes `64 × 8`,
-    /// and a float input `8 × 8`. `None` on a device that offers no instruction to contract it:
-    /// there a tile would feed no fragment, and the input stays as it was laid down.
+    /// Packed codes on a device that contracts them as stored, under a block-scaled instruction
+    /// that reads them for `input` at their block along `k`, take the largest such instruction:
+    /// NVFP4's `128 × 8`. Under an `8 × 8 × 8` instruction NVFP4 against an `f16` input takes
+    /// `64 × 8`, and a float input `8 × 8`. `None` on a device that offers no instruction to
+    /// contract it: there a tile would feed no fragment, and the input stays as it was laid down.
     pub fn stored_on(
         hw: &Hardware,
         input: MatmulOperand,
@@ -131,9 +132,18 @@ impl MatmulStep {
         contracted: ElemType,
     ) -> Option<Self> {
         let f32 = ElemType::Float(FloatKind::F32);
-        let shape = match values == ElemType::Float(FloatKind::E2M1) && block_scaled_nvfp4(hw) {
-            true => manual_mma(hw).for_triple(values, values, f32).largest(),
-            false => hw
+        let block_scaled = operand.scale(K).and_then(|block| {
+            block_scaled_mma(hw)
+                .filter(|instruction| {
+                    instruction.shape.cd_type == f32
+                        && instruction.holds(input == MatmulOperand::Lhs, values, block)
+                })
+                .map(|instruction| instruction.shape)
+                .largest()
+        });
+        let shape = match block_scaled {
+            Some(shape) => Some(shape),
+            None => hw
                 .properties
                 .features
                 .matmul
@@ -270,13 +280,15 @@ mod tests {
 
     /// NVFP4 in tile order as the writer stores it for a 128-bit load.
     fn tile_order() -> Operand {
-        Operand::packed(K, 8, K, tile_order::BLOCK, 4)
+        Operand::packed(K, 8, K, tile_order::TileOrder::NVFP4.block, 4)
             .stored(
                 N,
                 4,
                 Some((
                     &tile_order::values_axes(N),
-                    tile_order::values_storage(N, (128, 8), 4).tiles(),
+                    tile_order::TileOrder::NVFP4
+                        .values_storage(N, (128, 8), 4)
+                        .tiles(),
                 )),
                 None,
             )
@@ -444,13 +456,15 @@ mod tests {
                     hw
                 };
                 let words = hw.load_values(ElemType::UInt(UIntKind::U32));
-                let rhs = Operand::packed(K, 8, K, tile_order::BLOCK, 4)
+                let rhs = Operand::packed(K, 8, K, tile_order::TileOrder::NVFP4.block, 4)
                     .stored(
                         N,
                         words,
                         Some((
                             &tile_order::values_axes(N),
-                            tile_order::values_storage(N, (k, n), words).tiles(),
+                            tile_order::TileOrder::NVFP4
+                                .values_storage(N, (k, n), words)
+                                .tiles(),
                         )),
                         None,
                     )
@@ -478,14 +492,16 @@ mod tests {
                 hw
             };
             let words = hw.load_values(ElemType::UInt(UIntKind::U32));
-            let in_rows = Operand::packed(K, 8, K, tile_order::BLOCK, 4);
+            let in_rows = Operand::packed(K, 8, K, tile_order::TileOrder::NVFP4.block, 4);
             let stored = in_rows
                 .stored(
                     N,
                     words,
                     Some((
                         &tile_order::values_axes(N),
-                        tile_order::values_storage(N, (128, 8), words).tiles(),
+                        tile_order::TileOrder::NVFP4
+                            .values_storage(N, (128, 8), words)
+                            .tiles(),
                     )),
                     None,
                 )
@@ -524,7 +540,7 @@ mod tests {
         let features = devices::features(&mut block_scaled);
         features.tma = Tma::Base.into();
         features.types.opaque.insert(OpaqueType::Barrier);
-        let nvfp4 = Operand::packed(K, 8, K, tile_order::BLOCK, 4);
+        let nvfp4 = Operand::packed(K, 8, K, tile_order::TileOrder::NVFP4.block, 4);
         let float = Operand::plain();
         let tile = |hw: &Hardware, rhs: &Operand, values| {
             MatmulStep::stored_on(hw, MatmulOperand::Rhs, *rhs, values, F16)

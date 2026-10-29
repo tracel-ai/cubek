@@ -1,6 +1,8 @@
 use super::packed::*;
 use super::problem::{MatmulProblem, OperandKind};
-use super::selector::{FLOAT_FEW_ROWS, MatmulTable, NVFP4_TENSOR_CORES_UNSERVED, measured_table};
+use super::selector::{
+    BLOCK_SCALED_TENSOR_CORES_UNSERVED, FLOAT_FEW_ROWS, MatmulTable, measured_table,
+};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
 use crate::kernels::tune::MatmulTableGroups;
 use MatmulKernel as K;
@@ -86,7 +88,7 @@ fn float_pin(kernel: K) -> String {
     match kernel {
         K::UnitRegisters => "unit-registers@default".to_string(),
         K::PlaneShuffle => "plane-shuffle".to_string(),
-        K::Nvfp4TensorCores => unreachable!("a float product's selection refuses it"),
+        K::BlockScaledTensorCores => unreachable!("a float product's selection refuses it"),
     }
 }
 
@@ -99,7 +101,7 @@ fn float_rule() -> String {
 fn packed_pin(kernel: K) -> String {
     match kernel {
         K::PlaneShuffle => "plane-shuffle(packed as stored)".to_string(),
-        K::Nvfp4TensorCores => fastest(MatmulTable::Nvfp4),
+        K::BlockScaledTensorCores => fastest(MatmulTable::BlockScaled),
         K::UnitRegisters => unreachable!("a packed selection runs it on the decoded inputs"),
     }
 }
@@ -280,18 +282,18 @@ fn autotune_never_names_the_4_bit_kernel() {
 /// another scheme, and a GPU without the instruction. No policy names it: a policy picks by rule
 /// and never measures, and this kernel's settings are chosen by measuring.
 #[test]
-fn the_named_nvfp4_kernel_serves_only_two_nvfp4_inputs_on_a_4_bit_gpu() {
-    let named = Specific(K::Nvfp4TensorCores);
+fn the_named_block_scaled_kernel_serves_two_nvfp4_inputs_only_on_a_gpu_with_the_instruction() {
+    let named = Specific(K::BlockScaledTensorCores);
     for rows in [1, 512] {
         let nvfp4 = with_packed_lhs(quantized(rows, nvfp4_along_k()), nvfp4_lhs());
         assert_eq!(
             select(named, &nvfp4, &block_scaled()),
-            Ok(packed_pin(K::Nvfp4TensorCores)),
+            Ok(packed_pin(K::BlockScaledTensorCores)),
             "{rows}"
         );
         assert_eq!(
             select(named, &nvfp4, &devices::h100()),
-            Err(NVFP4_TENSOR_CORES_UNSERVED)
+            Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED)
         );
         for refused in [
             quantized(rows, nvfp4_along_k()),
@@ -309,10 +311,60 @@ fn the_named_nvfp4_kernel_serves_only_two_nvfp4_inputs_on_a_4_bit_gpu() {
         {
             assert_ne!(
                 select(strategy, &nvfp4, &block_scaled()),
-                Ok(packed_pin(K::Nvfp4TensorCores)),
+                Ok(packed_pin(K::BlockScaledTensorCores)),
                 "{strategy:?}"
             );
         }
+    }
+}
+
+/// Named, the block-scaled kernel takes any pair of formats the GPU's block-scaled instruction
+/// reads a word of scales a step of: NVFP4 without its per-tensor scale, and `e2m1` under `ue8m0`
+/// scales of sixteen, the 4-bit instruction's other form. It refuses MXFP8, whose word of four
+/// `ue8m0` scales is four of the 8-bit instruction's steps, and `e2m1` under scales of thirty-two
+/// (MXFP4), two steps a word: their scales are no register as stored.
+#[test]
+fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads_a_word_a_step() {
+    let named = Specific(K::BlockScaledTensorCores);
+    let hw = devices::offering_block_scaled(devices::h100());
+    let scheme = |value, block: u8, scale, store| {
+        let dims: &[u8] = match store {
+            QuantStore::PackedU32(1) => &[block, 1],
+            _ => &[block],
+        };
+        QuantScheme::default()
+            .with_value(value)
+            .per_block(dims, scale)
+            .with_store(store)
+    };
+    let pair = |value, block, scale| {
+        with_packed_lhs(
+            quantized(512, scheme(value, block, scale, QuantStore::PackedU32(1))),
+            scheme(value, block, scale, QuantStore::PackedU32(0)),
+        )
+    };
+    let served = [
+        pair(QuantValue::E2M1, 16, ScaleDtype::UE4M3),
+        pair(QuantValue::E2M1, 16, ScaleDtype::UE8M0),
+    ];
+    for problem in served {
+        assert_eq!(
+            select(named, &problem, &hw),
+            Ok(packed_pin(K::BlockScaledTensorCores)),
+            "{problem:?}"
+        );
+    }
+    let refused = [
+        pair(QuantValue::E4M3, 32, ScaleDtype::UE8M0),
+        pair(QuantValue::E2M1, 32, ScaleDtype::UE8M0),
+        pair(QuantValue::Q4S, 16, ScaleDtype::UE4M3),
+    ];
+    for problem in refused {
+        assert_eq!(
+            select(named, &problem, &hw),
+            Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED),
+            "{problem:?}"
+        );
     }
 }
 
@@ -585,7 +637,7 @@ mod strategy {
                     kernel,
                     MatmulKernel::UnitRegisters
                         | MatmulKernel::PlaneShuffle
-                        | MatmulKernel::Nvfp4TensorCores
+                        | MatmulKernel::BlockScaledTensorCores
                 ),
                 "{kernel:?} is not one of this family's kernels",
             );
@@ -663,8 +715,8 @@ mod float {
         // any row count.
         for m in [1, 2, 512] {
             assert_eq!(
-                select(Specific(K::Nvfp4TensorCores), &float(m, 1)),
-                Err(NVFP4_TENSOR_CORES_UNSERVED)
+                select(Specific(K::BlockScaledTensorCores), &float(m, 1)),
+                Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED)
             );
         }
     }

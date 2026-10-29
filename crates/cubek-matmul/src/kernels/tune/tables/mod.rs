@@ -17,9 +17,9 @@
 //! own tuner, named rather than taken from the module path.
 
 mod base;
+mod block_scaled;
 mod few_rows;
 mod many_rows;
-mod nvfp4;
 #[cfg(test)]
 mod tests;
 

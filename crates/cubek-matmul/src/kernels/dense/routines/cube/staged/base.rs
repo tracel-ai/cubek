@@ -1,25 +1,24 @@
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::MatmulBinding;
 use crate::kernels::MatmulPartitioning;
-use crate::kernels::select::packed::nvfp4_scheme;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::quant::scheme::QuantScheme;
+use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::tile::BlockScaledOperands;
 use cubecl::tile::Space;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
 use cubek_microkernel::matmul::MatmulStep;
 use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands, MatmulWorkItem};
+use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
 use cubek_std::layout::stored::Packing;
-use cubek_std::layout::tile_order;
 use cubek_std::matmul_axes::{K, KB, KI, MI, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
 use cubek_std::microkernel::{StageLayout, StageRing};
-use cubek_std::{Hardware, Instructions};
-use cubek_std::{UNIT_REGISTERS, manual_mma};
+use cubek_std::{UNIT_REGISTERS, block_scaled_for, block_scaled_mma};
 
 use crate::kernels::{
     MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_PACKED_WALK_PAST_K, MatmulBlueprint, MatmulOutput,
@@ -81,7 +80,7 @@ struct StagedShape {
 }
 
 impl CubeStagedMatmulRoutine {
-    /// The settings an NVFP4 product read as stored is raced at on `hw`, counted in steps of the
+    /// The settings a block-scaled product read as stored is raced at on `hw`, counted in steps of the
     /// product ([`block_scaled_step`](Self::block_scaled_step)): a plane's steps of `M`, `N` and `K`, the layout of its planes,
     /// the planes sharing each step of `K`, the stages in flight and who stores the box, and who
     /// fills the stages.
@@ -121,10 +120,36 @@ impl CubeStagedMatmulRoutine {
     /// Apart from the float list ([`settings`](Routine::settings)): a block-scaled step contracts
     /// four times the float one's `K` from the same bytes, so the boxes that keep it fed are not
     /// the float product's, and the float table races none of them.
+    ///
+    /// The lists of every block-scaled instruction the device offers, each over inputs in its
+    /// form ([`block_scaled_inputs`](Self::block_scaled_inputs)), one after another, a setting two
+    /// instructions share listed once: a setting is counted in steps, and prepares only on a
+    /// product whose instruction's step it was counted in.
     pub fn block_scaled_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
-        let Some(step) = Self::block_scaled_step(hw) else {
-            return vec![CubeStagedMatmulRoutineSettings::DEFAULT];
-        };
+        let mut settings: Vec<CubeStagedMatmulRoutineSettings> = Vec::new();
+        for inputs in block_scaled_mma(hw)
+            .filter_map(|instruction| Self::block_scaled_inputs(&instruction.form))
+        {
+            let Some(step) = Self::block_scaled_step(hw, &inputs) else {
+                continue;
+            };
+            for setting in Self::block_scaled_settings_in(hw, &step, &inputs) {
+                if !settings.contains(&setting) {
+                    settings.push(setting);
+                }
+            }
+        }
+        settings.push(CubeStagedMatmulRoutineSettings::DEFAULT);
+        settings
+    }
+
+    /// [`block_scaled_settings`](Self::block_scaled_settings) over `inputs`, counted in `step`,
+    /// without the default.
+    fn block_scaled_settings_in(
+        hw: &Hardware,
+        step: &MatmulStep,
+        inputs: &MatmulOperands<Option<Packing>>,
+    ) -> Vec<CubeStagedMatmulRoutineSettings> {
         let layout = MatmulPlaneLayout::new;
         let (double, triple) = (StageRing::DOUBLE, StageRing::TRIPLE);
         let (fragments, by_tma_store) = (CubeStagedStore::Fragments, CubeStagedStore::Tma);
@@ -169,7 +194,7 @@ impl CubeStagedMatmulRoutine {
             .into_iter()
             .chain(decode_by_units)
             .map(|shape| (shape, CubeStagedDelivery::AsyncCopy));
-        let mut settings: Vec<_> = by_tma
+        let settings: Vec<_> = by_tma
             .chain(by_units)
             .map(|((steps, planes, planes_along_k, ring, store), delivery)| {
                 let shape = StagedShape {
@@ -179,64 +204,105 @@ impl CubeStagedMatmulRoutine {
                     ring,
                     store,
                 };
-                Self::in_steps(&step, shape, delivery)
+                Self::in_steps(step, shape, delivery)
             })
-            .filter(|settings| Self::fits(hw, &step, settings))
+            .filter(|settings| Self::fits(hw, step, inputs, settings))
             .collect();
-        settings.push(CubeStagedMatmulRoutineSettings::DEFAULT);
         settings
     }
 
-    /// The step of an NVFP4 product on `hw` ([`MatmulStep`]): the least box every load of
-    /// both inputs fills whole — a row of the TMA engine's box, a word of scales — under the
-    /// device's block-scaled instruction. `None` on a device that offers none. An input in rows and
-    /// one in [tile order](cubek_std::layout::tile_order) step alike, and a load on such a device
-    /// stores in this step.
-    pub fn block_scaled_step(hw: &Hardware) -> Option<MatmulStep> {
-        let e2m1 = ElemType::Float(FloatKind::E2M1);
-        let instruction = manual_mma(hw)
-            .for_triple(e2m1, e2m1, ElemType::Float(FloatKind::F32))
-            .next()?;
-        let packings = Self::nvfp4_inputs();
-        let operands = packings.map(|_, packing| packing.map_or(Operand::plain(), |p| p.operand));
+    /// The step of a product of `inputs` on `hw` read as stored ([`MatmulStep`]): the least box
+    /// every load of both inputs fills whole — a row of the TMA engine's box, a word of scales —
+    /// under the device's largest block-scaled instruction over them. `None` on a device that
+    /// offers none. An input in rows and one in [tile order](cubek_std::layout::tile_order) step
+    /// alike, and a load on such a device stores in this step.
+    pub fn block_scaled_step(
+        hw: &Hardware,
+        inputs: &MatmulOperands<Option<Packing>>,
+    ) -> Option<MatmulStep> {
+        let (lhs, rhs) = (inputs.lhs?, inputs.rhs?);
+        let instruction = block_scaled_for(
+            hw,
+            (&lhs.scheme, lhs.operand.scale(K)?),
+            (&rhs.scheme, rhs.operand.scale(K)?),
+        )
+        .next()?;
+        let operands = inputs.map(|_, packing| packing.map_or(Operand::plain(), |p| p.operand));
+        let elements = MatmulOperands {
+            lhs: instruction.shape.a_type,
+            rhs: instruction.shape.b_type,
+            out: instruction.shape.a_type,
+        };
         let shape = Space::new(&[
-            (M, instruction.m as usize),
-            (N, instruction.n as usize),
-            (K, instruction.k as usize),
+            (M, instruction.shape.m as usize),
+            (N, instruction.shape.n as usize),
+            (K, instruction.shape.k as usize),
         ]);
         Some(
-            MatmulStep::new(hw, operands, MatmulOperands::all(e2m1))
-                .filled_by_tma(&operands.rhs, e2m1)
+            MatmulStep::new(hw, operands, elements)
+                .filled_by_tma(&operands.rhs, elements.rhs)
                 .under(shape),
         )
     }
 
-    /// Both inputs packed in NVFP4, their words along `K`: the `[m, k]` one as a row-major
-    /// quantizer writes it ([`nvfp4_scheme`]), the `[k, n]` one as a checkpoint packs it and as
-    /// tile order stores it.
-    fn nvfp4_inputs() -> MatmulOperands<Option<Packing>> {
-        let packing = |input: MatmulOperand, scheme: QuantScheme| Packing {
-            operand: Operand::of_scheme(&scheme, K, input.axes())
-                .expect("NVFP4 is one block along k"),
-            scheme,
+    /// Both inputs packed in `form`, their words along `K`, as a block-scaled product of that form
+    /// reads them: the `[m, k]` one as a row-major quantizer writes it, the `[k, n]` one as a
+    /// checkpoint packs it and as tile order stores it, each under a per-tensor `f32` above its
+    /// block scales where the scales are a ratio (`ue4m3`'s) rather than a magnitude. `None` for a
+    /// form no packed input stores: codes no scheme packs, or a scale type no scheme names.
+    pub fn block_scaled_inputs(
+        form: &BlockScaledOperands,
+    ) -> Option<MatmulOperands<Option<Packing>>> {
+        let scales = match form.scales {
+            FloatKind::E4M3 => ScaleDtype::UE4M3,
+            FloatKind::UE8M0 => ScaleDtype::UE8M0,
+            _ => return None,
         };
-        MatmulOperands {
-            lhs: Some(packing(MatmulOperand::Lhs, nvfp4_scheme())),
-            rhs: Some(packing(MatmulOperand::Rhs, tile_order::scheme())),
+        let code = |kind: FloatKind| match kind {
+            FloatKind::E2M1x2 => Some(QuantValue::E2M1),
+            FloatKind::E4M3 => Some(QuantValue::E4M3),
+            FloatKind::E5M2 => Some(QuantValue::E5M2),
+            _ => None,
+        };
+        let block = u8::try_from(form.block).ok()?;
+        let scheme = |value: QuantValue, dims: &[u8], store: QuantStore| {
+            let scheme = QuantScheme::default()
+                .with_value(value)
+                .per_block(dims, scales)
+                .with_store(store);
+            match scales {
+                ScaleDtype::UE4M3 => scheme.per_tensor(ScaleDtype::F32),
+                _ => scheme,
+            }
+        };
+        let packing = |input: MatmulOperand, scheme: QuantScheme| {
+            Some(Packing {
+                operand: Operand::of_scheme(&scheme, K, input.axes())?,
+                scheme,
+            })
+        };
+        Some(MatmulOperands {
+            lhs: packing(
+                MatmulOperand::Lhs,
+                scheme(code(form.lhs)?, &[block], QuantStore::PackedU32(0)),
+            ),
+            rhs: packing(
+                MatmulOperand::Rhs,
+                scheme(code(form.rhs)?, &[block, 1], QuantStore::PackedU32(1)),
+            ),
             out: None,
-        }
+        })
     }
 
-    /// `m` rows by `n` columns `k` deep of two NVFP4 inputs, into an `f16` output: what
+    /// `m` rows by `n` columns `k` deep of `inputs`, into an `f16` output: what
     /// [`block_scaled_settings`](Self::block_scaled_settings) prepares its boxes on.
-    fn block_scaled_problem(m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
-        MatmulRoutineProblem::packed(
-            m,
-            n,
-            k,
-            ElemType::Float(FloatKind::F16),
-            Self::nvfp4_inputs(),
-        )
+    fn block_scaled_problem(
+        inputs: &MatmulOperands<Option<Packing>>,
+        m: usize,
+        n: usize,
+        k: usize,
+    ) -> MatmulRoutineProblem {
+        MatmulRoutineProblem::packed(m, n, k, ElemType::Float(FloatKind::F16), *inputs)
     }
 
     /// Registers the compiler adds around a plane's lower bound
@@ -283,12 +349,18 @@ impl CubeStagedMatmulRoutine {
 
     /// Whether `settings` prepare a product of their own box on `hw`, two stages deep, and a
     /// unit's share of their planes fits its registers.
-    fn fits(hw: &Hardware, step: &MatmulStep, settings: &CubeStagedMatmulRoutineSettings) -> bool {
+    fn fits(
+        hw: &Hardware,
+        step: &MatmulStep,
+        inputs: &MatmulOperands<Option<Packing>>,
+        settings: &CubeStagedMatmulRoutineSettings,
+    ) -> bool {
         let (plane, planes) = (&settings.microkernel.plane, &settings.microkernel.planes);
         let extent = |axis, fragments: NonZeroUsize, count: NonZeroUsize| {
             fragments.get() / step.calls(axis) * step.along(axis) * count.get()
         };
         let problem = Self::block_scaled_problem(
+            inputs,
             extent(M, plane.along_m, planes.along_m),
             extent(N, plane.along_n, planes.along_n),
             2 * plane.depth.get() / step.calls(K) * step.along(K),
@@ -300,7 +372,7 @@ impl CubeStagedMatmulRoutine {
             .expect(MatmulView::PREPARED)
             .work_item()
             .as_stored()
-            .expect("an NVFP4 product is read as stored");
+            .expect("a block-scaled product is read as stored");
         let registers = blueprint
             .microkernel
             .plane

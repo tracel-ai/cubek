@@ -4,7 +4,7 @@ use crate::matmul::{
 };
 use cubecl::tile::launch::Refusal;
 use cubek_std::layout::BindingOrder;
-use cubek_std::{Hardware, Instructions, manual_mma};
+use cubek_std::{Hardware, Instructions, block_scaled_for, manual_mma};
 
 use crate::matmul::MatmulStage;
 use crate::matmul::plane::{
@@ -174,7 +174,7 @@ impl PlaneFragmentMicrokernel {
             && blocks_whole
             && space.k.is_multiple_of(window)
             && Self::decodes(hw, item.elements.lhs, item.sum);
-        let instruction = PlaneFragmentInstruction::Mma { shape };
+        let instruction = PlaneFragmentInstruction::mma(shape);
         (1..=settings.along_n.get())
             .rev()
             .filter(move |&along_n| offered && space.n.is_multiple_of(along_n * shape.n as usize))
@@ -217,7 +217,7 @@ impl PlaneFragmentMicrokernel {
             .for_triple(lhs, rhs, sum)
             .deepest()
             .largest_first()
-            .map(|shape| PlaneFragmentInstruction::Mma { shape });
+            .map(PlaneFragmentInstruction::mma);
         let settings = *settings;
         let software = PlaneFragmentInstruction::Registers {
             step_sum: settings.step_sum.serving(item),
@@ -285,13 +285,25 @@ impl PlaneFragmentMicrokernel {
         let step = rhs
             .grouping(K, space.k)
             .map(|block| block * rhs.scale_read(K));
-        manual_mma(hw)
-            .for_triple(item.elements.lhs, item.elements.rhs, item.sum)
-            .largest_first()
-            .map(|shape| PlaneFragmentInstruction::Mma { shape })
+        // Each input under its own scheme, at its own block along `K`.
+        let input = |input: MatmulOperand| {
+            let packing = space.packings.get(input)?;
+            Some((packing.scheme, space.operand(input).grouping(K, space.k)?))
+        };
+        let offered: Vec<_> = match (input(MatmulOperand::Lhs), input(MatmulOperand::Rhs)) {
+            (Some((lhs, lhs_block)), Some((rhs, rhs_block))) => {
+                block_scaled_for(hw, (&lhs, lhs_block), (&rhs, rhs_block))
+                    .filter(|instruction| instruction.shape.cd_type == item.sum)
+                    .map(PlaneFragmentInstruction::block_scaled_mma)
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        offered
+            .into_iter()
             .filter(|instruction| {
                 let [_, _, (_, k)] = instruction.shape();
-                committed && instruction.block_scaled() && step == Some(k)
+                committed && step == Some(k)
             })
             .map(|instruction| Self {
                 instruction,
@@ -694,7 +706,7 @@ impl Microkernel for PlaneFragmentMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let packed: Vec<Self> = match item.blocks {
             None => Vec::new(),
-            Some(space) if item.both_stored_in_e2m1() => {
+            Some(space) if item.both_stored_as_codes() => {
                 Self::block_scaled_candidates(hw, item, *settings, space)
             }
             Some(space) => Self::packed_candidates(hw, item, *settings, space).collect(),
@@ -776,7 +788,7 @@ mod tests {
     /// An `f16` activation against an `e2m1` weight packed down `k`, under scale blocks `block`
     /// long along `k`.
     fn against_blocks_of(block: usize) -> (MatmulWorkItem, MatmulBlocks) {
-        against(tile_order::scheme(), block)
+        against(tile_order::nvfp4_scheme(), block)
     }
 
     /// An `f16` activation against a weight packed down `k` under `scheme`, eight values a word

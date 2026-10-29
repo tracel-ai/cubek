@@ -482,7 +482,7 @@ mod tests {
 
     /// `m` rows against an NVFP4 `k × n` rhs in tile order, read as `hw` loads it.
     fn nvfp4(hw: &Hardware, m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
-        let scheme = tile_order::scheme();
+        let scheme = tile_order::nvfp4_scheme();
         let words = hw.load_values(ElemType::UInt(UIntKind::U32));
         let operand = Operand::of_scheme(&scheme, K, [K, N])
             .expect("one axis a block")
@@ -491,7 +491,9 @@ mod tests {
                 words,
                 Some((
                     &tile_order::values_axes(N),
-                    tile_order::values_storage(N, (128, 8), words).tiles(),
+                    tile_order::TileOrder::NVFP4
+                        .values_storage(N, (128, 8), words)
+                        .tiles(),
                 )),
                 None,
             )
