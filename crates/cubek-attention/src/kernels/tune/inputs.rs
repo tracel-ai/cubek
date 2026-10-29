@@ -1,39 +1,23 @@
-//! Choosing an attention's routine by measurement, in one of two autotunes: a call of many query
-//! positions, and a call of one.
-//!
-//! The routines serve GQA natively, each key head read once per box. They attend the first
-//! `len` positions of a cache with the queries bottom-right aligned, so a call over a cache is
-//! raced on the one chunk, or the one decode step, every key over a cache stands for
-//! ([`AttentionKey`]): no key reads how many positions a cache holds.
+//! The operands of one float attention as autotune measures them: the key a call is tuned under,
+//! and the inputs a round measures on in its place.
 
-use crate::kernels::select::problem::QueryPositions;
 use crate::kernels::tune::key::AttentionKey;
-use crate::kernels::{
-    AttentionBlueprint, AttentionRoutine, AttentionRoutineCandidate, AttentionRoutineProblem,
-    AttentionScoring, AttentionTensors, CubeShuffleAttentionRoutine, CubeStagedAttentionRoutine,
-    HypercubeLastArrivalShuffleAttentionRoutine, HypercubeSecondLaunchFragmentAttentionRoutine,
-    HypercubeSecondLaunchShuffleAttentionRoutine, HypercubeStreamFragmentAttentionRoutine,
-    UnitAttentionRoutine,
-};
+use crate::kernels::{AttentionRoutineProblem, AttentionScoring, AttentionTensors};
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::throughput::MemoryAccess;
 use cubecl::tile::launch::Refusal;
-use cubecl::tune::{LocalTuner, Tunable, TunableSet, Work, local_tuner};
+use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
-use cubecl::{CubeTuneId, Device};
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::attention::AttentionMicrokernel;
-use cubek_std::Hardware;
-use cubek_std::autotune::{Autotune, Ceiling, GroupPriority, Roofline, TuneCandidate};
-use cubek_std::routine::Routine;
+use cubek_std::autotune::{Ceiling, Roofline};
 
 /// The operands of one float attention, as autotune measures them, and the tensors every
 /// candidate launches on, the output among them: a candidate writes the output these inputs hold
 /// rather than handing one back, so the call's output is the one the winner wrote.
 #[derive(Clone)]
 pub struct AttentionTuneInputs {
-    client: Client,
+    pub(super) client: Client,
     /// `[b, h, q, d]`.
     query: PlainTensor,
     /// `[b, kv, s, d]`, or a pool of pages `[pages, kv, page_size, d]`.
@@ -48,7 +32,7 @@ pub struct AttentionTuneInputs {
     /// The `[b, h, q, s]` mask hiding keys from the call's queries ([`with_mask`](Self::with_mask)).
     mask: Option<PlainTensor>,
     attended: AttendedKeys,
-    tensors: AttentionTensors,
+    pub(super) tensors: AttentionTensors,
 }
 
 /// How many of the positions its key and value buffers hold a call attends, as the host knows it:
@@ -61,181 +45,6 @@ enum AttendedKeys {
     /// Every position the buffers hold: they are the call's own keys, and their extent is the
     /// problem's.
     Every,
-}
-
-/// The attention of `query` over `key` and `value`, `[b, q, h, dv]`, through whichever routine
-/// and setting measures fastest for this problem on `device`: among the routines that serve many
-/// query positions, or those that serve one, as `positions` says. `routines` is the priority of
-/// the routines' group; under it sits the unit routine's lead, which serves any problem on any
-/// device.
-pub fn launch_tuned(
-    positions: QueryPositions,
-    device: &Device,
-    inputs: AttentionTuneInputs,
-    routines: GroupPriority,
-) -> TensorHandle {
-    let client = inputs.client.clone();
-    let id = CubeTuneId::new(&client, device);
-    let hw = Hardware::from_client(&client);
-    match positions {
-        QueryPositions::Many => {
-            // Named rather than `module_path!()`, so the cached winners stay this autotune's
-            // wherever the code lives; a cached winner is an index into the candidate list.
-            static TUNER: LocalTuner<AttentionKey, CubeTuneId> = local_tuner!("prefill");
-            let tunables = TUNER.init(&id, move || many_queries(&hw, routines));
-            TUNER.execute(&id, &client, tunables, inputs.clone());
-        }
-        QueryPositions::One => {
-            static TUNER: LocalTuner<AttentionKey, CubeTuneId> = local_tuner!("decode");
-            let tunables = TUNER.init(&id, move || one_query(&hw, routines));
-            TUNER.execute(&id, &client, tunables, inputs.clone());
-        }
-    }
-    inputs.tensors.into_out()
-}
-
-type AttentionAutotune = Autotune<AttentionKey, AttentionTuneInputs, ()>;
-
-/// The routines that serve many query positions: the cube routines, and the hypercube routines for a prompt's or a chunk's
-/// few boxes over many keys. The unit routine is listed only where none of them can run, for want
-/// of a plane width the device commits to: elsewhere measuring its candidates takes longer than
-/// the rest of the autotune. The plane routine is not listed.
-///
-/// Its candidates are timed as the cache leaves them, unlike one query's: a prompt's queries, keys
-/// and values are the activations the layer before it just wrote, so production reads them warm,
-/// and a round timing them cold ranks the candidates on a read they never meet (an f32 head dim
-/// of 128 on an L4: a winner 14% behind the multi-level kernels warm, against 28% chosen cold).
-fn many_queries(
-    hw: &Hardware,
-    priority: GroupPriority,
-) -> TunableSet<AttentionKey, AttentionTuneInputs, ()> {
-    let mut autotune = AttentionAutotune::measured_on(
-        AttentionTuneInputs::many_queries_key,
-        "as-keyed",
-        AttentionTuneInputs::many_queries_representative,
-    );
-    let routines = autotune.group("microkernel", priority);
-    autotune = autotune.prioritized(
-        &routines,
-        AttentionRoutineCandidate::list(CubeStagedAttentionRoutine, hw),
-        launch,
-    );
-    autotune = autotune
-        .prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(CubeShuffleAttentionRoutine, hw),
-            launch,
-        )
-        .prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(HypercubeLastArrivalShuffleAttentionRoutine::new(), hw),
-            launch,
-        )
-        .prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(
-                HypercubeSecondLaunchShuffleAttentionRoutine::new(),
-                hw,
-            ),
-            launch,
-        )
-        .prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(HypercubeSecondLaunchFragmentAttentionRoutine, hw),
-            launch,
-        )
-        .prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(HypercubeStreamFragmentAttentionRoutine, hw),
-            launch,
-        );
-    if hw.plane_dim().is_err() {
-        autotune = autotune.prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(UnitAttentionRoutine, hw),
-            launch,
-        );
-    }
-    autotune.floor(unit_lead(hw)).finish()
-}
-
-/// The routines that serve a single position, reading its group of heads as rows. The
-/// hypercube's cubes of plane shuffles share each key head's cache, merged on the last arrival or
-/// by a second launch; the cube's plane shuffles split a cube's keys. No routine whose cubes stage
-/// is listed: a cube staging a step for a decode step's few rows measured twelve times the
-/// hypercube's time. As for many positions, the unit routine is listed only where neither can
-/// run, and the plane routine not at all.
-fn one_query(
-    hw: &Hardware,
-    priority: GroupPriority,
-) -> TunableSet<AttentionKey, AttentionTuneInputs, ()> {
-    let mut autotune = AttentionAutotune::measured_on(
-        AttentionTuneInputs::one_query_key,
-        "as-keyed",
-        AttentionTuneInputs::one_query_representative,
-    );
-    let routines = autotune.group("microkernel", priority);
-    autotune = autotune
-        .read_cold(AttentionTuneInputs::one_query_roofline)
-        .prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(HypercubeLastArrivalShuffleAttentionRoutine::new(), hw),
-            launch,
-        )
-        .prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(
-                HypercubeSecondLaunchShuffleAttentionRoutine::new(),
-                hw,
-            ),
-            launch,
-        )
-        .prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(CubeShuffleAttentionRoutine, hw),
-            launch,
-        );
-    if hw.plane_dim().is_err() {
-        autotune = autotune.prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(UnitAttentionRoutine, hw),
-            launch,
-        );
-    }
-    autotune.floor(unit_lead(hw)).finish()
-}
-
-/// Both autotunes' floor: the unit routine's lead, which asks nothing of the hardware. Nobody
-/// wants it to win, but a plan cubecl cannot fill is a panic, and a configuration may take every
-/// group out of the autotune.
-fn unit_lead(hw: &Hardware) -> Tunable<AttentionKey, AttentionTuneInputs, ()> {
-    let hw = hw.clone();
-    Tunable::new("unit-attention-lead", move |inputs: AttentionTuneInputs| {
-        UnitAttentionRoutine
-            .launch_lead_on(&hw, inputs.tensors)
-            .map(|_| ())
-            .map_err(|why| format!("the unit routine's lead does not serve this problem: {why:?}"))
-    })
-}
-
-/// `inputs` attended by `candidate`'s routine at its setting into their output, or why it did
-/// not run.
-fn launch<R, M: AttentionMicrokernel, SM: PartialEq>(
-    candidate: &AttentionRoutineCandidate<R>,
-    inputs: AttentionTuneInputs,
-) -> Result<(), String>
-where
-    R: AttentionRoutine<M, SM>
-        + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
-        + Copy,
-{
-    candidate
-        .launch_on(inputs.tensors)
-        .map(|_| ())
-        .map_err(|why| {
-            let settings = candidate.strategy();
-            format!("{settings} does not serve this problem: {why:?}")
-        })
 }
 
 impl AttentionTuneInputs {
@@ -351,7 +160,7 @@ impl AttentionTuneInputs {
     /// key stands for, whatever the cache holds and however many queries the call brought: a
     /// winner measured on that chunk serves every call over a cache. Over keys of the call's own
     /// it keeps the call's extents.
-    fn many_queries_key(&self) -> AttentionKey {
+    pub(super) fn many_queries_key(&self) -> AttentionKey {
         let (queries, keys) = match self.attended {
             AttendedKeys::Lengths => (AttentionKey::CHUNK_QUERIES, AttentionKey::CACHE_PREFIX),
             AttendedKeys::Every => (self.query.shape()[2], self.keys()),
@@ -362,7 +171,7 @@ impl AttentionTuneInputs {
     /// The key a decode step is tuned under: one query over the keys a decode round attends
     /// ([`one_query_keys`](Self::one_query_keys)). The single position sees the whole attended
     /// prefix, or its window's end of it, so a causal mask is no part of the key.
-    fn one_query_key(&self) -> AttentionKey {
+    pub(super) fn one_query_key(&self) -> AttentionKey {
         self.key_of(1, self.one_query_keys())
     }
 
@@ -400,7 +209,7 @@ impl AttentionTuneInputs {
     /// stands for every chunk, so the round measures the chunk the key names on operands of its
     /// own rather than whichever chunk reached the autotune first. Uploaded rather than filled:
     /// a process mode that drops launches drops a launch, not an upload.
-    fn many_queries_representative(key: &AttentionKey, inputs: &Self) -> Self {
+    pub(super) fn many_queries_representative(key: &AttentionKey, inputs: &Self) -> Self {
         let Some(problem) = chunk_problem(key) else {
             return inputs.whole_representative(key);
         };
@@ -485,7 +294,7 @@ impl AttentionTuneInputs {
     /// measurement agree about the work. The call's arrival counters are kept: the round has the
     /// call's sequences and heads, so they cover its boxes, and every candidate counts in at them
     /// as production does.
-    fn one_query_representative(key: &AttentionKey, inputs: &Self) -> Self {
+    pub(super) fn one_query_representative(key: &AttentionKey, inputs: &Self) -> Self {
         let (keys, values, pages) = match inputs.attended {
             AttendedKeys::Lengths => inputs.zero_keys(key, inputs.query.shape()[0]),
             AttendedKeys::Every => (
@@ -569,7 +378,7 @@ impl AttentionTuneInputs {
     /// The one-position roofline: the bus, in the direction the traffic goes. One query against
     /// the whole cache reuses nothing — every key and value byte is read once and the write is a
     /// single row — so the ceiling is the **read** bandwidth.
-    fn one_query_roofline(_key: &AttentionKey, inputs: &Self) -> Roofline {
+    pub(super) fn one_query_roofline(_key: &AttentionKey, inputs: &Self) -> Roofline {
         Roofline {
             client: inputs.client.clone(),
             ceiling: Ceiling::Memory(MemoryAccess::Read),

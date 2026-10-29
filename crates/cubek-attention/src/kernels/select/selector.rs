@@ -7,9 +7,8 @@
 
 use super::problem::{KvKind, QueryPositions};
 use super::{AttentionKernel, AttentionOpStrategy};
-use crate::kernels::plan::{
-    AttentionAutotuneGroups, AttentionPlan, CacheRead, KernelLead, Rebuilt, fastest,
-};
+use crate::kernels::plan::{AttentionPlan, CacheRead, KernelLead, Rebuilt};
+use crate::kernels::tune::{AttentionAutotuneGroups, fastest};
 use crate::kernels::{CubeAttentionKernel, HypercubeAttentionKernel};
 use cubecl::tile::launch::Refusal;
 use cubek_std::plan::{InOrder, Then};
@@ -112,8 +111,8 @@ fn rebuilt(plan: AttentionPlan) -> AttentionPlan {
 
 #[cfg(test)]
 mod tests {
-    use crate::kernels::plan::AttentionAutotuneGroups;
     use crate::kernels::select::selector::*;
+    use crate::kernels::tune::AttentionAutotuneGroups;
     use crate::kernels::*;
     use AttentionKernelHeuristic as H;
     use AttentionOpStrategy::{Autotune, Heuristic, Specific};

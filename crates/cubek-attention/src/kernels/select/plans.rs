@@ -16,7 +16,7 @@
 use super::AttentionOpStrategy;
 use super::problem::{KvKind, QueryPositions};
 use super::selector::select;
-use crate::kernels::plan::AttentionAutotuneGroups;
+use crate::kernels::tune::AttentionAutotuneGroups;
 use cubek_std::plan::Plan;
 
 /// Every strategy's plan for every kind of call is the one `plans.txt` records.

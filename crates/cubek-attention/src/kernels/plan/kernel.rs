@@ -1,11 +1,8 @@
-use super::{AttentionCall, AttentionPlan};
+use super::AttentionCall;
 use crate::kernels::AttentionKernel;
-use crate::kernels::select::problem::QueryPositions;
-use crate::kernels::tune::launch_tuned;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
-use cubek_std::autotune::GroupPriority;
-use cubek_std::plan::{Declined, Fastest, Plan, PlanTree};
+use cubek_std::plan::{Declined, Plan, PlanTree};
 
 /// One kernel at its lead, the first setting it lists, over the cache a call holds: a float one,
 /// or a packed one as it lies through the caller's read.
@@ -54,55 +51,4 @@ impl Plan<AttentionCall> for KernelLead {
         };
         PlanTree::Routine(format!("{}@lead{cache}", self.kernel.name()))
     }
-}
-
-/// The priority each autotune's routines ship at: a caller's to set, as in the matmul family.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AttentionAutotuneGroups {
-    /// The many-positions autotune's.
-    pub prefill: GroupPriority,
-    /// The one-position autotune's.
-    pub decode: GroupPriority,
-}
-
-impl AttentionAutotuneGroups {
-    /// The priority of the autotune of calls of `positions` query positions.
-    pub fn of(self, positions: QueryPositions) -> GroupPriority {
-        match positions {
-            QueryPositions::One => self.decode,
-            QueryPositions::Many => self.prefill,
-        }
-    }
-}
-
-impl Default for AttentionAutotuneGroups {
-    fn default() -> Self {
-        Self {
-            prefill: GroupPriority::DEFAULT,
-            decode: GroupPriority::DEFAULT,
-        }
-    }
-}
-
-/// The autotune of calls of `positions` query positions as a plan, its routines' group at
-/// `routines`: the decode autotune at one position, the prefill one at many. It measures a float
-/// call; a packed cache is rebuilt before it.
-pub fn fastest(positions: QueryPositions, routines: GroupPriority) -> AttentionPlan {
-    let autotune = match positions {
-        QueryPositions::One => "decode",
-        QueryPositions::Many => "prefill",
-    };
-    Box::new(Fastest::new(
-        autotune,
-        move |call: &AttentionCall| match call {
-            AttentionCall::Float(float) => {
-                launch_tuned(positions, &float.device, float.inputs.clone(), routines)
-            }
-            AttentionCall::Packed(_) => {
-                unreachable!(
-                    "an autotune is planned over a float call, the packed cache rebuilt first"
-                )
-            }
-        },
-    ))
 }
