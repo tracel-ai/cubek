@@ -254,9 +254,9 @@ impl Microkernel for CubeAttentionMicrokernel {
         self.plane.vectorize(cube_space, vectorization);
     }
 
-    /// Its plane microkernel's work, and the staging, which it places: its box of the query, and
-    /// every key and value of the walk in runs of a row each, as many times over as it has
-    /// readers.
+    /// Its plane microkernel's work, with a second loaded step where shuffle planes walk steps
+    /// rather than pages, and the staging, which it places: its box of the query, and every key
+    /// and value of the walk in runs of a row each, as many times over as it has readers.
     fn estimate(
         &self,
         item: &AttentionWorkItem,
@@ -265,6 +265,11 @@ impl Microkernel for CubeAttentionMicrokernel {
         estimate: &mut KernelEstimate,
     ) {
         self.plane.estimate(item, cube_space, planes, estimate);
+        if let (CubeAttentionPlane::Shuffle(plane), None, Some(work)) =
+            (self.plane, self.page_steps, &mut estimate.work)
+        {
+            work.registers += plane.step_registers(item);
+        }
         self.staging(item).count(item, cube_space, estimate);
     }
 }

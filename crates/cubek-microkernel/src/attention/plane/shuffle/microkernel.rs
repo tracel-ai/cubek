@@ -208,16 +208,70 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         shuffle
     }
 
-    /// Each team loads its keys of the step from `keys` and `values` ([`StepReads`]), every load
-    /// issued before any is used, a key past the attended ones reading nothing; the team sums
-    /// each key's partial dots against each row, takes the step's scores into its rows' max and
-    /// sum once, and adds the values they weigh into its lines of the output, rescaled to the new
-    /// max. A key a row does not see weighs nothing. `plane` is its region of one step of the walk.
+    /// Each team's keys of the step loaded from `keys` and `values` ([`StepReads`]), every load
+    /// issued before any is used, a key past the attended ones reading nothing. `plane` is its
+    /// region of one step of the walk.
+    pub fn load<K: StepReads<N>, L: StepReads<N>>(
+        &self,
+        plane: &Region,
+        keys: &K,
+        values: &L,
+        visible: &VisibleKeys,
+    ) -> LoadedStep<K::Element, L::Element, N> {
+        let microkernel = comptime!(self.microkernel);
+        let (head_lines, value_lines) = comptime!((self.head_lines, self.value_lines));
+        let teams = comptime!(microkernel.teams);
+        let in_flight = comptime!(microkernel.settings.keys_in_flight.get());
+        let units_per_key = comptime!(microkernel.settings.units_per_key.get());
+        let unit = UNIT_POS_PLANE as usize;
+        let (team, lane) = (unit / units_per_key, unit % units_per_key);
+        let walk = StepWalk {
+            team,
+            lane,
+            attended: visible.attended,
+            teams,
+            keys_in_flight: in_flight,
+            units_per_key,
+        };
+        LoadedStep::new(
+            keys.load(plane, &walk, head_lines),
+            values.load(plane, &walk, value_lines),
+        )
+    }
+
+    /// A step `load` can be copied into.
+    pub fn unloaded<K: StepReads<N>, L: StepReads<N>>(
+        &self,
+    ) -> LoadedStep<K::Element, L::Element, N> {
+        let microkernel = comptime!(self.microkernel);
+        let in_flight = comptime!(microkernel.settings.keys_in_flight.get());
+        let units_per_key = comptime!(microkernel.settings.units_per_key.get());
+        let key_lines = comptime!(in_flight * self.head_lines.div_ceil(units_per_key));
+        let value_lines = comptime!(in_flight * self.value_lines.div_ceil(units_per_key));
+        LoadedStep::new(Array::new(key_lines), Array::new(value_lines))
+    }
+
+    /// Each team loads its keys of the step (`load`), then takes them into its rows (`consume`).
     pub fn step<K: StepReads<N>, L: StepReads<N>>(
         &mut self,
         plane: &Region,
         keys: &K,
         values: &L,
+        visible: &VisibleKeys,
+        scale: EA,
+    ) {
+        let step = self.load::<K, L>(plane, keys, values, visible);
+        self.consume(plane, &step, visible, scale);
+    }
+
+    /// `step`, loaded from `plane`, taken into the rows: each team sums each key's partial dots
+    /// against each row, takes the step's scores into its rows' max and sum once, and adds the
+    /// values they weigh into its lines of the output, rescaled to the new max. A key a row does
+    /// not see weighs nothing.
+    pub fn consume<KE: Float, VE: Float>(
+        &mut self,
+        plane: &Region,
+        step: &LoadedStep<KE, VE, N>,
         visible: &VisibleKeys,
         scale: EA,
     ) {
@@ -231,20 +285,9 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             head_lines.div_ceil(units_per_key),
             value_lines.div_ceil(units_per_key)
         ));
-        let unit = UNIT_POS_PLANE as usize;
-        let (team, lane) = (unit / units_per_key, unit % units_per_key);
+        let team = UNIT_POS_PLANE as usize / units_per_key;
         let (first_query, first_key) = (plane.origin(Q), plane.origin(S));
         let head = plane.origin(G) as u32;
-        let walk = StepWalk {
-            team,
-            lane,
-            attended: visible.attended,
-            teams,
-            keys_in_flight: in_flight,
-            units_per_key,
-        };
-        let key_reads = keys.load(plane, &walk, head_lines);
-        let value_reads = values.load(plane, &walk, value_lines);
 
         let team_share = comptime!(UnitShare::Group {
             unit_bits: units_per_key - 1
@@ -264,7 +307,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                 for p in 0..per_head {
                     partial += Monoid::reduce::<EA, N>(
                         self.query[r * per_head + p]
-                            * Vector::cast_from(key_reads[c * per_head + p]),
+                            * Vector::cast_from(step.keys[c * per_head + p]),
                         width,
                         Monoid::Sum,
                     );
@@ -303,7 +346,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                 let mut line = self.sum[r * per_value + p] * Vector::cast_from(corrections[r]);
                 #[unroll]
                 for c in 0..in_flight {
-                    line += Vector::<EA, N>::cast_from(value_reads[c * per_value + p])
+                    line += Vector::<EA, N>::cast_from(step.values[c * per_value + p])
                         * Vector::cast_from(weights[r * in_flight + c]);
                 }
                 self.sum[r * per_value + p] = line;
@@ -355,5 +398,31 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
     ) {
         self.close();
         self.write_partial(slot_out, slot_max, slot_sum, first_slot, row_stride, rows);
+    }
+}
+
+/// One step's keys and values as a team loaded them, held while the step before it computes.
+#[derive(CubeType)]
+pub struct LoadedStep<KE: Float, VE: Float, N: Size> {
+    pub keys: Array<Vector<KE, N>>,
+    pub values: Array<Vector<VE, N>>,
+}
+
+#[cube]
+impl<KE: Float, VE: Float, N: Size> LoadedStep<KE, VE, N> {
+    pub fn new(keys: Array<Vector<KE, N>>, values: Array<Vector<VE, N>>) -> Self {
+        LoadedStep::<KE, VE, N> { keys, values }
+    }
+
+    /// `other` taken over line by line: assigning a held array would alias it instead.
+    pub fn copy_from(&mut self, other: &Self) {
+        #[unroll]
+        for l in 0..self.keys.len() {
+            self.keys[l] = other.keys[l];
+        }
+        #[unroll]
+        for l in 0..self.values.len() {
+            self.values[l] = other.values[l];
+        }
     }
 }
