@@ -167,7 +167,7 @@ impl CubeStagedMicrokernel {
             .filled(CubeStagedDelivery::AsyncCopy, 0),
     ];
 
-    /// The [stored settings](Self::STORED) `hw` races: those filled by the TMA engine only where
+    /// The stored settings (`STORED`) `hw` races: those filled by the TMA engine only where
     /// it has one, since elsewhere they would race the units' fill of a box the copy engine's
     /// settings already cover.
     pub fn stored_settings(hw: &Hardware) -> Vec<CubeStagedMicrokernelSettings> {

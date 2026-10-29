@@ -41,7 +41,7 @@ pub struct PlaneFragmentMicrokernel {
     /// The block-split space a packed rhs it reads straight from memory puts the product in:
     /// none for a float rhs, or one decoded into a stage before the plane reads it.
     pub blocks: Option<MatmulBlocks>,
-    /// How the tiles it reads state `K` ([`k_axes`](Self::k_axes)).
+    /// How the tiles it reads state `K` (`k_axes`).
     pub k_stated: PlaneFragmentKStatement,
 }
 
