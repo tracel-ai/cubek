@@ -3,7 +3,7 @@ use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 
 use crate::kernels::indexed::routed::RoutedMatmulTensors;
-use crate::kernels::tune::{Listed, ListedFor, Product};
+use crate::kernels::tune::{Listed, ListedFor, Product, first_served};
 use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     PlaneShuffleMatmulRoutineSettings, UnitRegistersMatmulRoutine,
@@ -31,7 +31,7 @@ impl RoutedFloors {
     ///
     /// # Errors
     ///
-    /// The last floor's refusal, where none serves.
+    /// The last floor's refusal, where none serves. The first that serves ends the walk.
     pub(crate) fn served(
         &self,
         hw: &Hardware,
@@ -44,11 +44,7 @@ impl RoutedFloors {
             .map(|floor| tensors.served_by(hw, &CubeStagedMatmulRoutine, &floor.settings));
         let unit_registers = Listed::admitted(&self.unit_registers, stack)
             .map(|floor| tensors.served_by(hw, &UnitRegistersMatmulRoutine, &floor.settings));
-        plane_shuffle
-            .chain(cube_staged)
-            .chain(unit_registers)
-            .reduce(Result::or)
-            .expect("a floor is listed for every kind of stack")
+        first_served(plane_shuffle.chain(cube_staged).chain(unit_registers))
     }
 
     pub(crate) const LISTED: Self = Self {

@@ -92,3 +92,21 @@ impl ListedFor {
         }
     }
 }
+
+/// The first of `attempts` that is `Ok`, the rest never run; where none is, the last refusal.
+///
+/// # Panics
+///
+/// On no attempt: a floor is listed for every kind of stack.
+pub(crate) fn first_served(
+    attempts: impl IntoIterator<Item = Result<(), Refusal>>,
+) -> Result<(), Refusal> {
+    let mut refusal = None;
+    for attempt in attempts {
+        match attempt {
+            Ok(()) => return Ok(()),
+            Err(why) => refusal = Some(why),
+        }
+    }
+    Err(refusal.expect("a floor is listed for every kind of stack"))
+}

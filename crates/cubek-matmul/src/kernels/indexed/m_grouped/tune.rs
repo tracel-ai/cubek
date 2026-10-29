@@ -26,7 +26,7 @@ use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
-use crate::kernels::tune::{Listed, ListedFor, Product};
+use crate::kernels::tune::{Listed, ListedFor, Product, first_served};
 use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulRoutine,
     PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
@@ -105,10 +105,7 @@ pub fn launch_tuned_padded(
         .map(|floor| tensors.served_by(&hw, &PlaneShuffleMatmulRoutine, &floor.settings));
     let cube_staged = Listed::admitted(&floors.cube_staged, stack)
         .map(|floor| tensors.served_by(&hw, &CubeStagedMatmulRoutine, &floor.settings));
-    plane_shuffle
-        .chain(cube_staged)
-        .reduce(Result::or)
-        .expect("a floor is listed for every kind of stack")?;
+    first_served(plane_shuffle.chain(cube_staged))?;
 
     // Named rather than `module_path!()`, so the cached winners stay this autotune's wherever the
     // code lives; a cached winner is an index into the candidate list.
