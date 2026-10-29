@@ -93,6 +93,7 @@ impl MatmulStage {
                 .space
                 .subspace(&operand.dims().map(|dim| self.axes.of(dim))),
             innermost: self.axes.of(orders.innermost(operand)),
+            from_words: StagedOperand::is_stored_in_words(elements.get(operand)),
         })
     }
 

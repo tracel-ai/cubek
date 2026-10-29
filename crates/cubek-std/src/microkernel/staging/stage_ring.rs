@@ -1,7 +1,6 @@
 use crate::Hardware;
 use crate::microkernel::StagedOperand;
 use core::num::NonZeroUsize;
-use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::stage::Prefetch;
 
 /// How a walk through shared memory holds its stages: a staged cube's, or each plane's own,
@@ -69,19 +68,14 @@ impl StageRing {
     /// Asked before the operands' widths are settled, so each operand's share is its most over
     /// every width it could bind at: the powers of two up to the widest line `hw` reads.
     ///
-    /// An operand of an element no buffer stores, e2m1 or tf32, is read from words: the register
-    /// prefetch, which reads a plain source at its own width, does not carry it, and its ring
-    /// prefetches into its slots.
+    /// An operand read from words ([`StagedOperand::from_words`]) is not carried by the register
+    /// prefetch, which reads a plain source at its own width: its ring prefetches into its slots.
     ///
     /// The tile DSL holds one stage ahead in registers, so a ring of more than two stages would
     /// leave the slots past the second idle; and it holds at most [`Prefetch::fits`] scalars a unit
     /// of every operand's stage ([`StagedOperand::most_prefetched`]).
     pub fn resolve(self, hw: &Hardware, operands: &[StagedOperand], units: usize) -> Self {
-        let words = [FloatKind::E2M1, FloatKind::TF32].map(ElemType::Float);
-        if operands
-            .iter()
-            .any(|operand| words.contains(&operand.element))
-        {
+        if operands.iter().any(|operand| operand.from_words) {
             return Self {
                 prefetch: Prefetch::InSlots,
                 ..self
@@ -130,8 +124,27 @@ mod tests {
             element: ElemType::Float(FloatKind::F16),
             space: Space::new(&axes),
             innermost: axes[1].0,
+            from_words: false,
         };
         [operand([(M, 16), (K, 16)]), operand([(K, 16), (N, 16)])]
+    }
+
+    /// The register prefetch does not carry an operand read from words, so its ring keeps the
+    /// slots.
+    #[test]
+    fn an_operand_read_from_words_prefetches_into_its_slots() {
+        let [lhs, rhs] = small_stage();
+        let words = [
+            StagedOperand {
+                from_words: true,
+                ..lhs
+            },
+            rhs,
+        ];
+        assert_eq!(
+            StageRing::DOUBLE_THROUGH_REGISTERS.resolve(&devices::m2_pro(), &words, 128),
+            StageRing::DOUBLE
+        );
     }
 
     /// The tile DSL holds one stage ahead in registers and refuses a deeper ring at expansion,

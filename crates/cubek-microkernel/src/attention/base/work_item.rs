@@ -131,6 +131,7 @@ impl AttentionWorkItem {
             element: self.elements.get(operand),
             space: Space::new(&[(S, keys), (row, extent)]),
             innermost: operand.innermost(key_order),
+            from_words: StagedOperand::is_stored_in_words(self.elements.get(operand)),
         };
         [
             operand(AttentionOperand::Key, D, self.head_dim),

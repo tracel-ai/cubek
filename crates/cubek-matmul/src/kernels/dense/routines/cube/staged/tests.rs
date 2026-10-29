@@ -696,6 +696,48 @@ mod base {
         assert!(kept > 0, "no listed setting kept its register prefetch");
     }
 
+    /// A packed input is read from words, which the register prefetch does not carry: every float
+    /// setting prefetching into registers, prepared on a q4 weight, prefetches into its slots.
+    #[test]
+    fn a_packed_input_keeps_no_register_prefetch() {
+        use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+        use cubecl::tile::stage::Prefetch;
+        use cubek_std::layout::stored::{Operand, Packing};
+
+        let hw = offering(devices::strix_halo());
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::Q4S)
+            .per_block([32, 1], ScaleDtype::F16)
+            .with_store(QuantStore::PackedU32(1));
+        let packings = MatmulOperands {
+            lhs: None,
+            rhs: Some(Packing {
+                operand: Operand::of_scheme(&scheme, K, [K, N]).expect("q4 is one block along k"),
+                scheme,
+            }),
+            out: None,
+        };
+        let problem = MatmulRoutineProblem::packed(256, 512, 256, F16, packings);
+        let prefetching = CubeStagedMatmulRoutine
+            .settings(&hw)
+            .into_iter()
+            .filter(|settings| settings.microkernel.ring.prefetch == Prefetch::InRegisters);
+        let mut prepared = 0;
+        for settings in prefetching {
+            let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings)
+            else {
+                continue;
+            };
+            prepared += 1;
+            assert_eq!(
+                blueprint.microkernel.ring.prefetch,
+                Prefetch::InSlots,
+                "{settings}"
+            );
+        }
+        assert!(prepared > 0, "no register prefetching setting prepared");
+    }
+
     /// A box asked of the TMA engine's store is stored by it wherever a descriptor addresses the
     /// output, each cube writing its own box once, and by the fragments everywhere else, so the
     /// setting runs on every problem. A box the engine stores is drained whole into shared memory

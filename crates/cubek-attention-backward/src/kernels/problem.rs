@@ -87,6 +87,7 @@ impl AttentionBackwardProblem {
             element: self.element,
             space: Space::new(&[(walked, extent), (row, width)]),
             innermost: row,
+            from_words: StagedOperand::is_stored_in_words(self.element),
         };
         [operand(D, self.head_dim), operand(DV, self.val_dim)]
     }

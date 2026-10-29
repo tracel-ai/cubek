@@ -1,5 +1,5 @@
 use crate::Hardware;
-use cubecl::ir::ElemType;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::{Axis, Space, StageStorage, stage::Prefetch};
 
 /// One operand's box of a stage, as the ring that holds it reads it: what a stage of it costs in
@@ -12,9 +12,19 @@ pub struct StagedOperand {
     pub space: Space,
     /// The axis it is bound innermost along, which the stage's rows run along.
     pub innermost: Axis,
+    /// Whether its fill reads it from words rather than at its own width, which the register
+    /// prefetch does not carry.
+    pub from_words: bool,
 }
 
 impl StagedOperand {
+    /// Whether no buffer stores `element`, e2m1 or tf32, so a fill reads it from words.
+    pub fn is_stored_in_words(element: ElemType) -> bool {
+        [FloatKind::E2M1, FloatKind::TF32]
+            .map(ElemType::Float)
+            .contains(&element)
+    }
+
     /// Elements one stage holds of it.
     pub fn cells(&self) -> usize {
         self.space
