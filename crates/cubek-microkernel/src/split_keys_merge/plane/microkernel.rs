@@ -35,6 +35,7 @@ pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
                 slot_max,
                 slot_sum,
                 slot_box.first_row + r,
+                slots.splits,
                 slots,
             );
             #[comptime]
@@ -104,8 +105,75 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
     #[unroll]
     for r in 0..queries {
         if r % splits == split {
-            let mut row =
-                MergedSlotRow::<EA, N>::new(slot_out, slot_max, slot_sum, first_row + r, slots);
+            let mut row = MergedSlotRow::<EA, N>::new(
+                slot_out,
+                slot_max,
+                slot_sum,
+                first_row + r,
+                splits,
+                slots,
+            );
+            #[comptime]
+            match logsumexp {
+                ComptimeOption::Some(logsumexp) => {
+                    if lane == 0 {
+                        let mut logsumexp = logsumexp.clone();
+                        logsumexp
+                            .flat_mut::<EA, Const<1>>()
+                            .write(r, Vector::cast_from(row.logsumexp()));
+                    }
+                }
+                ComptimeOption::None => {}
+            }
+            let merged = row.normalized();
+            #[unroll]
+            for e in 0..comptime!(lines_of_value.div_ceil(units)) {
+                let line = lane + e * units;
+                if line < lines_of_value {
+                    lines.write(r * lines_of_value + line, Vector::cast_from(merged[e]));
+                }
+            }
+        }
+    }
+}
+
+/// One plane's rows merged from the slots the cubes that shared their keys left and written into
+/// `out`, normalized: the first `rows` of the plane's queries, which lie from row `first_row` of
+/// the slots as `slots` states, each from its first `holders` slots (`MergedSlotRow::new`).
+/// `out`, and `logsumexp` where the caller asks for each row's, are windowed to the plane's rows.
+/// A row whose every slot saw nothing writes zeros, and the minimum value as its logsumexp.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
+    // Read only, taken as the kernel holds them: cube code passes no `&mut` where a `&` is asked.
+    slot_out: &mut [Vector<EA, N>],
+    slot_max: &mut [EA],
+    slot_sum: &mut [EA],
+    out: &Tile,
+    logsumexp: &ComptimeOption<Tile>,
+    first_row: usize,
+    rows: usize,
+    holders: usize,
+    #[comptime] slots: SlotShape,
+    #[comptime] queries: usize,
+) {
+    let SlotShape { units, val_dim, .. } = slots;
+    let width = N::value();
+    let lines_of_value = comptime!(val_dim / width);
+    let lane = UNIT_POS_PLANE as usize;
+    let mut out = out.clone();
+    let mut lines = out.flat_mut::<E, N>();
+    #[unroll]
+    for r in 0..queries {
+        if r < rows {
+            let mut row = MergedSlotRow::<EA, N>::new(
+                slot_out,
+                slot_max,
+                slot_sum,
+                first_row + r,
+                holders,
+                slots,
+            );
             #[comptime]
             match logsumexp {
                 ComptimeOption::Some(logsumexp) => {
@@ -163,8 +231,14 @@ pub(crate) fn plane_merge_rows_partial_microkernel<EA: Float, N: Size>(
     #[unroll]
     for r in 0..queries {
         if r % splits == split && r < rows {
-            let merged =
-                MergedSlotRow::<EA, N>::new(slot_out, slot_max, slot_sum, first_row + r, slots);
+            let merged = MergedSlotRow::<EA, N>::new(
+                slot_out,
+                slot_max,
+                slot_sum,
+                first_row + r,
+                splits,
+                slots,
+            );
             let slot = first_slot + r * row_stride;
             #[unroll]
             for e in 0..comptime!(lines_of_value.div_ceil(units)) {
@@ -207,13 +281,15 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
     /// is read. A unit past the row's lines then holds its group's copy of line `lane % lines`.
     ///
     /// The slots lie in any memory, laid out as [`SlotShape`] states: device memory where
-    /// cubes meet, shared memory where a cube's planes do.
+    /// cubes meet, shared memory where a cube's planes do. Only the first `holders` of a row's
+    /// slots hold parts of it, as many as cubes shared its keys; the rest are not read.
     fn new(
         // Read only, taken as the kernel holds them: cube code passes no `&mut` where a `&` is asked.
         slot_out: &mut [Vector<EA, N>],
         slot_max: &mut [EA],
         slot_sum: &mut [EA],
         row: usize,
+        holders: usize,
         #[comptime] shape: SlotShape,
     ) -> MergedSlotRow<EA, N> {
         let SlotShape {
@@ -240,7 +316,7 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
         #[unroll]
         for round in 0..rounds {
             let own = round * units + lane;
-            if own < splits {
+            if own < holders {
                 own_max = max(own_max, slot_max[first_slot + own]);
             }
         }
@@ -255,7 +331,7 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
         for round in 0..rounds {
             let own = round * units + lane;
             let mut weight = EA::from_int(0);
-            if own < splits {
+            if own < holders {
                 weight = (slot_max[first_slot + own] - merged).exp();
                 total += weight * slot_sum[first_slot + own];
             }
@@ -271,7 +347,7 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
             #[unroll]
             for k in 0..per_group {
                 let index = round * units + k * groups + group;
-                if index < splits {
+                if index < holders {
                     let slot = first_slot + index;
                     #[unroll]
                     for e in 0..elements {
