@@ -51,11 +51,13 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     // The longest sequence's attended steps, a box's share of the line; one at least, so a box of
     // no key is still some run's, which leaves it empty.
     let mut longest = 1usize;
+
     for b in 0..len.shape(0) {
         longest = longest.max((len[b * len.stride(0)] as usize).div_ceil(keys_per_step));
     }
 
     let portion = partitioning.walk().portion_of(longest);
+
     for i in 0..portion.touched() {
         let cube = portion.region(i);
         let (from, steps) = portion.steps(i);

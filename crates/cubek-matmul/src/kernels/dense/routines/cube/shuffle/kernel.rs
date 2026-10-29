@@ -25,6 +25,7 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
     let c = O::tile::<E, VO>(out, &partitioning);
+
     for cube in &partitioning {
         cube_shuffle_microkernel::<EA>(
             &cube,

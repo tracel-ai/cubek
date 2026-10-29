@@ -41,6 +41,7 @@ pub fn cube_staged_matmul_kernel<
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
     let c = O::tile::<E, VO>(out, &partitioning);
+
     for cube in &partitioning {
         let b = b.at(&cube);
         cube_staged_microkernel::<EA, EL>(

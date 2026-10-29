@@ -19,6 +19,7 @@ pub fn unit_registers_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destin
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
     let c = O::tile::<E, VO>(out, &partitioning);
+
     for plane in &partitioning {
         for unit in plane {
             let (c, a, b) = (c.at(&unit), a.at(&unit), b.at(&unit));

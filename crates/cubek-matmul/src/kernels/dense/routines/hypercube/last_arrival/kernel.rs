@@ -41,6 +41,7 @@ pub fn hypercube_last_arrival_matmul_kernel<
     // The walk under the cubes steps a tile's `K` a stage at a time: what a run is counted in.
     let stages = comptime!(partitioning.levels()[1].clone());
     let portion = partitioning.walk().portion(stages.clone());
+
     for i in 0..portion.touched() {
         let tile = portion.region(i);
         let (from, steps) = portion.steps(i);

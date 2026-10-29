@@ -15,6 +15,7 @@ pub fn plane_dequantize_kernel<ER: Numeric, VO: Size, O: Destination>(
 ) {
     let packed = packed.tile(&partitioning);
     let c = O::tile::<ER, VO>(out, &partitioning);
+
     for plane in &partitioning {
         let mut c = c.at(&plane);
         c.dequantize_from(&packed.at(&plane));

@@ -41,6 +41,7 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
     };
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+
     for cube in &partitioning {
         let visible = VisibleKeys::new(len, &cube, queries, &mask, visibility);
         let steps = visible.steps(
