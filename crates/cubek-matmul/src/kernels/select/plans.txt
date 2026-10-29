@@ -3,56 +3,56 @@ Autotune: fastest(few-rows)
 Heuristic(Tile): in-order[plane-shuffle, cube-staged@default, unit-registers@default]
 Specific(UnitRegisters): unit-registers@default
 Specific(PlaneShuffle): plane-shuffle
-Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format whose step is a word of their scales; take autotune or a policy for any other product
+Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format; take autotune or a policy for any other product
 
 # float, the few-rows line
 Autotune: fastest(few-rows)
 Heuristic(Tile): in-order[plane-shuffle, cube-staged@default, unit-registers@default]
 Specific(UnitRegisters): unit-registers@default
 Specific(PlaneShuffle): plane-shuffle
-Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format whose step is a word of their scales; take autotune or a policy for any other product
+Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format; take autotune or a policy for any other product
 
 # float, past the few-rows line
 Autotune: fastest(many-rows)
 Heuristic(Tile): in-order[plane-shuffle, cube-staged@default, unit-registers@default]
 Specific(UnitRegisters): unit-registers@default
 Specific(PlaneShuffle): plane-shuffle
-Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format whose step is a word of their scales; take autotune or a policy for any other product
+Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format; take autotune or a policy for any other product
 
 # packed rhs, 1 row
 Autotune: fastest(few-rows)
 Heuristic(Tile): in-order[plane-shuffle(packed as stored), decoded(in-order[plane-shuffle, cube-staged@default, unit-registers@default])]
 Specific(UnitRegisters): decoded(unit-registers@default)
 Specific(PlaneShuffle): plane-shuffle(packed as stored)
-Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format whose step is a word of their scales; take autotune or a policy for any other product
+Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format; take autotune or a policy for any other product
 
 # packed rhs, 2 rows
 Autotune: fastest(few-rows)
 Heuristic(Tile): decoded(in-order[plane-shuffle, cube-staged@default, unit-registers@default])
 Specific(UnitRegisters): decoded(unit-registers@default)
 Specific(PlaneShuffle): plane-shuffle(packed as stored)
-Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format whose step is a word of their scales; take autotune or a policy for any other product
+Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format; take autotune or a policy for any other product
 
 # packed rhs, the few-rows line
 Autotune: fastest(few-rows)
 Heuristic(Tile): decoded(in-order[plane-shuffle, cube-staged@default, unit-registers@default])
 Specific(UnitRegisters): decoded(unit-registers@default)
 Specific(PlaneShuffle): plane-shuffle(packed as stored)
-Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format whose step is a word of their scales; take autotune or a policy for any other product
+Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format; take autotune or a policy for any other product
 
 # packed rhs, past the few-rows line
 Autotune: fastest(many-rows)
 Heuristic(Tile): decoded(in-order[plane-shuffle, cube-staged@default, unit-registers@default])
 Specific(UnitRegisters): decoded(unit-registers@default)
 Specific(PlaneShuffle): plane-shuffle(packed as stored)
-Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format whose step is a word of their scales; take autotune or a policy for any other product
+Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format; take autotune or a policy for any other product
 
 # rhs packed under a scheme no kernel reads, 1 row
 Autotune: framework-dequantized(fastest(few-rows))
 Heuristic(Tile): framework-dequantized(in-order[plane-shuffle, cube-staged@default, unit-registers@default])
 Specific(UnitRegisters): framework-dequantized(unit-registers@default)
 Specific(PlaneShuffle): framework-dequantized(plane-shuffle)
-Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format whose step is a word of their scales; take autotune or a policy for any other product
+Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format; take autotune or a policy for any other product
 
 # two NVFP4 inputs, 1 row, 4-bit GPU
 Autotune: fastest(few-rows)
@@ -73,5 +73,5 @@ Autotune: fastest(few-rows)
 Heuristic(Tile): in-order[plane-shuffle(packed as stored), decoded(in-order[plane-shuffle, cube-staged@default, unit-registers@default])]
 Specific(UnitRegisters): decoded(unit-registers@default)
 Specific(PlaneShuffle): plane-shuffle(packed as stored)
-Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format whose step is a word of their scales; take autotune or a policy for any other product
+Specific(BlockScaledTensorCores): refused: BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a block-scaled tensor-core instruction of their format; take autotune or a policy for any other product
 
