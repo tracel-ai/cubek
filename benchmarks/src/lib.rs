@@ -1,6 +1,5 @@
 //! Benchmark registry for cubek.
 
-pub use cubek_attention::eval::forward::benchmarks as attention;
 pub use cubek_attention_backward::eval::benchmarks as attention_backward;
 pub use cubek_convolution::eval::benchmarks as conv2d;
 pub use cubek_convolution::eval::benchmarks::depthwise;
@@ -29,7 +28,6 @@ pub use cubek_test_utils::{
 /// Every benchmark category compiled into this build of the registry.
 pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
     &[
-        &crate::attention::Category,
         &crate::attention_backward::Category,
         &crate::contiguous::Category,
         &crate::conv2d::Category,
