@@ -60,6 +60,16 @@ impl StageRing {
         self.stages_in_flight.get() * stage_bytes
     }
 
+    /// Times a walk through the ring expands the body it runs on each stage, so the copies of
+    /// whatever shared memory that body declares: once a slot in the laps that fill ahead and
+    /// once a slot in the last, except for one slot filled in place, which has no laps ahead.
+    pub fn bodies(&self) -> usize {
+        match (self.prefetch, self.stages_in_flight.get()) {
+            (Prefetch::InSlots, 1) => 1,
+            (_, slots) => 2 * slots,
+        }
+    }
+
     /// The ring that fills stages of `operands` on a cube of `units` units: this one, prefetching
     /// into its slots where the tile DSL would refuse to hold the next stage in registers. A
     /// refusal is made at expansion, where it is a launch that writes nothing; so every setting
@@ -149,5 +159,16 @@ mod tests {
             StageRing::DOUBLE_THROUGH_REGISTERS.resolve(&devices::m2_pro(), &small_stage(), 128),
             StageRing::DOUBLE_THROUGH_REGISTERS
         );
+    }
+
+    /// What the tile DSL's walks expand: one body for a single slot filled in place, and two a slot
+    /// otherwise. The first three are what the hypercube attention backward's compiled kernels
+    /// hold in shared memory, on CUDA.
+    #[test]
+    fn a_walk_expands_its_body_once_a_slot_ahead_and_once_a_slot_last() {
+        assert_eq!(StageRing::SINGLE.bodies(), 1);
+        assert_eq!(StageRing::SINGLE_THROUGH_REGISTERS.bodies(), 2);
+        assert_eq!(StageRing::DOUBLE.bodies(), 4);
+        assert_eq!(StageRing::DOUBLE_THROUGH_REGISTERS.bodies(), 4);
     }
 }
