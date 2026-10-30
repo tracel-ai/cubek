@@ -81,13 +81,31 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
             let b = self.previous.at(plane);
             if self.parity == 0 {
                 lab_skewed_step::<EA, ES>(
-                    plane, &mut sum, &mut self.softmax, &a, &b, &self.query.at(plane),
-                    &keys.at(plane), &values.at(plane), &visible.at(plane), scale, self.microkernel,
+                    plane,
+                    &mut sum,
+                    &mut self.softmax,
+                    &a,
+                    &b,
+                    &self.query.at(plane),
+                    &keys.at(plane),
+                    &values.at(plane),
+                    &visible.at(plane),
+                    scale,
+                    self.microkernel,
                 );
             } else {
                 lab_skewed_step::<EA, ES>(
-                    plane, &mut sum, &mut self.softmax, &b, &a, &self.query.at(plane),
-                    &keys.at(plane), &values.at(plane), &visible.at(plane), scale, self.microkernel,
+                    plane,
+                    &mut sum,
+                    &mut self.softmax,
+                    &b,
+                    &a,
+                    &self.query.at(plane),
+                    &keys.at(plane),
+                    &values.at(plane),
+                    &visible.at(plane),
+                    scale,
+                    self.microkernel,
                 );
             }
             self.parity ^= 1;
@@ -105,6 +123,46 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
             scale,
             self.microkernel,
             comptime!(self.microkernel.score_levels(&self.planes)),
+        );
+    }
+
+    /// LAB: the first half of [`step`](Self::step): `keys` scored into the score's fragments, taken
+    /// into the softmax, and the sum rescaled.
+    pub fn lab_score(&mut self, plane: &Region, keys: &Tile, visible: &Tile, scale: EA) {
+        let wide = ComptimeOption::<Tile>::new_None();
+        let mut sum = self.sum.at(plane);
+        let mut logits = self.score.at(plane).scores();
+        logits.reset();
+        plane_fragment_microkernel(
+            plane,
+            &logits,
+            &wide,
+            &self.query.at(plane),
+            &keys.at(plane),
+            comptime!(self.microkernel.score.tile_instruction()),
+            comptime!(Some(DV)),
+            comptime!(MatmulOperands::all(MatmulRead::AsBound)),
+        );
+        if comptime!(std::env::var("CUBEK_LAB_NO_SOFTMAX").is_err()) {
+            let correction = self.softmax.step(&logits, &visible.at(plane), scale);
+            sum.along(DV).mul(&correction);
+        }
+    }
+
+    /// LAB: the second half of [`step`](Self::step): the probabilities contracted with `values`.
+    pub fn lab_value(&mut self, plane: &Region, values: &Tile) {
+        let wide = ComptimeOption::<Tile>::new_None();
+        let sum = self.sum.at(plane);
+        let logits = self.score.at(plane).scores();
+        plane_fragment_microkernel(
+            plane,
+            &sum.clone(),
+            &wide,
+            &logits.cast::<ES>(),
+            &values.at(plane),
+            comptime!(self.microkernel.value.tile_instruction()),
+            comptime!(Some(D)),
+            comptime!(MatmulOperands::all(MatmulRead::AsBound)),
         );
     }
 
