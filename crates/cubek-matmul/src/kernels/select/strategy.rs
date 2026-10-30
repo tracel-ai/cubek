@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum MatmulOpStrategy {
     /// Pick by measurement: every kernel that can serve the problem joins an
-    /// autotune table and the fastest runs, per problem and per device.
+    /// autotune and the fastest runs, per problem and per device.
     ///
     /// The default. The rules cannot know where the
     /// crossover between a streaming kernel and a staged one falls on a device

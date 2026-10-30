@@ -82,7 +82,7 @@ mod candidate {
         }
     }
 
-    /// The priority is the table's one rule over the cube's output block: first where the block
+    /// The priority is the autotune's one rule over the cube's output block: first where the block
     /// tiles the product, last where one cube covers all of it.
     #[test]
     fn the_priority_reads_the_block_one_cube_covers() {
@@ -193,7 +193,7 @@ mod candidate {
         assert_ne!(single.0.partitioning, batched.0.partitioning);
     }
 
-    /// The few-rows table's candidates: the shuffle routines, every packed rhs launched as stored.
+    /// The few-rows autotune's candidates: the shuffle routines, every packed rhs launched as stored.
     mod few_rows {
         use super::*;
         use crate::kernels::CubeShuffleMatmulRoutine;
@@ -297,7 +297,7 @@ mod candidate {
         }
     }
 
-    /// The many-rows table's routines: their estimates on a strix halo.
+    /// The many-rows autotune's routines: their estimates on a strix halo.
     mod many_rows_estimates {
         use crate::kernels::CubeStagedMatmulRoutine;
         use crate::kernels::UnitRegistersMatmulRoutine;
@@ -369,7 +369,7 @@ mod candidate {
         }
     }
 
-    /// The few-rows table's routines: their estimates on an rtx2060.
+    /// The few-rows autotune's routines: their estimates on an rtx2060.
     mod few_rows_estimates {
         use crate::kernels::CubeShuffleMatmulRoutine;
         use crate::kernels::PlaneShuffleMatmulRoutine;

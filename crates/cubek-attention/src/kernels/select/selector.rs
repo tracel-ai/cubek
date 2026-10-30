@@ -5,38 +5,13 @@
 //! kernel is chosen: by measurement on one of two autotunes, by rule, or by the caller's pin.
 //! Each routine then chooses its own setting, the autotune's candidates being its settings.
 
+use super::problem::{KvKind, QueryPositions};
 use super::{AttentionKernel, AttentionOpStrategy};
-use crate::kernels::plan::{
-    AttentionPlan, AttentionTableGroups, CacheRead, KernelLead, Rebuilt, fastest,
-};
+use crate::kernels::plan::{AttentionPlan, CacheRead, KernelLead, Rebuilt};
+use crate::kernels::tune::{AttentionAutotuneGroups, fastest};
 use crate::kernels::{CubeAttentionKernel, HypercubeAttentionKernel};
 use cubecl::tile::launch::Refusal;
 use cubek_std::plan::{InOrder, Then};
-
-/// How many query positions a call has: what the rules and autotune tell calls apart by.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum QueryPositions {
-    One,
-    Many,
-}
-
-impl QueryPositions {
-    /// The positions of a call of `seq_q` queries.
-    pub fn of(seq_q: usize) -> Self {
-        match seq_q {
-            1 => Self::One,
-            _ => Self::Many,
-        }
-    }
-}
-
-/// What the cache a call reads is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KvKind {
-    Float,
-    /// TurboQuant, with or without the keys' QJL fix-up.
-    Packed,
-}
 
 /// The kernel a rule runs at one query position, over a float cache or a packed one.
 const ONE_POSITION_RULE: AttentionKernel =
@@ -51,9 +26,9 @@ const PACKED_PIN_UNREAD: Refusal = Refusal::Declined {
 /// tries, the autotunes it names shipping their routines' group at `groups`.
 ///
 /// A measuring strategy measures: a call of one query position on the one-position autotune, any
-/// other on the many-positions autotune. A rule runs the hypercube shuffle merged on the last arrival
-/// at one position, and the cube fragment routine elsewhere, then what each kernel's scope names
-/// where it declines, down to the unit routine. A pin runs its kernel alone.
+/// other on the many-positions autotune. A rule runs the hypercube shuffle merged on the last
+/// arrival at one position, and the cube fragment routine elsewhere, then what each kernel's scope
+/// names where it declines, down to the unit routine. A pin runs its kernel alone.
 ///
 /// A packed cache is decoded inline at one position under every policy, by the hypercube shuffle
 /// by rule, and rebuilt as floats first elsewhere. Of the pins, only the two hypercube shuffles'
@@ -67,7 +42,7 @@ pub fn select(
     strategy: AttentionOpStrategy,
     queries: QueryPositions,
     cache: KvKind,
-    groups: AttentionTableGroups,
+    groups: AttentionAutotuneGroups,
 ) -> Result<AttentionPlan, Refusal> {
     let choice = Choice::of(strategy, queries);
     let float = || choice.plan(queries, CacheRead::Float, groups);
@@ -114,7 +89,7 @@ impl Choice {
         self,
         queries: QueryPositions,
         cache: CacheRead,
-        groups: AttentionTableGroups,
+        groups: AttentionAutotuneGroups,
     ) -> AttentionPlan {
         let lead = |kernel| -> AttentionPlan { Box::new(KernelLead::new(kernel, cache)) };
         match self {
@@ -136,8 +111,8 @@ fn rebuilt(plan: AttentionPlan) -> AttentionPlan {
 
 #[cfg(test)]
 mod tests {
-    use crate::kernels::plan::AttentionTableGroups;
     use crate::kernels::select::selector::*;
+    use crate::kernels::tune::AttentionAutotuneGroups;
     use crate::kernels::*;
     use AttentionKernelHeuristic as H;
     use AttentionOpStrategy::{Autotune, Heuristic, Specific};
@@ -262,7 +237,7 @@ mod tests {
         queries: QueryPositions,
         cache: KvKind,
     ) -> Result<String, cubecl::tile::launch::Refusal> {
-        select(strategy, queries, cache, AttentionTableGroups::default())
+        select(strategy, queries, cache, AttentionAutotuneGroups::default())
             .map(|plan| plan.tree().to_string())
     }
 
