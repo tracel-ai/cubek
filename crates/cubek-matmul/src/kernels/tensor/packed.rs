@@ -27,6 +27,36 @@ use cubek_std::routine::ADMITTED_PLAN_RUNS;
 /// The element a packed matrix's words and scales are bound in: whole `u32` words.
 const WORD: ElemType = ElemType::UInt(UIntKind::U32);
 
+/// What [`PackedTensor::of_quantized`] declines: a scheme with no block scales along the axis its
+/// words run along.
+pub const SCALES_NOT_ALONG_WORDS: Refusal = Refusal::Declined {
+    why: "the packed routines read block scales along the axis the words run along",
+};
+
+/// What [`PackedTensor::of_quantized`] declines: a batch of matrices, or values stored other than
+/// in contiguous rows.
+pub const PACKED_NOT_ONE_MATRIX_IN_ROWS: Refusal = Refusal::Declined {
+    why: "the packed routines read one quantized matrix in row-major rows",
+};
+
+/// What a read of a packed tensor declines: anything but one packed, block-scaled matrix.
+pub const TENSOR_NOT_PACKED: Refusal = Refusal::Declined {
+    why: "a packed read takes one packed, block-scaled matrix",
+};
+
+/// What reading a packed tensor as a stack of slabs declines: words stored in tiles, or slabs that
+/// split one read of its words, one block of its scales or one word of block scales.
+pub const PACKED_STACK_UNREAD: Refusal = Refusal::Declined {
+    why: "a packed stack is read slab by slab from words in rows, each slab whole reads, whole \
+          scale blocks and whole words of block scales",
+};
+
+/// What a read of a packed tensor declines: values stored in tiles it reads no whole load of.
+pub const STORED_TILES_UNREAD: Refusal = Refusal::Declined {
+    why: "a packed read takes values stored in tiles shaped [n, k / block, block] from a \
+              whole word, a load one run along k and one along n",
+};
+
 /// A packed matrix as a kernel reads it: its words, in the order their buffer steps, its block
 /// scales, and its per-tensor scale where its scheme has one, over two axes, each with its extent.
 /// The words and scales are read where they lie, in rows or in the tiles they are stored in.
@@ -129,12 +159,12 @@ impl PackedTensor {
         if shape.rank() != 2 || values.tiling.is_tiled() {
             return Err(PACKED_NOT_ONE_MATRIX_IN_ROWS);
         }
-        let words = stored_words(values, &scheme);
+        let words = Self::stored_words(values, &scheme);
         if !words.is_contiguous() {
             return Err(PACKED_NOT_ONE_MATRIX_IN_ROWS);
         }
         let in_rows_of_words =
-            |scale: PlainTensor| bound_to_whole_words(scale.into_contiguous(client));
+            |scale: PlainTensor| Self::bound_to_whole_words(scale.into_contiguous(client));
         Ok(Self::new(
             words,
             WordsLaid::InRows,
@@ -664,70 +694,40 @@ impl PackedTensor {
             &[PhysicalAxisMap::broadcast(), PhysicalAxisMap::broadcast()],
         )
     }
-}
 
-/// The values of a quantized matrix bound under its logical shape, `values`, as the elements
-/// `scheme` stores them in: one per value, or, packed, whole words of them, the packed dim's
-/// extent counting words.
-fn stored_words(values: TensorBinding, scheme: &QuantScheme) -> PlainTensor {
-    let packed = |values: TensorBinding, packed_dim: usize, elem: ElemType| {
-        let mut values = values;
-        let dim = values.shape.rank() - packed_dim - 1;
-        values.shape[dim] = values.shape[dim].div_ceil(scheme.num_quants());
-        PlainTensor::new(values, elem)
-    };
-    match (scheme.store, scheme.value) {
-        (QuantStore::Native, QuantValue::Q8F | QuantValue::Q8S) => {
-            PlainTensor::new(values, ElemType::Int(IntKind::I8))
+    /// The values of a quantized matrix bound under its logical shape, `values`, as the elements
+    /// `scheme` stores them in: one per value, or, packed, whole words of them, the packed dim's
+    /// extent counting words.
+    fn stored_words(values: TensorBinding, scheme: &QuantScheme) -> PlainTensor {
+        let packed = |values: TensorBinding, packed_dim: usize, elem: ElemType| {
+            let mut values = values;
+            let dim = values.shape.rank() - packed_dim - 1;
+            values.shape[dim] = values.shape[dim].div_ceil(scheme.num_quants());
+            PlainTensor::new(values, elem)
+        };
+        match (scheme.store, scheme.value) {
+            (QuantStore::Native, QuantValue::Q8F | QuantValue::Q8S) => {
+                PlainTensor::new(values, ElemType::Int(IntKind::I8))
+            }
+            (QuantStore::Native, QuantValue::E4M3 | QuantValue::E5M2) => {
+                PlainTensor::new(values, ElemType::UInt(UIntKind::U8))
+            }
+            (QuantStore::PackedU32(packed_dim), _) => packed(values, packed_dim, WORD),
+            (QuantStore::PackedNative(packed_dim), QuantValue::E2M1) => {
+                packed(values, packed_dim, ElemType::UInt(UIntKind::U8))
+            }
+            (store, value) => panic!("no framework stores {value:?} as {store:?}"),
         }
-        (QuantStore::Native, QuantValue::E4M3 | QuantValue::E5M2) => {
-            PlainTensor::new(values, ElemType::UInt(UIntKind::U8))
-        }
-        (QuantStore::PackedU32(packed_dim), _) => packed(values, packed_dim, WORD),
-        (QuantStore::PackedNative(packed_dim), QuantValue::E2M1) => {
-            packed(values, packed_dim, ElemType::UInt(UIntKind::U8))
-        }
-        (store, value) => panic!("no framework stores {value:?} as {store:?}"),
+    }
+
+    /// `tensor`, contiguous, its binding ending on the `u32` word that holds its last element: the
+    /// routines read scales a word at a time. A quantized buffer starts each region on a word, so the
+    /// word's tail is allocated.
+    fn bound_to_whole_words(mut tensor: PlainTensor) -> PlainTensor {
+        let handle = &mut tensor.binding.handle;
+        let bytes = (tensor.binding.shape.num_elements() * tensor.elem.size()) as u64;
+        let end = handle.offset_start.unwrap_or(0) + bytes.next_multiple_of(4);
+        handle.offset_end = Some(handle.size - end);
+        tensor
     }
 }
-
-/// `tensor`, contiguous, its binding ending on the `u32` word that holds its last element: the
-/// routines read scales a word at a time. A quantized buffer starts each region on a word, so the
-/// word's tail is allocated.
-fn bound_to_whole_words(mut tensor: PlainTensor) -> PlainTensor {
-    let handle = &mut tensor.binding.handle;
-    let bytes = (tensor.binding.shape.num_elements() * tensor.elem.size()) as u64;
-    let end = handle.offset_start.unwrap_or(0) + bytes.next_multiple_of(4);
-    handle.offset_end = Some(handle.size - end);
-    tensor
-}
-
-/// What [`PackedTensor::of_quantized`] declines: a scheme with no block scales along the axis its
-/// words run along.
-pub const SCALES_NOT_ALONG_WORDS: Refusal = Refusal::Declined {
-    why: "the packed routines read block scales along the axis the words run along",
-};
-
-/// What [`PackedTensor::of_quantized`] declines: a batch of matrices, or values stored other than
-/// in contiguous rows.
-pub const PACKED_NOT_ONE_MATRIX_IN_ROWS: Refusal = Refusal::Declined {
-    why: "the packed routines read one quantized matrix in row-major rows",
-};
-
-/// What a read of a packed tensor declines: anything but one packed, block-scaled matrix.
-pub const TENSOR_NOT_PACKED: Refusal = Refusal::Declined {
-    why: "a packed read takes one packed, block-scaled matrix",
-};
-
-/// What reading a packed tensor as a stack of slabs declines: words stored in tiles, or slabs that
-/// split one read of its words, one block of its scales or one word of block scales.
-pub const PACKED_STACK_UNREAD: Refusal = Refusal::Declined {
-    why: "a packed stack is read slab by slab from words in rows, each slab whole reads, whole \
-          scale blocks and whole words of block scales",
-};
-
-/// What a read of a packed tensor declines: values stored in tiles it reads no whole load of.
-pub const STORED_TILES_UNREAD: Refusal = Refusal::Declined {
-    why: "a packed read takes values stored in tiles shaped [n, k / block, block] from a \
-              whole word, a load one run along k and one along n",
-};
