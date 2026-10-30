@@ -313,7 +313,13 @@ fn staged_walk<EA: Float, ES: Float>(
                     stages.walk(unmasked, prefetch, |slot, stage| {
                         slot.consume(|key, value| {
                             for plane in stage {
-                                planes.step(&plane, key, value, &bias.unmasked, scale);
+                                // LAB: `CUBEK_LAB_FUSED` scores these unbiased steps fused.
+                                if comptime!(std::env::var("CUBEK_LAB_FUSED").is_ok()) {
+                                    planes.lab_score(&plane, key, &bias.unmasked, scale, true);
+                                    planes.lab_value(&plane, value);
+                                } else {
+                                    planes.step(&plane, key, value, &bias.unmasked, scale);
+                                }
                             }
                         });
                     });

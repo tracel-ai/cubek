@@ -604,9 +604,6 @@ impl AttentionTensors {
             Some(kind) => arg(tensor, axes, width, ElemType::UInt(UIntKind::U32)).packed(kind),
             None => arg(tensor, axes, width, read),
         };
-        let query = read_operand(&self.query, &[B, KV, G, Q, D], widths.query)
-            .build()
-            .expect(ADMITTED_PLAN_RUNS);
         // The keys and values move into their stages as the microkernel says, unless they are
         // bound as words its stages decode, which pass through the units' registers.
         let delivery = match words {
@@ -615,6 +612,14 @@ impl AttentionTensors {
                 .microkernel
                 .delivery(&widths, &problem.work_item()),
         };
+        // LAB: `CUBEK_LAB_Q_ASYNC` stages the query the way the keys and values are.
+        let query = read_operand(&self.query, &[B, KV, G, Q, D], widths.query);
+        let query = match std::env::var("CUBEK_LAB_Q_ASYNC") {
+            Ok(_) => query.delivery(delivery),
+            Err(_) => query,
+        }
+        .build()
+        .expect(ADMITTED_PLAN_RUNS);
         let cache = match &self.cache {
             AttentionCache::Float { key, value, pages } => {
                 // A pool of pages is placed by its table, keyed by the batch and the keys'
