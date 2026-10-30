@@ -401,6 +401,10 @@ pub struct BlockScaledMma {
 }
 
 impl BlockScaledMma {
+    /// Bytes one register of the instruction holds, each byte one element: a code or an `e2m1x2`
+    /// pair of them.
+    const REGISTER_BYTES: usize = 4;
+
     /// The instruction `config` runs, where its operands are floats.
     pub fn of(config: &ScaledMmaConfig) -> Option<Self> {
         let form = BlockScaledOperands::of(config)?;
@@ -418,9 +422,8 @@ impl BlockScaledMma {
     }
 
     /// Whether the instruction reads, as the `lhs` input or the other, codes stored as `values`
-    /// under a scale every `block` of `k`. A register is four bytes, each one element, a code or an
-    /// `e2m1x2` pair of them: a code narrower than a byte held one a byte is no word a packed
-    /// input stores.
+    /// under a scale every `block` of `k`. A code narrower than a byte held one a byte
+    /// ([`REGISTER_BYTES`](Self::REGISTER_BYTES)) is no word a packed input stores.
     pub fn holds(&self, lhs: bool, values: ElemType, block: usize) -> bool {
         let (code, kind) = match lhs {
             true => (self.shape.a_type, self.form.lhs),
@@ -438,8 +441,7 @@ impl BlockScaledMma {
             true => self.form.lhs,
             false => self.form.rhs,
         };
-        // A register is four bytes ([`holds`](Self::holds)).
-        let register_codes = 4 * BlockScaledOperands::values_per_element(kind);
+        let register_codes = Self::REGISTER_BYTES * BlockScaledOperands::values_per_element(kind);
         let scales = scheme
             .block_scale()
             .map(|scale| ElemType::from_scale_dtype(scale.dtype));

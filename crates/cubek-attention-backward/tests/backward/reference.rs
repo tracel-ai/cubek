@@ -5,9 +5,11 @@ use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::Shape;
+use cubek_attention_backward::kernels::AttentionBackwardRoutine;
 use cubek_attention_backward::{AttentionBackwardGradients, AttentionBackwardTensors};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
+use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 
 /// The shape of one backward pass, and how its queries see its keys.
@@ -206,6 +208,25 @@ impl Reference {
             query_gradient,
             key_gradient,
             value_gradient,
+        }
+    }
+
+    /// `routine` at `settings`, or at its lead, on `case` in `element`, against the host within
+    /// `tolerance`; skipped, and said so, where the device declines it.
+    pub fn run<R: AttentionBackwardRoutine>(
+        routine: R,
+        case: Case,
+        element: ElemType,
+        tolerance: f64,
+        settings: Option<R::Settings>,
+    ) {
+        let client: Client = cubecl::test_device().client();
+        let reference = Reference::new(&client, case, element);
+        let hw = Hardware::from_client(&client);
+        let settings = settings.unwrap_or_else(|| routine.lead(&hw));
+        match routine.launch_on(&hw, reference.tensors.clone(), &settings) {
+            Ok(gradients) => reference.check(&client, gradients, tolerance),
+            Err(refusal) => eprintln!("{settings}: declined on this device, {refusal:?}"),
         }
     }
 

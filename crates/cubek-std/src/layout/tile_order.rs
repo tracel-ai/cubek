@@ -20,6 +20,7 @@
 //! restatement moves nothing.
 //!
 
+use crate::NVFP4_BLOCK;
 use crate::layout::stored::Operand;
 use crate::layout::{Fragments, assemble, fragments_of};
 use crate::matmul_axes::{K, KB, KI, blocked};
@@ -50,7 +51,7 @@ pub struct TileOrder {
 impl TileOrder {
     /// NVFP4's tile order: a scale every sixteen values, eight to a word.
     pub const NVFP4: Self = Self {
-        block: 16,
+        block: NVFP4_BLOCK,
         values_per_word: 8,
     };
 
@@ -65,20 +66,26 @@ impl TileOrder {
         };
         let dims = scheme.block_size()?.to_dim_vec(2);
         let byte_scales = ElemType::from_scale_dtype(scheme.block_scale()?.dtype).size_bits() == 8;
-        let (block, values_per_word) = (dims[0] as usize, scheme.num_quants());
-        let whole_words = values_per_word > 1 && block.is_multiple_of(values_per_word);
         let symmetric = scheme.mode == QuantMode::Symmetric;
-        (symmetric && byte_scales && dims[1] == 1 && whole_words).then_some(Self {
-            block,
-            values_per_word,
-        })
+        if !(symmetric && byte_scales && dims[1] == 1) {
+            return None;
+        }
+        Self::in_whole_words(dims[0] as usize, scheme.num_quants())
     }
+
     /// The tile order of a matrix read as `operand`: its words down `K`, each a whole read, under a
     /// scale every whole number of them along `K`. `None` for an operand tile order does not store.
     pub fn of_operand(operand: &Operand) -> Option<Self> {
-        let (block, values_per_word) = (operand.scale(K)?, operand.read(K));
-        let whole_words = values_per_word > 1 && block.is_multiple_of(values_per_word);
-        (operand.lined() == K && whole_words).then_some(Self {
+        if operand.lined() != K {
+            return None;
+        }
+        Self::in_whole_words(operand.scale(K)?, operand.read(K))
+    }
+
+    /// A scale every `block` values, `values_per_word` to a word: `None` unless the words pack
+    /// several values and a block is a whole number of them.
+    fn in_whole_words(block: usize, values_per_word: usize) -> Option<Self> {
+        (values_per_word > 1 && block.is_multiple_of(values_per_word)).then_some(Self {
             block,
             values_per_word,
         })
@@ -168,24 +175,6 @@ impl TileOrder {
         )
     }
 
-    /// A tile-order matrix `k` deep and `across` an axis stored in `tile`'s values as the rows of `k`
-    /// a product reads, `[lines, k]`, stated for a read of `words_per_load` words:
-    /// [`kernel_values_read`] restated as [`values_in_rows`] does.
-    pub fn rows_read(
-        self,
-        k: usize,
-        across: (Axis, usize),
-        tile: (usize, usize),
-        words_per_load: usize,
-    ) -> Metadata {
-        values_in_rows(&matrix_values(&self.kernel_values_read(
-            k,
-            across,
-            tile,
-            words_per_load,
-        )))
-    }
-
     /// The kernel's statement of a matrix's values over [`values_axes`]: `k`'s finest fragments, as
     /// many as make a block, become `KI`, and the rest `KB`. The statement the tile DSL wrote, exactly:
     /// a reader matches the tiles it is stored in, not only the addresses. `None` for a matrix in rows, or one
@@ -273,27 +262,6 @@ pub fn matrix_values(kernel: &Metadata) -> Metadata {
     let [lines, kb, ki] = fragments_of::<3>(kernel)
         .unwrap_or_else(|rank| panic!("tile order states values over three dims, not {rank}"));
     assemble(&[&[kb.as_slice(), ki.as_slice()].concat(), &lines])
-}
-
-/// A matrix's values as the rows of `k` a product reads, `[lines, k]`: the same bytes as the
-/// matrix's own `[k, lines]` statement, the two logical dims swapped. What a reader whose kernel
-/// names no scale blocks binds, `k` one axis over all of its fragments.
-///
-/// # Panics
-///
-/// When `matrix` is not a statement of two logical dims.
-pub fn values_in_rows(matrix: &Metadata) -> Metadata {
-    let [k, n] = fragments_of::<2>(matrix)
-        .unwrap_or_else(|rank| panic!("a matrix states its values over two dims, not {rank}"));
-    // A fragment of one below an axis's rest is where `KI`'s rest sat as a dim of its own; inside
-    // `k` it is no piece. The rest stays, whatever its extent: a reader takes it for the rest.
-    let pieces = |fragments: Fragments| {
-        let (rest, finer) = fragments.split_first().expect("an axis has a rest");
-        core::iter::once(*rest)
-            .chain(finer.iter().copied().filter(|&(extent, _)| extent > 1))
-            .collect::<Vec<_>>()
-    };
-    assemble(&[&pieces(n), &pieces(k)])
 }
 
 /// A tiled matrix's `[k, lines]` fragments, coarsest first; `None` for one in rows.
@@ -430,21 +398,6 @@ mod tests {
                 let ki = w * VALUES_PER_WORD;
                 let value = offset(&kernel, &[ni, ki / BLOCK, ki % BLOCK]);
                 assert_eq!(at * VALUES_PER_WORD, value, "column {ni}, word {w}");
-            }
-        }
-    }
-
-    /// The values restated as rows of `k` send every value where the rhs's statement does.
-    #[test]
-    fn the_rows_of_k_state_the_same_memory() {
-        let (k, n) = (128, 48);
-        let kernel = NVFP4.kernel_values_read(k, (N, n), (128, 8), 4);
-        let weight = matrix_values(&kernel);
-        let rows = values_in_rows(&weight);
-        assert_eq!(layout::tile(&rows), (8, 128));
-        for ki in 0..k {
-            for ni in 0..n {
-                assert_eq!(offset(&rows, &[ni, ki]), offset(&weight, &[ki, ni]));
             }
         }
     }
