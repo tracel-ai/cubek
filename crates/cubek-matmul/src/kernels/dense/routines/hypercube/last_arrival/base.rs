@@ -1,25 +1,21 @@
 use super::super::blueprint::hypercube_blueprint;
 use super::kernel::hypercube_last_arrival_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
-    MATMUL_HYPERCUBE_PACKED_LHS, MATMUL_PACKED_WALK_PAST_K, MatmulBlueprint, MatmulOutput,
-    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_HYPERCUBE_PACKED_LHS, MATMUL_PACKED_WALK_PAST_K, MatmulBinding, MatmulBlueprint,
+    MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem, MatmulTensors,
+    MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
-use cubecl::tile::{Space, StageStorage, TileArgLaunch, launch::DestinationLaunch};
+use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::{Space, StageStorage, TileArgLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_microkernel::matmul::cube::MatmulCubeWrite;
-use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedMicrokernel};
+use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedMicrokernel, MatmulCubeWrite};
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
-use cubek_std::microkernel::StageRing;
-use cubek_std::microkernel::{KernelEstimate, Microkernel};
+use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// `out = lhs · rhs` with every tile's steps of `K` laid end to end and shared between a fixed
@@ -54,10 +50,10 @@ pub struct HypercubeLastArrivalMatmulRoutineSettings {
 }
 
 impl HypercubeLastArrivalMatmulRoutineSettings {
-    /// The staged cube's own box, four cubes a worker. A product that wants this routine has more tiles
-    /// than the device holds at once, which is the problem the staged cube's box is for, and four
-    /// of its cubes are what a worker holding a thousand units runs at once, so the grid is one
-    /// round.
+    /// The staged cube's own box, four cubes a worker. A product that wants this routine has more
+    /// tiles than the device holds at once, which is the problem the staged cube's box is for, and
+    /// four of its cubes are what a worker holding a thousand units runs at once, so the grid is
+    /// one round.
     pub const DEFAULT: Self = Self {
         microkernel: HypercubeStagedMicrokernelSettings::CUBE_BOX,
         cubes_per_worker: NonZeroUsize::new(4).unwrap(),
@@ -74,8 +70,8 @@ impl core::fmt::Display for HypercubeLastArrivalMatmulRoutineSettings {
     }
 }
 
-/// The last-arrival routine's blueprint: how a stage its cubes' microkernel walks holds its cells, as
-/// the cube routine's does.
+/// The last-arrival routine's blueprint: how a stage its cubes' microkernel walks holds its cells,
+/// as the cube routine's does.
 pub type HypercubeLastArrivalMatmulRoutineBlueprint =
     MatmulBlueprint<HypercubeStagedMicrokernel, StageStorage>;
 

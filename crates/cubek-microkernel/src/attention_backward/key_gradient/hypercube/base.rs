@@ -82,10 +82,18 @@ impl HypercubeKeyGradientMicrokernel {
         self.cube.score_gradient_levels()
     }
 
-    /// Bytes of shared memory one cube holds beside its stages: the cube microkernel's, the
-    /// fragments every plane's part of the query's gradient bounces through, and, where planes
-    /// split the keys, the stage's query gradient they meet in.
+    /// Bytes of shared memory one cube holds beside its stages, outside its walk: the cube
+    /// microkernel's.
     pub fn window_bytes(&self, item: &AttentionBackwardWorkItem) -> usize {
+        self.cube.window_bytes(item)
+    }
+
+    /// Bytes of shared memory the walk's body opens for a stage's share of the query's gradient:
+    /// the fragments every plane's part bounces through, and, where planes split the keys, the
+    /// sum they meet in. A walk holds them once a body it expands ([`StageRing::bodies`]).
+    ///
+    /// [`StageRing::bodies`]: cubek_std::microkernel::StageRing::bodies
+    pub fn share_bytes(&self, item: &AttentionBackwardWorkItem) -> usize {
         let bounced = self.query_gradient.scratch_bytes(
             &item.summed_query_gradient(item.element),
             self.cube.plane.settings.scratch,
@@ -94,7 +102,7 @@ impl HypercubeKeyGradientMicrokernel {
             1 => 0,
             _ => self.seq_q() * item.head_dim * item.sum.size(),
         };
-        self.cube.window_bytes(item) + self.plane_count() * bounced + met
+        self.plane_count() * bounced + met
     }
 }
 

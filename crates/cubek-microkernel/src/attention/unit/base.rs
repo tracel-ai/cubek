@@ -1,5 +1,4 @@
-use crate::attention::AttentionMicrokernel;
-use crate::attention::{AttentionOperand, AttentionWorkItem, D, DV, G, Q, S};
+use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, D, DV, G, Q, S};
 use crate::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use crate::matmul::{MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use core::num::NonZeroUsize;

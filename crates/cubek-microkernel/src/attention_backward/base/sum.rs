@@ -24,5 +24,6 @@ pub(crate) fn scale_rows<EA: Float>(sum: &Tile, scale: EA, #[comptime] rows: usi
     for r in 0..rows {
         scales[r] = scale;
     }
+
     sum.along(D).mul(&scales);
 }

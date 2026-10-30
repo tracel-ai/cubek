@@ -34,17 +34,14 @@ pub fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     let value = value.tile(&partitioning);
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+
     for plane in &partitioning {
         let visible = VisibleKeys::new(len, &plane, queries, &mask, visibility);
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
         let bias = visible.bias::<EA>(&partitioning);
-        let steps = visible.steps(
-            &plane,
-            comptime!(microkernel.seq_q()),
-            comptime!(microkernel.seq_kv()),
-            1usize,
-        );
+        let steps = visible.steps(&plane, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
+
         plane_fragment_attention_microkernel::<EA, ES>(
             &plane,
             &o.at(&plane),
