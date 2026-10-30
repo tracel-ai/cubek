@@ -1,7 +1,4 @@
-use super::base::{
-    MatmulProduct, MatmulTableGroups, MatmulTunables, RoutineIdentity, measured_table,
-    reads_no_routes,
-};
+use super::{MatmulAutotuneGroups, MatmulProduct, MatmulTunables, RoutineIdentity, candidate_list};
 use crate::kernels::MatmulRoutine;
 use crate::kernels::plan::MatmulCall;
 use crate::kernels::tensor::PlainTensor;
@@ -13,29 +10,30 @@ use cubek_std::Hardware;
 use cubek_std::autotune::{GroupPriority, Identity};
 use cubek_std::routine::Routine;
 
-/// The block-scaled table's candidates on `hw`: the staged routine reading both inputs as stored
+/// The block-scaled autotune's candidates on `hw`: the staged routine reading both inputs as stored
 /// on the block-scaled tensor cores, at each of its block-scaled settings
 /// ([`block_scaled_settings`](CubeStagedMatmulRoutine::block_scaled_settings)), the last, its
 /// default, on the floor, since it serves every product the selector sends here.
 ///
 /// Every candidate sums each output in the same order, so the race moves the time and no number.
-/// Not bounded: a roofline is a 16-bit product's peak, which a block-scaled instruction runs past, so a
-/// bound would end every round at its first candidate. Its one group is its own: the table races
-/// one kernel's settings.
-pub(super) fn table(hw: Hardware, _groups: MatmulTableGroups) -> MatmulTunables {
-    let mut table = measured_table();
-    let group = table.group("block-scaled", GroupPriority::DEFAULT);
+/// Not bounded: a roofline is a 16-bit product's peak, which a block-scaled instruction runs past,
+/// so a bound would end every round at its first candidate. Its one group is its own: the autotune
+/// races one kernel's settings.
+pub(super) fn candidates(hw: Hardware, _groups: MatmulAutotuneGroups) -> MatmulTunables {
+    let mut autotune = candidate_list();
+    let group = autotune.group("block-scaled", GroupPriority::DEFAULT);
     let settings = CubeStagedMatmulRoutine.block_scaled_settings(&hw);
     let (&floor, raced) = settings
         .split_last()
         .expect("the block-scaled settings end in the default");
-    let table = raced.iter().fold(table, |table, &settings| {
-        table.candidate(&group, candidate(hw.clone(), settings))
+    let autotune = raced.iter().fold(autotune, |autotune, &settings| {
+        autotune.candidate(&group, candidate(hw.clone(), settings))
     });
-    table.floor(candidate(hw, floor)).finish()
+    autotune.floor(candidate(hw, floor)).finish()
 }
 
-/// `settings` as a candidate of the block-scaled table: both inputs contracted as they are stored.
+/// `settings` as a candidate of the block-scaled autotune: both inputs contracted as they are
+/// stored.
 fn candidate(
     hw: Hardware,
     settings: CubeStagedMatmulRoutineSettings,
@@ -43,7 +41,9 @@ fn candidate(
     RoutineIdentity::named(
         &format!("block-scaled {settings}"),
         move |call: MatmulCall| {
-            reads_no_routes(&call)?;
+            if call.routes.is_some() {
+                return Err("reads no routes; the rhs is a stack read through them".to_string());
+            }
             let declined = |why| format!("{settings} does not serve this product: {why:?}");
             let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
             let tensors = match &call.destination {

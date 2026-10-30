@@ -2,9 +2,11 @@
 //! attention, the candidate every routine is listed as, and the autotunes that race them
 //! ([`launch_tuned`]).
 
-mod base;
+mod autotunes;
 mod candidate;
+mod inputs;
 pub mod key;
 
-pub use base::*;
+pub use autotunes::*;
 pub use candidate::*;
+pub use inputs::*;

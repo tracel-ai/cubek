@@ -1,7 +1,5 @@
-use super::base::{
-    MatmulTableGroups, MatmulTunables, RoutineIdentity, activation_decoded_candidate,
-    activation_decoded_identity, decoded_floor, many_rows_roofline, measured_table,
-    microkernel_candidate, packed_candidate,
+use super::{
+    MatmulAutotuneGroups, MatmulTunables, RoutineIdentity, candidate_list, floor, roofline,
 };
 use crate::kernels::tune::{MatmulPackedCandidate, MatmulRoutineCandidate};
 use crate::kernels::{
@@ -9,38 +7,39 @@ use crate::kernels::{
 };
 use cubek_std::Hardware;
 
-/// The many-rows table's candidates on `hw`: the cube staged routine, the last-arrival hypercube
+/// The many-rows autotune's candidates on `hw`: the cube staged routine, the last-arrival hypercube
 /// routine and the unit routine, in that order; against a packed input the staged routine reading
-/// it as stored, in rows or in tiles, decoding it into its stages, the same with a packed activation
-/// decoded first ([`activation_decoded_candidate`]), and the last-arrival routine reading it as
-/// stored, several cubes sharing each box along `K`.
+/// it as stored, in rows or in tiles, decoding it into its stages, the same with a packed
+/// activation decoded first
+/// ([`launch_activation_decoded`](MatmulPackedCandidate::launch_activation_decoded)), and the
+/// last-arrival routine reading it as stored, several cubes sharing each box along `K`.
 ///
 /// The unit routine prepares everywhere, though a round orders the candidates by priority and its
 /// small block often tiles a key the others mask. The last-arrival routine sizes its grid by the
-/// device's workers and declines where it cannot. The relay hypercube routine is on no table: its
-/// cubes wait on each other.
-pub(super) fn table(hw: Hardware, groups: MatmulTableGroups) -> MatmulTunables {
-    let mut table = measured_table();
-    let microkernel = table.group("microkernel", groups.many_rows);
-    table
-        .bounded(many_rows_roofline)
+/// device's workers and declines where it cannot. The relay hypercube routine is on no autotune:
+/// its cubes wait on each other.
+pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTunables {
+    let mut autotune = candidate_list();
+    let microkernel = autotune.group("microkernel", groups.many_rows);
+    autotune
+        .bounded(roofline::many_rows)
         .identified(
             &microkernel,
             MatmulRoutineCandidate::list(CubeStagedMatmulRoutine, &hw),
             RoutineIdentity::new,
-            microkernel_candidate,
+            MatmulRoutineCandidate::launch,
         )
         .identified(
             &microkernel,
             MatmulRoutineCandidate::list(HypercubeLastArrivalMatmulRoutine, &hw),
             RoutineIdentity::new,
-            microkernel_candidate,
+            MatmulRoutineCandidate::launch,
         )
         .identified(
             &microkernel,
             MatmulRoutineCandidate::list(UnitRegistersMatmulRoutine, &hw),
             RoutineIdentity::new,
-            microkernel_candidate,
+            MatmulRoutineCandidate::launch,
         )
         .identified(
             &microkernel,
@@ -50,7 +49,7 @@ pub(super) fn table(hw: Hardware, groups: MatmulTableGroups) -> MatmulTunables {
                 &hw,
             ),
             RoutineIdentity::new,
-            packed_candidate,
+            MatmulPackedCandidate::launch,
         )
         // The same, against a packed activation decoded first.
         .identified(
@@ -60,8 +59,8 @@ pub(super) fn table(hw: Hardware, groups: MatmulTableGroups) -> MatmulTunables {
                 CubeStagedMatmulRoutine.packed_settings(&hw),
                 &hw,
             ),
-            activation_decoded_identity,
-            activation_decoded_candidate,
+            MatmulPackedCandidate::activation_decoded_identity,
+            MatmulPackedCandidate::launch_activation_decoded,
         )
         // The packed boxes again, several cubes sharing each along `K`: what a product with too
         // few boxes to fill the device and a long `K` wants.
@@ -73,8 +72,8 @@ pub(super) fn table(hw: Hardware, groups: MatmulTableGroups) -> MatmulTunables {
                 &hw,
             ),
             RoutineIdentity::new,
-            packed_candidate,
+            MatmulPackedCandidate::launch,
         )
-        .floor(decoded_floor(&hw))
+        .floor(floor::decoded(&hw))
         .finish()
 }

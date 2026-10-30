@@ -31,8 +31,8 @@ pub struct MatmulProblem {
     ///
     /// Not `m`. Every memory-bound candidate merges the left-hand side's leading
     /// extents and reads the rhs once, so routing on the trailing extent
-    /// sends a batched product to a table whose every candidate declines it,
-    /// and the answer to a table that declines everything is the fallback
+    /// sends a batched product to an autotune whose every candidate declines it,
+    /// and the answer to an autotune that declines everything is the fallback
     /// rather than a kernel.
     pub streamed_rows: Option<usize>,
     /// What each input is: float, or packed. The output is float.
@@ -84,7 +84,7 @@ impl MatmulProblem {
     /// rhs exactly once, so this — not `x`'s trailing extent — is the number
     /// they all work from, and the number routing has to ask. Reading the trailing
     /// extent instead calls `[64, 8, k] @ [1, k, n]` an 8-row product and sends a
-    /// 512-row one to a table whose every candidate declines it.
+    /// 512-row one to an autotune whose every candidate declines it.
     ///
     /// `None` is a batched rhs, which is one rhs per product where these
     /// kernels stream a single one, or a left-hand side whose feature extent is not the
