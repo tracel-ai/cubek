@@ -1,4 +1,5 @@
-use cubecl::tile::{Partitioning, StageStorage, TileArg, launch::Destination};
+use cubecl::tile::launch::Destination;
+use cubecl::tile::{Partitioning, StageStorage, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, hypercube_staged_relay_microkernel,
@@ -34,10 +35,12 @@ pub fn hypercube_relay_matmul_kernel<
     #[define(EA, EL, ER, E)] _elements: [ElemType; 4],
 ) {
     let relay = carry.relay::<VO>(&partitioning, turns);
+
     // Uniform across the cube, so it leaves before any barrier.
     if !relay.has_turn() {
         terminate!();
     }
+
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
     let c = O::tile::<E, VO>(out, &partitioning);
@@ -47,7 +50,7 @@ pub fn hypercube_relay_matmul_kernel<
         &b,
         relay,
         &c,
-        comptime!(microkernel.cube.walk()),
+        microkernel.cube.walk(),
         storage,
     );
 }

@@ -45,14 +45,18 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     let value = value.tile(&partitioning);
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
-    let keys_per_step = comptime!(microkernel.cube.seq_kv());
+    let keys_per_step = microkernel.cube.seq_kv();
+
     // The longest sequence's attended steps, a box's share of the line; one at least, so a box of
     // no key is still some run's, which leaves it empty.
     let mut longest = 1usize;
+
     for b in 0..len.shape(0) {
         longest = longest.max((len[b * len.stride(0)] as usize).div_ceil(keys_per_step));
     }
+
     let portion = partitioning.walk().portion_of(longest);
+
     for i in 0..portion.touched() {
         let cube = portion.region(i);
         let (from, steps) = portion.steps(i);
@@ -61,17 +65,15 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
         let bias = visible.step_bias::<EA>(&partitioning, &cube);
+
         // The run's steps of the box its rows see: none past them is walked.
-        let seen = visible.steps(
-            &cube,
-            comptime!(microkernel.cube.seq_q()),
-            keys_per_step,
-            1usize,
-        );
+        let seen = visible.steps(&cube, microkernel.cube.seq_q(), keys_per_step, 1usize);
+
         let mut taken = 0usize;
         if seen > from {
             taken = steps.min(seen - from);
         }
+
         let run = cube.walk().range(from, taken);
         cube_staged_attention_shared_microkernel::<EA, ES, E>(
             &cube,
@@ -92,9 +94,9 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
             portion.index(i),
             portion.run() - first,
             holders,
-            comptime!(microkernel.cube),
+            microkernel.cube,
             splits,
-            comptime!(storage.clone()),
+            storage.clone(),
         );
     }
 }

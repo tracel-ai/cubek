@@ -3,26 +3,24 @@
 
 mod fragment {
     use super::super::*;
-    use crate::kernels::AttentionRoutineProblem;
-    use crate::kernels::QueryOrder;
+    use crate::kernels::{AttentionRoutineProblem, QueryOrder};
     use cubecl::tile::launch::{Delivery, Refusal};
     use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
     use cubek_microkernel::matmul::cube::CubeStagedDelivery;
 
     use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernelSettings;
-    use cubek_std::Hardware;
-    use cubek_std::devices;
     use cubek_std::routine::Routine;
+    use cubek_std::{Hardware, devices};
 
     use core::num::NonZeroUsize;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::stage::RowChunks;
-    use cubek_microkernel::attention::AttentionMicrokernel;
     use cubek_microkernel::attention::cube::{CubeAttentionPlane, CubeAttentionPlaneSettings};
-    use cubek_microkernel::attention::plane::InstructionShape;
-    use cubek_microkernel::attention::plane::{ROW_STATE_HELD_BY_UNIT, ScoreHolder};
-    use cubek_microkernel::attention::{G, Q, S};
+    use cubek_microkernel::attention::plane::{
+        InstructionShape, ROW_STATE_HELD_BY_UNIT, ScoreHolder,
+    };
+    use cubek_microkernel::attention::{AttentionMicrokernel, G, Q, S};
     use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 
     const ROUTINE: CubeStagedAttentionRoutine = CubeStagedAttentionRoutine;

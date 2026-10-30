@@ -1,10 +1,8 @@
-use crate::matmul::MatmulStage;
-use crate::matmul::{MatmulOperand, MatmulOperands, MatmulWorkItem};
+use crate::matmul::{MatmulOperand, MatmulOperands, MatmulStage, MatmulWorkItem};
 use cubecl::tile::Space;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, M, N};
-use cubek_std::microkernel::StageRing;
-use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate};
+use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, StageRing};
 
 /// How a kernel's cubes stage their boxes through `K`, as the component that places the stage's
 /// reads states it: a staged cube for its ring, a routine for its own planes' or units' steps.

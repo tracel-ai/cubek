@@ -12,8 +12,7 @@ use cubecl::tile::launch::{Delivery, Vectorization};
 use cubecl::tile::{Axis, Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::microkernel::StageRing;
-use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StagedOperand};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageRing, StagedOperand};
 
 /// A box of queries of some heads of the group a cube owns: its planes each take the rows of one
 /// head with its plane microkernel. Where its planes read a stage, the cube stages the keys and

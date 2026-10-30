@@ -13,8 +13,7 @@ use cubek_microkernel::attention_backward::query_gradient::cube::{
     CubeQueryGradientMicrokernel, CubeQueryGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
-use cubek_std::microkernel::StageRing;
+use cubek_std::microkernel::{Microkernel, StageRing};
 
 /// The backward pass with every cube owning, in the first walk, a box of queries of some heads of
 /// the group, and in the second, a box of keys of one key head, its planes each on a matrix
@@ -159,6 +158,7 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
         let walk = blueprint.query_walk;
         let binding = tensors.bind(&walk);
         let operands = binding.operands;
+
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles. Each plane writes only its own queries' gradient and dot products, and each
@@ -186,9 +186,11 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
                 elements,
             );
         }
+
         let walk = blueprint.key_walk;
         let binding = tensors.bind(&walk);
         let operands = binding.operands;
+
         // SAFETY: as the first walk's; each plane writes only its own keys' and values' gradients,
         // and reads the dot products the first walk wrote, which the launches' order sees done.
         unsafe {

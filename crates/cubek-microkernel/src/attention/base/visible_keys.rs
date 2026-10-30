@@ -1,20 +1,20 @@
 use crate::attention::{AttentionVisibility, B, G, Q, QueryPlacement, S};
-use cubecl::tile::{
-    Axis, Partitioning, Region, Space, Tile,
-    procedural::{Constant, MemoryValues, Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
-    space::Coords,
+use cubecl::tile::procedural::{
+    Constant, MemoryValues, Procedural, Reads, Recipe, RecipeCoords, RecipeExpand,
 };
+use cubecl::tile::space::Coords;
+use cubecl::tile::{Axis, Partitioning, Region, Space, Tile};
 use cubecl::{self as cubecl, cube, ir::Scope, prelude::*};
 
 /// Which keys a query sees, and the bias its scores are summed with: zero at a key it sees, the
 /// minimum value elsewhere. A microkernel that holds a tile of scores sums the bias into it; one
 /// that scores keys in its own registers asks [`sees`](VisibleKeys::sees). A query sees the first
-/// `attended` keys; under [`Causal`](AttentionVisibility::Causal) none past its own position: query `q` of
-/// `queries` sees key `s` where `s + queries ≤ q + queries_end`; under
-/// [`Windowed`](AttentionVisibility::Windowed) none `window` or more before it either, where
-/// `s + queries + window > q + queries_end`; under [`Recent`](AttentionVisibility::Recent) the
-/// last `window` of them, where `s + window ≥ attended`; and, where there is a mask, none whose
-/// cell is not zero.
+/// `attended` keys; under [`Causal`](AttentionVisibility::Causal) none past its own position: query
+/// `q` of `queries` sees key `s` where `s + queries ≤ q + queries_end`; under
+/// [`Windowed`](AttentionVisibility::Windowed) none `window` or more before it either, where `s +
+/// queries + window > q + queries_end`; under [`Recent`](AttentionVisibility::Recent) the last
+/// `window` of them, where `s + window ≥ attended`; and, where there is a mask, none whose cell is
+/// not zero.
 #[derive(CubeType, Clone)]
 pub struct VisibleKeys {
     /// Keys attended, a prefix of the buffers': none past it is read.
@@ -42,10 +42,11 @@ impl VisibleKeys {
         #[comptime] visibility: AttentionVisibility,
     ) -> VisibleKeys {
         let attended = len[owner.origin(B) * len.stride(0)];
-        let queries_end = match comptime!(visibility.queries()) {
+        let queries_end = match visibility.queries() {
             Some(QueryPlacement::First) => queries,
             Some(QueryPlacement::Last) | None => attended,
         };
+
         VisibleKeys {
             attended,
             seq_q: queries,
@@ -62,10 +63,11 @@ impl VisibleKeys {
         queries: u32,
         #[comptime] visibility: AttentionVisibility,
     ) -> VisibleKeys {
-        let queries_end = match comptime!(visibility.queries()) {
+        let queries_end = match visibility.queries() {
             Some(QueryPlacement::First) => queries,
             Some(QueryPlacement::Last) | None => keys,
         };
+
         VisibleKeys {
             attended: keys,
             seq_q: queries,
@@ -140,9 +142,11 @@ impl VisibleKeys {
                 seen = 0;
             }
         }
+
         if comptime!(hides) {
             seen = 0;
         }
+
         seen
     }
 
@@ -158,13 +162,14 @@ impl VisibleKeys {
                 first = reach - self.queries_end as usize;
             }
         }
+
         first / queries_per_step
     }
 
-    /// Steps of `keys_per_step` keys that the first `region_queries` queries of `region` see: the steps from
-    /// `region`'s first key on, every `in_turns`-th of them where that many walkers take a walk's
-    /// steps in turns. A step the last visible key falls in is taken whole; the bias masks its
-    /// tail. A region that starts past every key its queries see, a cube's run of a split walk,
+    /// Steps of `keys_per_step` keys that the first `region_queries` queries of `region` see: the
+    /// steps from `region`'s first key on, every `in_turns`-th of them where that many walkers take
+    /// a walk's steps in turns. A step the last visible key falls in is taken whole; the bias masks
+    /// its tail. A region that starts past every key its queries see, a cube's run of a split walk,
     /// takes none.
     ///
     /// A window bounds the keys a query sees from below too, and the walk still starts at
@@ -188,29 +193,35 @@ impl VisibleKeys {
                 seen = 0;
             }
         }
+
         let first = region.origin(S) / keys_per_step;
         let visible = seen.div_ceil(keys_per_step);
         let mut ahead = 0usize;
         if visible > first {
             ahead = visible - first;
         }
+
         ahead.div_ceil(in_turns)
     }
 
     /// Whether query `query` of head `head` in its key head's group sees key `key`.
     pub fn sees(&self, head: u32, query: u32, key: u32) -> bool {
+        let visibility = comptime!(self.visibility);
+
         let mut seen = key < self.attended;
-        if comptime!(self.visibility.is_causal()) {
+        if visibility.is_causal() {
             seen = seen && key + self.seq_q <= query + self.queries_end;
         }
-        if comptime!(self.visibility.window().is_some()) {
-            let window = comptime!(self.visibility.window().unwrap().get() as u32);
-            if comptime!(self.visibility.is_causal()) {
+
+        if visibility.window().is_some() {
+            let window = comptime!(visibility.window().unwrap().get() as u32);
+            if visibility.is_causal() {
                 seen = seen && key + self.seq_q + window > query + self.queries_end;
             } else {
                 seen = seen && key + window >= self.attended;
             }
         }
+
         #[comptime]
         match &self.mask {
             ComptimeOption::None => {}
@@ -222,6 +233,7 @@ impl VisibleKeys {
                 seen = seen && mask.read::<u32>(comptime!(vec![G, Q, S]), &cell) == 0;
             }
         }
+
         seen
     }
 }
@@ -234,6 +246,7 @@ impl<E: Numeric> Recipe<E> for VisibleKeys {
             coordinates.along(Q),
             coordinates.along(S),
         );
+
         select(seen, E::from_int(0), E::min_value())
     }
 }
@@ -276,6 +289,7 @@ impl StepBias {
         if seen > first {
             unmasked = steps.min(seen - first);
         }
+
         unmasked
     }
 }

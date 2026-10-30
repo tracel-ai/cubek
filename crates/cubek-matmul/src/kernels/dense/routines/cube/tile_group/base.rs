@@ -1,8 +1,7 @@
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::dense::routines::cube::cube_shuffle_matmul_kernel;
 use crate::kernels::{
-    MATMUL_STREAMED_INPUT_FLOAT, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulRoutine,
-    MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_STREAMED_INPUT_FLOAT, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
+    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use cubecl::tile::TileArgLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
@@ -10,7 +9,7 @@ use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeTileGroupMicrokernel, CubeTileGroupMicrokernelSettings,
 };
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulRead};
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -177,7 +176,7 @@ impl MatmulRoutine<CubeTileGroupMicrokernel> for CubeTileGroupMatmulRoutine {
                 microkernel.meet,
                 microkernel.split(),
                 microkernel.planes_along_k.get(),
-                MatmulOperands::all(MatmulRead::AsBound),
+                MatmulOperands::AS_BOUND,
                 [sum, out],
             );
         }

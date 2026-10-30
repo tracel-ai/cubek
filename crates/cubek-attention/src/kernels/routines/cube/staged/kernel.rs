@@ -32,17 +32,14 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     let value = value.tile(&partitioning);
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+
     for cube in &partitioning {
         let visible = VisibleKeys::new(len, &cube, queries, &mask, visibility);
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
         let bias = visible.step_bias::<EA>(&partitioning, &cube);
-        let steps = visible.steps(
-            &cube,
-            comptime!(microkernel.seq_q()),
-            comptime!(microkernel.seq_kv()),
-            1usize,
-        );
+        let steps = visible.steps(&cube, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
+
         cube_staged_attention_microkernel::<EA, ES>(
             &cube,
             &o.at(&cube),
@@ -54,7 +51,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
             steps,
             EA::cast_from(scale),
             microkernel,
-            comptime!(storage.clone()),
+            storage.clone(),
         );
     }
 }
