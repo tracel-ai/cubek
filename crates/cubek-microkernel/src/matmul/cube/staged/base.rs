@@ -499,8 +499,7 @@ impl CubeStagedMicrokernel {
     /// [`launch_tiling`](Self::launch_tiling).
     ///
     /// Its fragments bounce through a scratch wherever they cannot land their cells on their own:
-    /// into an output they add into, where the planes merge along `K` or the cubes relay the
-    /// output, and into one they cannot address whole, a tile the output's edge cuts short or a
+    /// into an output they add into, where the planes merge along `K`, and into one they cannot address whole, a tile the output's edge cuts short or a
     /// sink. The software instruction's cells and a manual fragment's land on their own.
     ///
     /// Whether this problem's edge cuts a tile short reads the exact `m`, which a tune key
@@ -529,7 +528,7 @@ impl CubeStagedMicrokernel {
             .resolve(hw, &stage.operands(item.elements, self.plane.orders), units);
         let instruction = self.plane.instruction;
         let landed = self.plane.landed_stage_storage(stage);
-        let merges = self.drain() == CubeStagedDrain::Merged || write.accumulates();
+        let merges = self.drain() == CubeStagedDrain::Merged;
         let store = self
             .store
             .resolve(hw, item, buffers, cube_space, write, self.planes_along_k);
@@ -585,7 +584,7 @@ impl CubeStagedMicrokernel {
             store,
             ..self
         };
-        let shared_memory = microkernel.shared_memory(hw, item, write, stage, &storage, window);
+        let shared_memory = microkernel.shared_memory(hw, item, stage, &storage, window);
         Ok(CubeStagedResolved {
             microkernel,
             storage,
@@ -605,7 +604,6 @@ impl CubeStagedMicrokernel {
         &self,
         hw: &Hardware,
         item: &MatmulWorkItem,
-        write: MatmulCubeWrite,
         stage: &MatmulStage,
         storage: &StageStorage,
         window: Scratch,
@@ -628,13 +626,8 @@ impl CubeStagedMicrokernel {
             .ring
             .bytes(stage.bytes(hw, item.elements, storage, self.plane.orders) + scales);
         // The windows open once the walk has freed its stages, and take their bytes
-        // (`CubeStagedWalk::drain_sum`), where a cube walks its run once; one that opens stages for
-        // each box of its run, in a loop, frees nothing the windows could take.
-        let walked = match write.walks_once() {
-            true => stages.max(windows),
-            false => stages + windows,
-        };
-        walked + accumulator + stored
+        // (`CubeStagedWalk::drain_sum`).
+        stages.max(windows) + accumulator + stored
     }
 
     /// Bytes one stage's block scales take beside its values, where its planes read the packed
@@ -959,7 +952,7 @@ impl Microkernel for CubeStagedMicrokernel {
     /// Its ring reads both operands out of their tiles a stage at a time, in stretches of the
     /// stage's extent along each one's contiguous axis, one element wide where the TMA engine
     /// fills it. Each plane drains its tile a fragment at a time, or a cell at a time from a manual
-    /// fragment, into the output or the carry the routine's cubes relay it through; merged along
+    /// fragment, into the output; merged along
     /// `K` in shared memory, it drains one element at a time, since an atomic takes one, and
     /// planes on the software instruction drain their register block, which holds the rhs's lines,
     /// so the rhs is read one element at a time too. Its planes' reads are the plane
@@ -1005,8 +998,8 @@ impl Microkernel for CubeStagedMicrokernel {
     /// along the whole of `K` a cube walks, of the rhs along the stage's `n`, or along the whole of
     /// `K` for a col rhs bound in its buffer's order. Its drain: each plane writing its tile a
     /// row of it at a time, or every plane adding its whole partial box into the accumulator
-    /// atomically before the cube copies it out a row at a time; into an output the cubes relay,
-    /// each turn reads the carry back. Then its planes' microkernel, for the work.
+    /// atomically before the cube copies it out a row at a time. Then its planes' microkernel, for
+    /// the work.
     fn estimate(
         &self,
         item: &MatmulWorkItem,

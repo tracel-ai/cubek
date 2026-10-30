@@ -20,3 +20,5 @@ pub mod attention_backward;
 pub mod matmul;
 #[cfg(feature = "attention")]
 pub mod split_keys_merge;
+#[cfg(feature = "testing")]
+pub mod testing;

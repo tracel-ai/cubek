@@ -79,7 +79,8 @@ impl CubeAttentionMicrokernelSettings {
     /// along them, so a step reaches the hundreds of keys, with the default's others; then the
     /// larger boxes again in swizzled tiles, which a plane keeping its score in fragments reads
     /// without bank conflicts and a cmma plane declines, the one-by-eight box among them also on
-    /// two planes along a head's queries; then the one-by-four box on two slots the copy engine
+    /// two planes along a head's queries, and the one-by-two box on two heads and two planes along
+    /// their queries; then the one-by-four box on two slots the copy engine
     /// fills, over two and four heads. The wide steps hold one head because a step's stages and the
     /// heads' windows share one budget; one that still does not fit the device's shared memory
     /// declines there.
@@ -174,6 +175,17 @@ impl CubeAttentionMicrokernelSettings {
             planes_along_queries: count(2),
             ..swizzled[2]
         };
+        // Four planes a cube sharing each stage, two heads over two boxes of queries, each plane a
+        // one-by-two box: thirty-two rows over sixteen keys a step, the work a step of the attention
+        // Apple ships for Metal does. On an M2 Pro (Qwen3-0.6B's 16/8 heads, and Qwen3-4B's 32/8)
+        // it is the fastest cube setting, 5 to 16% under the lead taking its queries last first, at
+        // 512 and 2048 queries.
+        let four_planes_split = Self {
+            heads: count(2),
+            planes_along_queries: count(2),
+            layout: StageLayout::SwizzledBlocks,
+            ..fragments(1, 2)
+        };
         // The copy engine lands a stage while the planes contract the one before, so it wants a
         // second slot. On Qwen3-8B's last 8k prompt chunk on an RTX PRO 6000 (32/8 heads, 512
         // queries over 8192 keys), the one-by-four box on two slots takes 470 µs with the units
@@ -200,7 +212,7 @@ impl CubeAttentionMicrokernelSettings {
             .chain([whole, rectangular])
             .chain(along_keys)
             .chain(swizzled)
-            .chain([swizzled_split])
+            .chain([swizzled_split, four_planes_split])
             .chain(copied)
             .collect()
     }

@@ -331,10 +331,6 @@ mod tests {
                 .sum::<usize>(),
             fleet
                 .iter()
-                .map(|hw| assert_steps_divide(PlaneFragmentAttentionRoutine, hw))
-                .sum(),
-            fleet
-                .iter()
                 .map(|hw| assert_steps_divide(CubeStagedAttentionRoutine, hw))
                 .sum(),
             fleet
@@ -459,7 +455,6 @@ mod tests {
             &packed
         ));
         declines(UnitAttentionRoutine, &hw, &packed);
-        declines(PlaneFragmentAttentionRoutine, &hw, &packed);
         declines(CubeStagedAttentionRoutine, &hw, &packed);
         declines(CubeShuffleAttentionRoutine, &hw, &packed);
         declines(HypercubeSecondLaunchFragmentAttentionRoutine, &hw, &packed);
