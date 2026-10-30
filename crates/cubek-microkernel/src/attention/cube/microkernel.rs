@@ -114,7 +114,11 @@ pub fn cube_staged_attention_microkernel<EA: Float, ES: Float>(
         microkernel,
         storage,
     );
-    planes.store_normalized(cube, out);
+    if comptime!(std::env::var("CUBEK_LAB_OUT_BOUNCE").is_ok()) {
+        planes.lab_store_bounced(cube, out);
+    } else {
+        planes.store_normalized(cube, out);
+    }
     #[comptime]
     match logsumexp {
         ComptimeOption::Some(logsumexp) => planes.store_logsumexp(cube, logsumexp),
@@ -755,7 +759,11 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
         storage,
     );
     if holders == 1 {
-        planes.store_normalized(cube, out);
+        if comptime!(std::env::var("CUBEK_LAB_OUT_BOUNCE").is_ok()) {
+            planes.lab_store_bounced(cube, out);
+        } else {
+            planes.store_normalized(cube, out);
+        }
         #[comptime]
         match logsumexp {
             ComptimeOption::Some(logsumexp) => planes.store_logsumexp(cube, logsumexp),

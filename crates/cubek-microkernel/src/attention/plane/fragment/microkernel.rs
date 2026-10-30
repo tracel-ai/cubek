@@ -218,6 +218,24 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
         output.write();
     }
 
+    /// LAB: [`store_normalized`](Self::store_normalized) through shared memory: each plane's
+    /// rows normalized and cast into a window of the walk's step, then the cube's units write the
+    /// window into `out` in whole lines, rather than each unit its cells one element at a time.
+    pub fn lab_store_bounced(&mut self, region: &Region, out: &Tile) {
+        let walk = region.walk();
+        let window = Tile::scratch::<ES>(&walk, comptime!(vec![G, Q, DV]), StageStorage::Strided);
+        for plane in region.planes() {
+            let sum = self.sum.at(&plane);
+            sum.along(DV).mul(&self.softmax.normalizer(&plane));
+            let mut rows = window.at(&plane);
+            rows.copy_cast_from(&sum);
+        }
+        // Every plane's rows land before the cube reads them.
+        sync_cube();
+        let mut out = out.clone();
+        out.copy_cast_from(&window);
+    }
+
     /// Each plane's rows' logsumexp, `max + ln(sum)` of their scaled scores, written into
     /// `logsumexp`, `region`'s window of it, from their state kept where the score is
     /// ([`OnlineSoftmax::store_logsumexp`]).

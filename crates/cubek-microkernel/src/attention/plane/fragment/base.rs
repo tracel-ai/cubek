@@ -324,7 +324,10 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             elements: self.out_edge(),
         });
         // A manual fragment drains one cell at a time, wherever its unit holds it.
-        if self.value.instruction.drain() == PlaneFragmentDrain::CellByCell {
+        // LAB: `CUBEK_LAB_OUT_BOUNCE` writes the output through shared memory, in whole lines.
+        if self.value.instruction.drain() == PlaneFragmentDrain::CellByCell
+            && std::env::var("CUBEK_LAB_OUT_BOUNCE").is_err()
+        {
             vectorization.require(VectorRequirement::Elementwise {
                 operand: AttentionOperand::Out,
             });
