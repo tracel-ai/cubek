@@ -90,5 +90,152 @@ fn plane_fragment_matmul_matches_the_cpu() {
             }
         }
     }
-    assert!(ran > 0, "the test device runs no plane fragment microkernel");
+    assert!(
+        ran > 0,
+        "the test device runs no plane fragment microkernel"
+    );
+}
+
+#[cfg(feature = "attention")]
+mod attention {
+    use super::{F16, F32, values};
+    use cubecl::ir::{ElemType, UIntKind};
+    use cubecl::zspace::shape;
+    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
+    use cubek_microkernel::testing::attention::{AttentionElements, PlaneFragmentAttentionLaunch};
+    use cubek_std::Hardware;
+    use cubek_std::microkernel::Microkernel;
+    use cubek_test_utils::{HostData, HostDataType, TestInput};
+
+    /// `softmax(scale · q · kᵀ) · v` on the CPU, every key attended, all row-major.
+    fn reference(
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        [queries, keys]: [usize; 2],
+        [head, val]: [usize; 2],
+        scale: f32,
+    ) -> Vec<f32> {
+        let mut out = vec![0.0; queries * val];
+        for i in 0..queries {
+            let scores: Vec<f32> = (0..keys)
+                .map(|j| {
+                    scale
+                        * (0..head)
+                            .map(|d| q[i * head + d] * k[j * head + d])
+                            .sum::<f32>()
+                })
+                .collect();
+            let max = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let weights: Vec<f32> = scores.iter().map(|s| (s - max).exp()).collect();
+            let total: f32 = weights.iter().sum();
+            for d in 0..val {
+                out[i * val + d] =
+                    (0..keys).map(|j| weights[j] * v[j * val + d]).sum::<f32>() / total;
+            }
+        }
+        out
+    }
+
+    fn check(launch: &PlaneFragmentAttentionLaunch) {
+        let client = cubecl::test_device().client();
+        let [queries, keys] = launch.seq;
+        let (head, val) = (launch.item.head_dim, launch.item.val_dim);
+        let input = launch.item.elements.query;
+        // Small values, so the scores stay in a range `f16` holds and the softmax spreads.
+        let scaled = |len, modulo, offset| -> Vec<f32> {
+            values(len, modulo, offset)
+                .into_iter()
+                .map(|x| x / 4.0)
+                .collect()
+        };
+        let (q, k, v) = (
+            scaled(queries * head, 7, 3.0),
+            scaled(keys * head, 5, 2.0),
+            scaled(keys * val, 11, 5.0),
+        );
+        // The query and output over `[B, KV, G, Q, _]`, the keys and values over `[B, KV, S, _]`,
+        // each of one batch and one head.
+        let per_head = |data: Vec<f32>, rows, columns, element| {
+            TestInput::builder(client.clone(), shape![1, 1, 1, rows, columns])
+                .dtype(element)
+                .custom(data)
+                .generate_without_host_data()
+        };
+        let per_key_head = |data: Vec<f32>, rows, columns, element| {
+            TestInput::builder(client.clone(), shape![1, 1, rows, columns])
+                .dtype(element)
+                .custom(data)
+                .generate_without_host_data()
+        };
+        let out = per_head(
+            vec![-1e4; queries * val],
+            queries,
+            val,
+            launch.item.elements.out,
+        );
+        let lengths = TestInput::builder(client.clone(), shape![1])
+            .dtype(ElemType::UInt(UIntKind::U32))
+            .custom(vec![keys as f32])
+            .generate_without_host_data();
+        let scale = 1.0 / (head as f32).sqrt();
+        launch
+            .launch(
+                &client,
+                per_head(q.clone(), queries, head, input).binding(),
+                per_key_head(k.clone(), keys, head, input).binding(),
+                per_key_head(v.clone(), keys, val, input).binding(),
+                out.clone().binding(),
+                lengths.binding().into_tensor_arg(),
+                scale,
+            )
+            .unwrap_or_else(|why| panic!("{:?}: {why:?}", launch.microkernel));
+
+        let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+        let want = reference(&q, &k, &v, launch.seq, [head, val], scale);
+        for i in 0..queries {
+            for d in 0..val {
+                let (have, want) = (got.get_f32(&[0, 0, 0, i, d]), want[i * val + d]);
+                assert!(
+                    (have - want).abs() <= 2e-2 * want.abs().max(1.0),
+                    "{:?} at ({i}, {d}): got {have}, want {want}",
+                    launch.microkernel
+                );
+            }
+        }
+    }
+
+    /// Every plane fragment attention microkernel the test device runs, at each of its settings,
+    /// over one and three stages of keys, for `f16` and `f32` inputs summed in `f32`.
+    #[test]
+    fn plane_fragment_attention_matches_the_cpu() {
+        let hw = Hardware::from_client(&cubecl::test_device().client());
+        let mut ran = 0;
+        for input in [F16, F32] {
+            let elements = AttentionElements {
+                input,
+                sum: F32,
+                out: F32,
+            };
+            for settings in PlaneFragmentAttentionMicrokernel::settings(&hw) {
+                for steps in [1, 3] {
+                    let Ok(launch) = PlaneFragmentAttentionLaunch::new(
+                        &hw,
+                        elements,
+                        [64, 64],
+                        &settings,
+                        steps,
+                    ) else {
+                        continue;
+                    };
+                    check(&launch);
+                    ran += 1;
+                }
+            }
+        }
+        assert!(
+            ran > 0,
+            "the test device runs no plane fragment attention microkernel"
+        );
+    }
 }

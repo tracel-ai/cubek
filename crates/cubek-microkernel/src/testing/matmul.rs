@@ -118,7 +118,10 @@ impl PlaneFragmentLaunch {
             self.microkernel
                 .tiling()
                 .walk_every(&[K])
-                .launch_planes(&[M, N], PlaneOrder::new(&[(M, 1), (N, 1)], CubeOrder::RowMajor))
+                .launch_planes(
+                    &[M, N],
+                    PlaneOrder::new(&[(M, 1), (N, 1)], CubeOrder::RowMajor),
+                )
                 .build(),
         );
         let grid = Grid::Stated {
@@ -126,7 +129,11 @@ impl PlaneFragmentLaunch {
             cube_dim: partitioning.cube_dim(self.plane_width),
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
-        let MatmulElements { input, sum, out: out_element } = self.elements;
+        let MatmulElements {
+            input,
+            sum,
+            out: out_element,
+        } = self.elements;
         let bound = |arg, element, axes: &[_]| {
             TileArgLaunch::new(
                 arg,

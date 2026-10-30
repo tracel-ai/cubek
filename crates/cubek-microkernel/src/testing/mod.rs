@@ -5,5 +5,7 @@
 //! the operands are bound) is set here to the least that runs it: one plane, one stage at a
 //! time, every operand bound one element a line. A routine's choices are its own tests'.
 
+#[cfg(feature = "attention")]
+pub mod attention;
 #[cfg(feature = "matmul")]
 pub mod matmul;
