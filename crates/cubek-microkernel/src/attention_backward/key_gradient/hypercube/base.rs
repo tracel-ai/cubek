@@ -7,7 +7,7 @@ use crate::attention_backward::key_gradient::plane::{
 use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
 };
-use crate::matmul::plane::PlaneFragmentMicrokernel;
+use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentTransport};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Level, Levels, Partitioning};
@@ -121,9 +121,10 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
 
     const DECLINE: &'static str = PlaneKeyGradientMicrokernel::DECLINE;
 
-    /// The cube microkernel's, then wider boxes of keys: each cube adds into the query's gradient
-    /// once a stage whatever its planes, so the more keys a cube holds, the fewer cubes add into
-    /// each query's.
+    /// The cube microkernel's that read the score through windows, then wider boxes of keys: each
+    /// cube adds into the query's gradient once a stage whatever its planes, so the more keys a
+    /// cube holds, the fewer cubes add into each query's. Its share reads the score's gradient
+    /// transposed out of the cast window, which a score held in fragments does not leave.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         let wider = [(2, 2, 8), (1, 1, 4), (1, 1, 8), (4, 2, 4)].map(|(keys, queries, planes)| {
             CubeKeyGradientMicrokernelSettings {
@@ -133,6 +134,7 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
         });
         CubeKeyGradientMicrokernel::settings(hw)
             .into_iter()
+            .filter(|cube| cube.plane.transport == PlaneFragmentTransport::Cmma)
             .chain(wider)
             .map(|cube| Self::Settings { cube })
             .collect()

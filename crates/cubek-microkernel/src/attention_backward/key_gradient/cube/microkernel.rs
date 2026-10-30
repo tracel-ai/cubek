@@ -1,6 +1,5 @@
 use super::base::CubeKeyGradientMicrokernel;
 use super::share::{QueryGradientShare, StageQueryGradientShare};
-use crate::attention::{Q, S};
 use crate::attention_backward::ScoreWindows;
 use crate::attention_backward::key_gradient::plane::{
     KeyGradientSums, PlaneKeyGradientMicrokernel,
@@ -43,11 +42,11 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
     // Every head has the first's shape: the stages and windows are placed once, by its walk.
     let first_head = heads.region(0usize);
     let shape = first_head.walk();
-    let windows = ScoreWindows::open::<EA, ES>(&shape, comptime!(vec![S, Q]));
+    let windows = ScoreWindows::held_or_open::<EA, ES>(&shape, plane_microkernel.holder());
     let sums = KeyGradientSums::open::<EA>(
         key_gradient,
         value_gradient,
-        &windows.scores,
+        &ScoreWindows::scores_box::<EA>(&windows, &shape, key, plane_microkernel.score),
         &query.at(&first_head),
         &out_gradient.at(&first_head),
         plane_microkernel,
@@ -90,9 +89,9 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
                     };
 
                     for plane in stage {
-                        let windows = windows.at(&plane);
+                        let windows = ScoreWindows::held_at(&windows, &plane);
                         let key = staged_key.at(&plane);
-                        PlaneKeyGradientMicrokernel::step::<EA>(
+                        PlaneKeyGradientMicrokernel::step::<EA, ES>(
                             &plane,
                             &sums.at(&plane),
                             &windows,
@@ -115,7 +114,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
                         match &share {
                             ComptimeOption::Some(share) => share.add(
                                 &plane,
-                                &windows.cast,
+                                &ScoreWindows::cast_of(&windows),
                                 &key,
                                 scale,
                                 plane_microkernel.settings.scratch,

@@ -1,3 +1,5 @@
+use crate::attention::plane::ScoreHolder;
+use crate::attention::{Q, S};
 use crate::matmul::MatmulAxes;
 use crate::matmul::plane::PlaneFragmentMicrokernel;
 use cubecl::tile::{Axis, Level, Region, Semiring, Space, StageStorage, Tile, Walk};
@@ -21,6 +23,66 @@ impl ScoreWindows {
             scores: Tile::scratch::<EA>(walk, axes.clone(), StageStorage::Strided),
             gradients: Tile::scratch::<EA>(walk, axes.clone(), StageStorage::Strided),
             cast: Tile::scratch::<ES>(walk, axes, StageStorage::Strided),
+        }
+    }
+
+    /// The windows of one step of `walk` keys first, `[S, Q]`, where `holder` reads the score
+    /// through them; none where it holds the score in its fragments.
+    pub fn held_or_open<EA: Float, ES: Float>(
+        walk: &Walk,
+        #[comptime] holder: ScoreHolder,
+    ) -> ComptimeOption<ScoreWindows> {
+        match comptime!(holder) {
+            ScoreHolder::Window => {
+                ComptimeOption::new_Some(ScoreWindows::open::<EA, ES>(walk, comptime!(vec![S, Q])))
+            }
+            ScoreHolder::Fragments => ComptimeOption::new_None(),
+        }
+    }
+
+    /// A tile over the box of one step's score, keys first, which the gradients' sums are opened
+    /// against: the windows' scores, or, held in fragments, an accumulator over the same box
+    /// opened against `key`, which holds no memory.
+    pub fn scores_box<EA: Float>(
+        windows: &ComptimeOption<ScoreWindows>,
+        walk: &Walk,
+        key: &Tile,
+        #[comptime] score: PlaneFragmentMicrokernel,
+    ) -> Tile {
+        #[comptime]
+        match windows {
+            ComptimeOption::Some(windows) => windows.scores.clone(),
+            ComptimeOption::None => Tile::stage_accumulator::<EA>(
+                walk,
+                comptime!(vec![S, Q]),
+                key,
+                score.tile_instruction(),
+            ),
+        }
+    }
+
+    /// `plane`'s windows, where there are any.
+    pub fn held_at(
+        windows: &ComptimeOption<ScoreWindows>,
+        plane: &Region,
+    ) -> ComptimeOption<ScoreWindows> {
+        #[comptime]
+        match windows {
+            ComptimeOption::Some(windows) => ComptimeOption::new_Some(windows.at(plane)),
+            ComptimeOption::None => ComptimeOption::new_None(),
+        }
+    }
+
+    /// The cast window a step leaves the score's gradient in, which a share of the query's
+    /// gradient reads transposed: only a score read through windows leaves one.
+    pub fn cast_of(windows: &ComptimeOption<ScoreWindows>) -> Tile {
+        #[comptime]
+        match windows {
+            ComptimeOption::Some(windows) => windows.cast.clone(),
+            ComptimeOption::None => panic!(
+                "ScoreWindows::cast_of: a score held in fragments leaves its gradient in registers, \
+                 which a share of the query's gradient does not read"
+            ),
         }
     }
 
@@ -51,7 +113,33 @@ impl ScoreWindows {
         let instruction = product.tile_instruction();
         let mut sum = placed.accumulator::<EA>(lhs, rhs, instruction, Semiring::SUM_PROD);
         sum.zero();
+        ScoreWindows::contract_fragments(&sum, lhs, rhs, product);
 
+        // The accumulator's fragments and the window are one grid at two depths: the accumulator is
+        // placed on the product's own grid, the window sits under the plane's region, and a region
+        // only windows a tile at its depth.
+        let fragment = comptime!(Level::every(&[
+            (product.axes.m, product.instruction.shape()[0].1),
+            (product.axes.n, product.instruction.shape()[1].1)
+        ]));
+        let (window_fragments, sum_fragments) = (window.over(&fragment), sum.over(&fragment));
+        #[unroll]
+        for at in 0..product.settings.along_m.get() * product.settings.along_n.get() {
+            let mut cells = window.at(&window_fragments.region(at));
+            cells.copy_cast_from(&sum.at(&sum_fragments.region(at)));
+        }
+    }
+
+    /// `sum += lhs · rhs` on `product`'s own grid of fragments, `sum` placed on it: each fragment
+    /// of the grid pairs the operands' fragments by position, the lhs's rows by steps of the
+    /// contraction, the rhs's columns by the same steps. An lhs of manual-mma accumulators is read
+    /// in their registers, a run of them along the contraction as one `A`.
+    pub fn contract_fragments(
+        sum: &Tile,
+        lhs: &Tile,
+        rhs: &Tile,
+        #[comptime] product: PlaneFragmentMicrokernel,
+    ) {
         // Each operand's fragments, walked over its own box and paired by position.
         let [(_, m), (_, n), (_, k)] = product.instruction.shape();
         let MatmulAxes {
@@ -101,16 +189,23 @@ impl ScoreWindows {
                 }
             }
         }
+    }
 
-        // The accumulator's fragments and the window are one grid at two depths: the accumulator is
-        // placed on the product's own grid, the window sits under the plane's region, and a region
-        // only windows a tile at its depth.
-        let window_fragments = window.over(&fragment);
-        #[unroll]
-        for at in 0..rows * columns {
-            let mut cells = window.at(&window_fragments.region(at));
-            cells.copy_cast_from(&sum.at(&sum_fragments.region(at)));
-        }
+    /// `lhs · rhs` summed in `EA` on `product`'s own grid of fragments, placed as `levels` state it
+    /// below the walker's planes, over `space`, and left in the fragments' registers: where a plane
+    /// keeps a score, or the gradient against its probabilities, when the next contraction reads it
+    /// cast in place ([`ScoreHolder::Fragments`](crate::attention::plane::ScoreHolder)).
+    pub fn contract_held<EA: Float>(
+        lhs: &Tile,
+        rhs: &Tile,
+        #[comptime] space: Space,
+        #[comptime] product: PlaneFragmentMicrokernel,
+        #[comptime] levels: Vec<Level>,
+    ) -> Tile {
+        let sum =
+            Tile::placed_accumulator::<EA>(space, 1usize, levels, lhs, product.tile_instruction());
+        ScoreWindows::contract_fragments(&sum, lhs, rhs, product);
+        sum
     }
 }
 

@@ -99,6 +99,26 @@ fn every_plane_setting_matches_the_reference() {
     }
 }
 
+/// Every setting in `f16` on the same case: what the settings holding the score in their
+/// fragments run on, the manual `mma` taking 16-bit operands only.
+#[test]
+fn every_plane_setting_matches_the_reference_in_f16() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let case = Case {
+        val_dim: 16,
+        ..CASE
+    };
+    for settings in PlaneFragmentAttentionBackwardRoutine.settings(&hw) {
+        Reference::run(
+            PlaneFragmentAttentionBackwardRoutine,
+            case,
+            half::f16::elem_type_native(),
+            3e-2,
+            Some(settings),
+        );
+    }
+}
+
 /// A value dim of two fragments: the values' gradient holds a grid of its own two fragments wide.
 #[test]
 fn the_plane_routine_holds_a_wide_value_dim() {
