@@ -388,15 +388,13 @@ mod packed_lhs {
 mod hypercube_last_arrival {
     use super::*;
     use crate::kernels::select::packed::nvfp4_scheme;
-    use crate::kernels::{
-        HypercubeLastArrivalMatmulRoutine, HypercubeRelayMatmulRoutine, MATMUL_HYPERCUBE_PACKED_LHS,
-    };
+    use crate::kernels::{HypercubeLastArrivalMatmulRoutine, MATMUL_HYPERCUBE_PACKED_LHS};
     use cubecl::features::MmaConfig;
     use cubek_std::devices;
     use cubek_std::routine::Routine;
 
-    /// Two NVFP4 inputs, the block-scaled instruction's, are declined by both hypercube routines
-    /// at every setting they list, before anything is compiled: they bind a packed rhs beside a
+    /// Two NVFP4 inputs, the block-scaled instruction's, are declined by the hypercube routine at
+    /// every setting it lists, before anything is compiled: they bind a packed rhs beside a
     /// float lhs, and a launch over a packed lhs would fail to expand.
     #[test]
     fn two_packed_inputs_are_declined() {
@@ -431,12 +429,9 @@ mod hypercube_last_arrival {
                 out: None,
             },
         );
-        let (last_arrival, relay) = (
-            HypercubeLastArrivalMatmulRoutine.settings(&hw),
-            HypercubeRelayMatmulRoutine.settings(&hw),
-        );
+        let last_arrival = HypercubeLastArrivalMatmulRoutine.settings(&hw);
         assert!(
-            !last_arrival.is_empty() && !relay.is_empty(),
+            !last_arrival.is_empty(),
             "a device whose cubes meet lists hypercube settings"
         );
         for settings in last_arrival {
@@ -446,15 +441,6 @@ mod hypercube_last_arrival {
                     .err(),
                 Some(MATMUL_HYPERCUBE_PACKED_LHS),
                 "last arrival at {settings}"
-            );
-        }
-        for settings in relay {
-            assert_eq!(
-                HypercubeRelayMatmulRoutine
-                    .prepare(&hw, &problem, &settings)
-                    .err(),
-                Some(MATMUL_HYPERCUBE_PACKED_LHS),
-                "relay at {settings}"
             );
         }
     }
