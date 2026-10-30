@@ -73,16 +73,45 @@ impl ScoreWindows {
         }
     }
 
+    /// Where a step held in fragments leaves the score's gradient cast for a share of the query's
+    /// gradient to read transposed: a window of the staged element over one step of `walk`, keys
+    /// first, where `holder` keeps the score in its fragments; none where it reads the score
+    /// through windows, which leave it in their own cast window.
+    pub fn share_window<ES: Float>(
+        walk: &Walk,
+        #[comptime] holder: ScoreHolder,
+    ) -> ComptimeOption<Tile> {
+        match comptime!(holder) {
+            ScoreHolder::Fragments => ComptimeOption::new_Some(Tile::scratch::<ES>(
+                walk,
+                comptime!(vec![S, Q]),
+                StageStorage::Strided,
+            )),
+            ScoreHolder::Window => ComptimeOption::new_None(),
+        }
+    }
+
     /// The cast window a step leaves the score's gradient in, which a share of the query's
-    /// gradient reads transposed: only a score read through windows leaves one.
-    pub fn cast_of(windows: &ComptimeOption<ScoreWindows>) -> Tile {
+    /// gradient reads transposed: its windows' cast window, or, the score held in fragments, the
+    /// window `left` it was left in ([`share_window`](Self::share_window)).
+    pub fn cast_of(windows: &ComptimeOption<ScoreWindows>, left: &ComptimeOption<Tile>) -> Tile {
         #[comptime]
-        match windows {
-            ComptimeOption::Some(windows) => windows.cast.clone(),
-            ComptimeOption::None => panic!(
-                "ScoreWindows::cast_of: a score held in fragments leaves its gradient in registers, \
-                 which a share of the query's gradient does not read"
+        match (windows, left) {
+            (ComptimeOption::Some(windows), _) => windows.cast.clone(),
+            (ComptimeOption::None, ComptimeOption::Some(left)) => left.clone(),
+            (ComptimeOption::None, ComptimeOption::None) => panic!(
+                "ScoreWindows::cast_of: a score held in fragments leaves its gradient for a share \
+                 only in the window the share opened for it"
             ),
+        }
+    }
+
+    /// `plane`'s part of `window`, where there is one.
+    pub fn window_at(window: &ComptimeOption<Tile>, plane: &Region) -> ComptimeOption<Tile> {
+        #[comptime]
+        match window {
+            ComptimeOption::Some(window) => ComptimeOption::new_Some(window.at(plane)),
+            ComptimeOption::None => ComptimeOption::new_None(),
         }
     }
 
@@ -114,7 +143,13 @@ impl ScoreWindows {
         let mut sum = placed.accumulator::<EA>(lhs, rhs, instruction, Semiring::SUM_PROD);
         sum.zero();
         ScoreWindows::contract_fragments(&sum, lhs, rhs, product);
+        ScoreWindows::store_cast(window, &sum, product);
+    }
 
+    /// `sum`, an accumulator on `product`'s own grid of fragments, cast into the plane's `window`
+    /// of shared memory, fragment by fragment. The caller meets the plane before the window is
+    /// read.
+    pub fn store_cast(window: &Tile, sum: &Tile, #[comptime] product: PlaneFragmentMicrokernel) {
         // The accumulator's fragments and the window are one grid at two depths: the accumulator is
         // placed on the product's own grid, the window sits under the plane's region, and a region
         // only windows a tile at its depth.

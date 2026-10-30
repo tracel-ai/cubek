@@ -101,3 +101,25 @@ fn every_hypercube_setting_matches_the_reference() {
         );
     }
 }
+
+/// Every setting in `f16` on the same case: what the settings holding the score in their
+/// fragments run on, the manual `mma` taking 16-bit operands only, each step leaving the score's
+/// gradient in a window for the share.
+#[test]
+fn every_hypercube_setting_matches_the_reference_in_f16() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let case = Case {
+        heads: 4,
+        val_dim: 16,
+        ..CASE
+    };
+    for settings in HypercubeAttentionBackwardRoutine.settings(&hw) {
+        Reference::run(
+            HypercubeAttentionBackwardRoutine,
+            case,
+            half::f16::elem_type_native(),
+            3e-2,
+            Some(settings),
+        );
+    }
+}

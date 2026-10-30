@@ -43,6 +43,13 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
     let first_head = heads.region(0usize);
     let shape = first_head.walk();
     let windows = ScoreWindows::held_or_open::<EA, ES>(&shape, plane_microkernel.holder());
+    #[comptime]
+    let left = match query_gradient {
+        ComptimeOption::Some(_) => {
+            ScoreWindows::share_window::<ES>(&shape, plane_microkernel.holder())
+        }
+        ComptimeOption::None => ComptimeOption::<Tile>::new_None(),
+    };
     let sums = KeyGradientSums::open::<EA>(
         key_gradient,
         value_gradient,
@@ -90,11 +97,13 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
 
                     for plane in stage {
                         let windows = ScoreWindows::held_at(&windows, &plane);
+                        let left = ScoreWindows::window_at(&left, &plane);
                         let key = staged_key.at(&plane);
                         PlaneKeyGradientMicrokernel::step::<EA, ES>(
                             &plane,
                             &sums.at(&plane),
                             &windows,
+                            &left,
                             &key,
                             &staged_value.at(&plane),
                             &query.at(&plane),
@@ -114,7 +123,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
                         match &share {
                             ComptimeOption::Some(share) => share.add(
                                 &plane,
-                                &ScoreWindows::cast_of(&windows),
+                                &ScoreWindows::cast_of(&windows, &left),
                                 &key,
                                 scale,
                                 plane_microkernel.settings.scratch,

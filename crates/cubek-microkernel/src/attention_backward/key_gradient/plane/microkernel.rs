@@ -87,6 +87,7 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
                         stage,
                         &sums,
                         &windows,
+                        &ComptimeOption::new_None(),
                         &staged_key,
                         &staged_value,
                         query,
@@ -185,6 +186,7 @@ impl PlaneKeyGradientMicrokernel {
         stage: &Region,
         sums: &KeyGradientSums,
         windows: &ComptimeOption<ScoreWindows>,
+        left: &ComptimeOption<Tile>,
         key: &Tile,
         value: &Tile,
         query: &Tile,
@@ -217,6 +219,7 @@ impl PlaneKeyGradientMicrokernel {
             ),
             ComptimeOption::None => Self::held_step::<EA, ES>(
                 sums,
+                left,
                 key,
                 value,
                 query,
@@ -319,10 +322,12 @@ impl PlaneKeyGradientMicrokernel {
     /// their own manual-mma fragments: the probabilities and the gradient against the score taken
     /// in place, each cast in its registers as the `A` of the gradient that contracts it, a run of
     /// two along the stage's queries. Nothing passes through shared memory, so the plane meets on
-    /// nothing.
+    /// nothing, unless a share of the query's gradient asks for the score's gradient `left` cast in
+    /// a window.
     #[allow(clippy::too_many_arguments)]
     fn held_step<EA: Float, ES: Float>(
         sums: &KeyGradientSums,
+        left: &ComptimeOption<Tile>,
         key: &Tile,
         value: &Tile,
         query: &Tile,
@@ -370,5 +375,16 @@ impl PlaneKeyGradientMicrokernel {
             query,
             microkernel.key_gradient,
         );
+
+        // A share of the query's gradient reads the score's gradient transposed, out of the window
+        // it is left in.
+        #[comptime]
+        match left {
+            ComptimeOption::Some(window) => {
+                ScoreWindows::store_cast(window, &gradients, microkernel.score_gradient);
+                sync_plane();
+            }
+            ComptimeOption::None => {}
+        }
     }
 }

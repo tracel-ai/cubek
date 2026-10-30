@@ -43,7 +43,8 @@ impl QueryGradientShare {
 #[cube]
 impl<EA: Float> StageQueryGradientShare<EA> {
     /// `plane`'s part: `score_gradient · key` contracted over its keys, its `rows` rows scaled by
-    /// `scale`, drained into the meeting. Every plane of the cube adds its part.
+    /// `scale`, drained into the meeting. Every plane of the cube adds its part. The part bounces
+    /// through `scratch` as it is scaled, unless its instruction scales it in place.
     pub fn add(
         &self,
         plane: &Region,
@@ -54,6 +55,10 @@ impl<EA: Float> StageQueryGradientShare<EA> {
         #[comptime] rows: usize,
     ) {
         let instruction = comptime!(self.product.tile_instruction());
+        let scratch = comptime!(match instruction.scales_its_sum_in_place() {
+            true => Scratch::None,
+            false => scratch,
+        });
         let mut part = self
             .sum
             .at(plane)

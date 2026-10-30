@@ -1,3 +1,4 @@
+use crate::attention::plane::ScoreHolder;
 use crate::attention_backward::key_gradient::cube::{
     CubeKeyGradientMicrokernel, CubeKeyGradientMicrokernelSettings,
 };
@@ -7,7 +8,7 @@ use crate::attention_backward::key_gradient::plane::{
 use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
 };
-use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentTransport};
+use crate::matmul::plane::PlaneFragmentMicrokernel;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Level, Levels, Partitioning};
@@ -83,9 +84,14 @@ impl HypercubeKeyGradientMicrokernel {
     }
 
     /// Bytes of shared memory one cube holds beside its stages, outside its walk: the cube
-    /// microkernel's.
+    /// microkernel's, and, its score held in fragments, the window each step leaves the score's
+    /// gradient cast in for the share to read transposed.
     pub fn window_bytes(&self, item: &AttentionBackwardWorkItem) -> usize {
-        self.cube.window_bytes(item)
+        let left = match self.cube.plane.holder() {
+            ScoreHolder::Fragments => self.seq_kv() * self.seq_q() * item.element.size(),
+            ScoreHolder::Window => 0,
+        };
+        self.cube.window_bytes(item) + left
     }
 
     /// Bytes of shared memory the walk's body opens for a stage's share of the query's gradient:
@@ -121,10 +127,9 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
 
     const DECLINE: &'static str = PlaneKeyGradientMicrokernel::DECLINE;
 
-    /// The cube microkernel's that read the score through windows, then wider boxes of keys: each
-    /// cube adds into the query's gradient once a stage whatever its planes, so the more keys a
-    /// cube holds, the fewer cubes add into each query's. Its share reads the score's gradient
-    /// transposed out of the cast window, which a score held in fragments does not leave.
+    /// The cube microkernel's, then wider boxes of keys: each cube adds into the query's gradient
+    /// once a stage whatever its planes, so the more keys a cube holds, the fewer cubes add into
+    /// each query's.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         let wider = [(2, 2, 8), (1, 1, 4), (1, 1, 8), (4, 2, 4)].map(|(keys, queries, planes)| {
             CubeKeyGradientMicrokernelSettings {
@@ -134,7 +139,6 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
         });
         CubeKeyGradientMicrokernel::settings(hw)
             .into_iter()
-            .filter(|cube| cube.plane.transport == PlaneFragmentTransport::Cmma)
             .chain(wider)
             .map(|cube| Self::Settings { cube })
             .collect()
