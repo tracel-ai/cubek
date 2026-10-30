@@ -1,4 +1,4 @@
-use crate::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentTransport};
+use crate::matmul::plane::{PlaneFragmentDepth, PlaneFragmentInstruction, PlaneFragmentTransport};
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 
@@ -18,6 +18,10 @@ pub struct PlaneFragmentAttentionMicrokernelSettings {
     /// The shape of cmma instruction tried first, where the plane reads the score through its
     /// windows; the other where the device offers none.
     pub shape: InstructionShape,
+    /// How deep along the head dim the score's fragments are: one instruction step, the head dim
+    /// walked a step at a time, or the whole head dim, contracted in one call. Only a score kept
+    /// in its fragments, on the manual `mma`, takes the whole head dim; any other declines it.
+    pub score_depth: PlaneFragmentDepth,
 }
 
 /// A matrix instruction's shape: as long as it is wide and deep, or any other.
@@ -42,6 +46,7 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         scratch: Scratch::OneTile,
         transport: PlaneFragmentTransport::Mma,
         shape: InstructionShape::Square,
+        score_depth: PlaneFragmentDepth::Instruction,
     };
 
     /// The default with every fragment of the grid bounced at once.
@@ -87,8 +92,12 @@ impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
             PlaneFragmentTransport::Wgmma => write!(f, " transport=wgmma")?,
         }
         match self.shape {
-            InstructionShape::Square => Ok(()),
-            InstructionShape::Rectangular => write!(f, " shape=rectangular"),
+            InstructionShape::Square => {}
+            InstructionShape::Rectangular => write!(f, " shape=rectangular")?,
+        }
+        match self.score_depth {
+            PlaneFragmentDepth::Instruction => Ok(()),
+            PlaneFragmentDepth::Stage => write!(f, " score_depth=head"),
         }
     }
 }
