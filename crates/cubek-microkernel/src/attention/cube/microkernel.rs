@@ -154,6 +154,8 @@ fn staged_walk<EA: Float, ES: Float>(
     } else {
         scale
     };
+    // LAB: the walk's first region, for the sums' final reduction after the walk.
+    let lab_region = walk.region(0usize);
     // The query spans no key: staged once for every plane, before the walk, laid out as the
     // stages of keys and values are.
     let mut staged_query = query.stage_for(
@@ -332,6 +334,7 @@ fn staged_walk<EA: Float, ES: Float>(
         stages.free();
         sync_cube();
     }
+    planes.lab_finalize(&lab_region);
     planes
 }
 

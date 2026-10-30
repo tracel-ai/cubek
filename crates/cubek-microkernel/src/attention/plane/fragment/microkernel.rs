@@ -126,6 +126,15 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
         );
     }
 
+    /// LAB: the running sums summed across the units sharing each row, once, after the walk
+    /// (`CUBECL_LAB_LOCAL_SUMS` keeps them per unit while it runs). `region` is the cube's.
+    pub fn lab_finalize(&mut self, region: &Region) {
+        for plane in region.planes() {
+            self.softmax
+                .lab_finalize_sums(&self.score.at(&plane).scores());
+        }
+    }
+
     /// LAB: the first half of [`step`](Self::step): `keys` scored into the score's fragments, taken
     /// into the softmax, and the sum rescaled.
     pub fn lab_score(
