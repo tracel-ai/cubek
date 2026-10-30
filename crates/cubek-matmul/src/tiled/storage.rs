@@ -74,14 +74,12 @@ pub use cubecl::tile::{
 };
 
 /// How a tensor of one shape lies stored as a [`StoragePartitioning`] states: its metadata in
-/// values and in the words a packed one moves as, the words' extents along the named axes and the
-/// outermost stored tile of each, its batch dims, and the words it allocates.
+/// values and in the words a packed one moves as, the relayout of its words into storage tiles,
+/// and the words it allocates.
 struct StoredLayout {
     values: Metadata,
     words: Metadata,
-    word_extents: Vec<(Axis, usize)>,
-    tiles: Vec<(Axis, usize)>,
-    batch_dims: Vec<usize>,
+    relayout: Relayout,
     word_count: usize,
     per_word: usize,
 }
@@ -192,9 +190,11 @@ impl StoredLayout {
         Ok(Self {
             values: metadata(&in_values)?,
             words: metadata(&in_words)?,
-            word_extents,
-            tiles,
-            batch_dims,
+            relayout: Relayout {
+                batches: batch_dims,
+                extents: word_extents,
+                tiles,
+            },
             word_count,
             per_word,
         })
@@ -276,15 +276,9 @@ pub fn tile(
         }
     }
     src_words.shape[rank - 1] /= layout.per_word;
-    relayout_launch(
-        client,
-        src_words,
-        dst.binding(),
-        dtype,
-        &layout.batch_dims,
-        &layout.word_extents,
-        &layout.tiles,
-    )?;
+    layout
+        .relayout
+        .launch(client, src_words, dst.binding(), dtype)?;
     Ok(TensorHandle::from_metadata(handle, layout.values, dtype))
 }
 
@@ -319,94 +313,106 @@ pub fn untile(
         .iter()
         .map(|&(axis, extent)| (axis, extent / src.shape[axis.0 as usize]))
         .collect();
-    let dst = TensorHandle::empty(client, logical.clone(), dtype);
-    relayout_launch(
-        client,
-        src,
-        dst.clone().binding(),
-        dtype,
-        &logical[..batches],
-        &extents,
-        &tiles,
-    )?;
+    let relayout = Relayout {
+        batches: logical[..batches].to_vec(),
+        extents,
+        tiles,
+    };
+    let dst = TensorHandle::empty(client, logical, dtype);
+    relayout.launch(client, src, dst.clone().binding(), dtype)?;
     Ok(dst)
 }
 
-/// The one launch both directions share: a space over the named axes (and one cell of each
-/// batch) cut by one level, the outermost stored tile, a cube of one plane per tile. Each side's
-/// binding says whether it is the tiled one, which decodes the levels inside that tile.
-fn relayout_launch(
-    client: &Client,
-    src: TensorBinding,
-    dst: TensorBinding,
-    dtype: ElemType,
-    batches: &[usize],
-    extents: &[(Axis, usize)],
-    tiles: &[(Axis, usize)],
-) -> Result<(), MatmulSetupError> {
-    let named: Vec<Axis> = extents.iter().map(|&(axis, _)| axis).collect();
-    // Batch axes the named ones leave free.
-    let batch_axes: Vec<Axis> = (0..=u8::MAX)
-        .map(Axis)
-        .filter(|axis| !named.contains(axis))
-        .take(batches.len())
-        .collect();
-    let batch: Vec<(Axis, usize)> = batch_axes
-        .iter()
-        .copied()
-        .zip(batches.iter().copied())
-        .filter(|&(_, b)| b > 1)
-        .collect();
-    let space = Space::new(&batch.iter().chain(extents).copied().collect::<Vec<_>>());
-    let level = Levels::leaf(tiles)
-        .cubes(&named)
-        .batches(&batch.iter().map(|&(a, _)| a).collect::<Vec<_>>())
-        .build()
-        .remove(0);
-    let partitioning = Partitioning::new(space, vec![level.clone()]);
-    let cube_count = partitioning.cube_count();
-    let cube_dim = CubeDim::new_1d(client.properties().hardware.plane_size_max);
-    let concrete = partitioning.space().clone();
-    let launch = Launcher::new(
-        client,
-        partitioning.all_dynamic(),
-        &concrete,
-        Grid::Stated {
-            cube_count: cube_count.clone(),
-            cube_dim,
-        },
-    )?;
-    // A line runs along the innermost named axis when both sides end with it.
-    let innermost = named[named.len() - 1];
-    let (src_geometry, dst_geometry) = (Geometry::from(&src), Geometry::from(&dst));
-    let (src_labels, dst_labels) = (src_geometry.labels(&named), dst_geometry.labels(&named));
-    let v = match (src_labels.last(), dst_labels.last()) {
-        (Some(&s), Some(&d)) if s == innermost && d == innermost => launch.vector_size(
-            innermost,
-            &[(&src_geometry, &src_labels), (&dst_geometry, &dst_labels)],
-            dtype.size(),
-        ),
-        _ => 1,
-    };
-    let bind = |binding| {
-        launch
-            .arg(binding, dtype)
-            .axes(&named)
-            .batches(&batch_axes)
-            .vectorize(v)
+/// The relayout both directions share: a space over the named axes (and one cell of each batch)
+/// cut by one level, the outermost stored tile, a cube of one plane per tile.
+struct Relayout {
+    /// The batch dims ahead of the named axes, plain and coarsest.
+    batches: Vec<usize>,
+    /// The named axes and their extents.
+    extents: Vec<(Axis, usize)>,
+    /// The outermost stored tile along each named axis.
+    tiles: Vec<(Axis, usize)>,
+}
+
+impl Relayout {
+    /// Launch `dst = src`. Each side's binding says whether it is the tiled one, which decodes the
+    /// levels inside that tile.
+    fn launch(
+        &self,
+        client: &Client,
+        src: TensorBinding,
+        dst: TensorBinding,
+        dtype: ElemType,
+    ) -> Result<(), MatmulSetupError> {
+        let Self {
+            batches,
+            extents,
+            tiles,
+        } = self;
+        let named: Vec<Axis> = extents.iter().map(|&(axis, _)| axis).collect();
+        // Batch axes the named ones leave free.
+        let batch_axes: Vec<Axis> = (0..=u8::MAX)
+            .map(Axis)
+            .filter(|axis| !named.contains(axis))
+            .take(batches.len())
+            .collect();
+        let batch: Vec<(Axis, usize)> = batch_axes
+            .iter()
+            .copied()
+            .zip(batches.iter().copied())
+            .filter(|&(_, b)| b > 1)
+            .collect();
+        let space = Space::new(&batch.iter().chain(extents).copied().collect::<Vec<_>>());
+        let level = Levels::leaf(tiles)
+            .cubes(&named)
+            .batches(&batch.iter().map(|&(a, _)| a).collect::<Vec<_>>())
             .build()
-    };
-    let (s, d) = (bind(src)?, bind(dst)?);
-    relayout::launch(
-        client,
-        cube_count,
-        cube_dim,
-        v,
-        s.arg(),
-        d.arg(),
-        launch.partitioning_arg(),
-        level,
-        dtype,
-    );
-    Ok(())
+            .remove(0);
+        let partitioning = Partitioning::new(space, vec![level.clone()]);
+        let cube_count = partitioning.cube_count();
+        let cube_dim = CubeDim::new_1d(client.properties().hardware.plane_size_max);
+        let concrete = partitioning.space().clone();
+        let launch = Launcher::new(
+            client,
+            partitioning.all_dynamic(),
+            &concrete,
+            Grid::Stated {
+                cube_count: cube_count.clone(),
+                cube_dim,
+            },
+        )?;
+        // A line runs along the innermost named axis when both sides end with it.
+        let innermost = named[named.len() - 1];
+        let (src_geometry, dst_geometry) = (Geometry::from(&src), Geometry::from(&dst));
+        let (src_labels, dst_labels) = (src_geometry.labels(&named), dst_geometry.labels(&named));
+        let v = match (src_labels.last(), dst_labels.last()) {
+            (Some(&s), Some(&d)) if s == innermost && d == innermost => launch.vector_size(
+                innermost,
+                &[(&src_geometry, &src_labels), (&dst_geometry, &dst_labels)],
+                dtype.size(),
+            ),
+            _ => 1,
+        };
+        let bind = |binding| {
+            launch
+                .arg(binding, dtype)
+                .axes(&named)
+                .batches(&batch_axes)
+                .vectorize(v)
+                .build()
+        };
+        let (s, d) = (bind(src)?, bind(dst)?);
+        relayout::launch(
+            client,
+            cube_count,
+            cube_dim,
+            v,
+            s.arg(),
+            d.arg(),
+            launch.partitioning_arg(),
+            level,
+            dtype,
+        );
+        Ok(())
+    }
 }
