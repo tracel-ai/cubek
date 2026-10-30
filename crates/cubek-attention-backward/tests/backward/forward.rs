@@ -12,8 +12,7 @@ use cubek_attention::kernels::{
     AttentionRoutine, AttentionScoring, AttentionTensors, CubeShuffleAttentionRoutine,
     CubeStagedAttentionRoutine, HypercubeLastArrivalShuffleAttentionRoutine,
     HypercubeSecondLaunchFragmentAttentionRoutine, HypercubeSecondLaunchShuffleAttentionRoutine,
-    HypercubeStreamFragmentAttentionRoutine, PlaneFragmentAttentionRoutine, ScoreScale,
-    UnitAttentionRoutine,
+    HypercubeStreamFragmentAttentionRoutine, ScoreScale, UnitAttentionRoutine,
 };
 use cubek_attention_backward::AttentionBackwardTensors;
 use cubek_attention_backward::kernels::{AttentionBackwardRoutine, UnitAttentionBackwardRoutine};
@@ -187,11 +186,6 @@ fn the_unit_routine_writes_the_logsumexp() {
     check_forward("unit", UnitAttentionRoutine, None, DECODE);
 }
 
-#[test]
-fn the_plane_routine_writes_the_logsumexp() {
-    check_forward("plane", PlaneFragmentAttentionRoutine, None, PROMPT);
-}
-
 /// Planes that split the same rows' keys merge their state before they write it.
 #[test]
 fn the_cube_staged_routine_writes_the_logsumexp() {
@@ -301,7 +295,6 @@ fn every_prompt_routine_hides_what_a_mask_and_a_first_placed_diagonal_hide() {
         PROMPT_MASKED_PLACED_FIRST,
     ] {
         check_forward("unit", UnitAttentionRoutine, None, case);
-        check_forward("plane", PlaneFragmentAttentionRoutine, None, case);
         check_forward("cube-fragment", CubeStagedAttentionRoutine, None, case);
         check_forward("cube-shuffle", CubeShuffleAttentionRoutine, None, case);
         check_forward(
