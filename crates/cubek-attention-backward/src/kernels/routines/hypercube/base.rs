@@ -91,7 +91,25 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             });
         let rings = [StageRing::DOUBLE, StageRing::SINGLE_THROUGH_REGISTERS]
             .map(|ring| Self::Settings { ring, ..lead });
-        core::iter::once(lead).chain(keys).chain(rings).collect()
+        // A key walk holding its score in fragments runs nothing but its products between two
+        // fills, so its next stage lands under them: each held setting on each ring.
+        let held = HypercubeKeyGradientMicrokernel::settings(hw)
+            .into_iter()
+            .filter(|key_gradient| key_gradient.holds_its_score())
+            .flat_map(|key_gradient| {
+                [StageRing::DOUBLE, StageRing::SINGLE_THROUGH_REGISTERS].map(|ring| {
+                    Self::Settings {
+                        key_gradient,
+                        ring,
+                        ..lead
+                    }
+                })
+            });
+        core::iter::once(lead)
+            .chain(keys)
+            .chain(rings)
+            .chain(held)
+            .collect()
     }
 
     /// The first walk's planes take the queries of every head, a plane a cube; the second's cubes

@@ -60,7 +60,7 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
     type SharedMemory = StageRing;
 
     /// Each walk's microkernel's settings, the other's and the ring at their default, then each
-    /// ring of stages through registers.
+    /// ring of stages through registers, then each held key walk on each of them.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         let lead = CubeStagedAttentionBackwardRoutineSettings::DEFAULT;
         let queries = CubeQueryGradientMicrokernel::settings(hw)
@@ -79,10 +79,25 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
             });
         let rings = [StageRing::DOUBLE, StageRing::SINGLE_THROUGH_REGISTERS]
             .map(|ring| Self::Settings { ring, ..lead });
+        // A key walk holding its score in fragments runs nothing but its products between two
+        // fills, so its next stage lands under them: each held setting on each ring.
+        let held = CubeKeyGradientMicrokernel::settings(hw)
+            .into_iter()
+            .filter(|key_gradient| key_gradient.holds_its_score())
+            .flat_map(|key_gradient| {
+                [StageRing::DOUBLE, StageRing::SINGLE_THROUGH_REGISTERS].map(|ring| {
+                    Self::Settings {
+                        key_gradient,
+                        ring,
+                        ..lead
+                    }
+                })
+            });
         core::iter::once(lead)
             .chain(queries)
             .chain(keys)
             .chain(rings)
+            .chain(held)
             .collect()
     }
 

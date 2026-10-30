@@ -40,6 +40,11 @@ pub struct HypercubeKeyGradientMicrokernelSettings {
 }
 
 impl HypercubeKeyGradientMicrokernelSettings {
+    /// Whether its planes keep their score in fragments, on the manual `mma`.
+    pub fn holds_its_score(&self) -> bool {
+        self.cube.holds_its_score()
+    }
+
     pub const DEFAULT: Self = Self {
         cube: CubeKeyGradientMicrokernelSettings::DEFAULT,
     };
@@ -127,15 +132,27 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
 
     const DECLINE: &'static str = PlaneKeyGradientMicrokernel::DECLINE;
 
-    /// The cube microkernel's, then wider boxes of keys: each cube adds into the query's gradient
-    /// once a stage whatever its planes, so the more keys a cube holds, the fewer cubes add into
-    /// each query's.
+    /// The cube microkernel's, then wider boxes of keys, each read through windows and held in
+    /// fragments: each cube adds into the query's gradient once a stage whatever its planes, so the
+    /// more keys a cube holds, the fewer cubes add into each query's. A held box of one plane meets
+    /// no other in shared memory.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
-        let wider = [(2, 2, 8), (1, 1, 4), (1, 1, 8), (4, 2, 4)].map(|(keys, queries, planes)| {
-            CubeKeyGradientMicrokernelSettings {
-                plane: PlaneKeyGradientMicrokernelSettings::fragments(keys, queries),
+        let wider = [
+            (2, 2, 8),
+            (1, 1, 4),
+            (1, 1, 8),
+            (4, 2, 4),
+            (2, 4, 4),
+            (4, 2, 1),
+            (2, 4, 1),
+        ]
+        .into_iter()
+        .flat_map(|(keys, queries, planes)| {
+            let plane = PlaneKeyGradientMicrokernelSettings::fragments(keys, queries);
+            [plane, plane.held()].map(|plane| CubeKeyGradientMicrokernelSettings {
+                plane,
                 planes_along_keys: NonZeroUsize::new(planes).unwrap(),
-            }
+            })
         });
         CubeKeyGradientMicrokernel::settings(hw)
             .into_iter()

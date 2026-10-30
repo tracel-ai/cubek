@@ -274,7 +274,8 @@ impl Microkernel for PlaneKeyGradientMicrokernel {
 
     /// The default, a fragment of each, more fragments along the keys or along the queries, and
     /// the whole grid of both gradients bounced at once; then the default and the wider grids
-    /// with the score held in its fragments.
+    /// with the score held in its fragments, and a fragment of keys against two and four of
+    /// queries: a plane's gradients over a wide head dim held without spilling its registers.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         vec![
             Self::Settings::DEFAULT,
@@ -288,6 +289,8 @@ impl Microkernel for PlaneKeyGradientMicrokernel {
             Self::Settings::DEFAULT.held(),
             Self::Settings::fragments(4, 2).held(),
             Self::Settings::fragments(2, 4).held(),
+            Self::Settings::fragments(1, 2).held(),
+            Self::Settings::fragments(1, 4).held(),
         ]
     }
 
