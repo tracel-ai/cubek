@@ -6,12 +6,14 @@ use crate::matmul::plane::PlaneFragmentMicrokernelSettings;
 use crate::matmul::{
     MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind, MatmulWorkItem,
 };
+use cubecl::ir::ElemType;
 use cubecl::tile::Scratch;
 use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
+use cubek_std::layout::stored::BlockScales;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::{
     CubePlanes, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
@@ -229,5 +231,65 @@ impl MatmulMicrokernel for HypercubeStagedMicrokernel {
 
     fn delivery(&self) -> Delivery {
         self.cube.delivery()
+    }
+
+    /// Its cubes': how they read a packed input's block scales.
+    fn block_scales(&self) -> BlockScales {
+        self.cube.block_scales()
+    }
+
+    /// Its cubes': the element their fill decodes their inputs into.
+    fn decoded_stage(&self) -> Option<ElemType> {
+        self.cube.decoded_stage()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::matmul::{MatmulAxes, MatmulDestination, MatmulLayout, MatmulReading, MatmulRows};
+    use cubecl::features::MmaConfig;
+    use cubecl::ir::FloatKind;
+    use cubek_std::devices;
+
+    /// An `f32` product read rounded stages its inputs decoded from their words, as each of its
+    /// cubes reads them: bound as they lie, the cubes' tf32 instruction never expands and the
+    /// launch leaves the output unwritten.
+    #[test]
+    fn a_rounded_f32_product_binds_its_inputs_as_its_cubes_decode_them() {
+        let (f32, tf32) = (
+            ElemType::Float(FloatKind::F32),
+            ElemType::Float(FloatKind::TF32),
+        );
+        let hw = devices::offering_mma(
+            devices::h100(),
+            [MmaConfig {
+                a_type: tf32,
+                b_type: tf32,
+                cd_type: f32,
+                m: 16,
+                n: 8,
+                k: 8,
+            }],
+        );
+        let item = MatmulWorkItem {
+            elements: MatmulOperands::all(f32),
+            sum: f32,
+            layouts: MatmulOperands::all(MatmulLayout::Row),
+            blocks: None,
+            rows: MatmulRows::Tiled,
+            destination: MatmulDestination::Buffer,
+            axes: MatmulAxes::MNK,
+            reading: MatmulReading::Rounded,
+        };
+        let hypercube = HypercubeStagedMicrokernel::best(
+            &hw,
+            &item,
+            &HypercubeStagedMicrokernelSettings::DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(hypercube.decoded_stage(), Some(tf32));
+        assert_eq!(hypercube.words_delivery(), hypercube.cube.words_delivery());
+        assert_eq!(hypercube.block_scales(), hypercube.cube.block_scales());
     }
 }
