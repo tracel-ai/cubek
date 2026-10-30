@@ -15,5 +15,4 @@ mod simple_async;
 mod simple_cyclic;
 mod simple_strided;
 mod simple_tilewise;
-mod specialized_tma;
 mod tma;
