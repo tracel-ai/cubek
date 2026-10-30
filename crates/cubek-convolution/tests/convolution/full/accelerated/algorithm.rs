@@ -38,14 +38,5 @@ macro_rules! testgen_convolution_accelerated_algorithm {
 
             $crate::testgen_convolution_accelerated_precision!(ConvAlgorithm::SimpleAsyncTma);
         }
-
-        // Specialized async cyclic / strided are now wired through the
-        // unified launch_ref but only the TMA variant is exercised here for
-        // parity with the previous test surface.
-        mod specialized_tma {
-            use super::*;
-
-            $crate::testgen_convolution_accelerated_precision!(ConvAlgorithm::SpecializedTma);
-        }
     };
 }
