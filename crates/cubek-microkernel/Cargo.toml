@@ -20,9 +20,19 @@ std = ["cubecl/std", "cubek-std/std"]
 matmul = []
 attention = ["matmul"]
 attention-backward = ["attention"]
+# A launch of one microkernel on one work item, for tests: what a routine adds around it,
+# kept to the least that runs it.
+testing = []
 
 [dependencies]
 cubek-std = { workspace = true }
 
 cubecl = { workspace = true, features = ["stdlib", "tile"] }
 serde = { workspace = true }
+
+[dev-dependencies]
+cubek-test-utils = { workspace = true }
+
+[[test]]
+name = "testing"
+required-features = ["testing"]
