@@ -118,6 +118,7 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
             filling_planes: query_gradient.plane_count(),
             copies: 1,
             window_bytes: query_gradient.window_bytes(&item),
+            body_bytes: 0,
         }
         .grid(hw, &query_partitioning)?;
         let (key_grid, key_ring) = WalkStages {
@@ -126,6 +127,7 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
             filling_planes: key_gradient.plane_count(),
             copies: 1,
             window_bytes: key_gradient.window_bytes(&item),
+            body_bytes: 0,
         }
         .grid(hw, &key_partitioning)?;
         Ok(AttentionBackwardBlueprint {

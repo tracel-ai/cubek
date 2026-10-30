@@ -144,6 +144,7 @@ impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
             filling_planes: 1,
             copies: planes,
             window_bytes: query_gradient.window_bytes(&item),
+            body_bytes: 0,
         }
         .grid(hw, &query_partitioning)?;
         let (key_grid, key_ring) = WalkStages {
@@ -152,6 +153,7 @@ impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
             filling_planes: 1,
             copies: planes,
             window_bytes: key_gradient.window_bytes(&item),
+            body_bytes: 0,
         }
         .grid(hw, &key_partitioning)?;
         Ok(AttentionBackwardBlueprint {
