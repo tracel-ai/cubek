@@ -87,7 +87,8 @@ impl PlaneFragmentAttentionLaunch {
     /// `out = softmax(scale · query · keyᵀ) · value`, `query` `[1, 1, 1, queries, head_dim]`,
     /// `key` `[1, 1, keys, head_dim]`, `value` `[1, 1, keys, val_dim]` and `out`
     /// `[1, 1, 1, queries, val_dim]`, all row-major (`[B, KV, G, Q, _]` and `[B, KV, S, _]`);
-    /// `lengths` holds the one sequence's attended keys, as `u32`.
+    /// `lengths` holds the one sequence's attended keys, as `u32`. Where `logsumexp` is given,
+    /// `[1, 1, 1, queries]` in the sum's element, each query's `ln Σ exp(score)` lands there.
     ///
     /// # Errors
     ///
@@ -100,6 +101,7 @@ impl PlaneFragmentAttentionLaunch {
         key: TensorBinding,
         value: TensorBinding,
         out: TensorBinding,
+        logsumexp: Option<TensorBinding>,
         lengths: TensorArg,
         scale: f32,
     ) -> Result<(), Refusal> {
@@ -149,6 +151,9 @@ impl PlaneFragmentAttentionLaunch {
             .delivery(delivery)
             .build()?;
         let out = bound(out, item.elements.out, &[B, KV, G, Q, DV]).build()?;
+        let logsumexp = logsumexp
+            .map(|logsumexp| bound(logsumexp, item.sum, &[B, KV, G, Q]).build())
+            .transpose()?;
         // SAFETY: every operand is bound through the launcher at the problem's own extents, the
         // keys and values are read no further than the attended length, and the kernel indexes
         // no buffer but through its tiles and the one entry of the lengths.
@@ -161,6 +166,7 @@ impl PlaneFragmentAttentionLaunch {
                 key.arg(),
                 value.arg(),
                 out.arg(),
+                logsumexp.map(|logsumexp| logsumexp.arg()).into(),
                 Option::<TileArgLaunch>::None.into(),
                 lengths,
                 queries as u32,
@@ -184,6 +190,7 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     key: &TileArg<'_>,
     value: &TileArg<'_>,
     out: &TileArg<'_>,
+    logsumexp: ComptimeOption<&TileArg<'static>>,
     mask: ComptimeOption<&TileArg<'static>>,
     len: &Tensor<u32>,
     queries: u32,
@@ -198,7 +205,7 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
     let o = out.tile(&partitioning);
-    let lse = ComptimeOption::<Tile>::new_None();
+    let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
 
     for plane in &partitioning {
         let visible = VisibleKeys::new(len, &plane, queries, &mask, AttentionVisibility::Attended);
@@ -210,7 +217,7 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
         plane_fragment_attention_microkernel::<EA, ES>(
             &plane,
             &o.at(&plane),
-            &lse,
+            &lse.clone().map(|lse| lse.at(&plane)),
             &q.at(&plane),
             &k.at(&plane),
             &v.at(&plane),
