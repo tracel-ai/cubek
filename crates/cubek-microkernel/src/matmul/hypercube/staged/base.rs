@@ -17,8 +17,8 @@ use cubek_std::microkernel::{
 
 /// A box of the output several cubes own together: each cube runs a [`CubeStagedMicrokernel`]
 /// over its own run of `K`, and the parts reach the output once, as the routine's
-/// [`MatmulCubeWrite`](crate::matmul::cube::MatmulCubeWrite) says: in turns
-/// at a carry, or into slots the last cube to arrive adds up. Which cubes share which box is the
+/// [`MatmulCubeWrite`](crate::matmul::cube::MatmulCubeWrite) says: into slots the last cube to
+/// arrive adds up. Which cubes share which box is the
 /// routine's too, so one microkernel serves every way a hypercube's cubes share their boxes.
 ///
 /// Its settings, with the cube's settings replaced by the cube microkernel the hardware settled;
