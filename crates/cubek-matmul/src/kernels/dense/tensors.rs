@@ -834,6 +834,13 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                     StoredTensor::Plain(_) => None,
                     StoredTensor::Packed(operand) => operand.stored_tile(),
                 };
+                // A float input is read at its own element, whatever the output is written in: an
+                // f16 activation into an f32 output is still an f16 activation.
+                let element = |operand: &StoredTensor| match operand {
+                    StoredTensor::Plain(input) => input.elem,
+                    StoredTensor::Packed(_) => MatmulRoutineProblem::PACKED,
+                };
+                let out = self.out.element(lhs, rhs);
                 let problem = MatmulRoutineProblem {
                     destination: Out::DESTINATION,
                     stored_tiles: MatmulOperands {
@@ -841,11 +848,16 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                         rhs: stored_tile(rhs),
                         out: None,
                     },
+                    elements: MatmulOperands {
+                        lhs: element(lhs),
+                        rhs: element(rhs),
+                        out,
+                    },
                     ..MatmulRoutineProblem::packed(
                         MatmulTensors::rows_of(lhs, k),
                         rhs.extent([K, N], N),
                         k,
-                        self.out.element(lhs, rhs),
+                        out,
                         packings,
                     )
                 };
@@ -1180,61 +1192,6 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         (lhs, rhs)
     }
 
-    /// The carry the cubes splitting `K` take their turns at, in the sum's element, bound as the
-    /// output is, beside one turn counter a cube, holding zero.
-    ///
-    /// # Panics
-    ///
-    /// On float tensors read for every row whole: only a launch tiling its rows splits `K` over
-    /// cubes. Packed ones merge their batches into the rows whatever the launch.
-    pub fn bind_relay<Mk: MatmulMicrokernel, SM>(
-        &self,
-        blueprint: &MatmulBlueprint<Mk, SM>,
-        launcher: &Launcher,
-    ) -> MatmulRelayBinding {
-        let sum = self.problem().sum();
-        // Over the output's axes: a float product's, or against packed inputs the block-split
-        // space's, the carry restated over them as the output is. Packed tensors merge their
-        // batches into the rows whatever the launch, so only float ones are read for a tiling one.
-        let carry = match self.read(|view| view.blocks()) {
-            None => {
-                self.assert_tiled();
-                let [lhs, rhs] = self.plain();
-                let shape =
-                    Operands::product_shape(lhs, rhs).expect("the product's shape was checked");
-                let (_, carry) = PlainTensor::empty(&self.client, shape.into(), sum);
-                launcher
-                    .arg(carry.binding, sum)
-                    .axes(&[M, N])
-                    .batches(&self.batch_axes())
-                    .vectorize(blueprint.widths.out)
-                    .build()
-                    .expect(ADMITTED_PLAN_RUNS)
-            }
-            Some(blocks) => {
-                let batches = self.table_batches();
-                let shape = vec![self.rows(), self.problem().n];
-                let (_, carry) = PlainTensor::empty(&self.client, shape.into(), sum);
-                let (carry, axes) = carry.restated(&blocks, M, N, &batches);
-                launcher
-                    .arg(carry.binding, sum)
-                    .axes(&axes)
-                    .batches(&batches)
-                    .vectorize(blueprint.widths.out)
-                    .build()
-                    .expect(ADMITTED_PLAN_RUNS)
-            }
-        };
-        MatmulRelayBinding {
-            carry,
-            turns: ZeroedCounters::new(
-                blueprint.partitioning.as_tile().relay_counters(),
-                &self.client,
-            )
-            .into_arg(),
-        }
-    }
-
     /// The slots the cubes sharing a box park their parts in, over the output's axes in the sum's
     /// element, two cube boxes a cube
     /// ([`Partitioning::arrival_slots`](cubecl::tile::Partitioning::arrival_slots)), beside one
@@ -1285,13 +1242,13 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         }
     }
 
-    /// Checks the tensors were read for a launch tiling its rows, the only one a staged or relayed
+    /// Checks the tensors were read for a launch tiling its rows, the only one a staged or shared
     /// binding belongs to.
     fn assert_tiled(&self) {
         assert_eq!(
             self.rows_kind,
             MatmulRowsKind::Tiled,
-            "a staged or relayed binding is a tiled launch's"
+            "a staged or shared binding is a tiled launch's"
         );
     }
 
@@ -1411,14 +1368,6 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             },
         )
     }
-}
-
-/// The carry and the turn counters of a launch whose cubes take turns at the output.
-pub struct MatmulRelayBinding {
-    /// The partial sums the turns add up, the output's shape in the sum's element.
-    pub carry: Bound,
-    /// A turn counter a cube, holding zero.
-    pub turns: BufferArg,
 }
 
 /// What a launch whose cubes share its boxes' `K` binds beside its operands
