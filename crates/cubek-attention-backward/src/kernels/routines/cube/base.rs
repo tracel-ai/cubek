@@ -93,11 +93,37 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
                     }
                 })
             });
+        // Both walks holding their scores in fragments, the key walk on two planes, on a ring of
+        // one stage and on the one prefetching through registers.
+        let query_held: Vec<_> = CubeQueryGradientMicrokernel::settings(hw)
+            .into_iter()
+            .filter(|query_gradient| query_gradient.holds_its_score())
+            .collect();
+        let both = CubeKeyGradientMicrokernel::settings(hw)
+            .into_iter()
+            .filter(|key_gradient| {
+                key_gradient.holds_its_score() && key_gradient.planes_along_keys.get() == 2
+            })
+            .flat_map(move |key_gradient| {
+                query_held
+                    .clone()
+                    .into_iter()
+                    .flat_map(move |query_gradient| {
+                        [StageRing::SINGLE, StageRing::SINGLE_THROUGH_REGISTERS].map(|ring| {
+                            Self::Settings {
+                                query_gradient,
+                                key_gradient,
+                                ring,
+                            }
+                        })
+                    })
+            });
         core::iter::once(lead)
             .chain(queries)
             .chain(keys)
             .chain(rings)
             .chain(held)
+            .chain(both)
             .collect()
     }
 
