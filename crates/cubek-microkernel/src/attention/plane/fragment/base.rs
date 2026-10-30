@@ -466,8 +466,8 @@ impl PlaneFragmentAttentionMicrokernel {
                     .leaf_extent(MatmulDim::N)
                     .max(self.value.leaf_extent(MatmulDim::K)),
             ),
-            (D, self.score.leaf_extent(MatmulDim::K)),
-            (DV, self.out_edge()),
+            (D, lab_wide(self.score.leaf_extent(MatmulDim::K))),
+            (DV, lab_wide(self.out_edge())),
         ]
     }
 
@@ -504,4 +504,13 @@ impl PlaneFragmentAttentionMicrokernel {
             ) => Ok(()),
         }
     }
+}
+
+/// LAB: `CUBEK_LAB_WIDE_BLOCK=n` widens a stage block's head-dim edge to `n` elements, so a
+/// block row is a whole run of the source row rather than one fragment's sliver of it.
+fn lab_wide(edge: usize) -> usize {
+    std::env::var("CUBEK_LAB_WIDE_BLOCK")
+        .ok()
+        .and_then(|n| n.parse::<usize>().ok())
+        .map_or(edge, |wide| wide.max(edge))
 }
