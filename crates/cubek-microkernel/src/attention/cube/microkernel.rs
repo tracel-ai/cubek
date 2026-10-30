@@ -194,6 +194,7 @@ fn staged_walk<EA: Float, ES: Float>(
                     &mut planes,
                     &bias.unmasked,
                     scale,
+                    true,
                 );
             }
             ComptimeOption::None => {}
@@ -205,6 +206,7 @@ fn staged_walk<EA: Float, ES: Float>(
             &mut planes,
             &bias.masked,
             scale,
+            false,
         );
         keys.free();
         values.free();
@@ -343,6 +345,7 @@ fn lab_split_walk<EA: Float, ES: Float>(
     planes: &mut PlaneFragmentAttention<EA, ES>,
     bias: &Tile,
     scale: EA,
+    #[comptime] unbiased: bool,
 ) {
     let total = walk.total();
     // LAB: `CUBEK_LAB_INSIDE` fills every step but the walk's last unchecked.
@@ -363,7 +366,7 @@ fn lab_split_walk<EA: Float, ES: Float>(
         }
         keys.consume(0usize, |key| {
             for plane in stage.planes() {
-                planes.lab_score(&plane, key, bias, scale);
+                planes.lab_score(&plane, key, bias, scale, unbiased);
             }
         });
         if index + 1 < total {
@@ -376,7 +379,7 @@ fn lab_split_walk<EA: Float, ES: Float>(
         // LAB: `CUBEK_LAB_EARLY_K` takes the softmax after the next keys are issued.
         if comptime!(std::env::var("CUBEK_LAB_EARLY_K").is_ok()) {
             for plane in stage.planes() {
-                planes.lab_softmax(&plane, bias, scale);
+                planes.lab_softmax(&plane, bias, scale, unbiased);
             }
         }
         values.consume(0usize, |value| {

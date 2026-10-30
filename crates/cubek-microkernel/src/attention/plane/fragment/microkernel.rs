@@ -128,7 +128,14 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
 
     /// LAB: the first half of [`step`](Self::step): `keys` scored into the score's fragments, taken
     /// into the softmax, and the sum rescaled.
-    pub fn lab_score(&mut self, plane: &Region, keys: &Tile, visible: &Tile, scale: EA) {
+    pub fn lab_score(
+        &mut self,
+        plane: &Region,
+        keys: &Tile,
+        visible: &Tile,
+        scale: EA,
+        #[comptime] unbiased: bool,
+    ) {
         let wide = ComptimeOption::<Tile>::new_None();
         let mut sum = self.sum.at(plane);
         let mut logits = self.score.at(plane).scores();
@@ -144,18 +151,29 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
             comptime!(MatmulOperands::all(MatmulRead::AsBound)),
         );
         if comptime!(std::env::var("CUBEK_LAB_EARLY_K").is_err()) {
-            self.lab_softmax(plane, visible, scale);
+            self.lab_softmax(plane, visible, scale, unbiased);
         }
         let _ = &mut sum;
     }
 
     /// LAB: the score's fragments taken into the softmax and the sum rescaled, apart from the
     /// contraction that wrote them, so the next keys can be issued in between.
-    pub fn lab_softmax(&mut self, plane: &Region, visible: &Tile, scale: EA) {
+    pub fn lab_softmax(
+        &mut self,
+        plane: &Region,
+        visible: &Tile,
+        scale: EA,
+        #[comptime] unbiased: bool,
+    ) {
         if comptime!(std::env::var("CUBEK_LAB_NO_SOFTMAX").is_err()) {
             let mut sum = self.sum.at(plane);
             let logits = self.score.at(plane).scores();
-            let correction = self.softmax.step(&logits, &visible.at(plane), scale);
+            // LAB: `CUBEK_LAB_FUSED` takes a block no bias touches FlashInfer's way.
+            let correction = if comptime!(unbiased && std::env::var("CUBEK_LAB_FUSED").is_ok()) {
+                self.softmax.lab_step_unbiased(&logits, scale)
+            } else {
+                self.softmax.step(&logits, &visible.at(plane), scale)
+            };
             sum.along(DV).mul(&correction);
         }
     }
