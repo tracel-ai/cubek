@@ -341,7 +341,6 @@ version = "0.4.0-pre.1"
 dependencies = [
  "cubecl",
  "cubek",
- "cubek-attention",
  "cubek-attention-backward",
  "cubek-convolution",
  "cubek-fft",
@@ -1403,7 +1402,6 @@ dependencies = [
  "bytemuck",
  "cubecl",
  "cubecl-common",
- "cubek-attention",
  "cubek-matmul",
  "cubek-microkernel",
  "cubek-std",
