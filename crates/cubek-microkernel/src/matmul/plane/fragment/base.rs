@@ -296,13 +296,25 @@ impl PlaneFragmentMicrokernel {
             }
             _ => Vec::new(),
         };
+        // Along `K`, what one read of each packed input's scales covers: the tile DSL cuts a step's
+        // window of them on whole reads.
+        let scale_reads: Vec<usize> = MatmulOperand::INPUTS
+            .into_iter()
+            .filter(|&input| space.packings.get(input).is_some())
+            .filter_map(|input| space.operand(input).scale_read_space())
+            .map(|read| read.extent(K))
+            .collect();
         offered
             .into_iter()
-            // A step of the instruction is whole blocks, whose scales it reads as a word where the
-            // word is a step, or one a block beside the values otherwise.
+            // A step of the instruction is whole reads of each input's scales, so whole blocks too,
+            // or its window of them would start or end inside a read. MXFP4's step of 64 covers
+            // half a read of four scales of thirty-two, which leaves it to the planes that decode
+            // as they load.
             .filter(|instruction| {
                 let [_, _, (_, k)] = instruction.shape();
-                committed && block.is_some_and(|block| k.is_multiple_of(block))
+                committed
+                    && block.is_some()
+                    && scale_reads.iter().all(|&read| k.is_multiple_of(read))
             })
             .map(|instruction| Self {
                 instruction,

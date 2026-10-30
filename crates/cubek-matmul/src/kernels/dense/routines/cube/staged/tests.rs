@@ -1436,11 +1436,13 @@ mod base {
         assert!(estimate.work.is_some());
     }
 
-    /// On a GPU with every block-scaled instruction `sm_120` has, each format's product read as
-    /// stored prepares on that format's instruction: NVFP4's scales handed over a word a step, as
-    /// the instruction takes them, MXFP4's of thirty-two and MXFP8's, whose word of four `ue8m0`
-    /// scales is more than one step, read one a block beside the values. The block-scaled list
-    /// prepares each format, the default box among it.
+    /// On a GPU with every block-scaled instruction `sm_120` has, a format's product read as
+    /// stored prepares on that format's instruction where a step covers whole reads of its
+    /// scales: NVFP4's, its scales handed over a word a step, as the instruction takes them. A
+    /// step of MXFP4 (64) or MXFP8 (32) covers part of a read of four scales of thirty-two, a
+    /// window the tile DSL cuts only on whole reads, so the block-scaled list prepares neither:
+    /// on an RTX PRO 6000 every MXFP4 launch failed to expand and left its output unwritten.
+    /// Both run on the planes that decode as they load instead.
     #[test]
     fn each_format_read_as_stored_prepares_on_its_instruction() {
         use cubecl::tile::BlockScaledOperands;
@@ -1461,9 +1463,9 @@ mod base {
             )
         };
         let formats = [
-            ((NVFP4_FORM, 64), BlockScales::Words),
-            (ue8m0(FloatKind::E2M1x2, 64), BlockScales::Fields),
-            (ue8m0(FloatKind::E4M3, 32), BlockScales::Fields),
+            ((NVFP4_FORM, 64), Some(BlockScales::Words)),
+            (ue8m0(FloatKind::E2M1x2, 64), None),
+            (ue8m0(FloatKind::E4M3, 32), None),
         ];
         let settings = CubeStagedMatmulRoutine.block_scaled_settings(&hw);
         for ((form, k), scales) in formats {
@@ -1480,6 +1482,10 @@ mod base {
                 .iter()
                 .filter_map(|setting| CubeStagedMatmulRoutine.prepare(&hw, &problem, setting).ok())
                 .collect();
+            let Some(scales) = scales else {
+                assert!(prepared.is_empty(), "{form:?}");
+                continue;
+            };
             assert!(!prepared.is_empty(), "{form:?}");
             for (blueprint, _) in prepared {
                 let instruction = blueprint.microkernel.plane.instruction;

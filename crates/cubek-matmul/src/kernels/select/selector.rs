@@ -168,9 +168,11 @@ fn packed_plan(
 
 /// Whether the block-scaled tensor cores serve this product, on a GPU whose block-scaled
 /// instruction takes it: both inputs packed with their words along `k` under block scales along
-/// `k` ([`block_scaled_for`]), one block for both, a step of the instruction whole blocks, and `k`
-/// whole words of each input's scales. A per-tensor scale above the blocks, or none, is the
-/// product's to apply.
+/// `k` ([`block_scaled_for`]), one block for both, a step of the instruction whole words of each
+/// input's scales, and `k` whole words of them too. A step that cuts a word of scales is a window
+/// the tile DSL refuses to read, which leaves MXFP4's step of 64 and MXFP8's of 32, under words
+/// of four scales of thirty-two, to the planes that decode as they load. A per-tensor scale above
+/// the blocks, or none, is the product's to apply.
 fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bool {
     let input = |input: MatmulOperand| match problem.operands.get(input) {
         OperandKind::Quantized(scheme) if Operand::axis_of(&scheme, input.axes()) == Some(K) => {
@@ -187,8 +189,10 @@ fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bo
     };
     problem.k.is_multiple_of(lhs_word)
         && problem.k.is_multiple_of(rhs_word)
-        && block_scaled_for(hw, (&lhs, lhs_block), (&rhs, rhs_block))
-            .any(|instruction| (instruction.shape.k as usize).is_multiple_of(lhs_block))
+        && block_scaled_for(hw, (&lhs, lhs_block), (&rhs, rhs_block)).any(|instruction| {
+            let step = instruction.shape.k as usize;
+            step.is_multiple_of(lhs_word) && step.is_multiple_of(rhs_word)
+        })
 }
 
 /// `BlockScaledTensorCores` named for a product it does not serve.

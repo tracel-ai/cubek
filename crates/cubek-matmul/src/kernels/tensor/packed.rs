@@ -615,20 +615,27 @@ impl PackedTensor {
         tile
     }
 
-    /// `words` under `block_scales`, words of block scales read whole and so bound plain, under
-    /// `global`, the per-tensor scale packed as the scheme's field for it: what
-    /// [`quantized_arg`] binds, but for the block scales' level.
+    /// `words` under `block_scales`, words of block scales read whole, each word the scheme's
+    /// block-scale field four or more times, under `global`, the per-tensor scale packed as the
+    /// scheme's field for it: what [`quantized_arg`] binds, but for the block scales' level. The
+    /// words state their field: the block-scaled instruction reads an `e4m3` scale and a `ue8m0`
+    /// one as different types, and a word that states none is read as one scale.
     fn under_scale_words(
         &self,
         words: Arg<'_, Labelled>,
         block_scales: Arg<'_, Labelled>,
         global: Option<Arg<'_, Labelled>>,
     ) -> Result<TileArgLaunch, Refusal> {
-        let mut tile = words
-            .packed(self.scheme.value)
-            .build()?
-            .arg()
-            .scales(block_scales.build()?.arg());
+        let block = self
+            .scheme
+            .block_scale()
+            .expect("block scales bound as words are a block-scaled scheme's");
+        let mut tile = words.packed(self.scheme.value).build()?.arg().scales(
+            block_scales
+                .words(Field::of_scale(block.dtype))
+                .build()?
+                .arg(),
+        );
         if let (Some(global), Some(field)) = (global, self.scheme.tensor_scale()) {
             tile = tile.scales(global.packed(Field::of_scale(field)).build()?.arg());
         }
