@@ -11,6 +11,7 @@ use crate::split_keys_merge::plane::{
 };
 use crate::split_keys_merge::{SlotBox, SlotShape};
 use cubecl::tile::layout::PageEntry;
+use cubecl::tile::stage::{OperandPair, Role};
 use cubecl::tile::{Region, StageStorage, Stages, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -201,32 +202,105 @@ fn staged_walk<EA: Float, ES: Float>(
     // scores nothing; the rest take the visibility's. Two walks of the one ring, so neither
     // step carries the other's bias.
     let prefetch = comptime!(microkernel.ring.prefetch);
-    #[comptime]
-    match unmasked {
-        ComptimeOption::Some(unmasked) => {
-            stages.walk(unmasked, prefetch, |slot, stage| {
-                slot.consume(|key, value| {
-                    for plane in stage {
-                        planes.step(&plane, key, value, &bias.unmasked, scale);
+    // LAB: planes set aside fill both walks' stages while the rest consume them.
+    if comptime!(std::env::var("CUBEK_LAB_FILLERS").is_ok()) {
+        let depth = comptime!(microkernel.ring.stages_in_flight.get());
+        match stages.role() {
+            Role::Fill => {
+                #[comptime]
+                match &unmasked {
+                    ComptimeOption::Some(unmasked) => {
+                        lab_fill_walk(&mut stages, unmasked, depth);
                     }
-                });
-            });
-        }
-        ComptimeOption::None => {}
-    }
-    stages.walk(walk, prefetch, |slot, stage| {
-        slot.consume(|key, value| {
-            for plane in stage {
-                planes.step(&plane, key, value, &bias.masked, scale);
+                    ComptimeOption::None => {}
+                }
+                lab_fill_walk(&mut stages, &walk, depth);
             }
+            Role::Compute => {
+                #[comptime]
+                match &unmasked {
+                    ComptimeOption::Some(unmasked) => {
+                        let total = unmasked.total();
+                        let laps = (total + comptime!(depth - 1)) / comptime!(depth);
+                        for lap in 0..laps {
+                            #[unroll]
+                            for slot in 0..depth {
+                                let index = lap * comptime!(depth) + slot;
+                                if index < total {
+                                    let stage = unmasked.region(index);
+                                    stages.consume(slot, |key, value| {
+                                        for plane in stage.planes() {
+                                            planes.step(&plane, key, value, &bias.unmasked, scale);
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    ComptimeOption::None => {}
+                }
+                let total = walk.total();
+                let laps = (total + comptime!(depth - 1)) / comptime!(depth);
+                for lap in 0..laps {
+                    #[unroll]
+                    for slot in 0..depth {
+                        let index = lap * comptime!(depth) + slot;
+                        if index < total {
+                            let stage = walk.region(index);
+                            stages.consume(slot, |key, value| {
+                                for plane in stage.planes() {
+                                    planes.step(&plane, key, value, &bias.masked, scale);
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        #[comptime]
+        match unmasked {
+            ComptimeOption::Some(unmasked) => {
+                stages.walk(unmasked, prefetch, |slot, stage| {
+                    slot.consume(|key, value| {
+                        for plane in stage {
+                            planes.step(&plane, key, value, &bias.unmasked, scale);
+                        }
+                    });
+                });
+            }
+            ComptimeOption::None => {}
+        }
+        stages.walk(walk, prefetch, |slot, stage| {
+            slot.consume(|key, value| {
+                for plane in stage {
+                    planes.step(&plane, key, value, &bias.masked, scale);
+                }
+            });
         });
-    });
+    }
     // Nothing reads a stage once the walk is over: what the cube declares after it takes their
     // bytes, once every unit is past its last read
     // ([`walk_then_shared_memory`](CubeAttentionMicrokernel::walk_then_shared_memory)).
     stages.free();
     sync_cube();
     planes
+}
+
+/// LAB: every stage of `walk` filled in ring order, `depth` slots a lap.
+#[cube]
+fn lab_fill_walk(stages: &mut Stages<OperandPair>, walk: &Walk, #[comptime] depth: usize) {
+    let total = walk.total();
+    let laps = (total + comptime!(depth - 1)) / comptime!(depth);
+    for lap in 0..laps {
+        #[unroll]
+        for slot in 0..depth {
+            let index = lap * comptime!(depth) + slot;
+            if index < total {
+                stages.fill(slot, &walk.region(index));
+            }
+        }
+    }
 }
 
 /// One cube's box, its planes reading their keys and values where they lie

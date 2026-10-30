@@ -80,7 +80,16 @@ impl AttentionPartitioning {
             Some(steps) => step.walk(&[(S, steps.get())]),
             None => step,
         };
+        // LAB: `CUBEK_LAB_FILLERS=n` sets `n` planes aside to fill the stages.
+        let lab_fillers = std::env::var("CUBEK_LAB_FILLERS")
+            .ok()
+            .and_then(|n| n.parse::<usize>().ok())
+            .unwrap_or(0);
         let cubes = match cubes_along_keys.get() {
+            1 if lab_fillers > 0 => walked
+                .walk_every(&[S])
+                .filled_by(lab_fillers)
+                .cubes(&[Q, G]),
             1 => walked.walk_every(&[S]).cubes(&[Q, G]),
             cubes => walked.cubes(&[Q, G, S]).across(S, cubes).interleaved(S),
         };
@@ -124,8 +133,16 @@ impl AttentionPartitioning {
     /// [`Levels::shared_by`]): every cube walks as many steps as any other, however the boxes
     /// divide them.
     pub fn shared(space: Space, step: Levels, cubes: NonZeroUsize) -> Self {
-        let levels = step
-            .walk_every(&[S])
+        // LAB: `CUBEK_LAB_FILLERS=n` sets `n` planes aside to fill the stages.
+        let walked = step.walk_every(&[S]);
+        let walked = match std::env::var("CUBEK_LAB_FILLERS")
+            .ok()
+            .and_then(|n| n.parse::<usize>().ok())
+        {
+            Some(fillers) if fillers > 0 => walked.filled_by(fillers),
+            _ => walked,
+        };
+        let levels = walked
             .cubes(&[Q, G])
             .shared_by(cubes.get())
             .batches(&[B, KV])
