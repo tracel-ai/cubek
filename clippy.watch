@@ -1,0 +1,2 @@
+09:02:40 start (load 4.45, free 64%, jobs 3, cpu): --release -p cubek-matmul -p cubek-microkernel --all-targets --features cubek-matmul/tiled
+09:02:44 start (load 4.26, free 64%, jobs 3, cpu): --release -p cubek-matmul -p cubek-microkernel --all-targets
