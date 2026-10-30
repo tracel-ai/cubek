@@ -174,16 +174,19 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
         let candidates: Vec<_> = CubeKeyGradientMicrokernel::candidates(hw, item, &settings.cube)
             .filter_map(|cube| {
                 let plane = cube.plane;
-                let [_, (_, n), (_, k)] = plane.score.instruction.shape();
+                // The query's gradient runs on the score's instruction over the plane's own box:
+                // its rows a stage's queries, its contraction the plane's keys, each in the
+                // instruction's own steps, which a manual `mma`'s `m` and `n` make differ.
+                let [(_, m), (_, n), (_, k)] = plane.score.instruction.shape();
+                let query_rows = PlaneKeyGradientMicrokernel::steps(plane.seq_q(), m)?;
                 let head_columns = PlaneKeyGradientMicrokernel::steps(head, n)?;
-                let key_steps =
-                    PlaneKeyGradientMicrokernel::steps(plane.settings.seq_kv.get() * n, k)?;
+                let key_steps = PlaneKeyGradientMicrokernel::steps(plane.seq_kv(), k)?;
                 Some(Self {
                     cube,
                     query_gradient: PlaneKeyGradientMicrokernel::beside(
                         plane.score,
                         &query_item,
-                        (plane.settings.seq_q, head_columns, key_steps),
+                        (query_rows, head_columns, key_steps),
                     ),
                     settings: hypercube,
                 })

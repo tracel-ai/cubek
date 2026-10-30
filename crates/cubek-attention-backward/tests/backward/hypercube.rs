@@ -123,3 +123,27 @@ fn every_hypercube_setting_matches_the_reference_in_f16() {
         );
     }
 }
+
+/// Every setting in `f16` on queries and keys that span several stages and several boxes, none
+/// cut evenly: each cube's share of the query's gradient covers a whole stage of queries, which a
+/// case shorter than one stage never shows.
+#[test]
+fn every_hypercube_setting_matches_the_reference_over_several_stages_in_f16() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let case = Case {
+        heads: 4,
+        seq_q: 70,
+        seq_kv: 75,
+        val_dim: 16,
+        ..CASE
+    };
+    for settings in HypercubeAttentionBackwardRoutine.settings(&hw) {
+        Reference::run(
+            HypercubeAttentionBackwardRoutine,
+            case,
+            half::f16::elem_type_native(),
+            3e-2,
+            Some(settings),
+        );
+    }
+}
