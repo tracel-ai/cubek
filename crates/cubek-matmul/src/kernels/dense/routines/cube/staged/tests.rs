@@ -2,41 +2,35 @@
 
 mod base {
     use super::super::*;
-    use crate::kernels::CUBE_STRIPS;
-    use crate::kernels::MatmulPartitioning;
-    use crate::kernels::{MATMUL_PACKED_WALK_PAST_K, MatmulRoutineProblem, MatmulView};
+    use crate::kernels::{
+        CUBE_STRIPS, MATMUL_PACKED_WALK_PAST_K, MatmulPartitioning, MatmulRoutineProblem,
+        MatmulView,
+    };
     use core::num::NonZeroUsize;
-    use cubecl::features::MmaConfig;
-    use cubecl::features::{WgmmaConfig, WgmmaElems};
+    use cubecl::features::{MmaConfig, WgmmaConfig, WgmmaElems};
     use cubecl::ir::{ElemType, FloatKind};
-    use cubecl::tile::Scratch;
-    use cubecl::tile::StageStorage;
-    use cubecl::tile::launch::Refusal;
+    use cubecl::tile::launch::{Delivery, Refusal};
     use cubecl::tile::layout::ElemAlignment;
-    use cubecl::tile::{launch::Delivery, space::CubeOrder, stage::RowChunks};
-    use cubek_microkernel::matmul::MatmulOperand;
-    use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
+    use cubecl::tile::space::CubeOrder;
+    use cubecl::tile::stage::RowChunks;
+    use cubecl::tile::{Scratch, StageStorage};
     use cubek_microkernel::matmul::cube::{
-        CubeStagedDelivery, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedStore,
+        CubeStagedDelivery, CubeStagedFill, CubeStagedFillingRefusal, CubeStagedMicrokernel,
+        CubeStagedMicrokernelSettings, CubeStagedStore, CubeStagedTmaRefusal, MatmulPlaneLayout,
     };
-    use cubek_microkernel::matmul::cube::{
-        CubeStagedFill, CubeStagedFillingRefusal, CubeStagedTmaRefusal,
-    };
-    use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
-    use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
     use cubek_microkernel::matmul::plane::{
-        PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentStepSum,
+        PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
+        PlaneFragmentStepSum, PlaneFragmentTransport,
     };
-    use cubek_microkernel::matmul::{MatmulDestination, MatmulOperands, MatmulStoredTile};
-    use cubek_std::Hardware;
-    use cubek_std::devices;
-    use cubek_std::layout::BindingOrder;
+    use cubek_microkernel::matmul::{
+        MatmulDestination, MatmulOperand, MatmulOperands, MatmulStoredTile,
+    };
     use cubek_std::layout::stored::{Operand, Packing};
-    use cubek_std::layout::tile_order;
+    use cubek_std::layout::{BindingOrder, tile_order};
     use cubek_std::matmul_axes::{K, M, N};
-    use cubek_std::microkernel::Microkernel;
-    use cubek_std::microkernel::{StageLayout, StageRing};
+    use cubek_std::microkernel::{Microkernel, StageLayout, StageRing};
     use cubek_std::routine::Routine;
+    use cubek_std::{Hardware, devices};
 
     /// Why `hw` cannot deliver `problem`'s stages under `partitioning` by the TMA engine.
     fn tma_refusal(
@@ -1302,7 +1296,6 @@ mod base {
                 .expect("the default's box prepares")
                 .0
         };
-
         let hw = offering(devices::strix_halo());
         let blueprint = prepared(&hw, &problem(), &in_order);
         assert!(matches!(
@@ -1411,8 +1404,7 @@ mod base {
     fn an_nvfp4_product_read_as_stored_is_estimated() {
         use crate::kernels::select::packed::nvfp4_scheme;
         use cubek_microkernel::matmul::cube::CubeStagedDepth;
-        use cubek_std::layout::stored::Operand;
-        use cubek_std::layout::stored::Packing;
+        use cubek_std::layout::stored::{Operand, Packing};
         use cubek_std::layout::tile_order;
         use cubek_std::microkernel::KernelEstimate;
 
@@ -1504,8 +1496,7 @@ mod base {
     #[test]
     fn a_decoded_input_is_estimated_in_stages_of_its_blocks() {
         use cubek_microkernel::matmul::cube::CubeStagedDepth;
-        use cubek_std::layout::stored::Operand;
-        use cubek_std::layout::stored::Packing;
+        use cubek_std::layout::stored::{Operand, Packing};
         use cubek_std::layout::tile_order;
         use cubek_std::matmul_axes::KI;
         use cubek_std::microkernel::KernelEstimate;
@@ -1605,7 +1596,6 @@ mod base {
                     settings.microkernel == CubeStagedMicrokernelSettings::PACKED_FLOAT_ON_ENGINE
                 })
         };
-
         let hw = devices::offering_mma(devices::h100(), [mma]);
         let settings = on_engine(&hw).expect("a device with a copy engine lists the setting");
         let (blueprint, _) = CubeStagedMatmulRoutine
@@ -1634,8 +1624,7 @@ mod base {
     #[test]
     fn a_packed_input_prepares_no_walk_past_k() {
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-        use cubek_std::layout::stored::Operand;
-        use cubek_std::layout::stored::Packing;
+        use cubek_std::layout::stored::{Operand, Packing};
         use cubek_std::matmul_axes::{KB, KI};
 
         let f16 = ElemType::Float(FloatKind::F16);

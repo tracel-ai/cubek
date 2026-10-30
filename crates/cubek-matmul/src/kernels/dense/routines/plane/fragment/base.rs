@@ -1,25 +1,21 @@
 use super::kernel::plane_fragment_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
-use crate::kernels::{CUBE_STRIPS, cube_order_name};
-use cubecl::tile::launch::Refusal;
-use cubek_microkernel::matmul::{MatmulAxes, MatmulDestination, MatmulOperand, MatmulOperands};
-use cubek_std::Hardware;
-
 use crate::kernels::{
-    MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    CUBE_STRIPS, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
+    MatmulRoutineProblem, MatmulTensors, MatmulView, cube_order_name,
 };
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{DestinationLaunch, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
-use cubek_microkernel::matmul::MatmulStagingCount;
+use cubecl::tile::{Scratch, StageStorage, TileArgLaunch};
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
+use cubek_microkernel::matmul::{
+    MatmulAxes, MatmulDestination, MatmulOperand, MatmulOperands, MatmulStagingCount,
+};
+use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
-use cubek_std::microkernel::StageRing;
-use cubek_std::microkernel::{KernelEstimate, Microkernel};
+use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// `out = lhs · rhs` with every plane owning a tile of the output from loading to writing: it

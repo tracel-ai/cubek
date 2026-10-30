@@ -1,8 +1,7 @@
-use cubecl::client::Client;
-use serde::{Deserialize, Serialize};
-
 use crate::kernels::indexed::m_grouped::{GroupedRows, PaddedRows, RouteSort};
 use crate::kernels::tensor::PlainTensor;
+use cubecl::client::Client;
+use serde::{Deserialize, Serialize};
 
 /// Where a grouped product's rows come from: what its launch pads into tiles a cube high before
 /// the product reads them, each source in the pass it makes anyway.

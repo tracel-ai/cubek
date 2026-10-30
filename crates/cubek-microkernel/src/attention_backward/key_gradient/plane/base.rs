@@ -33,7 +33,8 @@ pub struct PlaneKeyGradientMicrokernel {
     /// The fragments of the gradient against the probabilities: the score's grid, walking the
     /// whole value dim.
     pub score_gradient: PlaneFragmentMicrokernel,
-    /// The values' gradient's fragments: its keys by the whole value dim, walking a stage's queries.
+    /// The values' gradient's fragments: its keys by the whole value dim, walking a stage's
+    /// queries.
     pub value_gradient: PlaneFragmentMicrokernel,
     /// The keys' gradient's fragments: its keys by the whole head dim, walking a stage's queries.
     pub key_gradient: PlaneFragmentMicrokernel,

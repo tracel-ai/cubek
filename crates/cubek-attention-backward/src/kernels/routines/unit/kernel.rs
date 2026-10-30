@@ -40,13 +40,10 @@ pub fn unit_query_gradient_kernel<EA: Float>(
     let d_q = query_gradient.tile(&partitioning);
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.bias::<EA>(&partitioning);
+
     for unit in &partitioning {
-        let steps = visible.steps(
-            &unit,
-            comptime!(microkernel.seq_q()),
-            comptime!(microkernel.seq_kv()),
-            1usize,
-        );
+        let steps = visible.steps(&unit, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
+
         unit_query_gradient_microkernel::<EA>(
             &unit,
             &d_q.at(&unit),
@@ -99,8 +96,9 @@ pub fn unit_key_gradient_kernel<EA: Float>(
     );
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
+
     for unit in &partitioning {
-        let first_step = visible.first_query_step(&unit, comptime!(microkernel.seq_q()));
+        let first_step = visible.first_query_step(&unit, microkernel.seq_q());
         unit_key_gradient_microkernel::<EA>(
             &unit,
             &d_k.at(&unit),

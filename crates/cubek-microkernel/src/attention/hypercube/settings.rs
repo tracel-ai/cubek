@@ -61,8 +61,8 @@ impl HypercubeAttentionMicrokernelSettings {
     }
 
     /// Every one of two, four and eight rows a plane, eight and sixteen units on a key and two and
-    /// four keys in flight, a plane a cube; then four planes along a cube's run of the keys over the
-    /// same units and keys at two rows, four and eight planes at four rows, and four planes at
+    /// four keys in flight, a plane a cube; then four planes along a cube's run of the keys over
+    /// the same units and keys at two rows, four and eight planes at four rows, and four planes at
     /// eight rows.
     ///
     /// A decode step's rows are its head group: two, four or eight query heads to a key head. A

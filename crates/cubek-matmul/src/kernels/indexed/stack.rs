@@ -1,6 +1,7 @@
 //! A stacked rhs: slabs laid end to end along one axis of a product, as the routed and grouped
 //! products read it.
 
+use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use cubecl::client::Client;
 use cubecl::tile::Axis;
 use cubecl::tile::launch::Refusal;
@@ -8,8 +9,6 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulLayout;
 use cubek_std::matmul_axes::{K, N};
 use serde::{Deserialize, Serialize};
-
-use crate::kernels::tensor::{PlainTensor, StoredTensor};
 
 /// The axis of a product along which the slabs of its stacked rhs lie end
 /// to end.

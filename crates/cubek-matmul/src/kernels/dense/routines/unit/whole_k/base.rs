@@ -1,27 +1,23 @@
 use super::kernel::unit_whole_k_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
-    MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
+    MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::TileArgLaunch;
-use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubek_microkernel::matmul::MatmulStagingCount;
 use cubek_microkernel::matmul::unit::{UnitWholeKMicrokernel, UnitWholeKMicrokernelSettings};
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStagingCount};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
-/// `out = lhs · rhs` with every unit owning every row of a run of the output's columns, walking
-/// all of `K` alone. The routine that does not stage on a device that commits to no plane width: a plane's units share
-/// nothing, so any width is correct.
+/// `out = lhs · rhs` with every unit owning every row of a run of the output's columns, walking all
+/// of `K` alone. The routine that does not stage on a device that commits to no plane width: a
+/// plane's units share nothing, so any width is correct.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UnitWholeKMatmulRoutine;
 
@@ -73,8 +69,9 @@ impl Routine for UnitWholeKMatmulRoutine {
     type Partitioning = MatmulPartitioning;
 
     /// Empty where the device commits to a plane width, since the shuffles serve it. Otherwise a
-    /// star off the default, which leads: [`launch_first_served_on`](MatmulRoutine::launch_first_served_on)
-    /// runs the first setting that serves.
+    /// star off the default, which leads:
+    /// [`launch_first_served_on`](MatmulRoutine::launch_first_served_on) runs the first setting
+    /// that serves.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         if hw.plane_size().is_ok() {
             return Vec::new();

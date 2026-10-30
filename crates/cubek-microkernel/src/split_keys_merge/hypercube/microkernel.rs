@@ -22,20 +22,25 @@ pub fn hypercube_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
     arrivals: &[Atomic<u32>],
     #[comptime] merge: HypercubeMergeShape,
 ) {
-    let box_queries = comptime!(merge.seq_q);
+    let box_queries = merge.seq_q;
     let counter = slot_box.head_index * slot_max.shape(3).div_ceil(box_queries)
         + slot_box.first_query / box_queries;
+
     // The partial lands at device scope before the cube counts itself in.
     sync_storage();
+
     let mut arrived = Shared::<[u32]>::new_slice(1usize);
     if UNIT_POS == 0 {
         arrived[0] = arrivals[counter].fetch_add(1u32);
     }
+
     sync_cube();
+
     // Uniform across the cube: only the box's last cube merges.
-    if arrived[0] as usize + 1 == comptime!(merge.cubes) {
+    if arrived[0] as usize + 1 == merge.cubes {
         // What every other cube of the box stored is acquired before it is read.
         sync_storage();
+
         plane_split_keys_merge_microkernel::<EA, E, N>(
             slot_out,
             slot_max,
@@ -46,6 +51,7 @@ pub fn hypercube_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
             merge.slots,
             merge.seq_q,
         );
+
         if UNIT_POS == 0 {
             arrivals[counter].store(0u32);
         }

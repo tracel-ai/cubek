@@ -21,8 +21,7 @@ use cubek_microkernel::attention_backward::key_gradient::hypercube::{
     HypercubeKeyGradientMicrokernel, HypercubeKeyGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
-use cubek_std::microkernel::StageRing;
+use cubek_std::microkernel::{Microkernel, StageRing};
 use cubek_std::routine::{CubeResources, Grid};
 
 /// What the hypercube routine declines on a device that cannot add `f32` atomically: the query's
@@ -116,6 +115,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
         {
             return Err(ATTENTION_BACKWARD_NO_ATOMIC_ADD);
         }
+
         let item = problem.work_item();
         let delta = PlaneDeltaMicrokernel::best(hw, &item, &settings.delta)?;
         let key_gradient =
@@ -149,6 +149,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             filling_planes: key_gradient.plane_count(),
             copies: 1,
             window_bytes: key_gradient.window_bytes(&item),
+            body_bytes: key_gradient.share_bytes(&item),
         }
         .grid(hw, &key_partitioning)?;
         let mut queries =
@@ -160,6 +161,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             AttentionBackwardOperand::QueryGradient => width.min(sum_ceiling),
             _ => width,
         });
+
         Ok(AttentionBackwardBlueprint {
             query_walk: queries,
             key_walk: AttentionBackwardWalk::new(
@@ -187,6 +189,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             problem.seq_q,
             problem.head_dim,
         ];
+
         // Every cube adds into it, so it starts at zero.
         let sum = PlainTensor::of_handle(TensorHandle::zeros(
             client,
@@ -196,6 +199,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
         let walk = &blueprint.query_walk;
         let binding = tensors.bind(walk);
         let operands = binding.operands;
+
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles. Each plane writes only its own queries' dot products.
@@ -211,6 +215,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
                 AttentionBackwardProblem::SUM,
             );
         }
+
         let elements = [AttentionBackwardProblem::SUM, problem.element];
         let key_walk = blueprint.key_walk;
         let key_binding = tensors.bind(&key_walk);
@@ -221,6 +226,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             AttentionBackwardOperand::QueryGradient,
         );
         let key_operands = key_binding.operands;
+
         // SAFETY: as the first walk's; each plane writes only its own keys' and values' gradients,
         // and only adds into the query's gradient's sum, atomically. It reads the dot products the
         // first walk wrote, which the launches' order sees done.
@@ -248,6 +254,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
                 elements,
             );
         }
+
         let cast_binding = tensors.bind(walk);
         let sum = tensors.bind_beside(
             &cast_binding,
@@ -255,6 +262,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             &sum,
             AttentionBackwardOperand::QueryGradient,
         );
+
         // SAFETY: as the first walk's; each plane writes only its own queries' gradient, out of the
         // sum the key walk finished adding into, which the launches' order sees done.
         unsafe {
