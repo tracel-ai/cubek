@@ -10,7 +10,7 @@
 
 use cubecl::tile::{
     Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, kind::Field, launch::Grid,
-    layout::StorageMisfit,
+    launch::Refusal,
 };
 use cubecl::{
     client::Client,
@@ -149,7 +149,7 @@ impl StoredLayout {
                 false => (axis, extent),
             })
             .collect();
-        let misfit = |misfit: StorageMisfit| refused(misfit.to_string());
+        let misfit = |misfit: Refusal| refused(misfit.to_string());
         let in_values = storage.physical(&values).map_err(misfit)?;
         let in_words = words_storage.physical(&word_extents).map_err(misfit)?;
         let batch_dims: Vec<usize> = shape[..batches].to_vec();

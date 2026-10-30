@@ -13,7 +13,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Arg, Labelled, Refusal, TmaCoordinates, TmaTerm};
 use cubecl::tile::{
     Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, TileSpec, launch::Bound,
-    launch::TmaBox, launch::TmaOperand, launch::Unbound,
+    launch::TmaBox, launch::Unbound,
 };
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::{Shape, Strides};
@@ -750,7 +750,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// On tensors read for every row whole, and on a sink, which no descriptor addresses: the
     /// store that chose the engine refused both.
-    pub fn tma_output(&self, stage: &MatmulStage) -> TmaOperand {
+    pub fn tma_output(&self, stage: &MatmulStage) -> TileArgLaunch {
         self.assert_tiled();
         let out = self
             .out
@@ -764,16 +764,16 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             out.elem,
             TensorMapSwizzle::None,
         );
-        TmaOperand {
+        TileArgLaunch::tensor_map(
             map,
-            axes: vec![M, N],
-            shape: TmaBox {
+            &[M, N],
+            TmaBox {
                 rows: self.rows() as u32,
                 cols: self.problem().n as u32,
                 batch: None,
                 transposed,
             },
-        }
+        )
     }
 }
 

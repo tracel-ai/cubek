@@ -784,7 +784,7 @@ impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedMatmulRout
                     out_width,
                     lhs,
                     rhs,
-                    tensors.tma_output(&stage).arg(),
+                    tensors.tma_output(&stage),
                     binding.launcher.partitioning_arg(),
                     blueprint.microkernel.walk(),
                     blueprint.shared_memory,

@@ -1,6 +1,6 @@
 use cubecl::tile::{
     Axis, Partitioning, Space, TileSpec,
-    space::{ComputeScope, Count, Coverage, CubeOrder, PlaneOrder},
+    space::{ComputeScope, Coverage, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::cube::MatmulCubeSpace;
 use cubek_microkernel::matmul::{MatmulAxesKind, MatmulRowsKind, MatmulStage};
@@ -262,16 +262,10 @@ impl MatmulPartitioning {
         );
     }
 
-    /// Tiles along `axis` a level distributes its units in turns ([`Count::Distributed`]), where
-    /// one does.
+    /// Tiles along `axis` a level distributes its units in turns, where one does
+    /// ([`Partitioning::distributed`]).
     pub fn distributed(&self, axis: Axis) -> Option<usize> {
-        self.partitioning
-            .levels()
-            .iter()
-            .find_map(|level| match level.count(axis) {
-                Some(Count::Distributed(tiles)) => Some(tiles),
-                _ => None,
-            })
+        self.partitioning.distributed(axis)
     }
 
     /// The tile DSL's partitioning, for what it reads of it: the launch and the binding.
