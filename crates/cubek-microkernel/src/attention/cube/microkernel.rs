@@ -147,6 +147,13 @@ fn staged_walk<EA: Float, ES: Float>(
     #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] storage: StageStorage,
 ) -> PlaneFragmentAttention<EA, ES> {
+    // LAB: under `CUBEK_LAB_EXP2` the backend's `exp` is `2^x`, so the scores are scaled into
+    // base 2 here; the probabilities, and so the output, are the same.
+    let scale = if comptime!(std::env::var("CUBEK_LAB_EXP2").is_ok()) {
+        scale * EA::new(core::f64::consts::LOG2_E)
+    } else {
+        scale
+    };
     // The query spans no key: staged once for every plane, before the walk, laid out as the
     // stages of keys and values are.
     let mut staged_query = query.stage_for(
@@ -338,19 +345,33 @@ fn lab_split_walk<EA: Float, ES: Float>(
     scale: EA,
 ) {
     let total = walk.total();
+    // LAB: `CUBEK_LAB_INSIDE` fills every step but the walk's last unchecked.
+    let inside = comptime!(std::env::var("CUBEK_LAB_INSIDE").is_ok());
     if total > 0 {
-        keys.fill(0usize, &walk.region(0usize));
+        if comptime!(inside) && total > 1 {
+            keys.fill_inside(0usize, &walk.region(0usize));
+        } else {
+            keys.fill(0usize, &walk.region(0usize));
+        }
     }
     for index in 0..total {
         let stage = walk.region(index);
-        values.fill(0usize, &stage);
+        if comptime!(inside) && index + 1 < total {
+            values.fill_inside(0usize, &stage);
+        } else {
+            values.fill(0usize, &stage);
+        }
         keys.consume(0usize, |key| {
             for plane in stage.planes() {
                 planes.lab_score(&plane, key, bias, scale);
             }
         });
         if index + 1 < total {
-            keys.fill(0usize, &walk.region(index + 1));
+            if comptime!(inside) && index + 2 < total {
+                keys.fill_inside(0usize, &walk.region(index + 1));
+            } else {
+                keys.fill(0usize, &walk.region(index + 1));
+            }
         }
         // LAB: `CUBEK_LAB_EARLY_K` takes the softmax after the next keys are issued.
         if comptime!(std::env::var("CUBEK_LAB_EARLY_K").is_ok()) {
