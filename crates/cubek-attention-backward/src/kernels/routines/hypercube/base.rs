@@ -149,6 +149,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             filling_planes: key_gradient.plane_count(),
             copies: 1,
             window_bytes: key_gradient.window_bytes(&item),
+            body_bytes: key_gradient.share_bytes(&item),
         }
         .grid(hw, &key_partitioning)?;
         let mut queries =

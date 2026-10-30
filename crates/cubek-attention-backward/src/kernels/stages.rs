@@ -7,7 +7,9 @@ use cubek_std::microkernel::{StageRing, StagedOperand};
 use cubek_std::routine::{CubeResources, Grid};
 
 /// The stages one walk holds in shared memory: `stage` held as `ring` says, filled by
-/// `filling_planes` planes, `copies` times a cube, each copy with `window_bytes` beside it.
+/// `filling_planes` planes, `copies` times a cube, each copy with `window_bytes` beside it and
+/// `body_bytes` declared in the walk's body, held once a body the ring expands
+/// ([`StageRing::bodies`]).
 ///
 /// A plane that walks its own stages fills them alone and its cube holds one copy a plane; a cube
 /// that walks them above its planes fills them with all of them and holds one.
@@ -17,6 +19,7 @@ pub(crate) struct WalkStages {
     pub filling_planes: usize,
     pub copies: usize,
     pub window_bytes: usize,
+    pub body_bytes: usize,
 }
 
 impl WalkStages {
@@ -42,7 +45,8 @@ impl WalkStages {
             .sum();
         let cube = CubeResources {
             plane_width,
-            shared_memory: self.copies * (ring.bytes(stage_bytes) + self.window_bytes),
+            shared_memory: self.copies
+                * (ring.bytes(stage_bytes) + self.window_bytes + ring.bodies() * self.body_bytes),
         };
         Ok((Grid::new(hw, partitioning, cube)?, ring))
     }
