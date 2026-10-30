@@ -248,14 +248,17 @@ impl PackedTensor {
             .ok_or(STORED_TILES_UNREAD)
     }
 
-    /// How it lies in tile order ([`TileOrder::of_operand`]).
+    /// How it lies in tile order, as its scheme packs it ([`TileOrder::of`]). Read from the scheme
+    /// and not from its operand: a matrix read in tiles holds the operand
+    /// [`read_in_tiles`](Self::read_in_tiles) restated at the device's load, whose read along `K`
+    /// is a whole load of words, not one word's values.
     ///
     /// # Panics
     ///
     /// On a matrix tile order does not store, which [`read_in_tiles`](Self::read_in_tiles) refuses
     /// before any is laid in tiles.
     pub fn tile_order(&self) -> TileOrder {
-        TileOrder::of_operand(&self.operand).expect("a matrix in tiles is in tile order")
+        TileOrder::of(&self.scheme).expect("a matrix in tiles is in tile order")
     }
 
     /// The slabs it holds where it is read as a stack ([`stacked`](Self::stacked)).
