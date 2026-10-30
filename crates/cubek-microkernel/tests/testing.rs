@@ -107,7 +107,8 @@ mod attention {
     use cubek_std::microkernel::Microkernel;
     use cubek_test_utils::{HostData, HostDataType, TestInput};
 
-    /// `softmax(scale · q · kᵀ) · v` on the CPU, every key attended, all row-major.
+    /// `softmax(scale · q · kᵀ) · v` on the CPU, every key attended, all row-major, and each
+    /// query's `ln Σ exp(scale · q · kᵀ)`.
     fn reference(
         q: &[f32],
         k: &[f32],
@@ -115,8 +116,9 @@ mod attention {
         [queries, keys]: [usize; 2],
         [head, val]: [usize; 2],
         scale: f32,
-    ) -> Vec<f32> {
+    ) -> (Vec<f32>, Vec<f32>) {
         let mut out = vec![0.0; queries * val];
+        let mut logsumexp = vec![0.0; queries];
         for i in 0..queries {
             let scores: Vec<f32> = (0..keys)
                 .map(|j| {
@@ -129,12 +131,13 @@ mod attention {
             let max = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             let weights: Vec<f32> = scores.iter().map(|s| (s - max).exp()).collect();
             let total: f32 = weights.iter().sum();
+            logsumexp[i] = max + total.ln();
             for d in 0..val {
                 out[i * val + d] =
                     (0..keys).map(|j| weights[j] * v[j * val + d]).sum::<f32>() / total;
             }
         }
-        out
+        (out, logsumexp)
     }
 
     fn check(launch: &PlaneFragmentAttentionLaunch) {
@@ -174,6 +177,10 @@ mod attention {
             val,
             launch.item.elements.out,
         );
+        let logsumexp = TestInput::builder(client.clone(), shape![1, 1, 1, queries])
+            .dtype(launch.item.sum)
+            .custom(vec![-1e4; queries])
+            .generate_without_host_data();
         let lengths = TestInput::builder(client.clone(), shape![1])
             .dtype(ElemType::UInt(UIntKind::U32))
             .custom(vec![keys as f32])
@@ -186,13 +193,15 @@ mod attention {
                 per_key_head(k.clone(), keys, head, input).binding(),
                 per_key_head(v.clone(), keys, val, input).binding(),
                 out.clone().binding(),
+                Some(logsumexp.clone().binding()),
                 lengths.binding().into_tensor_arg(),
                 scale,
             )
             .unwrap_or_else(|why| panic!("{:?}: {why:?}", launch.microkernel));
 
         let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
-        let want = reference(&q, &k, &v, launch.seq, [head, val], scale);
+        let got_logsumexp = HostData::from_tensor_handle(&client, logsumexp, HostDataType::F32);
+        let (want, want_logsumexp) = reference(&q, &k, &v, launch.seq, [head, val], scale);
         for i in 0..queries {
             for d in 0..val {
                 let (have, want) = (got.get_f32(&[0, 0, 0, i, d]), want[i * val + d]);
@@ -202,6 +211,12 @@ mod attention {
                     launch.microkernel
                 );
             }
+            let (have, want) = (got_logsumexp.get_f32(&[0, 0, 0, i]), want_logsumexp[i]);
+            assert!(
+                (have - want).abs() <= 2e-2 * want.abs().max(1.0),
+                "{:?} logsumexp at {i}: got {have}, want {want}",
+                launch.microkernel
+            );
         }
     }
 
