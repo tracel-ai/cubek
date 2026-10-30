@@ -182,8 +182,8 @@ impl CubeAttentionPlane {
     /// in slots.
     ///
     /// Fragments drain through a window of every row of the cube's box over the value dim, and two
-    /// of one cell a row, their softmax state's max and sum. A shuffle's rows leave their slots from
-    /// its units' registers, after its planes that split the same rows' keys meet
+    /// of one cell a row, their softmax state's max and sum. A shuffle's rows leave their slots
+    /// from its units' registers, after its planes that split the same rows' keys meet
     /// ([`merge_bytes`](Self::merge_bytes)).
     pub fn partial_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
         let rows = layout.row_groups() * self.seq_q();

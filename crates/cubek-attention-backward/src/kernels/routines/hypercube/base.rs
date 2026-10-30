@@ -3,14 +3,14 @@ use super::kernel::{
 };
 use crate::kernels::{
     AttentionBackwardBlueprint, AttentionBackwardProblem, AttentionBackwardRoutine,
-    AttentionBackwardRoutineBlueprint, AttentionBackwardTensors, AttentionBackwardWalk,
+    AttentionBackwardRoutineBlueprint, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
 };
 use cubecl::features::AtomicUsage;
 use cubecl::ir::Type;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubecl::tile::{Partitioning, StageStorage};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{B, G, KV, Q, S};
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
@@ -21,8 +21,7 @@ use cubek_microkernel::attention_backward::key_gradient::hypercube::{
     HypercubeKeyGradientMicrokernel, HypercubeKeyGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
-use cubek_std::microkernel::{StageRing, StagedOperand};
+use cubek_std::microkernel::{Microkernel, StageRing};
 use cubek_std::routine::{CubeResources, Grid};
 
 /// What the hypercube routine declines on a device that cannot add `f32` atomically: the query's
@@ -74,8 +73,8 @@ impl core::fmt::Display for HypercubeAttentionBackwardRoutineSettings {
 
 impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
     type Settings = HypercubeAttentionBackwardRoutineSettings;
-    type QueryGradient = PlaneDeltaMicrokernel;
-    type KeyGradient = HypercubeKeyGradientMicrokernel;
+    type QueryMicrokernel = PlaneDeltaMicrokernel;
+    type KeyMicrokernel = HypercubeKeyGradientMicrokernel;
     /// The settings' ring as this device holds a cube's stages; the first walk holds none.
     type SharedMemory = StageRing;
 
@@ -116,6 +115,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
         {
             return Err(ATTENTION_BACKWARD_NO_ATOMIC_ADD);
         }
+
         let item = problem.work_item();
         let delta = PlaneDeltaMicrokernel::best(hw, &item, &settings.delta)?;
         let key_gradient =
@@ -143,21 +143,15 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             problem.space(),
             key_gradient.tiling().cubes(&[S]).batches(&[B, KV]).build(),
         );
-        let stage = problem.stage(Q, key_gradient.seq_q());
-        let ring = settings.ring.resolve(
-            hw,
-            &stage,
-            key_gradient.plane_count() * plane_width as usize,
-        );
-        let key_grid = Grid::new(
-            hw,
-            &key_partitioning,
-            CubeResources {
-                plane_width,
-                shared_memory: ring.bytes(Self::stage_bytes(hw, &stage))
-                    + key_gradient.window_bytes(&item),
-            },
-        )?;
+        let (key_grid, ring) = WalkStages {
+            stage: problem.stage(Q, key_gradient.seq_q()),
+            ring: settings.ring,
+            filling_planes: key_gradient.plane_count(),
+            copies: 1,
+            window_bytes: key_gradient.window_bytes(&item),
+            body_bytes: key_gradient.share_bytes(&item),
+        }
+        .grid(hw, &key_partitioning)?;
         let mut queries =
             AttentionBackwardWalk::new(hw, problem, delta, delta_partitioning, delta_grid, ring);
         // The last launch casts the sum into the query's gradient under this walk, both bound at
@@ -167,9 +161,10 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             AttentionBackwardOperand::QueryGradient => width.min(sum_ceiling),
             _ => width,
         });
+
         Ok(AttentionBackwardBlueprint {
-            query_gradient: queries,
-            key_gradient: AttentionBackwardWalk::new(
+            query_walk: queries,
+            key_walk: AttentionBackwardWalk::new(
                 hw,
                 problem,
                 key_gradient,
@@ -194,15 +189,17 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             problem.seq_q,
             problem.head_dim,
         ];
+
         // Every cube adds into it, so it starts at zero.
         let sum = PlainTensor::of_handle(TensorHandle::zeros(
             client,
             gradient_shape,
             AttentionBackwardProblem::SUM,
         ));
-        let walk = &blueprint.query_gradient;
+        let walk = &blueprint.query_walk;
         let binding = tensors.bind(walk);
         let operands = binding.operands;
+
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles. Each plane writes only its own queries' dot products.
@@ -218,8 +215,9 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
                 AttentionBackwardProblem::SUM,
             );
         }
+
         let elements = [AttentionBackwardProblem::SUM, problem.element];
-        let key_walk = blueprint.key_gradient;
+        let key_walk = blueprint.key_walk;
         let key_binding = tensors.bind(&key_walk);
         let summed = tensors.bind_beside(
             &key_binding,
@@ -228,6 +226,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             AttentionBackwardOperand::QueryGradient,
         );
         let key_operands = key_binding.operands;
+
         // SAFETY: as the first walk's; each plane writes only its own keys' and values' gradients,
         // and only adds into the query's gradient's sum, atomically. It reads the dot products the
         // first walk wrote, which the launches' order sees done.
@@ -255,6 +254,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
                 elements,
             );
         }
+
         let cast_binding = tensors.bind(walk);
         let sum = tensors.bind_beside(
             &cast_binding,
@@ -262,6 +262,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             &sum,
             AttentionBackwardOperand::QueryGradient,
         );
+
         // SAFETY: as the first walk's; each plane writes only its own queries' gradient, out of the
         // sum the key walk finished adding into, which the launches' order sees done.
         unsafe {
@@ -274,15 +275,5 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
                 cast_binding.launcher.partitioning_arg(),
             );
         }
-    }
-}
-
-impl HypercubeAttentionBackwardRoutine {
-    /// Bytes one stage of `stage` takes, strided.
-    fn stage_bytes(hw: &Hardware, stage: &[StagedOperand; 2]) -> usize {
-        stage
-            .iter()
-            .map(|operand| operand.bytes(hw, &StageStorage::Strided))
-            .sum()
     }
 }

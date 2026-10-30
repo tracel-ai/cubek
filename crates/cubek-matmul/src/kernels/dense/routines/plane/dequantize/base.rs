@@ -1,18 +1,15 @@
 use super::kernel::plane_dequantize_kernel;
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::tensor::{PackedTensor, PlainTensor};
 use crate::kernels::{
     MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED, MatmulBlueprint, MatmulDequantizeBinding, MatmulInputs,
-    MatmulRoutineProblem, MatmulView, PlaneShuffleMatmulRoutineSettings,
+    MatmulPartitioning, MatmulRoutineProblem, MatmulView, PlaneShuffleMatmulRoutineSettings,
     PlaneShufflePackedPlacement,
 };
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
-use cubecl::tile::launch::{Buffered, DestinationLaunch};
+use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
@@ -37,8 +34,8 @@ pub struct PlaneDequantizeMatmulRoutine;
 pub type PlaneDequantizeMatmulRoutineBlueprint = MatmulBlueprint<PlaneShuffleMicrokernel>;
 
 impl PlaneDequantizeMatmulRoutine {
-    /// The settings every decode runs at: the plane shuffle routine's lead. The decode is a copy, so nothing
-    /// about it is worth racing.
+    /// The settings every decode runs at: the plane shuffle routine's lead. The decode is a copy,
+    /// so nothing about it is worth racing.
     pub const SETTINGS: PlaneShuffleMatmulRoutineSettings =
         PlaneShuffleMatmulRoutineSettings::PACKED;
 

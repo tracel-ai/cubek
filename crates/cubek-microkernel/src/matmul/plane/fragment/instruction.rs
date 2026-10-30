@@ -1,17 +1,16 @@
 use crate::matmul::{MatmulAxes, MatmulDim, MatmulLayout, MatmulOperands, MatmulWorkItem};
-use cubecl::tile::launch::Refusal;
-use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
-
 use cubecl::features::{MmaConfig, WgmmaConfig};
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::ops::matmul::MmaIo;
+use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{
     Axis, BlockScaledOperands, Instruction, MmaOperands, RegisterBlock, StageStorage,
-    ops::matmul::MmaIo, stage::RowChunks,
 };
 use cubecl::wgmma::WARPGROUP_UNITS;
-use cubek_std::BlockScaledMma;
+use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{ArithmeticInstruction, SWIZZLED_STAGE_UNREAD, StageLayout};
+use cubek_std::{BlockScaledMma, Hardware};
 
 /// What a plane's fragments contract through: one of the device's matrix instructions, reached
 /// by either transport, or the software instruction every device runs.
@@ -117,9 +116,9 @@ impl PlaneFragmentInstruction {
     /// The instruction as the tile DSL runs it, a unit holding `cells` accumulator cells.
     ///
     /// The software instruction takes each lhs line's values at fixed positions
-    /// ([`RegisterBlock::component_fanout`]): a position read at runtime sends the whole line through
-    /// local memory on NVPTX at every step of `K`. The plane microkernel runs on GPUs alone,
-    /// where that is the right walk.
+    /// ([`RegisterBlock::component_fanout`]): a position read at runtime sends the whole line
+    /// through local memory on NVPTX at every step of `K`. The plane microkernel runs on GPUs
+    /// alone, where that is the right walk.
     pub fn tile_instruction(self, cells: usize) -> Instruction {
         match self {
             Self::Cmma { .. } => Instruction::Cmma,
@@ -235,10 +234,10 @@ impl PlaneFragmentInstruction {
     /// stage whole, `depth` of `K` deep: in tiles of a matrix instruction along `m` and `n`, each
     /// the whole stage deep along `K`, so the tiles stack whole rows one after another as a box
     /// lands them, and one of every batch axis in `batches`. The manual `mma`'s rows swizzled as
-    /// the descriptor swizzles them, which keeps the rows a fragment load reads at once on
-    /// distinct banks as its own [`stage_layout`](Self::stage_layout) does; `cmma`'s in order, since a
-    /// box lands no padding; the software instruction's as the operand lies, as ever. The
-    /// warpgroup MMA's swizzled as the manual `mma`'s are: a row one swizzle span long lies as the
+    /// the descriptor swizzles them, which keeps the rows a fragment load reads at once on distinct
+    /// banks as its own [`stage_layout`](Self::stage_layout) does; `cmma`'s in order, since a box
+    /// lands no padding; the software instruction's as the operand lies, as ever. The warpgroup
+    /// MMA's swizzled as the manual `mma`'s are: a row one swizzle span long lies as the
     /// instruction's descriptor reads it.
     pub fn landed_stage_storage(
         self,
@@ -262,8 +261,9 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// Whether this is a block-scaled instruction ([`block_scaled_mma`](cubek_std::block_scaled_mma)):
-    /// one that reads packed codes and their scales as they lie.
+    /// Whether this is a block-scaled instruction
+    /// ([`block_scaled_mma`](cubek_std::block_scaled_mma)): one that reads packed codes and their
+    /// scales as they lie.
     pub fn block_scaled(self) -> bool {
         self.form().is_some()
     }

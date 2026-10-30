@@ -1,7 +1,8 @@
 use super::base::PlaneShuffleAttentionMicrokernel;
 use super::step_reads::{StepReads, StepReadsExpand, StepWalk};
 use crate::attention::{D, G, Q, S, VisibleKeys};
-use cubecl::tile::{Monoid, Region, Tile, Walk, space::UnitShare};
+use cubecl::tile::space::UnitShare;
+use cubecl::tile::{Monoid, Region, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One plane's rows in its units' registers while it walks the keys: each unit's lines of every
@@ -34,12 +35,13 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
     fn load_query<E: Float>(&mut self, query: &Tile) {
         let microkernel = comptime!(self.microkernel);
         let head_lines = comptime!(self.head_lines);
-        let units_per_key = comptime!(microkernel.settings.units_per_key.get());
-        let per_head = comptime!(head_lines.div_ceil(units_per_key));
+        let units_per_key = microkernel.settings.units_per_key.get();
+        let per_head = head_lines.div_ceil(units_per_key);
+
         let lane = UNIT_POS_PLANE as usize % units_per_key;
         let read = query.flat::<E, N>();
         #[unroll]
-        for r in 0..comptime!(microkernel.seq_q()) {
+        for r in 0..microkernel.seq_q() {
             #[unroll]
             for p in 0..per_head {
                 let line = lane + p * units_per_key;
@@ -47,6 +49,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                 if line < head_lines {
                     held = Vector::cast_from(read.read(r * head_lines + line));
                 }
+
                 self.query[r * per_head + p] = held;
             }
         }
@@ -57,14 +60,15 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
     /// rescaled to the merged max. Run once, after the last step.
     fn close(&mut self) {
         let microkernel = comptime!(self.microkernel);
-        if comptime!(microkernel.teams > 1) {
-            let rows = comptime!(microkernel.seq_q());
-            let units_per_key = comptime!(microkernel.settings.units_per_key.get());
+        if microkernel.teams > 1 {
+            let rows = microkernel.seq_q();
+            let units_per_key = microkernel.settings.units_per_key.get();
             let per_value = comptime!(self.value_lines.div_ceil(units_per_key));
             let teams = comptime!(UnitShare::Group {
                 unit_bits: (microkernel.units() - 1) & !(units_per_key - 1)
             });
             let size!(W1) = 1usize;
+
             #[unroll]
             for r in 0..rows {
                 let own = self.max[r];
@@ -92,8 +96,9 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
 
     /// The closed rows written as a partial, the first `rows` of them: row `r`'s running max and
     /// sum at `first_slot + r · row_stride` of `max` and `sum`, and its unnormalized output's line
-    /// `l` at that slot times the lines of a value, plus `l`, of `out` ([`SlotShape`](crate::split_keys_merge::SlotShape)).
-    /// The first team's units write their lines, and the plane's first unit the state.
+    /// `l` at that slot times the lines of a value, plus `l`, of `out`
+    /// ([`SlotShape`](crate::split_keys_merge::SlotShape)). The first team's units write their
+    /// lines, and the plane's first unit the state.
     fn write_partial(
         &self,
         out: &mut [Vector<EA, N>],
@@ -105,11 +110,12 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
     ) {
         let microkernel = comptime!(self.microkernel);
         let value_lines = comptime!(self.value_lines);
-        let units_per_key = comptime!(microkernel.settings.units_per_key.get());
-        let per_value = comptime!(value_lines.div_ceil(units_per_key));
+        let units_per_key = microkernel.settings.units_per_key.get();
+        let per_value = value_lines.div_ceil(units_per_key);
+
         let unit = UNIT_POS_PLANE as usize;
         #[unroll]
-        for r in 0..comptime!(microkernel.seq_q()) {
+        for r in 0..microkernel.seq_q() {
             if r < rows {
                 let slot = first_slot + r * row_stride;
                 if unit < units_per_key {
@@ -121,6 +127,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                         }
                     }
                 }
+
                 if unit == 0 {
                     max[slot] = self.max[r];
                     sum[slot] = self.total[r];
@@ -135,19 +142,21 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
     fn store_rows<E: Float>(&self, out: &mut Tile) {
         let microkernel = comptime!(self.microkernel);
         let value_lines = comptime!(self.value_lines);
-        let units_per_key = comptime!(microkernel.settings.units_per_key.get());
-        let per_value = comptime!(value_lines.div_ceil(units_per_key));
+        let units_per_key = microkernel.settings.units_per_key.get();
+        let per_value = value_lines.div_ceil(units_per_key);
+
         let unit = UNIT_POS_PLANE as usize;
         let mut lines = out.flat_mut::<E, N>();
         if unit < units_per_key {
             #[unroll]
-            for r in 0..comptime!(microkernel.seq_q()) {
+            for r in 0..microkernel.seq_q() {
                 let total = self.total[r];
                 let recip = select(
                     total > EA::from_int(0),
                     EA::from_int(1) / total,
                     EA::from_int(0),
                 );
+
                 #[unroll]
                 for p in 0..per_value {
                     let line = unit + p * units_per_key;
@@ -176,11 +185,12 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         let width = query.vector_size();
         let head_lines = comptime!(query.space().extent(D) / width);
         let value_lines = comptime!(val_dim / width);
-        let rows = comptime!(microkernel.seq_q());
-        let units_per_key = comptime!(microkernel.settings.units_per_key.get());
-        let per_head = comptime!(head_lines.div_ceil(units_per_key));
-        let per_value = comptime!(value_lines.div_ceil(units_per_key));
-        let mut sum = Array::<Vector<EA, N>>::new(comptime!(rows * per_value));
+        let rows = microkernel.seq_q();
+        let units_per_key = microkernel.settings.units_per_key.get();
+        let per_head = head_lines.div_ceil(units_per_key);
+        let per_value = value_lines.div_ceil(units_per_key);
+
+        let mut sum = Array::<Vector<EA, N>>::new(rows * per_value);
         let mut max = Array::<EA>::new(rows);
         let mut total = Array::<EA>::new(rows);
         #[unroll]
@@ -189,11 +199,13 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             for p in 0..per_value {
                 sum[r * per_value + p] = Vector::cast_from(0u32);
             }
+
             max[r] = EA::min_value();
             total[r] = EA::from_int(0);
         }
+
         let mut shuffle = PlaneShuffleAttention::<EA, N> {
-            query: Array::<Vector<EA, N>>::new(comptime!(rows * per_head)),
+            query: Array::<Vector<EA, N>>::new(rows * per_head),
             sum,
             max,
             total,
@@ -202,9 +214,11 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             head_lines,
             value_lines,
         };
+
         for plane in walk.planes() {
             shuffle.load_query::<E>(&query.at(&plane));
         }
+
         shuffle
     }
 
@@ -223,14 +237,13 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
     ) {
         let microkernel = comptime!(self.microkernel);
         let (head_lines, value_lines) = comptime!((self.head_lines, self.value_lines));
-        let rows = comptime!(microkernel.seq_q());
-        let teams = comptime!(microkernel.teams);
-        let in_flight = comptime!(microkernel.settings.keys_in_flight.get());
-        let units_per_key = comptime!(microkernel.settings.units_per_key.get());
-        let (per_head, per_value) = comptime!((
-            head_lines.div_ceil(units_per_key),
-            value_lines.div_ceil(units_per_key)
-        ));
+        let rows = microkernel.seq_q();
+        let teams = microkernel.teams;
+        let in_flight = microkernel.settings.keys_in_flight.get();
+        let units_per_key = microkernel.settings.units_per_key.get();
+        let per_head = head_lines.div_ceil(units_per_key);
+        let per_value = value_lines.div_ceil(units_per_key);
+
         let unit = UNIT_POS_PLANE as usize;
         let (team, lane) = (unit / units_per_key, unit % units_per_key);
         let (first_query, first_key) = (plane.origin(Q), plane.origin(S));
@@ -246,12 +259,14 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         let key_reads = keys.load(plane, &walk, head_lines);
         let value_reads = values.load(plane, &walk, value_lines);
 
+        // The scores of the step's keys against each row, taken into the row's running max and
+        // sum: a key's dot is each unit's lines summed in its team.
         let team_share = comptime!(UnitShare::Group {
             unit_bits: units_per_key - 1
         });
         let width = comptime!(self.width);
         let size!(W1) = 1usize;
-        let mut weights = Array::<EA>::new(comptime!(rows * in_flight));
+        let mut weights = Array::<EA>::new(rows * in_flight);
         let mut corrections = Array::<EA>::new(rows);
         #[unroll]
         for r in 0..rows {
@@ -269,11 +284,13 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                         Monoid::Sum,
                     );
                 }
+
                 scores[c] = team_share
                     .reduce::<Vector<EA, W1>>(Vector::cast_from(partial), Monoid::Sum)
                     .extract(0usize)
                     * scale;
             }
+
             let before = self.max[r];
             let mut after = before;
             #[unroll]
@@ -282,6 +299,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                     after = max(after, scores[c]);
                 }
             }
+
             let mut added = EA::from_int(0);
             #[unroll]
             for c in 0..in_flight {
@@ -290,12 +308,14 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                 weights[r * in_flight + c] = weight;
                 added += weight;
             }
+
             let correction = (before - after).exp();
             self.max[r] = after;
             self.total[r] = self.total[r] * correction + added;
             corrections[r] = correction;
         }
 
+        // The values the step's keys weigh, added into each row's lines of the output.
         #[unroll]
         for r in 0..rows {
             #[unroll]
@@ -306,6 +326,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                     line += Vector::<EA, N>::cast_from(value_reads[c * per_value + p])
                         * Vector::cast_from(weights[r * in_flight + c]);
                 }
+
                 self.sum[r * per_value + p] = line;
             }
         }
@@ -322,9 +343,8 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         }
     }
 
-    /// Each row's logsumexp, from its max and total, which
-    /// `store_normalized` merged across the plane's teams, written into
-    /// `logsumexp`, `region`'s window of it, by the plane's first unit.
+    /// Each row's logsumexp, from its max and total, which `store_normalized` merged across the
+    /// plane's teams, written into `logsumexp`, `region`'s window of it, by the plane's first unit.
     pub fn store_logsumexp(&self, region: &Region, logsumexp: &Tile) {
         let rows = comptime!(self.microkernel.seq_q());
         let mut values = Array::<EA>::new(rows);
@@ -333,6 +353,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             let live = self.total[r] > EA::from_int(0);
             values[r] = select(live, self.max[r] + self.total[r].ln(), EA::min_value());
         }
+
         for plane in region.planes() {
             logsumexp.at(&plane).set_cells(&values, rows);
         }

@@ -1,10 +1,9 @@
-use crate::matmul::MatmulAxesKind;
-use crate::matmul::MatmulStage;
 use crate::matmul::cube::{MatmulCubeSpace, MatmulCubeWrite};
-use crate::matmul::{MatmulBuffers, MatmulDestination, MatmulOperand, MatmulWorkItem};
+use crate::matmul::{
+    MatmulAxesKind, MatmulBuffers, MatmulDestination, MatmulOperand, MatmulStage, MatmulWorkItem,
+};
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Delivery;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Delivery, VectorRequirement, Vectorization};
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 

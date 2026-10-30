@@ -107,6 +107,15 @@ pub enum MatmulRead {
     Dequantized(ElemType),
 }
 
+impl MatmulOperands<MatmulRead> {
+    /// Every operand read as bound.
+    pub const AS_BOUND: Self = Self {
+        lhs: MatmulRead::AsBound,
+        rhs: MatmulRead::AsBound,
+        out: MatmulRead::AsBound,
+    };
+}
+
 impl MatmulRead {
     /// The element a stage of the operand decoded by its fill holds: `f32` where `None`.
     pub fn staged(self) -> Option<ElemType> {
@@ -121,7 +130,7 @@ impl MatmulRead {
 impl MatmulRead {
     /// `operand`, a leaf's window of it, as the leaf `sum` contracts it read as `read` says.
     pub fn leaf(sum: &Tile, operand: &Tile, #[comptime] read: MatmulRead) -> Tile {
-        match comptime!(read) {
+        match read {
             MatmulRead::AsBound => operand.clone(),
             MatmulRead::Dequantized(element) => sum.dequantized(operand, element),
         }

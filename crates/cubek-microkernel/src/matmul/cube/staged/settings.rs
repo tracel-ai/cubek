@@ -1,5 +1,4 @@
-use crate::matmul::cube::MatmulPlaneLayout;
-use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore};
+use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore, MatmulPlaneLayout};
 use crate::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
@@ -186,8 +185,8 @@ impl CubeStagedMicrokernelSettings {
     }
 }
 
-/// Nothing for one plane along `K`, a one-fragment scratch or the instruction's own stage layout, so
-/// the settings that hold them keep their names.
+/// Nothing for one plane along `K`, a one-fragment scratch or the instruction's own stage layout,
+/// so the settings that hold them keep their names.
 impl core::fmt::Display for CubeStagedMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} {}", self.plane, self.planes)?;

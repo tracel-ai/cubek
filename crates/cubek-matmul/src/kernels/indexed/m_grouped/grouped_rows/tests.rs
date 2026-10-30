@@ -1,11 +1,10 @@
+use super::{GroupedRows, PaddedRows, RouteSort, upload};
+use crate::kernels::tensor::PlainTensor;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubek_test_utils::client;
-
-use super::{GroupedRows, PaddedRows, RouteSort, upload};
-use crate::kernels::tensor::PlainTensor;
 
 /// `values` uploaded as a `u32` vector.
 fn u32s(client: &Client, values: &[u32]) -> PlainTensor {

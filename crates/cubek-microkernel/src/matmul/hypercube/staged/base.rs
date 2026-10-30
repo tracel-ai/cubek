@@ -7,9 +7,7 @@ use crate::matmul::{
     MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind, MatmulWorkItem,
 };
 use cubecl::tile::Scratch;
-use cubecl::tile::launch::Delivery;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Delivery, Refusal, Vectorization};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{M, N};
@@ -37,9 +35,9 @@ pub struct HypercubeStagedMicrokernelSettings {
 }
 
 impl HypercubeStagedMicrokernelSettings {
-    /// A smaller box than a staged cube's own default: what a product with too few output tiles to fill
-    /// the device and a long contraction wants, which is the problem a hypercube exists for. Two by
-    /// four fragments on each of two by two planes.
+    /// A smaller box than a staged cube's own default: what a product with too few output tiles to
+    /// fill the device and a long contraction wants, which is the problem a hypercube exists for.
+    /// Two by four fragments on each of two by two planes.
     pub const DEFAULT: Self = Self::boxed(PlaneFragmentMicrokernelSettings::grid(2, 4, 1), (2, 2));
 
     /// The staged cube's own box ([`CubeStagedMicrokernelSettings::DEFAULT`]).

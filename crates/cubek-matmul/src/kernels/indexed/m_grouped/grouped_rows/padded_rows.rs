@@ -1,7 +1,6 @@
-use cubecl::std::tensor::TensorHandle;
-
 use super::GroupedRows;
 use crate::kernels::tensor::PlainTensor;
+use cubecl::std::tensor::TensorHandle;
 
 /// Rows in the padded layout, beside the layout that places them: what a grouped product hands
 /// back, for the next step to read padded or to [`unpad`](Self::unpad).

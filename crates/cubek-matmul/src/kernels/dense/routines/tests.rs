@@ -5,14 +5,11 @@ use crate::kernels::MatmulRoutineProblem;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::{Axis, Space};
-use cubek_microkernel::matmul::MatmulOperands;
-use cubek_microkernel::matmul::MatmulStep;
-use cubek_std::Hardware;
-use cubek_std::devices;
-use cubek_std::layout::stored::Operand;
-use cubek_std::layout::stored::Packing;
+use cubek_microkernel::matmul::{MatmulOperands, MatmulStep};
+use cubek_std::layout::stored::{Operand, Packing};
 use cubek_std::layout::tile_order;
 use cubek_std::matmul_axes::{K, M, N, blocked};
+use cubek_std::{Hardware, devices};
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
 
@@ -104,8 +101,8 @@ fn step(hw: &Hardware, problem: &MatmulRoutineProblem) -> MatmulStep {
     MatmulStep::new(hw, operands, problem.elements)
 }
 
-/// Whether `space` covers a whole number of `step`s along `M`, `N` and `K`, each over the block axis
-/// and the inside axis it is split into.
+/// Whether `space` covers a whole number of `step`s along `M`, `N` and `K`, each over the block
+/// axis and the inside axis it is split into.
 fn whole_steps(step: &MatmulStep, space: &Space) -> bool {
     [M, N, K].into_iter().all(|axis| {
         let (blocks, inside) = blocked(axis);
@@ -188,10 +185,9 @@ mod cube_staged {
     use cubecl::tile::StageStorage;
     use cubecl::tile::launch::Refusal;
     use cubecl::tile::stage::RowChunks;
-    use cubek_microkernel::matmul::MatmulDim;
-    use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
     use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
+    use cubek_microkernel::matmul::{MatmulDim, MatmulMicrokernel};
     use cubek_std::devices;
     use cubek_std::routine::Routine;
 

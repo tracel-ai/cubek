@@ -18,8 +18,8 @@ use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkern
 /// partials meet.
 ///
 /// The keys are cut across cubes, and inside each cube across its planes: they are the contracted
-/// axis of `p · value` and the columns of `query · keyᵀ`, so each plane scores only its part of
-/// its cube's run, and the rows' running max and sum are what let the planes' sums add. No cube waits
+/// axis of `p · value` and the columns of `query · keyᵀ`, so each plane scores only its part of its
+/// cube's run, and the rows' running max and sum are what let the planes' sums add. No cube waits
 /// on another: a cube spinning on a counter another cube moves holds the device until that cube
 /// runs, which, where cubes are not preempted, as on Metal, can be never.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

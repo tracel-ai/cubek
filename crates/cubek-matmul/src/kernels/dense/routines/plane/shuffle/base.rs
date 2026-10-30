@@ -1,14 +1,10 @@
 use super::kernel::plane_shuffle_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
-    MATMUL_STREAMED_INPUT_FLOAT, MatmulBlueprint, MatmulOutput, MatmulRoutine,
-    MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_STREAMED_INPUT_FLOAT, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
+    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Axis, TileArgLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -25,7 +21,8 @@ use cubek_std::selector::divisor_at_most;
 /// columns, the launch grouping its planes in cubes side by side along `n`. Each column is read
 /// once, by the one plane that owns it.
 ///
-/// It runs where the device commits to a plane width, since its units add their sums across the plane.
+/// It runs where the device commits to a plane width, since its units add their sums across the
+/// plane.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlaneShuffleMatmulRoutine;
 
@@ -162,12 +159,13 @@ impl PlaneShuffleMatmulRoutine {
         let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let [rows, k] = [view.rows(), problem.k].map(|extent| extent as u64);
-        // A step of the plane: one unit's block of `K`, over both axes it is split into, by the units
-        // sharing it.
+        // A step of the plane: one unit's block of `K`, over both axes it is split into, by the
+        // units sharing it.
         let leaf = blueprint.partitioning.leaf();
         let (blocks, inside) = blocked(K);
         let step_k = (leaf.extent(blocks) * leaf.extent(inside) * microkernel.units_along_k) as u64;
-        // The columns of a cube's box, over both axes `N` is split into: the planes its order groups.
+        // The columns of a cube's box, over both axes `N` is split into: the planes its order
+        // groups.
         let columns = blueprint.partitioning.columns();
         let groups = columns / microkernel.columns() as u64;
         let size = |operand: MatmulOperand| item.elements.get(operand).size() as u64;
@@ -250,8 +248,8 @@ impl PlaneShuffleMatmulRoutine {
 
 /// Where the plane shuffle places a packed product: its microkernel, the axis its columns land on,
 /// and the planes one cube holds side by side along it, a target snapped to what the runs of
-/// columns divide, so no cube overhangs. The plane shuffle deals the planes the launch's columns; the
-/// decode into a float rhs places the same planes in cubes, each cube copying its box.
+/// columns divide, so no cube overhangs. The plane shuffle deals the planes the launch's columns;
+/// the decode into a float rhs places the same planes in cubes, each cube copying its box.
 pub struct PlaneShufflePackedPlacement {
     pub microkernel: PlaneShuffleMicrokernel,
     pub columns: Axis,
@@ -263,8 +261,8 @@ impl PlaneShufflePackedPlacement {
     ///
     /// # Errors
     ///
-    /// [`MATMUL_STREAMED_INPUT_FLOAT`], for a float `[k, n]` input; why `hw` cannot walk `problem`'s steps, or
-    /// run its microkernel at `settings`.
+    /// [`MATMUL_STREAMED_INPUT_FLOAT`], for a float `[k, n]` input; why `hw` cannot walk
+    /// `problem`'s steps, or run its microkernel at `settings`.
     pub fn new(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
@@ -311,10 +309,10 @@ impl Routine for PlaneShuffleMatmulRoutine {
     /// Against a packed rhs it races
     /// [`packed_settings`](PlaneShuffleMatmulRoutine::packed_settings).
     ///
-    /// The order is also what a caller naming the routine and no setting runs: the `PlaneShuffle` pin
-    /// and the `Tile` policy launch the first setting that serves the product
-    /// ([`launch_first_served_on`](MatmulRoutine::launch_first_served_on)), so a reorder changes what
-    /// they run, not only the order a table measures in.
+    /// The order is also what a caller naming the routine and no setting runs: the `PlaneShuffle`
+    /// pin and the `Tile` policy launch the first setting that serves the product
+    /// ([`launch_first_served_on`](MatmulRoutine::launch_first_served_on)), so a reorder changes
+    /// what they run, not only the order a table measures in.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         use PlaneShuffleMicrokernelSettings as Block;
         let on = |microkernel, planes| Self::Settings {
@@ -442,9 +440,8 @@ mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-    use cubek_microkernel::matmul::MatmulLayout;
-    use cubek_microkernel::matmul::MatmulOperands;
     use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
+    use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
     use cubek_std::layout::stored::Operand;
 

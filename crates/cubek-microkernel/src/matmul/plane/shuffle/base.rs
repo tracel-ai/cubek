@@ -4,8 +4,7 @@ use crate::matmul::{
     MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, RegisterBlock};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -113,17 +112,6 @@ impl PlaneShuffleMicrokernel {
         why: "the plane shuffle reads an rhs lined along `K` or `N`",
     };
 
-    /// The order this microkernel reads an rhs `layout` lies as in, where it reads it: a col
-    /// rhs in its buffer's order, a row rhs as the product names it, and none for an rhs
-    /// lined along neither axis.
-    fn order_of(layout: MatmulLayout) -> Option<BindingOrder> {
-        match layout {
-            MatmulLayout::Col => Some(BindingOrder::InBufferOrder),
-            MatmulLayout::Row => Some(BindingOrder::Stated),
-            MatmulLayout::Strided => None,
-        }
-    }
-
     /// What a col rhs is declined with where it binds one element at a time: the tile DSL merges
     /// a vector of it with a vector of the lhs into one cell, so it reads both in vectors of at
     /// least two, and a `K` the steps overhang, or either buffer aligned to one element, gives
@@ -138,6 +126,17 @@ impl PlaneShuffleMicrokernel {
     pub const COL_RHS_ONE_COLUMN_A_UNIT: Refusal = Refusal::Declined {
         why: "the plane shuffle reads a col rhs one column a unit, each summing its line of partials",
     };
+
+    /// The order this microkernel reads an rhs `layout` lies as in, where it reads it: a col
+    /// rhs in its buffer's order, a row rhs as the product names it, and none for an rhs
+    /// lined along neither axis.
+    fn order_of(layout: MatmulLayout) -> Option<BindingOrder> {
+        match layout {
+            MatmulLayout::Col => Some(BindingOrder::InBufferOrder),
+            MatmulLayout::Row => Some(BindingOrder::Stated),
+            MatmulLayout::Strided => None,
+        }
+    }
 
     /// Whether the operands bound at `widths` are read in vectors this microkernel merges.
     ///
@@ -576,8 +575,7 @@ mod tests {
     use crate::matmul::{MatmulAxes, MatmulDestination, MatmulReading};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
-    use cubek_std::layout::stored::Operand;
-    use cubek_std::layout::stored::Packing;
+    use cubek_std::layout::stored::{Operand, Packing};
     use cubek_std::layout::tile_order;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

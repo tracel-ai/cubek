@@ -5,8 +5,7 @@ use crate::kernels::{
     HypercubeMerge,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Space, StageStorage};
 use cubek_microkernel::attention::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
@@ -43,7 +42,8 @@ pub struct HypercubeStreamFragmentAttentionRoutineSettings {
 
 impl HypercubeStreamFragmentAttentionRoutineSettings {
     /// Its microkernel's default, one cube a worker: a staging cube of plane fragments takes most
-    /// of a worker's shared memory, so one is what a worker runs at once, and the grid is one round.
+    /// of a worker's shared memory, so one is what a worker runs at once, and the grid is one
+    /// round.
     pub const DEFAULT: Self = Self {
         microkernel: HypercubeAttentionMicrokernelSettings::FRAGMENT,
         cubes_per_worker: NonZeroUsize::MIN,

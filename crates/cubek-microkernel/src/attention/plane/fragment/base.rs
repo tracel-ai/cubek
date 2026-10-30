@@ -10,16 +10,14 @@ use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem}
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Level, Levels, Space};
-use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::manual_mma;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, SWIZZLED_STAGE_UNREAD,
     StageLayout, UnitWork,
 };
+use cubek_std::{Hardware, manual_mma};
 
 /// A box of rows of one head a plane owns: their scores against a stage of keys in the fragments
 /// of a matrix instruction, the softmax taken where the plane keeps the score, and their outputs
@@ -134,6 +132,7 @@ impl PlaneFragmentAttentionMicrokernel {
     ) -> Vec<Self> {
         let item = &item.read_as(read);
         let (head, value) = (item.head_dim, item.val_dim);
+
         // The grids and walks are sized once the instruction is named, from its shape.
         let unsized_grid = PlaneFragmentMicrokernelSettings {
             along_m: settings.seq_q,
@@ -208,11 +207,13 @@ impl PlaneFragmentAttentionMicrokernel {
                         && value.k.is_multiple_of(shape.n)
                         && keys.is_multiple_of(value.k as usize)
                 };
+
                 hw.accumulator_as_a
                     .then(|| manual_mma(hw).filter(run).max_by_key(|value| value.k))
                     .flatten()
                     .map(PlaneFragmentInstruction::mma)
             }
+
             PlaneFragmentInstruction::Mma { .. }
             | PlaneFragmentInstruction::Registers { .. }
             | PlaneFragmentInstruction::Wgmma { .. } => None,
@@ -312,6 +313,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             MatmulOperand::Rhs => Some(AttentionOperand::Key),
             MatmulOperand::Out => None,
         });
+
         let mut value = Vectorization::new();
         self.value.vectorize(&(), &mut value);
         vectorization.restate(value, |operand| match operand {
@@ -319,10 +321,12 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             MatmulOperand::Rhs => Some(AttentionOperand::Value),
             MatmulOperand::Out => Some(AttentionOperand::Out),
         });
+
         vectorization.require(VectorRequirement::Access {
             operand: AttentionOperand::Out,
             elements: self.out_edge(),
         });
+
         // A manual fragment drains one cell at a time, wherever its unit holds it.
         if self.value.instruction.drain() == PlaneFragmentDrain::CellByCell {
             vectorization.require(VectorRequirement::Elementwise {
@@ -350,6 +354,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             instruction: ArithmeticInstruction::Matrix,
             registers: self.softmax_registers(item),
         };
+
         estimate.work = score
             .zip(estimate.work)
             .map(|(score, value)| score.beside(value).beside(softmax));
@@ -381,9 +386,13 @@ impl PlaneFragmentAttentionMicrokernel {
 
     /// Its fragments, as its [`ScoreHolder`] cuts them. Where the score is kept in fragments they
     /// are one grid of both multiplications: its rows along the queries of one head, its keys, and
-    /// the head and value dims whole, each multiplication walking its own of them and holding the
-    /// other's. The keys step by the value's `k`, a run of the score's fragments below each step:
-    /// the score contracts each fragment of the run, the value the run at once. Where it is read
+    /// the head and value dims whole. Each multiplication steps along the axis it contracts alone,
+    /// the cells it sums into one level below: the head dim outermost, then the keys, then the
+    /// rows by the value dim. The score's step is a slice of the head dim over every row and key,
+    /// the value's a step of the keys over every row and value: each step loads its operands'
+    /// fragments once for all its cells, neighbours of a grid two at a time. The keys step by the
+    /// value's `k`, a run of the score's fragments below each step: the score contracts each
+    /// fragment of the run, the value the run at once. Where it is read
     /// through windows, the value's fragments, its rows by the value dim and the steps of the
     /// stage's keys it contracts, each spanning the head dim whole: the score
     /// states its own grid below the plane ([`score_levels`](Self::score_levels)). The walk
@@ -401,10 +410,10 @@ impl PlaneFragmentAttentionMicrokernel {
             .walk(&[(S, self.score_run())])
             .walk(&[
                 (Q, self.settings.seq_q.get()),
-                (S, self.settings.seq_kv.get() / self.score_run()),
-                (D, self.score.settings.depth.get()),
                 (DV, self.value.settings.along_n.get()),
-            ]),
+            ])
+            .walk(&[(S, self.settings.seq_kv.get() / self.score_run())])
+            .walk(&[(D, self.score.settings.depth.get())]),
             ScoreHolder::Window => self
                 .value
                 .tiling_holding(&[(G, 1), (D, self.score.tile_extent(D))]),
@@ -430,6 +439,7 @@ impl PlaneFragmentAttentionMicrokernel {
         if self.score_holder() == ScoreHolder::Fragments {
             return 0;
         }
+
         let cells = self.seq_q() * self.seq_kv();
         let bounced = self
             .value
