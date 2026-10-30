@@ -87,7 +87,11 @@ impl PlaneFragmentLaunch {
         );
         let storage = microkernel.instruction.stage_layout(None)?.storage(
             stage.space(),
-            microkernel.instruction.stage_tile(&[], MatmulAxes::MNK),
+            microkernel.instruction.stage_tile(
+                &[],
+                MatmulAxes::MNK,
+                microkernel.settings.rows_along,
+            ),
         );
         Ok(Self {
             microkernel,

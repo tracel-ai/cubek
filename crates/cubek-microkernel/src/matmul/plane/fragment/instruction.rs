@@ -1,3 +1,4 @@
+use crate::matmul::plane::PlaneFragmentRowsAlong;
 use crate::matmul::{MatmulAxes, MatmulDim, MatmulLayout, MatmulOperands, MatmulWorkItem};
 use cubecl::features::{MmaConfig, WgmmaConfig};
 use cubecl::ir::{ElemType, FloatKind};
@@ -64,6 +65,16 @@ impl PlaneFragmentInstruction {
 
     /// Units in each plane of a warpgroup: the only plane width its MMA runs at.
     pub const WARPGROUP_PLANE_UNITS: usize = WARPGROUP_UNITS / Self::WARPGROUP_PLANES;
+
+    /// The instruction's `m × n × k` laid with its rows along `rows`: its own where they lie
+    /// along `m`, its rows' and columns' edges exchanged where they lie along `n`.
+    pub fn shape_along(self, rows: PlaneFragmentRowsAlong) -> [(MatmulDim, usize); 3] {
+        let [(_, m), (_, n), k] = self.shape();
+        match rows {
+            PlaneFragmentRowsAlong::M => [(MatmulDim::M, m), (MatmulDim::N, n), k],
+            PlaneFragmentRowsAlong::N => [(MatmulDim::M, n), (MatmulDim::N, m), k],
+        }
+    }
 
     /// The instruction's `m × n × k`, over the whole plane.
     pub fn shape(self) -> [(MatmulDim, usize); 3] {
@@ -219,38 +230,44 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// The tile a fragment loads from a stage the instruction reads: the instruction's shape, and
-    /// one of every batch axis in `batches`, so a fragment loads one contiguous tile where the
-    /// stage is blocked.
-    pub fn stage_tile(self, batches: &[Axis], axes: MatmulAxes) -> Vec<(Axis, usize)> {
+    /// The tile a fragment loads from a stage the instruction reads: the instruction's shape, its
+    /// rows along `rows`, and one of every batch axis in `batches`, so a fragment loads one
+    /// contiguous tile where the stage is blocked.
+    pub fn stage_tile(
+        self,
+        batches: &[Axis],
+        axes: MatmulAxes,
+        rows: PlaneFragmentRowsAlong,
+    ) -> Vec<(Axis, usize)> {
         batches
             .iter()
             .map(|&axis| (axis, 1))
-            .chain(axes.name(self.shape()))
+            .chain(axes.name(self.shape_along(rows)))
             .collect()
     }
 
     /// How a stage the instruction reads holds its cells where one TMA box lands each operand's
     /// stage whole, `depth` of `K` deep: in tiles of a matrix instruction along `m` and `n`, each
     /// the whole stage deep along `K`, so the tiles stack whole rows one after another as a box
-    /// lands them, and one of every batch axis in `batches`. The manual `mma`'s rows swizzled as
-    /// the descriptor swizzles them, which keeps the rows a fragment load reads at once on distinct
-    /// banks as its own [`stage_layout`](Self::stage_layout) does; `cmma`'s in order, since a box
-    /// lands no padding; the software instruction's as the operand lies, as ever. The warpgroup
-    /// MMA's swizzled as the manual `mma`'s are: a row one swizzle span long lies as the
-    /// instruction's descriptor reads it.
+    /// lands them, its rows along `rows`, and one of every batch axis in `batches`. The manual
+    /// `mma`'s rows swizzled as the descriptor swizzles them, which keeps the rows a fragment load
+    /// reads at once on distinct banks as its own [`stage_layout`](Self::stage_layout) does;
+    /// `cmma`'s in order, since a box lands no padding; the software instruction's as the operand
+    /// lies, as ever. The warpgroup MMA's swizzled as the manual `mma`'s are: a row one swizzle
+    /// span long lies as the instruction's descriptor reads it.
     pub fn landed_stage_storage(
         self,
         batches: &[Axis],
         axes: MatmulAxes,
         depth: usize,
+        rows: PlaneFragmentRowsAlong,
     ) -> StageStorage {
         let chunks = match self {
             Self::Cmma { .. } => RowChunks::InOrder,
             Self::Mma { .. } | Self::Wgmma { .. } => RowChunks::Swizzled,
             Self::Registers { .. } => return StageStorage::Strided,
         };
-        let [m, n, _] = self.shape();
+        let [m, n, _] = self.shape_along(rows);
         StageStorage::Tiled {
             block: batches
                 .iter()
