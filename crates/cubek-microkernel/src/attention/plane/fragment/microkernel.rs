@@ -143,7 +143,18 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
             comptime!(Some(DV)),
             comptime!(MatmulOperands::all(MatmulRead::AsBound)),
         );
+        if comptime!(std::env::var("CUBEK_LAB_EARLY_K").is_err()) {
+            self.lab_softmax(plane, visible, scale);
+        }
+        let _ = &mut sum;
+    }
+
+    /// LAB: the score's fragments taken into the softmax and the sum rescaled, apart from the
+    /// contraction that wrote them, so the next keys can be issued in between.
+    pub fn lab_softmax(&mut self, plane: &Region, visible: &Tile, scale: EA) {
         if comptime!(std::env::var("CUBEK_LAB_NO_SOFTMAX").is_err()) {
+            let mut sum = self.sum.at(plane);
+            let logits = self.score.at(plane).scores();
             let correction = self.softmax.step(&logits, &visible.at(plane), scale);
             sum.along(DV).mul(&correction);
         }

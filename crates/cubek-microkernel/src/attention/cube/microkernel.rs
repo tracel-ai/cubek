@@ -352,6 +352,12 @@ fn lab_split_walk<EA: Float, ES: Float>(
         if index + 1 < total {
             keys.fill(0usize, &walk.region(index + 1));
         }
+        // LAB: `CUBEK_LAB_EARLY_K` takes the softmax after the next keys are issued.
+        if comptime!(std::env::var("CUBEK_LAB_EARLY_K").is_ok()) {
+            for plane in stage.planes() {
+                planes.lab_softmax(&plane, bias, scale);
+            }
+        }
         values.consume(0usize, |value| {
             for plane in stage.planes() {
                 planes.lab_value(&plane, value);
