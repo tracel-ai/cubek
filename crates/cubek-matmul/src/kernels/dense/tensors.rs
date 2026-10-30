@@ -834,6 +834,13 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                     StoredTensor::Plain(_) => None,
                     StoredTensor::Packed(operand) => operand.stored_tile(),
                 };
+                // A float input is read at its own element, whatever the output is written in: an
+                // f16 activation into an f32 output is still an f16 activation.
+                let element = |operand: &StoredTensor| match operand {
+                    StoredTensor::Plain(input) => input.elem,
+                    StoredTensor::Packed(_) => MatmulRoutineProblem::PACKED,
+                };
+                let out = self.out.element(lhs, rhs);
                 let problem = MatmulRoutineProblem {
                     destination: Out::DESTINATION,
                     stored_tiles: MatmulOperands {
@@ -841,11 +848,16 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                         rhs: stored_tile(rhs),
                         out: None,
                     },
+                    elements: MatmulOperands {
+                        lhs: element(lhs),
+                        rhs: element(rhs),
+                        out,
+                    },
                     ..MatmulRoutineProblem::packed(
                         MatmulTensors::rows_of(lhs, k),
                         rhs.extent([K, N], N),
                         k,
-                        self.out.element(lhs, rhs),
+                        out,
                         packings,
                     )
                 };
