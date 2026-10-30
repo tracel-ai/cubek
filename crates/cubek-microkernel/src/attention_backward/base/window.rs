@@ -26,15 +26,16 @@ impl ScoreWindows {
         }
     }
 
-    /// The windows of one step of `walk` keys first, `[S, Q]`, where `holder` reads the score
-    /// through them; none where it holds the score in its fragments.
+    /// The windows of one step of `walk` along `axes`, where `holder` reads the score through
+    /// them; none where it holds the score in its fragments.
     pub fn held_or_open<EA: Float, ES: Float>(
         walk: &Walk,
+        #[comptime] axes: Vec<Axis>,
         #[comptime] holder: ScoreHolder,
     ) -> ComptimeOption<ScoreWindows> {
         match comptime!(holder) {
             ScoreHolder::Window => {
-                ComptimeOption::new_Some(ScoreWindows::open::<EA, ES>(walk, comptime!(vec![S, Q])))
+                ComptimeOption::new_Some(ScoreWindows::open::<EA, ES>(walk, axes))
             }
             ScoreHolder::Fragments => ComptimeOption::new_None(),
         }

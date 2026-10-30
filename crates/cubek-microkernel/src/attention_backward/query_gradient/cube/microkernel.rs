@@ -45,7 +45,11 @@ pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
     staged_query.copy_from(query);
     let mut staged_out_gradient = out_gradient.stage_for(&walk, StageStorage::Strided, None);
     staged_out_gradient.copy_from(out_gradient);
-    let windows = ScoreWindows::open::<EA, ES>(&walk, comptime!(vec![G, Q, S]));
+    let windows = ScoreWindows::held_or_open::<EA, ES>(
+        &walk,
+        comptime!(vec![G, Q, S]),
+        microkernel.plane.holder(),
+    );
 
     // The staged operands and the dot products land before any plane reads them.
     sync_cube();
@@ -62,10 +66,10 @@ pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
     stages.walk(walk, ring.prefetch, |slot, stage| {
         slot.consume(|key, value| {
             for plane in stage {
-                PlaneQueryGradientMicrokernel::step::<EA>(
+                PlaneQueryGradientMicrokernel::step::<EA, ES>(
                     &plane,
                     &sum.at(&plane),
-                    &windows.at(&plane),
+                    &ScoreWindows::held_at(&windows, &plane),
                     &staged_query.at(&plane),
                     &staged_out_gradient.at(&plane),
                     &key.at(&plane),

@@ -1,5 +1,6 @@
 use super::base::CubeKeyGradientMicrokernel;
 use super::share::{QueryGradientShare, StageQueryGradientShare};
+use crate::attention::{Q, S};
 use crate::attention_backward::ScoreWindows;
 use crate::attention_backward::key_gradient::plane::{
     KeyGradientSums, PlaneKeyGradientMicrokernel,
@@ -42,7 +43,11 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
     // Every head has the first's shape: the stages and windows are placed once, by its walk.
     let first_head = heads.region(0usize);
     let shape = first_head.walk();
-    let windows = ScoreWindows::held_or_open::<EA, ES>(&shape, plane_microkernel.holder());
+    let windows = ScoreWindows::held_or_open::<EA, ES>(
+        &shape,
+        comptime!(vec![S, Q]),
+        plane_microkernel.holder(),
+    );
     #[comptime]
     let left = match query_gradient {
         ComptimeOption::Some(_) => {

@@ -45,7 +45,8 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
 
     // The windows span the keys and one head's queries, the axes of every product out of them;
     // a score held in fragments needs none.
-    let windows = ScoreWindows::held_or_open::<EA, ES>(&shape, microkernel.holder());
+    let windows =
+        ScoreWindows::held_or_open::<EA, ES>(&shape, comptime!(vec![S, Q]), microkernel.holder());
     let sums = KeyGradientSums::open::<EA>(
         key_gradient,
         value_gradient,
