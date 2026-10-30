@@ -212,7 +212,9 @@ impl Reference {
     }
 
     /// `routine` at `settings`, or at its lead, on `case` in `element`, against the host within
-    /// `tolerance`; skipped, and said so, where the device declines it.
+    /// `tolerance`; skipped, and said so, where the device declines it. A launch that fails on the
+    /// device fails the check: its gradients would be whatever their buffers held, which a buffer
+    /// handed back by the memory pool can make look right.
     pub fn run<R: AttentionBackwardRoutine>(
         routine: R,
         case: Case,
@@ -225,7 +227,12 @@ impl Reference {
         let hw = Hardware::from_client(&client);
         let settings = settings.unwrap_or_else(|| routine.lead(&hw));
         match routine.launch_on(&hw, reference.tensors.clone(), &settings) {
-            Ok(gradients) => reference.check(&client, gradients, tolerance),
+            Ok(gradients) => {
+                if let Err(error) = cubecl::future::block_on(client.sync()) {
+                    panic!("{settings}: the launch failed on the device: {error:?}");
+                }
+                reference.check(&client, gradients, tolerance)
+            }
             Err(refusal) => eprintln!("{settings}: declined on this device, {refusal:?}"),
         }
     }
