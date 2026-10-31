@@ -36,7 +36,22 @@ impl Case {
         (0..n).map(|i| ((i % period) as f32) - 1.0).collect()
     }
 
-    fn check(&self, dtype: ElemType) -> Result<(), String> {
+    /// Values on a period of 17 in `[-0.5, 0.5)`: their products round, so the sum's own
+    /// precision shows.
+    fn fractions(n: usize, period: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| ((i * 7 + period) % 17) as f32 / 17.0 - 0.5)
+            .collect()
+    }
+
+    /// Runs the case on `values` and compares it to the CPU reference, to within `tolerance`
+    /// times one plus the reference's magnitude.
+    fn check(
+        &self,
+        dtype: ElemType,
+        values: fn(usize, usize) -> Vec<f32>,
+        tolerance: f32,
+    ) -> Result<(), String> {
         let client = cubecl::test_device().client();
         let args = ConvolutionArgs::<2> {
             stride: [self.stride; 2],
@@ -59,18 +74,18 @@ impl Case {
 
         let (input, input_host) = TestInput::builder(client.clone(), Shape::new(in_shape))
             .dtype(dtype)
-            .custom(Self::ramp(in_shape.iter().product(), 4))
+            .custom(values(in_shape.iter().product(), 4))
             .generate_with_f32_host_data();
         let (weight, weight_host) = TestInput::builder(client.clone(), Shape::new(w_shape))
             .dtype(dtype)
-            .custom(Self::ramp(w_shape.iter().product(), 3))
+            .custom(values(w_shape.iter().product(), 3))
             .generate_with_f32_host_data();
         let (bias, bias_host) = self
             .bias
             .then(|| {
                 TestInput::builder(client.clone(), Shape::new([self.c_out]))
                     .dtype(dtype)
-                    .custom(Self::ramp(self.c_out, 5))
+                    .custom(values(self.c_out, 5))
                     .generate_with_f32_host_data()
             })
             .unzip();
@@ -105,7 +120,7 @@ impl Case {
                             got.get_f32(&[b, oh, ow, oc]),
                             want.get_f32(&[b, oh, ow, oc]),
                         );
-                        if g != w {
+                        if g.is_nan() || (g - w).abs() > tolerance * (1.0 + w.abs()) {
                             return Err(format!("({b},{oh},{ow},{oc}) got {g} want {w}"));
                         }
                     }
@@ -161,7 +176,7 @@ fn check_grid(dtype: ElemType) {
                     padding,
                     bias,
                 };
-                if let Err(e) = case.check(dtype) {
+                if let Err(e) = case.check(dtype, Case::ramp, 0.0) {
                     bad.push(format!("{case:?}: {e}"));
                 }
             }
@@ -181,4 +196,26 @@ fn direct_f32_matches_the_reference() {
 #[test]
 fn direct_f16_matches_the_reference() {
     check_grid(half::f16::elem_type_native());
+}
+
+/// A half-precision layer of 320 input channels summed over a 3x3 window: 2880 products a sum,
+/// which drift by a rounding a term when summed in `f16`. The reference sums the same `f16`
+/// values in `f32`, so what is left is the output's own rounding, half a unit in its last place.
+#[test]
+fn direct_f16_sums_in_f32() {
+    let case = Case {
+        b: 1,
+        c_in: 320,
+        c_out: 8,
+        groups: 1,
+        size: 6,
+        kh: 3,
+        kw: 3,
+        stride: 1,
+        dilation: 1,
+        padding: 1,
+        bias: true,
+    };
+    case.check(half::f16::elem_type_native(), Case::fractions, 1e-3)
+        .unwrap();
 }
