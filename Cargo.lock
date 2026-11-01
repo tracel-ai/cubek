@@ -1392,7 +1392,9 @@ dependencies = [
  "cubek-quant",
  "cubek-random",
  "cubek-reduce",
+ "cubek-rms-norm",
  "cubek-std",
+ "cubek-swiglu",
 ]
 
 [[package]]
@@ -1548,6 +1550,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cubek-rms-norm"
+version = "0.4.0-pre.1"
+dependencies = [
+ "cubecl",
+ "cubek-matmul",
+ "cubek-microkernel",
+ "cubek-std",
+ "cubek-test-utils",
+ "half",
+ "serde",
+]
+
+[[package]]
 name = "cubek-std"
 version = "0.4.0-pre.1"
 dependencies = [
@@ -1557,6 +1572,19 @@ dependencies = [
  "cubek-test-utils",
  "serde",
  "tempfile",
+]
+
+[[package]]
+name = "cubek-swiglu"
+version = "0.4.0-pre.1"
+dependencies = [
+ "cubecl",
+ "cubek-matmul",
+ "cubek-microkernel",
+ "cubek-std",
+ "cubek-test-utils",
+ "half",
+ "serde",
 ]
 
 [[package]]
