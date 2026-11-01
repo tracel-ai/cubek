@@ -197,8 +197,10 @@ impl CubeAttentionMicrokernelSettings {
         // Four planes a cube sharing each stage, two heads over two boxes of queries, each plane a
         // one-by-two box: thirty-two rows over sixteen keys a step, the work a step of the attention
         // Apple ships for Metal does. On an M2 Pro (Qwen3-0.6B's 16/8 heads, and Qwen3-4B's 32/8)
-        // it is the fastest cube setting, 5 to 16% under the lead taking its queries last first, at
-        // 512 and 2048 queries.
+        // it was the fastest cube setting, 5 to 16% under the lead taking its queries last first, at
+        // 512 and 2048 queries, while MSL picked a vector's lane at a run-time index through a
+        // chain of selects; since each lane loads alone (cubecl's scalar extract pass), the lead
+        // is 9 to 25% under it there.
         let four_planes_split = Self {
             heads: count(2),
             planes_along_queries: count(2),
