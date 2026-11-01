@@ -494,7 +494,7 @@ pub fn launch_into_tuned(
     out: LhsOutput,
 ) -> Result<(), Refusal> {
     let floor = CubeGroupsRmsNormRoutineSettings::DEFAULT;
-    if let Some(elected) = fastest_rms_norm_routine(call, device, tile)
+    if let Some(elected) = fastest_rms_norm_routine(&call.client, device, &call.input, tile)
         .filter(|elected| elected.settings() != RmsNormRoutineSettings::from(floor))
         && elected.launch_into(call, out.clone()).is_ok()
     {
@@ -504,17 +504,18 @@ pub fn launch_into_tuned(
     RmsNormRoutineCandidate::new(CubeGroupsRmsNormRoutine, floor, &hw).launch_into(call, out)
 }
 
-/// The routine, at its setting, that the autotune found fastest for the norm of `call`'s rows on
-/// `device`, or `None` where no round has settled the key, or the floor named apart won it: what a
-/// fused tail runs the norm on, so it inherits the kernel the unfused round chose.
+/// The routine, at its setting, that the autotune found fastest for the norm of `input`'s rows on
+/// `client`'s `device`, or `None` where no round has settled the key, or the floor named apart won
+/// it: what a fused tail runs the norm on, so it inherits the kernel the unfused round chose.
 pub fn fastest_rms_norm_routine(
-    call: &RmsNormCall,
+    client: &Client,
     device: &Device,
+    input: &PlainTensor,
     tile: GroupPriority,
 ) -> Option<RmsNormCandidate> {
-    let id = CubeTuneId::new(&call.client, device);
-    let tunables = tunables(&id, &call.client, tile);
-    let key = RmsNormKey::from(&call.input);
+    let id = CubeTuneId::new(client, device);
+    let tunables = tunables(&id, client, tile);
+    let key = RmsNormKey::from(input);
     TUNER.fastest_identity(&id, &tunables, &key)?.routine()
 }
 
