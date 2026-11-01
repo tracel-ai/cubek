@@ -238,6 +238,11 @@ impl MatmulPartitioning {
         self.partitioning.overhangs(axis)
     }
 
+    /// The problem's extent along `axis`.
+    pub fn extent(&self, axis: Axis) -> usize {
+        self.partitioning.space().extent(axis)
+    }
+
     /// Whether the tiles overhang the output: a tile the output's edge cuts short, which a write
     /// that cannot be masked would reach past.
     pub fn overhangs_output(&self) -> bool {

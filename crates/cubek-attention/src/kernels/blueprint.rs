@@ -59,7 +59,11 @@ impl<M: AttentionMicrokernel, SM> AttentionBlueprint<M, SM> {
             });
             let innermost = operand.innermost(key_order);
             if innermost == S || partitioning.overhangs(innermost) {
-                vectorization.require(VectorRequirement::Masked { operand });
+                // The keys are stated at launch: no extent a width could divide.
+                let extent = (innermost != S)
+                    .then(|| partitioning.extent(innermost))
+                    .flatten();
+                vectorization.require(VectorRequirement::Masked { operand, extent });
             }
         }
         let widths = problem

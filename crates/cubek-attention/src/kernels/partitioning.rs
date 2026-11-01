@@ -248,6 +248,13 @@ impl AttentionPartitioning {
         self.partitioning.overhangs(axis)
     }
 
+    /// The problem's extent along `axis`, where the partitioning states it: none along an axis a
+    /// launch states, as the keys a cache holds.
+    pub fn extent(&self, axis: Axis) -> Option<usize> {
+        let space = self.partitioning.space();
+        (!space.is_dynamic(axis)).then(|| space.extent(axis))
+    }
+
     /// Cubes one batch and key head of the problem spawns: one for every box of queries and
     /// heads, times the cubes sharing each, or the cubes sharing the line of its boxes' steps.
     pub fn cubes(&self) -> usize {

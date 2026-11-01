@@ -67,8 +67,12 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
                     problem.elements.get(operand).size(),
                 ),
             });
-            if partitioning.overhangs(MatmulAxes::MNK.of(orders.innermost(operand))) {
-                vectorization.require(VectorRequirement::Masked { operand });
+            let innermost = MatmulAxes::MNK.of(orders.innermost(operand));
+            if partitioning.overhangs(innermost) {
+                vectorization.require(VectorRequirement::Masked {
+                    operand,
+                    extent: Some(partitioning.extent(innermost)),
+                });
             }
         }
         let widths = alignments.map(|operand, _| {

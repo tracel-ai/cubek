@@ -1218,8 +1218,9 @@ mod base {
     }
 
     /// Every width is the widest the device reads `f16` in, until an access's stretch or the
-    /// binding's mask narrows it: the stages's stage and the fragments' tiles are sixteen deep, so
-    /// only a mask does here.
+    /// buffer narrows it: the stages's stage and the fragments' tiles are sixteen deep, and a mask
+    /// takes any width dividing the extent it masks, so only a row no wide line divides does
+    /// here.
     #[test]
     fn the_widths_are_what_the_accesses_and_the_binding_admit() {
         let hw = offering(devices::strix_halo());
@@ -1234,10 +1235,13 @@ mod base {
             (widths.lhs, widths.rhs, widths.out)
         };
         assert_eq!(widths(256, 512, 64), (widest, widest, widest));
-        // A `k` the stages overhang masks the lhs, whose contiguous axis it is.
-        assert_eq!(widths(256, 512, 24), (1, widest, widest));
-        // An `n` the cubes overhang masks the rhs and the output.
-        assert_eq!(widths(256, 520, 64), (widest, 1, 1));
+        // A `k` the stages overhang masks the lhs, whose contiguous axis it is, at a width that
+        // divides it.
+        assert_eq!(widths(256, 512, 24), (widest, widest, widest));
+        assert_eq!(widths(256, 512, 20), (4, widest, widest));
+        // An `n` the cubes overhang masks the rhs and the output, likewise.
+        assert_eq!(widths(256, 520, 64), (widest, widest, widest));
+        assert_eq!(widths(256, 516, 64), (widest, 4, 4));
     }
 
     /// A padded stage holds its cells and one 16-byte chunk after every block row, a line of
@@ -1391,8 +1395,9 @@ mod base {
             (widths.lhs, widths.rhs, widths.out)
         };
         assert_eq!(widths(256, 512, 64), (widest, widest, 1));
-        // A `k` the stages overhang masks the lhs, whose contiguous axis it is.
-        assert_eq!(widths(256, 512, 72), (1, widest, 1));
+        // A `k` the stages overhang masks the lhs, whose contiguous axis it is, at a width that
+        // divides it.
+        assert_eq!(widths(256, 512, 72), (widest, widest, 1));
     }
 
     /// Two NVFP4 inputs the block-scaled instruction reads as stored are estimated like any staged
