@@ -2,7 +2,7 @@
 
 use crate::kernels::AttentionPartitioning;
 use crate::kernels::AttentionRoutineProblem;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{MaskedExtent, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_microkernel::attention::{AttentionOperand, AttentionOperands, S};
@@ -58,12 +58,18 @@ impl<M: AttentionMicrokernel, SM> AttentionBlueprint<M, SM> {
                 ),
             });
             let innermost = operand.innermost(key_order);
-            if innermost == S || partitioning.overhangs(innermost) {
-                // The keys are stated at launch: no extent a width could divide.
-                let extent = (innermost != S)
-                    .then(|| partitioning.extent(innermost))
-                    .flatten();
-                vectorization.require(VectorRequirement::Masked { operand, extent });
+            if innermost == S {
+                // The keys are read up to the attended length, known only at run time.
+                vectorization.require(VectorRequirement::Masked {
+                    operand,
+                    extent: MaskedExtent::Unknown,
+                });
+            } else if partitioning.overhangs(innermost) {
+                vectorization.require(VectorRequirement::masked(
+                    operand,
+                    partitioning.space(),
+                    innermost,
+                ));
             }
         }
         let widths = problem

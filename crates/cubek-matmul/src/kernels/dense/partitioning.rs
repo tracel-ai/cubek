@@ -238,9 +238,9 @@ impl MatmulPartitioning {
         self.partitioning.overhangs(axis)
     }
 
-    /// The problem's extent along `axis`.
-    pub fn extent(&self, axis: Axis) -> usize {
-        self.partitioning.space().extent(axis)
+    /// The problem's space: every axis at its extent, or dynamic where a launch states it.
+    pub fn space(&self) -> &Space {
+        self.partitioning.space()
     }
 
     /// Whether the tiles overhang the output: a tile the output's edge cuts short, which a write
