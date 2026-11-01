@@ -463,6 +463,34 @@ impl PlainTensor {
     }
 }
 
+/// Where a tensor lies, as a problem reads it: the alignment its layout gives a line, and the bytes
+/// it starts past its buffer's own start, which together bound the width a launch binds it at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Placement {
+    pub elem_alignment: ElemAlignment,
+    pub start_bytes: u64,
+}
+
+impl Placement {
+    /// Dense rows of `width` elements starting where their buffer does: an output a launch lays
+    /// out itself, as a sink's or a cube's stage.
+    pub fn dense_rows(width: usize) -> Self {
+        Self {
+            elem_alignment: ElemAlignment::dense_rows(width),
+            start_bytes: 0,
+        }
+    }
+}
+
+impl From<&PlainTensor> for Placement {
+    fn from(tensor: &PlainTensor) -> Self {
+        Self {
+            elem_alignment: tensor.elem_alignment(),
+            start_bytes: tensor.start_bytes(),
+        }
+    }
+}
+
 /// What a launch declines on a device whose runtime does not compute in the operands' element and
 /// store it in a buffer, as WGSL does not bf16: the kernel would fail to compile there.
 pub const ELEMENT_NOT_ON_DEVICE: Refusal = Refusal::Declined {
