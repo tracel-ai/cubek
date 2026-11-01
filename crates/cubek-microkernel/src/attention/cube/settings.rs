@@ -200,7 +200,7 @@ impl CubeAttentionMicrokernelSettings {
         // it was the fastest cube setting, 5 to 16% under the lead taking its queries last first, at
         // 512 and 2048 queries, while MSL picked a vector's lane at a run-time index through a
         // chain of selects; since each lane loads alone (cubecl's scalar extract pass), the lead
-        // is 9 to 25% under it there.
+        // is 8 to 25% under it there.
         let four_planes_split = Self {
             heads: count(2),
             planes_along_queries: count(2),
