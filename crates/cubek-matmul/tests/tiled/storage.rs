@@ -8,8 +8,16 @@ use cubecl::{
 };
 use cubek_matmul::{
     definition::MatmulSetupError,
-    tiled::storage::{StorageLevels, StoragePartitioning, empty, tile, untile},
+    tiled::storage::{
+        StorageLevels, StoragePartitioning, StoredValues, empty, stored_tile, tile, untile,
+    },
 };
+use cubek_microkernel::matmul::{MatmulOperand, MatmulStep};
+use cubek_std::layout::{
+    stored::Operand,
+    tile_order::{TileOrder, nvfp4_scheme},
+};
+use cubek_std::{Hardware, matmul_axes::K};
 use cubek_test_utils::{HostData, HostDataType, TestInput, client};
 
 const ROWS: Axis = Axis(0);
@@ -554,4 +562,58 @@ fn packed_values_without_their_axes_are_refused() {
         StorageLevels::new(&[(KI, 8)]).grid(&[KI, KB, N]),
     );
     assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
+}
+
+/// A float input is stored in the step a product against it takes, over its own two axes, except
+/// on a device whose TMA engine fills the stages from rows.
+#[test]
+fn elements_are_stored_in_the_step_of_their_product() {
+    let hw = Hardware::from_client(&client());
+    let f16: ElemType = half::f16::elem_type_native();
+    for input in MatmulOperand::INPUTS {
+        let tile = stored_tile(&hw, input, StoredValues::Elements(f16), f16);
+        if hw.bulk_tensor_copy() {
+            assert_eq!(tile, None, "{input:?} stays in rows for the TMA fill");
+            continue;
+        }
+        let step = MatmulStep::stored_on(&hw, input, Operand::plain(), f16, f16);
+        let want = step.map(|step| input.axes().map(|axis| (axis, step.along(axis))));
+        assert_eq!(
+            tile.map(|tile| input.axes().map(|axis| (axis, tile.extent(axis)))),
+            want,
+            "{input:?}"
+        );
+    }
+}
+
+/// NVFP4 codes are stored in whole scale blocks along `k`, where a device contracts them.
+#[test]
+fn packed_codes_are_stored_in_whole_blocks() {
+    let hw = Hardware::from_client(&client());
+    let f16: ElemType = half::f16::elem_type_native();
+    let scheme = nvfp4_scheme();
+    for input in MatmulOperand::INPUTS {
+        if let Some(tile) = stored_tile(&hw, input, StoredValues::Packed(scheme), f16) {
+            assert!(
+                tile.extent(K).is_multiple_of(TileOrder::NVFP4.block),
+                "{input:?} tile {tile:?}"
+            );
+        }
+    }
+}
+
+/// Codes under a scheme tile order does not store keep the layout they were laid down in.
+#[test]
+fn codes_tile_order_does_not_store_take_no_tile() {
+    use cubecl::quant::scheme::{QuantScheme, QuantStore};
+    let hw = Hardware::from_client(&client());
+    let f16: ElemType = half::f16::elem_type_native();
+    let along_n = QuantScheme::default()
+        .with_value(QuantValue::Q8S)
+        .with_store(QuantStore::PackedU32(0));
+    assert_eq!(TileOrder::of(&along_n), None);
+    assert_eq!(
+        stored_tile(&hw, MatmulOperand::Rhs, StoredValues::Packed(along_n), f16),
+        None
+    );
 }
