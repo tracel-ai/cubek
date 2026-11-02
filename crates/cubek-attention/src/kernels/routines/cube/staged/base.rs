@@ -60,22 +60,22 @@ impl Routine for CubeStagedAttentionRoutine {
     type Blueprint = CubeStagedAttentionRoutineBlueprint;
     type Partitioning = AttentionPartitioning;
 
-    /// Its microkernel's settings over plane fragments
-    /// ([`CubeAttentionMicrokernelSettings::listed`]) in query order, then the first of them, its
-    /// lead, with the boxes taken last first.
+    /// Its default, then its microkernel's settings over plane fragments
+    /// ([`CubeAttentionMicrokernelSettings::listed`]) with the boxes taken last first. Under a
+    /// causal mask a later box sees more keys, so the heaviest start first and the light ones fill
+    /// the device's tail; without one the order changes nothing. On an RTX PRO 6000, a 6016 by
+    /// 8192 causal `f16` prompt (32/8 heads, head dim 128) takes 8 to 10% less time last first on
+    /// every setting tried.
     fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
-        let microkernel = CubeAttentionMicrokernelSettings::FRAGMENT.listed();
-        let last_first = Self::Settings {
-            microkernel: microkernel[0],
-            queries: QueryOrder::LastFirst,
-        };
-        microkernel
+        let last_first = CubeAttentionMicrokernelSettings::FRAGMENT
+            .listed()
             .into_iter()
             .map(|microkernel| Self::Settings {
                 microkernel,
-                queries: QueryOrder::InOrder,
-            })
-            .chain([last_first])
+                queries: QueryOrder::LastFirst,
+            });
+        core::iter::once(Self::Settings::DEFAULT)
+            .chain(last_first)
             .collect()
     }
 

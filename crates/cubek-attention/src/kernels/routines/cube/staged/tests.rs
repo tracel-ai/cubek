@@ -398,10 +398,10 @@ mod fragment {
         );
     }
 
-    /// The lead takes the boxes of queries in order, and the one setting listed last first is
-    /// its default reversed: a table may race the order, and nothing takes it unasked.
+    /// The default takes the boxes of queries in order, and every listed setting after it takes
+    /// them last first: the lead is listed both ways, so a race still weighs the order.
     #[test]
-    fn only_the_listed_setting_takes_the_queries_last_first() {
+    fn the_listed_settings_take_the_queries_last_first() {
         let hw = offering(devices::m2_pro(), 8);
         let [_, _, problem, _] = problems();
         let reverses_queries = |settings: &Settings| {
@@ -416,18 +416,20 @@ mod fragment {
                 .any(|level| level.is_reversed(Q))
         };
         let settings = ROUTINE.settings(&hw);
-        let last_first: Vec<_> = settings
-            .iter()
-            .filter(|settings| settings.queries == QueryOrder::LastFirst)
-            .collect();
+        assert_eq!(settings[0], Settings::DEFAULT);
+        assert!(
+            settings[1..]
+                .iter()
+                .all(|settings| settings.queries == QueryOrder::LastFirst)
+        );
         assert_eq!(
-            last_first,
-            [&Settings {
+            settings[1],
+            Settings {
                 queries: QueryOrder::LastFirst,
                 ..Settings::DEFAULT
-            }]
+            }
         );
         assert!(!reverses_queries(&settings[0]));
-        assert!(reverses_queries(last_first[0]));
+        assert!(reverses_queries(&settings[1]));
     }
 }
