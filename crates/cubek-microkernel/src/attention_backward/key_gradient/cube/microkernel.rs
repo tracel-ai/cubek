@@ -164,7 +164,8 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
                             }
                             sync_cube();
                         }
-                        _ => {}
+                        (ComptimeOption::Some(_), ComptimeOption::None)
+                        | (ComptimeOption::None, _) => {}
                     }
                 });
             },
