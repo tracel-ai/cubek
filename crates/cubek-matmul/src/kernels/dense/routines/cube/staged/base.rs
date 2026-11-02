@@ -562,7 +562,8 @@ impl CubeStagedMatmulRoutine {
     /// of its columns' axis: the lhs's `KI`, which a box holds whole blocks of, and the rhs's
     /// `NI`, its buffer's rows, which a box may reach past. So it owes that axis what any operand
     /// owes its innermost one ([`MatmulBlueprint::new`]): its buffer's alignment and its start's,
-    /// and a single value where the tiles overhang it, where the tile engine checks no wider vector.
+    /// and, where the tiles overhang it, a width dividing its extent, the widest line the tile
+    /// engine masks at an edge.
     fn float_width_in_blocks(
         problem: &MatmulRoutineProblem,
         blocks: &MatmulBlocks,
@@ -588,7 +589,11 @@ impl CubeStagedMatmulRoutine {
             ),
         });
         if partitioning.overhangs(inside) {
-            vectorization.require(VectorRequirement::Masked { operand });
+            vectorization.require(VectorRequirement::masked(
+                operand,
+                partitioning.space(),
+                inside,
+            ));
         }
         vectorization.width(operand, |_| widest)
     }
