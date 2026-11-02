@@ -36,9 +36,10 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
     let mut sum = query_gradient.accumulator::<EA>(
         bias,
         key,
-        comptime!(microkernel.query_gradient.tile_instruction()),
+        microkernel.query_gradient.tile_instruction(),
         Semiring::SUM_PROD,
     );
+
     sum.zero();
     for step in queries.walk().range(0, steps) {
         let (query, key, value) = (query.at(&step), key.at(&step), value.at(&step));
@@ -46,24 +47,28 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
         let mut score = bias.accumulator::<EA>(
             &query,
             &key,
-            comptime!(microkernel.score.tile_instruction()),
+            microkernel.score.tile_instruction(),
             Semiring::SUM_PROD,
         );
+
         score.zero();
         for depth in step.walk() {
             unit_registers_microkernel(&depth, &score, &query, &key);
         }
+
         score.along(S).probabilities::<EA>(scale, &bias, logsumexp);
         let mut gradient = bias.accumulator::<EA>(
             &out_gradient,
             &value,
-            comptime!(microkernel.score_gradient.tile_instruction()),
+            microkernel.score_gradient.tile_instruction(),
             Semiring::SUM_PROD,
         );
+
         gradient.zero();
         for depth in step.walk() {
             unit_registers_microkernel(&depth, &gradient, &out_gradient, &value);
         }
+
         gradient
             .along(S)
             .softmax_gradient::<EA>(&score.along(S), &delta);
@@ -72,5 +77,6 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
             unit_registers_microkernel(&depth, &step_sum, &gradient, &key);
         }
     }
-    drain_scaled::<EA>(&sum, query_gradient, scale, comptime!(microkernel.seq_q()));
+
+    drain_scaled::<EA>(&sum, query_gradient, scale, microkernel.seq_q());
 }

@@ -1,5 +1,4 @@
 use core::marker::PhantomData;
-
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
@@ -45,6 +44,7 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
         tile: value.tile(&partitioning),
         element: PhantomData,
     };
+
     // The cube level's walk: this cube's run of the steps, or pages, of keys.
     let run = partitioning.walk();
     let first_step = run.region(0);
@@ -52,9 +52,9 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
     let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
     let steps = visible.steps(
         &first_step,
-        comptime!(microkernel.cube.seq_q()),
-        comptime!(microkernel.cube.region_keys()),
-        comptime!(merge.cubes),
+        microkernel.cube.seq_q(),
+        microkernel.cube.region_keys(),
+        merge.cubes,
     );
     let slot_box = cube_unstaged_attention_partial_microkernel::<
         EA,
@@ -74,10 +74,11 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
         slot_out,
         slot_max,
         slot_sum,
-        comptime!(microkernel.cube),
-        comptime!(merge.slots.splits),
-        comptime!(merge.slots.val_dim),
+        microkernel.cube,
+        merge.slots.splits,
+        merge.slots.val_dim,
     );
+
     hypercube_split_keys_merge_microkernel::<EA, E, N>(
         &slot_box, slot_out, slot_max, slot_sum, out, logsumexp, arrivals, merge,
     );
@@ -116,6 +117,7 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
         tile: value.tile(&partitioning),
         fixup: ComptimeOption::new_None(),
     };
+
     // The cube level's walk: this cube's run of the steps, or pages, of keys.
     let run = partitioning.walk();
     let first_step = run.region(0);
@@ -123,9 +125,9 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
     let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
     let steps = visible.steps(
         &first_step,
-        comptime!(microkernel.cube.seq_q()),
-        comptime!(microkernel.cube.region_keys()),
-        comptime!(merge.cubes),
+        microkernel.cube.seq_q(),
+        microkernel.cube.region_keys(),
+        merge.cubes,
     );
     let slot_box =
         cube_unstaged_attention_partial_microkernel::<EA, E, N, PackedStepReads, PackedStepReads>(
@@ -140,9 +142,9 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
             slot_out,
             slot_max,
             slot_sum,
-            comptime!(microkernel.cube),
-            comptime!(merge.slots.splits),
-            comptime!(merge.slots.val_dim),
+            microkernel.cube,
+            merge.slots.splits,
+            merge.slots.val_dim,
         );
     // A packed cache is read for inference: no backward pass reads its logsumexp.
     hypercube_split_keys_merge_microkernel::<EA, E, N>(

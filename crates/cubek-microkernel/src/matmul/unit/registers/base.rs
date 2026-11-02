@@ -162,8 +162,8 @@ impl Microkernel for UnitRegistersMicrokernel {
     }
 
     /// The lhs's step is the block's depth down `K`, and the rhs's its extent along its own
-    /// contiguous axis. A col rhs's step is contracted with the lhs's, a line of each summed into a cell
-    /// one value wide, so the output is written a value at a time; a row rhs's lands in the
+    /// contiguous axis. A col rhs's step is contracted with the lhs's, a line of each summed into a
+    /// cell one value wide, so the output is written a value at a time; a row rhs's lands in the
     /// output's cells, lined with them, and the output is written the block's columns at a time.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {
         let (rhs_partner, out) = match self.orders.rhs {

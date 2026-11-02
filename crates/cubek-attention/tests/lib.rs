@@ -1,3 +1,3 @@
-#![allow(clippy::needless_range_loop)]
+#![cfg(feature = "tiled")]
 
-mod attention;
+mod sequence_reads;

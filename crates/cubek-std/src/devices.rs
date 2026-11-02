@@ -172,6 +172,52 @@ pub fn offering_nvfp4(hw: Hardware) -> Hardware {
     )
 }
 
+/// `hw` offering every block-scaled instruction Blackwell's `sm_120` does (the CUDA runtime's set
+/// under a 13.1 toolkit): the 8-bit kind over every 8-, 6- and 4-bit code pair under a `ue8m0`
+/// scale every thirty-two of `k`; and the 4-bit kind over `e2m1` pairs, under `ue8m0` scales of
+/// thirty-two (MXFP4) or sixteen, or `e4m3` scales of sixteen (NVFP4). Each `16 × 8`, summed in
+/// `f32`.
+pub fn offering_block_scaled(hw: Hardware) -> Hardware {
+    let f32 = ElemType::Float(FloatKind::F32);
+    let ue8m0 = ElemType::Float(FloatKind::UE8M0);
+    let fp4 = ElemType::Float(FloatKind::E2M1x2);
+    let codes = [
+        FloatKind::E4M3,
+        FloatKind::E5M2,
+        FloatKind::E3M2,
+        FloatKind::E2M3,
+        FloatKind::E2M1,
+    ];
+    let eight_bit = codes.iter().flat_map(|&a| {
+        codes.iter().map(move |&b| ScaledMmaConfig {
+            a_type: ElemType::Float(a),
+            b_type: ElemType::Float(b),
+            cd_type: f32,
+            scales_type: ue8m0,
+            m: 16,
+            n: 8,
+            k: 32,
+            scales_factor: 1,
+        })
+    });
+    let four_bit = [
+        (ue8m0, 2),
+        (ElemType::Float(FloatKind::E4M3), 4),
+        (ue8m0, 4),
+    ]
+    .map(|(scales_type, scales_factor)| ScaledMmaConfig {
+        a_type: fp4,
+        b_type: fp4,
+        cd_type: f32,
+        scales_type,
+        m: 16,
+        n: 8,
+        k: 64,
+        scales_factor,
+    });
+    offering_scaled_mma(hw, eight_bit.chain(four_bit))
+}
+
 /// `hw` offering exactly `forms` as warpgroup MMAs.
 pub fn offering_wgmma(mut hw: Hardware, forms: impl IntoIterator<Item = WgmmaConfig>) -> Hardware {
     features(&mut hw).matmul.wgmma = forms.into_iter().collect();

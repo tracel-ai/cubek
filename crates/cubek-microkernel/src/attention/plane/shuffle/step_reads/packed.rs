@@ -34,22 +34,26 @@ impl<N: Size> StepReads<N> for PackedStepReads {
     ) -> Array<Vector<f32, N>> {
         let qjl = self.fixup.is_some();
         let window = self.tile.at(step);
+
         // Without a fix-up, the operand stands in for it, and is never read through it.
         let fixup = if comptime!(qjl) {
             self.fixup.clone().unwrap().at(step)
         } else {
             window.clone()
         };
+
         let (read, fixup) = (window.decoded::<f32, N>(), fixup.decoded::<f32, N>());
         let half = comptime!(if qjl { lines / 2 } else { lines });
         let first_key = step.origin(S);
         let (teams, keys_in_flight) = comptime!((walk.teams, walk.keys_in_flight));
         let units_per_key = comptime!(walk.units_per_key);
-        let per_key = comptime!(lines.div_ceil(units_per_key));
+        let per_key = lines.div_ceil(units_per_key);
+
         // Where the units' lines tile the row exactly, every line a unit takes lies in it: only
         // the key is tested, once, and a key's lines are read in one block, sharing its row.
-        let whole_rows = comptime!(lines.is_multiple_of(units_per_key));
-        let mut loaded = Array::<Vector<f32, N>>::new(comptime!(keys_in_flight * per_key));
+        let whole_rows = lines.is_multiple_of(units_per_key);
+
+        let mut loaded = Array::<Vector<f32, N>>::new(keys_in_flight * per_key);
         #[unroll]
         for c in 0..keys_in_flight {
             let at = c * teams + walk.team;
@@ -57,11 +61,12 @@ impl<N: Size> StepReads<N> for PackedStepReads {
             for p in 0..per_key {
                 loaded[c * per_key + p] = Vector::<f32, N>::cast_from(0u32);
             }
+
             if ((first_key + at) as u32) < walk.attended {
                 #[unroll]
                 for p in 0..per_key {
                     let line = walk.lane + p * units_per_key;
-                    if comptime!(whole_rows) || line < lines {
+                    if whole_rows || line < lines {
                         let value = if comptime!(qjl) {
                             if line < half {
                                 read.read_unchecked(at, line)
@@ -71,11 +76,13 @@ impl<N: Size> StepReads<N> for PackedStepReads {
                         } else {
                             read.read_unchecked(at, line)
                         };
+
                         loaded[c * per_key + p] = value;
                     }
                 }
             }
         }
+
         loaded
     }
 

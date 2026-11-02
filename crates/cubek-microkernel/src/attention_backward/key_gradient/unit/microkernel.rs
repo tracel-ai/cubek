@@ -35,16 +35,18 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
     let mut key_sum = key_gradient.accumulator::<EA>(
         bias,
         query,
-        comptime!(microkernel.key_gradient.tile_instruction()),
+        microkernel.key_gradient.tile_instruction(),
         Semiring::SUM_PROD,
     );
+
     key_sum.zero();
     let mut value_sum = value_gradient.accumulator::<EA>(
         bias,
         out_gradient,
-        comptime!(microkernel.value_gradient.tile_instruction()),
+        microkernel.value_gradient.tile_instruction(),
         Semiring::SUM_PROD,
     );
+
     value_sum.zero();
     for head in keys.walk() {
         let queries = head.walk();
@@ -56,28 +58,33 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
             let mut score = bias.accumulator::<EA>(
                 &key,
                 &query,
-                comptime!(microkernel.score.tile_instruction()),
+                microkernel.score.tile_instruction(),
                 Semiring::SUM_PROD,
             );
+
             score.zero();
             for depth in step.walk() {
                 unit_registers_microkernel(&depth, &score, &key, &query);
             }
+
             score.along(Q).probabilities::<EA>(scale, &bias, &logsumexp);
             let step_value_sum = value_sum.at(&step);
             for depth in step.walk() {
                 unit_registers_microkernel(&depth, &step_value_sum, &score, &out_gradient);
             }
+
             let mut gradient = bias.accumulator::<EA>(
                 &value,
                 &out_gradient,
-                comptime!(microkernel.score_gradient.tile_instruction()),
+                microkernel.score_gradient.tile_instruction(),
                 Semiring::SUM_PROD,
             );
+
             gradient.zero();
             for depth in step.walk() {
                 unit_registers_microkernel(&depth, &gradient, &value, &out_gradient);
             }
+
             gradient
                 .along(Q)
                 .softmax_gradient::<EA>(&score.along(Q), &delta);
@@ -87,11 +94,7 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
             }
         }
     }
-    drain_scaled::<EA>(
-        &key_sum,
-        key_gradient,
-        scale,
-        comptime!(microkernel.seq_kv()),
-    );
+
+    drain_scaled::<EA>(&key_sum, key_gradient, scale, microkernel.seq_kv());
     value_sum.drained_into(value_gradient);
 }

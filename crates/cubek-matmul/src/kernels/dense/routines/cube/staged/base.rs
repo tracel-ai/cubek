@@ -1,44 +1,31 @@
 use super::kernel::cube_staged_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
-use crate::kernels::select::packed::nvfp4_scheme;
-use crate::kernels::{CUBE_STRIPS, cube_order_name};
+use crate::kernels::{
+    CUBE_STRIPS, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_PACKED_WALK_PAST_K, MatmulBinding,
+    MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
+    MatmulTensors, MatmulView, cube_order_name,
+};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::quant::scheme::QuantScheme;
-use cubecl::tile::Space;
-use cubecl::tile::launch::Refusal;
+use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::tile::launch::{DestinationLaunch, Refusal, TmaStored, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
-use cubek_microkernel::matmul::MatmulStep;
-use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands, MatmulWorkItem};
-use cubek_std::layout::stored::Operand;
-use cubek_std::layout::stored::Packing;
-use cubek_std::layout::tile_order;
-use cubek_std::matmul_axes::{K, KB, KI, MI, NI};
-use cubek_std::microkernel::{CubeStaging, GlobalStream};
-use cubek_std::microkernel::{StageLayout, StageRing};
-use cubek_std::{Hardware, Instructions};
-use cubek_std::{UNIT_REGISTERS, manual_mma};
-
-use crate::kernels::{
-    MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_PACKED_WALK_PAST_K, MatmulBlueprint, MatmulOutput,
-    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
-};
-use cubecl::tile::launch::Vectorization;
-use cubecl::tile::{
-    StageStorage, TileArgLaunch,
-    launch::{DestinationLaunch, TmaStored},
-};
-use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
+use cubecl::tile::{BlockScaledOperands, Space, StageStorage, TileArgLaunch};
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
-    CubeStagedStore,
+    CubeStagedStore, MatmulPlaneLayout,
 };
 use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
-use cubek_std::matmul_axes::{M, N};
-use cubek_std::microkernel::{KernelEstimate, Microkernel};
+use cubek_microkernel::matmul::{
+    MatmulDim, MatmulOperand, MatmulOperands, MatmulStep, MatmulWorkItem,
+};
+use cubek_std::layout::stored::{Operand, Packing};
+use cubek_std::matmul_axes::{K, KB, KI, M, MI, N, NI};
+use cubek_std::microkernel::{
+    CubeStaging, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
+};
 use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::{Hardware, UNIT_REGISTERS, block_scaled_for, block_scaled_mma};
 
 /// `out = lhs · rhs` with every cube owning a box of the output: it stages the box for its planes,
 /// which each own a tile of it, or split its contraction between them
@@ -69,8 +56,9 @@ impl CubeStagedMatmulRoutineSettings {
 }
 
 /// The shape of a setting the routine races, counted in steps of the product
-/// ([`block_scaled_step`](CubeStagedMatmulRoutine::block_scaled_step)): a plane's steps of `M`, `N` and `K` (a stage's depth), the layout of
-/// its planes, the planes sharing each step of `K`, the stages in flight and who stores the box.
+/// ([`block_scaled_step`](CubeStagedMatmulRoutine::block_scaled_step)): a plane's steps of `M`, `N`
+/// and `K` (a stage's depth), the layout of its planes, the planes sharing each step of `K`, the
+/// stages in flight and who stores the box.
 #[derive(Debug, Clone, Copy)]
 struct StagedShape {
     steps: (usize, usize, usize),
@@ -81,10 +69,10 @@ struct StagedShape {
 }
 
 impl CubeStagedMatmulRoutine {
-    /// The settings an NVFP4 product read as stored is raced at on `hw`, counted in steps of the
-    /// product ([`block_scaled_step`](Self::block_scaled_step)): a plane's steps of `M`, `N` and `K`, the layout of its planes,
-    /// the planes sharing each step of `K`, the stages in flight and who stores the box, and who
-    /// fills the stages.
+    /// The settings a block-scaled product read as stored is raced at on `hw`, counted in steps of
+    /// the product ([`block_scaled_step`](Self::block_scaled_step)): a plane's steps of `M`, `N`
+    /// and `K`, the layout of its planes, the planes sharing each step of `K`, the stages in flight
+    /// and who stores the box, and who fills the stages.
     ///
     /// For a prompt's rows, filled by the TMA engine through the tile DSL's transport: four by
     /// eight steps on four by two planes, the box a long rhs fills the device with; two by
@@ -121,10 +109,36 @@ impl CubeStagedMatmulRoutine {
     /// Apart from the float list ([`settings`](Routine::settings)): a block-scaled step contracts
     /// four times the float one's `K` from the same bytes, so the boxes that keep it fed are not
     /// the float product's, and the float table races none of them.
+    ///
+    /// The lists of every block-scaled instruction the device offers, each over inputs in its
+    /// form ([`block_scaled_inputs`](Self::block_scaled_inputs)), one after another, a setting two
+    /// instructions share listed once: a setting is counted in steps, and prepares only on a
+    /// product whose instruction's step it was counted in.
     pub fn block_scaled_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
-        let Some(step) = Self::block_scaled_step(hw) else {
-            return vec![CubeStagedMatmulRoutineSettings::DEFAULT];
-        };
+        let mut settings: Vec<CubeStagedMatmulRoutineSettings> = Vec::new();
+        for inputs in block_scaled_mma(hw)
+            .filter_map(|instruction| Self::block_scaled_inputs(&instruction.form))
+        {
+            let Some(step) = Self::block_scaled_step(hw, &inputs) else {
+                continue;
+            };
+            for setting in Self::block_scaled_settings_in(hw, &step, &inputs) {
+                if !settings.contains(&setting) {
+                    settings.push(setting);
+                }
+            }
+        }
+        settings.push(CubeStagedMatmulRoutineSettings::DEFAULT);
+        settings
+    }
+
+    /// [`block_scaled_settings`](Self::block_scaled_settings) over `inputs`, counted in `step`,
+    /// without the default.
+    fn block_scaled_settings_in(
+        hw: &Hardware,
+        step: &MatmulStep,
+        inputs: &MatmulOperands<Option<Packing>>,
+    ) -> Vec<CubeStagedMatmulRoutineSettings> {
         let layout = MatmulPlaneLayout::new;
         let (double, triple) = (StageRing::DOUBLE, StageRing::TRIPLE);
         let (fragments, by_tma_store) = (CubeStagedStore::Fragments, CubeStagedStore::Tma);
@@ -169,7 +183,7 @@ impl CubeStagedMatmulRoutine {
             .into_iter()
             .chain(decode_by_units)
             .map(|shape| (shape, CubeStagedDelivery::AsyncCopy));
-        let mut settings: Vec<_> = by_tma
+        let settings: Vec<_> = by_tma
             .chain(by_units)
             .map(|((steps, planes, planes_along_k, ring, store), delivery)| {
                 let shape = StagedShape {
@@ -179,70 +193,111 @@ impl CubeStagedMatmulRoutine {
                     ring,
                     store,
                 };
-                Self::in_steps(&step, shape, delivery)
+                Self::in_steps(step, shape, delivery)
             })
-            .filter(|settings| Self::fits(hw, &step, settings))
+            .filter(|settings| Self::fits(hw, step, inputs, settings))
             .collect();
-        settings.push(CubeStagedMatmulRoutineSettings::DEFAULT);
         settings
     }
 
-    /// The step of an NVFP4 product on `hw` ([`MatmulStep`]): the least box every load of
-    /// both inputs fills whole — a row of the TMA engine's box, a word of scales — under the
-    /// device's block-scaled instruction. `None` on a device that offers none. An input in rows and
-    /// one in [tile order](cubek_std::layout::tile_order) step alike, and a load on such a device
-    /// stores in this step.
-    pub fn block_scaled_step(hw: &Hardware) -> Option<MatmulStep> {
-        let e2m1 = ElemType::Float(FloatKind::E2M1);
-        let instruction = manual_mma(hw)
-            .for_triple(e2m1, e2m1, ElemType::Float(FloatKind::F32))
-            .next()?;
-        let packings = Self::nvfp4_inputs();
-        let operands = packings.map(|_, packing| packing.map_or(Operand::plain(), |p| p.operand));
+    /// The step of a product of `inputs` on `hw` read as stored ([`MatmulStep`]): the least box
+    /// every load of both inputs fills whole — a row of the TMA engine's box, a word of scales —
+    /// under the device's largest block-scaled instruction over them. `None` on a device that
+    /// offers none. An input in rows and one in [tile order](cubek_std::layout::tile_order) step
+    /// alike, and a load on such a device stores in this step.
+    pub fn block_scaled_step(
+        hw: &Hardware,
+        inputs: &MatmulOperands<Option<Packing>>,
+    ) -> Option<MatmulStep> {
+        let (lhs, rhs) = (inputs.lhs?, inputs.rhs?);
+        let instruction = block_scaled_for(
+            hw,
+            (&lhs.scheme, lhs.operand.scale(K)?),
+            (&rhs.scheme, rhs.operand.scale(K)?),
+        )
+        .next()?;
+        let operands = inputs.map(|_, packing| packing.map_or(Operand::plain(), |p| p.operand));
+        let elements = MatmulOperands {
+            lhs: instruction.shape.a_type,
+            rhs: instruction.shape.b_type,
+            out: instruction.shape.a_type,
+        };
         let shape = Space::new(&[
-            (M, instruction.m as usize),
-            (N, instruction.n as usize),
-            (K, instruction.k as usize),
+            (M, instruction.shape.m as usize),
+            (N, instruction.shape.n as usize),
+            (K, instruction.shape.k as usize),
         ]);
         Some(
-            MatmulStep::new(hw, operands, MatmulOperands::all(e2m1))
-                .filled_by_tma(&operands.rhs, e2m1)
+            MatmulStep::new(hw, operands, elements)
+                .filled_by_tma(&operands.rhs, elements.rhs)
                 .under(shape),
         )
     }
 
-    /// Both inputs packed in NVFP4, their words along `K`: the `[m, k]` one as a row-major
-    /// quantizer writes it ([`nvfp4_scheme`]), the `[k, n]` one as a checkpoint packs it and as
-    /// tile order stores it.
-    fn nvfp4_inputs() -> MatmulOperands<Option<Packing>> {
-        let packing = |input: MatmulOperand, scheme: QuantScheme| Packing {
-            operand: Operand::of_scheme(&scheme, K, input.axes())
-                .expect("NVFP4 is one block along k"),
-            scheme,
+    /// Both inputs packed in `form`, their words along `K`, as a block-scaled product of that form
+    /// reads them: the `[m, k]` one as a row-major quantizer writes it, the `[k, n]` one as a
+    /// checkpoint packs it and as tile order stores it, each under a per-tensor `f32` above its
+    /// block scales where the scales are a ratio (`ue4m3`'s) rather than a magnitude. `None` for a
+    /// form no packed input stores: codes no scheme packs, or a scale type no scheme names.
+    pub fn block_scaled_inputs(
+        form: &BlockScaledOperands,
+    ) -> Option<MatmulOperands<Option<Packing>>> {
+        let scales = match form.scales {
+            FloatKind::E4M3 => ScaleDtype::UE4M3,
+            FloatKind::UE8M0 => ScaleDtype::UE8M0,
+            _ => return None,
         };
-        MatmulOperands {
-            lhs: Some(packing(MatmulOperand::Lhs, nvfp4_scheme())),
-            rhs: Some(packing(MatmulOperand::Rhs, tile_order::scheme())),
+        let code = |kind: FloatKind| match kind {
+            FloatKind::E2M1x2 => Some(QuantValue::E2M1),
+            FloatKind::E4M3 => Some(QuantValue::E4M3),
+            FloatKind::E5M2 => Some(QuantValue::E5M2),
+            _ => None,
+        };
+        let block = u8::try_from(form.block).ok()?;
+        let scheme = |value: QuantValue, dims: &[u8], store: QuantStore| {
+            let scheme = QuantScheme::default()
+                .with_value(value)
+                .per_block(dims, scales)
+                .with_store(store);
+            match scales {
+                ScaleDtype::UE4M3 => scheme.per_tensor(ScaleDtype::F32),
+                _ => scheme,
+            }
+        };
+        let packing = |input: MatmulOperand, scheme: QuantScheme| {
+            Some(Packing {
+                operand: Operand::of_scheme(&scheme, K, input.axes())?,
+                scheme,
+            })
+        };
+        Some(MatmulOperands {
+            lhs: packing(
+                MatmulOperand::Lhs,
+                scheme(code(form.lhs)?, &[block], QuantStore::PackedU32(0)),
+            ),
+            rhs: packing(
+                MatmulOperand::Rhs,
+                scheme(code(form.rhs)?, &[block, 1], QuantStore::PackedU32(1)),
+            ),
             out: None,
-        }
+        })
     }
 
-    /// `m` rows by `n` columns `k` deep of two NVFP4 inputs, into an `f16` output: what
+    /// `m` rows by `n` columns `k` deep of `inputs`, into an `f16` output: what
     /// [`block_scaled_settings`](Self::block_scaled_settings) prepares its boxes on.
-    fn block_scaled_problem(m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
-        MatmulRoutineProblem::packed(
-            m,
-            n,
-            k,
-            ElemType::Float(FloatKind::F16),
-            Self::nvfp4_inputs(),
-        )
+    fn block_scaled_problem(
+        inputs: &MatmulOperands<Option<Packing>>,
+        m: usize,
+        n: usize,
+        k: usize,
+    ) -> MatmulRoutineProblem {
+        MatmulRoutineProblem::packed(m, n, k, ElemType::Float(FloatKind::F16), *inputs)
     }
 
     /// Registers the compiler adds around a plane's lower bound
     /// ([`registers_per_unit`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel::registers_per_unit)):
-    /// addressing, loop state and the scale registers. A margin rather than a derivation, since
-    /// the compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
+    /// addressing, loop state and the scale registers. A margin rather than a derivation, since the
+    /// compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
     /// `sm_120`.
     const ADDRESSING_REGISTERS: u32 = 64;
 
@@ -283,12 +338,18 @@ impl CubeStagedMatmulRoutine {
 
     /// Whether `settings` prepare a product of their own box on `hw`, two stages deep, and a
     /// unit's share of their planes fits its registers.
-    fn fits(hw: &Hardware, step: &MatmulStep, settings: &CubeStagedMatmulRoutineSettings) -> bool {
+    fn fits(
+        hw: &Hardware,
+        step: &MatmulStep,
+        inputs: &MatmulOperands<Option<Packing>>,
+        settings: &CubeStagedMatmulRoutineSettings,
+    ) -> bool {
         let (plane, planes) = (&settings.microkernel.plane, &settings.microkernel.planes);
         let extent = |axis, fragments: NonZeroUsize, count: NonZeroUsize| {
             fragments.get() / step.calls(axis) * step.along(axis) * count.get()
         };
         let problem = Self::block_scaled_problem(
+            inputs,
             extent(M, plane.along_m, planes.along_m),
             extent(N, plane.along_n, planes.along_n),
             2 * plane.depth.get() / step.calls(K) * step.along(K),
@@ -300,7 +361,7 @@ impl CubeStagedMatmulRoutine {
             .expect(MatmulView::PREPARED)
             .work_item()
             .as_stored()
-            .expect("an NVFP4 product is read as stored");
+            .expect("a block-scaled product is read as stored");
         let registers = blueprint
             .microkernel
             .plane
@@ -420,9 +481,9 @@ impl CubeStagedMatmulRoutine {
 
     /// The blueprint of a product over a block-split space, whose inputs are restated contiguous
     /// along `K`, so no buffer fact narrows them: a packed input its fill decodes binds at
-    /// [`decoded_width`](Self::decoded_width); every other input a device's load of the element its planes contract it at,
-    /// at most a block; the output one value wide. The fill is narrowed to the widths the inputs
-    /// it does not decode land, which are the ones the copy engine may move.
+    /// [`decoded_width`](Self::decoded_width); every other input a device's load of the element its
+    /// planes contract it at, at most a block; the output one value wide. The fill is narrowed to
+    /// the widths the inputs it does not decode land, which are the ones the copy engine may move.
     fn blueprint_in_blocks(
         hw: &Hardware,
         contracted: &MatmulWorkItem,
@@ -678,6 +739,15 @@ impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedMatmulRout
         // bound operands, or the TMA engine from descriptors over the same tensors.
         let (lhs, rhs) = match blueprint.microkernel.fill.delivery {
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => (binding.lhs, binding.rhs),
+            // A packed product's inputs through descriptors over its block-split space.
+            CubeStagedDelivery::Tma if tensors.work_item().blocks.is_some() => tensors
+                .tma_packed_operands(
+                    &binding.launcher,
+                    &stage,
+                    &blueprint.shared_memory,
+                    blueprint.microkernel.plane.orders,
+                    blueprint.widths,
+                ),
             CubeStagedDelivery::Tma => tensors.tma_operands(
                 &stage,
                 &blueprint.shared_memory,

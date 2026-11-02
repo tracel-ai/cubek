@@ -1,10 +1,9 @@
 use super::kernel::{
     hypercube_attention_partial_kernel, hypercube_attention_partial_packed_kernel,
 };
-use crate::kernels::HypercubeMerge;
 use crate::kernels::{
     AttentionBinding, AttentionCacheBinding, AttentionRoutineProblem, AttentionTensors,
-    HypercubeSecondLaunch, HypercubeShuffleAttentionRoutine,
+    HypercubeMerge, HypercubeSecondLaunch, HypercubeShuffleAttentionRoutine,
     HypercubeShuffleAttentionRoutineBlueprint, HypercubeShuffleMerge,
 };
 use cubecl::prelude::ComptimeOptionArgs;

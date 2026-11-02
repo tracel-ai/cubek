@@ -1,27 +1,19 @@
 //! The candidate a routine is listed as at the settings it lists for a packed input.
 
+use crate::kernels::plan::{Decoded, MatmulCall};
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::MatmulTuneKey;
+use crate::kernels::tune::{MatmulProduct, RoutineIdentity};
 use crate::kernels::{
     CubeShuffleMatmulRoutineSettings, CubeStagedMatmulRoutineSettings,
     HypercubeLastArrivalMatmulRoutineSettings, MatmulRoutine, MatmulTensors,
     PlaneShuffleMatmulRoutineSettings,
 };
-use cubecl::client::Client;
-use cubecl::ir::ElemType;
-use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
 use cubek_std::Hardware;
-use cubek_std::autotune::{CandidatePriority, TuneCandidate};
+use cubek_std::autotune::{CandidateIdentity, CandidatePriority, TuneCandidate};
 use cubek_std::routine::Routine;
-
-/// What a [`MatmulPackedCandidate`] declines: two float inputs, which its settings were not listed
-/// for.
-pub const PACKED_SETTING_FLOAT_INPUTS: Refusal = Refusal::Declined {
-    why: "a setting listed for a packed input reads one, and both inputs are float",
-};
 
 /// What a packed setting contracts on, the one thing of it a packed key's priority reads.
 pub trait PackedContraction {
@@ -100,59 +92,98 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
         self.routine
     }
 
-    /// `lhs · rhs` on `client`'s device written into `out`, which the caller allocated, by this
-    /// candidate's routine at its setting ([`MatmulRoutine::launch_into`]).
+    /// `call`'s product by this candidate's routine at its setting, reading the packed inputs as
+    /// stored, or the reason it did not run: through the call's routes where it states them,
+    /// otherwise into its destination ([`MatmulRoutine::launch_into`]) or into an output the
+    /// launch allocates, written in the call's element.
     ///
     /// # Errors
     ///
-    /// [`PACKED_SETTING_FLOAT_INPUTS`] where neither input is packed, before compiling anything,
-    /// and as [`MatmulRoutine::launch_into`].
-    pub fn launch_into<M: MatmulMicrokernel, SM>(
-        &self,
-        client: &Client,
-        lhs: StoredTensor,
-        rhs: StoredTensor,
-        out: PlainTensor,
-    ) -> Result<(), Refusal>
-    where
-        R: MatmulRoutine<M, SM>,
-    {
-        if let (StoredTensor::Plain(_), StoredTensor::Plain(_)) = (&lhs, &rhs) {
-            return Err(PACKED_SETTING_FLOAT_INPUTS);
-        }
-        self.routine
-            .launch_into(&self.hw, client, lhs, rhs, out, &self.settings)
-    }
-
-    /// `lhs · rhs` on `client`'s device, written in `out` into an output the launch allocates, by
-    /// this candidate's routine at its setting.
-    ///
-    /// # Errors
-    ///
-    /// [`PACKED_SETTING_FLOAT_INPUTS`] where neither input is packed, before compiling anything,
+    /// Two float inputs, which the packed settings are not listed for, before compiling anything,
     /// what [`MatmulTensors::written_in`] declines, and why the routine cannot run the product at
     /// this setting.
-    pub fn launch_written_in<M: MatmulMicrokernel, SM>(
+    pub fn launch<M: MatmulMicrokernel, SM>(
         &self,
-        client: &Client,
-        lhs: StoredTensor,
-        rhs: StoredTensor,
-        out: ElemType,
-    ) -> Result<TensorHandle, Refusal>
+        call: MatmulCall,
+    ) -> Result<MatmulProduct, String>
     where
         R: MatmulRoutine<M, SM>,
     {
-        if let (StoredTensor::Plain(_), StoredTensor::Plain(_)) = (&lhs, &rhs) {
-            return Err(PACKED_SETTING_FLOAT_INPUTS);
+        if !call.is_packed() {
+            return Err("listed for a packed input; both are float".into());
         }
-        let tensors = MatmulTensors::written_in(client, lhs, rhs, out)?;
-        let (blueprint, grid) =
-            self.routine
-                .prepare(&self.hw, &tensors.problem(), &self.settings)?;
-        self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
-        Ok(tensors
-            .into_out()
-            .expect("a launch allocating its output hands it back"))
+        let settings = &self.settings;
+        let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
+        let launched = match (&call.routes, call.destination) {
+            (Some(routes), _) => routes.launch(&call.hw, &self.routine, settings),
+            (None, Some(destination)) => self
+                .routine
+                .launch_into(
+                    &self.hw,
+                    &call.client,
+                    lhs,
+                    rhs,
+                    PlainTensor::of_handle(destination.clone()),
+                    settings,
+                )
+                .map(|()| destination),
+            (None, None) => {
+                MatmulTensors::written_in(&call.client, lhs, rhs, call.out).and_then(|tensors| {
+                    let (blueprint, grid) =
+                        self.routine
+                            .prepare(&self.hw, &tensors.problem(), settings)?;
+                    self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
+                    Ok(tensors
+                        .into_out()
+                        .expect("a launch allocating its output hands it back"))
+                })
+            }
+        };
+        launched
+            .map(|handle| MatmulProduct {
+                client: call.client,
+                handle,
+            })
+            .map_err(|why| format!("{settings} does not serve this problem: {why:?}"))
+    }
+
+    /// [`launch`](Self::launch) with a packed lhs decoded first, the rhs still read as stored: a
+    /// packed activation beside a weight no routine reads it beside (an MXFP8 activation's blocks
+    /// of 32 beside an NVFP4 weight's 16), or beside one a routine reads it beside slower than the
+    /// weight alone, contracted as fast as the weight alone allows. An activation is a few rows
+    /// against the weight's many, so decoding it costs little of a product that streams the
+    /// weight; decoding the weight instead, as the autotunes' floor does, rewrites the weight on
+    /// every call.
+    ///
+    /// # Errors
+    ///
+    /// A float lhs, which the candidate as stored serves; and every error of
+    /// [`launch`](Self::launch).
+    pub fn launch_activation_decoded<M: MatmulMicrokernel, SM>(
+        &self,
+        call: MatmulCall,
+    ) -> Result<MatmulProduct, String>
+    where
+        R: MatmulRoutine<M, SM>,
+    {
+        if matches!(call.lhs.tensor, StoredTensor::Plain(_)) {
+            return Err("the lhs is float: the candidate reading it as stored serves it".into());
+        }
+        let lhs = Decoded
+            .input(&call, &call.lhs)
+            .map_err(|why| why.to_string())?;
+        self.launch(MatmulCall { lhs, ..call })
+    }
+
+    /// What a [`launch_activation_decoded`](Self::launch_activation_decoded) candidate is
+    /// identified by: its setting, named apart from the same setting reading the lhs as stored,
+    /// which a caller may launch again as a routine; this one it may not, since its lhs is decoded
+    /// first.
+    pub fn activation_decoded_identity(&self) -> RoutineIdentity
+    where
+        R::Settings: core::fmt::Display,
+    {
+        CandidateIdentity::Named(format!("{} activation decoded", self.settings))
     }
 }
 

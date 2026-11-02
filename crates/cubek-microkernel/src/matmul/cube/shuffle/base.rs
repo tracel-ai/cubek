@@ -8,8 +8,7 @@ use crate::matmul::{
     MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -316,7 +315,8 @@ impl CubeShufflePlane {
     }
 
     /// Values of `K` one step of the plane covers, `leaf` its step's box: a unit's slice by the
-    /// units sharing a step, over both axes a packed rhs's `K` is split into, or a fragment's depth.
+    /// units sharing a step, over both axes a packed rhs's `K` is split into, or a fragment's
+    /// depth.
     pub fn step_depth(&self, leaf: &Space) -> usize {
         match self {
             CubeShufflePlane::Shuffle(plane) => {
@@ -370,7 +370,7 @@ impl CubeShufflePlane {
     /// ([`MatmulWorkItem::decoding_reads`]).
     pub fn reads(&self, item: &MatmulWorkItem) -> MatmulOperands<MatmulRead> {
         match self {
-            CubeShufflePlane::Shuffle(_) => MatmulOperands::all(MatmulRead::AsBound),
+            CubeShufflePlane::Shuffle(_) => MatmulOperands::AS_BOUND,
             CubeShufflePlane::Fragment(_) => item.decoding_reads(),
         }
     }

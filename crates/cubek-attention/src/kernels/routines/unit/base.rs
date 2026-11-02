@@ -1,12 +1,10 @@
 use super::kernel::unit_attention_kernel;
-use crate::kernels::AttentionPartitioning;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
+    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Refusal, Vectorization};
 use cubecl::tile::space::UnitCube;
 use cubek_microkernel::attention::unit::{
     UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings,
@@ -260,7 +258,8 @@ mod tests {
         }
     }
 
-    /// A unit reads the keys along the head dim, where they lie contiguous, with the query it    /// contracts them with; its output is lined with the values. None of them is lined along the
+    /// A unit reads the keys along the head dim, where they lie contiguous, with the query it
+    /// contracts them with; its output is lined with the values. None of them is lined along the
     /// attended keys, so each binds wider than one element.
     #[test]
     fn every_operand_binds_wider_than_one_element() {

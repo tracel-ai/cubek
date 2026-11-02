@@ -1,13 +1,10 @@
 use super::cube_shuffle_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
-    MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
+    MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use cubecl::tile::TileArgLaunch;
-use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::cube::{
@@ -230,7 +227,8 @@ impl Routine for CubeShuffleMatmulRoutine {
     type Blueprint = CubeShuffleMatmulRoutineBlueprint;
     type Partitioning = MatmulPartitioning;
 
-    /// Its microkernel's settings ([`CubeShuffleMicrokernel::settings`]): it has no knob of its own.
+    /// Its microkernel's settings ([`CubeShuffleMicrokernel::settings`]): it has no knob of its
+    /// own.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         CubeShuffleMicrokernel::settings(hw)
             .into_iter()
@@ -482,7 +480,7 @@ mod tests {
 
     /// `m` rows against an NVFP4 `k × n` rhs in tile order, read as `hw` loads it.
     fn nvfp4(hw: &Hardware, m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
-        let scheme = tile_order::scheme();
+        let scheme = tile_order::nvfp4_scheme();
         let words = hw.load_values(ElemType::UInt(UIntKind::U32));
         let operand = Operand::of_scheme(&scheme, K, [K, N])
             .expect("one axis a block")
@@ -491,7 +489,9 @@ mod tests {
                 words,
                 Some((
                     &tile_order::values_axes(N),
-                    tile_order::values_storage(N, (128, 8), words).tiles(),
+                    tile_order::TileOrder::NVFP4
+                        .values_storage(N, (128, 8), words)
+                        .tiles(),
                 )),
                 None,
             )

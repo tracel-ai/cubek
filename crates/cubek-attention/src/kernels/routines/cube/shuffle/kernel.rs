@@ -1,15 +1,15 @@
 use core::marker::PhantomData;
-
 use cubecl::tile::{Partitioning, Tile, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::attention::cube::CubeAttentionMicrokernel;
-use cubek_microkernel::attention::cube::cube_unstaged_attention_microkernel;
+use cubek_microkernel::attention::cube::{
+    CubeAttentionMicrokernel, cube_unstaged_attention_microkernel,
+};
 use cubek_microkernel::attention::plane::TileStepReads;
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 
-/// Every cube running the cube microkernel on its box with planes of shuffles, each reading its keys
-/// where they lie, over the keys its rows see, and writing each row's logsumexp where the launch
-/// binds one.
+/// Every cube running the cube microkernel on its box with planes of shuffles, each reading its
+/// keys where they lie, over the keys its rows see, and writing each row's logsumexp where the
+/// launch binds one.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
@@ -40,14 +40,16 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
     };
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+
     for cube in &partitioning {
         let visible = VisibleKeys::new(len, &cube, queries, &mask, visibility);
         let steps = visible.steps(
             &cube,
-            comptime!(microkernel.seq_q()),
-            comptime!(microkernel.region_keys()),
+            microkernel.seq_q(),
+            microkernel.region_keys(),
             1usize,
         );
+
         cube_unstaged_attention_microkernel::<EA, E, N, TileStepReads<E>, TileStepReads<E>>(
             &cube,
             &o.at(&cube),

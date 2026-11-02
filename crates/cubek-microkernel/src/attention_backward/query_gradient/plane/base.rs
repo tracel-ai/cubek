@@ -100,7 +100,7 @@ impl PlaneQueryGradientMicrokernel {
     }
 
     /// The score's grid below the walker's level of planes, `planes` its counts
-    /// ([`grid_levels`](Self::grid_levels)).
+    /// (`grid_levels`).
     pub fn score_levels(&self, planes: &[(Axis, usize)]) -> Vec<Level> {
         Self::grid_levels(self.score, planes)
     }
@@ -162,6 +162,7 @@ impl PlaneQueryGradientMicrokernel {
             },
             axes: product.axes,
             blocks: None,
+            k_stated: crate::matmul::plane::PlaneFragmentKStatement::Caller,
         }
     }
 

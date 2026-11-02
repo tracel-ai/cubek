@@ -29,6 +29,7 @@ pub fn unit_attention_kernel<EA: Float>(
     let value = value.tile(&partitioning);
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+
     for unit in &partitioning {
         let visible = VisibleKeys::new(len, &unit, queries, &mask, visibility);
         let k = key.within(S, 0, visible.attended as usize);
@@ -36,10 +37,11 @@ pub fn unit_attention_kernel<EA: Float>(
         let bias = visible.bias::<EA>(&partitioning);
         let steps = visible.steps(
             &unit,
-            comptime!(microkernel.settings.seq_q.get()),
-            comptime!(microkernel.seq_kv()),
+            microkernel.settings.seq_q.get(),
+            microkernel.seq_kv(),
             1usize,
         );
+
         unit_attention_microkernel::<EA>(
             &unit,
             &o.at(&unit),

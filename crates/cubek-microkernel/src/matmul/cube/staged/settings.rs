@@ -1,5 +1,4 @@
-use crate::matmul::cube::MatmulPlaneLayout;
-use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore};
+use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore, MatmulPlaneLayout};
 use crate::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
@@ -91,6 +90,36 @@ impl CubeStagedMicrokernelSettings {
         }
     }
 
+    /// A box against a packed input its stages hold as it is stored, its planes decoding it as
+    /// each fragment loads: `fragments` of the decoding instruction along `m`, `n` and `k` on each
+    /// plane, through the tile DSL's transport, each fragment as deep as the stage
+    /// ([`windowed`](PlaneFragmentMicrokernelSettings::windowed)), on `planes` (along `m` by along
+    /// `n`), holding its stages in `ring`. Each fragment of the rhs is decoded once a step and
+    /// contracted against every fragment of the lhs along `m`.
+    ///
+    /// # Panics
+    ///
+    /// On a count of zero.
+    pub const fn stored(
+        fragments: (usize, usize, usize),
+        planes: (usize, usize),
+        ring: StageRing,
+    ) -> Self {
+        Self {
+            plane: PlaneFragmentMicrokernelSettings {
+                along_m: NonZeroUsize::new(fragments.0).unwrap(),
+                ..PlaneFragmentMicrokernelSettings::windowed(fragments.1, fragments.2)
+            },
+            planes: MatmulPlaneLayout::new(planes.0, planes.1),
+            planes_along_k: NonZeroUsize::MIN,
+            scratch: Scratch::OneTile,
+            ring,
+            fill: CubeStagedFill::BY_UNITS,
+            stage_layout: None,
+            store: CubeStagedStore::Fragments,
+        }
+    }
+
     /// Eight by one steps on each of one by two planes, one stage at a time: on the M2, eight by
     /// two instructions a plane in tile order, the float staged routine's fastest box on the
     /// Qwen3-4B projections at a prompt's rows, whose planes contract the same stages these hold.
@@ -156,8 +185,8 @@ impl CubeStagedMicrokernelSettings {
     }
 }
 
-/// Nothing for one plane along `K`, a one-fragment scratch or the instruction's own stage layout, so
-/// the settings that hold them keep their names.
+/// Nothing for one plane along `K`, a one-fragment scratch or the instruction's own stage layout,
+/// so the settings that hold them keep their names.
 impl core::fmt::Display for CubeStagedMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} {}", self.plane, self.planes)?;

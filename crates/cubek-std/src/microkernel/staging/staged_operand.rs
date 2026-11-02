@@ -30,10 +30,8 @@ impl StagedOperand {
         let rows = self.rows();
         let row = self.space.extent(self.innermost);
         let bits = self.element.size_bits();
-        let widest = hw.vector_ceiling(self.element);
-        (0..=widest.ilog2())
-            .map(|power| 1 << power)
-            .filter(|&width: &usize| row.is_multiple_of(width) && (width * bits).is_multiple_of(8))
+        self.widths(hw)
+            .filter(|&width| row.is_multiple_of(width) && (width * bits).is_multiple_of(8))
             .map(|width| storage.bytes(&rows, width, bits))
             .max()
             .expect("a row holds whole bytes")
@@ -55,10 +53,14 @@ impl StagedOperand {
     /// over every width it could bind at on `hw`: the powers of two up to the widest line `hw`
     /// reads. Asked before the operands' widths are settled.
     pub fn most_prefetched(&self, hw: &Hardware, units: usize) -> usize {
-        let widest = hw.vector_ceiling(self.element);
-        (0..=widest.ilog2())
-            .map(|power| Prefetch::scalars(self.cells(), units.max(1), 1 << power))
+        self.widths(hw)
+            .map(|width| Prefetch::scalars(self.cells(), units.max(1), width))
             .max()
             .expect("the widths hold one element")
+    }
+
+    /// Every width it could bind at on `hw`: the powers of two up to the widest line `hw` reads.
+    fn widths(&self, hw: &Hardware) -> impl Iterator<Item = usize> {
+        (0..=hw.vector_ceiling(self.element).ilog2()).map(|power| 1 << power)
     }
 }

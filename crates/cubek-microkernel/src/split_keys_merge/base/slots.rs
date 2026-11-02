@@ -60,6 +60,7 @@ impl SlotBox {
         if head < group && held_queries > first_query {
             held = held_queries - first_query;
         }
+
         let head_index = (batch * kv_heads + kv) * group + head;
         SlotBox {
             batch,

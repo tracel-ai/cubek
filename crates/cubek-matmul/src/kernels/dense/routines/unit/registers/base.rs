@@ -1,20 +1,15 @@
 use super::kernel::unit_registers_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
-use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use crate::kernels::{
-    MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    CUBE_STRIPS, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
+    MatmulRoutineProblem, MatmulTensors, MatmulView, cube_order_name,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::TileArgLaunch;
-use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubek_microkernel::matmul::MatmulStagingCount;
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStagingCount};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -406,7 +401,7 @@ mod tests {
     }
 
     /// A unit reads its block's `depth` of the lhs and its `columns` of the rhs and the output, so
-    /// the default's four narrows every width, until the binding's mask narrows it to one.
+    /// the default's four narrows every width, until the extent a mask cuts narrows it further.
     #[test]
     fn the_widths_are_what_the_accesses_and_the_binding_admit() {
         let hw = devices::strix_halo();
@@ -421,10 +416,12 @@ mod tests {
             (widths.lhs, widths.rhs, widths.out)
         };
         assert_eq!(widths(256, 512, 64), (4, 4, 4));
-        // A `k` the steps overhang masks the lhs, whose contiguous axis it is.
-        assert_eq!(widths(256, 512, 22), (1, 4, 4));
-        // An `n` the planes overhang masks the rhs and the output.
-        assert_eq!(widths(256, 516, 64), (4, 1, 1));
+        // A `k` the steps overhang masks the lhs, whose contiguous axis it is, at a width that
+        // divides it.
+        assert_eq!(widths(256, 512, 22), (2, 4, 4));
+        // An `n` the planes overhang masks the rhs and the output, likewise.
+        assert_eq!(widths(256, 516, 64), (4, 4, 4));
+        assert_eq!(widths(256, 514, 64), (4, 2, 2));
     }
 
     /// `cpu_col_rhs` settings with `n = 1632`: 32 blocks of width 2 per plane would overhang `n`,

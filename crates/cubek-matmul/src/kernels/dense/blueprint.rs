@@ -67,8 +67,21 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
                     problem.elements.get(operand).size(),
                 ),
             });
-            if partitioning.overhangs(MatmulAxes::MNK.of(orders.innermost(operand))) {
-                vectorization.require(VectorRequirement::Masked { operand });
+            let innermost = MatmulAxes::MNK.of(orders.innermost(operand));
+            // A table entry placing the innermost axis — a run of `K` read along a row — places an
+            // element, which a line would straddle: the input reads it one value a line.
+            let indexed_along_a_line = problem.index.is_some_and(|index| {
+                index.readers().get(operand) && index.indexing().axis() == innermost
+            });
+            if indexed_along_a_line {
+                vectorization.require(VectorRequirement::Elementwise { operand });
+            }
+            if partitioning.overhangs(innermost) {
+                vectorization.require(VectorRequirement::masked(
+                    operand,
+                    partitioning.space(),
+                    innermost,
+                ));
             }
         }
         let widths = alignments.map(|operand, _| {

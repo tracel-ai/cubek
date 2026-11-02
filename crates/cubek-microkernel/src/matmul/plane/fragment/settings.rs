@@ -2,11 +2,13 @@ use crate::matmul::plane::{PlaneFragmentStepSum, PlaneFragmentTransport};
 use core::num::NonZeroUsize;
 
 /// The steps a plane holds along `m` and `n`, and how many steps of `K` it walks per stage, each
-/// step the fewest calls of the instruction every load fills whole ([`MatmulStep`](crate::matmul::MatmulStep)). The
-/// instruction itself is a candidate, not a setting.
+/// step the fewest calls of the instruction every load fills whole
+/// ([`MatmulStep`](crate::matmul::MatmulStep)). The instruction itself is a candidate, not a
+/// setting.
 ///
 /// A warpgroup MMA holds one instruction a plane group, `along_n` times its form's granularity
-/// wide: there `along_m` is one, and the steps along `n` size the instruction rather than a grid of them.
+/// wide: there `along_m` is one, and the steps along `n` size the instruction rather than a grid of
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentMicrokernelSettings {
     pub along_m: NonZeroUsize,

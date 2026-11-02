@@ -5,16 +5,18 @@ use crate::kernels::{
     MatmulIndexTable, MatmulInputs, MatmulOutput, MatmulOutputBuffer, MatmulRoutineProblem,
     MatmulView,
 };
+use core::marker::PhantomData;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
-use cubecl::prelude::{BufferArg, TensorMapSwizzle};
+use cubecl::prelude::{BufferArg, TensorMapArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Arg, Labelled, Refusal};
+use cubecl::tile::launch::{Arg, Labelled, Refusal, TmaCoordinates, TmaTerm};
 use cubecl::tile::{
     Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, TileSpec, launch::Bound,
     launch::TmaBox, launch::TmaOperand, launch::Unbound,
 };
 use cubecl::zspace::metadata::Metadata;
+use cubecl::zspace::{Shape, Strides};
 use cubecl_environment::sync::{Arc, SyncOnceCell};
 use cubek_microkernel::matmul::MatmulStage;
 use cubek_microkernel::matmul::{
@@ -22,10 +24,10 @@ use cubek_microkernel::matmul::{
     MatmulWorkItem,
 };
 use cubek_std::MatrixLayout;
-use cubek_std::launch::tma::{tma_operand, tma_store_operand};
+use cubek_std::launch::tma::{tma_meta_tiled, tma_operand, tma_store_operand};
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::contiguous;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::layout::{contiguous, tile_order};
+use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
 
@@ -828,8 +830,17 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                     rhs: packing(rhs),
                     out: None,
                 };
+                let stored_tile = |operand: &StoredTensor| match operand {
+                    StoredTensor::Plain(_) => None,
+                    StoredTensor::Packed(operand) => operand.stored_tile(),
+                };
                 let problem = MatmulRoutineProblem {
                     destination: Out::DESTINATION,
+                    stored_tiles: MatmulOperands {
+                        lhs: stored_tile(lhs),
+                        rhs: stored_tile(rhs),
+                        out: None,
+                    },
                     ..MatmulRoutineProblem::packed(
                         MatmulTensors::rows_of(lhs, k),
                         rhs.extent([K, N], N),
@@ -1082,6 +1093,90 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 landed,
             ),
         };
+        (lhs, rhs)
+    }
+
+    /// A packed product's inputs for stages the TMA engine fills, each landing as `storage`
+    /// holds its stage of `stage` and served `widths` wide: the float lhs through a descriptor
+    /// over the matrix its blocks split, `k` cut into rows of the swizzle's span so a box lands a
+    /// stage's blocks of `K` side by side; the packed rhs's words through one over the tiles they
+    /// are stored in ([`PackedTensor::bind_by_tma`]), its scales bound under `launcher` for the
+    /// copy engine to keep beside them. What a fill
+    /// [`CubeStagedTmaRefusal`](cubek_microkernel::matmul::cube::CubeStagedTmaRefusal) admits.
+    pub fn tma_packed_operands(
+        &self,
+        launcher: &Launcher,
+        stage: &MatmulStage,
+        storage: &StageStorage,
+        orders: MatmulOperands<BindingOrder>,
+        widths: MatmulOperands<usize>,
+    ) -> (TileArgLaunch, TileArgLaunch) {
+        let blocks = self.blocks();
+        let batches = self.table_batches();
+        let (StoredTensor::Plain(lhs), StoredTensor::Packed(rhs)) = (&self.lhs, &self.rhs) else {
+            panic!("tma_packed_operands: a float lhs beside a packed rhs");
+        };
+        let (lhs, axes) = lhs.restated(&blocks, M, K, &batches);
+        let lhs_stage = stage.landed_space(MatmulOperand::Lhs, orders, &axes);
+        let swizzle = storage
+            .tma_swizzle(&lhs_stage, 1, lhs.elem.size_bits())
+            .expect("the fill delivers by TMA only a stage a box lands");
+        let (rows, k) = (
+            lhs.binding.shape[0],
+            lhs.binding.shape[1] * lhs.binding.shape[2],
+        );
+        let depth = lhs_stage.extent(KB) * lhs_stage.extent(KI);
+        // A box row is the swizzle's span, or the stage's depth where it swizzles nothing.
+        let row = match swizzle {
+            TensorMapSwizzle::B32 => 32 / lhs.elem.size(),
+            TensorMapSwizzle::B64 => 64 / lhs.elem.size(),
+            TensorMapSwizzle::B128 => 128 / lhs.elem.size(),
+            _ => depth,
+        }
+        .min(depth);
+        let metadata = Metadata::new(Shape::new([rows, k / row, row]), Strides::new(&[k, row, 1]));
+        let map = TensorMapArg {
+            tensor: lhs.binding.clone().into_tensor_arg(),
+            metadata: tma_meta_tiled(
+                metadata,
+                Shape::new([lhs_stage.extent(axes[0]), depth / row, row]),
+                lhs.elem,
+                swizzle,
+            ),
+            _kind: PhantomData,
+        };
+        // A box starts on a stage's first block of `K`, a whole number of rows in.
+        let coordinates = TmaCoordinates {
+            dims: vec![
+                vec![TmaTerm::axis(0)],
+                vec![
+                    TmaTerm::axis(1)
+                        .times(lhs_stage.extent(KI) as u32)
+                        .over(row as u32),
+                ],
+                vec![],
+            ],
+        };
+        let extents: Vec<u32> = lhs.binding.shape.iter().map(|&e| e as u32).collect();
+        let lhs = TileArgLaunch::tensor_map_folded(map, &axes, &extents, coordinates)
+            .served_wide(widths.lhs);
+        let values_axes = tile_order::values_axes(N);
+        let rhs_stage = stage.landed_space(MatmulOperand::Rhs, orders, &values_axes);
+        let values_per_word = rhs.tile_order().values_per_word;
+        let rhs_swizzle = storage
+            .tma_swizzle(
+                &rhs_stage,
+                values_per_word,
+                u32::BITS as usize / values_per_word,
+            )
+            .expect("the fill delivers by TMA only a stage a box lands");
+        let rhs = rhs.bind_by_tma(
+            launcher,
+            widths.rhs,
+            rhs_stage.extent(values_axes[0]),
+            rhs_stage.extent(KB) * rhs_stage.extent(KI),
+            rhs_swizzle,
+        );
         (lhs, rhs)
     }
 

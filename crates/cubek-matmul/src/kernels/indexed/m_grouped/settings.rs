@@ -1,13 +1,12 @@
+use crate::kernels::{
+    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
+    PlaneShuffleMatmulRoutineSettings,
+};
 use core::fmt::Display;
 use core::num::NonZeroUsize;
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
-
-use crate::kernels::{
-    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
-    PlaneShuffleMatmulRoutineSettings,
-};
 
 /// A dense routine's setting a grouped launch runs at, and the chunks of rows it pads each group
 /// to: the launch is the dense product of those chunks, one a batch.

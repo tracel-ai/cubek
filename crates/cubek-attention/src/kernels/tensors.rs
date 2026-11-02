@@ -8,7 +8,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::prelude::TensorArg;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{Delivery, Refusal};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Indexing, Launcher, TileArgLaunch, TileSpec, launch::Grid as LaunchGrid};
 use cubecl::zspace::metadata::Metadata;
@@ -607,12 +607,21 @@ impl AttentionTensors {
         let query = read_operand(&self.query, &[B, KV, G, Q, D], widths.query)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
+        // The keys and values move into their stages as the microkernel says, unless they are
+        // bound as words its stages decode, which pass through the units' registers.
+        let delivery = match words {
+            Some(_) => Delivery::SyncPerUnit,
+            None => blueprint
+                .microkernel
+                .delivery(&widths, &problem.work_item()),
+        };
         let cache = match &self.cache {
             AttentionCache::Float { key, value, pages } => {
                 // A pool of pages is placed by its table, keyed by the batch and the keys'
                 // positions: it covers the launch, its rows the batch and its columns the keys.
                 let read_cache = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
                     let arg = read_operand(tensor, axes, width)
+                        .delivery(delivery)
                         .build()
                         .expect(ADMITTED_PLAN_RUNS)
                         .arg();

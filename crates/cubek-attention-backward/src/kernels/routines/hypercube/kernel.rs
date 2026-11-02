@@ -21,6 +21,7 @@ pub fn plane_delta_kernel<EA: Float>(
 ) {
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
     let delta = delta.tile(&partitioning);
+
     for plane in &partitioning {
         plane_delta_microkernel::<EA>(&delta.at(&plane), &d_o.at(&plane), &o.at(&plane));
     }
@@ -64,12 +65,14 @@ pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
     let d_q = query_gradient.tile(&partitioning);
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
+
     for cube in &partitioning {
-        let first_step = visible.first_query_step(&cube, comptime!(microkernel.seq_q()));
+        let first_step = visible.first_query_step(&cube, microkernel.seq_q());
         let share = ComptimeOption::new_Some(QueryGradientShare {
             sum: d_q.at(&cube),
-            product: comptime!(microkernel.query_gradient),
+            product: microkernel.query_gradient,
         });
+
         cube_staged_key_gradient_microkernel::<EA, ES>(
             &cube,
             &d_k.at(&cube),
@@ -84,7 +87,7 @@ pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
             &bias.at(&cube),
             first_step,
             EA::cast_from(scale),
-            comptime!(microkernel.cube),
+            microkernel.cube,
             ring,
         );
     }
@@ -98,6 +101,7 @@ pub fn cast_query_gradient_kernel(
     partitioning: Partitioning,
 ) {
     let (sum, d_q) = (sum.tile(&partitioning), query_gradient.tile(&partitioning));
+
     for plane in &partitioning {
         let mut d_q = d_q.at(&plane);
         d_q.copy_cast_from(&sum.at(&plane));
