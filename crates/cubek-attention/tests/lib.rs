@@ -1,3 +1,3 @@
 #![cfg(feature = "tiled")]
 
-mod sequence_reads;
+mod attention;
