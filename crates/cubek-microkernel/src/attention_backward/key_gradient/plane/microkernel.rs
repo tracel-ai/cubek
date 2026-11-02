@@ -67,7 +67,11 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
     for g in 0..heads.total() {
         let head = heads.region(g);
         let queries = head.walk();
-        let steps = queries.total();
+        // The queries from `first_step` to the head's last: a range takes its count of steps, so
+        // the steps before the first are not walked past the end. A key past every query takes
+        // none.
+        let first = first_step.min(queries.total());
+        let steps = queries.total() - first;
         let mut stages = Stages::smem(
             &queries,
             &query.at(&head),
@@ -77,33 +81,28 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
             None,
         );
 
-        stages.walk(
-            queries.range(first_step, steps),
-            ring.prefetch,
-            |slot, stage| {
-                let (bias, logsumexp, delta) =
-                    (bias.at(stage), logsumexp.at(stage), delta.at(stage));
-                slot.consume(|query, out_gradient| {
-                    PlaneKeyGradientMicrokernel::step::<EA, ES>(
-                        stage,
-                        &sums,
-                        &windows,
-                        &ComptimeOption::new_None(),
-                        &staged_key,
-                        &staged_value,
-                        query,
-                        out_gradient,
-                        &bias,
-                        &logsumexp,
-                        &delta,
-                        scale,
-                        microkernel,
-                        microkernel.score_levels(&[(S, planes)]),
-                        microkernel.score_gradient_levels(&[(S, planes)]),
-                    );
-                });
-            },
-        );
+        stages.walk(queries.range(first, steps), ring.prefetch, |slot, stage| {
+            let (bias, logsumexp, delta) = (bias.at(stage), logsumexp.at(stage), delta.at(stage));
+            slot.consume(|query, out_gradient| {
+                PlaneKeyGradientMicrokernel::step::<EA, ES>(
+                    stage,
+                    &sums,
+                    &windows,
+                    &ComptimeOption::new_None(),
+                    &staged_key,
+                    &staged_value,
+                    query,
+                    out_gradient,
+                    &bias,
+                    &logsumexp,
+                    &delta,
+                    scale,
+                    microkernel,
+                    microkernel.score_levels(&[(S, planes)]),
+                    microkernel.score_gradient_levels(&[(S, planes)]),
+                );
+            });
+        });
     }
 
     sums.store::<EA>(key_gradient, value_gradient, scale, microkernel);

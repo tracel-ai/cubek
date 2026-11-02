@@ -79,7 +79,11 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
     for g in 0..heads.total() {
         let head = heads.region(g);
         let queries = head.walk();
-        let steps = queries.total();
+        // The queries from `first_step` to the head's last: a range takes its count of steps, so
+        // the steps before the first are not walked past the end. A key past every query takes
+        // none.
+        let first = first_step.min(queries.total());
+        let steps = queries.total() - first;
         let mut stages = Stages::smem(
             &queries,
             &query.at(&head),
@@ -89,91 +93,87 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
             None,
         );
 
-        stages.walk(
-            queries.range(first_step, steps),
-            ring.prefetch,
-            |slot, stage| {
-                slot.consume(|query, out_gradient| {
-                    // Read through windows, the planes meet on their parts of the query's
-                    // gradient; held, they add theirs by rows once every plane has stepped.
-                    #[comptime]
-                    let mut share = match (query_gradient, &left) {
-                        (ComptimeOption::Some(share), ComptimeOption::None) => {
-                            ComptimeOption::new_Some(share.open::<EA>(stage))
-                        }
-                        _ => ComptimeOption::<StageQueryGradientShare<EA>>::new_None(),
-                    };
-
-                    for plane in stage {
-                        let windows = ScoreWindows::held_at(&windows, &plane);
-                        let left = ScoreWindows::window_at(&left, &plane);
-                        let key = staged_key.at(&plane);
-                        PlaneKeyGradientMicrokernel::step::<EA, ES>(
-                            &plane,
-                            &sums.at(&plane),
-                            &windows,
-                            &left,
-                            &key,
-                            &staged_value.at(&plane),
-                            &query.at(&plane),
-                            &out_gradient.at(&plane),
-                            &bias.at(&plane),
-                            &logsumexp.at(&plane),
-                            &delta.at(&plane),
-                            scale,
-                            plane_microkernel,
-                            microkernel.score_levels(),
-                            microkernel.score_gradient_levels(),
-                        );
-
-                        // The step leaves the score's gradient cast in its window: its product
-                        // with the keys is this plane's part of the stage's query gradient.
-                        #[comptime]
-                        match &share {
-                            ComptimeOption::Some(share) => share.add(
-                                &plane,
-                                &ScoreWindows::cast_of(&windows),
-                                &key,
-                                scale,
-                                plane_microkernel.settings.scratch,
-                                microkernel.seq_q(),
-                            ),
-                            ComptimeOption::None => {}
-                        }
+        stages.walk(queries.range(first, steps), ring.prefetch, |slot, stage| {
+            slot.consume(|query, out_gradient| {
+                // Read through windows, the planes meet on their parts of the query's
+                // gradient; held, they add theirs by rows once every plane has stepped.
+                #[comptime]
+                let mut share = match (query_gradient, &left) {
+                    (ComptimeOption::Some(share), ComptimeOption::None) => {
+                        ComptimeOption::new_Some(share.open::<EA>(stage))
                     }
+                    _ => ComptimeOption::<StageQueryGradientShare<EA>>::new_None(),
+                };
 
+                for plane in stage {
+                    let windows = ScoreWindows::held_at(&windows, &plane);
+                    let left = ScoreWindows::window_at(&left, &plane);
+                    let key = staged_key.at(&plane);
+                    PlaneKeyGradientMicrokernel::step::<EA, ES>(
+                        &plane,
+                        &sums.at(&plane),
+                        &windows,
+                        &left,
+                        &key,
+                        &staged_value.at(&plane),
+                        &query.at(&plane),
+                        &out_gradient.at(&plane),
+                        &bias.at(&plane),
+                        &logsumexp.at(&plane),
+                        &delta.at(&plane),
+                        scale,
+                        plane_microkernel,
+                        microkernel.score_levels(),
+                        microkernel.score_gradient_levels(),
+                    );
+
+                    // The step leaves the score's gradient cast in its window: its product
+                    // with the keys is this plane's part of the stage's query gradient.
                     #[comptime]
-                    match share {
-                        ComptimeOption::Some(ref mut share) => share.write(),
+                    match &share {
+                        ComptimeOption::Some(share) => share.add(
+                            &plane,
+                            &ScoreWindows::cast_of(&windows),
+                            &key,
+                            scale,
+                            plane_microkernel.settings.scratch,
+                            microkernel.seq_q(),
+                        ),
                         ComptimeOption::None => {}
                     }
+                }
 
-                    // Every plane left its part of the score's gradient in the window: each adds
-                    // its rows of the stage's queries over all the cube's keys, and the window is
-                    // free again once all have read it.
-                    #[comptime]
-                    match (query_gradient, &left) {
-                        (ComptimeOption::Some(share), ComptimeOption::Some(left)) => {
-                            sync_cube();
-                            for plane in stage {
-                                share.add_rows::<EA>(
-                                    stage,
-                                    &plane,
-                                    left,
-                                    &staged_key,
-                                    scale,
-                                    microkernel.plane_count(),
-                                    microkernel.seq_q(),
-                                );
-                            }
-                            sync_cube();
+                #[comptime]
+                match share {
+                    ComptimeOption::Some(ref mut share) => share.write(),
+                    ComptimeOption::None => {}
+                }
+
+                // Every plane left its part of the score's gradient in the window: each adds
+                // its rows of the stage's queries over all the cube's keys, and the window is
+                // free again once all have read it.
+                #[comptime]
+                match (query_gradient, &left) {
+                    (ComptimeOption::Some(share), ComptimeOption::Some(left)) => {
+                        sync_cube();
+                        for plane in stage {
+                            share.add_rows::<EA>(
+                                stage,
+                                &plane,
+                                left,
+                                &staged_key,
+                                scale,
+                                microkernel.plane_count(),
+                                microkernel.seq_q(),
+                            );
                         }
-                        (ComptimeOption::Some(_), ComptimeOption::None)
-                        | (ComptimeOption::None, _) => {}
+                        sync_cube();
                     }
-                });
-            },
-        );
+                    (ComptimeOption::Some(_), ComptimeOption::None) | (ComptimeOption::None, _) => {
+                    }
+                }
+            });
+        });
     }
 
     for plane in cube.planes() {
