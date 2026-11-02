@@ -30,6 +30,10 @@ pub struct CubeAttentionMicrokernelSettings {
     /// lines are handed to. A request the microkernel resolves against the device, its ring and
     /// the lines' widths, so every setting runs everywhere.
     pub delivery: CubeStagedDelivery,
+    /// Whether the query, staged once before the walk, moves into shared memory as the keys and
+    /// values do: by the copy engine where they are, its lines landing while the cube opens its
+    /// planes. Else, as by default, its units load and store it.
+    pub query_as_keys: bool,
 }
 
 impl CubeAttentionMicrokernelSettings {
@@ -45,6 +49,7 @@ impl CubeAttentionMicrokernelSettings {
         ring: StageRing::SINGLE,
         layout: StageLayout::Strided,
         delivery: CubeStagedDelivery::Copy,
+        query_as_keys: false,
     };
 
     /// The lead over plane shuffles: four planes of the plane shuffle's default splitting one
@@ -60,6 +65,7 @@ impl CubeAttentionMicrokernelSettings {
         ring: StageRing::SINGLE,
         layout: StageLayout::Strided,
         delivery: CubeStagedDelivery::Copy,
+        query_as_keys: false,
     };
 
     /// The cube's settings worth trying over planes of the kind this lead runs, the lead first: a
@@ -196,7 +202,10 @@ impl CubeAttentionMicrokernelSettings {
         // one-by-four on two such slots in padded tiles, 1584 µs; the two-by-four on two slots the
         // copy engine fills, 1615 µs. Where the planes run short of registers, the steps every row
         // sees whole take no bias (`unbiased_steps`): the one-by-eight box in padded tiles 1563 to
-        // 1527 µs, the one-by-four 1584 to 1564; the others gained nothing.
+        // 1527 µs, the one-by-four 1584 to 1564; the others gained nothing. On the copy engine's
+        // slots the query moves as the keys do (`query_as_keys`): the one-by-eight box 1523 to
+        // 1506 µs, and 1495 with its unmasked steps unbiased, which alone gained it nothing; the
+        // two-by-four 1615 to 1596. It cost the one-by-four 1 to 4%.
         let eight_warps = [
             (
                 1,
@@ -204,7 +213,8 @@ impl CubeAttentionMicrokernelSettings {
                 StageRing::DOUBLE,
                 StageLayout::SwizzledBlocks,
                 CubeStagedDelivery::AsyncCopy,
-                false,
+                true,
+                true,
             ),
             (
                 1,
@@ -212,6 +222,7 @@ impl CubeAttentionMicrokernelSettings {
                 StageRing::SINGLE_THROUGH_REGISTERS,
                 StageLayout::SwizzledBlocks,
                 CubeStagedDelivery::Copy,
+                false,
                 false,
             ),
             (
@@ -221,6 +232,7 @@ impl CubeAttentionMicrokernelSettings {
                 StageLayout::PaddedBlocks,
                 CubeStagedDelivery::Copy,
                 true,
+                false,
             ),
             (
                 1,
@@ -229,6 +241,7 @@ impl CubeAttentionMicrokernelSettings {
                 StageLayout::PaddedBlocks,
                 CubeStagedDelivery::Copy,
                 true,
+                false,
             ),
             (
                 2,
@@ -237,10 +250,11 @@ impl CubeAttentionMicrokernelSettings {
                 StageLayout::SwizzledBlocks,
                 CubeStagedDelivery::AsyncCopy,
                 false,
+                true,
             ),
         ]
         .map(
-            |(rows, keys, ring, layout, delivery, unbiased_steps)| Self {
+            |(rows, keys, ring, layout, delivery, unbiased_steps, query_as_keys)| Self {
                 plane: CubeAttentionPlaneSettings::Fragment(
                     PlaneFragmentAttentionMicrokernelSettings {
                         seq_q: count(rows),
@@ -254,6 +268,7 @@ impl CubeAttentionMicrokernelSettings {
                 ring,
                 layout,
                 delivery,
+                query_as_keys,
                 ..lead
             },
         );
@@ -343,9 +358,13 @@ impl core::fmt::Display for CubeAttentionMicrokernelSettings {
             self.layout
         )?;
         match self.delivery {
-            CubeStagedDelivery::Copy => Ok(()),
-            CubeStagedDelivery::AsyncCopy => write!(f, " delivery=async"),
-            CubeStagedDelivery::Tma => write!(f, " delivery=tma"),
+            CubeStagedDelivery::Copy => {}
+            CubeStagedDelivery::AsyncCopy => write!(f, " delivery=async")?,
+            CubeStagedDelivery::Tma => write!(f, " delivery=tma")?,
+        }
+        match self.query_as_keys {
+            true => write!(f, " query=as_keys"),
+            false => Ok(()),
         }
     }
 }

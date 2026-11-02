@@ -360,4 +360,19 @@ impl AttentionMicrokernel for CubeAttentionMicrokernel {
             }
         }
     }
+
+    /// The keys and values' ([`delivery`](Self::delivery)) where the settings ask for it
+    /// ([`query_as_keys`](CubeAttentionMicrokernelSettings::query_as_keys)) and the copy engine
+    /// takes the query's lines too, else its units'.
+    fn query_delivery(
+        &self,
+        widths: &AttentionOperands<usize>,
+        item: &AttentionWorkItem,
+    ) -> Delivery {
+        let bytes = widths.query * self.served(item).elements.query.size();
+        match self.settings.query_as_keys && matches!(bytes, 4 | 8 | 16) {
+            true => self.delivery(widths, item),
+            false => Delivery::SyncPerUnit,
+        }
+    }
 }
