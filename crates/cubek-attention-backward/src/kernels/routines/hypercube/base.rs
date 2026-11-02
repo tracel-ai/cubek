@@ -2,8 +2,8 @@ use super::kernel::{
     cast_query_gradient_kernel, hypercube_key_gradient_kernel, plane_delta_kernel,
 };
 use crate::kernels::{
-    AttentionBackwardBlueprint, AttentionBackwardProblem, AttentionBackwardRoutine,
-    AttentionBackwardRoutineBlueprint, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
+    AttentionBackwardBlueprint, AttentionBackwardGrid, AttentionBackwardProblem,
+    AttentionBackwardRoutine, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
 };
 use cubecl::features::AtomicUsage;
 use cubecl::ir::Type;
@@ -22,7 +22,7 @@ use cubek_microkernel::attention_backward::key_gradient::hypercube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{Microkernel, StageRing};
-use cubek_std::routine::{CubeResources, Grid};
+use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// What the hypercube routine declines on a device that cannot add `f32` atomically: the query's
 /// gradient is summed across the cubes that own its keys.
@@ -71,12 +71,16 @@ impl core::fmt::Display for HypercubeAttentionBackwardRoutineSettings {
     }
 }
 
-impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
+/// What [`HypercubeAttentionBackwardRoutine`] compiles, each walk's stages held in the settings'
+/// ring as this device holds a cube's; the first walk holds none.
+pub type HypercubeAttentionBackwardRoutineBlueprint =
+    AttentionBackwardBlueprint<PlaneDeltaMicrokernel, HypercubeKeyGradientMicrokernel, StageRing>;
+
+impl Routine for HypercubeAttentionBackwardRoutine {
+    type Problem = AttentionBackwardProblem;
     type Settings = HypercubeAttentionBackwardRoutineSettings;
-    type QueryMicrokernel = PlaneDeltaMicrokernel;
-    type KeyMicrokernel = HypercubeKeyGradientMicrokernel;
-    /// The settings' ring as this device holds a cube's stages; the first walk holds none.
-    type SharedMemory = StageRing;
+    type Blueprint = HypercubeAttentionBackwardRoutineBlueprint;
+    type Grid = AttentionBackwardGrid;
 
     /// The key walk's microkernel's settings at the default ring, then each ring of stages through
     /// registers.
@@ -106,7 +110,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &Self::Settings,
-    ) -> Result<AttentionBackwardRoutineBlueprint<Self>, Refusal> {
+    ) -> Result<(Self::Blueprint, Self::Grid), Refusal> {
         let atomic_sum = Type::atomic(AttentionBackwardProblem::SUM);
         if !hw
             .properties
@@ -152,8 +156,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             body_bytes: key_gradient.share_bytes(&item),
         }
         .grid(hw, &key_partitioning)?;
-        let mut queries =
-            AttentionBackwardWalk::new(hw, problem, delta, delta_partitioning, delta_grid, ring);
+        let mut queries = AttentionBackwardWalk::new(hw, problem, delta, delta_partitioning, ring);
         // The last launch casts the sum into the query's gradient under this walk, both bound at
         // one width, which the sum's element must allow too.
         let sum_ceiling = hw.vector_ceiling(AttentionBackwardProblem::SUM);
@@ -162,23 +165,24 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             _ => width,
         });
 
-        Ok(AttentionBackwardBlueprint {
+        let blueprint = AttentionBackwardBlueprint {
             query_walk: queries,
-            key_walk: AttentionBackwardWalk::new(
-                hw,
-                problem,
-                key_gradient,
-                key_partitioning,
-                key_grid,
-                ring,
-            ),
-        })
+            key_walk: AttentionBackwardWalk::new(hw, problem, key_gradient, key_partitioning, ring),
+        };
+        let grid = AttentionBackwardGrid {
+            query_walk: delta_grid,
+            key_walk: key_grid,
+        };
+        Ok((blueprint, grid))
     }
+}
 
+impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
     fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
-        blueprint: AttentionBackwardRoutineBlueprint<Self>,
+        blueprint: Self::Blueprint,
+        grid: AttentionBackwardGrid,
     ) {
         let problem = tensors.problem();
         let (queries, keys) = (problem.seq_q as u32, problem.seq_kv as u32);
@@ -196,8 +200,8 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             gradient_shape,
             AttentionBackwardProblem::SUM,
         ));
-        let walk = &blueprint.query_walk;
-        let binding = tensors.bind(walk);
+        let (walk, walk_grid) = (&blueprint.query_walk, &grid.query_walk);
+        let binding = tensors.bind(walk, walk_grid);
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -206,8 +210,8 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
         unsafe {
             plane_delta_kernel::launch_unchecked(
                 client,
-                walk.grid.launch.cube_count.clone(),
-                walk.grid.launch.cube_dim,
+                walk_grid.launch.cube_count.clone(),
+                walk_grid.launch.cube_dim,
                 operands.out.arg(),
                 operands.out_gradient.arg(),
                 operands.delta.arg(),
@@ -217,8 +221,8 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
         }
 
         let elements = [AttentionBackwardProblem::SUM, problem.element];
-        let key_walk = blueprint.key_walk;
-        let key_binding = tensors.bind(&key_walk);
+        let (key_walk, key_grid) = (blueprint.key_walk, grid.key_walk);
+        let key_binding = tensors.bind(&key_walk, &key_grid);
         let summed = tensors.bind_beside(
             &key_binding,
             &key_walk,
@@ -233,8 +237,8 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
         unsafe {
             hypercube_key_gradient_kernel::launch_unchecked(
                 client,
-                key_walk.grid.launch.cube_count,
-                key_walk.grid.launch.cube_dim,
+                key_grid.launch.cube_count,
+                key_grid.launch.cube_dim,
                 key_operands.query.arg(),
                 key_operands.key.arg(),
                 key_operands.value.arg(),
@@ -255,7 +259,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             );
         }
 
-        let cast_binding = tensors.bind(walk);
+        let cast_binding = tensors.bind(walk, walk_grid);
         let sum = tensors.bind_beside(
             &cast_binding,
             walk,
@@ -268,8 +272,8 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
         unsafe {
             cast_query_gradient_kernel::launch_unchecked(
                 client,
-                walk.grid.launch.cube_count.clone(),
-                walk.grid.launch.cube_dim,
+                walk_grid.launch.cube_count.clone(),
+                walk_grid.launch.cube_dim,
                 sum.arg(),
                 cast_binding.operands.query_gradient.arg(),
                 cast_binding.launcher.partitioning_arg(),

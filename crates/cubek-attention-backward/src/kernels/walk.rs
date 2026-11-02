@@ -10,7 +10,6 @@ use cubek_microkernel::attention_backward::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_std::routine::Grid;
 
 /// A microkernel of this kind, as a walk reads it.
 pub trait AttentionBackwardMicrokernel:
@@ -31,21 +30,21 @@ impl<M> AttentionBackwardMicrokernel for M where
 {
 }
 
-/// One launch of a routine: its microkernel, the partitioning that places its work items, the
-/// width each operand binds at, the grid it spawns, and how the routine lays out the shared
-/// memory the walk holds; `()` for one that holds none.
-#[derive(Debug, Clone)]
+/// The decisions of one launch of a routine: its microkernel, the partitioning that places its
+/// work items, the width each operand binds at, and how the routine lays out the shared memory the
+/// walk holds; `()` for one that holds none. The grid it spawns is beside it
+/// ([`AttentionBackwardGrid`](crate::kernels::AttentionBackwardGrid)).
+#[derive(Debug, Clone, PartialEq)]
 pub struct AttentionBackwardWalk<M, SM = ()> {
     pub microkernel: M,
     pub partitioning: Partitioning,
     pub widths: AttentionBackwardOperands<usize>,
-    pub grid: Grid,
     pub shared_memory: SM,
 }
 
 impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
-    /// `microkernel` placed by `partitioning` on `grid`, shared memory laid out as
-    /// `shared_memory`, its widths settled.
+    /// `microkernel` placed by `partitioning`, shared memory laid out as `shared_memory`, its
+    /// widths settled.
     ///
     /// To the requirements the microkernel enqueues, the binding adds its own: each operand's
     /// buffer alignment, where its view starts, and the masking of an operand whose innermost
@@ -56,7 +55,6 @@ impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
         problem: &AttentionBackwardProblem,
         microkernel: M,
         partitioning: Partitioning,
-        grid: Grid,
         shared_memory: SM,
     ) -> Self {
         let mut vectorization = Vectorization::new();
@@ -88,7 +86,6 @@ impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
             microkernel,
             partitioning,
             widths,
-            grid,
             shared_memory,
         }
     }

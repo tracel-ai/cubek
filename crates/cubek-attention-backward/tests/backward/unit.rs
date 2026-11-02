@@ -7,6 +7,7 @@ use cubecl::prelude::*;
 use cubek_attention_backward::kernels::{AttentionBackwardRoutine, UnitAttentionBackwardRoutine};
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
+use cubek_std::routine::Routine;
 
 /// Two heads of their own key heads, more keys than queries, and no step that divides the
 /// queries or the keys evenly: every walk's last step is cut short.

@@ -1,7 +1,7 @@
 use super::kernel::{plane_fragment_key_gradient_kernel, plane_fragment_query_gradient_kernel};
 use crate::kernels::{
-    AttentionBackwardBlueprint, AttentionBackwardProblem, AttentionBackwardRoutine,
-    AttentionBackwardRoutineBlueprint, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
+    AttentionBackwardBlueprint, AttentionBackwardGrid, AttentionBackwardProblem,
+    AttentionBackwardRoutine, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Partitioning;
@@ -16,6 +16,7 @@ use cubek_microkernel::attention_backward::query_gradient::plane::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{Microkernel, StageRing};
+use cubek_std::routine::Routine;
 
 /// The backward pass with every plane owning, in the first walk, a box of queries of one head, and
 /// in the second, a box of keys of one key head, each on a matrix instruction. A plane stages what
@@ -66,11 +67,18 @@ pub struct PlaneFragmentAttentionBackwardSharedMemory {
     pub planes: usize,
 }
 
-impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
+/// What [`PlaneFragmentAttentionBackwardRoutine`] compiles.
+pub type PlaneFragmentAttentionBackwardRoutineBlueprint = AttentionBackwardBlueprint<
+    PlaneQueryGradientMicrokernel,
+    PlaneKeyGradientMicrokernel,
+    PlaneFragmentAttentionBackwardSharedMemory,
+>;
+
+impl Routine for PlaneFragmentAttentionBackwardRoutine {
+    type Problem = AttentionBackwardProblem;
     type Settings = PlaneFragmentAttentionBackwardRoutineSettings;
-    type QueryMicrokernel = PlaneQueryGradientMicrokernel;
-    type KeyMicrokernel = PlaneKeyGradientMicrokernel;
-    type SharedMemory = PlaneFragmentAttentionBackwardSharedMemory;
+    type Blueprint = PlaneFragmentAttentionBackwardRoutineBlueprint;
+    type Grid = AttentionBackwardGrid;
 
     /// Each walk's microkernel's settings, the other's and the routine's at their default, then
     /// two planes a cube, and each ring of stages through registers.
@@ -111,7 +119,7 @@ impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &Self::Settings,
-    ) -> Result<AttentionBackwardRoutineBlueprint<Self>, Refusal> {
+    ) -> Result<(Self::Blueprint, Self::Grid), Refusal> {
         let item = problem.work_item();
         let query_gradient =
             PlaneQueryGradientMicrokernel::best(hw, &item, &settings.query_gradient)?;
@@ -155,13 +163,12 @@ impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
             body_bytes: 0,
         }
         .grid(hw, &key_partitioning)?;
-        Ok(AttentionBackwardBlueprint {
+        let blueprint = AttentionBackwardBlueprint {
             query_walk: AttentionBackwardWalk::new(
                 hw,
                 problem,
                 query_gradient,
                 query_partitioning,
-                query_grid,
                 PlaneFragmentAttentionBackwardSharedMemory {
                     ring: query_ring,
                     planes,
@@ -172,25 +179,32 @@ impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
                 problem,
                 key_gradient,
                 key_partitioning,
-                key_grid,
                 PlaneFragmentAttentionBackwardSharedMemory {
                     ring: key_ring,
                     planes,
                 },
             ),
-        })
+        };
+        let grid = AttentionBackwardGrid {
+            query_walk: query_grid,
+            key_walk: key_grid,
+        };
+        Ok((blueprint, grid))
     }
+}
 
+impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
     fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
-        blueprint: AttentionBackwardRoutineBlueprint<Self>,
+        blueprint: Self::Blueprint,
+        grid: AttentionBackwardGrid,
     ) {
         let problem = tensors.problem();
         let (queries, keys) = (problem.seq_q as u32, problem.seq_kv as u32);
         let elements = [AttentionBackwardProblem::SUM, problem.element];
-        let walk = blueprint.query_walk;
-        let binding = tensors.bind(&walk);
+        let (walk, walk_grid) = (blueprint.query_walk, grid.query_walk);
+        let binding = tensors.bind(&walk, &walk_grid);
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -200,8 +214,8 @@ impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
         unsafe {
             plane_fragment_query_gradient_kernel::launch_unchecked(
                 tensors.client(),
-                walk.grid.launch.cube_count,
-                walk.grid.launch.cube_dim,
+                walk_grid.launch.cube_count,
+                walk_grid.launch.cube_dim,
                 operands.query.arg(),
                 operands.key.arg(),
                 operands.value.arg(),
@@ -222,8 +236,8 @@ impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
             );
         }
 
-        let walk = blueprint.key_walk;
-        let binding = tensors.bind(&walk);
+        let (walk, walk_grid) = (blueprint.key_walk, grid.key_walk);
+        let binding = tensors.bind(&walk, &walk_grid);
         let operands = binding.operands;
 
         // SAFETY: as the first walk's; each plane writes only its own keys' and values' gradients,
@@ -231,8 +245,8 @@ impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
         unsafe {
             plane_fragment_key_gradient_kernel::launch_unchecked(
                 tensors.client(),
-                walk.grid.launch.cube_count,
-                walk.grid.launch.cube_dim,
+                walk_grid.launch.cube_count,
+                walk_grid.launch.cube_dim,
                 operands.query.arg(),
                 operands.key.arg(),
                 operands.value.arg(),

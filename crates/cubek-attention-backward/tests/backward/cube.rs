@@ -3,11 +3,10 @@
 
 use super::reference::{Case, Reference};
 use cubecl::prelude::*;
-use cubek_attention_backward::kernels::{
-    AttentionBackwardRoutine, CubeStagedAttentionBackwardRoutine,
-};
+use cubek_attention_backward::kernels::CubeStagedAttentionBackwardRoutine;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
+use cubek_std::routine::Routine;
 
 /// Two heads of their own key heads, more keys than queries, and no cube's box that divides the
 /// queries or the keys evenly: every walk's last step, and a cube's last plane, is cut short.

@@ -65,10 +65,8 @@ impl<R: AttentionBackwardRoutine> TuneCandidate for AttentionBackwardCandidate<R
                     .ok()
             });
         match prepared {
-            Some(blueprint) => CandidatePriority::FIRST.lowered(short_of_the_device(
-                &self.hw,
-                &blueprint.key_walk.grid.launch,
-            )),
+            Some((_, grid)) => CandidatePriority::FIRST
+                .lowered(short_of_the_device(&self.hw, &grid.key_walk.launch)),
             None => CandidatePriority::LAST,
         }
     }

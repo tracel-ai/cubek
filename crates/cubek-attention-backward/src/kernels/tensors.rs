@@ -12,7 +12,7 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::AttentionVisibility;
 use cubek_microkernel::attention_backward::{AttentionBackwardOperand, AttentionBackwardOperands};
-use cubek_std::routine::ADMITTED_PLAN_RUNS;
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
 /// What a backward pass declines before preparing anything: an element the routines do not
 /// take, inputs of two elements, or a logsumexp not stored in `f32`.
@@ -207,11 +207,12 @@ impl AttentionBackwardTensors {
         self.gradients
     }
 
-    /// Every operand bound as `walk` states it: under its partitioning, at its widths, on its
-    /// grid. A walk passes its kernel the ones it reads and writes.
+    /// Every operand bound as `walk` states it, under its partitioning, at its widths, on `grid`.
+    /// A walk passes its kernel the ones it reads and writes.
     pub(crate) fn bind<M, SM>(
         &self,
         walk: &AttentionBackwardWalk<M, SM>,
+        grid: &Grid,
     ) -> AttentionBackwardBinding
     where
         M: AttentionBackwardMicrokernel,
@@ -221,8 +222,8 @@ impl AttentionBackwardTensors {
             walk.kernel_partitioning(),
             walk.partitioning.space(),
             LaunchGrid::Stated {
-                cube_count: walk.grid.launch.cube_count.clone(),
-                cube_dim: walk.grid.launch.cube_dim,
+                cube_count: grid.launch.cube_count.clone(),
+                cube_dim: grid.launch.cube_dim,
             },
         )
         .expect(ADMITTED_PLAN_RUNS);

@@ -1,7 +1,7 @@
 use super::kernel::{cube_staged_key_gradient_kernel, cube_staged_query_gradient_kernel};
 use crate::kernels::{
-    AttentionBackwardBlueprint, AttentionBackwardProblem, AttentionBackwardRoutine,
-    AttentionBackwardRoutineBlueprint, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
+    AttentionBackwardBlueprint, AttentionBackwardGrid, AttentionBackwardProblem,
+    AttentionBackwardRoutine, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
 };
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Refusal;
@@ -14,6 +14,7 @@ use cubek_microkernel::attention_backward::query_gradient::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{Microkernel, StageRing};
+use cubek_std::routine::Routine;
 
 /// The backward pass with every cube owning, in the first walk, a box of queries of some heads of
 /// the group, and in the second, a box of keys of one key head, its planes each on a matrix
@@ -52,12 +53,16 @@ impl core::fmt::Display for CubeStagedAttentionBackwardRoutineSettings {
     }
 }
 
-impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
+/// What [`CubeStagedAttentionBackwardRoutine`] compiles, each walk's stages held in the settings'
+/// ring as this device holds a cube's.
+pub type CubeStagedAttentionBackwardRoutineBlueprint =
+    AttentionBackwardBlueprint<CubeQueryGradientMicrokernel, CubeKeyGradientMicrokernel, StageRing>;
+
+impl Routine for CubeStagedAttentionBackwardRoutine {
+    type Problem = AttentionBackwardProblem;
     type Settings = CubeStagedAttentionBackwardRoutineSettings;
-    type QueryMicrokernel = CubeQueryGradientMicrokernel;
-    type KeyMicrokernel = CubeKeyGradientMicrokernel;
-    /// The settings' ring as this device holds a cube's stages.
-    type SharedMemory = StageRing;
+    type Blueprint = CubeStagedAttentionBackwardRoutineBlueprint;
+    type Grid = AttentionBackwardGrid;
 
     /// Each walk's microkernel's settings, the other's and the ring at their default, then each
     /// ring of stages through registers.
@@ -94,7 +99,7 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &Self::Settings,
-    ) -> Result<AttentionBackwardRoutineBlueprint<Self>, Refusal> {
+    ) -> Result<(Self::Blueprint, Self::Grid), Refusal> {
         let item = problem.work_item();
         let query_gradient =
             CubeQueryGradientMicrokernel::best(hw, &item, &settings.query_gradient)?;
@@ -129,13 +134,12 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
             body_bytes: 0,
         }
         .grid(hw, &key_partitioning)?;
-        Ok(AttentionBackwardBlueprint {
+        let blueprint = AttentionBackwardBlueprint {
             query_walk: AttentionBackwardWalk::new(
                 hw,
                 problem,
                 query_gradient,
                 query_partitioning,
-                query_grid,
                 query_ring,
             ),
             key_walk: AttentionBackwardWalk::new(
@@ -143,22 +147,29 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
                 problem,
                 key_gradient,
                 key_partitioning,
-                key_grid,
                 key_ring,
             ),
-        })
+        };
+        let grid = AttentionBackwardGrid {
+            query_walk: query_grid,
+            key_walk: key_grid,
+        };
+        Ok((blueprint, grid))
     }
+}
 
+impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
     fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
-        blueprint: AttentionBackwardRoutineBlueprint<Self>,
+        blueprint: Self::Blueprint,
+        grid: AttentionBackwardGrid,
     ) {
         let problem = tensors.problem();
         let (queries, keys) = (problem.seq_q as u32, problem.seq_kv as u32);
         let elements = [AttentionBackwardProblem::SUM, problem.element];
-        let walk = blueprint.query_walk;
-        let binding = tensors.bind(&walk);
+        let (walk, walk_grid) = (blueprint.query_walk, grid.query_walk);
+        let binding = tensors.bind(&walk, &walk_grid);
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -168,8 +179,8 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
         unsafe {
             cube_staged_query_gradient_kernel::launch_unchecked(
                 tensors.client(),
-                walk.grid.launch.cube_count,
-                walk.grid.launch.cube_dim,
+                walk_grid.launch.cube_count,
+                walk_grid.launch.cube_dim,
                 operands.query.arg(),
                 operands.key.arg(),
                 operands.value.arg(),
@@ -189,8 +200,8 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
             );
         }
 
-        let walk = blueprint.key_walk;
-        let binding = tensors.bind(&walk);
+        let (walk, walk_grid) = (blueprint.key_walk, grid.key_walk);
+        let binding = tensors.bind(&walk, &walk_grid);
         let operands = binding.operands;
 
         // SAFETY: as the first walk's; each plane writes only its own keys' and values' gradients,
@@ -198,8 +209,8 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
         unsafe {
             cube_staged_key_gradient_kernel::launch_unchecked(
                 tensors.client(),
-                walk.grid.launch.cube_count,
-                walk.grid.launch.cube_dim,
+                walk_grid.launch.cube_count,
+                walk_grid.launch.cube_dim,
                 operands.query.arg(),
                 operands.key.arg(),
                 operands.value.arg(),

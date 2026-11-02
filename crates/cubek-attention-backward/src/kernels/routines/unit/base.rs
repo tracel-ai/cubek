@@ -1,7 +1,7 @@
 use super::kernel::{unit_key_gradient_kernel, unit_query_gradient_kernel};
 use crate::kernels::{
-    AttentionBackwardBlueprint, AttentionBackwardProblem, AttentionBackwardRoutine,
-    AttentionBackwardRoutineBlueprint, AttentionBackwardTensors, AttentionBackwardWalk,
+    AttentionBackwardBlueprint, AttentionBackwardGrid, AttentionBackwardProblem,
+    AttentionBackwardRoutine, AttentionBackwardTensors, AttentionBackwardWalk,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Partitioning;
@@ -16,7 +16,7 @@ use cubek_microkernel::attention_backward::query_gradient::unit::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_std::routine::{CubeResources, Grid};
+use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// The backward pass with every unit owning, in the first walk, queries of one head, and in the
 /// second, keys of one key head. This kind's floor: it asks nothing of the hardware, so it runs
@@ -54,11 +54,15 @@ impl core::fmt::Display for UnitAttentionBackwardRoutineSettings {
     }
 }
 
-impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
+/// What [`UnitAttentionBackwardRoutine`] compiles.
+pub type UnitAttentionBackwardRoutineBlueprint =
+    AttentionBackwardBlueprint<UnitQueryGradientMicrokernel, UnitKeyGradientMicrokernel, ()>;
+
+impl Routine for UnitAttentionBackwardRoutine {
+    type Problem = AttentionBackwardProblem;
     type Settings = UnitAttentionBackwardRoutineSettings;
-    type QueryMicrokernel = UnitQueryGradientMicrokernel;
-    type KeyMicrokernel = UnitKeyGradientMicrokernel;
-    type SharedMemory = ();
+    type Blueprint = UnitAttentionBackwardRoutineBlueprint;
+    type Grid = AttentionBackwardGrid;
 
     /// Each walk's microkernel's settings, the other's and the routine's at their default, then a
     /// cube as full as the device holds ([`Hardware::full_cube_planes`]).
@@ -99,7 +103,7 @@ impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &Self::Settings,
-    ) -> Result<AttentionBackwardRoutineBlueprint<Self>, Refusal> {
+    ) -> Result<(Self::Blueprint, Self::Grid), Refusal> {
         let item = problem.work_item();
         let query_gradient =
             UnitQueryGradientMicrokernel::best(hw, &item, &settings.query_gradient)?;
@@ -132,36 +136,36 @@ impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
         );
         let query_grid = Grid::new(hw, &query_partitioning, resources)?;
         let key_grid = Grid::new(hw, &key_partitioning, resources)?;
-        Ok(AttentionBackwardBlueprint {
+        let blueprint = AttentionBackwardBlueprint {
             query_walk: AttentionBackwardWalk::new(
                 hw,
                 problem,
                 query_gradient,
                 query_partitioning,
-                query_grid,
                 (),
             ),
-            key_walk: AttentionBackwardWalk::new(
-                hw,
-                problem,
-                key_gradient,
-                key_partitioning,
-                key_grid,
-                (),
-            ),
-        })
+            key_walk: AttentionBackwardWalk::new(hw, problem, key_gradient, key_partitioning, ()),
+        };
+        let grid = AttentionBackwardGrid {
+            query_walk: query_grid,
+            key_walk: key_grid,
+        };
+        Ok((blueprint, grid))
     }
+}
 
+impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
     fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
-        blueprint: AttentionBackwardRoutineBlueprint<Self>,
+        blueprint: Self::Blueprint,
+        grid: AttentionBackwardGrid,
     ) {
         let problem = tensors.problem();
         let (queries, keys) = (problem.seq_q as u32, problem.seq_kv as u32);
         let sum = AttentionBackwardProblem::SUM;
-        let walk = blueprint.query_walk;
-        let binding = tensors.bind(&walk);
+        let (walk, walk_grid) = (blueprint.query_walk, grid.query_walk);
+        let binding = tensors.bind(&walk, &walk_grid);
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -170,8 +174,8 @@ impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
         unsafe {
             unit_query_gradient_kernel::launch_unchecked(
                 tensors.client(),
-                walk.grid.launch.cube_count,
-                walk.grid.launch.cube_dim,
+                walk_grid.launch.cube_count,
+                walk_grid.launch.cube_dim,
                 operands.query.arg(),
                 operands.key.arg(),
                 operands.value.arg(),
@@ -190,8 +194,8 @@ impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
             );
         }
 
-        let walk = blueprint.key_walk;
-        let binding = tensors.bind(&walk);
+        let (walk, walk_grid) = (blueprint.key_walk, grid.key_walk);
+        let binding = tensors.bind(&walk, &walk_grid);
         let operands = binding.operands;
 
         // SAFETY: as the first walk's; each unit writes only its own keys' and values' gradients,
@@ -199,8 +203,8 @@ impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
         unsafe {
             unit_key_gradient_kernel::launch_unchecked(
                 tensors.client(),
-                walk.grid.launch.cube_count,
-                walk.grid.launch.cube_dim,
+                walk_grid.launch.cube_count,
+                walk_grid.launch.cube_dim,
                 operands.query.arg(),
                 operands.key.arg(),
                 operands.value.arg(),
