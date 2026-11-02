@@ -1684,4 +1684,60 @@ mod base {
         }
         assert!(past_k > 0, "no setting's stage reaches past a k of 256");
     }
+
+    /// A product of NVFP4 activations against an NVFP4 weight, Qwen3.8-27B's gate and up
+    /// projections at a prompt's rows, prepares under every setting the staged routine races on
+    /// a GPU with `sm_120`'s block-scaled instructions, and every plan admitted on the
+    /// block-scaled instruction holds fragments one instruction step deep: it contracts a
+    /// fragment of its own depth alone. A setting whose fragments span a stage, as the boxes
+    /// decoding a packed weight against a float activation have, declines rather than asking for a
+    /// `16 × 8 × 256` instruction no device offers, which on an RTX PRO 6000 failed to expand.
+    #[test]
+    fn a_w4a4_product_contracts_block_scaled_fragments_one_step_deep() {
+        use crate::kernels::select::packed::nvfp4_scheme;
+        use cubek_microkernel::matmul::MatmulDim;
+
+        let hw = devices::offering_block_scaled(devices::h100());
+        let packing = |scheme: cubecl::quant::scheme::QuantScheme, axes| Packing {
+            operand: Operand::of_scheme(&scheme, K, axes).expect("NVFP4 is one block along k"),
+            scheme,
+        };
+        let problem = MatmulRoutineProblem::packed(
+            512,
+            17408,
+            5120,
+            ElemType::Float(FloatKind::F16),
+            MatmulOperands {
+                lhs: Some(packing(nvfp4_scheme(), [M, K])),
+                rhs: Some(packing(tile_order::nvfp4_scheme(), [K, N])),
+                out: None,
+            },
+        );
+        let routine = CubeStagedMatmulRoutine;
+        let raced = routine
+            .packed_settings(&hw)
+            .into_iter()
+            .chain(routine.packed_one_step_settings())
+            .chain(routine.block_scaled_settings(&hw));
+        let mut block_scaled = 0;
+        for settings in raced {
+            let Ok((blueprint, _)) = routine.prepare(&hw, &problem, &settings) else {
+                continue;
+            };
+            let plane = &blueprint.microkernel.plane;
+            if !plane.instruction.block_scaled() {
+                continue;
+            }
+            assert_eq!(
+                plane.leaf_extent(MatmulDim::K),
+                plane.instruction.shape()[2].1,
+                "{settings}"
+            );
+            block_scaled += 1;
+        }
+        assert!(
+            block_scaled > 0,
+            "no setting prepared on the block-scaled instruction"
+        );
+    }
 }
