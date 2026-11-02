@@ -19,6 +19,8 @@ pub mod attention;
 pub mod attention_backward;
 #[cfg(feature = "matmul")]
 pub mod matmul;
+#[cfg(feature = "reduce")]
+pub mod reduce;
 #[cfg(feature = "rms-norm")]
 pub mod rms_norm;
 #[cfg(feature = "row-store")]
