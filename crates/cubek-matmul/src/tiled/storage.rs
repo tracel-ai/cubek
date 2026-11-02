@@ -20,6 +20,11 @@ use cubecl::{
     zspace::{Shape, Strides, Tiling, metadata::Metadata},
 };
 
+use cubecl::quant::scheme::QuantScheme;
+use cubek_microkernel::matmul::{MatmulOperand, MatmulStep};
+use cubek_std::layout::{stored::Operand, tile_order::TileOrder};
+use cubek_std::{Hardware, matmul_axes::K, value_element};
+
 use crate::definition::MatmulSetupError;
 
 /// `dst = src` over their logical cells, one cube per region of `level`, the cube's units
@@ -72,6 +77,47 @@ pub use cubecl::tile::{
     Axis,
     layout::{StorageLevels, StoragePartitioning},
 };
+
+/// A matmul input's values as they lie, which the tile it is stored in depends on: elements of one
+/// type, or codes packed under a quantization scheme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredValues {
+    /// One element of this type a value.
+    Elements(ElemType),
+    /// Codes packed under this scheme.
+    Packed(QuantScheme),
+}
+
+/// The tile a load stores matmul input `input` in on `hw`, over the input's two axes: the step a
+/// product against it takes under the largest instruction `hw` offers
+/// ([`MatmulStep::stored_on`]), the other input contracted at `contracted`.
+///
+/// `None` where no tile is worth storing: no instruction contracts the input on `hw`; codes under
+/// a scheme tile order does not store ([`TileOrder::of`]); or elements on a device whose TMA
+/// engine fills the stages, which the fastest float routine fills from rows.
+///
+/// The tile does not depend on the matrix's extents: a caller stores the input in it where it
+/// divides them.
+pub fn stored_tile(
+    hw: &Hardware,
+    input: MatmulOperand,
+    values: StoredValues,
+    contracted: ElemType,
+) -> Option<Space> {
+    let (operand, element) = match values {
+        StoredValues::Packed(scheme) => {
+            TileOrder::of(&scheme)?;
+            let operand = Operand::of_scheme(&scheme, K, input.axes())?;
+            (operand, value_element(scheme.value)?)
+        }
+        StoredValues::Elements(_) if hw.bulk_tensor_copy() => return None,
+        StoredValues::Elements(element) => (Operand::plain(), element),
+    };
+    let step = MatmulStep::stored_on(hw, input, operand, element, contracted)?;
+    Some(Space::new(
+        &input.axes().map(|axis| (axis, step.along(axis))),
+    ))
+}
 
 /// How a tensor of one shape lies stored as a [`StoragePartitioning`] states: its metadata in
 /// values and in the words a packed one moves as, the relayout of its words into storage tiles,
