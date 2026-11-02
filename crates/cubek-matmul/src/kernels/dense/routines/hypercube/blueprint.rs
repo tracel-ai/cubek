@@ -53,7 +53,8 @@ pub(super) fn hypercube_blueprint(
         Some(_) => MatmulBlueprint {
             widths: CubeStagedMatmulRoutine::widths_in_blocks(
                 hw,
-                &microkernel.cube.contracted(item),
+                problem,
+                item,
                 &microkernel.cube,
                 &partitioning,
                 &storage,

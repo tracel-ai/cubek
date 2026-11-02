@@ -423,7 +423,7 @@ impl BlockScaledMma {
 
     /// Whether the instruction reads, as the `lhs` input or the other, codes stored as `values`
     /// under a scale every `block` of `k`. A code narrower than a byte held one a byte
-    /// ([`REGISTER_BYTES`](Self::REGISTER_BYTES)) is no word a packed input stores.
+    /// (`REGISTER_BYTES`) is no word a packed input stores.
     pub fn holds(&self, lhs: bool, values: ElemType, block: usize) -> bool {
         let (code, kind) = match lhs {
             true => (self.shape.a_type, self.form.lhs),
