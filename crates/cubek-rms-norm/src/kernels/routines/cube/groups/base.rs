@@ -22,7 +22,9 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// floor. Into a packed one it needs plane instructions, and a cube holds the rows its stage fits.
 ///
 /// Each group reads its row where it lies, its units in turns along it, and sums their partials
-/// through its own run of the cube's shared memory; a group of one unit owns its row outright.
+/// as its microkernel's [`GroupSum`](cubek_microkernel::rms_norm::cube::GroupSum) says: by plane
+/// instructions where the device commits to a plane width, else through its own run of the cube's
+/// shared memory; a group of one unit owns its row outright.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeGroupsRmsNormRoutine;
 
@@ -35,7 +37,7 @@ pub struct CubeGroupsRmsNormRoutineSettings {
 
 impl CubeGroupsRmsNormRoutineSettings {
     /// One group of up to 256 units a cube: a decode step's single row read by as many units as it
-    /// has lines, up to a quarter of a cube on every GPU profile, summing through shared memory.
+    /// has lines, up to a quarter of a cube on every GPU profile.
     pub const DEFAULT: Self = Self {
         microkernel: CubeGroupsRmsNormMicrokernelSettings::DEFAULT,
         groups: NonZeroUsize::MIN,
@@ -120,8 +122,9 @@ impl Routine for CubeGroupsRmsNormRoutine {
             .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 
-    /// A group is launched as the cube's `x`, its units the group's, and the groups along `y`: the
-    /// units cooperate through shared memory only, so the width a plane runs at is not read.
+    /// A group is launched as the cube's `x`, its units the group's, and the groups along `y`. A
+    /// group's units are a power of two, so a group within a plane is a run of its lanes and a
+    /// larger one is whole planes, which is what its microkernel's plane sums count on.
     fn prepare(
         &self,
         hw: &Hardware,
@@ -176,7 +179,7 @@ impl RmsNormRoutine<CubeGroupsRmsNormMicrokernel> for CubeGroupsRmsNormRoutine {
         // SAFETY: every operand is bound through the launcher, and the output through `O`, which
         // mask the reads and writes of a tile the problem's edge cuts short, and the kernel
         // indexes no buffer but through its tiles; its shared memory is the groups' slots,
-        // indexed by group and unit, and a packed store's stage, each group writing its own row,
+        // indexed by group and by unit or plane, and a packed store's stage, each group writing its own row,
         // encoded only once the cube has synced.
         unsafe {
             cube_groups_rms_norm_kernel::launch_unchecked::<O>(
