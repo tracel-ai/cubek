@@ -1,6 +1,7 @@
 use super::{GatedDeltaWalkSpec, GatedDeltaWalkStrategy};
 use crate::kernels::walk::{
-    CubeGatedDeltaWalkRoutine, GatedDeltaWalkInputs, GatedDeltaWalkRoutine, launch_tuned, serves,
+    CubeGatedDeltaWalkRoutine, GatedDeltaWalkInputs, GatedDeltaWalkRoutine,
+    GatedDeltaWalkStateInputs, GatedDeltaWalkStateLayout, launch_tuned, serves,
 };
 use core::num::NonZeroUsize;
 use cubecl::benchmark::{Benchmark, ProfileDuration, TimingMethod};
@@ -12,6 +13,7 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_std::Hardware;
 use cubek_std::autotune::GroupPriority;
 use cubek_test_utils::{RunSamples, TestInput};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// `spec`'s walk in `f32`, run by `strategy` on `cubecl::TestRuntime`: the raw samples.
 pub fn bench(
@@ -20,10 +22,12 @@ pub fn bench(
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let device = cubecl::test_device();
+    let client = device.client();
     let bench = GatedDeltaWalkBench {
         spec: *spec,
         strategy: *strategy,
-        client: device.client(),
+        rotation: SlotRotation::new(&client, spec),
+        client,
         device,
         samples: num_samples,
     };
@@ -34,9 +38,48 @@ pub fn bench(
     Ok(RunSamples::new(durations))
 }
 
+/// The slot tables a walk in a store's slots takes in turn: each call's rows lie in slots no call
+/// since the store's last pass touched, so the states are read from memory and not from the cache.
+struct SlotRotation {
+    tables: Vec<PlainTensor>,
+    next: AtomicUsize,
+}
+
+impl SlotRotation {
+    /// The tables that place `spec`'s rows in consecutive slots, wrapping around the store; none
+    /// for a walk over states it owns.
+    fn new(client: &Client, spec: &GatedDeltaWalkSpec) -> Self {
+        let tables = match spec.state {
+            GatedDeltaWalkStateLayout::Owned { .. } => Vec::new(),
+            GatedDeltaWalkStateLayout::Slots { slots, .. } => (0..slots.get() / spec.batch)
+                .map(|turn| {
+                    let rows: Vec<u32> = (0..spec.batch)
+                        .map(|row| ((turn * spec.batch + row) % slots.get()) as u32)
+                        .collect();
+                    PlainTensor::of_u32s(client, &[spec.batch], &rows)
+                })
+                .collect(),
+        };
+        Self {
+            tables,
+            next: AtomicUsize::new(0),
+        }
+    }
+
+    /// `inputs` with the next table of the rotation placing its rows.
+    fn turned(&self, mut inputs: GatedDeltaWalkInputs) -> GatedDeltaWalkInputs {
+        if let GatedDeltaWalkStateInputs::Slots { slots, .. } = &mut inputs.state {
+            let turn = self.next.fetch_add(1, Ordering::Relaxed);
+            *slots = self.tables[turn % self.tables.len()].clone();
+        }
+        inputs
+    }
+}
+
 struct GatedDeltaWalkBench {
     spec: GatedDeltaWalkSpec,
     strategy: GatedDeltaWalkStrategy,
+    rotation: SlotRotation,
     device: Device,
     client: Client,
     samples: usize,
@@ -64,8 +107,29 @@ impl Benchmark for GatedDeltaWalkBench {
             batch,
             positions,
             heads,
+            state,
         } = self.spec;
         let (b, t, kh, h) = (batch, positions, heads.key_heads, heads.value_heads());
+        let state = match state {
+            GatedDeltaWalkStateLayout::Owned { .. } => {
+                GatedDeltaWalkStateInputs::Owned(self.uniform(
+                    vec![b, h, heads.key_features, heads.value_features],
+                    5,
+                    -0.2,
+                    0.2,
+                ))
+            }
+            GatedDeltaWalkStateLayout::Slots { slots, .. } => GatedDeltaWalkStateInputs::Slots {
+                store: self.uniform(
+                    vec![slots.get(), h, 1, heads.key_features * heads.value_features],
+                    5,
+                    -0.2,
+                    0.2,
+                ),
+                slots: self.rotation.tables[0].clone(),
+                positions: PlainTensor::of_u32s(&self.client, &[b], &vec![1; b]),
+            },
+        };
         GatedDeltaWalkInputs {
             client: self.client.clone(),
             query: self.uniform(vec![b, t, kh, heads.key_features], 0, -0.09, 0.09),
@@ -73,18 +137,14 @@ impl Benchmark for GatedDeltaWalkBench {
             value: self.uniform(vec![b, t, h, heads.value_features], 2, -1.0, 1.0),
             decay: self.uniform(vec![b, t, h], 3, -1.0, -0.05),
             strength: self.uniform(vec![b, t, h], 4, 0.0, 1.0),
-            state: self.uniform(
-                vec![b, h, heads.key_features, heads.value_features],
-                5,
-                -0.2,
-                0.2,
-            ),
+            state,
             output_element: f32::elem_type_native(),
             kept: NonZeroUsize::MIN,
         }
     }
 
     fn execute(&self, inputs: Self::Input) -> Result<(), String> {
+        let inputs = self.rotation.turned(inputs);
         match self.strategy {
             GatedDeltaWalkStrategy::CubeLead => {
                 let hw = Hardware::from_client(&self.client);
@@ -95,8 +155,13 @@ impl Benchmark for GatedDeltaWalkBench {
             }
             GatedDeltaWalkStrategy::Tuned => {
                 let hw = Hardware::from_client(&self.client);
-                serves(&hw, self.spec.heads, f32::elem_type_native())
-                    .map_err(|why| format!("the table does not serve this problem: {why:?}"))?;
+                serves(
+                    &hw,
+                    self.spec.heads,
+                    self.spec.state,
+                    f32::elem_type_native(),
+                )
+                .map_err(|why| format!("the table does not serve this problem: {why:?}"))?;
                 launch_tuned(&self.device, inputs, GroupPriority::DEFAULT);
                 Ok(())
             }

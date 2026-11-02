@@ -15,16 +15,26 @@ pub struct HeldState<N: Size> {
 
 #[cube]
 impl<N: Size> HeldState<N> {
-    /// The unit's rows of `state`, windowed to the unit: the state read once.
-    pub fn load(state: &Tile, #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel) -> Self {
+    /// The unit's rows of `state`, windowed to the unit: the state read once, or zeros where the
+    /// row is `fresh`, which reads nothing.
+    pub fn load(
+        state: &Tile,
+        fresh: bool,
+        #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,
+    ) -> Self {
         let width = N::value();
         let (rows, columns) = comptime!((microkernel.rows, microkernel.columns));
         let parts = comptime!(columns / width);
         let reads = state.flat::<f32, N>();
+        let zero = Vector::<f32, N>::cast_from(0.0f32);
         let mut lines = Array::<Vector<f32, N>>::new(comptime!(rows * parts));
         #[unroll]
         for line in 0..comptime!(rows * parts) {
-            lines[line] = reads.read(line);
+            let mut value = zero;
+            if !fresh {
+                value = reads.read(line);
+            }
+            lines[line] = value;
         }
         HeldState::<N> { lines, microkernel }
     }

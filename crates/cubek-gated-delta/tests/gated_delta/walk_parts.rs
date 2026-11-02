@@ -9,7 +9,8 @@ use cubecl::bytes::Bytes;
 use cubecl::tile::{Partitioning, Region, Tile, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_gated_delta::kernels::walk::{
-    CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkTensors,
+    CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkStateBinding,
+    GatedDeltaWalkTensors,
 };
 use cubek_microkernel::gated_delta::walk::cube::{
     CubeGatedDeltaWalkMicrokernel, HeldState, UnitPartials,
@@ -168,7 +169,7 @@ fn held_state_part<N: Size>(
             let slot = unit.coord(KEY_FEATURE);
             let mut partials =
                 UnitPartials::<N>::new(run.coord(VALUE_FEATURE), slot, runs, microkernel);
-            let mut held = HeldState::<N>::load(&state.at(&unit), microkernel);
+            let mut held = HeldState::<N>::load(&state.at(&unit), false, microkernel);
             let origin = unit.origin(VALUE_FEATURE);
             for step in unit.walk() {
                 let position = step.coord(POSITION);
@@ -289,7 +290,9 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
             let len = runs * microkernel.units * stride;
             let dump = client.create(Bytes::from_elems(vec![f32::NAN; len]));
             let binding = tensors.bind(&blueprint, &grid);
-            let operands = binding.operands;
+            let GatedDeltaWalkStateBinding::Owned { state, kept } = binding.state else {
+                unreachable!("the case owns its states")
+            };
             // SAFETY: every operand is bound through the launcher as the real kernel's are, and
             // each unit writes its own `stride` floats of `dump`, within `len`.
             unsafe {
@@ -298,10 +301,10 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
                     grid.launch.cube_count.clone(),
                     grid.launch.cube_dim,
                     blueprint.width,
-                    operands.query,
-                    operands.key,
-                    operands.state,
-                    operands.kept,
+                    binding.query,
+                    binding.key,
+                    state,
+                    kept,
                     BufferArg::from_raw_parts(dump.clone(), len),
                     tensors.problem().first_kept(),
                     binding.launcher.partitioning_arg(),
@@ -337,7 +340,7 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
             }
             // The states after each position.
             let walked = tensors.into_outputs();
-            let kept = read(&client, walked.kept.handle.clone(), F32);
+            let kept = read(&client, walked.kept.unwrap().handle.clone(), F32);
             let mut s: Vec<f64> = o.state.iter().map(|&x| x as f64).collect();
             let mut expected = Vec::new();
             for t in 0..case.positions {

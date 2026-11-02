@@ -5,8 +5,10 @@ mod base;
 mod held_state;
 mod microkernel;
 mod unit_partials;
+mod walk_state;
 
 pub use base::*;
 pub use held_state::*;
 pub use microkernel::*;
 pub use unit_partials::*;
+pub use walk_state::*;

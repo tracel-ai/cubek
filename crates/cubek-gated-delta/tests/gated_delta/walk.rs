@@ -16,8 +16,8 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::metadata::Metadata;
 use cubek_gated_delta::kernels::walk::{
     CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkInputs,
-    GatedDeltaWalkOutputs, GatedDeltaWalkProblem, GatedDeltaWalkRoutine, GatedDeltaWalkTensors,
-    launch_tuned,
+    GatedDeltaWalkOutputs, GatedDeltaWalkProblem, GatedDeltaWalkRoutine, GatedDeltaWalkStateInputs,
+    GatedDeltaWalkTensors, launch_tuned,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::gated_delta::GatedDeltaHeads;
@@ -233,10 +233,10 @@ impl Case {
             value: up(&[b, t, h, heads.value_features], &operands.value),
             decay: up(&[b, t, h], &operands.decay),
             strength: up(&[b, t, h], &operands.strength),
-            state: up(
+            state: GatedDeltaWalkStateInputs::Owned(up(
                 &[b, h, heads.key_features, heads.value_features],
                 &operands.state,
-            ),
+            )),
             output_element: element,
             kept: NonZeroUsize::new(self.kept).expect("a state is kept"),
         }
@@ -302,28 +302,33 @@ impl Case {
             .iter()
             .map(|&x| round_to(x as f32, element) as f64)
             .collect();
-        // A sum an ulp of the element apart rounds to neighbouring values.
-        let tolerance = match element {
-            F16 => 1.5e-3,
-            F32 => 1e-4,
-            _ => 1.5e-2,
-        };
         assert_close_within(
             read(client, walked.out.handle.clone(), element),
             &out,
             &format!("{what} {element:?} {self:?}: the output"),
-            tolerance,
+            output_tolerance(element),
         );
+        let walked_kept = walked.kept.expect("a walk over owned states keeps them");
         assert_close(
-            read(client, walked.kept.handle.clone(), F32),
+            read(client, walked_kept.handle.clone(), F32),
             &kept,
             &format!("{what} {self:?}: the kept states"),
         );
     }
 }
 
+/// How far the output may fall from the reference's rounding: a sum an ulp of the element apart
+/// rounds to neighbouring values.
+pub fn output_tolerance(element: ElemType) -> f64 {
+    match element {
+        F16 => 1.5e-3,
+        F32 => 1e-4,
+        _ => 1.5e-2,
+    }
+}
+
 /// The problem `inputs` state, which a device admits or declines.
-fn problem_of(inputs: &GatedDeltaWalkInputs) -> GatedDeltaWalkProblem {
+pub fn problem_of(inputs: &GatedDeltaWalkInputs) -> GatedDeltaWalkProblem {
     GatedDeltaWalkTensors::new(inputs.clone())
         .expect("the harness hands elements the device runs")
         .problem()
@@ -351,7 +356,7 @@ pub fn walk_or_skip(
 }
 
 /// The walk of `inputs` through the table, or `None` where this device declines the problem.
-fn tuned_or_skip(
+pub fn tuned_or_skip(
     hw: &Hardware,
     device: &cubecl::Device,
     inputs: GatedDeltaWalkInputs,
@@ -461,7 +466,7 @@ fn a_masked_walk_passes_the_state_through() {
         let Some(walked) = walk_or_skip(&hw, inputs, &settings, &format!("{settings}")) else {
             continue;
         };
-        let kept = read(&client, walked.kept.handle.clone(), F32);
+        let kept = read(&client, walked.kept.unwrap().handle.clone(), F32);
         let state: Vec<f64> = operands.state.iter().map(|&x| x as f64).collect();
         for slab in kept.chunks(state.len()) {
             assert_close(

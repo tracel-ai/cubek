@@ -1,7 +1,8 @@
-use super::kernel::cube_gated_delta_walk_kernel;
+use super::kernel::{cube_gated_delta_walk_owned_kernel, cube_gated_delta_walk_slots_kernel};
 use crate::kernels::walk::{
     GATED_DELTA_WALK_ELEMENT, GatedDeltaWalkBinding, GatedDeltaWalkBlueprint,
-    GatedDeltaWalkProblem, GatedDeltaWalkRoutine, GatedDeltaWalkTensors, settled_width,
+    GatedDeltaWalkProblem, GatedDeltaWalkRoutine, GatedDeltaWalkStateBinding,
+    GatedDeltaWalkTensors, settled_width,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Levels;
@@ -11,7 +12,7 @@ use cubek_microkernel::gated_delta::walk::cube::{
     CubeGatedDeltaWalkMicrokernel, CubeGatedDeltaWalkMicrokernelSettings, MAX_HELD_LINES_PER_UNIT,
 };
 use cubek_microkernel::gated_delta::{
-    GROUP, GatedDeltaWalkPartitioning, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, VALUE_FEATURE,
+    GROUP, GatedDeltaWalkPartitioning, KEY_FEATURE, KEY_HEAD, POSITION, VALUE_FEATURE,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
@@ -151,7 +152,7 @@ impl Routine for CubeGatedDeltaWalkRoutine {
             ],
             writes: vec![
                 stream_at(problem.output_element.size(), positions * columns, columns),
-                stream(problem.kept.get() * state, columns),
+                stream(problem.state.kept().get() * state, columns),
             ],
             stages: positions as u64,
             stages_in_flight: 1,
@@ -185,14 +186,15 @@ impl Routine for CubeGatedDeltaWalkRoutine {
                 .capped_at(MAX_HELD_LINES_PER_UNIT * width),
         )?;
         let runs = settings.runs_of(hw, &microkernel, problem);
-        let unit = Levels::leaf(&[
+        let mut unit_axes = vec![
             (POSITION, 1),
             (KEY_HEAD, 1),
             (GROUP, 1),
-            (KEPT_STATE, problem.kept.get()),
             (KEY_FEATURE, microkernel.rows),
             (VALUE_FEATURE, microkernel.columns),
-        ]);
+        ];
+        unit_axes.extend(problem.state.kept_axis());
+        let unit = Levels::leaf(&unit_axes);
         let partitioning = GatedDeltaWalkPartitioning::new(
             problem.space(),
             unit.walk_every(&[POSITION])
@@ -217,30 +219,54 @@ impl GatedDeltaWalkRoutine<CubeGatedDeltaWalkMicrokernel> for CubeGatedDeltaWalk
         blueprint: CubeGatedDeltaWalkRoutineBlueprint,
         grid: Grid,
     ) {
-        let operands = binding.operands;
         // SAFETY: every operand is bound through the launcher, and the kernel indexes no buffer but
         // through its tiles, which mask what the units overhang. Its shared memory is indexed by
         // its runs' and units' own positions, within the slots it declares.
         unsafe {
-            cube_gated_delta_walk_kernel::launch_unchecked(
-                tensors.client(),
-                grid.launch.cube_count,
-                grid.launch.cube_dim,
-                blueprint.width,
-                operands.query,
-                operands.key,
-                operands.value,
-                operands.decay,
-                operands.strength,
-                operands.state,
-                operands.out,
-                operands.kept,
-                tensors.problem().first_kept(),
-                binding.launcher.partitioning_arg(),
-                blueprint.microkernel,
-                blueprint.runs,
-                tensors.problem().output_element,
-            );
+            match binding.state {
+                GatedDeltaWalkStateBinding::Owned { state, kept } => {
+                    cube_gated_delta_walk_owned_kernel::launch_unchecked(
+                        tensors.client(),
+                        grid.launch.cube_count,
+                        grid.launch.cube_dim,
+                        blueprint.width,
+                        binding.query,
+                        binding.key,
+                        binding.value,
+                        binding.decay,
+                        binding.strength,
+                        state,
+                        binding.out,
+                        kept,
+                        tensors.problem().first_kept(),
+                        binding.launcher.partitioning_arg(),
+                        blueprint.microkernel,
+                        blueprint.runs,
+                        tensors.problem().output_element,
+                    );
+                }
+                GatedDeltaWalkStateBinding::Slots { store, positions } => {
+                    cube_gated_delta_walk_slots_kernel::launch_unchecked(
+                        tensors.client(),
+                        grid.launch.cube_count,
+                        grid.launch.cube_dim,
+                        blueprint.width,
+                        binding.query,
+                        binding.key,
+                        binding.value,
+                        binding.decay,
+                        binding.strength,
+                        store,
+                        binding.out,
+                        positions,
+                        tensors.problem().first_kept(),
+                        binding.launcher.partitioning_arg(),
+                        blueprint.microkernel,
+                        blueprint.runs,
+                        tensors.problem().output_element,
+                    );
+                }
+            }
         }
     }
 }
@@ -248,6 +274,7 @@ impl GatedDeltaWalkRoutine<CubeGatedDeltaWalkMicrokernel> for CubeGatedDeltaWalk
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::walk::GatedDeltaWalkStateLayout;
     use crate::kernels::walk::problem::fixtures::binding_enough;
     use cubecl::tile::launch::Refusal;
     use cubek_microkernel::gated_delta::GatedDeltaHeads;
@@ -272,14 +299,31 @@ mod tests {
             positions,
             heads,
             GATED_DELTA_WALK_ELEMENT,
-            NonZeroUsize::new(kept).expect("a state is kept"),
+            GatedDeltaWalkStateLayout::Owned {
+                kept: NonZeroUsize::new(kept).expect("a state is kept"),
+            },
         )
+    }
+
+    fn in_slots(
+        batch: usize,
+        positions: usize,
+        heads: (usize, usize, usize, usize),
+        slots: usize,
+    ) -> GatedDeltaWalkProblem {
+        let mut problem = walk(batch, positions, heads, 1);
+        problem.state = GatedDeltaWalkStateLayout::Slots {
+            slots: NonZeroUsize::new(slots).expect("a store holds a slot"),
+            kept: NonZeroUsize::MIN,
+        };
+        problem
     }
 
     /// A decode step of a many-headed layer, a prompt of it, a prime position count with every
     /// state kept, value heads that are their own key heads, heads of odd widths, key rows no unit
-    /// takes whole, and many sequences.
-    fn problems() -> [GatedDeltaWalkProblem; 7] {
+    /// takes whole, and many sequences; then the walks in a store's slots of a decode step, three
+    /// positions and an odd head.
+    fn problems() -> [GatedDeltaWalkProblem; 10] {
         [
             walk(1, 1, (16, 3, 128, 128), 1),
             walk(1, 512, (16, 3, 128, 128), 4),
@@ -288,6 +332,9 @@ mod tests {
             walk(1, 3, (1, 2, 16, 37), 1),
             walk(2, 4, (3, 1, 100, 12), 2),
             walk(64, 1, (16, 3, 128, 128), 1),
+            in_slots(8, 1, (16, 3, 128, 128), 32),
+            in_slots(2, 3, (4, 3, 128, 128), 5),
+            in_slots(3, 2, (1, 2, 16, 37), 3),
         ]
     }
 
