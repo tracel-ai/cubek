@@ -7,6 +7,7 @@ mod fragment {
     use cubecl::tile::launch::{Delivery, Refusal};
     use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
     use cubek_microkernel::matmul::cube::CubeStagedDelivery;
+    use cubek_microkernel::matmul::plane::PlaneFragmentDepth;
 
     use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernelSettings;
     use cubek_std::routine::Routine;
@@ -53,9 +54,19 @@ mod fragment {
         ]
     }
 
+    /// Whether `settings` hold the score the whole head dim deep, which only manual-mma fragments do.
+    fn holds_whole_head(settings: &Settings) -> bool {
+        matches!(
+            settings.microkernel.plane,
+            CubeAttentionPlaneSettings::Fragment(plane)
+                if plane.score_depth == PlaneFragmentDepth::Stage
+        )
+    }
+
     /// Every setting prepares where the device offers a square instruction and a cube holds a plane
     /// for every head; one other than the default may ask for more than a cube holds, or for a
-    /// layout its planes do not read, and says so.
+    /// layout its planes do not read, and says so, and one holding its score the whole head dim
+    /// deep declines on these devices, which offer the cmma instruction alone.
     #[test]
     fn every_setting_prepares_where_planes_run() {
         for hw in [
@@ -68,7 +79,8 @@ mod fragment {
                     let declined = matches!(
                         prepared,
                         Err(Refusal::SharedMemoryPastDevice { .. } | Refusal::CubePastDevice { .. })
-                    ) || prepared.as_ref().err() == Some(&SWIZZLED_STAGE_UNREAD);
+                    ) || prepared.as_ref().err() == Some(&SWIZZLED_STAGE_UNREAD)
+                        || (prepared.is_err() && holds_whole_head(settings));
                     assert!(
                         prepared.is_ok() || (position > 0 && declined),
                         "{settings} on {hw:?}: {prepared:?}"
@@ -398,8 +410,14 @@ mod fragment {
         );
     }
 
+<<<<<<< HEAD
     /// The default takes the boxes of queries in order, and every listed setting after it takes
     /// them last first: the lead is listed both ways, so a race still weighs the order.
+=======
+    /// The lead takes the boxes of queries in order, and the settings listed last first are its
+    /// default reversed, with its score as deep as its instruction and the whole head dim deep: a
+    /// table may race the order, and nothing takes it unasked.
+>>>>>>> origin/dev/louisfd
     #[test]
     fn the_listed_settings_take_the_queries_last_first() {
         let hw = offering(devices::m2_pro(), 8);
@@ -416,6 +434,7 @@ mod fragment {
                 .any(|level| level.is_reversed(Q))
         };
         let settings = ROUTINE.settings(&hw);
+<<<<<<< HEAD
         assert_eq!(settings[0], Settings::DEFAULT);
         assert!(
             settings[1..]
@@ -429,6 +448,21 @@ mod fragment {
                 ..Settings::DEFAULT
             }
         );
+=======
+        let last_first: Vec<_> = settings
+            .iter()
+            .filter(|settings| settings.queries == QueryOrder::LastFirst)
+            .collect();
+        let reversed = Settings {
+            queries: QueryOrder::LastFirst,
+            ..Settings::DEFAULT
+        };
+        let whole_head = Settings {
+            microkernel: reversed.microkernel.whole_head(),
+            ..reversed
+        };
+        assert_eq!(last_first, [&reversed, &whole_head]);
+>>>>>>> origin/dev/louisfd
         assert!(!reverses_queries(&settings[0]));
         assert!(reverses_queries(&settings[1]));
     }

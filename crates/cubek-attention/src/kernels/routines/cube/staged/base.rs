@@ -60,6 +60,7 @@ impl Routine for CubeStagedAttentionRoutine {
     type Blueprint = CubeStagedAttentionRoutineBlueprint;
     type Partitioning = AttentionPartitioning;
 
+<<<<<<< HEAD
     /// Its default, then its microkernel's settings over plane fragments
     /// ([`CubeAttentionMicrokernelSettings::listed`]) with the boxes taken last first. Under a
     /// causal mask a later box sees more keys, so the heaviest start first and the light ones fill
@@ -75,6 +76,25 @@ impl Routine for CubeStagedAttentionRoutine {
                 queries: QueryOrder::LastFirst,
             });
         core::iter::once(Self::Settings::DEFAULT)
+=======
+    /// Its microkernel's settings over plane fragments
+    /// ([`CubeAttentionMicrokernelSettings::listed`]) in query order, then the first of them, its
+    /// lead, and the lead holding its score the whole head dim deep, with the boxes taken last
+    /// first.
+    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+        let microkernel = CubeAttentionMicrokernelSettings::FRAGMENT.listed();
+        let last_first =
+            [microkernel[0], microkernel[0].whole_head()].map(|microkernel| Self::Settings {
+                microkernel,
+                queries: QueryOrder::LastFirst,
+            });
+        microkernel
+            .into_iter()
+            .map(|microkernel| Self::Settings {
+                microkernel,
+                queries: QueryOrder::InOrder,
+            })
+>>>>>>> origin/dev/louisfd
             .chain(last_first)
             .collect()
     }

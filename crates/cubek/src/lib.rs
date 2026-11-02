@@ -7,6 +7,12 @@ pub use cubek_random as random;
 #[cfg(feature = "reduce")]
 pub use cubek_reduce as reduce;
 
+#[cfg(feature = "rms-norm")]
+pub use cubek_rms_norm as rms_norm;
+
+#[cfg(feature = "swiglu")]
+pub use cubek_swiglu as swiglu;
+
 #[cfg(feature = "matmul")]
 pub use cubek_matmul as matmul;
 
