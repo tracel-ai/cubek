@@ -1,7 +1,8 @@
 use cubecl::ir::ElemType;
-use cubecl::tile::{Partitioning, TileArg};
+use cubecl::tile::launch::Output;
+use cubecl::tile::{Partitioning, Tile, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
+use cubek_microkernel::attention::{AttentionVisibility, G, VisibleKeys};
 use cubek_microkernel::attention_backward::key_gradient::cube::{
     CubeKeyGradientMicrokernel, cube_staged_key_gradient_microkernel,
 };
@@ -87,27 +88,125 @@ pub fn cube_staged_key_gradient_kernel<EA: Float, ES: Float>(
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
-    let (q, k, v) = (
-        query.tile(&partitioning),
-        key.tile(&partitioning),
-        value.tile(&partitioning),
+    cube_staged_key_gradient_walks::<EA, ES>(
+        &query.tile(&partitioning),
+        &key.tile(&partitioning),
+        &value.tile(&partitioning),
+        &out_gradient.tile(&partitioning),
+        &logsumexp.tile(&partitioning),
+        &delta.tile(&partitioning),
+        &key_gradient.tile(&partitioning),
+        &value_gradient.tile(&partitioning),
+        queries,
+        keys,
+        scale,
+        &partitioning,
+        microkernel,
+        ring,
+        visibility,
     );
-    let d_o = out_gradient.tile(&partitioning);
-    let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
+}
+
+/// [`cube_staged_key_gradient_kernel`] with the group's heads split over cubes: every cube adds
+/// its heads' part of the keys' and values' gradients into `key_gradient` and `value_gradient`,
+/// which every cube of the key head's group adds into.
+#[cube(launch_unchecked)]
+#[allow(clippy::too_many_arguments)]
+pub fn cube_staged_key_gradient_sum_kernel<ES: Float>(
+    query: &TileArg<'_>,
+    key: &TileArg<'_>,
+    value: &TileArg<'_>,
+    out_gradient: &TileArg<'_>,
+    logsumexp: &TileArg<'_>,
+    delta: &TileArg<'_>,
+    key_gradient: &Output<'_, f32>,
+    value_gradient: &Output<'_, f32>,
+    queries: u32,
+    keys: u32,
+    scale: f32,
+    partitioning: Partitioning,
+    #[comptime] microkernel: CubeKeyGradientMicrokernel,
+    #[comptime] ring: StageRing,
+    #[comptime] visibility: AttentionVisibility,
+    #[define(ES)] _element: ElemType,
+) {
+    cube_staged_key_gradient_walks::<f32, ES>(
+        &query.tile(&partitioning),
+        &key.tile(&partitioning),
+        &value.tile(&partitioning),
+        &out_gradient.tile(&partitioning),
+        &logsumexp.tile(&partitioning),
+        &delta.tile(&partitioning),
+        &key_gradient.tile(&partitioning),
+        &value_gradient.tile(&partitioning),
+        queries,
+        keys,
+        scale,
+        &partitioning,
+        microkernel,
+        ring,
+        visibility,
+    );
+}
+
+/// Every plane of the launch whose cube took the first head of its group casting its keys' and
+/// values' gradients out of the sums every cube of the group added into: the other cubes of the
+/// group cover the same keys.
+#[cube(launch_unchecked)]
+pub fn cast_key_gradient_kernel(
+    key_sum: &TileArg<'_>,
+    value_sum: &TileArg<'_>,
+    key_gradient: &TileArg<'_>,
+    value_gradient: &TileArg<'_>,
+    partitioning: Partitioning,
+) {
+    let (key_sum, value_sum) = (key_sum.tile(&partitioning), value_sum.tile(&partitioning));
     let (d_k, d_v) = (
         key_gradient.tile(&partitioning),
         value_gradient.tile(&partitioning),
     );
+
+    for plane in &partitioning {
+        if plane.origin(G) == 0 {
+            let mut d_k = d_k.at(&plane);
+            d_k.copy_cast_from(&key_sum.at(&plane));
+            let mut d_v = d_v.at(&plane);
+            d_v.copy_cast_from(&value_sum.at(&plane));
+        }
+    }
+}
+
+/// Every cube's walk of its keys, the gradients written into `key_gradient` and
+/// `value_gradient`.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn cube_staged_key_gradient_walks<EA: Float, ES: Float>(
+    q: &Tile,
+    k: &Tile,
+    v: &Tile,
+    d_o: &Tile,
+    lse: &Tile,
+    delta: &Tile,
+    key_gradient: &Tile,
+    value_gradient: &Tile,
+    queries: u32,
+    keys: u32,
+    scale: f32,
+    partitioning: &Partitioning,
+    #[comptime] microkernel: CubeKeyGradientMicrokernel,
+    #[comptime] ring: StageRing,
+    #[comptime] visibility: AttentionVisibility,
+) {
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
-    let bias = visible.keys_first_bias::<EA>(&partitioning);
+    let bias = visible.keys_first_bias::<EA>(partitioning);
     let no_share = ComptimeOption::new_None();
 
-    for cube in &partitioning {
+    for cube in partitioning {
         let first_step = visible.first_query_step(&cube, microkernel.seq_q());
         cube_staged_key_gradient_microkernel::<EA, ES>(
             &cube,
-            &d_k.at(&cube),
-            &d_v.at(&cube),
+            &key_gradient.at(&cube),
+            &value_gradient.at(&cube),
             &no_share,
             &q.at(&cube),
             &k.at(&cube),
