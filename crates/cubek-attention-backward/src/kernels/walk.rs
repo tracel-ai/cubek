@@ -75,7 +75,11 @@ impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
                 ),
             });
             if partitioning.overhangs(operand.innermost()) {
-                vectorization.require(VectorRequirement::Masked { operand });
+                vectorization.require(VectorRequirement::masked(
+                    operand,
+                    partitioning.space(),
+                    operand.innermost(),
+                ));
             }
         }
         let widths = elements

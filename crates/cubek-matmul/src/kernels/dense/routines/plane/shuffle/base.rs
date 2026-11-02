@@ -521,14 +521,16 @@ mod tests {
         assert_eq!(widths(MatmulLayout::Row), (4, 8, 8));
     }
 
-    /// A col rhs whose `K` the plane's steps overhang would bind one element at a time, which
-    /// the plane shuffle cannot read; a row rhs of the same shape runs.
+    /// A col rhs whose `K` no line wider than one divides binds one element at a time, which the
+    /// plane shuffle cannot read; a row rhs of the same shape runs, and so does a col rhs whose
+    /// overhanging `K` a wide line divides, its mask testing whole lines.
     #[test]
     fn a_col_rhs_needs_vectors_along_k() {
         let hw = devices::strix_halo();
-        let ragged = |rhs_layout| {
-            MatmulRoutineProblem::dense(1, 2048, 2040, F16).laid(MatmulOperand::Rhs, rhs_layout)
+        let problem = |k, rhs_layout| {
+            MatmulRoutineProblem::dense(1, 2048, k, F16).laid(MatmulOperand::Rhs, rhs_layout)
         };
+        let ragged = |rhs_layout| problem(2041, rhs_layout);
         let settings = PlaneShuffleMatmulRoutineSettings::DEFAULT;
         assert!(matches!(
             PlaneShuffleMatmulRoutine.prepare(&hw, &ragged(MatmulLayout::Col), &settings),
@@ -537,6 +539,11 @@ mod tests {
         assert!(
             PlaneShuffleMatmulRoutine
                 .prepare(&hw, &ragged(MatmulLayout::Row), &settings)
+                .is_ok()
+        );
+        assert!(
+            PlaneShuffleMatmulRoutine
+                .prepare(&hw, &problem(2040, MatmulLayout::Col), &settings)
                 .is_ok()
         );
     }
