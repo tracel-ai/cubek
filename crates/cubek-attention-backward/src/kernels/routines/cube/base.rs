@@ -140,14 +140,15 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
         let query_gradient =
             CubeQueryGradientMicrokernel::best(hw, &item, &settings.query_gradient)?;
         let key_gradient = CubeKeyGradientMicrokernel::best(hw, &item, &settings.key_gradient)?;
-        let query_partitioning = Partitioning::new(
-            problem.space(),
-            query_gradient
-                .tiling()
-                .cubes(&[Q, G])
-                .batches(&[B, KV])
-                .build(),
-        );
+        // Under a causal mask a later box of queries sees more keys: the heaviest start first and
+        // the light ones fill in behind them.
+        let query_cubes = query_gradient.tiling().cubes(&[Q, G]);
+        let query_cubes = match problem.visibility.is_causal() {
+            true => query_cubes.reversed(Q),
+            false => query_cubes,
+        };
+        let query_partitioning =
+            Partitioning::new(problem.space(), query_cubes.batches(&[B, KV]).build());
         let key_partitioning = Partitioning::new(
             problem.space(),
             key_gradient.tiling().cubes(&[S]).batches(&[B, KV]).build(),
