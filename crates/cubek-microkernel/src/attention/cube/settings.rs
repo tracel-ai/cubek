@@ -98,16 +98,10 @@ impl CubeAttentionMicrokernelSettings {
     /// larger boxes again in swizzled tiles, which a plane keeping its score in fragments reads
     /// without bank conflicts and a cmma plane declines, the one-by-eight box among them also on
     /// two planes along a head's queries, and the one-by-two box on two heads and two planes along
-<<<<<<< HEAD
-    /// their queries; then the one-by-four box on two slots the copy engine
-    /// fills, over two and four heads; then eight planes a cube, four heads by two planes along
-    /// their queries, on the boxes and rings a long causal prompt runs fastest on. The wide steps
-    /// hold one head because a step's stages and the
-=======
     /// their queries; then the lead's box with its score the whole head dim deep; then the
-    /// one-by-four box on two slots the copy engine
-    /// fills, over two and four heads. The wide steps hold one head because a step's stages and the
->>>>>>> origin/dev/louisfd
+    /// one-by-four box on two slots the copy engine fills, over two and four heads; then eight
+    /// planes a cube, four heads by two planes along their queries, on the boxes and rings a long
+    /// causal prompt runs fastest on. The wide steps hold one head because a step's stages and the
     /// heads' windows share one budget; one that still does not fit the device's shared memory
     /// declines there.
     fn fragments_listed(lead: Self, plane: PlaneFragmentAttentionMicrokernelSettings) -> Vec<Self> {
@@ -214,7 +208,6 @@ impl CubeAttentionMicrokernelSettings {
             layout: StageLayout::SwizzledBlocks,
             ..fragments(1, 2)
         };
-<<<<<<< HEAD
         // Eight planes a cube, four heads by two planes along their queries: the shapes that run a
         // long causal prompt fastest. On an RTX PRO 6000, a 6016 by 8192 causal `f16` prompt
         // (32/8 heads, head dim 128) with the boxes last first, against 1560 µs for FlashInfer:
@@ -267,13 +260,11 @@ impl CubeAttentionMicrokernelSettings {
             delivery,
             ..fragments(rows, keys)
         });
-=======
         // The score's fragments the whole head dim deep: one contraction a stage of keys instead of
         // a walk of the head dim's steps. On an M2 Pro (Qwen3-0.6B's 16/8 heads and Qwen3-4B's
         // 32/8), taken last first as the lead is, it is 1.5 to 4% under the lead at 512 and 2048
         // queries.
         let whole_head = lead.whole_head();
->>>>>>> origin/dev/louisfd
         // The copy engine lands a stage while the planes contract the one before, so it wants a
         // second slot. On Qwen3-8B's last 8k prompt chunk on an RTX PRO 6000 (32/8 heads, 512
         // queries over 8192 keys), the one-by-four box on two slots takes 470 µs with the units
