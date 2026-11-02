@@ -101,9 +101,11 @@ pub fn cube_staged_attention_microkernel<EA: Float, ES: Float>(
     #[comptime] storage: StageStorage,
 ) {
     let unmasked = bias.unmasked_steps(0, steps, microkernel.seq_kv());
+    // The keys and values are cut to the attended keys from the first: every stage but the walk's
+    // last lies inside them, and fills unchecked.
     let mut planes = CubeAttentionMicrokernel::staged_walk::<EA, ES>(
-        ComptimeOption::new_Some(cube.walk().range(0, unmasked)),
-        cube.walk().range(unmasked, steps - unmasked),
+        ComptimeOption::new_Some(cube.walk().over_run(S).range(0, unmasked)),
+        cube.walk().over_run(S).range(unmasked, steps - unmasked),
         out,
         query,
         key,
@@ -359,9 +361,10 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
 ) {
     let value_dim = comptime!(out.space().extent(DV));
     let unmasked = bias.unmasked_steps(first, steps, microkernel.seq_kv());
+    // Every stage but the box's last lies inside the attended keys, and fills unchecked.
     let mut planes = CubeAttentionMicrokernel::staged_walk::<EA, ES>(
-        ComptimeOption::new_Some(cube.walk().range(first, unmasked)),
-        cube.walk().range(first + unmasked, steps - unmasked),
+        ComptimeOption::new_Some(cube.walk().over_run(S).range(first, unmasked)),
+        cube.walk().over_run(S).range(first + unmasked, steps - unmasked),
         out,
         query,
         key,
