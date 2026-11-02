@@ -23,6 +23,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "simple_cyclic_cmma",
             "Simple Cyclic CMMA",
             MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
+                plane_tiling: None,
                 multi_rows: false,
                 ..Default::default()
             }))

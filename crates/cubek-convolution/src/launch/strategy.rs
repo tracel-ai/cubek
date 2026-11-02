@@ -2,6 +2,8 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
+use cubek_matmul::multi_level::routines::PlaneTilingBlueprintOptions;
+
 use crate::{definition::ConvBlueprint, launch::UnitStrategy};
 
 /// Top-level user-facing strategy for `launch_ref`.
@@ -17,6 +19,14 @@ pub enum Strategy {
     Inferred {
         algorithm: ConvAlgorithm,
         tile_kind: AcceleratedTileKind,
+    },
+    /// [`Strategy::Inferred`] with the plane selector's options (row count, k partition, multi-row
+    /// strategy, tiny-problem shortcut) set by the caller, for autotune to weigh tilings the
+    /// selector would not pick on its own.
+    InferredTiled {
+        algorithm: ConvAlgorithm,
+        tile_kind: AcceleratedTileKind,
+        tiling: PlaneTilingBlueprintOptions,
     },
     /// User supplies a pre-built blueprint. The algorithm tag tells the launcher
     /// which kernel generic to instantiate; the tiling/swizzle/etc. come from
@@ -88,6 +98,15 @@ impl Display for Strategy {
                 algorithm,
                 tile_kind,
             } => write!(f, "{algorithm}_{tile_kind}"),
+            Strategy::InferredTiled {
+                algorithm,
+                tile_kind,
+                tiling,
+            } => write!(
+                f,
+                "{algorithm}_{tile_kind}_rows{:?}_k{:?}",
+                tiling.row_count, tiling.partition_k
+            ),
             Strategy::Forced {
                 algorithm,
                 blueprint: _,
