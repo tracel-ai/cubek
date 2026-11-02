@@ -1,8 +1,8 @@
 use super::base::CubeQueryGradientMicrokernel;
 use crate::attention::{G, Q, S};
 use crate::attention_backward::query_gradient::plane::PlaneQueryGradientMicrokernel;
-use crate::attention_backward::{ScoreWindows, drain_scaled};
-use cubecl::tile::{Region, StageStorage, Stages, Tile};
+use crate::attention_backward::{ScoreWindows, drain_scaled, stage_storage};
+use cubecl::tile::{Region, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
 
@@ -41,9 +41,13 @@ pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
         PlaneQueryGradientMicrokernel::open_sum::<EA>(query_gradient, bias, key, microkernel.plane);
     // The query and the output's gradient span no key: staged once for every plane, before the
     // walk.
-    let mut staged_query = query.stage_for(&walk, StageStorage::Strided, None);
+    let storage = comptime!(stage_storage(
+        microkernel.plane.holder(),
+        microkernel.plane.score
+    ));
+    let mut staged_query = query.stage_for(&walk, comptime!(storage.clone()), None);
     staged_query.copy_from(query);
-    let mut staged_out_gradient = out_gradient.stage_for(&walk, StageStorage::Strided, None);
+    let mut staged_out_gradient = out_gradient.stage_for(&walk, comptime!(storage.clone()), None);
     staged_out_gradient.copy_from(out_gradient);
     let windows = ScoreWindows::held_or_open::<EA, ES>(
         &walk,
@@ -58,7 +62,7 @@ pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
         &walk,
         key,
         value,
-        StageStorage::Strided,
+        comptime!(storage.clone()),
         ring.stages_in_flight.get(),
         None,
     );

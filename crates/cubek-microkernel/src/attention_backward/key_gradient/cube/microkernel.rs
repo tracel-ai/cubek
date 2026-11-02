@@ -1,11 +1,11 @@
 use super::base::CubeKeyGradientMicrokernel;
 use super::share::{QueryGradientShare, StageQueryGradientShare};
 use crate::attention::{Q, S};
-use crate::attention_backward::ScoreWindows;
 use crate::attention_backward::key_gradient::plane::{
     KeyGradientSums, PlaneKeyGradientMicrokernel,
 };
-use cubecl::tile::{Region, StageStorage, Stages, Tile};
+use crate::attention_backward::{ScoreWindows, stage_storage};
+use cubecl::tile::{Region, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
 
@@ -65,9 +65,13 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
     );
 
     // The keys and the values span no query: staged once for every plane, before the walk.
-    let mut staged_key = key.stage_for(&shape, StageStorage::Strided, None);
+    let storage = comptime!(stage_storage(
+        plane_microkernel.holder(),
+        plane_microkernel.score
+    ));
+    let mut staged_key = key.stage_for(&shape, comptime!(storage.clone()), None);
     staged_key.copy_from(key);
-    let mut staged_value = value.stage_for(&shape, StageStorage::Strided, None);
+    let mut staged_value = value.stage_for(&shape, comptime!(storage.clone()), None);
     staged_value.copy_from(value);
     sync_cube();
 
@@ -80,7 +84,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
             &queries,
             &query.at(&head),
             &out_gradient.at(&head),
-            StageStorage::Strided,
+            comptime!(storage.clone()),
             ring.stages_in_flight.get(),
             None,
         );
