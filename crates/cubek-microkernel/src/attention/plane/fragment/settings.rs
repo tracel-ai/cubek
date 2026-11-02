@@ -18,6 +18,12 @@ pub struct PlaneFragmentAttentionMicrokernelSettings {
     /// The shape of cmma instruction tried first, where the plane reads the score through its
     /// windows; the other where the device offers none.
     pub shape: InstructionShape,
+    /// Whether a step every row sees whole takes the softmax with no bias: its max over the raw
+    /// scores, scaled once a row, and each cell's exponential one multiply-add
+    /// ([`OnlineSoftmax::step_unbiased`](cubecl::tile::ops::softmax::OnlineSoftmax::step_unbiased)). Fewer
+    /// instructions a cell, but the raw scores and the scaled max are live together: a plane
+    /// already short of registers spills.
+    pub unbiased_steps: bool,
 }
 
 /// A matrix instruction's shape: as long as it is wide and deep, or any other.
@@ -42,6 +48,7 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         scratch: Scratch::OneTile,
         transport: PlaneFragmentTransport::Mma,
         shape: InstructionShape::Square,
+        unbiased_steps: false,
     };
 
     /// The default with every fragment of the grid bounced at once.
@@ -87,8 +94,12 @@ impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
             PlaneFragmentTransport::Wgmma => write!(f, " transport=wgmma")?,
         }
         match self.shape {
-            InstructionShape::Square => Ok(()),
-            InstructionShape::Rectangular => write!(f, " shape=rectangular"),
+            InstructionShape::Square => {}
+            InstructionShape::Rectangular => write!(f, " shape=rectangular")?,
+        }
+        match self.unbiased_steps {
+            true => write!(f, " unbiased_steps"),
+            false => Ok(()),
         }
     }
 }

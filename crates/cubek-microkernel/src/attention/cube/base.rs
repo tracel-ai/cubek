@@ -85,6 +85,15 @@ impl CubeAttentionMicrokernel {
         ]
     }
 
+    /// Whether its planes take a step every row sees whole with no bias
+    /// ([`PlaneFragmentAttentionMicrokernelSettings::unbiased_steps`](crate::attention::plane::PlaneFragmentAttentionMicrokernelSettings::unbiased_steps)).
+    pub fn unbiased_steps(&self) -> bool {
+        match self.plane {
+            CubeAttentionPlane::Fragment(plane) => plane.settings.unbiased_steps,
+            CubeAttentionPlane::Shuffle(_) => false,
+        }
+    }
+
     /// Query positions of one head a cube's box holds.
     pub fn seq_q(&self) -> usize {
         self.plane.seq_q() * self.settings.planes_along_queries.get()

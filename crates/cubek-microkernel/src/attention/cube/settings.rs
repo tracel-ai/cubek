@@ -194,7 +194,9 @@ impl CubeAttentionMicrokernelSettings {
         // the one-by-eight box on two slots the copy engine fills, 1523 µs; on one slot with the
         // next stage waiting in registers, 1549 µs swizzled and 1563 µs in padded tiles; the
         // one-by-four on two such slots in padded tiles, 1584 µs; the two-by-four on two slots the
-        // copy engine fills, 1615 µs.
+        // copy engine fills, 1615 µs. Where the planes run short of registers, the steps every row
+        // sees whole take no bias (`unbiased_steps`): the one-by-eight box in padded tiles 1563 to
+        // 1527 µs, the one-by-four 1584 to 1564; the others gained nothing.
         let eight_warps = [
             (
                 1,
@@ -202,6 +204,7 @@ impl CubeAttentionMicrokernelSettings {
                 StageRing::DOUBLE,
                 StageLayout::SwizzledBlocks,
                 CubeStagedDelivery::AsyncCopy,
+                false,
             ),
             (
                 1,
@@ -209,6 +212,7 @@ impl CubeAttentionMicrokernelSettings {
                 StageRing::SINGLE_THROUGH_REGISTERS,
                 StageLayout::SwizzledBlocks,
                 CubeStagedDelivery::Copy,
+                false,
             ),
             (
                 1,
@@ -216,6 +220,7 @@ impl CubeAttentionMicrokernelSettings {
                 StageRing::SINGLE_THROUGH_REGISTERS,
                 StageLayout::PaddedBlocks,
                 CubeStagedDelivery::Copy,
+                true,
             ),
             (
                 1,
@@ -223,6 +228,7 @@ impl CubeAttentionMicrokernelSettings {
                 StageRing::DOUBLE_THROUGH_REGISTERS,
                 StageLayout::PaddedBlocks,
                 CubeStagedDelivery::Copy,
+                true,
             ),
             (
                 2,
@@ -230,16 +236,27 @@ impl CubeAttentionMicrokernelSettings {
                 StageRing::DOUBLE,
                 StageLayout::SwizzledBlocks,
                 CubeStagedDelivery::AsyncCopy,
+                false,
             ),
         ]
-        .map(|(rows, keys, ring, layout, delivery)| Self {
-            heads: count(4),
-            planes_along_queries: count(2),
-            ring,
-            layout,
-            delivery,
-            ..fragments(rows, keys)
-        });
+        .map(
+            |(rows, keys, ring, layout, delivery, unbiased_steps)| Self {
+                plane: CubeAttentionPlaneSettings::Fragment(
+                    PlaneFragmentAttentionMicrokernelSettings {
+                        seq_q: count(rows),
+                        seq_kv: count(keys),
+                        unbiased_steps,
+                        ..plane
+                    },
+                ),
+                heads: count(4),
+                planes_along_queries: count(2),
+                ring,
+                layout,
+                delivery,
+                ..lead
+            },
+        );
         // The copy engine lands a stage while the planes contract the one before, so it wants a
         // second slot. On Qwen3-8B's last 8k prompt chunk on an RTX PRO 6000 (32/8 heads, 512
         // queries over 8192 keys), the one-by-four box on two slots takes 470 µs with the units
