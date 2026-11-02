@@ -21,6 +21,12 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// runs of one head side by side. It reads no plane feature; it needs units, shared memory and 9
 /// bindings: this kind's floor.
 ///
+/// A unit owns a tile of the run's key rows: the partitioning's leaf holds `rows` of them and its
+/// units level cuts `KEY_FEATURE` into one leaf for each of a run's `units` units, a power of two.
+/// A unit reads its position from the region it is handed, and every tile it reads or writes is
+/// windowed to its rows, so rows the head leaves past its last are masked. A head whose key rows
+/// no such units hold within [`MAX_HELD_LINES_PER_UNIT`] lines each is declined.
+///
 /// Every run of a cube reads the same queries and keys, those of its head's key head, a position
 /// at a time, so the cube's runs share those reads through the device's caches.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -158,6 +164,7 @@ impl Routine for CubeGatedDeltaWalkRoutine {
 
     /// A run is launched as the cube's `x`, its units the run's, and the runs along `y`: the
     /// units meet in shared memory, so the width a plane runs at is not read.
+
     fn prepare(
         &self,
         hw: &Hardware,
@@ -179,17 +186,19 @@ impl Routine for CubeGatedDeltaWalkRoutine {
                 .capped_at(MAX_HELD_LINES_PER_UNIT * width),
         )?;
         let runs = settings.runs_of(hw, &microkernel, problem);
-        let run = Levels::leaf(&[
+        let unit = Levels::leaf(&[
             (POSITION, 1),
             (KEY_HEAD, 1),
             (GROUP, 1),
             (KEPT_STATE, problem.kept.get()),
-            (KEY_FEATURE, heads.key_features),
+            (KEY_FEATURE, microkernel.rows),
             (VALUE_FEATURE, microkernel.columns),
         ]);
         let partitioning = GatedDeltaWalkPartitioning::new(
             problem.space(),
-            run.walk_every(&[POSITION]).planes(&[(VALUE_FEATURE, runs)]),
+            unit.walk_every(&[POSITION])
+                .units(&[(KEY_FEATURE, microkernel.units)])
+                .planes(&[(VALUE_FEATURE, runs)]),
         );
         let blueprint = GatedDeltaWalkBlueprint::new(microkernel, partitioning, width, runs);
         let cube = CubeResources {
@@ -211,10 +220,8 @@ impl GatedDeltaWalkRoutine<CubeGatedDeltaWalkMicrokernel> for CubeGatedDeltaWalk
     ) {
         let operands = binding.operands;
         // SAFETY: every operand is bound through the launcher, and the kernel indexes no buffer but
-        // through its tiles. The tiles fit the problem, so their reads are unchecked: what keeps a
-        // unit whose rows overhang the head inside its buffers is the microkernel's guards on the
-        // key features, and its shared memory is indexed by its runs' and units' own positions,
-        // within the slots it declares.
+        // through its tiles, which mask what the units overhang. Its shared memory is indexed by
+        // its runs' and units' own positions, within the slots it declares.
         unsafe {
             cube_gated_delta_walk_kernel::launch_unchecked(
                 tensors.client(),
@@ -296,9 +303,11 @@ mod tests {
         ]
     }
 
-    /// The floor prepares every problem of the GPUs of the fleet, a committed width or a range,
-    /// plane instructions or none; a cube of twelve units holds a 128-row head's floor in no
-    /// units, and admission says so with the microkernel's refusal.
+    /// The floor prepares every problem of the GPUs of the fleet whose key rows its power-of-two
+    /// units hold in whole tiles or masked ones, a committed width or a range, plane instructions
+    /// or none; a cube of twelve units holds a 128-row head's floor in no units, and a head of
+    /// 100 rows, whose tiles would leave a unit wholly past it unmasked, is held by none. Admission
+    /// says so with the microkernel's refusal.
     #[test]
     fn the_floor_prepares_everything_a_cube_of_units_holds() {
         let floor = CubeGatedDeltaWalkRoutineSettings::FLOOR;
@@ -309,11 +318,11 @@ mod tests {
             let cpu = hw.properties.hardware.max_units_per_cube < 256;
             for problem in problems() {
                 let prepared = CubeGatedDeltaWalkRoutine.prepare(&hw, &problem, &floor);
-                let wide = problem.heads.key_features == 128;
-                if !cpu {
-                    assert!(prepared.is_ok(), "{problem:?}: {prepared:?}");
-                } else if wide {
+                let key_features = problem.heads.key_features;
+                if key_features == 100 || (cpu && key_features == 128) {
                     assert_eq!(prepared.as_ref().err(), Some(&declined), "{problem:?}");
+                } else if !cpu {
+                    assert!(prepared.is_ok(), "{problem:?}: {prepared:?}");
                 }
                 assert_eq!(problem.admit(&hw), prepared.map(|_| ()));
             }
@@ -345,8 +354,9 @@ mod tests {
     }
 
     /// A 128-wide head reads four columns at a time, its units holding the cells the settings
-    /// target; heads of odd widths read a column at a time; key rows of three lines and of a
-    /// head no unit takes whole are covered by their last unit.
+    /// target; heads of odd widths read a column at a time; key rows of three lines are held by
+    /// one unit, and a head no power of two of tiles divides by eight units whose last are
+    /// partial.
     #[test]
     fn a_unit_holds_the_cells_its_settings_target() {
         let hw = binding_enough(devices::strix_halo());
@@ -365,7 +375,67 @@ mod tests {
         assert_eq!(shape((2, 3, 128, 128), 32), (16, 8, 4));
         assert_eq!(shape((2, 3, 128, 37), 64), (8, 16, 1));
         assert_eq!(shape((2, 3, 12, 8), 64), (1, 12, 4));
-        assert_eq!(shape((2, 3, 100, 12), 64), (7, 16, 4));
+        assert_eq!(shape((2, 3, 100, 12), 64), (8, 16, 4));
+    }
+
+    /// The partitioning states what a unit owns: its leaf holds a unit's rows, its units level cuts
+    /// the key features into one leaf for each of the microkernel's units, and the tile engine
+    /// masks the rows the last units overhang exactly where the units reach past the head.
+    #[test]
+    fn the_units_cut_the_key_features() {
+        let hw = devices::h100();
+        for (heads, overhangs) in [
+            ((2, 3, 128, 128), false),
+            ((2, 3, 64, 64), false),
+            ((2, 3, 37, 53), true),
+            ((2, 3, 100, 12), true),
+            ((2, 3, 12, 8), false),
+        ] {
+            let problem = walk(1, 7, heads, 1);
+            let (blueprint, grid) = CubeGatedDeltaWalkRoutine
+                .prepare(&hw, &problem, &CubeGatedDeltaWalkRoutineSettings::DEFAULT)
+                .expect("prepares");
+            let microkernel = blueprint.microkernel;
+            let partitioning = blueprint.partitioning.as_cubek();
+            assert_eq!(partitioning.leaf().extent(KEY_FEATURE), microkernel.rows);
+            assert_eq!(partitioning.units() as usize, microkernel.units);
+            assert!(microkernel.units.is_power_of_two());
+            assert!(microkernel.units * microkernel.rows >= problem.heads.key_features);
+            assert_eq!(
+                partitioning.overhangs(KEY_FEATURE),
+                overhangs,
+                "{microkernel} {heads:?}"
+            );
+            assert_eq!(grid.launch.cube_dim.x as usize, microkernel.units);
+        }
+    }
+
+    /// A head whose power-of-two units would leave one wholly past its key rows while the rows
+    /// divide them is declined by the microkernel's refusal at the floor, however few cells a
+    /// unit holds; settings that cut it evenly or raggedly still prepare it.
+    #[test]
+    fn a_head_whose_units_would_overrun_unmasked_is_declined() {
+        let hw = devices::h100();
+        let declined = Refusal::Declined {
+            why: CubeGatedDeltaWalkMicrokernel::DECLINE,
+        };
+        for heads in [(2, 3, 12, 8), (2, 3, 40, 36), (2, 3, 100, 12)] {
+            let problem = walk(1, 7, heads, 1);
+            assert_eq!(
+                CubeGatedDeltaWalkRoutine
+                    .prepare(&hw, &problem, &CubeGatedDeltaWalkRoutineSettings::FLOOR)
+                    .err(),
+                Some(declined.clone()),
+                "{heads:?}"
+            );
+            assert_eq!(problem.admit(&hw), Err(declined.clone()), "{heads:?}");
+            assert!(
+                CubeGatedDeltaWalkRoutine
+                    .prepare(&hw, &problem, &CubeGatedDeltaWalkRoutineSettings::DEFAULT)
+                    .is_ok(),
+                "{heads:?}"
+            );
+        }
     }
 
     /// A view starting off a whole line narrows the width the binding settles, so a unit holds

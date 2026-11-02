@@ -1,6 +1,5 @@
 //! The parts the walk's microkernel is composed of, each against a host twin, at shapes chosen to
-//! be awkward: a unit count no power of two, lines narrower than the run's columns, and key rows a
-//! unit overhangs.
+//! be awkward: lines narrower than the run's columns, and key rows the last units overhang.
 //!
 //! A probe kernel runs one part and dumps what it holds.
 
@@ -15,7 +14,7 @@ use cubek_gated_delta::kernels::walk::{
 use cubek_microkernel::gated_delta::walk::cube::{
     CubeGatedDeltaWalkMicrokernel, HeldState, UnitPartials,
 };
-use cubek_microkernel::gated_delta::{GatedDeltaHeads, POSITION, VALUE_FEATURE};
+use cubek_microkernel::gated_delta::{GatedDeltaHeads, KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 
@@ -71,8 +70,7 @@ fn unit_partials_probe<N: Size>(
     }
 }
 
-/// Unit counts that are and are not powers of two, at lines as wide as the run's columns and
-/// narrower, meeting in both sums over several positions: each unit holds the sum of its run's
+/// Unit counts of a power of two, at lines as wide as the run's columns and narrower, meeting in both sums over several positions: each unit holds the sum of its run's
 /// partials, and a sum never reads another's.
 #[test]
 fn unit_partials_sum_like_the_host() {
@@ -80,7 +78,7 @@ fn unit_partials_sum_like_the_host() {
     let hardware = Hardware::from_client(&client).properties.hardware.clone();
     let runs = 2usize;
     let positions = 3usize;
-    for units in [1usize, 2, 3, 5, 8, 17] {
+    for units in [1usize, 2, 4, 8, 16] {
         if units * runs > hardware.max_units_per_cube as usize
             || units > hardware.max_cube_dim.0 as usize
             || runs > hardware.max_cube_dim.1 as usize
@@ -93,7 +91,6 @@ fn unit_partials_sum_like_the_host() {
                 units,
                 rows: columns,
                 columns,
-                key_features: units * columns,
             };
             let stride = 2 * columns;
             let len = positions * runs * units * stride;
@@ -165,51 +162,54 @@ fn held_state_part<N: Size>(
     let columns = comptime!(microkernel.columns);
     let parts = comptime!(columns / width);
     let units = comptime!(microkernel.units);
-    let (unit, slot) = (UNIT_POS_X as usize, UNIT_POS_Y as usize);
-    let mut partials = UnitPartials::<N>::new(slot, unit, runs, microkernel);
     let mut write = Array::<Vector<f32, N>>::new(parts);
     for run in cube {
-        let mut held = HeldState::<N>::load(&state.at(&run), unit, microkernel);
-        let origin = run.origin(VALUE_FEATURE);
-        for step in run.walk() {
-            let position = step.coord(POSITION);
-            let (keys, queries) = (key.at(&step), query.at(&step));
-            let base = (origin / columns * units + unit) * comptime!(2 * columns);
-            held.decay_and_recall(&keys, PROBE_DECAY, &mut partials);
-            if position == 0 {
-                #[unroll]
-                for part in 0..parts {
+        for unit in run.walk() {
+            let slot = unit.coord(KEY_FEATURE);
+            let mut partials =
+                UnitPartials::<N>::new(run.coord(VALUE_FEATURE), slot, runs, microkernel);
+            let mut held = HeldState::<N>::load(&state.at(&unit), microkernel);
+            let origin = unit.origin(VALUE_FEATURE);
+            for step in unit.walk() {
+                let position = step.coord(POSITION);
+                let (keys, queries) = (key.at(&step), query.at(&step));
+                let base = (origin / columns * units + slot) * comptime!(2 * columns);
+                held.decay_and_recall(&keys, PROBE_DECAY, &mut partials);
+                if position == 0 {
                     #[unroll]
-                    for lane in 0..width {
-                        dump[base + part * width + lane] = partials.get(part).extract(lane);
+                    for part in 0..parts {
+                        #[unroll]
+                        for lane in 0..width {
+                            dump[base + part * width + lane] = partials.get(part).extract(lane);
+                        }
                     }
                 }
-            }
-            #[unroll]
-            for part in 0..parts {
-                let mut line = Vector::<f32, N>::cast_from(0.0f32);
-                #[unroll]
-                for lane in 0..width {
-                    line.insert(
-                        lane,
-                        0.1f32 * f32::cast_from(origin + part * width + lane + 3),
-                    );
-                }
-                write[part] = line;
-            }
-            held.write_and_answer(&keys, &queries, &write, &mut partials);
-            if position == 0 {
                 #[unroll]
                 for part in 0..parts {
+                    let mut line = Vector::<f32, N>::cast_from(0.0f32);
                     #[unroll]
                     for lane in 0..width {
-                        dump[base + columns + part * width + lane] =
-                            partials.get(part).extract(lane);
+                        line.insert(
+                            lane,
+                            0.1f32 * f32::cast_from(origin + part * width + lane + 3),
+                        );
+                    }
+                    write[part] = line;
+                }
+                held.write_and_answer(&keys, &queries, &write, &mut partials);
+                if position == 0 {
+                    #[unroll]
+                    for part in 0..parts {
+                        #[unroll]
+                        for lane in 0..width {
+                            dump[base + columns + part * width + lane] =
+                                partials.get(part).extract(lane);
+                        }
                     }
                 }
-            }
-            if position >= first_kept {
-                held.store(&mut kept.at(&run), position - first_kept);
+                if position >= first_kept {
+                    held.store(&mut kept.at(&unit), position - first_kept);
+                }
             }
         }
     }
@@ -247,7 +247,7 @@ fn held_state_probe<N: Size>(
     }
 }
 
-/// Heads whose key rows no unit takes whole, a prime head, and a wide one: every unit's partials of
+/// Heads whose key rows the last units overhang, a prime head, and a wide one: every unit's partials of
 /// the first position, before and after the write, and the states the walk keeps, against the
 /// host.
 #[test]

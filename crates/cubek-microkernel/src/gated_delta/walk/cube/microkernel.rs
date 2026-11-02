@@ -1,7 +1,7 @@
 use super::base::CubeGatedDeltaWalkMicrokernel;
 use super::held_state::HeldState;
 use super::unit_partials::UnitPartials;
-use crate::gated_delta::{POSITION, VALUE_FEATURE};
+use crate::gated_delta::{KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -11,9 +11,10 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// where it is written. The state after each position from `first_kept` on is written to the next
 /// of the kept states.
 ///
-/// Every operand is windowed to the cube's box: its sequence, its head, its runs of columns, every
-/// key row and every position; the queries and keys to the key head the head is grouped under. The
-/// cube's runs walk the positions together, since their units meet in its shared memory.
+/// Every operand is windowed to the cube's box: its sequence, its head, its runs of columns and
+/// every key row; the queries and keys to the key head the head is grouped under. Each unit then
+/// windows them to its own key rows, and a position at a time. The cube's runs walk the positions
+/// together, since their units meet in its shared memory.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
@@ -32,39 +33,40 @@ pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
 ) {
     let width = N::value();
     let parts = comptime!(microkernel.columns / width);
-    // No level cuts a run's key rows, so its units are read off `x` by hand.
-    let unit = UNIT_POS_X as usize;
     let mut write = Array::<Vector<f32, N>>::new(parts);
     for run in cube {
-        let mut partials =
-            UnitPartials::<N>::new(run.coord(VALUE_FEATURE), unit, runs, microkernel);
-        let mut held = HeldState::<N>::load(&state.at(&run), unit, microkernel);
-        for step in run.walk() {
-            let (keys, queries) = (key.at(&step), query.at(&step));
-            let value_window = value.at(&step);
-            let values = value_window.flat::<f32, N>();
-            let factor = f32::exp(scalar(&decay.at(&step)));
-            let strength_all = Vector::<f32, N>::cast_from(scalar(&strength.at(&step)));
+        for unit in run.walk() {
+            let slot = unit.coord(KEY_FEATURE);
+            let mut partials =
+                UnitPartials::<N>::new(run.coord(VALUE_FEATURE), slot, runs, microkernel);
+            let mut held = HeldState::<N>::load(&state.at(&unit), microkernel);
+            for step in unit.walk() {
+                let (keys, queries) = (key.at(&step), query.at(&step));
+                let value_window = value.at(&step);
+                let values = value_window.flat::<f32, N>();
+                let factor = f32::exp(scalar(&decay.at(&step)));
+                let strength_all = Vector::<f32, N>::cast_from(scalar(&strength.at(&step)));
 
-            held.decay_and_recall(&keys, factor, &mut partials);
-            partials.sum(0usize);
-            #[unroll]
-            for part in 0..parts {
-                write[part] = (values.read(part) - partials.get(part)) * strength_all;
-            }
-            held.write_and_answer(&keys, &queries, &write, &mut partials);
-            partials.sum(1usize);
-            if unit == 0 {
-                let mut out_window = out.at(&step);
-                let mut writes = out_window.flat_mut::<E, N>();
+                held.decay_and_recall(&keys, factor, &mut partials);
+                partials.sum(0usize);
                 #[unroll]
                 for part in 0..parts {
-                    writes.write(part, Vector::<E, N>::cast_from(partials.get(part)));
+                    write[part] = (values.read(part) - partials.get(part)) * strength_all;
                 }
-            }
-            let position = step.coord(POSITION);
-            if position >= first_kept {
-                held.store(&mut kept.at(&run), position - first_kept);
+                held.write_and_answer(&keys, &queries, &write, &mut partials);
+                partials.sum(1usize);
+                if slot == 0 {
+                    let mut out_window = out.at(&step);
+                    let mut writes = out_window.flat_mut::<E, N>();
+                    #[unroll]
+                    for part in 0..parts {
+                        writes.write(part, Vector::<E, N>::cast_from(partials.get(part)));
+                    }
+                }
+                let at = step.coord(POSITION);
+                if at >= first_kept {
+                    held.store(&mut kept.at(&unit), at - first_kept);
+                }
             }
         }
     }
