@@ -16,6 +16,7 @@
 )]
 
 pub mod components;
+pub mod kernels;
 pub mod launch;
 pub mod routines;
 
