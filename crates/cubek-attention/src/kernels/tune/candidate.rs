@@ -49,7 +49,7 @@ impl<R: Routine + Copy> AttentionRoutineCandidate<R> {
 
 impl<R, M: AttentionMicrokernel, SM> AttentionRoutineCandidate<R>
 where
-    R: AttentionRoutine<M, SM> + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>,
+    R: AttentionRoutine<M, SM> + Routine<Grid = Grid, Blueprint = AttentionBlueprint<M, SM>>,
 {
     /// The attention `inputs` state, written into their output by this candidate's routine at its
     /// setting on the device the candidate was listed for, each problem prepared once
@@ -80,7 +80,7 @@ where
 
 impl<R, M: AttentionMicrokernel, SM: PartialEq> TuneCandidate for AttentionRoutineCandidate<R>
 where
-    R: AttentionRoutine<M, SM> + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>,
+    R: AttentionRoutine<M, SM> + Routine<Grid = Grid, Blueprint = AttentionBlueprint<M, SM>>,
 {
     type Strategy = R::Settings;
     type Key = AttentionKey;

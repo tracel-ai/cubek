@@ -28,7 +28,7 @@ use cubek_std::matmul_axes::{K, KB, KI, M, MI, N, NI};
 use cubek_std::microkernel::{
     CubeStaging, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
 };
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 use cubek_std::{Hardware, UNIT_REGISTERS, block_scaled_for, block_scaled_mma};
 
 /// `out = lhs · rhs` with every cube owning a box of the output: it stages the box for its planes,
@@ -399,7 +399,7 @@ impl CubeStagedMatmulRoutine {
         }
     }
 
-    /// [`Routine::estimate`] over a block-split space: each cube reads its box's rows of the lhs
+    /// [`EstimatedRoutine::estimate`] over a block-split space: each cube reads its box's rows of the lhs
     /// and its columns of the rhs over the whole of `K`, a packed input its words and a float one
     /// its values, a stage's depth of `K` at a time, and writes its box of the output once. Then
     /// its planes, for the work, on the item they contract: the packed inputs decoded where its
@@ -630,10 +630,9 @@ pub type CubeStagedMatmulRoutineBlueprint = MatmulBlueprint<CubeStagedMicrokerne
 
 impl Routine for CubeStagedMatmulRoutine {
     type Problem = MatmulRoutineProblem;
-    type Microkernel = CubeStagedMicrokernel;
     type Settings = CubeStagedMatmulRoutineSettings;
     type Blueprint = CubeStagedMatmulRoutineBlueprint;
-    type Partitioning = MatmulPartitioning;
+    type Grid = Grid;
 
     /// Its microkernel's settings ([`CubeStagedMicrokernel::settings`]), its cubes in the grid's
     /// order, except the tile DSL's multi-row box
@@ -674,45 +673,6 @@ impl Routine for CubeStagedMatmulRoutine {
             ..Self::Settings::SPLIT_ALONG_K
         }));
         on_grid.chain(in_strips).collect()
-    }
-
-    /// Nothing of its own: it only walks the cubes, and its microkernel makes every access.
-    fn vectorize(
-        &self,
-        microkernel: &CubeStagedMicrokernel,
-        partitioning: &MatmulPartitioning,
-        vectorization: &mut Vectorization<MatmulOperand>,
-    ) {
-        assert_eq!(
-            partitioning.as_tile().fillers() as usize,
-            microkernel.fill.filling_planes,
-            "a cube is launched over its launch tiling, beside the planes its fill sets aside"
-        );
-        microkernel.vectorize(&partitioning.cube_space(), vectorization);
-    }
-
-    /// Nothing of its own: it only distributes the cubes, and its microkernel walks the whole of
-    /// every cube's box. Over a block-split space, its own staging and its planes' work
-    /// (`estimate_in_blocks`).
-    fn estimate(
-        &self,
-        problem: &MatmulRoutineProblem,
-        blueprint: &CubeStagedMatmulRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        let item = MatmulView::of::<CubeStagedMicrokernel>(problem)
-            .expect(MatmulView::PREPARED)
-            .work_item();
-        match item.blocks {
-            None => blueprint.microkernel.estimate(
-                &item,
-                &blueprint.partitioning.cube_space(),
-                grid.planes(),
-                estimate,
-            ),
-            Some(_) => self.estimate_in_blocks(problem, blueprint, grid, estimate),
-        }
     }
 
     /// A plane is as many units as its instruction runs on: the width a matrix instruction issues
@@ -779,6 +739,49 @@ impl Routine for CubeStagedMatmulRoutine {
             }
         };
         Ok((blueprint, grid))
+    }
+}
+
+impl CubeStagedMatmulRoutine {
+    /// Nothing of its own: it only walks the cubes, and its microkernel makes every access.
+    fn vectorize(
+        &self,
+        microkernel: &CubeStagedMicrokernel,
+        partitioning: &MatmulPartitioning,
+        vectorization: &mut Vectorization<MatmulOperand>,
+    ) {
+        assert_eq!(
+            partitioning.as_tile().fillers() as usize,
+            microkernel.fill.filling_planes,
+            "a cube is launched over its launch tiling, beside the planes its fill sets aside"
+        );
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
+    }
+}
+
+impl EstimatedRoutine for CubeStagedMatmulRoutine {
+    /// Nothing of its own: it only distributes the cubes, and its microkernel walks the whole of
+    /// every cube's box. Over a block-split space, its own staging and its planes' work
+    /// (`estimate_in_blocks`).
+    fn estimate(
+        &self,
+        problem: &MatmulRoutineProblem,
+        blueprint: &CubeStagedMatmulRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        let item = MatmulView::of::<CubeStagedMicrokernel>(problem)
+            .expect(MatmulView::PREPARED)
+            .work_item();
+        match item.blocks {
+            None => blueprint.microkernel.estimate(
+                &item,
+                &blueprint.partitioning.cube_space(),
+                grid.planes(),
+                estimate,
+            ),
+            Some(_) => self.estimate_in_blocks(problem, blueprint, grid, estimate),
+        }
     }
 }
 

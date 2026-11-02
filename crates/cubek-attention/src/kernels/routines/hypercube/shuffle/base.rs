@@ -17,7 +17,7 @@ use cubek_microkernel::attention::plane::PlaneShuffleAttentionMicrokernelSetting
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// Attention with several cubes owning every box of queries, every cube walking its own run of the
 /// keys: the hypercube microkernel runs a cube of plane shuffles over a cube's run, its planes
@@ -109,10 +109,9 @@ impl<M: HypercubeShuffleMerge> core::fmt::Display for HypercubeShuffleAttentionR
 
 impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     type Problem = AttentionRoutineProblem;
-    type Microkernel = HypercubeAttentionMicrokernel;
     type Settings = HypercubeShuffleAttentionRoutineSettings<M>;
     type Blueprint = HypercubeShuffleAttentionRoutineBlueprint;
-    type Partitioning = AttentionPartitioning;
+    type Grid = Grid;
 
     /// The default first, then every one of eight, sixteen and thirty-two cubes on a box, by every
     /// setting its microkernel lists: queries a plane, units on a key, keys in flight, and planes
@@ -181,34 +180,6 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         settings
     }
 
-    /// Nothing of its own: it only distributes the cubes, and their microkernel makes every
-    /// access.
-    fn vectorize(
-        &self,
-        microkernel: &HypercubeAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
-        vectorization: &mut Vectorization<AttentionOperand>,
-    ) {
-        microkernel.vectorize(&partitioning.cube_space(), vectorization);
-    }
-
-    /// Nothing of its own: its cubes' microkernel walks each cube's run of the keys and counts
-    /// each cube's partial.
-    fn estimate(
-        &self,
-        problem: &AttentionRoutineProblem,
-        blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        blueprint.microkernel.estimate(
-            &problem.work_item(),
-            &blueprint.partitioning.cube_space(),
-            grid.planes(),
-            estimate,
-        );
-    }
-
     /// A cube holds its planes along the keys, and the shared memory its microkernel and its merge
     /// ask for. The cubes sharing a box are its settings' count, whatever the keys
     /// ([`AttentionPartitioning::new`]). Declines where the device cannot merge this way, and
@@ -257,6 +228,38 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
             storage,
         );
         Ok((blueprint, grid))
+    }
+}
+
+impl<M: HypercubeShuffleMerge> HypercubeShuffleAttentionRoutine<M> {
+    /// Nothing of its own: it only distributes the cubes, and their microkernel makes every
+    /// access.
+    fn vectorize(
+        &self,
+        microkernel: &HypercubeAttentionMicrokernel,
+        partitioning: &AttentionPartitioning,
+        vectorization: &mut Vectorization<AttentionOperand>,
+    ) {
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
+    }
+}
+
+impl<M: HypercubeShuffleMerge> EstimatedRoutine for HypercubeShuffleAttentionRoutine<M> {
+    /// Nothing of its own: its cubes' microkernel walks each cube's run of the keys and counts
+    /// each cube's partial.
+    fn estimate(
+        &self,
+        problem: &AttentionRoutineProblem,
+        blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        blueprint.microkernel.estimate(
+            &problem.work_item(),
+            &blueprint.partitioning.cube_space(),
+            grid.planes(),
+            estimate,
+        );
     }
 }
 

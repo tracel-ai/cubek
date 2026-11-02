@@ -282,7 +282,7 @@ impl<R: Routine + Copy> RmsNormRoutineCandidate<R> {
 
 impl<R, M> RmsNormRoutineCandidate<R>
 where
-    R: RmsNormRoutine<M> + Routine<Microkernel = M, Blueprint = RmsNormBlueprint<M>>,
+    R: RmsNormRoutine<M> + Routine<Grid = Grid, Blueprint = RmsNormBlueprint<M>>,
 {
     /// `input / sqrt(mean(input², last) + epsilon) · weight`, the square-sum in `f32`, launched on
     /// the operands' device ([`RmsNormTensors::new`]).
@@ -415,7 +415,7 @@ where
 
 impl<R, M: PartialEq> TuneCandidate for RmsNormRoutineCandidate<R>
 where
-    R: RmsNormRoutine<M> + Routine<Microkernel = M, Blueprint = RmsNormBlueprint<M>>,
+    R: RmsNormRoutine<M> + Routine<Grid = Grid, Blueprint = RmsNormBlueprint<M>>,
 {
     type Strategy = R::Settings;
     type Key = RmsNormKey;

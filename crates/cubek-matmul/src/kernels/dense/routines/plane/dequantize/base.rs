@@ -2,14 +2,14 @@ use super::kernel::plane_dequantize_kernel;
 use crate::kernels::tensor::{PackedTensor, PlainTensor};
 use crate::kernels::{
     MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED, MatmulBlueprint, MatmulDequantizeBinding, MatmulInputs,
-    MatmulPartitioning, MatmulRoutineProblem, MatmulView, PlaneShuffleMatmulRoutineSettings,
+    MatmulRoutineProblem, MatmulView, PlaneShuffleMatmulRoutineSettings,
     PlaneShufflePackedPlacement,
 };
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
-use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal};
 use cubecl::tile::space::CubeOrder;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
@@ -17,7 +17,7 @@ use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// A packed input decoded into a float one, in dense rows of the axis its words do not run along:
 /// the first launch of a product that then runs the float routine. It places the plane shuffle
@@ -128,26 +128,48 @@ impl PlaneDequantizeMatmulRoutine {
 
 impl Routine for PlaneDequantizeMatmulRoutine {
     type Problem = MatmulRoutineProblem;
-    type Microkernel = PlaneShuffleMicrokernel;
     type Settings = PlaneShuffleMatmulRoutineSettings;
     type Blueprint = PlaneDequantizeMatmulRoutineBlueprint;
-    type Partitioning = MatmulPartitioning;
+    type Grid = Grid;
 
     /// [`SETTINGS`](Self::SETTINGS) alone.
     fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
         vec![Self::SETTINGS]
     }
 
-    /// Nothing of its own: it walks cubes and planes, and its microkernel makes every access.
-    fn vectorize(
+    /// The plane shuffle routine's placement of the packed `[k, n]` input alone
+    /// (`PlaneShufflePackedPlacement`): the same microkernel and planes over the same space, one
+    /// row, the planes in cubes.
+    fn prepare(
         &self,
-        microkernel: &PlaneShuffleMicrokernel,
-        _: &MatmulPartitioning,
-        vectorization: &mut Vectorization<MatmulOperand>,
-    ) {
-        microkernel.vectorize(&(), vectorization);
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        settings: &Self::Settings,
+    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        let alone = Self::alone(problem);
+        let PlaneShufflePackedPlacement {
+            microkernel,
+            columns,
+            planes,
+        } = PlaneShufflePackedPlacement::new(hw, &alone, settings)?;
+        let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
+        let partitioning = MatmulView::of::<PlaneShuffleMicrokernel>(&alone)?.partitioning(
+            microkernel.tiling().planes(&[(columns, planes)]),
+            &[columns],
+            CubeOrder::RowMajor,
+            MatmulView::ONE_CUBE_A_BOX,
+        );
+        let cube = CubeResources {
+            plane_width: microkernel.plane_width() as u32,
+            shared_memory: 0,
+        };
+        let blueprint = MatmulBlueprint::packed(packing, microkernel, partitioning);
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
+        Ok((blueprint, grid))
     }
+}
 
+impl EstimatedRoutine for PlaneDequantizeMatmulRoutine {
     /// Each cube reads the words and scales of its columns once, and writes them decoded, a
     /// value of the decoded element each. Then its microkernel, for the work.
     fn estimate(
@@ -183,36 +205,5 @@ impl Routine for PlaneDequantizeMatmulRoutine {
         blueprint
             .microkernel
             .estimate(&item, &(), grid.planes(), estimate);
-    }
-
-    /// The plane shuffle routine's placement of the packed `[k, n]` input alone
-    /// (`PlaneShufflePackedPlacement`): the same microkernel and planes over the same space, one
-    /// row, the planes in cubes.
-    fn prepare(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let alone = Self::alone(problem);
-        let PlaneShufflePackedPlacement {
-            microkernel,
-            columns,
-            planes,
-        } = PlaneShufflePackedPlacement::new(hw, &alone, settings)?;
-        let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
-        let partitioning = MatmulView::of::<PlaneShuffleMicrokernel>(&alone)?.partitioning(
-            microkernel.tiling().planes(&[(columns, planes)]),
-            &[columns],
-            CubeOrder::RowMajor,
-            MatmulView::ONE_CUBE_A_BOX,
-        );
-        let cube = CubeResources {
-            plane_width: microkernel.plane_width() as u32,
-            shared_memory: 0,
-        };
-        let blueprint = MatmulBlueprint::packed(packing, microkernel, partitioning);
-        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
-        Ok((blueprint, grid))
     }
 }

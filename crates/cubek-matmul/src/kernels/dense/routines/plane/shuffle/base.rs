@@ -14,7 +14,9 @@ use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
+use cubek_std::routine::{
+    CubeResources, EstimatedRoutine, Grid, ROUTINE_LISTS_NO_SETTING, Routine,
+};
 use cubek_std::selector::divisor_at_most;
 
 /// `out = lhs · rhs` with every plane of the launch owning every row of a run of the output's
@@ -105,7 +107,7 @@ impl PlaneShuffleMatmulRoutine {
         Ok(blueprint)
     }
 
-    /// [`Routine::estimate`] against a float rhs.
+    /// [`EstimatedRoutine::estimate`] against a float rhs.
     fn float_estimate(
         &self,
         problem: &MatmulRoutineProblem,
@@ -147,7 +149,7 @@ impl PlaneShuffleMatmulRoutine {
         microkernel.estimate(&item, &(), grid.planes(), estimate);
     }
 
-    /// [`Routine::estimate`] against `packing`, a packed rhs.
+    /// [`EstimatedRoutine::estimate`] against `packing`, a packed rhs.
     fn packed_estimate(
         &self,
         problem: &MatmulRoutineProblem,
@@ -294,10 +296,9 @@ impl PlaneShufflePackedPlacement {
 
 impl Routine for PlaneShuffleMatmulRoutine {
     type Problem = MatmulRoutineProblem;
-    type Microkernel = PlaneShuffleMicrokernel;
     type Settings = PlaneShuffleMatmulRoutineSettings;
     type Blueprint = PlaneShuffleMatmulRoutineBlueprint;
-    type Partitioning = MatmulPartitioning;
+    type Grid = Grid;
 
     /// Its microkernel's blocks ([`PlaneShuffleMicrokernel::settings`]) at four planes a cube, and
     /// its own knob, planes a cube, at the default block: one and eight, since they trade cubes
@@ -364,6 +365,23 @@ impl Routine for PlaneShuffleMatmulRoutine {
         Err(declined)
     }
 
+    /// Against a float rhs, the launch's planes in cubes side by side along `n`; against a
+    /// packed one, over its block-split space, as many planes a cube as divide the runs of columns
+    /// its microkernel reads (`PlaneShufflePackedPlacement`).
+    fn prepare(
+        &self,
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        settings: &Self::Settings,
+    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        match &problem.packings.rhs {
+            Some(packing) => self.prepare_packed(hw, problem, packing, settings),
+            None => self.prepare_float(hw, problem, settings),
+        }
+    }
+}
+
+impl PlaneShuffleMatmulRoutine {
     /// Nothing of its own: it walks the launch's planes, and its microkernel makes every access.
     fn vectorize(
         &self,
@@ -373,7 +391,9 @@ impl Routine for PlaneShuffleMatmulRoutine {
     ) {
         microkernel.vectorize(&(), vectorization);
     }
+}
 
+impl EstimatedRoutine for PlaneShuffleMatmulRoutine {
     /// Its units' steps: each group of units reads the lhs's rows along the whole of `K`, and the
     /// rhs's columns it owns, straight from global memory, once: its values, or its words and
     /// scales where it is packed. Then its microkernel, for the work.
@@ -387,21 +407,6 @@ impl Routine for PlaneShuffleMatmulRoutine {
         match &problem.packings.rhs {
             Some(packing) => self.packed_estimate(problem, packing, blueprint, grid, estimate),
             None => self.float_estimate(problem, blueprint, grid, estimate),
-        }
-    }
-
-    /// Against a float rhs, the launch's planes in cubes side by side along `n`; against a
-    /// packed one, over its block-split space, as many planes a cube as divide the runs of columns
-    /// its microkernel reads (`PlaneShufflePackedPlacement`).
-    fn prepare(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        match &problem.packings.rhs {
-            Some(packing) => self.prepare_packed(hw, problem, packing, settings),
-            None => self.prepare_float(hw, problem, settings),
         }
     }
 }

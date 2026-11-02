@@ -11,7 +11,7 @@ use cubek_microkernel::attention::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// Attention with every cube owning a box of queries of some heads of the group, and walking
 /// nothing else: each plane of the cube owns its rows of one head and reads its keys and values
@@ -52,10 +52,9 @@ pub type CubeShuffleAttentionRoutineBlueprint =
 
 impl Routine for CubeShuffleAttentionRoutine {
     type Problem = AttentionRoutineProblem;
-    type Microkernel = CubeAttentionMicrokernel;
     type Settings = CubeShuffleAttentionRoutineSettings;
     type Blueprint = CubeShuffleAttentionRoutineBlueprint;
-    type Partitioning = AttentionPartitioning;
+    type Grid = Grid;
 
     /// Its microkernel's settings over plane shuffles
     /// ([`CubeAttentionMicrokernelSettings::listed`]) in query order, then its microkernel's lead
@@ -74,32 +73,6 @@ impl Routine for CubeShuffleAttentionRoutine {
             }])
             .collect()
     }
-    /// Nothing of its own: it walks cubes, and its microkernel makes every access.
-    fn vectorize(
-        &self,
-        microkernel: &CubeAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
-        vectorization: &mut Vectorization<AttentionOperand>,
-    ) {
-        microkernel.vectorize(&partitioning.cube_space(), vectorization);
-    }
-
-    /// Nothing of its own: the cube microkernel places the staging and its planes the work.
-    fn estimate(
-        &self,
-        problem: &AttentionRoutineProblem,
-        blueprint: &CubeShuffleAttentionRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        blueprint.microkernel.estimate(
-            &problem.work_item(),
-            &blueprint.partitioning.cube_space(),
-            grid.planes(),
-            estimate,
-        );
-    }
-
     /// The best cube of plane shuffles at the settings, a cube a box, holding a plane for every
     /// head it holds along every plane of its queries and of their keys, each as many units as the
     /// device's plane, and the shared memory the cube microkernel asks for, the cubes taking the
@@ -139,6 +112,36 @@ impl Routine for CubeShuffleAttentionRoutine {
             storage,
         );
         Ok((blueprint, grid))
+    }
+}
+
+impl CubeShuffleAttentionRoutine {
+    /// Nothing of its own: it walks cubes, and its microkernel makes every access.
+    fn vectorize(
+        &self,
+        microkernel: &CubeAttentionMicrokernel,
+        partitioning: &AttentionPartitioning,
+        vectorization: &mut Vectorization<AttentionOperand>,
+    ) {
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
+    }
+}
+
+impl EstimatedRoutine for CubeShuffleAttentionRoutine {
+    /// Nothing of its own: the cube microkernel places the staging and its planes the work.
+    fn estimate(
+        &self,
+        problem: &AttentionRoutineProblem,
+        blueprint: &CubeShuffleAttentionRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        blueprint.microkernel.estimate(
+            &problem.work_item(),
+            &blueprint.partitioning.cube_space(),
+            grid.planes(),
+            estimate,
+        );
     }
 }
 

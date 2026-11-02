@@ -14,7 +14,7 @@ use cubek_std::routine::{Grid, Routine};
 /// dispatches through any destination — and the launches around those are written once, on its
 /// candidate ([`SwigluRoutineCandidate`](crate::kernels::SwigluRoutineCandidate)).
 pub trait SwigluRoutine<M>:
-    Routine<Problem = SwigluRoutineProblem, Microkernel = M, Blueprint = SwigluBlueprint<M>>
+    Routine<Problem = SwigluRoutineProblem, Grid = Grid, Blueprint = SwigluBlueprint<M>>
 {
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`, its output reached
     /// through `O`.

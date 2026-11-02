@@ -15,7 +15,9 @@ use cubek_std::Hardware;
 use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
+use cubek_std::routine::{
+    CubeResources, EstimatedRoutine, Grid, ROUTINE_LISTS_NO_SETTING, Routine,
+};
 
 /// `out = lhs · rhs` with every cube owning every row of a run of the output's columns, and its
 /// planes splitting the contraction between them: in software sums
@@ -68,7 +70,7 @@ impl CubeShuffleMatmulRoutine {
             .collect()
     }
 
-    /// [`Routine::estimate`] against a float rhs: each group of units, across the cube's
+    /// [`EstimatedRoutine::estimate`] against a float rhs: each group of units, across the cube's
     /// planes, reads the lhs's rows along the whole of `K` and the rhs's columns it owns,
     /// straight from global memory, once; a step's planes read neighbouring slices, so a column is
     /// still read down all of `K`. Its drain, every plane adding its partial run into the
@@ -111,7 +113,7 @@ impl CubeShuffleMatmulRoutine {
         microkernel.estimate(&item, &(), grid.planes(), estimate);
     }
 
-    /// [`Routine::estimate`] against `packing`, a packed rhs: each group of units, across the
+    /// [`EstimatedRoutine::estimate`] against `packing`, a packed rhs: each group of units, across the
     /// cube's planes, reads the lhs's rows along the whole of `K` and the words and scales of the
     /// columns it owns, straight from global memory, once; a turn's planes read neighbouring scale
     /// blocks. Its drain, every plane adding its partial run into the accumulator. Then its
@@ -222,10 +224,9 @@ impl CubeShuffleMatmulRoutine {
 
 impl Routine for CubeShuffleMatmulRoutine {
     type Problem = MatmulRoutineProblem;
-    type Microkernel = CubeShuffleMicrokernel;
     type Settings = CubeShuffleMatmulRoutineSettings;
     type Blueprint = CubeShuffleMatmulRoutineBlueprint;
-    type Partitioning = MatmulPartitioning;
+    type Grid = Grid;
 
     /// Its microkernel's settings ([`CubeShuffleMicrokernel::settings`]): it has no knob of its
     /// own.
@@ -262,31 +263,6 @@ impl Routine for CubeShuffleMatmulRoutine {
         Err(declined)
     }
 
-    /// Nothing of its own: it only walks the cubes, and its microkernel makes every access.
-    fn vectorize(
-        &self,
-        microkernel: &CubeShuffleMicrokernel,
-        _: &MatmulPartitioning,
-        vectorization: &mut Vectorization<MatmulOperand>,
-    ) {
-        microkernel.vectorize(&(), vectorization);
-    }
-
-    /// Its walk's reads and its drain, against a float rhs or a packed one; then its
-    /// microkernel, for the work.
-    fn estimate(
-        &self,
-        problem: &MatmulRoutineProblem,
-        blueprint: &CubeShuffleMatmulRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        match &problem.packings.rhs {
-            Some(packing) => self.packed_estimate(problem, packing, blueprint, grid, estimate),
-            None => self.float_estimate(problem, blueprint, grid, estimate),
-        }
-    }
-
     /// Against a float rhs, the cubes over `M` and `N`; against a packed one, over its
     /// block-split space, every row in each cube.
     fn prepare(
@@ -299,6 +275,35 @@ impl Routine for CubeShuffleMatmulRoutine {
         match &problem.packings.rhs {
             Some(packing) => self.prepare_packed(hw, problem, packing, settings),
             None => self.prepare_float(hw, problem, settings),
+        }
+    }
+}
+
+impl CubeShuffleMatmulRoutine {
+    /// Nothing of its own: it only walks the cubes, and its microkernel makes every access.
+    fn vectorize(
+        &self,
+        microkernel: &CubeShuffleMicrokernel,
+        _: &MatmulPartitioning,
+        vectorization: &mut Vectorization<MatmulOperand>,
+    ) {
+        microkernel.vectorize(&(), vectorization);
+    }
+}
+
+impl EstimatedRoutine for CubeShuffleMatmulRoutine {
+    /// Its walk's reads and its drain, against a float rhs or a packed one; then its
+    /// microkernel, for the work.
+    fn estimate(
+        &self,
+        problem: &MatmulRoutineProblem,
+        blueprint: &CubeShuffleMatmulRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        match &problem.packings.rhs {
+            Some(packing) => self.packed_estimate(problem, packing, blueprint, grid, estimate),
+            None => self.float_estimate(problem, blueprint, grid, estimate),
         }
     }
 }

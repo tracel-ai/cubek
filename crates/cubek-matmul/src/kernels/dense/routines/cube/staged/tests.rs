@@ -29,7 +29,7 @@ mod base {
     use cubek_std::layout::{BindingOrder, tile_order};
     use cubek_std::matmul_axes::{K, M, N};
     use cubek_std::microkernel::{Microkernel, StageLayout, StageRing};
-    use cubek_std::routine::Routine;
+    use cubek_std::routine::{EstimatedRoutine, Routine};
     use cubek_std::{Hardware, devices};
 
     /// Why `hw` cannot deliver `problem`'s stages under `partitioning` by the TMA engine.

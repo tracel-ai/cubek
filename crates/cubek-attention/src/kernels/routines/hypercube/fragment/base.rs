@@ -14,7 +14,7 @@ use cubek_microkernel::attention::hypercube::{
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// Attention with several cubes owning every box of queries, every cube walking its own run of the
 /// keys: each cube stages its run's keys and values once for its plane fragments, on a square
@@ -63,10 +63,9 @@ const SLOT_WIDTH: usize = 1;
 
 impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
     type Problem = AttentionRoutineProblem;
-    type Microkernel = HypercubeAttentionMicrokernel;
     type Settings = HypercubeSecondLaunchFragmentAttentionRoutineSettings;
     type Blueprint = HypercubeSecondLaunchFragmentAttentionRoutineBlueprint;
-    type Partitioning = AttentionPartitioning;
+    type Grid = Grid;
 
     /// Its microkernel's settings over plane fragments
     /// ([`HypercubeAttentionMicrokernelSettings::listed`]) on eight cubes a box, then four and
@@ -84,34 +83,6 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
                     })
             })
             .collect()
-    }
-
-    /// Nothing of its own: it only distributes the cubes, and their microkernel makes every
-    /// access.
-    fn vectorize(
-        &self,
-        microkernel: &HypercubeAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
-        vectorization: &mut Vectorization<AttentionOperand>,
-    ) {
-        microkernel.vectorize(&partitioning.cube_space(), vectorization);
-    }
-
-    /// Nothing of its own: its cubes' microkernel walks each cube's run of the keys and counts
-    /// each cube's partial.
-    fn estimate(
-        &self,
-        problem: &AttentionRoutineProblem,
-        blueprint: &HypercubeSecondLaunchFragmentAttentionRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        blueprint.microkernel.estimate(
-            &problem.work_item(),
-            &blueprint.partitioning.cube_space(),
-            grid.planes(),
-            estimate,
-        );
     }
 
     /// The best hypercube of plane fragments at the settings, its settings' cubes on every box
@@ -165,6 +136,38 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
             storage,
         );
         Ok((blueprint, grid))
+    }
+}
+
+impl HypercubeSecondLaunchFragmentAttentionRoutine {
+    /// Nothing of its own: it only distributes the cubes, and their microkernel makes every
+    /// access.
+    fn vectorize(
+        &self,
+        microkernel: &HypercubeAttentionMicrokernel,
+        partitioning: &AttentionPartitioning,
+        vectorization: &mut Vectorization<AttentionOperand>,
+    ) {
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
+    }
+}
+
+impl EstimatedRoutine for HypercubeSecondLaunchFragmentAttentionRoutine {
+    /// Nothing of its own: its cubes' microkernel walks each cube's run of the keys and counts
+    /// each cube's partial.
+    fn estimate(
+        &self,
+        problem: &AttentionRoutineProblem,
+        blueprint: &HypercubeSecondLaunchFragmentAttentionRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        blueprint.microkernel.estimate(
+            &problem.work_item(),
+            &blueprint.partitioning.cube_space(),
+            grid.planes(),
+            estimate,
+        );
     }
 }
 

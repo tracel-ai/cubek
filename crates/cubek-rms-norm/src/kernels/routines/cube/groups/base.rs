@@ -15,7 +15,7 @@ use cubek_microkernel::rms_norm::{R, RmsNormOperand, RmsNormPartitioning};
 use cubek_microkernel::row_store::OwnerMemory;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// The norm with every row owned by a group of units, a cube holding several groups side by
 /// side. Into a plain output it asks nothing of the hardware, so it runs everywhere: this kind's
@@ -69,10 +69,9 @@ pub type CubeGroupsRmsNormRoutineBlueprint = RmsNormBlueprint<CubeGroupsRmsNormM
 
 impl Routine for CubeGroupsRmsNormRoutine {
     type Problem = RmsNormRoutineProblem;
-    type Microkernel = CubeGroupsRmsNormMicrokernel;
     type Settings = CubeGroupsRmsNormRoutineSettings;
     type Blueprint = CubeGroupsRmsNormRoutineBlueprint;
-    type Partitioning = RmsNormPartitioning;
+    type Grid = Grid;
 
     /// The default, then each of its microkernel's smaller groups
     /// ([`CubeGroupsRmsNormMicrokernel::settings`]), more of them a cube, and last one unit owning
@@ -91,35 +90,6 @@ impl Routine for CubeGroupsRmsNormRoutine {
             on(Group::new(1), 64),
             on(Group::new(1), 1),
         ]
-    }
-
-    /// Nothing of its own: it walks cubes and groups, and its microkernel makes every access.
-    fn vectorize(
-        &self,
-        microkernel: &CubeGroupsRmsNormMicrokernel,
-        _: &RmsNormPartitioning,
-        vectorization: &mut Vectorization<RmsNormOperand>,
-    ) {
-        microkernel.vectorize(&(), vectorization);
-    }
-
-    /// Each cube reads its groups' rows once, straight from global memory, the weight once, and
-    /// writes the rows once. Then its microkernel, for the work.
-    fn estimate(
-        &self,
-        problem: &RmsNormRoutineProblem,
-        blueprint: &CubeGroupsRmsNormRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        let rows = blueprint.partitioning.cube_box().extent(R);
-        estimate.staging = Some(problem.cube_staging(RmsNormCubeRows {
-            rows,
-            run: problem.dim,
-        }));
-        blueprint
-            .microkernel
-            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 
     /// A group is launched as the cube's `x`, its units the group's, and the groups along `y`. A
@@ -162,6 +132,39 @@ impl Routine for CubeGroupsRmsNormRoutine {
             RmsNormBlueprint::new(hw, problem, microkernel, partitioning, vectorization)
                 .planned_at(microkernel.width)?;
         Ok((blueprint, grid))
+    }
+}
+
+impl CubeGroupsRmsNormRoutine {
+    /// Nothing of its own: it walks cubes and groups, and its microkernel makes every access.
+    fn vectorize(
+        &self,
+        microkernel: &CubeGroupsRmsNormMicrokernel,
+        _: &RmsNormPartitioning,
+        vectorization: &mut Vectorization<RmsNormOperand>,
+    ) {
+        microkernel.vectorize(&(), vectorization);
+    }
+}
+
+impl EstimatedRoutine for CubeGroupsRmsNormRoutine {
+    /// Each cube reads its groups' rows once, straight from global memory, the weight once, and
+    /// writes the rows once. Then its microkernel, for the work.
+    fn estimate(
+        &self,
+        problem: &RmsNormRoutineProblem,
+        blueprint: &CubeGroupsRmsNormRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        let rows = blueprint.partitioning.cube_box().extent(R);
+        estimate.staging = Some(problem.cube_staging(RmsNormCubeRows {
+            rows,
+            run: problem.dim,
+        }));
+        blueprint
+            .microkernel
+            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 }
 

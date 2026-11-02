@@ -6,9 +6,8 @@ use crate::kernels::{
     MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{DestinationLaunch, Refusal};
 use cubecl::tile::{Space, StageStorage, TileArgLaunch};
-use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedMicrokernel, MatmulCubeWrite};
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
@@ -16,7 +15,7 @@ use cubek_microkernel::matmul::hypercube::{
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// `out = lhs · rhs` with every tile's steps of `K` laid end to end and shared between a fixed
 /// grid of cubes, one run each: a run may start inside one tile and end inside another,
@@ -121,10 +120,9 @@ impl HypercubeLastArrivalMatmulRoutine {
 
 impl Routine for HypercubeLastArrivalMatmulRoutine {
     type Problem = MatmulRoutineProblem;
-    type Microkernel = HypercubeStagedMicrokernel;
     type Settings = HypercubeLastArrivalMatmulRoutineSettings;
     type Blueprint = HypercubeLastArrivalMatmulRoutineBlueprint;
-    type Partitioning = MatmulPartitioning;
+    type Grid = Grid;
 
     /// A star off the default: one and two cubes a worker, a second stage in flight, and the
     /// staged cube's box two instruction steps of `K` a stage, both boxes its microkernel lists
@@ -149,45 +147,6 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             ..lead
         });
         [lead].into_iter().chain(counts).chain(boxes).collect()
-    }
-
-    /// Nothing of its own: it only distributes the cubes, and their microkernel makes every
-    /// access.
-    fn vectorize(
-        &self,
-        microkernel: &HypercubeStagedMicrokernel,
-        partitioning: &MatmulPartitioning,
-        vectorization: &mut Vectorization<MatmulOperand>,
-    ) {
-        assert_eq!(
-            partitioning.as_tile().fillers() as usize,
-            microkernel.cube.fill.filling_planes,
-            "a cube is launched over its launch tiling, beside the planes its fill sets aside"
-        );
-        microkernel.vectorize(&partitioning.cube_space(), vectorization);
-    }
-
-    /// Its cubes' microkernel's, over one cube's run as if it were one tile's contraction: a run
-    /// reads as many steps of the operands as that, whichever tiles they lie in, and drains once
-    /// for each tile it touches, which is at most one more. The launch zeroing the arrival counters
-    /// is the launch's, outside the kernel's estimate.
-    fn estimate(
-        &self,
-        problem: &MatmulRoutineProblem,
-        blueprint: &HypercubeLastArrivalMatmulRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        let partitioning = &blueprint.partitioning;
-        let cubes = grid.cubes().expect("a static grid");
-        blueprint.microkernel.estimate(
-            &MatmulView::of::<HypercubeStagedMicrokernel>(problem)
-                .expect(MatmulView::PREPARED)
-                .work_item(),
-            &Self::one_run(partitioning, cubes as usize).cube_space(),
-            grid.planes(),
-            estimate,
-        );
     }
 
     /// A plane is as many units as its instruction runs on. The grid is the device's workers times
@@ -247,6 +206,31 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let blueprint = hypercube_blueprint(hw, problem, &item, microkernel, partitioning, storage);
         Ok((blueprint, grid))
+    }
+}
+
+impl EstimatedRoutine for HypercubeLastArrivalMatmulRoutine {
+    /// Its cubes' microkernel's, over one cube's run as if it were one tile's contraction: a run
+    /// reads as many steps of the operands as that, whichever tiles they lie in, and drains once
+    /// for each tile it touches, which is at most one more. The launch zeroing the arrival counters
+    /// is the launch's, outside the kernel's estimate.
+    fn estimate(
+        &self,
+        problem: &MatmulRoutineProblem,
+        blueprint: &HypercubeLastArrivalMatmulRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        let partitioning = &blueprint.partitioning;
+        let cubes = grid.cubes().expect("a static grid");
+        blueprint.microkernel.estimate(
+            &MatmulView::of::<HypercubeStagedMicrokernel>(problem)
+                .expect(MatmulView::PREPARED)
+                .work_item(),
+            &Self::one_run(partitioning, cubes as usize).cube_space(),
+            grid.planes(),
+            estimate,
+        );
     }
 }
 
@@ -357,9 +341,9 @@ mod tests {
     use super::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::matmul::MatmulLayout;
     use cubek_microkernel::matmul::cube::CubeStagedMicrokernelSettings;
     use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
+    use cubek_microkernel::matmul::{MatmulLayout, MatmulOperand};
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

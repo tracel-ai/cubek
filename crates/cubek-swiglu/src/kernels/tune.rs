@@ -157,7 +157,7 @@ impl<R: Routine + Copy> SwigluRoutineCandidate<R> {
 
 impl<R, M> SwigluRoutineCandidate<R>
 where
-    R: SwigluRoutine<M> + Routine<Microkernel = M, Blueprint = SwigluBlueprint<M>>,
+    R: SwigluRoutine<M> + Routine<Grid = Grid, Blueprint = SwigluBlueprint<M>>,
 {
     /// `silu(gate) ⊙ up` over `both`, `(..., 2 · d)` laid out `[gate | up]`, in `f32`, launched
     /// on its device ([`SwigluTensors::new`]).
@@ -269,7 +269,7 @@ impl<R: Routine<Settings: core::fmt::Display>> core::fmt::Display for SwigluRout
 
 impl<R, M: PartialEq> TuneCandidate for SwigluRoutineCandidate<R>
 where
-    R: SwigluRoutine<M> + Routine<Microkernel = M, Blueprint = SwigluBlueprint<M>>,
+    R: SwigluRoutine<M> + Routine<Grid = Grid, Blueprint = SwigluBlueprint<M>>,
 {
     type Strategy = R::Settings;
     type Key = SwigluKey;

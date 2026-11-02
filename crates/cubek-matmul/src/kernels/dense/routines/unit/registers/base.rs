@@ -13,7 +13,7 @@ use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStagingCoun
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 use cubek_std::selector::divisor_at_most;
 
 /// `out = lhs · rhs` with every unit owning a block of the output. The floor of both tables: it
@@ -135,10 +135,9 @@ pub type UnitRegistersMatmulRoutineBlueprint = MatmulBlueprint<UnitRegistersMicr
 
 impl Routine for UnitRegistersMatmulRoutine {
     type Problem = MatmulRoutineProblem;
-    type Microkernel = UnitRegistersMicrokernel;
     type Settings = UnitRegistersMatmulRoutineSettings;
     type Blueprint = UnitRegistersMatmulRoutineBlueprint;
-    type Partitioning = MatmulPartitioning;
+    type Grid = Grid;
 
     /// Its microkernel's blocks, each at the routine's default, then a star off the default over
     /// its own knobs: each plane layout, a column of as many planes as a full cube holds
@@ -170,6 +169,44 @@ impl Routine for UnitRegistersMatmulRoutine {
             .collect()
     }
 
+    /// The units of a plane cooperate on nothing, so the plane is launched as wide as the device
+    /// dispatches one and no wider than the cube's unit budget leaves for each: any width is
+    /// correct, since they take their blocks in turns, and this one is always spawnable. The
+    /// width sizes the grid, never the blueprint.
+    fn prepare(
+        &self,
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        settings: &Self::Settings,
+    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        problem.check_plain()?;
+        let view = MatmulView::of::<UnitRegistersMicrokernel>(problem)?;
+        let microkernel =
+            UnitRegistersMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
+        let planes = settings.planes;
+        let plane_width = Self::plane_width(hw, planes.count());
+        let blocks_per_plane = Self::fitted_blocks_per_plane(
+            settings.blocks_per_plane.get(),
+            problem.n,
+            settings.microkernel.columns.get(),
+            plane_width,
+        );
+        let partitioning = view.plane_partitioning(
+            microkernel.tiling().units_distributed(N, blocks_per_plane),
+            &[M, N],
+            PlaneOrder::new(&planes.counts(), settings.cube_order),
+        );
+        let cube = CubeResources {
+            plane_width,
+            shared_memory: 0,
+        };
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
+        let blueprint = self.blueprint(hw, problem, microkernel, partitioning);
+        Ok((blueprint, grid))
+    }
+}
+
+impl UnitRegistersMatmulRoutine {
     /// Nothing of its own: it walks the launch's planes and their units, and its microkernel makes
     /// every access.
     fn vectorize(
@@ -180,7 +217,9 @@ impl Routine for UnitRegistersMatmulRoutine {
     ) {
         microkernel.vectorize(&(), vectorization);
     }
+}
 
+impl EstimatedRoutine for UnitRegistersMatmulRoutine {
     /// Its units' steps: each unit reads its own block's rows of the lhs along the whole of `K`,
     /// and, beside the other units of its plane along `n`, its columns of the rhs, straight from
     /// global memory — every unit along `n` reading the same rows and every one along `m` the same
@@ -219,42 +258,6 @@ impl Routine for UnitRegistersMatmulRoutine {
         blueprint
             .microkernel
             .estimate(&item, &(), grid.planes(), estimate);
-    }
-
-    /// The units of a plane cooperate on nothing, so the plane is launched as wide as the device
-    /// dispatches one and no wider than the cube's unit budget leaves for each: any width is
-    /// correct, since they take their blocks in turns, and this one is always spawnable. The
-    /// width sizes the grid, never the blueprint.
-    fn prepare(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        problem.check_plain()?;
-        let view = MatmulView::of::<UnitRegistersMicrokernel>(problem)?;
-        let microkernel =
-            UnitRegistersMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
-        let planes = settings.planes;
-        let plane_width = Self::plane_width(hw, planes.count());
-        let blocks_per_plane = Self::fitted_blocks_per_plane(
-            settings.blocks_per_plane.get(),
-            problem.n,
-            settings.microkernel.columns.get(),
-            plane_width,
-        );
-        let partitioning = view.plane_partitioning(
-            microkernel.tiling().units_distributed(N, blocks_per_plane),
-            &[M, N],
-            PlaneOrder::new(&planes.counts(), settings.cube_order),
-        );
-        let cube = CubeResources {
-            plane_width,
-            shared_memory: 0,
-        };
-        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
-        let blueprint = self.blueprint(hw, problem, microkernel, partitioning);
-        Ok((blueprint, grid))
     }
 }
 

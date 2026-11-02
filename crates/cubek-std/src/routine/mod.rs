@@ -1,10 +1,10 @@
-//! A kernel written around one microkernel: the [`Routine`] trait, the [`Grid`] it launches on,
-//! and the [`LaunchSettings`] that grid is checked as.
+//! How a problem is solved on a device: the [`Routine`] trait, the [`Grid`] a launch spawns, and
+//! the [`LaunchSettings`] that grid is checked as.
 //!
-//! A routine is the one place a kernel's hardware assumptions are stated. It takes the problem
+//! A routine is the one place its kernels' hardware assumptions are stated. It takes the problem
 //! and the [`Hardware`](crate::Hardware), and returns a blueprint of compile-time decisions and
-//! the grid to run on, or a [`Refusal`](cubecl::tile::launch::Refusal) saying why this device
-//! cannot run the kernel. Anything it decides is explicit and testable; anything it cannot
+//! the grids to run on, or a [`Refusal`](cubecl::tile::launch::Refusal) saying why this device
+//! cannot run them. Anything it decides is explicit and testable; anything it cannot
 //! decide, it declines.
 //!
 //! # What goes where

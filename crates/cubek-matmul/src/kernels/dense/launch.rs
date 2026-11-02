@@ -29,7 +29,7 @@ const ALLOCATED: &str = "a launch allocating its output hands it back";
 /// every row whole or tiles them, and however each input is stored: its kernel reads each input
 /// as the tile it is bound as. A routine declines a problem whose inputs it does not read.
 pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
-    Routine<Problem = MatmulRoutineProblem, Microkernel = M, Blueprint = MatmulBlueprint<M, SM>>
+    Routine<Problem = MatmulRoutineProblem, Grid = Grid, Blueprint = MatmulBlueprint<M, SM>>
 {
     /// How the routine's cubes reach the output.
     const WRITE: MatmulCubeWrite = MatmulCubeWrite::Replace;

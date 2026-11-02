@@ -13,7 +13,7 @@ use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// `out = lhs · rhs` with every unit owning every row of a run of the output's columns, walking all
 /// of `K` alone. The routine that does not stage on a device that commits to no plane width: a
@@ -63,10 +63,9 @@ pub type UnitWholeKMatmulRoutineBlueprint = MatmulBlueprint<UnitWholeKMicrokerne
 
 impl Routine for UnitWholeKMatmulRoutine {
     type Problem = MatmulRoutineProblem;
-    type Microkernel = UnitWholeKMicrokernel;
     type Settings = UnitWholeKMatmulRoutineSettings;
     type Blueprint = UnitWholeKMatmulRoutineBlueprint;
-    type Partitioning = MatmulPartitioning;
+    type Grid = Grid;
 
     /// Empty where the device commits to a plane width, since the shuffles serve it. Otherwise a
     /// star off the default, which leads:
@@ -95,6 +94,45 @@ impl Routine for UnitWholeKMatmulRoutine {
         microkernels.chain(planes).chain(shares).collect()
     }
 
+    /// As wide as the device dispatches a plane and the cube's unit budget allows, since any width
+    /// is correct.
+    fn prepare(
+        &self,
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        settings: &Self::Settings,
+    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        problem.check_plain()?;
+        problem.check_unindexed()?;
+        let view = MatmulView::of::<UnitWholeKMicrokernel>(problem)?;
+        let microkernel =
+            UnitWholeKMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
+        let planes = settings.planes.get();
+        let plane_width = (hw.properties.hardware.max_units_per_cube / planes as u32)
+            .min(hw.dispatch_plane_size())
+            .max(1);
+        let partitioning = view.plane_partitioning(
+            microkernel
+                .tiling()
+                .units_distributed(N, settings.blocks_per_plane.get()),
+            &[M, N],
+            PlaneOrder::new(&[(N, planes)], CubeOrder::RowMajor),
+        );
+        let mut vectorization = Vectorization::new();
+        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        let blueprint =
+            MatmulBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ());
+        microkernel.check_vectors(&blueprint.widths)?;
+        let cube = CubeResources {
+            plane_width,
+            shared_memory: 0,
+        };
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
+        Ok((blueprint, grid))
+    }
+}
+
+impl UnitWholeKMatmulRoutine {
     /// Nothing of its own: it walks the launch's planes and their units, and its microkernel makes
     /// every access.
     fn vectorize(
@@ -105,7 +143,9 @@ impl Routine for UnitWholeKMatmulRoutine {
     ) {
         microkernel.vectorize(&(), vectorization);
     }
+}
 
+impl EstimatedRoutine for UnitWholeKMatmulRoutine {
     /// Each unit reads every row of the lhs along all of `K`, and its own columns of the rhs
     /// once, from global memory. Then its microkernel, for the work.
     fn estimate(
@@ -146,43 +186,6 @@ impl Routine for UnitWholeKMatmulRoutine {
         blueprint
             .microkernel
             .estimate(&item, &(), grid.planes(), estimate);
-    }
-
-    /// As wide as the device dispatches a plane and the cube's unit budget allows, since any width
-    /// is correct.
-    fn prepare(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        problem.check_plain()?;
-        problem.check_unindexed()?;
-        let view = MatmulView::of::<UnitWholeKMicrokernel>(problem)?;
-        let microkernel =
-            UnitWholeKMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
-        let planes = settings.planes.get();
-        let plane_width = (hw.properties.hardware.max_units_per_cube / planes as u32)
-            .min(hw.dispatch_plane_size())
-            .max(1);
-        let partitioning = view.plane_partitioning(
-            microkernel
-                .tiling()
-                .units_distributed(N, settings.blocks_per_plane.get()),
-            &[M, N],
-            PlaneOrder::new(&[(N, planes)], CubeOrder::RowMajor),
-        );
-        let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
-        let blueprint =
-            MatmulBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ());
-        microkernel.check_vectors(&blueprint.widths)?;
-        let cube = CubeResources {
-            plane_width,
-            shared_memory: 0,
-        };
-        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
-        Ok((blueprint, grid))
     }
 }
 

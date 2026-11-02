@@ -14,7 +14,7 @@ use cubek_microkernel::attention::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// Attention with every unit owning rows of one head. This kind's floor: it asks nothing of the
 /// hardware, so it runs everywhere.
@@ -55,10 +55,9 @@ pub type UnitAttentionRoutineBlueprint = AttentionBlueprint<UnitAttentionMicroke
 
 impl Routine for UnitAttentionRoutine {
     type Problem = AttentionRoutineProblem;
-    type Microkernel = UnitAttentionMicrokernel;
     type Settings = UnitAttentionRoutineSettings;
     type Blueprint = UnitAttentionRoutineBlueprint;
-    type Partitioning = AttentionPartitioning;
+    type Grid = Grid;
 
     /// Its microkernel's settings ([`UnitAttentionMicrokernel::settings`]), each at the routine's
     /// default, then a cube as full as the device holds ([`Hardware::full_cube_planes`]).
@@ -76,52 +75,6 @@ impl Routine for UnitAttentionRoutine {
             })
             .chain([full])
             .collect()
-    }
-
-    /// Nothing of its own: it walks the launch's units, and its microkernel makes every access.
-    fn vectorize(
-        &self,
-        microkernel: &UnitAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
-        vectorization: &mut Vectorization<AttentionOperand>,
-    ) {
-        microkernel.vectorize(&partitioning.cube_space(), vectorization);
-    }
-
-    /// Its units' steps: each unit reads its rows of the query once a step, and every key and
-    /// value of the walk, straight from global memory — each unit of the cube reading them again —
-    /// and writes its rows once. Then its microkernel, for the work.
-    fn estimate(
-        &self,
-        problem: &AttentionRoutineProblem,
-        blueprint: &UnitAttentionRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        let (item, partitioning) = (problem.work_item(), &blueprint.partitioning);
-        let (cube, leaf) = (partitioning.cube_space(), partitioning.leaf());
-        let steps = cube.extent(S).div_ceil(leaf.extent(S)) as u64;
-        let row_readers = (cube.extent(Q) / leaf.extent(Q)) as u64;
-        AttentionStagingCount {
-            seq_kv: leaf.extent(S),
-            stages_in_flight: 1,
-            runs: AttentionOperands {
-                query: item.head_dim,
-                key: leaf.extent(S),
-                value: item.val_dim,
-                out: item.val_dim,
-            },
-            readers: AttentionOperands {
-                query: steps,
-                key: row_readers,
-                value: row_readers,
-                out: 1,
-            },
-        }
-        .count(&item, &cube, estimate);
-        blueprint
-            .microkernel
-            .estimate(&item, &cube, grid.planes(), estimate);
     }
 
     /// The units cooperate on nothing, so a cube groups its settings' planes, each as wide as the
@@ -160,6 +113,56 @@ impl Routine for UnitAttentionRoutine {
         let blueprint =
             AttentionBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ());
         Ok((blueprint, grid))
+    }
+}
+
+impl UnitAttentionRoutine {
+    /// Nothing of its own: it walks the launch's units, and its microkernel makes every access.
+    fn vectorize(
+        &self,
+        microkernel: &UnitAttentionMicrokernel,
+        partitioning: &AttentionPartitioning,
+        vectorization: &mut Vectorization<AttentionOperand>,
+    ) {
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
+    }
+}
+
+impl EstimatedRoutine for UnitAttentionRoutine {
+    /// Its units' steps: each unit reads its rows of the query once a step, and every key and
+    /// value of the walk, straight from global memory — each unit of the cube reading them again —
+    /// and writes its rows once. Then its microkernel, for the work.
+    fn estimate(
+        &self,
+        problem: &AttentionRoutineProblem,
+        blueprint: &UnitAttentionRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        let (item, partitioning) = (problem.work_item(), &blueprint.partitioning);
+        let (cube, leaf) = (partitioning.cube_space(), partitioning.leaf());
+        let steps = cube.extent(S).div_ceil(leaf.extent(S)) as u64;
+        let row_readers = (cube.extent(Q) / leaf.extent(Q)) as u64;
+        AttentionStagingCount {
+            seq_kv: leaf.extent(S),
+            stages_in_flight: 1,
+            runs: AttentionOperands {
+                query: item.head_dim,
+                key: leaf.extent(S),
+                value: item.val_dim,
+                out: item.val_dim,
+            },
+            readers: AttentionOperands {
+                query: steps,
+                key: row_readers,
+                value: row_readers,
+                out: 1,
+            },
+        }
+        .count(&item, &cube, estimate);
+        blueprint
+            .microkernel
+            .estimate(&item, &cube, grid.planes(), estimate);
     }
 }
 

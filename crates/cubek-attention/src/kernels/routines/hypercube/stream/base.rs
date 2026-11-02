@@ -13,7 +13,7 @@ use cubek_microkernel::attention::hypercube::{
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand, S};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// Attention with every batch, key head and box of queries' steps of keys laid end to end on one
 /// line, shared between a grid sized to the device's workers, one run each: a run may start inside
@@ -95,10 +95,9 @@ impl HypercubeStreamFragmentAttentionRoutine {
 
 impl Routine for HypercubeStreamFragmentAttentionRoutine {
     type Problem = AttentionRoutineProblem;
-    type Microkernel = HypercubeAttentionMicrokernel;
     type Settings = HypercubeStreamFragmentAttentionRoutineSettings;
     type Blueprint = HypercubeStreamFragmentAttentionRoutineBlueprint;
-    type Partitioning = AttentionPartitioning;
+    type Grid = Grid;
 
     /// Its microkernel's settings over plane fragments
     /// ([`HypercubeAttentionMicrokernelSettings::listed`]) on one cube a worker, then two.
@@ -120,48 +119,6 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
                     })
             })
             .collect()
-    }
-
-    /// Its cubes' microkernel's, and the output an element at a time: the last arrival merges a
-    /// row's slots one element a unit, as the slots are written, and writes them as it holds them.
-    fn vectorize(
-        &self,
-        microkernel: &HypercubeAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
-        vectorization: &mut Vectorization<AttentionOperand>,
-    ) {
-        vectorization.require(VectorRequirement::Elementwise {
-            operand: AttentionOperand::Out,
-        });
-        microkernel.vectorize(&partitioning.cube_space(), vectorization);
-    }
-
-    /// Its cubes' microkernel's, over one cube's run as if it were one box's keys: a run reads as
-    /// many steps of keys and values as that, whichever boxes they lie in, and leaves a partial
-    /// for each box it shares, which is at most two.
-    fn estimate(
-        &self,
-        problem: &AttentionRoutineProblem,
-        blueprint: &HypercubeStreamFragmentAttentionRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        let partitioning = &blueprint.partitioning;
-        let cube = partitioning.cube_space();
-        let step = partitioning.stage().extent(S);
-        let boxes = problem.batch * problem.num_kv_heads * partitioning.boxes();
-        let line = boxes * problem.seq_kv.div_ceil(step);
-        let run = line.div_ceil(partitioning.cubes()) * step;
-        let run_space = Space::new(
-            &cube
-                .extents()
-                .into_iter()
-                .map(|(axis, extent)| (axis, if axis == S { run } else { extent }))
-                .collect::<Vec<_>>(),
-        );
-        blueprint
-            .microkernel
-            .estimate(&problem.work_item(), &run_space, grid.planes(), estimate);
     }
 
     /// The best hypercube of plane fragments at the settings, its grid the device's workers times
@@ -214,6 +171,52 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
             storage,
         );
         Ok((blueprint, grid))
+    }
+}
+
+impl HypercubeStreamFragmentAttentionRoutine {
+    /// Its cubes' microkernel's, and the output an element at a time: the last arrival merges a
+    /// row's slots one element a unit, as the slots are written, and writes them as it holds them.
+    fn vectorize(
+        &self,
+        microkernel: &HypercubeAttentionMicrokernel,
+        partitioning: &AttentionPartitioning,
+        vectorization: &mut Vectorization<AttentionOperand>,
+    ) {
+        vectorization.require(VectorRequirement::Elementwise {
+            operand: AttentionOperand::Out,
+        });
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
+    }
+}
+
+impl EstimatedRoutine for HypercubeStreamFragmentAttentionRoutine {
+    /// Its cubes' microkernel's, over one cube's run as if it were one box's keys: a run reads as
+    /// many steps of keys and values as that, whichever boxes they lie in, and leaves a partial
+    /// for each box it shares, which is at most two.
+    fn estimate(
+        &self,
+        problem: &AttentionRoutineProblem,
+        blueprint: &HypercubeStreamFragmentAttentionRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        let partitioning = &blueprint.partitioning;
+        let cube = partitioning.cube_space();
+        let step = partitioning.stage().extent(S);
+        let boxes = problem.batch * problem.num_kv_heads * partitioning.boxes();
+        let line = boxes * problem.seq_kv.div_ceil(step);
+        let run = line.div_ceil(partitioning.cubes()) * step;
+        let run_space = Space::new(
+            &cube
+                .extents()
+                .into_iter()
+                .map(|(axis, extent)| (axis, if axis == S { run } else { extent }))
+                .collect::<Vec<_>>(),
+        );
+        blueprint
+            .microkernel
+            .estimate(&problem.work_item(), &run_space, grid.planes(), estimate);
     }
 }
 

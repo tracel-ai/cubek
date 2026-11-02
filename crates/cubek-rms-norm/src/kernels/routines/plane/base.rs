@@ -16,7 +16,7 @@ use cubek_microkernel::rms_norm::{D, R, RmsNormOperand, RmsNormPartitioning};
 use cubek_microkernel::row_store::{PACKED_STORE_NEEDS_A_CUBE, RowStore};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// The norm with every row owned by a plane of the launch, which groups its planes in cubes of
 /// several, consecutive rows a cube. Each plane reads its row once and sums its lanes' partials
@@ -55,10 +55,9 @@ pub type PlaneRmsNormRoutineBlueprint = RmsNormBlueprint<PlaneRmsNormMicrokernel
 
 impl Routine for PlaneRmsNormRoutine {
     type Problem = RmsNormRoutineProblem;
-    type Microkernel = PlaneRmsNormMicrokernel;
     type Settings = PlaneRmsNormRoutineSettings;
     type Blueprint = PlaneRmsNormRoutineBlueprint;
-    type Partitioning = RmsNormPartitioning;
+    type Grid = Grid;
 
     /// Planes a cube, the one axis this routine has: one, which spreads a few rows over the most
     /// cubes, to eight, which spawns the fewest for a prompt's many.
@@ -70,35 +69,6 @@ impl Routine for PlaneRmsNormRoutine {
                 ..Self::Settings::DEFAULT
             })
             .collect()
-    }
-
-    /// Nothing of its own: it walks the launch's planes, and its microkernel makes every access.
-    fn vectorize(
-        &self,
-        microkernel: &PlaneRmsNormMicrokernel,
-        _: &RmsNormPartitioning,
-        vectorization: &mut Vectorization<RmsNormOperand>,
-    ) {
-        microkernel.vectorize(&(), vectorization);
-    }
-
-    /// Each cube reads its planes' rows once, straight from global memory, the weight once, and
-    /// writes the rows once. Then its microkernel, for the work.
-    fn estimate(
-        &self,
-        problem: &RmsNormRoutineProblem,
-        blueprint: &PlaneRmsNormRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        let rows = blueprint.partitioning.cube_box().extent(R);
-        estimate.staging = Some(problem.cube_staging(RmsNormCubeRows {
-            rows,
-            run: problem.dim,
-        }));
-        blueprint
-            .microkernel
-            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 
     /// The plane is launched as wide as the device commits to, its lanes summing across exactly
@@ -130,6 +100,39 @@ impl Routine for PlaneRmsNormRoutine {
             RmsNormBlueprint::new(hw, problem, microkernel, partitioning, vectorization)
                 .planned_at(microkernel.width)?;
         Ok((blueprint, grid))
+    }
+}
+
+impl PlaneRmsNormRoutine {
+    /// Nothing of its own: it walks the launch's planes, and its microkernel makes every access.
+    fn vectorize(
+        &self,
+        microkernel: &PlaneRmsNormMicrokernel,
+        _: &RmsNormPartitioning,
+        vectorization: &mut Vectorization<RmsNormOperand>,
+    ) {
+        microkernel.vectorize(&(), vectorization);
+    }
+}
+
+impl EstimatedRoutine for PlaneRmsNormRoutine {
+    /// Each cube reads its planes' rows once, straight from global memory, the weight once, and
+    /// writes the rows once. Then its microkernel, for the work.
+    fn estimate(
+        &self,
+        problem: &RmsNormRoutineProblem,
+        blueprint: &PlaneRmsNormRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        let rows = blueprint.partitioning.cube_box().extent(R);
+        estimate.staging = Some(problem.cube_staging(RmsNormCubeRows {
+            rows,
+            run: problem.dim,
+        }));
+        blueprint
+            .microkernel
+            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 }
 

@@ -2,10 +2,10 @@ use cubecl::tile::launch::Refusal;
 use cubecl_environment::sync::Mutex;
 
 use crate::Hardware;
-use crate::routine::{Grid, Routine};
+use crate::routine::Routine;
 
 /// What [`prepare`](Routine::prepare) answers: the launch, or why the routine declines it.
-type Prepared<R> = Result<(<R as Routine>::Blueprint, Grid), Refusal>;
+type Prepared<R> = Result<(<R as Routine>::Blueprint, <R as Routine>::Grid), Refusal>;
 
 /// The launches one routine prepared at one setting on one device, per problem: what a caller
 /// that launches the same problem again and again reads instead of preparing it again.

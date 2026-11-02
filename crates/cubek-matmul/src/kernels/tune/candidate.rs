@@ -10,7 +10,7 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::matmul_axes::{K, M, N};
-use cubek_std::routine::{PreparedLaunches, Routine};
+use cubek_std::routine::{Grid, PreparedLaunches, Routine};
 use cubek_std::{Hardware, Instructions, manual_mma};
 use std::sync::Arc;
 
@@ -118,7 +118,7 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
 
 impl<R, M: MatmulMicrokernel, SM> MatmulRoutineCandidate<R>
 where
-    R: Routine<Problem = MatmulRoutineProblem, Microkernel = M, Blueprint = MatmulBlueprint<M, SM>>,
+    R: Routine<Problem = MatmulRoutineProblem, Grid = Grid, Blueprint = MatmulBlueprint<M, SM>>,
 {
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// key names a packed input, which a float routine does not read, or the routine declines the
@@ -167,7 +167,7 @@ where
 
 impl<R, M: MatmulMicrokernel, SM: PartialEq> TuneCandidate for MatmulRoutineCandidate<R>
 where
-    R: Routine<Problem = MatmulRoutineProblem, Microkernel = M, Blueprint = MatmulBlueprint<M, SM>>,
+    R: Routine<Problem = MatmulRoutineProblem, Grid = Grid, Blueprint = MatmulBlueprint<M, SM>>,
 {
     type Strategy = R::Settings;
     type Key = MatmulTuneKey;

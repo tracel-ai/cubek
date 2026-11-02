@@ -17,7 +17,7 @@ use cubek_std::routine::{Grid, Routine};
 /// dispatches through any destination — and the launches around those are written once, on its
 /// candidate ([`RmsNormRoutineCandidate`](crate::kernels::RmsNormRoutineCandidate)).
 pub trait RmsNormRoutine<M>:
-    Routine<Problem = RmsNormRoutineProblem, Microkernel = M, Blueprint = RmsNormBlueprint<M>>
+    Routine<Problem = RmsNormRoutineProblem, Grid = Grid, Blueprint = RmsNormBlueprint<M>>
 {
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`, its output reached
     /// through `O`, each row's mean square shifted by `epsilon`.

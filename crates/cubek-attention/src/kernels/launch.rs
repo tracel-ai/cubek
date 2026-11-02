@@ -13,7 +13,7 @@ use cubek_std::routine::{Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 /// A routine states what is its own, how it places its microkernel's work items and the kernel it
 /// dispatches, and the launch around those is written once, here.
 pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
-    Routine<Problem = AttentionRoutineProblem, Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
+    Routine<Problem = AttentionRoutineProblem, Grid = Grid, Blueprint = AttentionBlueprint<M, SM>>
 {
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`.
     fn dispatch(
@@ -74,7 +74,7 @@ mod tests {
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::microkernel::KernelEstimate;
-    use cubek_std::routine::EstimatedProblem;
+    use cubek_std::routine::{EstimatedProblem, EstimatedRoutine};
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
     const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -124,7 +124,11 @@ mod tests {
         })
     }
 
-    fn assert_every_estimate_is_whole<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+    fn assert_every_estimate_is_whole<
+        M: AttentionMicrokernel,
+        SM,
+        R: AttentionRoutine<M, SM> + EstimatedRoutine,
+    >(
         routine: R,
     ) {
         let hw = &m2_pro();

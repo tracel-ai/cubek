@@ -11,7 +11,7 @@ use cubek_microkernel::attention::cube::{
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// Attention with every cube owning a box of queries of some heads of the group, and walking
 /// nothing else: the cube microkernel stages the keys and values once for its planes, each plane
@@ -55,10 +55,9 @@ impl core::fmt::Display for CubeStagedAttentionRoutineSettings {
 
 impl Routine for CubeStagedAttentionRoutine {
     type Problem = AttentionRoutineProblem;
-    type Microkernel = CubeAttentionMicrokernel;
     type Settings = CubeStagedAttentionRoutineSettings;
     type Blueprint = CubeStagedAttentionRoutineBlueprint;
-    type Partitioning = AttentionPartitioning;
+    type Grid = Grid;
 
     /// Its microkernel's settings over plane fragments
     /// ([`CubeAttentionMicrokernelSettings::listed`]) in query order, then the first of them, its
@@ -79,32 +78,6 @@ impl Routine for CubeStagedAttentionRoutine {
             })
             .chain(last_first)
             .collect()
-    }
-
-    /// Nothing of its own: it walks cubes, and its microkernel makes every access.
-    fn vectorize(
-        &self,
-        microkernel: &CubeAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
-        vectorization: &mut Vectorization<AttentionOperand>,
-    ) {
-        microkernel.vectorize(&partitioning.cube_space(), vectorization);
-    }
-
-    /// Nothing of its own: the cube microkernel places the staging and its planes the work.
-    fn estimate(
-        &self,
-        problem: &AttentionRoutineProblem,
-        blueprint: &CubeStagedAttentionRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        blueprint.microkernel.estimate(
-            &problem.work_item(),
-            &blueprint.partitioning.cube_space(),
-            grid.planes(),
-            estimate,
-        );
     }
 
     /// The best cube at the settings, a cube a box, holding a plane for every
@@ -151,6 +124,36 @@ impl Routine for CubeStagedAttentionRoutine {
             storage,
         );
         Ok((blueprint, grid))
+    }
+}
+
+impl CubeStagedAttentionRoutine {
+    /// Nothing of its own: it walks cubes, and its microkernel makes every access.
+    fn vectorize(
+        &self,
+        microkernel: &CubeAttentionMicrokernel,
+        partitioning: &AttentionPartitioning,
+        vectorization: &mut Vectorization<AttentionOperand>,
+    ) {
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
+    }
+}
+
+impl EstimatedRoutine for CubeStagedAttentionRoutine {
+    /// Nothing of its own: the cube microkernel places the staging and its planes the work.
+    fn estimate(
+        &self,
+        problem: &AttentionRoutineProblem,
+        blueprint: &CubeStagedAttentionRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        blueprint.microkernel.estimate(
+            &problem.work_item(),
+            &blueprint.partitioning.cube_space(),
+            grid.planes(),
+            estimate,
+        );
     }
 }
 

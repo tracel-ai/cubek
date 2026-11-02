@@ -11,7 +11,7 @@ use cubek_microkernel::rms_norm::cube::{CubeRmsNormMicrokernel, CubeRmsNormMicro
 use cubek_microkernel::rms_norm::{R, RmsNormOperand, RmsNormPartitioning};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// The norm with every row owned by a cube, its planes each summing a contiguous run of the row
 /// and meeting once in shared memory. What a single row of the model's width wants: more units
@@ -42,10 +42,9 @@ pub type CubeRmsNormRoutineBlueprint = RmsNormBlueprint<CubeRmsNormMicrokernel>;
 
 impl Routine for CubeRmsNormRoutine {
     type Problem = RmsNormRoutineProblem;
-    type Microkernel = CubeRmsNormMicrokernel;
     type Settings = CubeRmsNormRoutineSettings;
     type Blueprint = CubeRmsNormRoutineBlueprint;
-    type Partitioning = RmsNormPartitioning;
+    type Grid = Grid;
 
     /// Its microkernel's settings ([`CubeRmsNormMicrokernel::settings`]): it has no knob of its own.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
@@ -53,35 +52,6 @@ impl Routine for CubeRmsNormRoutine {
             .into_iter()
             .map(|microkernel| Self::Settings { microkernel })
             .collect()
-    }
-
-    /// Nothing of its own: it walks cubes, and its microkernel walks their planes and makes every
-    /// access.
-    fn vectorize(
-        &self,
-        microkernel: &CubeRmsNormMicrokernel,
-        _: &RmsNormPartitioning,
-        vectorization: &mut Vectorization<RmsNormOperand>,
-    ) {
-        microkernel.vectorize(&(), vectorization);
-    }
-
-    /// Each cube reads its row once, a plane a run, straight from global memory, the weight once,
-    /// and writes the row once. Then its microkernel, for the work.
-    fn estimate(
-        &self,
-        problem: &RmsNormRoutineProblem,
-        blueprint: &CubeRmsNormRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        estimate.staging = Some(problem.cube_staging(RmsNormCubeRows {
-            rows: 1,
-            run: blueprint.microkernel.plane.run,
-        }));
-        blueprint
-            .microkernel
-            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 
     /// The planes are launched as wide as the device commits to, along `y`, one run of the row
@@ -114,6 +84,39 @@ impl Routine for CubeRmsNormRoutine {
             RmsNormBlueprint::new(hw, problem, microkernel, partitioning, vectorization)
                 .planned_at(microkernel.plane.width)?;
         Ok((blueprint, grid))
+    }
+}
+
+impl CubeRmsNormRoutine {
+    /// Nothing of its own: it walks cubes, and its microkernel walks their planes and makes every
+    /// access.
+    fn vectorize(
+        &self,
+        microkernel: &CubeRmsNormMicrokernel,
+        _: &RmsNormPartitioning,
+        vectorization: &mut Vectorization<RmsNormOperand>,
+    ) {
+        microkernel.vectorize(&(), vectorization);
+    }
+}
+
+impl EstimatedRoutine for CubeRmsNormRoutine {
+    /// Each cube reads its row once, a plane a run, straight from global memory, the weight once,
+    /// and writes the row once. Then its microkernel, for the work.
+    fn estimate(
+        &self,
+        problem: &RmsNormRoutineProblem,
+        blueprint: &CubeRmsNormRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        estimate.staging = Some(problem.cube_staging(RmsNormCubeRows {
+            rows: 1,
+            run: blueprint.microkernel.plane.run,
+        }));
+        blueprint
+            .microkernel
+            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 }
 

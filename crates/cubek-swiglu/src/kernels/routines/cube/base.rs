@@ -12,7 +12,7 @@ use cubek_microkernel::swiglu::cube::{CubeSwigluMicrokernel, CubeSwigluMicrokern
 use cubek_microkernel::swiglu::{H, R, SwigluOperand, SwigluPartitioning};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// The gate with every run of a row taken by a group of units, a cube holding several groups side
 /// by side, each on a row of its own. Into a plain output it asks nothing of the hardware, so it
@@ -97,10 +97,9 @@ pub type CubeSwigluRoutineBlueprint = SwigluBlueprint<CubeSwigluMicrokernel>;
 
 impl Routine for CubeSwigluRoutine {
     type Problem = SwigluRoutineProblem;
-    type Microkernel = CubeSwigluMicrokernel;
     type Settings = CubeSwigluRoutineSettings;
     type Blueprint = CubeSwigluRoutineBlueprint;
-    type Partitioning = SwigluPartitioning;
+    type Grid = Grid;
 
     /// Each of its microkernel's settings ([`CubeSwigluMicrokernel::settings`]) a group a cube,
     /// then the smaller groups several a cube: a prompt's many rows, more of them a cube.
@@ -117,31 +116,6 @@ impl Routine for CubeSwigluRoutine {
                 on(CubeSwigluMicrokernelSettings::LONG_RUNS, 4),
             ])
             .collect()
-    }
-
-    /// Nothing of its own: it walks cubes and groups, and its microkernel makes every access.
-    fn vectorize(
-        &self,
-        microkernel: &CubeSwigluMicrokernel,
-        _: &SwigluPartitioning,
-        vectorization: &mut Vectorization<SwigluOperand>,
-    ) {
-        microkernel.vectorize(&(), vectorization);
-    }
-
-    /// Each cube reads its groups' runs of either half once, straight from global memory, and
-    /// writes them once. Then its microkernel, for the work.
-    fn estimate(
-        &self,
-        problem: &SwigluRoutineProblem,
-        blueprint: &CubeSwigluRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        estimate.staging = Some(problem.cube_staging(&blueprint.partitioning.cube_box()));
-        blueprint
-            .microkernel
-            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 
     /// A group is launched as the cube's `x`, its units the group's, and the groups along `y`: the
@@ -184,6 +158,35 @@ impl Routine for CubeSwigluRoutine {
         let blueprint = SwigluBlueprint::new(hw, problem, microkernel, partitioning, vectorization)
             .planned_at(microkernel.width)?;
         Ok((blueprint, grid))
+    }
+}
+
+impl CubeSwigluRoutine {
+    /// Nothing of its own: it walks cubes and groups, and its microkernel makes every access.
+    fn vectorize(
+        &self,
+        microkernel: &CubeSwigluMicrokernel,
+        _: &SwigluPartitioning,
+        vectorization: &mut Vectorization<SwigluOperand>,
+    ) {
+        microkernel.vectorize(&(), vectorization);
+    }
+}
+
+impl EstimatedRoutine for CubeSwigluRoutine {
+    /// Each cube reads its groups' runs of either half once, straight from global memory, and
+    /// writes them once. Then its microkernel, for the work.
+    fn estimate(
+        &self,
+        problem: &SwigluRoutineProblem,
+        blueprint: &CubeSwigluRoutineBlueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        estimate.staging = Some(problem.cube_staging(&blueprint.partitioning.cube_box()));
+        blueprint
+            .microkernel
+            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 }
 

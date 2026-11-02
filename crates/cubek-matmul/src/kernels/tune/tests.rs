@@ -308,7 +308,7 @@ mod candidate {
         use cubek_std::Hardware;
         use cubek_std::devices;
         use cubek_std::microkernel::KernelEstimate;
-        use cubek_std::routine::EstimatedProblem;
+        use cubek_std::routine::{EstimatedProblem, EstimatedRoutine};
 
         const F16: ElemType = ElemType::Float(FloatKind::F16);
         const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -331,7 +331,11 @@ mod candidate {
         /// Every part of `routine`'s estimate at every setting it lists, on an aligned product and
         /// a ragged one: each owner set its own, and the cubes perform at least what the problem
         /// asks.
-        fn assert_every_estimate_is_whole<M: MatmulMicrokernel, SM, R: MatmulRoutine<M, SM>>(
+        fn assert_every_estimate_is_whole<
+            M: MatmulMicrokernel,
+            SM,
+            R: MatmulRoutine<M, SM> + EstimatedRoutine,
+        >(
             routine: R,
         ) {
             let hw = &strix_halo();
@@ -378,7 +382,7 @@ mod candidate {
         use cubek_std::Hardware;
         use cubek_std::devices;
         use cubek_std::microkernel::KernelEstimate;
-        use cubek_std::routine::EstimatedProblem;
+        use cubek_std::routine::{EstimatedProblem, EstimatedRoutine};
 
         const F16: ElemType = ElemType::Float(FloatKind::F16);
 
@@ -398,7 +402,12 @@ mod candidate {
         /// Every part of `routine`'s estimate at every setting it lists, on decode projections and
         /// a ragged product: each owner set its own, and the cubes perform at least what the
         /// problem asks.
-        fn assert_every_estimate_is_whole<Mk: MatmulMicrokernel, R: MatmulRoutine<Mk>>(routine: R) {
+        fn assert_every_estimate_is_whole<
+            Mk: MatmulMicrokernel,
+            R: MatmulRoutine<Mk> + EstimatedRoutine,
+        >(
+            routine: R,
+        ) {
             let hw = &rtx2060();
             let mut prepared = 0;
             for settings in routine.settings(hw) {

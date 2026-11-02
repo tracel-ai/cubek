@@ -1,10 +1,9 @@
 use crate::kernels::{MatmulRoutineProblem, PlaneDequantizeMatmulRoutine};
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
-use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{Grid, Routine};
+use cubek_std::microkernel::KernelEstimate;
+use cubek_std::routine::{EstimatedRoutine, Grid, Routine};
 
 /// `out = lhs · rhs` of packed inputs in launches of their own: each packed input decoded into a
 /// float one ([`PlaneDequantizeMatmulRoutine`]), then the float product's routine `R` on them. The
@@ -73,12 +72,12 @@ where
     R: Routine<Problem = MatmulRoutineProblem>,
 {
     type Problem = MatmulRoutineProblem;
-    type Microkernel = R::Microkernel;
     type Settings = DequantizedMatmulRoutineSettings<R::Settings>;
     /// The float routine's: the decode is prepared again from the problem wherever it is needed,
     /// at its lead, so it is no decision of this routine's.
     type Blueprint = R::Blueprint;
-    type Partitioning = R::Partitioning;
+    /// The float routine's: the decode's is a launch of its own.
+    type Grid = R::Grid;
 
     /// The float routine's settings, each after the decode at its lead.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
@@ -89,17 +88,30 @@ where
             .collect()
     }
 
-    /// The float routine's: the decode's launch makes its own accesses.
-    fn vectorize(
+    /// The float routine at `settings` over the decoded inputs, where the decode of each packed
+    /// input at its lead prepares too. The grid is the float routine's.
+    fn prepare(
         &self,
-        microkernel: &R::Microkernel,
-        partitioning: &R::Partitioning,
-        vectorization: &mut Vectorization<<R::Microkernel as Microkernel>::Operand>,
-    ) {
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        settings: &Self::Settings,
+    ) -> Result<(Self::Blueprint, Self::Grid), Refusal> {
+        for decode in Self::decodes(problem) {
+            PlaneDequantizeMatmulRoutine.prepare(
+                hw,
+                &decode,
+                &PlaneDequantizeMatmulRoutine::SETTINGS,
+            )?;
+        }
         self.dense
-            .vectorize(microkernel, partitioning, vectorization);
+            .prepare(hw, &Self::dense_problem(problem), &settings.dense)
     }
+}
 
+impl<R> EstimatedRoutine for DequantizedMatmulRoutine<R>
+where
+    R: EstimatedRoutine<Problem = MatmulRoutineProblem>,
+{
     /// The float routine's launch, which this kernel's grid is: the decode's is a launch of its
     /// own.
     fn estimate(
@@ -111,24 +123,5 @@ where
     ) {
         self.dense
             .estimate(&Self::dense_problem(problem), blueprint, grid, estimate);
-    }
-
-    /// The float routine at `settings` over the decoded inputs, where the decode of each packed
-    /// input at its lead prepares too. The grid is the float routine's.
-    fn prepare(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        for decode in Self::decodes(problem) {
-            PlaneDequantizeMatmulRoutine.prepare(
-                hw,
-                &decode,
-                &PlaneDequantizeMatmulRoutine::SETTINGS,
-            )?;
-        }
-        self.dense
-            .prepare(hw, &Self::dense_problem(problem), &settings.dense)
     }
 }
