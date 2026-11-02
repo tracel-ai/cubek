@@ -68,7 +68,7 @@ where
                 .prepare(&self.routine, &self.hw, tensors.problem(), &self.settings)?;
         let binding = tensors.bind(&blueprint, &grid);
         self.routine.dispatch(&tensors, binding, blueprint, grid);
-        Ok(tensors.into_walked())
+        Ok(tensors.into_outputs())
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the

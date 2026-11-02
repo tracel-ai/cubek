@@ -24,7 +24,7 @@ benchmarks = ["std", "dep:cubek-test-utils", "cubecl/test-runtime"]
 
 [dependencies]
 cubek-matmul = { workspace = true, features = ["tiled"] }
-cubek-microkernel = { workspace = true, features = ["gated_delta"] }
+cubek-microkernel = { workspace = true, features = ["gated-delta"] }
 cubek-std = { workspace = true }
 
 cubecl = { workspace = true, features = ["stdlib", "tile"] }

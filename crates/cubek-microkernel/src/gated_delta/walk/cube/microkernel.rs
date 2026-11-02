@@ -1,7 +1,7 @@
 use super::base::CubeGatedDeltaWalkMicrokernel;
 use super::held_state::HeldState;
 use super::unit_partials::UnitPartials;
-use crate::gated_delta::POSITION;
+use crate::gated_delta::{POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -32,11 +32,12 @@ pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
 ) {
     let width = N::value();
     let parts = comptime!(microkernel.columns / width);
-    // A run's units lie along `x` and the cube's runs along `y`, as its resources state them.
-    let (unit, run_slot) = (UNIT_POS_X as usize, UNIT_POS_Y as usize);
-    let mut partials = UnitPartials::<N>::new(run_slot, unit, runs, microkernel);
+    // No level cuts a run's key rows, so its units are read off `x` by hand.
+    let unit = UNIT_POS_X as usize;
     let mut write = Array::<Vector<f32, N>>::new(parts);
     for run in cube {
+        let mut partials =
+            UnitPartials::<N>::new(run.coord(VALUE_FEATURE), unit, runs, microkernel);
         let mut held = HeldState::<N>::load(&state.at(&run), unit, microkernel);
         for step in run.walk() {
             let (keys, queries) = (key.at(&step), query.at(&step));
@@ -54,8 +55,8 @@ pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
             held.write_and_answer(&keys, &queries, &write, &mut partials);
             partials.sum(1usize);
             if unit == 0 {
-                let mut answered = out.at(&step);
-                let mut writes = answered.flat_mut::<E, N>();
+                let mut out_window = out.at(&step);
+                let mut writes = out_window.flat_mut::<E, N>();
                 #[unroll]
                 for part in 0..parts {
                     writes.write(part, Vector::<E, N>::cast_from(partials.get(part)));

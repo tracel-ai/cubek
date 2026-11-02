@@ -3,24 +3,31 @@
 use crate::kernels::walk::tune::GatedDeltaWalkCandidate;
 use crate::kernels::walk::tune::key::GatedDeltaWalkKey;
 use crate::kernels::walk::{
-    CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkInputs,
-    GatedDeltaWalkOutputs, GatedDeltaWalkProblem,
+    CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GATED_DELTA_WALK_ELEMENT,
+    GatedDeltaWalkInputs, GatedDeltaWalkOutputs, GatedDeltaWalkProblem,
 };
 use core::num::NonZeroUsize;
+use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tune::{LocalTuner, Tunable, local_tuner};
 use cubecl::{CubeTuneId, Device};
+use cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE;
 use cubek_microkernel::gated_delta::GatedDeltaHeads;
 use cubek_std::Hardware;
 use cubek_std::autotune::{Autotune, GroupPriority};
 
-/// The walk of `inputs` through the autotune on `device`. `tile` is the priority of the cube
-/// routine's group; under it sits the floor, which serves every admitted problem.
+/// The walk of `inputs` through the autotune on `device`. `microkernel` is the priority of the
+/// cube routine's group; under it sits the floor, which serves every admitted problem.
+///
+/// # Panics
+///
+/// On a problem [`serves`] declines: every candidate declines it, and the autotune has nothing to
+/// run.
 pub fn launch_tuned(
     device: &Device,
     inputs: GatedDeltaWalkInputs,
-    tile: GroupPriority,
+    microkernel: GroupPriority,
 ) -> GatedDeltaWalkOutputs {
     let client = inputs.client.clone();
     static TUNER: LocalTuner<GatedDeltaWalkKey, CubeTuneId> = local_tuner!("gated-delta-walk");
@@ -32,7 +39,7 @@ pub fn launch_tuned(
             Autotune::<GatedDeltaWalkKey, GatedDeltaWalkInputs, GatedDeltaWalkOutputs>::new(
                 |inputs: &GatedDeltaWalkInputs| GatedDeltaWalkKey::from(inputs),
             );
-        let group = table.group("tile", tile);
+        let group = table.group("microkernel", microkernel);
         let floor = GatedDeltaWalkCandidate::new(
             CubeGatedDeltaWalkRoutine,
             CubeGatedDeltaWalkRoutineSettings::FLOOR,
@@ -44,8 +51,8 @@ pub fn launch_tuned(
                 GatedDeltaWalkCandidate::list(CubeGatedDeltaWalkRoutine, &hw),
                 GatedDeltaWalkCandidate::run,
             )
-            // The floor, which every admitted problem prepares: taking `tile` out of the table
-            // stops the family being measured, not being served.
+            // The floor, which every admitted problem prepares: taking `microkernel` out of the
+            // table stops the family being measured, not being served.
             .floor(Tunable::new(
                 "cube-gated-delta-walk-floor",
                 move |inputs: GatedDeltaWalkInputs| floor.run(inputs),
@@ -56,19 +63,31 @@ pub fn launch_tuned(
     TUNER.execute(&id, &client, tunables, inputs)
 }
 
-/// Whether the table serves a layer of `heads` and operands of `element` on `hw`: the element is a
-/// plain `f32` float (a packed one is declined, for the caller to unpack) and the problem is
-/// admitted, which includes the floor preparing it at one sequence and one position. An `Ok` is the
-/// guarantee that [`launch_tuned`] runs the layer, whichever candidate wins, for as many sequences
-/// and positions as the device's grid holds.
+/// Whether the table serves a layer of `heads` with the output written at `output_element` on
+/// `hw`: the inputs are `f32`, the output is a plain float the walk is verified at (a packed one is
+/// declined, for the caller to unpack) that the device runs, and the problem is admitted, which
+/// includes the floor preparing it at one sequence and one position. An `Ok` is the guarantee that
+/// [`launch_tuned`] runs the layer, whichever candidate wins, for as many sequences and positions
+/// as the device's grid holds.
 ///
 /// # Errors
 ///
 /// What the element or the layer's problem is declined with
-/// ([`GatedDeltaWalkProblem::admit_element`], [`GatedDeltaWalkProblem::admit`]).
-pub fn serves(hw: &Hardware, heads: GatedDeltaHeads, element: ElemType) -> Result<(), Refusal> {
-    GatedDeltaWalkProblem::admit_element(element)?;
-    GatedDeltaWalkProblem::dense(1, 1, heads, element, NonZeroUsize::MIN).admit(hw)
+/// ([`GatedDeltaWalkProblem::admit_output`], [`ELEMENT_NOT_ON_DEVICE`],
+/// [`GatedDeltaWalkProblem::admit`]).
+pub fn serves(
+    hw: &Hardware,
+    heads: GatedDeltaHeads,
+    output_element: ElemType,
+) -> Result<(), Refusal> {
+    GatedDeltaWalkProblem::admit_output(output_element)?;
+    for element in [GATED_DELTA_WALK_ELEMENT, output_element] {
+        let usage = hw.properties.features.type_usage(element);
+        if !usage.is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer) {
+            return Err(ELEMENT_NOT_ON_DEVICE);
+        }
+    }
+    GatedDeltaWalkProblem::dense(1, 1, heads, output_element, NonZeroUsize::MIN).admit(hw)
 }
 
 #[cfg(test)]
@@ -82,6 +101,18 @@ mod tests {
     use cubek_std::devices;
 
     const F32: ElemType = ElemType::Float(FloatKind::F32);
+    const F16: ElemType = ElemType::Float(FloatKind::F16);
+
+    /// `hw` as a device that computes in and stores each of `elements`: the fixtures grant none.
+    fn running(mut hw: Hardware, elements: &[ElemType]) -> Hardware {
+        for element in elements {
+            devices::features(&mut hw)
+                .types
+                .elem
+                .insert(*element, TypeUsage::Arithmetic | TypeUsage::Buffer);
+        }
+        hw
+    }
 
     fn heads() -> GatedDeltaHeads {
         GatedDeltaHeads {
@@ -96,18 +127,31 @@ mod tests {
     /// buffers declines it by name.
     #[test]
     fn the_table_serves_what_admission_admits() {
-        assert_eq!(serves(&devices::h100(), heads(), F32), Ok(()));
+        let h100 = running(devices::h100(), &[F32, F16]);
+        assert_eq!(serves(&h100, heads(), F32), Ok(()));
+        assert_eq!(serves(&h100, heads(), F16), Ok(()));
         for hw in [
             devices::wgpu_no_subgroups(),
             devices::rdna_range(),
             devices::strix_halo(),
         ] {
             assert_eq!(
-                serves(&hw, heads(), F32),
+                serves(&running(hw.clone(), &[F32, F16]), heads(), F32),
                 Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE),
                 "{hw:?}"
             );
         }
+    }
+
+    /// An output element the device does not run is declined by name, so [`launch_tuned`] is never
+    /// reached with a layer none of its candidates can launch.
+    #[test]
+    fn an_element_the_device_does_not_run_is_declined() {
+        let no_f16 = running(devices::h100(), &[F32]);
+        assert_eq!(serves(&no_f16, heads(), F32), Ok(()));
+        assert_eq!(serves(&no_f16, heads(), F16), Err(ELEMENT_NOT_ON_DEVICE));
+        let no_f32 = running(devices::h100(), &[F16]);
+        assert_eq!(serves(&no_f32, heads(), F16), Err(ELEMENT_NOT_ON_DEVICE));
     }
 
     /// A layer with no key head is declined, not divided by.
@@ -118,7 +162,7 @@ mod tests {
             ..heads()
         };
         assert_eq!(
-            serves(&devices::h100(), heads, F32),
+            serves(&running(devices::h100(), &[F32]), heads, F32),
             Err(GATED_DELTA_WALK_HEADS_EMPTY)
         );
     }
@@ -127,7 +171,11 @@ mod tests {
     #[test]
     fn a_packed_operand_is_declined() {
         assert_eq!(
-            serves(&devices::h100(), heads(), ElemType::UInt(UIntKind::U32)),
+            serves(
+                &running(devices::h100(), &[F32]),
+                heads(),
+                ElemType::UInt(UIntKind::U32)
+            ),
             Err(GATED_DELTA_WALK_ELEMENT_NOT_FLOAT)
         );
     }

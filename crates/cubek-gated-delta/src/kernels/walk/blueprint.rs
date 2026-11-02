@@ -10,7 +10,7 @@ use cubek_std::Hardware;
 
 /// The width the operands bind at on `hw`: to the requirements enqueued in `vectorization`, the
 /// binding adds its own, each operand's buffer alignment and where its view starts. The operands
-/// then bind at the widest width this device reads the element in that they all admit; the decay
+/// then bind at the widest width this device reads their elements in that they all admit; the decay
 /// and the strength, one scalar a position, at one.
 pub fn settled_width(
     hw: &Hardware,
@@ -30,17 +30,14 @@ pub fn settled_width(
     }
     vectorization.width(GatedDeltaWalkOperand::Value, |_| {
         hw.vector_ceiling(GATED_DELTA_WALK_ELEMENT)
-            .min(hw.vector_ceiling(problem.element))
+            .min(hw.vector_ceiling(problem.output_element))
     })
 }
 
 /// The element `operand` is bound at: the output's is the activations', every other's `f32`.
-pub fn operand_element(
-    operand: GatedDeltaWalkOperand,
-    problem: &GatedDeltaWalkProblem,
-) -> ElemType {
+fn operand_element(operand: GatedDeltaWalkOperand, problem: &GatedDeltaWalkProblem) -> ElemType {
     match operand {
-        GatedDeltaWalkOperand::Out => problem.element,
+        GatedDeltaWalkOperand::Out => problem.output_element,
         _ => GATED_DELTA_WALK_ELEMENT,
     }
 }
@@ -59,17 +56,14 @@ pub struct GatedDeltaWalkBlueprint<M> {
 }
 
 impl<M> GatedDeltaWalkBlueprint<M> {
-    /// `microkernel` placed by `partitioning`, `runs` a cube, its width settled
-    /// ([`settled_width`]) from what the routine and its microkernel enqueued in `vectorization`.
+    /// `microkernel` placed by `partitioning`, `runs` a cube, the operands bound at `width`
+    /// ([`settled_width`]).
     pub fn new(
-        hw: &Hardware,
-        problem: &GatedDeltaWalkProblem,
         microkernel: M,
         partitioning: GatedDeltaWalkPartitioning,
+        width: usize,
         runs: usize,
-        vectorization: Vectorization<GatedDeltaWalkOperand>,
     ) -> Self {
-        let width = settled_width(hw, problem, vectorization);
         Self {
             microkernel,
             partitioning,

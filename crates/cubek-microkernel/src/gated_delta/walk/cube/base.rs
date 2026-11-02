@@ -1,12 +1,16 @@
 use crate::gated_delta::GatedDeltaHeads;
 use crate::gated_delta::walk::GatedDeltaWalkOperand;
-use crate::registers::MAX_HELD_LINES_PER_UNIT;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
+
+/// The most vector lines of a row or a state a unit holds in registers: past it the registers, not
+/// the data, bound the kernel, and its unrolled walk takes longer to compile than the launch it
+/// serves takes to run.
+pub const MAX_HELD_LINES_PER_UNIT: usize = 16;
 
 /// A cube's runs of a head's value columns, `columns` of them a run, walked through every
 /// position one at a time by `units` units: unit `u` of a run holds key rows `u · rows ..` of the
@@ -39,8 +43,7 @@ pub struct CubeGatedDeltaWalkMicrokernelSettings {
 impl CubeGatedDeltaWalkMicrokernelSettings {
     /// 64 cells a unit: a 128-row head read four columns wide in runs of eight units.
     pub const DEFAULT: Self = Self::new(64);
-    /// The fewest cells whose lines stay within [`MAX_HELD_LINES_PER_UNIT`] at any width: what the
-    /// walk can always run.
+    /// The fewest cells whose lines stay within [`MAX_HELD_LINES_PER_UNIT`] at any width.
     pub const FLOOR: Self = Self::new(MAX_HELD_LINES_PER_UNIT);
 
     pub const fn new(cells: usize) -> Self {
@@ -98,8 +101,7 @@ impl Microkernel for CubeGatedDeltaWalkMicrokernel {
     }
 
     /// The units holding the cells the settings target, with no more rows a unit than
-    /// [`MAX_HELD_LINES_PER_UNIT`] lines at the widest read, and none past the head.
-    /// None where even
+    /// [`MAX_HELD_LINES_PER_UNIT`] lines at the widest read, and none past the head. None where even
     /// those units outnumber a cube's.
     fn candidates(
         hw: &Hardware,

@@ -2,9 +2,9 @@
 
 use cubecl::tile::launch::Refusal;
 
-/// The buffers a walk over states it owns needs a device to bind: one for each of its 8 operands,
-/// and one for the metadata buffer some runtimes bind beside them.
-pub const GATED_DELTA_WALK_OWNED_BINDING_BUFFERS: u32 = 8 + 1;
+/// The buffers a walk needs a device to bind: one for each of its 8 operands, and one for the
+/// metadata buffer some runtimes bind beside them.
+pub const GATED_DELTA_WALK_BINDING_BUFFERS: u32 = 8 + 1;
 
 /// What admission declines a problem with when it describes no head: a walk needs a key row and a
 /// value column to work on.
@@ -24,8 +24,8 @@ pub const GATED_DELTA_WALK_ELEMENT_NOT_FLOAT: Refusal = Refusal::Declined {
     why: "the gated delta walk reads plain float operands, not packed or integer ones",
 };
 
-/// What admission declines a float operand with that is not `f32`, the one element the walk is
-/// verified at.
+/// What admission declines a float with that the walk is not verified at: an input that is not
+/// `f32`, or an output that is not `f32`, `f16` or `bf16`.
 pub const GATED_DELTA_WALK_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
-    why: "the gated delta walk reads and writes f32 operands",
+    why: "the gated delta walk reads f32 inputs and writes f32, f16 or bf16 outputs",
 };

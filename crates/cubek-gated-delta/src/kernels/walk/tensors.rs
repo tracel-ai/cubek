@@ -11,7 +11,6 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Launcher, TileArgLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
-use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::gated_delta::walk::GatedDeltaWalkOperandMap;
 use cubek_microkernel::gated_delta::{
@@ -22,10 +21,10 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 /// The inputs of a walk, as a caller hands them: the queries and keys `[batch, positions,
 /// key_heads, key_features]`, the values `[batch, positions, value_heads, value_features]`, the
 /// decay and the strength `[batch, positions, value_heads]`, and the state `[batch, value_heads,
-/// key_features, value_features]`, `value_heads` a multiple of `key_heads`. Each is read where it
-/// lies, its rows padded or its view starting partway into a buffer included, the innermost axis of
-/// the wide ones contiguous; a padded row or a start off a whole read narrows the lines the walk
-/// reads.
+/// key_features, value_features]`, `value_heads` a multiple of `key_heads`. All six are `f32`. Each
+/// is read where it lies, its rows padded or its view starting partway into a buffer included, the
+/// innermost axis of the wide ones contiguous; a padded row or a start off a whole read narrows the
+/// lines the walk reads.
 #[derive(Clone)]
 pub struct GatedDeltaWalkInputs {
     /// The client every operand lives on.
@@ -36,8 +35,8 @@ pub struct GatedDeltaWalkInputs {
     pub decay: PlainTensor,
     pub strength: PlainTensor,
     pub state: PlainTensor,
-    /// The activations' element, which the output is written at.
-    pub element: ElemType,
+    /// The element the output is written at: the activations'.
+    pub output_element: ElemType,
     /// States kept for a rewind: the state after each of the last this many positions.
     pub kept: NonZeroUsize,
 }
@@ -52,15 +51,15 @@ impl core::fmt::Debug for GatedDeltaWalkInputs {
             .field("decay", &self.decay)
             .field("strength", &self.strength)
             .field("state", &self.state)
-            .field("element", &self.element)
+            .field("output_element", &self.output_element)
             .field("kept", &self.kept)
             .finish()
     }
 }
 
-/// What a walk leaves: what each position read, at the activations' element, `[batch, positions, value_heads,
-/// value_features]`, and the kept states, oldest first, `[kept, batch, value_heads, key_features,
-/// value_features]`.
+/// What a walk leaves: what each position read, at the activations' element, `[batch, positions,
+/// value_heads, value_features]`, and the kept states, oldest first, `[kept, batch, value_heads,
+/// key_features, value_features]`.
 #[derive(Clone)]
 pub struct GatedDeltaWalkOutputs {
     /// The client the outputs live on, which the autotune checks read two candidates through.
@@ -101,8 +100,9 @@ impl GatedDeltaWalkTensors {
     ///
     /// # Errors
     ///
-    /// [`GatedDeltaWalkProblem::admit_element`]'s refusals and [`ELEMENT_NOT_ON_DEVICE`], what the
-    /// routines decline whatever the device.
+    /// [`GatedDeltaWalkProblem::admit_output`]'s refusals for the output element,
+    /// [`GatedDeltaWalkProblem::admit_operand`]'s for an input not `f32`, and
+    /// [`ELEMENT_NOT_ON_DEVICE`]: what the routines decline whatever the device.
     ///
     /// # Panics
     ///
@@ -117,11 +117,11 @@ impl GatedDeltaWalkTensors {
             decay,
             strength,
             state,
-            element,
+            output_element,
             kept,
         } = inputs;
         let all = [&query, &key, &value, &decay, &strength, &state];
-        GatedDeltaWalkProblem::admit_element(element)?;
+        GatedDeltaWalkProblem::admit_output(output_element)?;
         for tensor in all {
             GatedDeltaWalkProblem::admit_operand(tensor.elem)?;
         }
@@ -129,9 +129,9 @@ impl GatedDeltaWalkTensors {
             return Err(ELEMENT_NOT_ON_DEVICE);
         }
         for tensor in [&query, &key, &value, &state] {
-            assert_eq!(
-                tensor.binding.strides.last(),
-                Some(&1),
+            let extent = tensor.shape().to_vec().last().copied();
+            assert!(
+                extent == Some(1) || tensor.binding.strides.last() == Some(&1),
                 "the innermost axis of an operand of the walk is contiguous"
             );
         }
@@ -178,16 +178,10 @@ impl GatedDeltaWalkTensors {
             strides.splice(head_axis..=head_axis, [stride * group, stride]);
             tensor.viewed(Metadata::new(shape, strides))
         };
-        let dense = |tensor: &PlainTensor, shape: &[usize]| {
-            tensor.viewed(Metadata::new(
-                shape.to_vec(),
-                row_major_contiguous_strides(shape),
-            ))
-        };
         let (out, out_plain) = PlainTensor::empty_contiguous(
             &client,
             Shape::from(vec![batch, positions, value_heads, value_features]),
-            element,
+            output_element,
         );
         if !out_plain.runs_on(&client) {
             return Err(ELEMENT_NOT_ON_DEVICE);
@@ -204,20 +198,14 @@ impl GatedDeltaWalkTensors {
             decay: grouped(&decay, 2),
             strength: grouped(&strength, 2),
             state: grouped(&state, 1),
-            out: dense(
-                &out_plain,
-                &[batch, positions, key_heads, group, value_features],
-            ),
-            kept: dense(
-                &kept_plain,
-                &[kept, batch, key_heads, group, key_features, value_features],
-            ),
+            out: grouped(&out_plain, 2),
+            kept: grouped(&kept_plain, 2),
         };
         let problem = GatedDeltaWalkProblem {
             batch,
             positions,
             heads,
-            element,
+            output_element,
             kept: NonZeroUsize::new(kept).expect("at least one state is kept"),
             alignments: GatedDeltaWalkOperandMap {
                 query: operands.query.elem_alignment(),
@@ -260,7 +248,7 @@ impl GatedDeltaWalkTensors {
     }
 
     /// The outputs, written.
-    pub fn into_walked(self) -> GatedDeltaWalkOutputs {
+    pub fn into_outputs(self) -> GatedDeltaWalkOutputs {
         GatedDeltaWalkOutputs {
             client: self.client,
             out: self.out,

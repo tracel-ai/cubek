@@ -122,6 +122,7 @@ jobs:
     needs:
       - publish-cubek-matmul
       - publish-cubek-microkernel
+      - publish-cubek-test-utils
       - publish-cubek-std
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v12
     with:

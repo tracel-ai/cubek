@@ -1,5 +1,5 @@
-//! The cube scope: a cube's runs of units each walk a run of a head's value columns through every
-//! position, their partial sums meeting in shared memory.
+//! The cube scope: a cube's runs of a head's value columns, each walked through every position by
+//! its units, whose partial sums meet in shared memory.
 
 mod base;
 mod held_state;

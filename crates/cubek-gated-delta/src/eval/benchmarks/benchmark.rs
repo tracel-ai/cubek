@@ -1,6 +1,6 @@
 use super::{GatedDeltaWalkSpec, GatedDeltaWalkStrategy};
 use crate::kernels::walk::{
-    CubeGatedDeltaWalkRoutine, GatedDeltaWalkInputs, GatedDeltaWalkRoutine, launch_tuned,
+    CubeGatedDeltaWalkRoutine, GatedDeltaWalkInputs, GatedDeltaWalkRoutine, launch_tuned, serves,
 };
 use core::num::NonZeroUsize;
 use cubecl::benchmark::{Benchmark, ProfileDuration, TimingMethod};
@@ -79,7 +79,7 @@ impl Benchmark for GatedDeltaWalkBench {
                 -0.2,
                 0.2,
             ),
-            element: f32::elem_type_native(),
+            output_element: f32::elem_type_native(),
             kept: NonZeroUsize::MIN,
         }
     }
@@ -94,6 +94,9 @@ impl Benchmark for GatedDeltaWalkBench {
                     .map_err(|why| format!("the lead does not serve this problem: {why:?}"))
             }
             GatedDeltaWalkStrategy::Tuned => {
+                let hw = Hardware::from_client(&self.client);
+                serves(&hw, self.spec.heads, f32::elem_type_native())
+                    .map_err(|why| format!("the table does not serve this problem: {why:?}"))?;
                 launch_tuned(&self.device, inputs, GroupPriority::DEFAULT);
                 Ok(())
             }

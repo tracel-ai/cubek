@@ -1,4 +1,4 @@
-//! The cube scope: a cube's runs of units each walk a run of a head's value columns.
+//! The cube scope: a cube's runs of a head's value columns, each walked by its units.
 
 mod base;
 mod kernel;

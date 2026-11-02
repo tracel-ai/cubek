@@ -6,7 +6,8 @@ pub const BATCH: Axis = Axis(0);
 pub const POSITION: Axis = Axis(1);
 /// A key head, which `GROUP` value heads read.
 pub const KEY_HEAD: Axis = Axis(2);
-/// A value head among those reading one key head: value head `key_head * group + group`.
+/// A value head's place among the `group` heads reading one key head: value head
+/// `key_head * group + place`.
 pub const GROUP: Axis = Axis(3);
 /// A state the walk keeps for the caller to rewind to: the state after each of its last positions,
 /// oldest first.

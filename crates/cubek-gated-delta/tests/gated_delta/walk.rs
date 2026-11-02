@@ -16,7 +16,8 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::metadata::Metadata;
 use cubek_gated_delta::kernels::walk::{
     CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkInputs,
-    GatedDeltaWalkOutputs, GatedDeltaWalkRoutine, launch_tuned,
+    GatedDeltaWalkOutputs, GatedDeltaWalkProblem, GatedDeltaWalkRoutine, GatedDeltaWalkTensors,
+    launch_tuned,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::gated_delta::GatedDeltaHeads;
@@ -236,7 +237,7 @@ impl Case {
                 &[b, h, heads.key_features, heads.value_features],
                 &operands.state,
             ),
-            element,
+            output_element: element,
             kept: NonZeroUsize::new(self.kept).expect("a state is kept"),
         }
     }
@@ -321,6 +322,48 @@ impl Case {
     }
 }
 
+/// The problem `inputs` state, which a device admits or declines.
+fn problem_of(inputs: &GatedDeltaWalkInputs) -> GatedDeltaWalkProblem {
+    GatedDeltaWalkTensors::new(inputs.clone())
+        .expect("the harness hands elements the device runs")
+        .problem()
+        .clone()
+}
+
+/// The walk of `inputs` at `settings`, or `None` where this device declines the problem by the
+/// refusal admission names: a head wider than its cube holds, or too few bindings. Any other
+/// refusal fails the test.
+pub fn walk_or_skip(
+    hw: &Hardware,
+    inputs: GatedDeltaWalkInputs,
+    settings: &CubeGatedDeltaWalkRoutineSettings,
+    what: &str,
+) -> Option<GatedDeltaWalkOutputs> {
+    let problem = problem_of(&inputs);
+    match CubeGatedDeltaWalkRoutine.launch_on(hw, inputs, settings) {
+        Ok(walked) => Some(walked),
+        Err(why) => {
+            eprintln!("skipped, the device declines {what}: {why:?}");
+            assert_eq!(problem.admit(hw), Err(why), "{what}");
+            None
+        }
+    }
+}
+
+/// The walk of `inputs` through the table, or `None` where this device declines the problem.
+fn tuned_or_skip(
+    hw: &Hardware,
+    device: &cubecl::Device,
+    inputs: GatedDeltaWalkInputs,
+    what: &str,
+) -> Option<GatedDeltaWalkOutputs> {
+    if let Err(why) = problem_of(&inputs).admit(hw) {
+        eprintln!("skipped, the device declines {what}: {why:?}");
+        return None;
+    }
+    Some(launch_tuned(device, inputs, GroupPriority::DEFAULT))
+}
+
 /// Every value within an `f32` sum's rounding of the reference's, relative to the largest magnitude
 /// it holds.
 pub fn assert_close(got: Vec<f32>, want: &[f64], what: &str) {
@@ -349,10 +392,11 @@ fn the_cube_walk_matches_the_reference() {
         for settings in CubeGatedDeltaWalkRoutine.settings(&hw) {
             for case in cases() {
                 let operands = case.operands();
-                let walked = CubeGatedDeltaWalkRoutine
-                    .launch_on(&hw, case.inputs(&client, &operands, element), &settings)
-                    .unwrap_or_else(|why| panic!("{settings} {case:?}: {why:?}"));
-                case.check(&client, &operands, walked, element, &settings.to_string());
+                let inputs = case.inputs(&client, &operands, element);
+                let what = format!("{settings} {case:?}");
+                if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
+                    case.check(&client, &operands, walked, element, &settings.to_string());
+                }
             }
         }
     }
@@ -367,10 +411,11 @@ fn the_floor_matches_the_reference() {
     for element in elements(&client) {
         for case in cases() {
             let operands = case.operands();
-            let walked = CubeGatedDeltaWalkRoutine
-                .launch_on(&hw, case.inputs(&client, &operands, element), &settings)
-                .unwrap_or_else(|why| panic!("{settings} {case:?}: {why:?}"));
-            case.check(&client, &operands, walked, element, "the floor");
+            let inputs = case.inputs(&client, &operands, element);
+            let what = format!("the floor {case:?}");
+            if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
+                case.check(&client, &operands, walked, element, "the floor");
+            }
         }
     }
 }
@@ -379,16 +424,16 @@ fn the_floor_matches_the_reference() {
 #[test]
 fn the_table_matches_the_reference() {
     let client = cubecl::test_device().client();
+    let hw = Hardware::from_client(&client);
     let device = cubecl::test_device();
     for element in elements(&client) {
         for case in cases() {
             let operands = case.operands();
-            let walked = launch_tuned(
-                &device,
-                case.inputs(&client, &operands, element),
-                GroupPriority::DEFAULT,
-            );
-            case.check(&client, &operands, walked, element, "the table");
+            let inputs = case.inputs(&client, &operands, element);
+            let what = format!("the table {case:?}");
+            if let Some(walked) = tuned_or_skip(&hw, &device, inputs, &what) {
+                case.check(&client, &operands, walked, element, "the table");
+            }
         }
     }
 }
@@ -412,9 +457,10 @@ fn a_masked_walk_passes_the_state_through() {
             masked: vec![0, 1, 2, 3],
         };
         let operands = case.operands();
-        let walked = CubeGatedDeltaWalkRoutine
-            .launch_on(&hw, case.inputs(&client, &operands, F32), &settings)
-            .unwrap_or_else(|why| panic!("{settings}: {why:?}"));
+        let inputs = case.inputs(&client, &operands, F32);
+        let Some(walked) = walk_or_skip(&hw, inputs, &settings, &format!("{settings}")) else {
+            continue;
+        };
         let kept = read(&client, walked.kept.handle.clone(), F32);
         let state: Vec<f64> = operands.state.iter().map(|&x| x as f64).collect();
         for slab in kept.chunks(state.len()) {
@@ -429,7 +475,7 @@ fn a_masked_walk_passes_the_state_through() {
 
 /// Operands that lie padded, off a whole read of their buffers, and with the strides a decode
 /// step's swapped view leaves on its extent-one axes: the walk reads them where they lie, at every
-/// width the layout leaves it.
+/// width the layouts leave it: 4, 2 and 1.
 #[test]
 fn the_walk_reads_operands_where_they_lie() {
     let client = cubecl::test_device().client();
@@ -437,6 +483,10 @@ fn the_walk_reads_operands_where_they_lie() {
     let layouts = [
         Layout {
             pad: 3,
+            ..Layout::default()
+        },
+        Layout {
+            pad: 2,
             ..Layout::default()
         },
         Layout {
@@ -453,27 +503,21 @@ fn the_walk_reads_operands_where_they_lie() {
             ..Layout::default()
         },
     ];
-    for layout in layouts {
-        for settings in [
-            CubeGatedDeltaWalkRoutineSettings::DEFAULT,
-            CubeGatedDeltaWalkRoutineSettings::FLOOR,
-        ] {
-            for case in cases() {
-                let operands = case.operands();
-                let walked = CubeGatedDeltaWalkRoutine
-                    .launch_on(
-                        &hw,
-                        case.inputs_laid_out(&client, &operands, layout, F16),
-                        &settings,
-                    )
-                    .unwrap_or_else(|why| panic!("{layout:?} {settings} {case:?}: {why:?}"));
-                case.check(
-                    &client,
-                    &operands,
-                    walked,
-                    F16,
-                    &format!("{layout:?} {settings}"),
-                );
+    for element in elements(&client) {
+        for layout in layouts {
+            for settings in [
+                CubeGatedDeltaWalkRoutineSettings::DEFAULT,
+                CubeGatedDeltaWalkRoutineSettings::FLOOR,
+            ] {
+                for case in cases() {
+                    let operands = case.operands();
+                    let inputs = case.inputs_laid_out(&client, &operands, layout, element);
+                    let what = format!("{layout:?} {settings} {case:?}");
+                    if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
+                        let what = format!("{layout:?} {settings}");
+                        case.check(&client, &operands, walked, element, &what);
+                    }
+                }
             }
         }
     }
@@ -483,6 +527,7 @@ fn the_walk_reads_operands_where_they_lie() {
 #[test]
 fn the_table_serves_a_narrower_call_after_an_aligned_one() {
     let client = cubecl::test_device().client();
+    let hw = Hardware::from_client(&client);
     let device = cubecl::test_device();
     let case = Case {
         batch: 1,
@@ -508,17 +553,10 @@ fn the_table_serves_a_narrower_call_after_an_aligned_one() {
         },
     ] {
         let operands = case.operands();
-        let walked = launch_tuned(
-            &device,
-            case.inputs_laid_out(&client, &operands, layout, F32),
-            GroupPriority::DEFAULT,
-        );
-        case.check(
-            &client,
-            &operands,
-            walked,
-            F32,
-            &format!("the table {layout:?}"),
-        );
+        let inputs = case.inputs_laid_out(&client, &operands, layout, F32);
+        let what = format!("the table {layout:?}");
+        if let Some(walked) = tuned_or_skip(&hw, &device, inputs, &what) {
+            case.check(&client, &operands, walked, F32, &what);
+        }
     }
 }

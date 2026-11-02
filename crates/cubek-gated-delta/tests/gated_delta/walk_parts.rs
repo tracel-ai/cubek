@@ -77,9 +77,17 @@ fn unit_partials_probe<N: Size>(
 #[test]
 fn unit_partials_sum_like_the_host() {
     let client = cubecl::test_device().client();
+    let hardware = Hardware::from_client(&client).properties.hardware.clone();
     let runs = 2usize;
     let positions = 3usize;
     for units in [1usize, 2, 3, 5, 8, 17] {
+        if units * runs > hardware.max_units_per_cube as usize
+            || units > hardware.max_cube_dim.0 as usize
+            || runs > hardware.max_cube_dim.1 as usize
+        {
+            eprintln!("skipped, the device holds no cube of {units} units by {runs} runs");
+            continue;
+        }
         for (columns, width) in [(1usize, 1usize), (2, 2), (4, 4), (4, 2), (4, 1)] {
             let microkernel = CubeGatedDeltaWalkMicrokernel {
                 units,
@@ -265,9 +273,15 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
         ] {
             let o = case.operands();
             let tensors = GatedDeltaWalkTensors::new(case.inputs(&client, &o, F32)).unwrap();
-            let (blueprint, grid) = CubeGatedDeltaWalkRoutine
-                .prepare(&hw, tensors.problem(), &settings)
-                .unwrap();
+            let prepared = CubeGatedDeltaWalkRoutine.prepare(&hw, tensors.problem(), &settings);
+            let (blueprint, grid) = match prepared {
+                Ok(prepared) => prepared,
+                Err(why) => {
+                    eprintln!("skipped, the device declines {settings} {case:?}: {why:?}");
+                    assert_eq!(tensors.problem().admit(&hw), Err(why));
+                    continue;
+                }
+            };
             let microkernel = blueprint.microkernel;
             let columns = microkernel.columns;
             let runs = value_features / columns;
@@ -322,7 +336,7 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
                 }
             }
             // The states after each position.
-            let walked = tensors.into_walked();
+            let walked = tensors.into_outputs();
             let kept = read(&client, walked.kept.handle.clone(), F32);
             let mut s: Vec<f64> = o.state.iter().map(|&x| x as f64).collect();
             let mut expected = Vec::new();

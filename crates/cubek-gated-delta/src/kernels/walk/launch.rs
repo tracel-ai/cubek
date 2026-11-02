@@ -38,7 +38,7 @@ pub trait GatedDeltaWalkRoutine<M>:
         let (blueprint, grid) = self.prepare(hw, tensors.problem(), settings)?;
         let binding = tensors.bind(&blueprint, &grid);
         self.dispatch(&tensors, binding, blueprint, grid);
-        Ok(tensors.into_walked())
+        Ok(tensors.into_outputs())
     }
 
     /// [`launch_on`](Self::launch_on) at the routine's lead, the first setting it lists on `hw`.

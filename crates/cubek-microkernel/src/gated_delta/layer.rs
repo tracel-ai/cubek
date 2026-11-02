@@ -14,8 +14,9 @@ pub struct GatedDeltaHeads {
 }
 
 impl GatedDeltaHeads {
-    /// The value columns a run of units holds together: the largest of 4, 2 and 1 that divides both
-    /// feature counts, so a line of the widest read the walk makes never straddles a head.
+    /// The value columns a run holds: the largest of 4, 2 and 1 that divides both feature counts, so
+    /// a line of the widest read the walk makes never straddles a head. The cap of 4 holds a run's
+    /// registers and its shared memory slice to four columns however wide the device reads.
     pub fn columns(&self) -> usize {
         [4, 2, 1]
             .into_iter()

@@ -5,8 +5,8 @@ use cubek_microkernel::gated_delta::walk::cube::{
     CubeGatedDeltaWalkMicrokernel, cube_gated_delta_walk_microkernel,
 };
 
-/// Every cube, walking its runs' runs of value columns through every position, the state after
-/// each position from `first_kept` on kept.
+/// Every cube, walking its runs of value columns through every position, the state after each
+/// position from `first_kept` on kept.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_gated_delta_walk_kernel<E: Float, N: Size>(

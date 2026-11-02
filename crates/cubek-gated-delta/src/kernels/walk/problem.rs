@@ -1,9 +1,9 @@
 //! The problem a routine computes.
 
 use crate::kernels::refusals::{
-    GATED_DELTA_WALK_BINDINGS_PAST_DEVICE, GATED_DELTA_WALK_ELEMENT_NOT_FLOAT,
-    GATED_DELTA_WALK_ELEMENT_UNVERIFIED, GATED_DELTA_WALK_HEADS_EMPTY,
-    GATED_DELTA_WALK_OWNED_BINDING_BUFFERS,
+    GATED_DELTA_WALK_BINDING_BUFFERS, GATED_DELTA_WALK_BINDINGS_PAST_DEVICE,
+    GATED_DELTA_WALK_ELEMENT_NOT_FLOAT, GATED_DELTA_WALK_ELEMENT_UNVERIFIED,
+    GATED_DELTA_WALK_HEADS_EMPTY,
 };
 use crate::kernels::walk::{CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings};
 use core::num::NonZeroUsize;
@@ -39,8 +39,8 @@ pub struct GatedDeltaWalkProblem {
     pub batch: usize,
     pub positions: usize,
     pub heads: GatedDeltaHeads,
-    /// The activations' element, which the output is written at, rounded from the `f32` read.
-    pub element: ElemType,
+    /// The element the output is written at, rounded from the `f32` read: the activations'.
+    pub output_element: ElemType,
     /// States kept for a rewind: the state after each of the last this many positions.
     pub kept: NonZeroUsize,
     /// The alignment of each operand's buffer in elements, over the axes the walk names.
@@ -50,14 +50,15 @@ pub struct GatedDeltaWalkProblem {
 }
 
 impl GatedDeltaWalkProblem {
-    /// Whether the walk writes its output at `element`: a plain float the activations are in.
+    /// Whether the walk writes its output at `output_element`: a plain float the activations are
+    /// in.
     ///
     /// # Errors
     ///
     /// [`GATED_DELTA_WALK_ELEMENT_NOT_FLOAT`] for an element that is not a float, a packed one
     /// included, [`GATED_DELTA_WALK_ELEMENT_UNVERIFIED`] for a float the walk is not verified at.
-    pub fn admit_element(element: ElemType) -> Result<(), Refusal> {
-        match element {
+    pub fn admit_output(output_element: ElemType) -> Result<(), Refusal> {
+        match output_element {
             element if OUTPUT_ELEMENTS.contains(&element) => Ok(()),
             element if element.is_float() => Err(GATED_DELTA_WALK_ELEMENT_UNVERIFIED),
             _ => Err(GATED_DELTA_WALK_ELEMENT_NOT_FLOAT),
@@ -68,7 +69,7 @@ impl GatedDeltaWalkProblem {
     ///
     /// # Errors
     ///
-    /// As [`admit_element`](Self::admit_element).
+    /// As [`admit_output`](Self::admit_output).
     pub fn admit_operand(element: ElemType) -> Result<(), Refusal> {
         match element {
             GATED_DELTA_WALK_ELEMENT => Ok(()),
@@ -101,22 +102,21 @@ impl GatedDeltaWalkProblem {
         {
             return Err(GATED_DELTA_WALK_HEADS_EMPTY);
         }
-        if GATED_DELTA_WALK_OWNED_BINDING_BUFFERS > hw.properties.hardware.max_bindings {
+        if GATED_DELTA_WALK_BINDING_BUFFERS > hw.properties.hardware.max_bindings {
             return Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE);
         }
         Ok(())
     }
 
-    /// Whether a device launches the walk at all: [`admit_launch`](Self::admit_launch), and the
-    /// floor, the walk at one run a cube and the fewest registers, preparing. Every routine's
-    /// guarantee rests on it, and a head too wide for the floor is declined by the refusal that
-    /// names what it overran.
+    /// Whether a device launches the walk at all: the floor, the walk at one run a cube and the
+    /// fewest registers, preparing, which includes [`admit_launch`](Self::admit_launch). Every
+    /// routine's guarantee rests on it, and a head too wide for the floor is declined by the
+    /// refusal that names what it overran.
     ///
     /// # Errors
     ///
-    /// What [`admit_launch`](Self::admit_launch) or the floor declines.
+    /// What the floor declines, [`admit_launch`](Self::admit_launch)'s among them.
     pub fn admit(&self, hw: &Hardware) -> Result<(), Refusal> {
-        self.admit_launch(hw)?;
         CubeGatedDeltaWalkRoutine
             .prepare(hw, self, &CubeGatedDeltaWalkRoutineSettings::FLOOR)
             .map(|_| ())
@@ -143,7 +143,7 @@ impl GatedDeltaWalkProblem {
         batch: usize,
         positions: usize,
         heads: GatedDeltaHeads,
-        element: ElemType,
+        output_element: ElemType,
         kept: NonZeroUsize,
     ) -> Self {
         let rows =
@@ -158,7 +158,7 @@ impl GatedDeltaWalkProblem {
             batch,
             positions,
             heads,
-            element,
+            output_element,
             kept,
             alignments: GatedDeltaWalkOperandMap {
                 query: rows(&[batch, positions, key_heads, key_features]),
@@ -194,14 +194,14 @@ impl EstimatedProblem for GatedDeltaWalkProblem {
     fn demand(&self) -> Work {
         let heads = &self.heads;
         let (value_heads, positions) = (self.batch * heads.value_heads(), self.positions);
-        let element = GATED_DELTA_WALK_ELEMENT.size();
+        let input_bytes = GATED_DELTA_WALK_ELEMENT.size();
         let keyed = self.batch * heads.key_heads * positions * 2 * heads.key_features;
         let valued = value_heads * positions * (heads.value_features + 2);
-        let read = value_heads * positions * heads.value_features * self.element.size();
+        let read = value_heads * positions * heads.value_features * self.output_element.size();
         let states = value_heads * (1 + self.kept.get()) * self.state_bytes();
         Work {
             compute_ops: 7 * value_heads * positions * heads.key_features * heads.value_features,
-            bytes: (keyed + valued) * element + read + states,
+            bytes: (keyed + valued) * input_bytes + read + states,
         }
     }
 }
@@ -268,12 +268,12 @@ mod tests {
     fn the_metadata_buffer_counts_against_the_devices_bindings() {
         let problem = walk(sixteen_heads());
         let mut hw = devices::h100();
-        devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_OWNED_BINDING_BUFFERS - 1;
+        devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_BINDING_BUFFERS - 1;
         assert_eq!(
             problem.admit(&hw),
             Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE)
         );
-        devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_OWNED_BINDING_BUFFERS;
+        devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_BINDING_BUFFERS;
         assert_eq!(problem.admit(&hw), Ok(()));
     }
 
@@ -287,14 +287,14 @@ mod tests {
         let packed = ElemType::UInt(UIntKind::U32);
         let f64 = ElemType::Float(FloatKind::F64);
         for element in [f16, ElemType::Float(FloatKind::BF16), f32] {
-            assert_eq!(GatedDeltaWalkProblem::admit_element(element), Ok(()));
+            assert_eq!(GatedDeltaWalkProblem::admit_output(element), Ok(()));
         }
         assert_eq!(
-            GatedDeltaWalkProblem::admit_element(packed),
+            GatedDeltaWalkProblem::admit_output(packed),
             Err(GATED_DELTA_WALK_ELEMENT_NOT_FLOAT)
         );
         assert_eq!(
-            GatedDeltaWalkProblem::admit_element(f64),
+            GatedDeltaWalkProblem::admit_output(f64),
             Err(GATED_DELTA_WALK_ELEMENT_UNVERIFIED)
         );
         assert_eq!(GatedDeltaWalkProblem::admit_operand(f32), Ok(()));

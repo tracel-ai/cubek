@@ -8,19 +8,18 @@ use cubecl::tile::Levels;
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::gated_delta::walk::GatedDeltaWalkOperand;
 use cubek_microkernel::gated_delta::walk::cube::{
-    CubeGatedDeltaWalkMicrokernel, CubeGatedDeltaWalkMicrokernelSettings,
+    CubeGatedDeltaWalkMicrokernel, CubeGatedDeltaWalkMicrokernelSettings, MAX_HELD_LINES_PER_UNIT,
 };
 use cubek_microkernel::gated_delta::{
     GROUP, GatedDeltaWalkPartitioning, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, VALUE_FEATURE,
 };
-use cubek_microkernel::registers::MAX_HELD_LINES_PER_UNIT;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// The walk with every run of a head's value columns held by a few units, a cube holding several
-/// runs of one head side by side. It asks nothing of the hardware, so it runs everywhere: this
-/// kind's floor.
+/// runs of one head side by side. It reads no plane feature; it needs units, shared memory and 9
+/// bindings: this kind's floor.
 ///
 /// Every run of a cube reads the same queries and keys, those of its head's key head, a position
 /// at a time, so the cube's runs share those reads through the device's caches.
@@ -32,8 +31,8 @@ pub struct CubeGatedDeltaWalkRoutine;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeGatedDeltaWalkRoutineSettings {
     pub microkernel: CubeGatedDeltaWalkMicrokernelSettings,
-    /// Groups a cube holds, a run of columns each: a target, fewer where the cube's units run out
-    /// or the head's runs of columns do not divide.
+    /// Runs a cube holds, `columns` of the head's value columns each: a target, fewer where the
+    /// cube's units run out or the head's runs of columns do not divide.
     pub runs: NonZeroUsize,
 }
 
@@ -50,9 +49,9 @@ impl CubeGatedDeltaWalkRoutineSettings {
         }
     }
 
-    /// Runs a cube of `microkernel`'s runs holds on `hw` for `problem`: the
-    /// largest count no larger than the target that divides the head's runs of columns, and that
-    /// the cube's units, its height and its shared memory hold.
+    /// Runs a cube holds on `hw` for `problem` at `microkernel`: the largest count no larger than
+    /// the target that divides the head's runs of columns, and that the cube's units, its height
+    /// and its shared memory hold.
     fn runs_of(
         &self,
         hw: &Hardware,
@@ -126,15 +125,15 @@ impl Routine for CubeGatedDeltaWalkRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let element = GATED_DELTA_WALK_ELEMENT.size();
+        let input_bytes = GATED_DELTA_WALK_ELEMENT.size();
         let columns = blueprint.runs * blueprint.microkernel.columns;
         let positions = problem.positions;
         let key_features = problem.heads.key_features;
-        let stream_at = |element: usize, elements: usize, run: usize| GlobalStream {
-            bytes: (elements * element) as u64,
-            run_bytes: run * element,
+        let stream_at = |element_bytes: usize, elements: usize, run: usize| GlobalStream {
+            bytes: (elements * element_bytes) as u64,
+            run_bytes: run * element_bytes,
         };
-        let stream = |elements: usize, run: usize| stream_at(element, elements, run);
+        let stream = |elements: usize, run: usize| stream_at(input_bytes, elements, run);
         let state = key_features * columns;
         estimate.staging = Some(CubeStaging {
             operations: (7 * positions * state) as f64,
@@ -145,7 +144,7 @@ impl Routine for CubeGatedDeltaWalkRoutine {
                 stream(state, columns),
             ],
             writes: vec![
-                stream_at(problem.element.size(), positions * columns, columns),
+                stream_at(problem.output_element.size(), positions * columns, columns),
                 stream(problem.kept.get() * state, columns),
             ],
             stages: positions as u64,
@@ -192,17 +191,7 @@ impl Routine for CubeGatedDeltaWalkRoutine {
             problem.space(),
             run.walk_every(&[POSITION]).planes(&[(VALUE_FEATURE, runs)]),
         );
-        let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
-        let blueprint = GatedDeltaWalkBlueprint::new(
-            hw,
-            problem,
-            microkernel,
-            partitioning,
-            runs,
-            vectorization,
-        );
-        debug_assert_eq!(blueprint.width, width);
+        let blueprint = GatedDeltaWalkBlueprint::new(microkernel, partitioning, width, runs);
         let cube = CubeResources {
             plane_width: microkernel.units as u32,
             shared_memory: microkernel.shared_memory(runs),
@@ -244,7 +233,7 @@ impl GatedDeltaWalkRoutine<CubeGatedDeltaWalkMicrokernel> for CubeGatedDeltaWalk
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel,
                 blueprint.runs,
-                tensors.problem().element,
+                tensors.problem().output_element,
             );
         }
     }
@@ -359,7 +348,7 @@ mod tests {
     /// target; heads of odd widths read a column at a time; key rows of three lines and of a
     /// head no unit takes whole are covered by their last unit.
     #[test]
-    fn a_group_holds_the_cells_its_settings_target() {
+    fn a_unit_holds_the_cells_its_settings_target() {
         let hw = binding_enough(devices::strix_halo());
         let shape = |heads: (usize, usize, usize, usize), cells: usize| {
             let settings = CubeGatedDeltaWalkRoutineSettings::new(
