@@ -1697,7 +1697,7 @@ mod base {
         use crate::kernels::select::packed::nvfp4_scheme;
         use cubek_microkernel::matmul::MatmulDim;
 
-        let hw = devices::offering_block_scaled(devices::h100());
+        let hw = devices::offering_nvfp4(devices::rtx_pro_6000());
         let packing = |scheme: cubecl::quant::scheme::QuantScheme, axes| Packing {
             operand: Operand::of_scheme(&scheme, K, axes).expect("NVFP4 is one block along k"),
             scheme,
@@ -1738,6 +1738,66 @@ mod base {
         assert!(
             block_scaled > 0,
             "no setting prepared on the block-scaled instruction"
+        );
+    }
+
+    /// Qwen3.8-27B's 48-wide gated-delta projection under W4A4: its NVFP4 activations against a
+    /// weight left in `bf16`, at a prompt's rows. Over the block-split space the float weight lies
+    /// along `NI`, its columns, so every setting the staged routine races binds it one value wide
+    /// wherever its box reaches past them, as a box 32 columns wide does at 48: the tile engine
+    /// checks no wider vector across an edge a tile overhangs. On an RTX PRO 6000 such a box was
+    /// bound eight wide, refused to bind, and the model did not load.
+    #[test]
+    fn a_float_weight_beside_a_packed_activation_binds_one_wide_past_its_columns() {
+        use crate::kernels::select::packed::nvfp4_scheme;
+        use cubek_std::matmul_axes::NI;
+
+        let bf16 = ElemType::Float(FloatKind::BF16);
+        let hw = devices::offering_nvfp4(devices::offering_mma(
+            devices::rtx_pro_6000(),
+            [MmaConfig {
+                a_type: bf16,
+                b_type: bf16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 16,
+                n: 8,
+                k: 16,
+            }],
+        ));
+        let scheme = nvfp4_scheme();
+        let activation = Packing {
+            operand: Operand::of_scheme(&scheme, K, [M, K]).expect("NVFP4 is one block along k"),
+            scheme,
+        };
+        let problem = MatmulRoutineProblem::packed(
+            512,
+            48,
+            5120,
+            bf16,
+            MatmulOperands {
+                lhs: Some(activation),
+                rhs: None,
+                out: None,
+            },
+        );
+        let routine = CubeStagedMatmulRoutine;
+        let mut past_columns = 0;
+        for settings in routine
+            .packed_settings(&hw)
+            .into_iter()
+            .chain(routine.packed_one_step_settings())
+        {
+            let Ok((blueprint, _)) = routine.prepare(&hw, &problem, &settings) else {
+                continue;
+            };
+            if blueprint.partitioning.overhangs(NI) {
+                assert_eq!(blueprint.widths.rhs, 1, "{settings}");
+                past_columns += 1;
+            }
+        }
+        assert!(
+            past_columns > 0,
+            "no setting's box reaches past the weight's columns"
         );
     }
 }
