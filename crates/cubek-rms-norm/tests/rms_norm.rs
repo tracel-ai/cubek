@@ -121,7 +121,10 @@ fn cases() -> Vec<Case> {
 }
 
 /// `routine` at every setting it lists, in `f32` and `f16`, on every case, against the reference.
-fn check_routine<M: Microkernel, R: RmsNormRoutine<M> + Copy>(routine: R, declines: Declines) {
+fn check_routine<M: Microkernel, P, R: RmsNormRoutine<M, P> + Copy>(
+    routine: R,
+    declines: Declines,
+) {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
     let mut launched = 0;

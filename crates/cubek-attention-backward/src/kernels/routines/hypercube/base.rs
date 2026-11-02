@@ -8,7 +8,6 @@ use crate::kernels::{
 use cubecl::features::AtomicUsage;
 use cubecl::ir::Type;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_matmul::kernels::tensor::PlainTensor;
@@ -22,7 +21,7 @@ use cubek_microkernel::attention_backward::key_gradient::hypercube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{Microkernel, StageRing};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeBoxes, CubeResources, Grid, LaunchPlanes, Partitioned, Routine};
 
 /// What the hypercube routine declines on a device that cannot add `f32` atomically: the query's
 /// gradient is summed across the cubes that own its keys.
@@ -73,8 +72,10 @@ impl core::fmt::Display for HypercubeAttentionBackwardRoutineSettings {
 
 /// What [`HypercubeAttentionBackwardRoutine`] compiles, each walk's stages held in the settings'
 /// ring as this device holds a cube's; the first walk holds none.
-pub type HypercubeAttentionBackwardRoutineBlueprint =
-    AttentionBackwardBlueprint<PlaneDeltaMicrokernel, HypercubeKeyGradientMicrokernel, StageRing>;
+pub type HypercubeAttentionBackwardRoutineBlueprint = AttentionBackwardBlueprint<
+    AttentionBackwardWalk<PlaneDeltaMicrokernel, LaunchPlanes, StageRing>,
+    AttentionBackwardWalk<HypercubeKeyGradientMicrokernel, CubeBoxes, StageRing>,
+>;
 
 impl Routine for HypercubeAttentionBackwardRoutine {
     type Problem = AttentionBackwardProblem;
@@ -125,28 +126,24 @@ impl Routine for HypercubeAttentionBackwardRoutine {
         let key_gradient =
             HypercubeKeyGradientMicrokernel::best(hw, &item, &settings.key_gradient)?;
         let plane_width = hw.plane_dim()?;
-        let delta_partitioning = Partitioning::new(
+        let delta_partitioning = Partitioned::launch_planes(
             problem.space(),
-            delta
-                .tiling()
-                .launch_planes(
-                    &[Q, G, B, KV],
-                    PlaneOrder::new(&[(Q, 1)], CubeOrder::RowMajor),
-                )
-                .build(),
+            delta.tiling(),
+            &[Q, G, B, KV],
+            LaunchPlanes {
+                order: PlaneOrder::new(&[(Q, 1)], CubeOrder::RowMajor),
+            },
         );
         let delta_grid = Grid::new(
             hw,
-            &delta_partitioning,
+            delta_partitioning.as_tile(),
             CubeResources {
                 plane_width,
                 shared_memory: 0,
             },
         )?;
-        let key_partitioning = Partitioning::new(
-            problem.space(),
-            key_gradient.tiling().cubes(&[S]).batches(&[B, KV]).build(),
-        );
+        let key_partitioning =
+            Partitioned::cubes(problem.space(), key_gradient.tiling(), &[S], &[B, KV]);
         let (key_grid, ring) = WalkStages {
             stage: problem.stage(Q, key_gradient.seq_q()),
             ring: settings.ring,
@@ -155,7 +152,7 @@ impl Routine for HypercubeAttentionBackwardRoutine {
             window_bytes: key_gradient.window_bytes(&item),
             body_bytes: key_gradient.share_bytes(&item),
         }
-        .grid(hw, &key_partitioning)?;
+        .grid(hw, key_partitioning.as_tile())?;
         let mut queries = AttentionBackwardWalk::new(hw, problem, delta, delta_partitioning, ring);
         // The last launch casts the sum into the query's gradient under this walk, both bound at
         // one width, which the sum's element must allow too.

@@ -231,7 +231,11 @@ impl RmsNormTensors {
 
     /// The three operands bound as `blueprint` states them, on `grid`: under its partitioning, at
     /// its width.
-    pub fn bind<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<Bound> {
+    pub fn bind<M, P>(
+        &self,
+        blueprint: &RmsNormBlueprint<M, P>,
+        grid: &Grid,
+    ) -> RmsNormBinding<Bound> {
         let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
         let out = launcher
             .arg(self.out.rows.binding.clone(), self.problem.element)
@@ -270,7 +274,11 @@ impl RmsNormTensors<Geometry> {
     /// The three operands bound as `blueprint` states them, on `grid`, the output derived over
     /// the sink's layout rather than a buffer: its spec, and the geometry the derivation settled,
     /// which the caller's sink addresses through.
-    pub fn bind<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<Unbound> {
+    pub fn bind<M, P>(
+        &self,
+        blueprint: &RmsNormBlueprint<M, P>,
+        grid: &Grid,
+    ) -> RmsNormBinding<Unbound> {
         let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
         let out = launcher
             .unbound(&self.out)
@@ -320,9 +328,9 @@ impl RmsNormTensors<PackedRows> {
 
     /// The rows and the weight bound as `blueprint` states them, on `grid`, and the output as one
     /// tile of its words under their scales ([`PackedRows::bind`]).
-    pub fn bind<M>(
+    pub fn bind<M, P>(
         &self,
-        blueprint: &RmsNormBlueprint<M>,
+        blueprint: &RmsNormBlueprint<M, P>,
         grid: &Grid,
     ) -> RmsNormBinding<TileArgLaunch> {
         let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
@@ -364,7 +372,11 @@ impl RmsNormTensors<TiledRows> {
 
     /// The rows and the weight bound as `blueprint` states them, on `grid`, and the output over
     /// the rows and the dim, through the tiles its binding states.
-    pub fn bind<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<Bound> {
+    pub fn bind<M, P>(
+        &self,
+        blueprint: &RmsNormBlueprint<M, P>,
+        grid: &Grid,
+    ) -> RmsNormBinding<Bound> {
         let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
         let out = self.out.bind(&launcher, blueprint.width);
         RmsNormBinding {
@@ -389,9 +401,9 @@ impl<Out> RmsNormTensors<Out> {
 
     /// The launcher of `blueprint`'s partitioning on `grid`, and the rows and the weight bound
     /// under it at its width: what every output binds beside.
-    fn bind_operands<M>(
+    fn bind_operands<M, P>(
         &self,
-        blueprint: &RmsNormBlueprint<M>,
+        blueprint: &RmsNormBlueprint<M, P>,
         grid: &Grid,
     ) -> (Launcher, [Bound; 2]) {
         let partitioning = &blueprint.partitioning;

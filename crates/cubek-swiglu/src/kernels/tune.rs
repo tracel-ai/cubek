@@ -155,9 +155,9 @@ impl<R: Routine + Copy> SwigluRoutineCandidate<R> {
     }
 }
 
-impl<R, M> SwigluRoutineCandidate<R>
+impl<R, M, P> SwigluRoutineCandidate<R>
 where
-    R: SwigluRoutine<M> + Routine<Grid = Grid, Blueprint = SwigluBlueprint<M>>,
+    R: SwigluRoutine<M, P> + Routine<Grid = Grid, Blueprint = SwigluBlueprint<M, P>>,
 {
     /// `silu(gate) ⊙ up` over `both`, `(..., 2 · d)` laid out `[gate | up]`, in `f32`, launched
     /// on its device ([`SwigluTensors::new`]).
@@ -222,7 +222,7 @@ where
     fn launch_on<O: DestinationLaunch, Out>(
         &self,
         tensors: &SwigluTensors<Out>,
-        bind: impl FnOnce(&SwigluBlueprint<M>, &Grid) -> SwigluBinding<O::Operand>,
+        bind: impl FnOnce(&SwigluBlueprint<M, P>, &Grid) -> SwigluBinding<O::Operand>,
     ) -> Result<(), Refusal> {
         if tensors.problem().is_empty() {
             return Ok(());
@@ -238,7 +238,7 @@ where
     fn prepare(
         &self,
         problem: &SwigluRoutineProblem,
-    ) -> Result<(SwigluBlueprint<M>, Grid), Refusal> {
+    ) -> Result<(SwigluBlueprint<M, P>, Grid), Refusal> {
         self.prepared
             .prepare(&self.routine, &self.hw, problem, &self.settings)
     }
@@ -246,7 +246,7 @@ where
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device. Not held: a key's problem places the candidate in a
     /// round, and may never be launched.
-    fn prepared(&self, key: &SwigluKey) -> Option<(SwigluBlueprint<M>, Grid)> {
+    fn prepared(&self, key: &SwigluKey) -> Option<(SwigluBlueprint<M, P>, Grid)> {
         self.routine
             .prepare(&self.hw, &SwigluRoutineProblem::from(key), &self.settings)
             .ok()
@@ -267,15 +267,15 @@ impl<R: Routine<Settings: core::fmt::Display>> core::fmt::Display for SwigluRout
     }
 }
 
-impl<R, M: PartialEq> TuneCandidate for SwigluRoutineCandidate<R>
+impl<R, M: PartialEq, P: PartialEq> TuneCandidate for SwigluRoutineCandidate<R>
 where
-    R: SwigluRoutine<M> + Routine<Grid = Grid, Blueprint = SwigluBlueprint<M>>,
+    R: SwigluRoutine<M, P> + Routine<Grid = Grid, Blueprint = SwigluBlueprint<M, P>>,
 {
     type Strategy = R::Settings;
     type Key = SwigluKey;
     /// The blueprint and the cube: the cube is kept out of a blueprint, and two settings preparing
     /// one blueprint can still launch different cubes.
-    type Blueprint = (SwigluBlueprint<M>, CubeDim);
+    type Blueprint = (SwigluBlueprint<M, P>, CubeDim);
 
     fn strategy(&self) -> &R::Settings {
         &self.settings

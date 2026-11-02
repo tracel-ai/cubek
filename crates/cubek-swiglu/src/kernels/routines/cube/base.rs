@@ -12,7 +12,7 @@ use cubek_microkernel::swiglu::cube::{CubeSwigluMicrokernel, CubeSwigluMicrokern
 use cubek_microkernel::swiglu::{H, R, SwigluOperand, SwigluPartitioning};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeBoxes, CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// The gate with every run of a row taken by a group of units, a cube holding several groups side
 /// by side, each on a row of its own. Into a plain output it asks nothing of the hardware, so it
@@ -93,7 +93,7 @@ impl core::fmt::Display for CubeSwigluRoutineSettings {
     }
 }
 
-pub type CubeSwigluRoutineBlueprint = SwigluBlueprint<CubeSwigluMicrokernel>;
+pub type CubeSwigluRoutineBlueprint = SwigluBlueprint<CubeSwigluMicrokernel, CubeBoxes>;
 
 impl Routine for CubeSwigluRoutine {
     type Problem = SwigluRoutineProblem;
@@ -166,7 +166,7 @@ impl CubeSwigluRoutine {
     fn vectorize(
         &self,
         microkernel: &CubeSwigluMicrokernel,
-        _: &SwigluPartitioning,
+        _: &SwigluPartitioning<CubeBoxes>,
         vectorization: &mut Vectorization<SwigluOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
@@ -190,7 +190,7 @@ impl EstimatedRoutine for CubeSwigluRoutine {
     }
 }
 
-impl SwigluRoutine<CubeSwigluMicrokernel> for CubeSwigluRoutine {
+impl SwigluRoutine<CubeSwigluMicrokernel, CubeBoxes> for CubeSwigluRoutine {
     fn dispatch<O: DestinationLaunch, Out>(
         &self,
         tensors: &SwigluTensors<Out>,

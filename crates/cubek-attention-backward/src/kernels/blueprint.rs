@@ -1,6 +1,5 @@
 //! What a routine compiles, its two walks, and the grids they spawn beside them.
 
-use crate::kernels::AttentionBackwardWalk;
 use cubek_std::routine::Grid;
 
 /// What a routine of this kind compiles: the walk owned by the queries, which writes each one's
@@ -8,10 +7,14 @@ use cubek_std::routine::Grid;
 /// dot products and writes the keys' and the values' gradients. The query's gradient is the first
 /// walk's where the queries own it, and summed by the second where the keys do, as the hypercube
 /// routine's cubes each add their keys' share.
+///
+/// Each walk is an [`AttentionBackwardWalk`](crate::kernels::AttentionBackwardWalk), whose type
+/// names its microkernel and how it hands its boxes out: a routine's blueprint reads as its two
+/// launches.
 #[derive(Debug, Clone, PartialEq)]
-pub struct AttentionBackwardBlueprint<QM, KM, SM = ()> {
-    pub query_walk: AttentionBackwardWalk<QM, SM>,
-    pub key_walk: AttentionBackwardWalk<KM, SM>,
+pub struct AttentionBackwardBlueprint<Q, K> {
+    pub query_walk: Q,
+    pub key_walk: K,
 }
 
 /// What the two walks of an [`AttentionBackwardBlueprint`] spawn on this device, beside it: the

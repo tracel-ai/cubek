@@ -3,7 +3,6 @@ use crate::kernels::{
     AttentionBackwardBlueprint, AttentionBackwardGrid, AttentionBackwardProblem,
     AttentionBackwardRoutine, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
 };
-use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::{B, G, KV, Q, S};
 use cubek_microkernel::attention_backward::key_gradient::cube::{
@@ -14,7 +13,7 @@ use cubek_microkernel::attention_backward::query_gradient::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{Microkernel, StageRing};
-use cubek_std::routine::Routine;
+use cubek_std::routine::{CubeBoxes, Partitioned, Routine};
 
 /// The backward pass with every cube owning, in the first walk, a box of queries of some heads of
 /// the group, and in the second, a box of keys of one key head, its planes each on a matrix
@@ -55,8 +54,10 @@ impl core::fmt::Display for CubeStagedAttentionBackwardRoutineSettings {
 
 /// What [`CubeStagedAttentionBackwardRoutine`] compiles, each walk's stages held in the settings'
 /// ring as this device holds a cube's.
-pub type CubeStagedAttentionBackwardRoutineBlueprint =
-    AttentionBackwardBlueprint<CubeQueryGradientMicrokernel, CubeKeyGradientMicrokernel, StageRing>;
+pub type CubeStagedAttentionBackwardRoutineBlueprint = AttentionBackwardBlueprint<
+    AttentionBackwardWalk<CubeQueryGradientMicrokernel, CubeBoxes, StageRing>,
+    AttentionBackwardWalk<CubeKeyGradientMicrokernel, CubeBoxes, StageRing>,
+>;
 
 impl Routine for CubeStagedAttentionBackwardRoutine {
     type Problem = AttentionBackwardProblem;
@@ -104,18 +105,10 @@ impl Routine for CubeStagedAttentionBackwardRoutine {
         let query_gradient =
             CubeQueryGradientMicrokernel::best(hw, &item, &settings.query_gradient)?;
         let key_gradient = CubeKeyGradientMicrokernel::best(hw, &item, &settings.key_gradient)?;
-        let query_partitioning = Partitioning::new(
-            problem.space(),
-            query_gradient
-                .tiling()
-                .cubes(&[Q, G])
-                .batches(&[B, KV])
-                .build(),
-        );
-        let key_partitioning = Partitioning::new(
-            problem.space(),
-            key_gradient.tiling().cubes(&[S]).batches(&[B, KV]).build(),
-        );
+        let query_partitioning =
+            Partitioned::cubes(problem.space(), query_gradient.tiling(), &[Q, G], &[B, KV]);
+        let key_partitioning =
+            Partitioned::cubes(problem.space(), key_gradient.tiling(), &[S], &[B, KV]);
         let (query_grid, query_ring) = WalkStages {
             stage: problem.stage(S, query_gradient.seq_kv()),
             ring: settings.ring,
@@ -124,7 +117,7 @@ impl Routine for CubeStagedAttentionBackwardRoutine {
             window_bytes: query_gradient.window_bytes(&item),
             body_bytes: 0,
         }
-        .grid(hw, &query_partitioning)?;
+        .grid(hw, query_partitioning.as_tile())?;
         let (key_grid, key_ring) = WalkStages {
             stage: problem.stage(Q, key_gradient.seq_q()),
             ring: settings.ring,
@@ -133,7 +126,7 @@ impl Routine for CubeStagedAttentionBackwardRoutine {
             window_bytes: key_gradient.window_bytes(&item),
             body_bytes: 0,
         }
-        .grid(hw, &key_partitioning)?;
+        .grid(hw, key_partitioning.as_tile())?;
         let blueprint = AttentionBackwardBlueprint {
             query_walk: AttentionBackwardWalk::new(
                 hw,

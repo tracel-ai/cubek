@@ -16,7 +16,7 @@ use cubek_microkernel::rms_norm::{D, R, RmsNormOperand, RmsNormPartitioning};
 use cubek_microkernel::row_store::{PACKED_STORE_NEEDS_A_CUBE, RowStore};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, LaunchPlanes, Routine};
 
 /// The norm with every row owned by a plane of the launch, which groups its planes in cubes of
 /// several, consecutive rows a cube. Each plane reads its row once and sums its lanes' partials
@@ -51,7 +51,7 @@ impl core::fmt::Display for PlaneRmsNormRoutineSettings {
     }
 }
 
-pub type PlaneRmsNormRoutineBlueprint = RmsNormBlueprint<PlaneRmsNormMicrokernel>;
+pub type PlaneRmsNormRoutineBlueprint = RmsNormBlueprint<PlaneRmsNormMicrokernel, LaunchPlanes>;
 
 impl Routine for PlaneRmsNormRoutine {
     type Problem = RmsNormRoutineProblem;
@@ -108,7 +108,7 @@ impl PlaneRmsNormRoutine {
     fn vectorize(
         &self,
         microkernel: &PlaneRmsNormMicrokernel,
-        _: &RmsNormPartitioning,
+        _: &RmsNormPartitioning<LaunchPlanes>,
         vectorization: &mut Vectorization<RmsNormOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
@@ -136,7 +136,7 @@ impl EstimatedRoutine for PlaneRmsNormRoutine {
     }
 }
 
-impl RmsNormRoutine<PlaneRmsNormMicrokernel> for PlaneRmsNormRoutine {
+impl RmsNormRoutine<PlaneRmsNormMicrokernel, LaunchPlanes> for PlaneRmsNormRoutine {
     fn dispatch<O: DestinationLaunch, Out>(
         &self,
         tensors: &RmsNormTensors<Out>,

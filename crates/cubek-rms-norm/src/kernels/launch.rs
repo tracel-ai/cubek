@@ -10,14 +10,14 @@ use cubecl::tile::launch::SinkLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Unbound};
 use cubek_std::routine::{Grid, Routine};
 
-/// A routine of this kind around microkernel `M`: it prepares an [`RmsNormBlueprint`] and
-/// launches it on tensors.
+/// A routine of this kind around microkernel `M`, its boxes handed out by `P`: it prepares an
+/// [`RmsNormBlueprint`] and launches it on tensors.
 ///
 /// A routine states what is its own — how it places its microkernel's rows, and the kernel it
 /// dispatches through any destination — and the launches around those are written once, on its
 /// candidate ([`RmsNormRoutineCandidate`](crate::kernels::RmsNormRoutineCandidate)).
-pub trait RmsNormRoutine<M>:
-    Routine<Problem = RmsNormRoutineProblem, Grid = Grid, Blueprint = RmsNormBlueprint<M>>
+pub trait RmsNormRoutine<M, P>:
+    Routine<Problem = RmsNormRoutineProblem, Grid = Grid, Blueprint = RmsNormBlueprint<M, P>>
 {
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`, its output reached
     /// through `O`, each row's mean square shifted by `epsilon`.
@@ -25,7 +25,7 @@ pub trait RmsNormRoutine<M>:
         &self,
         tensors: &RmsNormTensors<Out>,
         binding: RmsNormBinding<O::Operand>,
-        blueprint: RmsNormBlueprint<M>,
+        blueprint: RmsNormBlueprint<M, P>,
         grid: Grid,
         epsilon: f32,
     );
@@ -34,10 +34,10 @@ pub trait RmsNormRoutine<M>:
 /// A norm prepared for a sink that does not exist yet: the routine, its operands, and the launch
 /// it settled, whose width the sink is then built to — what a fused tail stores through.
 #[derive(Debug)]
-pub struct RmsNormRoutineSinkLaunch<R, M> {
+pub struct RmsNormRoutineSinkLaunch<R, M, P> {
     routine: R,
     tensors: RmsNormTensors<Geometry>,
-    blueprint: RmsNormBlueprint<M>,
+    blueprint: RmsNormBlueprint<M, P>,
     grid: Grid,
     epsilon: f32,
 }
@@ -47,13 +47,13 @@ pub const RMS_NORM_SINK_TAKES_NO_ROWS: Refusal = Refusal::Declined {
     why: "a sink takes the norm of at least one row",
 };
 
-impl<R: RmsNormRoutine<M>, M> RmsNormRoutineSinkLaunch<R, M> {
+impl<R: RmsNormRoutine<M, P>, M, P> RmsNormRoutineSinkLaunch<R, M, P> {
     /// The norm of `tensors` handed to a sink, by `routine` at the launch it `prepared` for them,
     /// each row's mean square shifted by `epsilon`.
     pub fn new(
         routine: R,
         tensors: RmsNormTensors<Geometry>,
-        prepared: (RmsNormBlueprint<M>, Grid),
+        prepared: (RmsNormBlueprint<M, P>, Grid),
         epsilon: f32,
     ) -> Self {
         let (blueprint, grid) = prepared;
@@ -67,7 +67,7 @@ impl<R: RmsNormRoutine<M>, M> RmsNormRoutineSinkLaunch<R, M> {
     }
 }
 
-impl<R: RmsNormRoutine<M>, M> SinkLaunch for RmsNormRoutineSinkLaunch<R, M> {
+impl<R: RmsNormRoutine<M, P>, M, P> SinkLaunch for RmsNormRoutineSinkLaunch<R, M, P> {
     fn width(&self) -> usize {
         self.blueprint.width
     }

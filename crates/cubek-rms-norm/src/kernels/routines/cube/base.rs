@@ -11,7 +11,7 @@ use cubek_microkernel::rms_norm::cube::{CubeRmsNormMicrokernel, CubeRmsNormMicro
 use cubek_microkernel::rms_norm::{R, RmsNormOperand, RmsNormPartitioning};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeBoxes, CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// The norm with every row owned by a cube, its planes each summing a contiguous run of the row
 /// and meeting once in shared memory. What a single row of the model's width wants: more units
@@ -38,7 +38,7 @@ impl core::fmt::Display for CubeRmsNormRoutineSettings {
     }
 }
 
-pub type CubeRmsNormRoutineBlueprint = RmsNormBlueprint<CubeRmsNormMicrokernel>;
+pub type CubeRmsNormRoutineBlueprint = RmsNormBlueprint<CubeRmsNormMicrokernel, CubeBoxes>;
 
 impl Routine for CubeRmsNormRoutine {
     type Problem = RmsNormRoutineProblem;
@@ -93,7 +93,7 @@ impl CubeRmsNormRoutine {
     fn vectorize(
         &self,
         microkernel: &CubeRmsNormMicrokernel,
-        _: &RmsNormPartitioning,
+        _: &RmsNormPartitioning<CubeBoxes>,
         vectorization: &mut Vectorization<RmsNormOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
@@ -120,7 +120,7 @@ impl EstimatedRoutine for CubeRmsNormRoutine {
     }
 }
 
-impl RmsNormRoutine<CubeRmsNormMicrokernel> for CubeRmsNormRoutine {
+impl RmsNormRoutine<CubeRmsNormMicrokernel, CubeBoxes> for CubeRmsNormRoutine {
     fn dispatch<O: DestinationLaunch, Out>(
         &self,
         tensors: &RmsNormTensors<Out>,

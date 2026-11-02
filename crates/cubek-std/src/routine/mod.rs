@@ -1,5 +1,6 @@
-//! How a problem is solved on a device: the [`Routine`] trait, the [`Grid`] a launch spawns, and
-//! the [`LaunchSettings`] that grid is checked as.
+//! How a problem is solved on a device: the [`Routine`] trait, the [`Partition`] each of its
+//! launches hands its boxes out by, the [`Grid`] a launch spawns, and the [`LaunchSettings`] that
+//! grid is checked as.
 //!
 //! A routine is the one place its kernels' hardware assumptions are stated. It takes the problem
 //! and the [`Hardware`](crate::Hardware), and returns a blueprint of compile-time decisions and
@@ -36,9 +37,11 @@
 mod base;
 mod grid;
 mod launch_settings;
+mod partition;
 mod prepared;
 
 pub use base::*;
 pub use grid::*;
 pub use launch_settings::*;
+pub use partition::*;
 pub use prepared::*;

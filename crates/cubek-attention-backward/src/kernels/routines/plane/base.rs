@@ -4,7 +4,6 @@ use crate::kernels::{
     AttentionBackwardRoutine, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_microkernel::attention::{B, G, KV, Q, S};
@@ -16,7 +15,7 @@ use cubek_microkernel::attention_backward::query_gradient::plane::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{Microkernel, StageRing};
-use cubek_std::routine::Routine;
+use cubek_std::routine::{LaunchPlanes, Partitioned, Routine};
 
 /// The backward pass with every plane owning, in the first walk, a box of queries of one head, and
 /// in the second, a box of keys of one key head, each on a matrix instruction. A plane stages what
@@ -69,9 +68,16 @@ pub struct PlaneFragmentAttentionBackwardSharedMemory {
 
 /// What [`PlaneFragmentAttentionBackwardRoutine`] compiles.
 pub type PlaneFragmentAttentionBackwardRoutineBlueprint = AttentionBackwardBlueprint<
-    PlaneQueryGradientMicrokernel,
-    PlaneKeyGradientMicrokernel,
-    PlaneFragmentAttentionBackwardSharedMemory,
+    AttentionBackwardWalk<
+        PlaneQueryGradientMicrokernel,
+        LaunchPlanes,
+        PlaneFragmentAttentionBackwardSharedMemory,
+    >,
+    AttentionBackwardWalk<
+        PlaneKeyGradientMicrokernel,
+        LaunchPlanes,
+        PlaneFragmentAttentionBackwardSharedMemory,
+    >,
 >;
 
 impl Routine for PlaneFragmentAttentionBackwardRoutine {
@@ -125,25 +131,21 @@ impl Routine for PlaneFragmentAttentionBackwardRoutine {
             PlaneQueryGradientMicrokernel::best(hw, &item, &settings.query_gradient)?;
         let key_gradient = PlaneKeyGradientMicrokernel::best(hw, &item, &settings.key_gradient)?;
         let planes = settings.planes.get();
-        let query_partitioning = Partitioning::new(
+        let query_partitioning = Partitioned::launch_planes(
             problem.space(),
-            query_gradient
-                .tiling()
-                .launch_planes(
-                    &[Q, G, B, KV],
-                    PlaneOrder::new(&[(Q, planes)], CubeOrder::RowMajor),
-                )
-                .build(),
+            query_gradient.tiling(),
+            &[Q, G, B, KV],
+            LaunchPlanes {
+                order: PlaneOrder::new(&[(Q, planes)], CubeOrder::RowMajor),
+            },
         );
-        let key_partitioning = Partitioning::new(
+        let key_partitioning = Partitioned::launch_planes(
             problem.space(),
-            key_gradient
-                .tiling()
-                .launch_planes(
-                    &[S, B, KV],
-                    PlaneOrder::new(&[(S, planes)], CubeOrder::RowMajor),
-                )
-                .build(),
+            key_gradient.tiling(),
+            &[S, B, KV],
+            LaunchPlanes {
+                order: PlaneOrder::new(&[(S, planes)], CubeOrder::RowMajor),
+            },
         );
         let (query_grid, query_ring) = WalkStages {
             stage: problem.stage(S, query_gradient.seq_kv()),
@@ -153,7 +155,7 @@ impl Routine for PlaneFragmentAttentionBackwardRoutine {
             window_bytes: query_gradient.window_bytes(&item),
             body_bytes: 0,
         }
-        .grid(hw, &query_partitioning)?;
+        .grid(hw, query_partitioning.as_tile())?;
         let (key_grid, key_ring) = WalkStages {
             stage: problem.stage(Q, key_gradient.seq_q()),
             ring: settings.ring,
@@ -162,7 +164,7 @@ impl Routine for PlaneFragmentAttentionBackwardRoutine {
             window_bytes: key_gradient.window_bytes(&item),
             body_bytes: 0,
         }
-        .grid(hw, &key_partitioning)?;
+        .grid(hw, key_partitioning.as_tile())?;
         let blueprint = AttentionBackwardBlueprint {
             query_walk: AttentionBackwardWalk::new(
                 hw,

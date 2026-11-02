@@ -10,6 +10,7 @@ use cubek_microkernel::attention_backward::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
+use cubek_std::routine::Partitioned;
 
 /// A microkernel of this kind, as a walk reads it.
 pub trait AttentionBackwardMicrokernel:
@@ -30,19 +31,20 @@ impl<M> AttentionBackwardMicrokernel for M where
 {
 }
 
-/// The decisions of one launch of a routine: its microkernel, the partitioning that places its
-/// work items, the width each operand binds at, and how the routine lays out the shared memory the
-/// walk holds; `()` for one that holds none. The grid it spawns is beside it
+/// The decisions of one launch of a routine: its microkernel `M`, the partitioning that places its
+/// work items, its boxes handed out by `P` ([`Partition`](cubek_std::routine::Partition)), the
+/// width each operand binds at, and how the routine lays out the shared memory the walk holds;
+/// `()` for one that holds none. The grid it spawns is beside it
 /// ([`AttentionBackwardGrid`](crate::kernels::AttentionBackwardGrid)).
 #[derive(Debug, Clone, PartialEq)]
-pub struct AttentionBackwardWalk<M, SM = ()> {
+pub struct AttentionBackwardWalk<M, P, SM = ()> {
     pub microkernel: M,
-    pub partitioning: Partitioning,
+    pub partitioning: Partitioned<P>,
     pub widths: AttentionBackwardOperands<usize>,
     pub shared_memory: SM,
 }
 
-impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
+impl<M: AttentionBackwardMicrokernel, P, SM> AttentionBackwardWalk<M, P, SM> {
     /// `microkernel` placed by `partitioning`, shared memory laid out as `shared_memory`, its
     /// widths settled.
     ///
@@ -54,11 +56,11 @@ impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         microkernel: M,
-        partitioning: Partitioning,
+        partitioning: Partitioned<P>,
         shared_memory: SM,
     ) -> Self {
         let mut vectorization = Vectorization::new();
-        microkernel.vectorize(&partitioning, &mut vectorization);
+        microkernel.vectorize(partitioning.as_tile(), &mut vectorization);
         let elements = problem.elements();
         for operand in AttentionBackwardOperand::ALL {
             vectorization.require(VectorRequirement::Aligned {
@@ -72,10 +74,10 @@ impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
                     elements.get(operand).size(),
                 ),
             });
-            if partitioning.overhangs(operand.innermost()) {
+            if partitioning.as_tile().overhangs(operand.innermost()) {
                 vectorization.require(VectorRequirement::masked(
                     operand,
-                    partitioning.space(),
+                    partitioning.as_tile().space(),
                     operand.innermost(),
                 ));
             }
@@ -94,12 +96,10 @@ impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
     /// batches, the key heads, the queries and the keys — left to the launch, and the group and
     /// the dims a row spans compiled in, which a row's registers are sized by.
     pub(crate) fn kernel_partitioning(&self) -> Partitioning {
+        let partitioning = self.partitioning.as_tile();
         Partitioning::new(
-            self.partitioning
-                .space()
-                .clone()
-                .with_dynamic(&[B, KV, Q, S]),
-            self.partitioning.levels().to_vec(),
+            partitioning.space().clone().with_dynamic(&[B, KV, Q, S]),
+            partitioning.levels().to_vec(),
         )
     }
 }

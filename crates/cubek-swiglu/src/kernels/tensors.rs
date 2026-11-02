@@ -101,7 +101,11 @@ impl SwigluTensors {
 
     /// The two operands bound as `blueprint` states them, on `grid`: under its partitioning, at
     /// its width.
-    pub fn bind<M>(&self, blueprint: &SwigluBlueprint<M>, grid: &Grid) -> SwigluBinding<Bound> {
+    pub fn bind<M, P>(
+        &self,
+        blueprint: &SwigluBlueprint<M, P>,
+        grid: &Grid,
+    ) -> SwigluBinding<Bound> {
         let (launcher, input) = self.bind_input(blueprint, grid);
         let out = launcher
             .arg(self.out.rows.binding.clone(), self.problem.element)
@@ -138,9 +142,9 @@ impl SwigluTensors<PackedRows> {
 
     /// The input bound as `blueprint` states it, on `grid`, and the output as one tile of its
     /// words under their scales ([`PackedRows::bind`]).
-    pub fn bind<M>(
+    pub fn bind<M, P>(
         &self,
-        blueprint: &SwigluBlueprint<M>,
+        blueprint: &SwigluBlueprint<M, P>,
         grid: &Grid,
     ) -> SwigluBinding<TileArgLaunch> {
         let (launcher, input) = self.bind_input(blueprint, grid);
@@ -175,7 +179,11 @@ impl SwigluTensors<TiledRows> {
 
     /// The input bound as `blueprint` states it, on `grid`, and the output over the rows and the
     /// width, through the tiles its binding states.
-    pub fn bind<M>(&self, blueprint: &SwigluBlueprint<M>, grid: &Grid) -> SwigluBinding<Bound> {
+    pub fn bind<M, P>(
+        &self,
+        blueprint: &SwigluBlueprint<M, P>,
+        grid: &Grid,
+    ) -> SwigluBinding<Bound> {
         let (launcher, input) = self.bind_input(blueprint, grid);
         let out = self.out.bind(&launcher, blueprint.width);
         SwigluBinding {
@@ -199,7 +207,11 @@ impl<Out> SwigluTensors<Out> {
 
     /// The launcher of `blueprint`'s partitioning on `grid`, and the fused rows bound under it at
     /// its width, as the store states the rows: what every output binds beside.
-    fn bind_input<M>(&self, blueprint: &SwigluBlueprint<M>, grid: &Grid) -> (Launcher, Bound) {
+    fn bind_input<M, P>(
+        &self,
+        blueprint: &SwigluBlueprint<M, P>,
+        grid: &Grid,
+    ) -> (Launcher, Bound) {
         let partitioning = &blueprint.partitioning;
         // The grid's launcher, settled over the extents on its first launch and cloned after.
         let launcher = grid.launcher(self.client(), || {

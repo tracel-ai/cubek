@@ -209,9 +209,9 @@ impl AttentionBackwardTensors {
 
     /// Every operand bound as `walk` states it, under its partitioning, at its widths, on `grid`.
     /// A walk passes its kernel the ones it reads and writes.
-    pub(crate) fn bind<M, SM>(
+    pub(crate) fn bind<M, P, SM>(
         &self,
-        walk: &AttentionBackwardWalk<M, SM>,
+        walk: &AttentionBackwardWalk<M, P, SM>,
         grid: &Grid,
     ) -> AttentionBackwardBinding
     where
@@ -220,7 +220,7 @@ impl AttentionBackwardTensors {
         let launcher = Launcher::new(
             &self.client,
             walk.kernel_partitioning(),
-            walk.partitioning.space(),
+            walk.partitioning.as_tile().space(),
             LaunchGrid::Stated {
                 cube_count: grid.launch.cube_count.clone(),
                 cube_dim: grid.launch.cube_dim,
@@ -241,10 +241,10 @@ impl AttentionBackwardTensors {
     /// `tensor`, `[b, h, q, ·]` like the query's gradient, bound under `binding`'s launcher as
     /// `operand` is under `walk`: a buffer a routine allocates beside the pass's own, such as a sum
     /// it adds into.
-    pub(crate) fn bind_beside<M, SM>(
+    pub(crate) fn bind_beside<M, P, SM>(
         &self,
         binding: &AttentionBackwardBinding,
-        walk: &AttentionBackwardWalk<M, SM>,
+        walk: &AttentionBackwardWalk<M, P, SM>,
         tensor: &PlainTensor,
         operand: AttentionBackwardOperand,
     ) -> Bound

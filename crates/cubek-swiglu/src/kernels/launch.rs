@@ -7,14 +7,14 @@ use crate::kernels::{SwigluBinding, SwigluBlueprint, SwigluRoutineProblem, Swigl
 use cubecl::tile::launch::DestinationLaunch;
 use cubek_std::routine::{Grid, Routine};
 
-/// A routine of this kind around microkernel `M`: it prepares a [`SwigluBlueprint`] and launches
-/// it on tensors.
+/// A routine of this kind around microkernel `M`, its boxes handed out by `P`: it prepares a
+/// [`SwigluBlueprint`] and launches it on tensors.
 ///
 /// A routine states what is its own — how it places its microkernel's runs, and the kernel it
 /// dispatches through any destination — and the launches around those are written once, on its
 /// candidate ([`SwigluRoutineCandidate`](crate::kernels::SwigluRoutineCandidate)).
-pub trait SwigluRoutine<M>:
-    Routine<Problem = SwigluRoutineProblem, Grid = Grid, Blueprint = SwigluBlueprint<M>>
+pub trait SwigluRoutine<M, P>:
+    Routine<Problem = SwigluRoutineProblem, Grid = Grid, Blueprint = SwigluBlueprint<M, P>>
 {
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`, its output reached
     /// through `O`.
@@ -22,7 +22,7 @@ pub trait SwigluRoutine<M>:
         &self,
         tensors: &SwigluTensors<Out>,
         binding: SwigluBinding<O::Operand>,
-        blueprint: SwigluBlueprint<M>,
+        blueprint: SwigluBlueprint<M, P>,
         grid: Grid,
     );
 }

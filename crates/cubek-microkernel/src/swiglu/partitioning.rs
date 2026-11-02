@@ -1,6 +1,7 @@
 use crate::row_store::{ROWS, RowStore, WIDTH};
-use cubecl::tile::{Axis, Levels, Partitioning, Space, space::ComputeScope};
+use cubecl::tile::{Axis, Levels, Partitioning, Space};
 use cubek_std::matmul_axes::batch_axis;
+use cubek_std::routine::{CubeBoxes, Partitioned};
 
 /// A row: the axis the halves are paired along, one row of the gate beside one of the up, and the
 /// rows of the product the output feeds.
@@ -13,47 +14,55 @@ pub const H: Axis = batch_axis(0);
 /// store states it as its blocks ([`RowStore::width_axes`]).
 pub const D: Axis = WIDTH;
 
-/// How a routine of this kind places its microkernel's runs over a problem: a cube for every box
-/// of rows and of a run of their width, both halves of it, and inside the cube's box the levels
-/// the routine and its microkernel state.
+/// How a routine of this kind places its microkernel's runs over a problem, handing its boxes out
+/// by `P`: a cube for every box of rows and of a run of their width, both halves of it, and inside
+/// the cube's box the levels the routine and its microkernel state ([`CubeBoxes`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SwigluPartitioning {
-    partitioning: Partitioning,
+pub struct SwigluPartitioning<P> {
+    partitioning: Partitioned<P>,
+    /// The box one cube covers.
+    cube_box: Space,
     /// How the output's rows are stored, which decides what the kernel leaves to the launch.
     store: RowStore,
 }
 
-impl SwigluPartitioning {
+impl SwigluPartitioning<CubeBoxes> {
     /// `space`, every axis of the problem, partitioned with `inside` a cube's box, the rows stored
     /// as `store` says: the boxes of rows ride the grid's `x`, the most cubes a device spawns along
     /// any axis, and the runs of a row its `y`.
     pub fn new(space: Space, inside: Levels, store: RowStore) -> Self {
+        let partitioning = Partitioned::cubes(space, inside, &[R, store.cut()], &[]);
+        let cube_box = partitioning.owner_box();
         Self {
-            partitioning: Partitioning::new(space, inside.cubes(&[R, store.cut()]).build()),
+            partitioning,
+            cube_box,
             store,
         }
     }
+}
 
+impl<P> SwigluPartitioning<P> {
     /// The box one cube covers: its rows, and the run of their width it holds.
     pub fn cube_box(&self) -> Space {
-        self.partitioning.box_of(ComputeScope::Cube)
+        self.cube_box.clone()
     }
 
     /// The partitioning a kernel compiles against: the rows of a plain store left to the launch
     /// ([`RowStore::dynamic_axes`]), the width compiled in, since it is a model's `d_ff` and the
     /// autotune key holds it exactly.
     pub fn kernel(&self) -> Partitioning {
+        let partitioning = self.as_tile();
         Partitioning::new(
-            self.partitioning
+            partitioning
                 .space()
                 .clone()
                 .with_dynamic(self.store.dynamic_axes()),
-            self.partitioning.levels().to_vec(),
+            partitioning.levels().to_vec(),
         )
     }
 
     /// The tile engine's partitioning, for the launch and the binding.
     pub fn as_tile(&self) -> &Partitioning {
-        &self.partitioning
+        self.partitioning.as_tile()
     }
 }

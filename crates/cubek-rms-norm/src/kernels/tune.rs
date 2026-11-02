@@ -280,9 +280,9 @@ impl<R: Routine + Copy> RmsNormRoutineCandidate<R> {
     }
 }
 
-impl<R, M> RmsNormRoutineCandidate<R>
+impl<R, M, P> RmsNormRoutineCandidate<R>
 where
-    R: RmsNormRoutine<M> + Routine<Grid = Grid, Blueprint = RmsNormBlueprint<M>>,
+    R: RmsNormRoutine<M, P> + Routine<Grid = Grid, Blueprint = RmsNormBlueprint<M, P>>,
 {
     /// `input / sqrt(mean(input², last) + epsilon) · weight`, the square-sum in `f32`, launched on
     /// the operands' device ([`RmsNormTensors::new`]).
@@ -352,7 +352,10 @@ where
     ///
     /// [`RMS_NORM_SINK_TAKES_NO_ROWS`]; what [`RmsNormTensors::sink`] declines; why this device
     /// cannot run the norm at this setting.
-    pub fn sink_launch(&self, call: &RmsNormCall) -> Result<RmsNormRoutineSinkLaunch<R, M>, Refusal>
+    pub fn sink_launch(
+        &self,
+        call: &RmsNormCall,
+    ) -> Result<RmsNormRoutineSinkLaunch<R, M, P>, Refusal>
     where
         R: Copy,
     {
@@ -375,7 +378,7 @@ where
         &self,
         call: &RmsNormCall,
         tensors: &RmsNormTensors<Out>,
-        bind: impl FnOnce(&RmsNormBlueprint<M>, &Grid) -> RmsNormBinding<O::Operand>,
+        bind: impl FnOnce(&RmsNormBlueprint<M, P>, &Grid) -> RmsNormBinding<O::Operand>,
     ) -> Result<(), Refusal> {
         if tensors.problem().rows == 0 {
             return Ok(());
@@ -391,7 +394,7 @@ where
     fn prepare(
         &self,
         problem: &RmsNormRoutineProblem,
-    ) -> Result<(RmsNormBlueprint<M>, Grid), Refusal> {
+    ) -> Result<(RmsNormBlueprint<M, P>, Grid), Refusal> {
         self.prepared
             .prepare(&self.routine, &self.hw, problem, &self.settings)
     }
@@ -399,7 +402,7 @@ where
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device. Not held: a key's problem places the candidate in a
     /// round, and may never be launched.
-    fn prepared(&self, key: &RmsNormKey) -> Option<(RmsNormBlueprint<M>, Grid)> {
+    fn prepared(&self, key: &RmsNormKey) -> Option<(RmsNormBlueprint<M, P>, Grid)> {
         self.routine
             .prepare(&self.hw, &RmsNormRoutineProblem::from(key), &self.settings)
             .ok()
@@ -413,15 +416,15 @@ where
     }
 }
 
-impl<R, M: PartialEq> TuneCandidate for RmsNormRoutineCandidate<R>
+impl<R, M: PartialEq, P: PartialEq> TuneCandidate for RmsNormRoutineCandidate<R>
 where
-    R: RmsNormRoutine<M> + Routine<Grid = Grid, Blueprint = RmsNormBlueprint<M>>,
+    R: RmsNormRoutine<M, P> + Routine<Grid = Grid, Blueprint = RmsNormBlueprint<M, P>>,
 {
     type Strategy = R::Settings;
     type Key = RmsNormKey;
     /// The blueprint and the cube: the cube is kept out of a blueprint, and two settings preparing
     /// one blueprint can still launch different cubes.
-    type Blueprint = (RmsNormBlueprint<M>, CubeDim);
+    type Blueprint = (RmsNormBlueprint<M, P>, CubeDim);
 
     fn strategy(&self) -> &R::Settings {
         &self.settings

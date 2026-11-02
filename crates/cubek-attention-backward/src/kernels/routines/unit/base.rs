@@ -4,7 +4,6 @@ use crate::kernels::{
     AttentionBackwardRoutine, AttentionBackwardTensors, AttentionBackwardWalk,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::UnitCube;
 use cubek_microkernel::attention::{B, G, KV, Q, S};
@@ -16,7 +15,7 @@ use cubek_microkernel::attention_backward::query_gradient::unit::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, Grid, LaunchUnits, Partitioned, Routine};
 
 /// The backward pass with every unit owning, in the first walk, queries of one head, and in the
 /// second, keys of one key head. This kind's floor: it asks nothing of the hardware, so it runs
@@ -55,8 +54,10 @@ impl core::fmt::Display for UnitAttentionBackwardRoutineSettings {
 }
 
 /// What [`UnitAttentionBackwardRoutine`] compiles.
-pub type UnitAttentionBackwardRoutineBlueprint =
-    AttentionBackwardBlueprint<UnitQueryGradientMicrokernel, UnitKeyGradientMicrokernel, ()>;
+pub type UnitAttentionBackwardRoutineBlueprint = AttentionBackwardBlueprint<
+    AttentionBackwardWalk<UnitQueryGradientMicrokernel, LaunchUnits>,
+    AttentionBackwardWalk<UnitKeyGradientMicrokernel, LaunchUnits>,
+>;
 
 impl Routine for UnitAttentionBackwardRoutine {
     type Problem = AttentionBackwardProblem;
@@ -120,22 +121,20 @@ impl Routine for UnitAttentionBackwardRoutine {
             plane_width,
             shared_memory: 0,
         };
-        let query_partitioning = Partitioning::new(
+        let query_partitioning = Partitioned::launch_units(
             problem.space(),
-            query_gradient
-                .tiling()
-                .launch_units(&[Q, G, B, KV], cube)
-                .build(),
+            query_gradient.tiling(),
+            &[Q, G, B, KV],
+            LaunchUnits { cube },
         );
-        let key_partitioning = Partitioning::new(
+        let key_partitioning = Partitioned::launch_units(
             problem.space(),
-            key_gradient
-                .tiling()
-                .launch_units(&[S, B, KV], cube)
-                .build(),
+            key_gradient.tiling(),
+            &[S, B, KV],
+            LaunchUnits { cube },
         );
-        let query_grid = Grid::new(hw, &query_partitioning, resources)?;
-        let key_grid = Grid::new(hw, &key_partitioning, resources)?;
+        let query_grid = Grid::new(hw, query_partitioning.as_tile(), resources)?;
+        let key_grid = Grid::new(hw, key_partitioning.as_tile(), resources)?;
         let blueprint = AttentionBackwardBlueprint {
             query_walk: AttentionBackwardWalk::new(
                 hw,

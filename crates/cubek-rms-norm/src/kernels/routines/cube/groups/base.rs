@@ -15,7 +15,7 @@ use cubek_microkernel::rms_norm::{R, RmsNormOperand, RmsNormPartitioning};
 use cubek_microkernel::row_store::OwnerMemory;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeBoxes, CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// The norm with every row owned by a group of units, a cube holding several groups side by
 /// side. Into a plain output it asks nothing of the hardware, so it runs everywhere: this kind's
@@ -65,7 +65,8 @@ impl core::fmt::Display for CubeGroupsRmsNormRoutineSettings {
     }
 }
 
-pub type CubeGroupsRmsNormRoutineBlueprint = RmsNormBlueprint<CubeGroupsRmsNormMicrokernel>;
+pub type CubeGroupsRmsNormRoutineBlueprint =
+    RmsNormBlueprint<CubeGroupsRmsNormMicrokernel, CubeBoxes>;
 
 impl Routine for CubeGroupsRmsNormRoutine {
     type Problem = RmsNormRoutineProblem;
@@ -140,7 +141,7 @@ impl CubeGroupsRmsNormRoutine {
     fn vectorize(
         &self,
         microkernel: &CubeGroupsRmsNormMicrokernel,
-        _: &RmsNormPartitioning,
+        _: &RmsNormPartitioning<CubeBoxes>,
         vectorization: &mut Vectorization<RmsNormOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
@@ -168,7 +169,7 @@ impl EstimatedRoutine for CubeGroupsRmsNormRoutine {
     }
 }
 
-impl RmsNormRoutine<CubeGroupsRmsNormMicrokernel> for CubeGroupsRmsNormRoutine {
+impl RmsNormRoutine<CubeGroupsRmsNormMicrokernel, CubeBoxes> for CubeGroupsRmsNormRoutine {
     fn dispatch<O: DestinationLaunch, Out>(
         &self,
         tensors: &RmsNormTensors<Out>,

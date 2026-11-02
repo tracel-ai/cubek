@@ -19,16 +19,17 @@ pub const SWIGLU_WIDTH_UNPLANNED: Refusal = Refusal::Declined {
 /// the stage a cube writes its runs into before they reach a packed output.
 ///
 /// One type for every routine of this kind, named per routine by an alias: what differs between
-/// them is the microkernel.
+/// them is the microkernel `M` and the way `P` its boxes are handed out
+/// ([`Partition`](cubek_std::routine::Partition)).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SwigluBlueprint<M> {
+pub struct SwigluBlueprint<M, P> {
     pub microkernel: M,
-    pub partitioning: SwigluPartitioning,
+    pub partitioning: SwigluPartitioning<P>,
     pub width: usize,
     pub stage: CubeStage,
 }
 
-impl<M> SwigluBlueprint<M> {
+impl<M, P> SwigluBlueprint<M, P> {
     /// `microkernel` placed by `partitioning`: the blueprint once its width is settled.
     ///
     /// To the requirements the routine and its microkernel enqueued in `vectorization`, the
@@ -40,7 +41,7 @@ impl<M> SwigluBlueprint<M> {
         hw: &Hardware,
         problem: &SwigluRoutineProblem,
         microkernel: M,
-        partitioning: SwigluPartitioning,
+        partitioning: SwigluPartitioning<P>,
         mut vectorization: Vectorization<SwigluOperand>,
     ) -> Self {
         for operand in SwigluOperand::ALL {
