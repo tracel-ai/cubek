@@ -2,7 +2,9 @@
 
 use crate::kernels::tune::AttentionTuneInputs;
 use crate::kernels::tune::key::AttentionKey;
-use crate::kernels::{AttentionBlueprint, AttentionRoutine, AttentionRoutineProblem};
+use crate::kernels::{
+    AttentionBlueprint, AttentionPartition, AttentionRoutine, AttentionRoutineProblem,
+};
 use cubecl::CubeDim;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
@@ -47,9 +49,9 @@ impl<R: Routine + Copy> AttentionRoutineCandidate<R> {
     }
 }
 
-impl<R, M: AttentionMicrokernel, SM> AttentionRoutineCandidate<R>
+impl<R, M: AttentionMicrokernel, P: AttentionPartition, SM> AttentionRoutineCandidate<R>
 where
-    R: AttentionRoutine<M, SM> + Routine<Grid = Grid, Blueprint = AttentionBlueprint<M, SM>>,
+    R: AttentionRoutine<M, P, SM> + Routine<Grid = Grid, Blueprint = AttentionBlueprint<M, P, SM>>,
 {
     /// The attention `inputs` state, written into their output by this candidate's routine at its
     /// setting on the device the candidate was listed for, each problem prepared once
@@ -70,7 +72,7 @@ where
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device.
-    fn prepared(&self, key: &AttentionKey) -> Option<(AttentionBlueprint<M, SM>, Grid)> {
+    fn prepared(&self, key: &AttentionKey) -> Option<(AttentionBlueprint<M, P, SM>, Grid)> {
         let problem = AttentionRoutineProblem::try_from(key).ok()?;
         self.routine
             .prepare(&self.hw, &problem, &self.settings)
@@ -78,15 +80,16 @@ where
     }
 }
 
-impl<R, M: AttentionMicrokernel, SM: PartialEq> TuneCandidate for AttentionRoutineCandidate<R>
+impl<R, M: AttentionMicrokernel, P: AttentionPartition, SM: PartialEq> TuneCandidate
+    for AttentionRoutineCandidate<R>
 where
-    R: AttentionRoutine<M, SM> + Routine<Grid = Grid, Blueprint = AttentionBlueprint<M, SM>>,
+    R: AttentionRoutine<M, P, SM> + Routine<Grid = Grid, Blueprint = AttentionBlueprint<M, P, SM>>,
 {
     type Strategy = R::Settings;
     type Key = AttentionKey;
     /// The blueprint and the cube: the cube is kept out of a blueprint, and two settings preparing
     /// one blueprint can still launch different cubes.
-    type Blueprint = (AttentionBlueprint<M, SM>, CubeDim);
+    type Blueprint = (AttentionBlueprint<M, P, SM>, CubeDim);
 
     fn strategy(&self) -> &R::Settings {
         &self.settings

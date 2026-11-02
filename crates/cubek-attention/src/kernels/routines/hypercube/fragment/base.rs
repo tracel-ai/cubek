@@ -14,7 +14,7 @@ use cubek_microkernel::attention::hypercube::{
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine, SplitBoxes};
 
 /// Attention with several cubes owning every box of queries, every cube walking its own run of the
 /// keys: each cube stages its run's keys and values once for its plane fragments, on a square
@@ -32,7 +32,7 @@ pub struct HypercubeSecondLaunchFragmentAttentionRoutine;
 pub struct HypercubeSecondLaunchFragmentAttentionRoutineSettings {
     pub microkernel: HypercubeAttentionMicrokernelSettings,
     /// Cubes sharing one box, each on its own run of the keys: part of the partitioning, which
-    /// distributes it whatever the keys ([`AttentionPartitioning::new`]).
+    /// distributes it whatever the keys ([`AttentionPartitioning::split`]).
     pub cubes_along_keys: NonZeroUsize,
 }
 
@@ -55,7 +55,7 @@ impl core::fmt::Display for HypercubeSecondLaunchFragmentAttentionRoutineSetting
 }
 
 pub type HypercubeSecondLaunchFragmentAttentionRoutineBlueprint =
-    AttentionBlueprint<HypercubeAttentionMicrokernel, StageStorage>;
+    AttentionBlueprint<HypercubeAttentionMicrokernel, SplitBoxes, StageStorage>;
 
 /// The width its planes store their slots' lines at: one element, as the windows their sums
 /// drain through serve them.
@@ -86,7 +86,7 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
     }
 
     /// The best hypercube of plane fragments at the settings, its settings' cubes on every box
-    /// whatever the keys ([`AttentionPartitioning::new`]), each holding its planes along the keys
+    /// whatever the keys ([`AttentionPartitioning::split`]), each holding its planes along the keys
     /// and the shared memory its microkernel asks for, its stages held as its planes read them;
     /// merged by a second launch, that launch checked against the device too. Serves a cache of
     /// any length, at any device fill: neither is a call's to decline, since an autotune key
@@ -106,11 +106,13 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
             .cube
             .plane
             .reads_stage(microkernel.cube.settings.layout)?;
-        let partitioning = AttentionPartitioning::new(
+        let partitioning = AttentionPartitioning::split(
             problem.space(),
             microkernel.cube.tiling(),
             microkernel.cube.page_steps,
-            settings.cubes_along_keys,
+            SplitBoxes {
+                cubes: settings.cubes_along_keys,
+            },
             QueryOrder::InOrder,
         );
         let storage = microkernel.cube.stage_storage(&partitioning.stage());
@@ -145,7 +147,7 @@ impl HypercubeSecondLaunchFragmentAttentionRoutine {
     fn vectorize(
         &self,
         microkernel: &HypercubeAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
+        partitioning: &AttentionPartitioning<SplitBoxes>,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
         microkernel.vectorize(&partitioning.cube_space(), vectorization);
@@ -171,7 +173,7 @@ impl EstimatedRoutine for HypercubeSecondLaunchFragmentAttentionRoutine {
     }
 }
 
-impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
+impl AttentionRoutine<HypercubeAttentionMicrokernel, SplitBoxes, StageStorage>
     for HypercubeSecondLaunchFragmentAttentionRoutine
 {
     /// Two launches: every plane leaves its partial in its slot, then a plane for every row

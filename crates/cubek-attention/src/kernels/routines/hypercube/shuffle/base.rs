@@ -17,7 +17,7 @@ use cubek_microkernel::attention::plane::PlaneShuffleAttentionMicrokernelSetting
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine, SplitBoxes};
 
 /// Attention with several cubes owning every box of queries, every cube walking its own run of the
 /// keys: the hypercube microkernel runs a cube of plane shuffles over a cube's run, its planes
@@ -62,13 +62,13 @@ pub trait HypercubeShuffleMerge: core::fmt::Debug + Copy + Eq + core::hash::Hash
 }
 
 pub type HypercubeShuffleAttentionRoutineBlueprint =
-    AttentionBlueprint<HypercubeAttentionMicrokernel, StageStorage>;
+    AttentionBlueprint<HypercubeAttentionMicrokernel, SplitBoxes, StageStorage>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeShuffleAttentionRoutineSettings<M> {
     pub microkernel: HypercubeAttentionMicrokernelSettings,
     /// Cubes sharing one box, each on its own run of the keys: part of the partitioning, which
-    /// distributes it whatever the keys ([`AttentionPartitioning::new`]).
+    /// distributes it whatever the keys ([`AttentionPartitioning::split`]).
     pub cubes_along_keys: NonZeroUsize,
     pub merge: PhantomData<M>,
 }
@@ -182,7 +182,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
 
     /// A cube holds its planes along the keys, and the shared memory its microkernel and its merge
     /// ask for. The cubes sharing a box are its settings' count, whatever the keys
-    /// ([`AttentionPartitioning::new`]). Declines where the device cannot merge this way, and
+    /// ([`AttentionPartitioning::split`]). Declines where the device cannot merge this way, and
     /// serves a cache of any length, at any device fill: neither is a call's to decline, since an
     /// autotune key prepares its candidates at one representative for every call of its bucket.
     fn prepare(
@@ -194,11 +194,13 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         M::MERGE.admits(hw)?;
         let item = problem.work_item();
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
-        let partitioning = AttentionPartitioning::new(
+        let partitioning = AttentionPartitioning::split(
             problem.space(),
             microkernel.cube.tiling(),
             microkernel.cube.page_steps,
-            settings.cubes_along_keys,
+            SplitBoxes {
+                cubes: settings.cubes_along_keys,
+            },
             QueryOrder::InOrder,
         );
         let storage = microkernel.cube.stage_storage(&partitioning.stage());
@@ -237,7 +239,7 @@ impl<M: HypercubeShuffleMerge> HypercubeShuffleAttentionRoutine<M> {
     fn vectorize(
         &self,
         microkernel: &HypercubeAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
+        partitioning: &AttentionPartitioning<SplitBoxes>,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
         microkernel.vectorize(&partitioning.cube_space(), vectorization);
@@ -263,7 +265,8 @@ impl<M: HypercubeShuffleMerge> EstimatedRoutine for HypercubeShuffleAttentionRou
     }
 }
 
-impl<M: HypercubeShuffleMerge> AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
+impl<M: HypercubeShuffleMerge>
+    AttentionRoutine<HypercubeAttentionMicrokernel, SplitBoxes, StageStorage>
     for HypercubeShuffleAttentionRoutine<M>
 {
     /// The cubes' launch and the merge `M` holds. The keys and values are tiles, or a packed cache

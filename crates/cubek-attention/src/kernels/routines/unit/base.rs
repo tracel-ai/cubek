@@ -14,7 +14,7 @@ use cubek_microkernel::attention::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, LaunchUnits, Routine};
 
 /// Attention with every unit owning rows of one head. This kind's floor: it asks nothing of the
 /// hardware, so it runs everywhere.
@@ -51,7 +51,7 @@ impl core::fmt::Display for UnitAttentionRoutineSettings {
     }
 }
 
-pub type UnitAttentionRoutineBlueprint = AttentionBlueprint<UnitAttentionMicrokernel>;
+pub type UnitAttentionRoutineBlueprint = AttentionBlueprint<UnitAttentionMicrokernel, LaunchUnits>;
 
 impl Routine for UnitAttentionRoutine {
     type Problem = AttentionRoutineProblem;
@@ -121,7 +121,7 @@ impl UnitAttentionRoutine {
     fn vectorize(
         &self,
         microkernel: &UnitAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
+        partitioning: &AttentionPartitioning<LaunchUnits>,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
         microkernel.vectorize(&partitioning.cube_space(), vectorization);
@@ -166,7 +166,7 @@ impl EstimatedRoutine for UnitAttentionRoutine {
     }
 }
 
-impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
+impl AttentionRoutine<UnitAttentionMicrokernel, LaunchUnits> for UnitAttentionRoutine {
     fn dispatch(
         &self,
         tensors: &AttentionTensors,

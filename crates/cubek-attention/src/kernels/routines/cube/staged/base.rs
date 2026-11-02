@@ -11,7 +11,7 @@ use cubek_microkernel::attention::cube::{
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeBoxes, CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// Attention with every cube owning a box of queries of some heads of the group, and walking
 /// nothing else: the cube microkernel stages the keys and values once for its planes, each plane
@@ -31,7 +31,7 @@ pub struct CubeStagedAttentionRoutineSettings {
 }
 
 pub type CubeStagedAttentionRoutineBlueprint =
-    AttentionBlueprint<CubeAttentionMicrokernel, StageStorage>;
+    AttentionBlueprint<CubeAttentionMicrokernel, CubeBoxes, StageStorage>;
 
 impl CubeStagedAttentionRoutineSettings {
     /// The cube's lead over plane fragments, its boxes taken in order.
@@ -100,7 +100,6 @@ impl Routine for CubeStagedAttentionRoutine {
             problem.space(),
             microkernel.tiling(),
             microkernel.page_steps,
-            AttentionPartitioning::ONE_CUBE_A_BOX,
             settings.queries,
         );
         let storage = microkernel.stage_storage(&partitioning.stage());
@@ -132,7 +131,7 @@ impl CubeStagedAttentionRoutine {
     fn vectorize(
         &self,
         microkernel: &CubeAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
+        partitioning: &AttentionPartitioning<CubeBoxes>,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
         microkernel.vectorize(&partitioning.cube_space(), vectorization);
@@ -157,7 +156,9 @@ impl EstimatedRoutine for CubeStagedAttentionRoutine {
     }
 }
 
-impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeStagedAttentionRoutine {
+impl AttentionRoutine<CubeAttentionMicrokernel, CubeBoxes, StageStorage>
+    for CubeStagedAttentionRoutine
+{
     /// Every cube staging its keys and values once for its planes, which read the stage, held as
     /// the blueprint's storage.
     fn dispatch(

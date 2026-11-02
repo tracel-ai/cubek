@@ -1,41 +1,42 @@
 use core::num::NonZeroUsize;
 use cubecl::tile::{
-    Axis, Levels, Partitioning, Space,
+    Axis, Level, Levels, Partitioning, Space,
     space::{ComputeScope, Coverage, PlaneOrder, UnitCube},
 };
 use cubek_microkernel::attention::{B, G, KV, Q, S};
+use cubek_std::routine::{
+    CubeBoxes, CubeLine, LaunchPlanes, LaunchUnits, Partition, Partitioned, SplitBoxes,
+};
 
-/// How a routine of this kind places its microkernel's work items over a problem: cubes for
-/// every box of queries and heads of the group, one batch and key head each, and inside the
-/// cube's box the levels the routine and its microkernel state.
+/// How a routine of this kind places its microkernel's work items over a problem, handing its
+/// boxes out by `P`: cubes for every box of queries and heads of the group, one batch and key head
+/// each, and inside the cube's box the levels the routine and its microkernel state
+/// ([`CubeBoxes`]).
 ///
 /// A box's rows are its cube's from loading to writing, and its cube walks the whole of `S`
-/// alone, but where several cubes share every box: each then walks its own run of `S`, its steps
-/// taken in turns with the others', and the cubes take turns at the box's rows to merge them.
-/// Over a cache of pages, the walk takes a page at a time, the steps inside it, and cubes sharing
-/// a box take the pages in turns.
+/// alone, but where several cubes share every box ([`SplitBoxes`]): each then walks its own run of
+/// `S`, its steps taken in turns with the others', and the cubes take turns at the box's rows to
+/// merge them. Over a cache of pages, the walk takes a page at a time, the steps inside it, and
+/// cubes sharing a box take the pages in turns. Or every box's steps laid end to end and shared
+/// between the cubes ([`CubeLine`]).
 ///
 /// Or, for a routine whose planes share nothing, a plane of the launch for every box of queries
-/// and heads, the launch grouping its planes in cubes as an order says
-/// ([`over_planes`](Self::over_planes)); and for one whose units share nothing, a unit of the
-/// launch for every box ([`over_units`](Self::over_units)).
+/// and heads, the launch grouping its planes in cubes as an order says ([`LaunchPlanes`]); and for
+/// one whose units share nothing, a unit of the launch for every box ([`LaunchUnits`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AttentionPartitioning {
-    partitioning: Partitioning,
-    key_cubes: KeyCubes,
+pub struct AttentionPartitioning<P> {
+    partitioning: Partitioned<P>,
     /// Steps of the walk through `S` a page holds, where the walk takes a page at a time.
     page_steps: Option<NonZeroUsize>,
     /// The box one cube covers, its `S` a cube's run of the walk where several share a box.
     cube_space: Space,
 }
 
-/// How the cubes of one batch and key head share the walk through `S`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum KeyCubes {
-    /// This many cubes share every box, each on its own run of `S`.
-    EveryBox(NonZeroUsize),
-    /// This many cubes share the line of every box's steps laid end to end.
-    Line(NonZeroUsize),
+/// A [`Partition`] as attention's walk through `S` reads it: which of the cube's walks a stage
+/// covers.
+pub trait AttentionPartition: Partition {
+    /// The box one step of the walk through `S` covers in `partitioning`.
+    fn stage(partitioning: &AttentionPartitioning<Self>) -> Space;
 }
 
 /// The order a launch's cubes take the boxes of queries in.
@@ -57,16 +58,51 @@ impl core::fmt::Display for QueryOrder {
     }
 }
 
-impl AttentionPartitioning {
-    /// One cube a box of rows: the count every routine but the hypercube's distributes.
-    pub const ONE_CUBE_A_BOX: NonZeroUsize = NonZeroUsize::MIN;
+impl QueryOrder {
+    /// `cubes`, their boxes of queries taken in this order, then one batch and key head a cube.
+    fn taken_by(self, cubes: Levels) -> Vec<Level> {
+        let cubes = match self {
+            Self::InOrder => cubes,
+            Self::LastFirst => cubes.reversed(Q),
+        };
+        cubes.batches(&[B, KV]).build()
+    }
+}
 
+/// `step`, one step of the walk through `S`, its walk taking a page of `page_steps` steps at a
+/// time where it has pages.
+fn paged(step: Levels, page_steps: Option<NonZeroUsize>) -> Levels {
+    match page_steps {
+        Some(steps) => step.walk(&[(S, steps.get())]),
+        None => step,
+    }
+}
+
+impl AttentionPartitioning<CubeBoxes> {
     /// `space`, every axis of the problem, partitioned with `step` the levels inside one step of
-    /// the walk through `S`, and `cubes_along_keys` cubes sharing every box
-    /// ([`ONE_CUBE_A_BOX`](Self::ONE_CUBE_A_BOX) for a box to itself), each taking a run of the
-    /// walk (the tile DSL's [`Levels::across`]), the boxes of queries taken in `queries` order.
-    /// With
-    /// `page_steps`, the walk takes a page of that many steps at a time.
+    /// the walk through `S`, a cube a box, walking the whole of `S`, the boxes of queries taken in
+    /// `queries` order. With `page_steps`, the walk takes a page of that many steps at a time.
+    pub fn new(
+        space: Space,
+        step: Levels,
+        page_steps: Option<NonZeroUsize>,
+        queries: QueryOrder,
+    ) -> Self {
+        let cubes = paged(step, page_steps).walk_every(&[S]).cubes(&[Q, G]);
+        let partitioning =
+            Partitioned::new(Partitioning::new(space, queries.taken_by(cubes)), CubeBoxes);
+        let cube_space = partitioning.owner_box();
+        Self {
+            partitioning,
+            page_steps,
+            cube_space,
+        }
+    }
+}
+
+impl AttentionPartitioning<SplitBoxes> {
+    /// [`new`](AttentionPartitioning::new) with the cubes of `split` sharing every box, each taking
+    /// a run of the walk (the tile DSL's [`Levels::across`]).
     ///
     /// The count is the one asked for, whatever the keys: it is part of what a kernel compiles,
     /// and the keys are the launch's, any length a cache holds. A buffer of fewer steps than the
@@ -76,38 +112,24 @@ impl AttentionPartitioning {
     /// every cube with a step or page of them: contiguous runs would leave the cubes past the
     /// prefix with nothing to walk. Where the count does not divide them, the trailing cubes take
     /// one fewer, or none.
-    pub fn new(
+    pub fn split(
         space: Space,
         step: Levels,
         page_steps: Option<NonZeroUsize>,
-        cubes_along_keys: NonZeroUsize,
+        split: SplitBoxes,
         queries: QueryOrder,
     ) -> Self {
-        let walked = match page_steps {
-            Some(steps) => step.walk(&[(S, steps.get())]),
-            None => step,
-        };
-        let cubes = match cubes_along_keys.get() {
-            1 => walked.walk_every(&[S]).cubes(&[Q, G]),
-            cubes => walked.cubes(&[Q, G, S]).across(S, cubes).interleaved(S),
-        };
-        let cubes = match queries {
-            QueryOrder::InOrder => cubes,
-            QueryOrder::LastFirst => cubes.reversed(Q),
-        };
-        let levels = cubes.batches(&[B, KV]).build();
+        let cubes = paged(step, page_steps)
+            .cubes(&[Q, G, S])
+            .across(S, split.cubes.get())
+            .interleaved(S);
         let keys = space.extent(S);
-        let partitioning = Partitioning::new(space, levels);
-        // Where cubes share a box, the cube level's own tile is one step of `S`, or one page,
-        // distributed in runs: the box states the run, as long as the longest cube's.
-        let tile = partitioning.box_of(ComputeScope::Cube);
-        let run = match cubes_along_keys.get() {
-            1 => tile.extent(S),
-            cubes => {
-                let step = tile.extent(S);
-                keys.div_ceil(step).max(1).div_ceil(cubes) * step
-            }
-        };
+        let partitioning =
+            Partitioned::new(Partitioning::new(space, queries.taken_by(cubes)), split);
+        // The cube level's own tile is one step of `S`, or one page, distributed in runs: the box
+        // states the run, as long as the longest cube's.
+        let tile = partitioning.owner_box();
+        let run = split.run(keys, tile.extent(S));
         let cube_space = Space::new(
             &tile
                 .extents()
@@ -117,62 +139,85 @@ impl AttentionPartitioning {
         );
         Self {
             partitioning,
-            key_cubes: KeyCubes::EveryBox(cubes_along_keys),
             page_steps,
             cube_space,
         }
     }
 
+    /// Cubes sharing every box of rows, each on its own run of `S`.
+    pub fn cubes_along_keys(&self) -> NonZeroUsize {
+        self.partitioning.partition().cubes
+    }
+
+    /// Cubes one batch and key head of the problem spawns: the cubes sharing each box, for every
+    /// box of queries and heads.
+    pub fn cubes(&self) -> usize {
+        self.boxes() * self.cubes_along_keys().get()
+    }
+}
+
+impl AttentionPartitioning<CubeLine> {
     /// `space`, every axis of the problem, partitioned with `step` the levels inside one step of
     /// the walk through `S`, every box of queries and heads holding the whole of `S`, and the steps
-    /// of each batch and key head's boxes laid end to end and shared by `cubes` cubes, each taking
-    /// a run that may start inside one box and end inside the next (the tile DSL's
+    /// of each batch and key head's boxes laid end to end and shared by the cubes of `line`, each
+    /// taking a run that may start inside one box and end inside the next (the tile DSL's
     /// [`Levels::shared_by`]): every cube walks as many steps as any other, however the boxes
     /// divide them.
-    pub fn shared(space: Space, step: Levels, cubes: NonZeroUsize) -> Self {
+    pub fn shared(space: Space, step: Levels, line: CubeLine) -> Self {
         let levels = step
             .walk_every(&[S])
             .cubes(&[Q, G])
-            .shared_by(cubes.get())
+            .shared_by(line.cubes.get())
             .batches(&[B, KV])
             .build();
-        let partitioning = Partitioning::new(space, levels);
-        let cube_space = partitioning.box_of(ComputeScope::Cube);
+        let partitioning = Partitioned::new(Partitioning::new(space, levels), line);
+        let cube_space = partitioning.owner_box();
         Self {
             partitioning,
-            key_cubes: KeyCubes::Line(cubes),
             page_steps: None,
             cube_space,
         }
     }
 
+    /// Cubes one batch and key head of the problem spawns: the cubes sharing the line of its
+    /// boxes' steps.
+    pub fn cubes(&self) -> usize {
+        self.partitioning.partition().cubes.get()
+    }
+}
+
+impl AttentionPartitioning<LaunchUnits> {
     /// `space`, every axis of the problem, partitioned with `inside` a unit's box, every box of
     /// queries and heads a unit of the launch's, one batch and key head each, the units taking
     /// them in row order, the queries fastest, grouped in cubes of `cube`. A cube's box is the
     /// units it holds, laid along the queries.
     pub fn over_units(space: Space, inside: Levels, cube: UnitCube) -> Self {
         let units = cube.units();
-        let levels = inside.launch_units(&[Q, G, B, KV], cube);
-        Self::spanning_launch(space, levels, ComputeScope::Unit, units)
+        let partitioning =
+            Partitioned::launch_units(space, inside, &[Q, G, B, KV], LaunchUnits { cube });
+        Self::spanning_launch(partitioning, units)
     }
+}
 
+impl AttentionPartitioning<LaunchPlanes> {
     /// `space`, every axis of the problem, partitioned with `inside` a plane's box, every box of
     /// queries and heads a plane of the launch's, one batch and key head each, the planes taking
     /// them in `order`. A cube's box is the planes it holds, laid along the queries.
     pub fn over_planes(space: Space, inside: Levels, order: PlaneOrder) -> Self {
         let planes = order.planes_per_cube();
-        let levels = inside.launch_planes(&[Q, G, B, KV], order);
-        Self::spanning_launch(space, levels, ComputeScope::Plane, planes)
+        let partitioning =
+            Partitioned::launch_planes(space, inside, &[Q, G, B, KV], LaunchPlanes { order });
+        Self::spanning_launch(partitioning, planes)
     }
+}
 
-    /// `space` partitioned by `levels`, whose outermost hands every box of queries and heads to an
-    /// instance of `scope` of the launch, `per_cube` of them a cube. A cube's box is its
-    /// instances' laid along the queries.
-    fn spanning_launch(space: Space, levels: Levels, scope: ComputeScope, per_cube: usize) -> Self {
-        let partitioning = Partitioning::new(space, levels.build());
-        let instance = partitioning.box_of(scope);
+impl<P: Partition> AttentionPartitioning<P> {
+    /// `partitioning`, whose outermost level hands every box of queries and heads to an owner of
+    /// the launch, `per_cube` of them a cube. A cube's box is its owners' laid along the queries.
+    fn spanning_launch(partitioning: Partitioned<P>, per_cube: usize) -> Self {
+        let owner = partitioning.owner_box();
         let cube_space = Space::new(
-            &instance
+            &owner
                 .extents()
                 .into_iter()
                 .map(|(axis, extent)| match axis == Q {
@@ -183,52 +228,20 @@ impl AttentionPartitioning {
         );
         Self {
             partitioning,
-            key_cubes: KeyCubes::EveryBox(Self::ONE_CUBE_A_BOX),
             page_steps: None,
             cube_space,
         }
     }
 
-    /// The box one cube covers: its queries of its heads, all of `D` and `DV`, and all of `S`, or
-    /// its run of it where several cubes share the box.
-    pub fn cube_space(&self) -> Space {
-        self.cube_space.clone()
-    }
-
-    /// Cubes sharing every box of rows, each on its own run of `S`.
-    pub fn cubes_along_keys(&self) -> NonZeroUsize {
-        match self.key_cubes {
-            KeyCubes::EveryBox(cubes) => cubes,
-            KeyCubes::Line(_) => Self::ONE_CUBE_A_BOX,
-        }
-    }
-
-    /// The box one step of the walk through `S` covers: what a staged routine stages at once.
-    ///
-    /// # Panics
-    ///
-    /// A partitioning whose cubes walk no `S`, alone or in runs.
-    pub fn stage(&self) -> Space {
-        match (self.cubes_along_keys().get() > 1, self.page_steps) {
-            // The cube level steps `S` itself, a run each: its tile is one step.
-            (true, None) => self.partitioning.box_of(ComputeScope::Cube),
-            // A cube walks the pages, then the steps inside each.
-            (false, Some(_)) => self.walk_inside_cube(1),
-            // The cube's own tile, a page where cubes take pages in turns, is walked in steps.
-            (_, _) => self.walk_inside_cube(0),
-        }
-    }
-
     /// The tile of the walk through `S` inside a cube past `outer` such walks.
     fn walk_inside_cube(&self, outer: usize) -> Space {
-        // Where the planes or units span the launch, the levels inside the outermost cut a plane's
-        // or a unit's box.
-        let outermost = &self.partitioning.levels()[0];
-        let mut enclosing = match (outermost.spans_launch(), outermost.coverage().scope()) {
-            (true, Some(scope)) => self.partitioning.box_of(scope),
-            _ => self.cube_space(),
+        // Where the planes or units span the launch, the levels inside the outermost cut an
+        // owner's box.
+        let mut enclosing = match P::OWNER {
+            ComputeScope::Cube => self.cube_space(),
+            _ => self.partitioning.owner_box(),
         };
-        let mut walks = self.partitioning.levels()[1..].iter().filter_map(|level| {
+        let mut walks = self.as_tile().levels()[1..].iter().filter_map(|level| {
             let tile = level.child(&enclosing);
             enclosing = tile.clone();
             (level.coverage() == Coverage::Walk && level.tile(S).is_some()).then_some(tile)
@@ -237,34 +250,83 @@ impl AttentionPartitioning {
             .nth(outer)
             .expect("the partitioning walks no S inside its cubes")
     }
+}
+
+impl AttentionPartition for CubeBoxes {
+    /// A cube walks the pages, then the steps inside each; or the steps of its own tile.
+    fn stage(partitioning: &AttentionPartitioning<Self>) -> Space {
+        match partitioning.page_steps {
+            Some(_) => partitioning.walk_inside_cube(1),
+            None => partitioning.walk_inside_cube(0),
+        }
+    }
+}
+
+impl AttentionPartition for SplitBoxes {
+    /// The cube level steps `S` itself, a run each, so its tile is one step; or, where cubes take
+    /// pages in turns, the page is walked in steps.
+    fn stage(partitioning: &AttentionPartitioning<Self>) -> Space {
+        match partitioning.page_steps {
+            Some(_) => partitioning.walk_inside_cube(0),
+            None => partitioning.partitioning.owner_box(),
+        }
+    }
+}
+
+impl AttentionPartition for CubeLine {
+    fn stage(partitioning: &AttentionPartitioning<Self>) -> Space {
+        partitioning.walk_inside_cube(0)
+    }
+}
+
+impl AttentionPartition for LaunchPlanes {
+    fn stage(partitioning: &AttentionPartitioning<Self>) -> Space {
+        partitioning.walk_inside_cube(0)
+    }
+}
+
+impl AttentionPartition for LaunchUnits {
+    fn stage(partitioning: &AttentionPartitioning<Self>) -> Space {
+        partitioning.walk_inside_cube(0)
+    }
+}
+
+impl<P: AttentionPartition> AttentionPartitioning<P> {
+    /// The box one step of the walk through `S` covers: what a staged routine stages at once.
+    ///
+    /// # Panics
+    ///
+    /// A partitioning whose cubes walk no `S`, alone or in runs.
+    pub fn stage(&self) -> Space {
+        P::stage(self)
+    }
+}
+
+impl<P> AttentionPartitioning<P> {
+    /// The box one cube covers: its queries of its heads, all of `D` and `DV`, and all of `S`, or
+    /// its run of it where several cubes share the box.
+    pub fn cube_space(&self) -> Space {
+        self.cube_space.clone()
+    }
 
     /// The innermost box: what one instruction, or one unit's block, covers.
     pub fn leaf(&self) -> Space {
-        self.partitioning.leaf()
+        self.as_tile().leaf()
     }
 
     /// Whether the tiles overhang `axis`: a tile the problem's edge cuts short along it.
     pub fn overhangs(&self, axis: Axis) -> bool {
-        self.partitioning.overhangs(axis)
+        self.as_tile().overhangs(axis)
     }
 
     /// The problem's space: every axis at its extent, or dynamic where a launch states it.
     pub fn space(&self) -> &Space {
-        self.partitioning.space()
-    }
-
-    /// Cubes one batch and key head of the problem spawns: one for every box of queries and
-    /// heads, times the cubes sharing each, or the cubes sharing the line of its boxes' steps.
-    pub fn cubes(&self) -> usize {
-        match self.key_cubes {
-            KeyCubes::EveryBox(cubes) => self.boxes() * cubes.get(),
-            KeyCubes::Line(cubes) => cubes.get(),
-        }
+        self.as_tile().space()
     }
 
     /// Boxes of queries and heads one batch and key head of the problem holds.
     pub fn boxes(&self) -> usize {
-        let (space, cube) = (self.partitioning.space(), self.cube_space());
+        let (space, cube) = (self.space(), self.cube_space());
         let boxes = |axis| space.extent(axis).div_ceil(cube.extent(axis));
         boxes(Q) * boxes(G)
     }
@@ -274,16 +336,13 @@ impl AttentionPartitioning {
     /// spans compiled in, which a row's registers and fragments are sized by.
     pub fn kernel(&self) -> Partitioning {
         Partitioning::new(
-            self.partitioning
-                .space()
-                .clone()
-                .with_dynamic(&[B, KV, Q, S]),
-            self.partitioning.levels().to_vec(),
+            self.space().clone().with_dynamic(&[B, KV, Q, S]),
+            self.as_tile().levels().to_vec(),
         )
     }
 
     /// The tile DSL's partitioning, for what it reads of it: the launch and the binding.
     pub fn as_tile(&self) -> &Partitioning {
-        &self.partitioning
+        self.partitioning.as_tile()
     }
 }

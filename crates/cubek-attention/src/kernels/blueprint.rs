@@ -13,18 +13,19 @@ use cubek_std::layout::BindingOrder;
 /// items, the width each operand binds at, and how the routine lays out shared memory.
 ///
 /// One type for every routine of this kind, named per routine by an alias: what differs between
-/// them is the microkernel, and the shared memory only the routine that walks at that level
-/// decides.
+/// them is the microkernel `M`, the way `P` its boxes are handed out
+/// ([`AttentionPartition`](crate::kernels::AttentionPartition)), and the shared memory only the
+/// routine that walks at that level decides.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AttentionBlueprint<M, SM = ()> {
+pub struct AttentionBlueprint<M, P, SM = ()> {
     pub microkernel: M,
-    pub partitioning: AttentionPartitioning,
+    pub partitioning: AttentionPartitioning<P>,
     pub widths: AttentionOperands<usize>,
     /// How the routine lays out the shared memory its walk holds; `()` for one that holds none.
     pub shared_memory: SM,
 }
 
-impl<M: AttentionMicrokernel, SM> AttentionBlueprint<M, SM> {
+impl<M: AttentionMicrokernel, P, SM> AttentionBlueprint<M, P, SM> {
     /// `microkernel` placed by `partitioning`, shared memory laid out as `shared_memory`: the
     /// blueprint once its widths are settled.
     ///
@@ -38,7 +39,7 @@ impl<M: AttentionMicrokernel, SM> AttentionBlueprint<M, SM> {
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         microkernel: M,
-        partitioning: AttentionPartitioning,
+        partitioning: AttentionPartitioning<P>,
         mut vectorization: Vectorization<AttentionOperand>,
         shared_memory: SM,
     ) -> Self {

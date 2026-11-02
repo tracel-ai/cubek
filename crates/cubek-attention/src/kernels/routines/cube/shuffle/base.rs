@@ -11,7 +11,7 @@ use cubek_microkernel::attention::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeBoxes, CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// Attention with every cube owning a box of queries of some heads of the group, and walking
 /// nothing else: each plane of the cube owns its rows of one head and reads its keys and values
@@ -48,7 +48,7 @@ impl core::fmt::Display for CubeShuffleAttentionRoutineSettings {
 }
 
 pub type CubeShuffleAttentionRoutineBlueprint =
-    AttentionBlueprint<CubeAttentionMicrokernel, StageStorage>;
+    AttentionBlueprint<CubeAttentionMicrokernel, CubeBoxes, StageStorage>;
 
 impl Routine for CubeShuffleAttentionRoutine {
     type Problem = AttentionRoutineProblem;
@@ -92,7 +92,6 @@ impl Routine for CubeShuffleAttentionRoutine {
             problem.space(),
             microkernel.tiling(),
             microkernel.page_steps,
-            AttentionPartitioning::ONE_CUBE_A_BOX,
             settings.queries,
         );
         let storage = microkernel.stage_storage(&partitioning.stage());
@@ -120,7 +119,7 @@ impl CubeShuffleAttentionRoutine {
     fn vectorize(
         &self,
         microkernel: &CubeAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
+        partitioning: &AttentionPartitioning<CubeBoxes>,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
         microkernel.vectorize(&partitioning.cube_space(), vectorization);
@@ -145,7 +144,9 @@ impl EstimatedRoutine for CubeShuffleAttentionRoutine {
     }
 }
 
-impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeShuffleAttentionRoutine {
+impl AttentionRoutine<CubeAttentionMicrokernel, CubeBoxes, StageStorage>
+    for CubeShuffleAttentionRoutine
+{
     fn dispatch(
         &self,
         tensors: &AttentionTensors,

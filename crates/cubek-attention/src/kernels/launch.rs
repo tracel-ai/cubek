@@ -1,5 +1,6 @@
 use crate::kernels::{
-    AttentionBinding, AttentionBlueprint, AttentionRoutineProblem, AttentionTensors,
+    AttentionBinding, AttentionBlueprint, AttentionPartition, AttentionRoutineProblem,
+    AttentionTensors,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
@@ -7,20 +8,20 @@ use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 
-/// A routine around microkernel `M`, laying out shared memory as `SM`: it prepares an
-/// [`AttentionBlueprint`] and launches it on tensors.
+/// A routine around microkernel `M`, its boxes handed out by `P`, laying out shared memory as
+/// `SM`: it prepares an [`AttentionBlueprint`] and launches it on tensors.
 ///
 /// A routine states what is its own, how it places its microkernel's work items and the kernel it
 /// dispatches, and the launch around those is written once, here.
-pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
-    Routine<Problem = AttentionRoutineProblem, Grid = Grid, Blueprint = AttentionBlueprint<M, SM>>
+pub trait AttentionRoutine<M: AttentionMicrokernel, P: AttentionPartition, SM = ()>:
+    Routine<Problem = AttentionRoutineProblem, Grid = Grid, Blueprint = AttentionBlueprint<M, P, SM>>
 {
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`.
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
         binding: AttentionBinding,
-        blueprint: AttentionBlueprint<M, SM>,
+        blueprint: AttentionBlueprint<M, P, SM>,
         grid: Grid,
     );
 
@@ -126,8 +127,9 @@ mod tests {
 
     fn assert_every_estimate_is_whole<
         M: AttentionMicrokernel,
+        P: AttentionPartition,
         SM,
-        R: AttentionRoutine<M, SM> + EstimatedRoutine,
+        R: AttentionRoutine<M, P, SM> + EstimatedRoutine,
     >(
         routine: R,
     ) {

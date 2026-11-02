@@ -13,7 +13,7 @@ use cubek_microkernel::attention::hypercube::{
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand, S};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeLine, CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// Attention with every batch, key head and box of queries' steps of keys laid end to end on one
 /// line, shared between a grid sized to the device's workers, one run each: a run may start inside
@@ -61,7 +61,7 @@ impl core::fmt::Display for HypercubeStreamFragmentAttentionRoutineSettings {
 }
 
 pub type HypercubeStreamFragmentAttentionRoutineBlueprint =
-    AttentionBlueprint<HypercubeAttentionMicrokernel, StageStorage>;
+    AttentionBlueprint<HypercubeAttentionMicrokernel, CubeLine, StageStorage>;
 
 impl HypercubeStreamFragmentAttentionRoutine {
     /// What it declines on a device that does not say how many workers it has, the count its grid
@@ -87,7 +87,10 @@ impl HypercubeStreamFragmentAttentionRoutine {
     /// Slots every row holds: as many as runs can share a box. A run holds at least
     /// `boxes / cubes` boxes' steps, so at most `cubes / boxes` runs fit inside one box, and one
     /// more ends in it.
-    fn splits(problem: &AttentionRoutineProblem, partitioning: &AttentionPartitioning) -> usize {
+    fn splits(
+        problem: &AttentionRoutineProblem,
+        partitioning: &AttentionPartitioning<CubeLine>,
+    ) -> usize {
         let boxes = problem.batch * problem.num_kv_heads * partitioning.boxes();
         partitioning.cubes().div_ceil(boxes) + 1
     }
@@ -151,7 +154,9 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
         let partitioning = AttentionPartitioning::shared(
             problem.space(),
             microkernel.cube.tiling(),
-            Self::cubes(hw, settings)?,
+            CubeLine {
+                cubes: Self::cubes(hw, settings)?,
+            },
         );
         let storage = microkernel.cube.stage_storage(&partitioning.stage());
         let cube = CubeResources {
@@ -180,7 +185,7 @@ impl HypercubeStreamFragmentAttentionRoutine {
     fn vectorize(
         &self,
         microkernel: &HypercubeAttentionMicrokernel,
-        partitioning: &AttentionPartitioning,
+        partitioning: &AttentionPartitioning<CubeLine>,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
         vectorization.require(VectorRequirement::Elementwise {
@@ -220,7 +225,7 @@ impl EstimatedRoutine for HypercubeStreamFragmentAttentionRoutine {
     }
 }
 
-impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
+impl AttentionRoutine<HypercubeAttentionMicrokernel, CubeLine, StageStorage>
     for HypercubeStreamFragmentAttentionRoutine
 {
     /// One launch: every cube walks its run, writing a box it holds whole into the output and

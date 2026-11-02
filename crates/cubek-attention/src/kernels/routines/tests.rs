@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 
 /// The keys a step covers and the query positions a cube's box holds, at every setting
 /// `routine` lists that prepares for `problem` on `hw`.
-fn reach<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+fn reach<M: AttentionMicrokernel, P: AttentionPartition, SM, R: AttentionRoutine<M, P, SM>>(
     routine: R,
     hw: &Hardware,
     problem: &AttentionRoutineProblem,

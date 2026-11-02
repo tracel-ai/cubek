@@ -563,9 +563,9 @@ impl AttentionTensors {
     /// values read at the element its microkernel serves them in
     /// ([`AttentionMicrokernel::served`]). A packed cache binds no tile: its kernel decodes it as
     /// it reads it ([`AttentionCacheBinding::Packed`]).
-    pub fn bind<M: AttentionMicrokernel, SM>(
+    pub fn bind<M: AttentionMicrokernel, P, SM>(
         &self,
-        blueprint: &AttentionBlueprint<M, SM>,
+        blueprint: &AttentionBlueprint<M, P, SM>,
         grid: &Grid,
     ) -> AttentionBinding {
         let partitioning = &blueprint.partitioning;

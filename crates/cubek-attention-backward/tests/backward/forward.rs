@@ -9,10 +9,11 @@ use cubecl::tile::launch::Refusal;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_attention::kernels::{
-    AttentionRoutine, AttentionScoring, AttentionTensors, CubeShuffleAttentionRoutine,
-    CubeStagedAttentionRoutine, HypercubeLastArrivalShuffleAttentionRoutine,
-    HypercubeSecondLaunchFragmentAttentionRoutine, HypercubeSecondLaunchShuffleAttentionRoutine,
-    HypercubeStreamFragmentAttentionRoutine, ScoreScale, UnitAttentionRoutine,
+    AttentionPartition, AttentionRoutine, AttentionScoring, AttentionTensors,
+    CubeShuffleAttentionRoutine, CubeStagedAttentionRoutine,
+    HypercubeLastArrivalShuffleAttentionRoutine, HypercubeSecondLaunchFragmentAttentionRoutine,
+    HypercubeSecondLaunchShuffleAttentionRoutine, HypercubeStreamFragmentAttentionRoutine,
+    ScoreScale, UnitAttentionRoutine,
 };
 use cubek_attention_backward::AttentionBackwardTensors;
 use cubek_attention_backward::kernels::{AttentionBackwardRoutine, UnitAttentionBackwardRoutine};
@@ -135,7 +136,12 @@ fn forward_tensors(client: &Client, case: Case, reference: &Reference) -> Attent
 
 /// `routine` at `settings` on `case`, its output and its logsumexp against the host's; a routine
 /// this device declines is skipped, and says so.
-fn check_forward<R: AttentionRoutine<M, SM>, M: AttentionMicrokernel, SM>(
+fn check_forward<
+    R: AttentionRoutine<M, P, SM>,
+    M: AttentionMicrokernel,
+    P: AttentionPartition,
+    SM,
+>(
     name: &str,
     routine: R,
     settings: Option<R::Settings>,

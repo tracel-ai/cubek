@@ -412,7 +412,12 @@ mod tests {
     /// lists; each hypercube shuffle prepares it.
     #[test]
     fn only_the_hypercube_shuffles_read_a_packed_cache() {
-        fn reads<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+        fn reads<
+            M: AttentionMicrokernel,
+            P: AttentionPartition,
+            SM,
+            R: AttentionRoutine<M, P, SM>,
+        >(
             routine: R,
             hw: &Hardware,
             problem: &AttentionRoutineProblem,
@@ -422,7 +427,12 @@ mod tests {
                 .iter()
                 .any(|settings| routine.prepare(hw, problem, settings).is_ok())
         }
-        fn declines<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+        fn declines<
+            M: AttentionMicrokernel,
+            P: AttentionPartition,
+            SM,
+            R: AttentionRoutine<M, P, SM>,
+        >(
             routine: R,
             hw: &Hardware,
             problem: &AttentionRoutineProblem,
@@ -460,7 +470,12 @@ mod tests {
         declines(HypercubeSecondLaunchFragmentAttentionRoutine, &hw, &packed);
     }
 
-    fn assert_steps_divide<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+    fn assert_steps_divide<
+        M: AttentionMicrokernel,
+        P: AttentionPartition,
+        SM,
+        R: AttentionRoutine<M, P, SM>,
+    >(
         routine: R,
         hw: &Hardware,
     ) -> usize {
