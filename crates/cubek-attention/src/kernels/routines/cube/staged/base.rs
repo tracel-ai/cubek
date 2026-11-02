@@ -62,20 +62,22 @@ impl Routine for CubeStagedAttentionRoutine {
 
     /// Its microkernel's settings over plane fragments
     /// ([`CubeAttentionMicrokernelSettings::listed`]) in query order, then the first of them, its
-    /// lead, with the boxes taken last first.
+    /// lead, and the lead holding its score the whole head dim deep, with the boxes taken last
+    /// first.
     fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
         let microkernel = CubeAttentionMicrokernelSettings::FRAGMENT.listed();
-        let last_first = Self::Settings {
-            microkernel: microkernel[0],
-            queries: QueryOrder::LastFirst,
-        };
+        let last_first =
+            [microkernel[0], microkernel[0].whole_head()].map(|microkernel| Self::Settings {
+                microkernel,
+                queries: QueryOrder::LastFirst,
+            });
         microkernel
             .into_iter()
             .map(|microkernel| Self::Settings {
                 microkernel,
                 queries: QueryOrder::InOrder,
             })
-            .chain([last_first])
+            .chain(last_first)
             .collect()
     }
 
