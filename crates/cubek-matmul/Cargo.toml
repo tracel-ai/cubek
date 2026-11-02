@@ -35,7 +35,7 @@ cpu-reference = ["dep:cubek-test-utils", "cubek-std/testing"]
 benchmarks = ["cpu-reference", "dep:cubek-quant", "cubecl/test-runtime"]
 
 [dependencies]
-cubek-microkernel = { workspace = true, optional = true, features = ["matmul"] }
+cubek-microkernel = { workspace = true, optional = true, features = ["matmul", "row-store"] }
 cubek-quant = { workspace = true, optional = true, features = ["kernels"] }
 cubecl-environment = { workspace = true }
 cubek-std = { workspace = true }
