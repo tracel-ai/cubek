@@ -104,6 +104,12 @@ impl AttentionBackwardTensors {
             q_shape.num_dims() == 4 && k_shape.num_dims() == 4 && v_shape.num_dims() == 4,
             "attention's backward pass reads [b, h, q, d], [b, kv, s, d] and [b, kv, s, dv]"
         );
+        assert!(
+            out.shape().num_dims() == 4
+                && out_gradient.shape().num_dims() == 4
+                && logsumexp.shape().num_dims() == 3,
+            "the output and its gradient are [b, h, q, dv], the logsumexp [b, h, q]"
+        );
         let [batch, heads, queries, head] = q_shape.dims::<4>();
         let [_, kv_heads, keys, _] = k_shape.dims::<4>();
         let value_dim = v_shape[3];

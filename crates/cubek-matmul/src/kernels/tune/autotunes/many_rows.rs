@@ -16,8 +16,7 @@ use cubek_std::Hardware;
 ///
 /// The unit routine prepares everywhere, though a round orders the candidates by priority and its
 /// small block often tiles a key the others mask. The last-arrival routine sizes its grid by the
-/// device's workers and declines where it cannot. The relay hypercube routine is on no autotune:
-/// its cubes wait on each other.
+/// device's workers and declines where it cannot.
 pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTunables {
     let mut autotune = candidate_list();
     let microkernel = autotune.group("microkernel", groups.many_rows);

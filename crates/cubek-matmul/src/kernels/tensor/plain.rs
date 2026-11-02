@@ -381,6 +381,70 @@ impl PlainTensor {
         ))
     }
 
+    /// This view as `[entries, rows, line]` rows of `line` values in batch entries, read where they
+    /// lie: the rows run outward from the line while each dim starts where the ones inside it end,
+    /// dims of extent 1 skipped, and the entries take the rest at one stride across. `None` where
+    /// they do not lie so: a storage-tiled buffer, a last dim other than `line` or not contiguous,
+    /// or entries that do not step evenly.
+    pub fn as_batched_rows(&self, line: usize) -> Option<Self> {
+        if self.is_tiled() {
+            return None;
+        }
+        let (shape, strides) = (&self.binding.shape, &self.binding.strides);
+        let rank = shape.len();
+        if shape[rank - 1] != line || (line != 1 && strides[rank - 1] != 1) {
+            return None;
+        }
+        let (mut rows, mut row_end) = (1, line);
+        let mut batch: Option<(usize, usize, usize)> = None;
+        for (&extent, &stride) in shape[..rank - 1].iter().zip(&strides[..rank - 1]).rev() {
+            match (extent, batch.as_mut()) {
+                (1, _) => {}
+                (_, None) if stride == row_end => {
+                    rows *= extent;
+                    row_end *= extent;
+                }
+                (_, None) => batch = Some((extent, stride, stride * extent)),
+                (_, Some((entries, _, end))) if stride == *end => {
+                    *entries *= extent;
+                    *end *= extent;
+                }
+                (_, Some(_)) => return None,
+            }
+        }
+        let (entries, entry_stride, _) = batch.unwrap_or((1, row_end, row_end));
+        Some(self.viewed(Metadata::new(
+            [entries, rows, line],
+            [entry_stride, line, 1],
+        )))
+    }
+
+    /// This tensor dense and starting on a whole read of `read_bytes`: as it is where it already
+    /// is ([`into_contiguous`](Self::into_contiguous)), a copy into a fresh buffer otherwise.
+    ///
+    /// What a kernel binding every operand at the width a dense row admits wants: a view starting
+    /// partway into a read, one into a larger buffer, binds narrower, a width a tuning key over the
+    /// shape cannot see.
+    ///
+    /// The copy reads one element at a time. cubecl's copy picks its vector width from the shape
+    /// and strides alone, not from where the view starts, so a vectorized read of a misaligned
+    /// start would issue a misaligned load, which CUDA faults on; the view is handed to it as
+    /// `[n, 1]`, whose last dim admits no wider read, and the copy is viewed back in this shape.
+    pub fn into_dense_at(self, client: &Client, read_bytes: u64) -> Self {
+        let tensor = self.into_contiguous(client);
+        if tensor.start_bytes().is_multiple_of(read_bytes.max(1)) {
+            return tensor;
+        }
+        let shape = tensor.binding.shape.clone();
+        let elements = shape.iter().product::<usize>();
+        let one_a_read = tensor.bound_as(Metadata::new([elements, 1], [1, 1]));
+        let copy = cubecl::std::tensor::into_contiguous(client, one_a_read, tensor.elem);
+        Self::of_handle(copy).viewed(Metadata::new(
+            shape.clone(),
+            row_major_contiguous_strides(&shape),
+        ))
+    }
+
     /// The step between the rows of a row-bound operand, in stored elements: the stride it really
     /// has; `None` for one of a single dim, which has no step.
     ///
@@ -396,6 +460,34 @@ impl PlainTensor {
             "a row-bound operand's innermost stride must be 1, got {strides:?}"
         );
         (rank >= 2).then(|| strides[rank - 2])
+    }
+}
+
+/// Where a tensor lies, as a problem reads it: the alignment its layout gives a line, and the bytes
+/// it starts past its buffer's own start, which together bound the width a launch binds it at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Placement {
+    pub elem_alignment: ElemAlignment,
+    pub start_bytes: u64,
+}
+
+impl Placement {
+    /// Dense rows of `width` elements starting where their buffer does: an output a launch lays
+    /// out itself, as a sink's or a cube's stage.
+    pub fn dense_rows(width: usize) -> Self {
+        Self {
+            elem_alignment: ElemAlignment::dense_rows(width),
+            start_bytes: 0,
+        }
+    }
+}
+
+impl From<&PlainTensor> for Placement {
+    fn from(tensor: &PlainTensor) -> Self {
+        Self {
+            elem_alignment: tensor.elem_alignment(),
+            start_bytes: tensor.start_bytes(),
+        }
     }
 }
 

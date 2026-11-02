@@ -112,6 +112,33 @@ pub fn h100() -> Hardware {
     }
 }
 
+/// The RTX PRO 6000 (Blackwell, `sm_120`), as cubecl's CUDA runtime reports it: 188 SMs, 99 KiB
+/// of shared memory a cube, TMA beside async copies and barriers, and a 128 MiB L2. Like
+/// [`h100`] it offers no instruction of its own: a test that needs one states it.
+pub fn rtx_pro_6000() -> Hardware {
+    let mut device = device(HardwareProperties {
+        num_streaming_multiprocessors: Some(188),
+        num_tensor_cores: Some(4),
+        min_tensor_cores_dim: Some(8),
+        max_cube_dim: (1024, 1024, 64),
+        max_cube_count: (2147483647, 65535, 65535),
+        max_bindings: 1024,
+        last_level_cache_size: Some(128 * 1024 * 1024),
+        ..gpu(32, 99 * 1024)
+    });
+    device.features.plane = Plane::Ops | Plane::Sync | Plane::NonUniformControlFlow;
+    device.features.device_memory_scope = true;
+    device.features.tma = Tma::Base | Tma::SwizzleAtomicity;
+    device.features.copy_async = true;
+    device.features.types.opaque.insert(OpaqueType::Barrier);
+    f32_atomic_add(&mut device);
+    shared_f32_atomic_add(&mut device);
+    Hardware {
+        accumulator_as_a: true,
+        ..hardware(device)
+    }
+}
+
 /// A 12-core CPU runtime, as cubecl's `CpuRuntime` reports it: single-unit planes with no
 /// plane ops, a cube of one unit per core on every axis, its L1d as shared memory, reads sized
 /// to four 128-bit registers back to back, and unbounded vectors.

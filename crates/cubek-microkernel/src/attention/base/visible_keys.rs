@@ -2,7 +2,6 @@ use crate::attention::{AttentionVisibility, B, G, Q, QueryPlacement, S};
 use cubecl::tile::procedural::{
     Constant, MemoryValues, Procedural, Reads, Recipe, RecipeCoords, RecipeExpand,
 };
-use cubecl::tile::space::Coords;
 use cubecl::tile::{Axis, Partitioning, Region, Space, Tile};
 use cubecl::{self as cubecl, cube, ir::Scope, prelude::*};
 
@@ -226,7 +225,7 @@ impl VisibleKeys {
         match &self.mask {
             ComptimeOption::None => {}
             ComptimeOption::Some(mask) => {
-                let mut cell = Coords::<u32>::new();
+                let mut cell = Sequence::<u32>::new();
                 cell.push(head);
                 cell.push(query);
                 cell.push(key);
