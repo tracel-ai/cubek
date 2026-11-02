@@ -1,4 +1,4 @@
-use crate::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentTransport};
+use crate::matmul::plane::{PlaneFragmentDepth, PlaneFragmentInstruction, PlaneFragmentTransport};
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 
@@ -18,12 +18,19 @@ pub struct PlaneFragmentAttentionMicrokernelSettings {
     /// The shape of cmma instruction tried first, where the plane reads the score through its
     /// windows; the other where the device offers none.
     pub shape: InstructionShape,
+<<<<<<< HEAD
     /// Whether a step every row sees whole takes the softmax with no bias: its max over the raw
     /// scores, scaled once a row, and each cell's exponential one multiply-add
     /// ([`OnlineSoftmax::step_unbiased`](cubecl::tile::ops::softmax::OnlineSoftmax::step_unbiased)). Fewer
     /// instructions a cell, but the raw scores and the scaled max are live together: a plane
     /// already short of registers spills.
     pub unbiased_steps: bool,
+=======
+    /// How deep along the head dim the score's fragments are: one instruction step, the head dim
+    /// walked a step at a time, or the whole head dim, contracted in one call. Only a score kept
+    /// in its fragments, on the manual `mma`, takes the whole head dim; any other declines it.
+    pub score_depth: PlaneFragmentDepth,
+>>>>>>> origin/dev/louisfd
 }
 
 /// A matrix instruction's shape: as long as it is wide and deep, or any other.
@@ -48,7 +55,11 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         scratch: Scratch::OneTile,
         transport: PlaneFragmentTransport::Mma,
         shape: InstructionShape::Square,
+<<<<<<< HEAD
         unbiased_steps: false,
+=======
+        score_depth: PlaneFragmentDepth::Instruction,
+>>>>>>> origin/dev/louisfd
     };
 
     /// The default with every fragment of the grid bounced at once.
@@ -97,9 +108,15 @@ impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
             InstructionShape::Square => {}
             InstructionShape::Rectangular => write!(f, " shape=rectangular")?,
         }
+<<<<<<< HEAD
         match self.unbiased_steps {
             true => write!(f, " unbiased_steps"),
             false => Ok(()),
+=======
+        match self.score_depth {
+            PlaneFragmentDepth::Instruction => Ok(()),
+            PlaneFragmentDepth::Stage => write!(f, " score_depth=head"),
+>>>>>>> origin/dev/louisfd
         }
     }
 }
