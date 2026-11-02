@@ -1,10 +1,6 @@
 #![allow(missing_docs)] // pub cube modules
 
-use cubecl::{
-    calculate_cube_count_elemwise,
-    ir::{ElemType, types::Fp8Format},
-    post_processing::minifloat::fp8_bits_to_f32,
-};
+use cubecl::{calculate_cube_count_elemwise, ir::ElemType};
 use cubecl::{features::TypeUsage, tensor_vector_size_parallel};
 use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
@@ -14,7 +10,7 @@ use crate::{
     scheme::{QuantMode, QuantScheme, QuantStore, QuantValue},
     utils::packed_storage_elem,
 };
-use cubecl::std::quant::{check_scale_bindings, fp4::e2m1_bits_to_float};
+use cubecl::std::quant::{check_scale_bindings, unpack_cast_u32};
 use cubecl::std::tensor::{
     View,
     layout::linear::{LinearView, linear_view},
@@ -88,80 +84,16 @@ pub fn dequantize_symmetric_packed_value<
 
     #[unroll]
     for i in 0..vector_size_values {
-        let floats = unpack_q::<F, NF, QS>(values.extract(i), scheme.value, scheme.store);
+        let floats = unpack_cast_u32::<F, Const<1>, NF>(
+            Vector::<u32, Const<1>>::new(u32::cast_from(values.extract(i))),
+            ComptimeOption::new_None(),
+            scheme,
+        );
         let scale = scales.read((position * vector_size_values) + i * num_quants);
         tmp[i] = scale.dequantize_symmetric::<F, NF>(floats);
     }
 
     tmp
-}
-
-/// Unpack a quantized integer into a vector of floating-point values, according to the specified quantization input type.
-///
-/// This handles types where multiple quantized values are packed into a single integer (the stored quantization type).
-#[allow(clippy::explicit_counter_loop)]
-#[cube]
-fn unpack_q<F: Float, NF: Size, QS: Int>(
-    value: QS,
-    #[comptime] quant: QuantValue,
-    #[comptime] store: QuantStore,
-) -> Vector<F, NF> {
-    let size_quant = quant.size_bits();
-    let size_store = store.size_bits(&quant);
-    let num_quant = size_store / size_quant;
-
-    let mask = QS::from_int((1 << size_quant) - 1);
-
-    // The raw fields, before anything decides what they mean.
-    let mut fields = Vector::<u32, NF>::empty();
-    #[unroll]
-    for position in 0..num_quant {
-        let offset = QS::cast_from(position * size_quant);
-        fields.insert(position, u32::cast_from((value >> offset) & mask));
-    }
-
-    match quant {
-        // A field is a minifloat *code*, not a small signed integer — `e2m1` disagrees with one on
-        // every magnitude below 2, and `e4m3` reads its own top half as negative. Decoded in
-        // software so the read lowers on every backend rather than only where the conversion
-        // intrinsic exists. Mirrors `encode_minifloat` in `quantize.rs`.
-        QuantValue::E2M1 => e2m1_bits_to_float::<F, NF>(fields),
-        QuantValue::E4M3 => Vector::cast_from(fp8_bits_to_f32::<NF>(fields, Fp8Format::E4M3)),
-        QuantValue::E5M2 => Vector::cast_from(fp8_bits_to_f32::<NF>(fields, Fp8Format::E5M2)),
-        QuantValue::Q8F
-        | QuantValue::Q8S
-        | QuantValue::Q4F
-        | QuantValue::Q4S
-        | QuantValue::Q2F
-        | QuantValue::Q2S => integer_fields_to_float::<F, NF>(fields, num_quant, size_quant),
-    }
-}
-
-/// Read each field as a two's complement integer of `size_quant` bits, which for the integer
-/// formats is both the code and the magnitude it stands for.
-#[cube]
-fn integer_fields_to_float<F: Float, NF: Size>(
-    fields: Vector<u32, NF>,
-    #[comptime] num_quant: usize,
-    #[comptime] size_quant: usize,
-) -> Vector<F, NF> {
-    let sign_bit = 1u32 << (size_quant - 1);
-    let two_pow_n = 1 << size_quant;
-
-    let mut output = Vector::empty();
-    #[unroll]
-    for position in 0..num_quant {
-        let raw = fields.extract(position);
-
-        // Branchless two's complement conversion
-        // If raw >= 2^(n-1), then result = raw - 2^n
-        let raw_i32 = i32::cast_from(raw);
-        let is_negative = i32::cast_from(raw >= sign_bit); // 1 if negative, 0 if positive
-        let signed_value = raw_i32 - (is_negative * two_pow_n);
-
-        output.insert(position, F::cast_from(signed_value));
-    }
-    output
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
