@@ -197,6 +197,15 @@ impl RowStore {
         }
     }
 
+    /// The axis a row's lines run along, which a masked line is tested against: the row's width
+    /// plain, the position inside a block packed.
+    pub fn contiguous_axis(&self) -> Axis {
+        match self {
+            Self::Plain => WIDTH,
+            Self::Packed { .. } => KI,
+        }
+    }
+
     /// Whether `partitioning`'s tiles overhang the row anywhere along the axes it is stated over.
     pub fn overhangs_width(&self, partitioning: &Partitioning) -> bool {
         match self {
