@@ -100,8 +100,8 @@ impl HypercubeKeyGradientMicrokernel {
     }
 
     /// Bytes of shared memory the walk's body opens for a stage's share of the query's gradient:
-    /// the fragments every plane's part bounces through, and, where planes split the keys, the
-    /// sum they meet in. A walk holds them once a body it expands ([`StageRing::bodies`]).
+    /// the fragments every plane's part bounces through, and, where planes split the keys and read
+    /// the score through windows, the sum they meet in. A walk holds them once a body it expands ([`StageRing::bodies`]).
     ///
     /// [`StageRing::bodies`]: cubek_std::microkernel::StageRing::bodies
     pub fn share_bytes(&self, item: &AttentionBackwardWorkItem) -> usize {
@@ -109,8 +109,9 @@ impl HypercubeKeyGradientMicrokernel {
             &item.summed_query_gradient(item.element),
             self.cube.plane.settings.scratch,
         );
-        let met = match self.plane_count() {
-            1 => 0,
+        // Held, the planes add their own rows and meet on nothing.
+        let met = match (self.plane_count(), self.cube.plane.holder()) {
+            (1, _) | (_, ScoreHolder::Fragments) => 0,
             _ => self.seq_q() * item.head_dim * item.sum.size(),
         };
         self.plane_count() * bounced + met
@@ -177,10 +178,23 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
                 // The query's gradient runs on the score's instruction over the plane's own box:
                 // its rows a stage's queries, its contraction the plane's keys, each in the
                 // instruction's own steps, which a manual `mma`'s `m` and `n` make differ.
+                // A cube reading its score through windows has each plane take every query of a
+                // stage over its own keys; one holding it has each take its own rows of them over
+                // all the cube's keys ([`QueryGradientShare`]), which the planes split evenly.
                 let [(_, m), (_, n), (_, k)] = plane.score.instruction.shape();
-                let query_rows = PlaneKeyGradientMicrokernel::steps(plane.seq_q(), m)?;
                 let head_columns = PlaneKeyGradientMicrokernel::steps(head, n)?;
-                let key_steps = PlaneKeyGradientMicrokernel::steps(plane.seq_kv(), k)?;
+                let (rows, keys) = match plane.holder() {
+                    ScoreHolder::Window => (plane.seq_q(), plane.seq_kv()),
+                    ScoreHolder::Fragments => {
+                        let planes = cube.plane_count();
+                        plane
+                            .seq_q()
+                            .is_multiple_of(planes)
+                            .then(|| (plane.seq_q() / planes, cube.seq_kv()))?
+                    }
+                };
+                let query_rows = PlaneKeyGradientMicrokernel::steps(rows, m)?;
+                let key_steps = PlaneKeyGradientMicrokernel::steps(keys, k)?;
                 Some(Self {
                     cube,
                     query_gradient: PlaneKeyGradientMicrokernel::beside(

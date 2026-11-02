@@ -92,17 +92,15 @@ impl ScoreWindows {
         }
     }
 
-    /// The cast window a step leaves the score's gradient in, which a share of the query's
-    /// gradient reads transposed: its windows' cast window, or, the score held in fragments, the
-    /// window `left` it was left in ([`share_window`](Self::share_window)).
-    pub fn cast_of(windows: &ComptimeOption<ScoreWindows>, left: &ComptimeOption<Tile>) -> Tile {
+    /// The cast window a step read through windows leaves the score's gradient in, which a share
+    /// of the query's gradient reads transposed.
+    pub fn cast_of(windows: &ComptimeOption<ScoreWindows>) -> Tile {
         #[comptime]
-        match (windows, left) {
-            (ComptimeOption::Some(windows), _) => windows.cast.clone(),
-            (ComptimeOption::None, ComptimeOption::Some(left)) => left.clone(),
-            (ComptimeOption::None, ComptimeOption::None) => panic!(
-                "ScoreWindows::cast_of: a score held in fragments leaves its gradient for a share \
-                 only in the window the share opened for it"
+        match windows {
+            ComptimeOption::Some(windows) => windows.cast.clone(),
+            ComptimeOption::None => panic!(
+                "ScoreWindows::cast_of: a score held in fragments leaves its gradient in the \
+                 window its share opened, which the share adds by rows"
             ),
         }
     }

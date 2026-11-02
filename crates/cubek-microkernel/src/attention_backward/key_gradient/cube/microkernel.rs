@@ -90,14 +90,14 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
             ring.prefetch,
             |slot, stage| {
                 slot.consume(|query, out_gradient| {
+                    // Read through windows, the planes meet on their parts of the query's
+                    // gradient; held, they add theirs by rows once every plane has stepped.
                     #[comptime]
-                    let mut share = match query_gradient {
-                        ComptimeOption::Some(share) => {
+                    let mut share = match (query_gradient, &left) {
+                        (ComptimeOption::Some(share), ComptimeOption::None) => {
                             ComptimeOption::new_Some(share.open::<EA>(stage))
                         }
-                        ComptimeOption::None => {
-                            ComptimeOption::<StageQueryGradientShare<EA>>::new_None()
-                        }
+                        _ => ComptimeOption::<StageQueryGradientShare<EA>>::new_None(),
                     };
 
                     for plane in stage {
@@ -128,7 +128,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
                         match &share {
                             ComptimeOption::Some(share) => share.add(
                                 &plane,
-                                &ScoreWindows::cast_of(&windows, &left),
+                                &ScoreWindows::cast_of(&windows),
                                 &key,
                                 scale,
                                 plane_microkernel.settings.scratch,
@@ -142,6 +142,29 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
                     match share {
                         ComptimeOption::Some(ref mut share) => share.write(),
                         ComptimeOption::None => {}
+                    }
+
+                    // Every plane left its part of the score's gradient in the window: each adds
+                    // its rows of the stage's queries over all the cube's keys, and the window is
+                    // free again once all have read it.
+                    #[comptime]
+                    match (query_gradient, &left) {
+                        (ComptimeOption::Some(share), ComptimeOption::Some(left)) => {
+                            sync_cube();
+                            for plane in stage {
+                                share.add_rows::<EA>(
+                                    stage,
+                                    &plane,
+                                    left,
+                                    &staged_key,
+                                    scale,
+                                    microkernel.plane_count(),
+                                    microkernel.seq_q(),
+                                );
+                            }
+                            sync_cube();
+                        }
+                        _ => {}
                     }
                 });
             },

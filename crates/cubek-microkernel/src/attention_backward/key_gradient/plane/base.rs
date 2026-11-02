@@ -191,7 +191,10 @@ impl PlaneKeyGradientMicrokernel {
 
     /// `product`'s own levels below the walker's planes, `planes` its counts: its fragments, its
     /// rows by its columns by the steps of its contraction.
-    fn grid_levels(product: PlaneFragmentMicrokernel, planes: &[(Axis, usize)]) -> Vec<Level> {
+    pub(crate) fn grid_levels(
+        product: PlaneFragmentMicrokernel,
+        planes: &[(Axis, usize)],
+    ) -> Vec<Level> {
         let [(_, m), (_, n), (_, k)] = product.instruction.shape();
         let (axes, settings) = (product.axes, product.settings);
         Levels::leaf(&[(axes.m, m), (axes.n, n), (axes.k, k)])
