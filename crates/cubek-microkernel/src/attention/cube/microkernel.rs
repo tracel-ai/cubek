@@ -364,7 +364,9 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
     // Every stage but the box's last lies inside the attended keys, and fills unchecked.
     let mut planes = CubeAttentionMicrokernel::staged_walk::<EA, ES>(
         ComptimeOption::new_Some(cube.walk().over_run(S).range(first, unmasked)),
-        cube.walk().over_run(S).range(first + unmasked, steps - unmasked),
+        cube.walk()
+            .over_run(S)
+            .range(first + unmasked, steps - unmasked),
         out,
         query,
         key,
