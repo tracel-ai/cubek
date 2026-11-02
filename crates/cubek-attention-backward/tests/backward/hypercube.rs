@@ -147,3 +147,34 @@ fn every_hypercube_setting_matches_the_reference_over_several_stages_in_f16() {
         );
     }
 }
+
+/// Every setting holding its score in fragments, under a causal mask, on queries and keys spanning
+/// several stages and several boxes: each key walk starts past its first stages, and a query's
+/// gradient sums only the key cubes that see it.
+#[test]
+fn every_held_hypercube_setting_masks_causally_over_several_stages_in_f16() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let case = Case {
+        heads: 4,
+        seq_q: 150,
+        seq_kv: 150,
+        val_dim: 16,
+        visibility: AttentionVisibility::Causal {
+            queries: QueryPlacement::Last,
+        },
+        ..CASE
+    };
+    let held = HypercubeAttentionBackwardRoutine
+        .settings(&hw)
+        .into_iter()
+        .filter(|settings| settings.key_gradient.holds_its_score());
+    for settings in held {
+        Reference::run(
+            HypercubeAttentionBackwardRoutine,
+            case,
+            half::f16::elem_type_native(),
+            3e-2,
+            Some(settings),
+        );
+    }
+}
