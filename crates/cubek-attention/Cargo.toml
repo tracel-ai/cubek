@@ -20,23 +20,10 @@ std = ["cubecl/std"]
 # The tiled attention's kernels, on the attention microkernels.
 tiled = ["cubecl/tile", "cubek-matmul/tiled", "dep:cubek-microkernel"]
 
-heavy = []
-extended = ["heavy"]
-full = ["extended", "benchmarks"]
-
-cpu-reference = ["dep:cubek-test-utils"]
-# Enables `pub mod benchmarks` — catalogue of benchmark problems / strategies,
-# the bench harness, and the seeded `AttentionCorrectness` impl. Implies
-# `cpu-reference` because the correctness wrapper compares kernel output
-# against the CPU flash-attention reference. Off by default; the top-level
-# `benchmarks` crate turns it on.
-benchmarks = ["cpu-reference", "cubecl/test-runtime"]
-
 [dependencies]
-cubek-matmul = { workspace = true, features = ["multi-level"] }
+cubek-matmul = { workspace = true }
 cubek-microkernel = { workspace = true, optional = true, features = ["attention"] }
 cubek-std = { workspace = true }
-cubek-test-utils = { workspace = true, optional = true }
 
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
@@ -46,7 +33,6 @@ half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 
 [dev-dependencies]
-cubek-attention = { path = ".", features = ["benchmarks"] }
 cubek-test-utils = { workspace = true }
 
 cubecl = { workspace = true, features = ["test-runtime"] }

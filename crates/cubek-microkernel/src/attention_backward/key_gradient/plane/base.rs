@@ -150,16 +150,12 @@ impl PlaneKeyGradientMicrokernel {
     }
 
     /// The scratch the gradients' sums bounce through as their scale is taken: the settings', for
-    /// an instruction that scales its sum only through shared memory, none for one whose units
-    /// scale their own cells in place.
+    /// a sum that drains by bouncing through shared memory, a cmma one; none for one whose units
+    /// hold their own cells and scale them in place.
     pub fn sum_scratch(&self) -> Scratch {
-        match self
-            .key_gradient
-            .tile_instruction()
-            .scales_its_sum_in_place()
-        {
-            true => Scratch::None,
-            false => self.settings.scratch,
+        match self.key_gradient.instruction.drain() {
+            PlaneFragmentDrain::Bounce => self.settings.scratch,
+            PlaneFragmentDrain::CellByCell | PlaneFragmentDrain::InLines => Scratch::None,
         }
     }
 

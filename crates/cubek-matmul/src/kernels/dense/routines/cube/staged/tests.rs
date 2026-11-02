@@ -65,6 +65,7 @@ mod base {
                 blueprint.partitioning.batch_axes(),
                 cubek_microkernel::matmul::MatmulAxes::MNK,
                 blueprint.partitioning.stage().extent(K),
+                blueprint.microkernel.plane.settings.rows_along,
             )
     }
     const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -1218,8 +1219,9 @@ mod base {
     }
 
     /// Every width is the widest the device reads `f16` in, until an access's stretch or the
-    /// binding's mask narrows it: the stages's stage and the fragments' tiles are sixteen deep, so
-    /// only a mask does here.
+    /// buffer narrows it: the stages's stage and the fragments' tiles are sixteen deep, and a mask
+    /// takes any width dividing the extent it masks, so only a row no wide line divides does
+    /// here.
     #[test]
     fn the_widths_are_what_the_accesses_and_the_binding_admit() {
         let hw = offering(devices::strix_halo());
@@ -1234,10 +1236,13 @@ mod base {
             (widths.lhs, widths.rhs, widths.out)
         };
         assert_eq!(widths(256, 512, 64), (widest, widest, widest));
-        // A `k` the stages overhang masks the lhs, whose contiguous axis it is.
-        assert_eq!(widths(256, 512, 24), (1, widest, widest));
-        // An `n` the cubes overhang masks the rhs and the output.
-        assert_eq!(widths(256, 520, 64), (widest, 1, 1));
+        // A `k` the stages overhang masks the lhs, whose contiguous axis it is, at a width that
+        // divides it.
+        assert_eq!(widths(256, 512, 24), (widest, widest, widest));
+        assert_eq!(widths(256, 512, 20), (4, widest, widest));
+        // An `n` the cubes overhang masks the rhs and the output, likewise.
+        assert_eq!(widths(256, 520, 64), (widest, widest, widest));
+        assert_eq!(widths(256, 516, 64), (widest, 4, 4));
     }
 
     /// A padded stage holds its cells and one 16-byte chunk after every block row, a line of
@@ -1391,8 +1396,9 @@ mod base {
             (widths.lhs, widths.rhs, widths.out)
         };
         assert_eq!(widths(256, 512, 64), (widest, widest, 1));
-        // A `k` the stages overhang masks the lhs, whose contiguous axis it is.
-        assert_eq!(widths(256, 512, 72), (1, widest, 1));
+        // A `k` the stages overhang masks the lhs, whose contiguous axis it is, at a width that
+        // divides it.
+        assert_eq!(widths(256, 512, 72), (widest, widest, 1));
     }
 
     /// Two NVFP4 inputs the block-scaled instruction reads as stored are estimated like any staged
@@ -1435,11 +1441,13 @@ mod base {
         assert!(estimate.work.is_some());
     }
 
-    /// On a GPU with every block-scaled instruction `sm_120` has, each format's product read as
-    /// stored prepares on that format's instruction: NVFP4's scales handed over a word a step, as
-    /// the instruction takes them, MXFP4's of thirty-two and MXFP8's, whose word of four `ue8m0`
-    /// scales is more than one step, read one a block beside the values. The block-scaled list
-    /// prepares each format, the default box among it.
+    /// On a GPU with every block-scaled instruction `sm_120` has, a format's product read as
+    /// stored prepares on that format's instruction where a step covers whole reads of its
+    /// scales: NVFP4's, its scales handed over a word a step, as the instruction takes them. A
+    /// step of MXFP4 (64) or MXFP8 (32) covers part of a read of four scales of thirty-two, a
+    /// window the tile DSL cuts only on whole reads, so the block-scaled list prepares neither:
+    /// on an RTX PRO 6000 every MXFP4 launch failed to expand and left its output unwritten.
+    /// Both run on the planes that decode as they load instead.
     #[test]
     fn each_format_read_as_stored_prepares_on_its_instruction() {
         use cubecl::tile::BlockScaledOperands;
@@ -1460,9 +1468,9 @@ mod base {
             )
         };
         let formats = [
-            ((NVFP4_FORM, 64), BlockScales::Words),
-            (ue8m0(FloatKind::E2M1x2, 64), BlockScales::Fields),
-            (ue8m0(FloatKind::E4M3, 32), BlockScales::Fields),
+            ((NVFP4_FORM, 64), Some(BlockScales::Words)),
+            (ue8m0(FloatKind::E2M1x2, 64), None),
+            (ue8m0(FloatKind::E4M3, 32), None),
         ];
         let settings = CubeStagedMatmulRoutine.block_scaled_settings(&hw);
         for ((form, k), scales) in formats {
@@ -1479,6 +1487,10 @@ mod base {
                 .iter()
                 .filter_map(|setting| CubeStagedMatmulRoutine.prepare(&hw, &problem, setting).ok())
                 .collect();
+            let Some(scales) = scales else {
+                assert!(prepared.is_empty(), "{form:?}");
+                continue;
+            };
             assert!(!prepared.is_empty(), "{form:?}");
             for (blueprint, _) in prepared {
                 let instruction = blueprint.microkernel.plane.instruction;

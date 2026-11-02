@@ -1,7 +1,8 @@
 use super::base::CubeStagedDrain;
 use crate::matmul::cube::CubeStagedStore;
 use crate::matmul::plane::{
-    PlaneFragmentStepSum, plane_fragment_microkernel, plane_fragment_partial,
+    PlaneFragmentRowsAlong, PlaneFragmentStepSum, plane_fragment_microkernel,
+    plane_fragment_partial,
 };
 use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::stage::{AsyncStage, AsyncStageExpand, Role};
@@ -23,6 +24,8 @@ pub struct CubeStagedWalk {
     /// How the planes read each operand: as bound, or dequantized at the element they contract,
     /// which a stage the fill decodes holds too.
     pub reads: MatmulOperands<MatmulRead>,
+    /// The axis its planes' instruction lays its rows along, which the sum is opened for.
+    pub rows_along: PlaneFragmentRowsAlong,
 }
 
 impl CubeStagedWalk {
@@ -35,14 +38,22 @@ impl CubeStagedWalk {
 
 #[cube]
 impl CubeStagedWalk {
-    /// A zeroed sum over `over`'s box, its planes reading `a` and `b` as `walk` says.
+    /// A zeroed sum over `over`'s box, its planes reading `a` and `b` as `walk` says: opened on
+    /// the factor the instruction's rows lie along first, which fills its `A`.
     pub fn open_sum<EA: Numeric>(
         over: &Tile,
         a: &Tile,
         b: &Tile,
         #[comptime] walk: CubeStagedWalk,
     ) -> Tile {
-        let mut sum = over.accumulator::<EA>(a, b, walk.instruction, Semiring::SUM_PROD);
+        let mut sum = match walk.rows_along {
+            PlaneFragmentRowsAlong::M => {
+                over.accumulator::<EA>(a, b, walk.instruction, Semiring::SUM_PROD)
+            }
+            PlaneFragmentRowsAlong::N => {
+                over.accumulator::<EA>(b, a, walk.instruction, Semiring::SUM_PROD)
+            }
+        };
         sum.zero();
         sum
     }
@@ -252,9 +263,7 @@ pub fn cube_staged_microkernel<EA: Numeric, EL: Numeric>(
 
 /// `sum += a · b` over `run`, a run of `K` of the box `over`, whose sum is already open: every
 /// plane fills the stages a step of `K` at a time and contracts its tile out of each with the plane
-/// microkernel, and nothing drains. A run that arrives as boxes adds each into one sum, as a
-/// hypercube's cube walks its run
-/// ([`hypercube_staged_relay_microkernel`](crate::matmul::hypercube::hypercube_staged_relay_microkernel())).
+/// microkernel, and nothing drains.
 #[cube]
 pub fn cube_staged_sum_microkernel<EL: Numeric>(
     run: Walk,

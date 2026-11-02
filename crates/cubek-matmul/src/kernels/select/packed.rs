@@ -1,34 +1,11 @@
-//! What the selection ([`super::selector::select`]) asks of a packed input: the
-//! schemes the kernels stream ([`matmul_supported`]), and the line between a packed product's
-//! few-rows and many-rows tables ([`MatmulTable::packed`](super::selector::MatmulTable::packed)),
-//! [`QUANTIZED_FEW_ROWS`], a **rule** rather than a measurement, for the reason the float bound
-//! is one.
+//! What the selection ([`super::selector::select`]) asks of a packed input: whether the kernels
+//! stream its scheme ([`matmul_supported`]).
 
 use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
 use cubek_std::NVFP4_BLOCK;
 use cubek_std::layout::stored::Operand;
-
-/// `input` packed under `scheme`, read before any tensor is in hand.
-///
-/// A rule runs ahead of the launch, so the strides that decide the axis
-/// everywhere else are not here and the scheme's own claim answers.
-fn scheme_operand(scheme: &QuantScheme, input: MatmulOperand) -> Option<Operand> {
-    let axes = input.axes();
-    Operand::of_scheme(scheme, Operand::axis_of(scheme, axes)?, axes)
-}
-
-/// The most rows a packed product goes to the few-rows table with. Past it the staged routines win on
-/// arithmetic, and measuring a routine that does not stage at prefill widths would cost minutes of first-touch tuning for
-/// a candidate that cannot win there.
-pub const QUANTIZED_FEW_ROWS: usize = 32;
-
-/// Whether a packed product of `rows` rows goes to the few-rows table: up to [`QUANTIZED_FEW_ROWS`],
-/// no rows included, the packed candidates' own admission answering every width below the bound.
-pub fn quantized_few_rows(rows: usize) -> bool {
-    rows <= QUANTIZED_FEW_ROWS
-}
 
 /// Whether the packed kernels stream `input` packed under `scheme`: the packed int formats
 /// (`q4f`/`q4s`/`q8f`/`q8s`), the fp4 one (`e2m1`) or the fp8 ones (`e4m3`/`e5m2`), in
@@ -71,7 +48,13 @@ pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOpera
             | QuantValue::E5M2
     );
     let numbers = scheme.mode == QuantMode::Symmetric;
-    value && numbers && scheme_operand(scheme, input).is_some()
+    // A rule runs ahead of the launch, so the strides that decide the axis everywhere else are not
+    // here and the scheme's own claim answers.
+    let axes = input.axes();
+    let laid = Operand::axis_of(scheme, axes)
+        .and_then(|axis| Operand::of_scheme(scheme, axis, axes))
+        .is_some();
+    value && numbers && laid
 }
 
 /// Values of `k` one word of an NVFP4 input's scales covers: four one-byte scales, a block each.

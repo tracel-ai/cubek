@@ -42,8 +42,8 @@ pub struct HypercubeLastArrivalMatmulRoutine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeLastArrivalMatmulRoutineSettings {
-    /// What each cube runs over its part of a tile: the hypercube microkernel the relay routine
-    /// runs too, since a tile several runs share is a tile cut along `K` between them.
+    /// What each cube runs over its part of a tile: a tile several runs share is a tile cut along
+    /// `K` between them.
     pub microkernel: HypercubeStagedMicrokernelSettings,
     /// Cubes the grid holds for every worker of the device.
     pub cubes_per_worker: NonZeroUsize,

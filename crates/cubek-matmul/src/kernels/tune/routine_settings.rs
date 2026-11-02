@@ -1,12 +1,11 @@
 //! One routine of the matmul at one of its settings, named so that something other than autotune
-//! can launch it again: what a table's winner is identified by.
+//! can launch it again: what an autotune's winner is identified by.
 
 use crate::kernels::plan::MatmulCall;
 use crate::kernels::{
     CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, CubeStagedMatmulRoutine,
     CubeStagedMatmulRoutineSettings, HypercubeLastArrivalMatmulRoutine,
-    HypercubeLastArrivalMatmulRoutineSettings, HypercubeRelayMatmulRoutine,
-    HypercubeRelayMatmulRoutineSettings, MatmulRoutine, PlaneShuffleMatmulRoutine,
+    HypercubeLastArrivalMatmulRoutineSettings, MatmulRoutine, PlaneShuffleMatmulRoutine,
     PlaneShuffleMatmulRoutineSettings, UnitRegistersMatmulRoutine,
     UnitRegistersMatmulRoutineSettings, UnitWholeKMatmulRoutine, UnitWholeKMatmulRoutineSettings,
 };
@@ -21,7 +20,6 @@ pub enum MatmulRoutineSettings {
     UnitWholeK(UnitWholeKMatmulRoutineSettings),
     CubeShuffle(CubeShuffleMatmulRoutineSettings),
     CubeStaged(CubeStagedMatmulRoutineSettings),
-    HypercubeRelay(HypercubeRelayMatmulRoutineSettings),
     HypercubeLastArrival(HypercubeLastArrivalMatmulRoutineSettings),
 }
 
@@ -45,7 +43,6 @@ impl MatmulRoutineSettings {
             Self::UnitWholeK(settings) => launch(UnitWholeKMatmulRoutine, call, &settings),
             Self::CubeShuffle(settings) => launch(CubeShuffleMatmulRoutine, call, &settings),
             Self::CubeStaged(settings) => launch(CubeStagedMatmulRoutine, call, &settings),
-            Self::HypercubeRelay(settings) => launch(HypercubeRelayMatmulRoutine, call, &settings),
             Self::HypercubeLastArrival(settings) => {
                 launch(HypercubeLastArrivalMatmulRoutine, call, &settings)
             }
@@ -54,8 +51,8 @@ impl MatmulRoutineSettings {
 
     /// The routine at these settings, prepared on `call`'s inputs for a sink and handed to
     /// `visitor` ([`MatmulRoutine::sink_launch_on`]): what a caller storing the product through a
-    /// sink of its own launches, once a table named the routine
-    /// ([`MatmulTable::fastest_routine`](crate::kernels::select::selector::MatmulTable::fastest_routine)).
+    /// sink of its own launches, once an autotune named the routine
+    /// ([`MatmulAutotune::fastest_routine`](crate::kernels::tune::MatmulAutotune::fastest_routine)).
     pub fn sink_launch<V: SinkLaunchVisitor>(self, call: &MatmulCall, visitor: V) -> V::Output {
         match self {
             Self::UnitRegisters(settings) => {
@@ -73,9 +70,6 @@ impl MatmulRoutineSettings {
             Self::CubeStaged(settings) => {
                 sink_launch(CubeStagedMatmulRoutine, call, &settings, visitor)
             }
-            Self::HypercubeRelay(settings) => {
-                sink_launch(HypercubeRelayMatmulRoutine, call, &settings, visitor)
-            }
             Self::HypercubeLastArrival(settings) => {
                 sink_launch(HypercubeLastArrivalMatmulRoutine, call, &settings, visitor)
             }
@@ -91,7 +85,6 @@ impl core::fmt::Display for MatmulRoutineSettings {
             Self::UnitWholeK(settings) => settings.fmt(f),
             Self::CubeShuffle(settings) => settings.fmt(f),
             Self::CubeStaged(settings) => settings.fmt(f),
-            Self::HypercubeRelay(settings) => settings.fmt(f),
             Self::HypercubeLastArrival(settings) => settings.fmt(f),
         }
     }
@@ -124,12 +117,6 @@ impl From<CubeShuffleMatmulRoutineSettings> for MatmulRoutineSettings {
 impl From<CubeStagedMatmulRoutineSettings> for MatmulRoutineSettings {
     fn from(settings: CubeStagedMatmulRoutineSettings) -> Self {
         Self::CubeStaged(settings)
-    }
-}
-
-impl From<HypercubeRelayMatmulRoutineSettings> for MatmulRoutineSettings {
-    fn from(settings: HypercubeRelayMatmulRoutineSettings) -> Self {
-        Self::HypercubeRelay(settings)
     }
 }
 

@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use cubecl::prelude::*;
 use cubecl::server::TensorMapMeta;
 pub use cubecl::zspace::metadata::Metadata;
-use cubecl::zspace::{Shape, Strides, shape, strides};
+use cubecl::zspace::{Shape, Strides, Tiling, shape, strides};
 
 use cubecl::tile::launch::TmaLanding;
 
@@ -144,6 +144,11 @@ pub fn tma_operand_typed(
 /// `(batch, rows, cols)` and may swap the inner pair, this one keeps the stored rank: the tile is
 /// stored a row at a time, so there is nothing to transpose.
 ///
+/// A tiling's finer levels that the copy engine has no use for, such as a vector read inside a
+/// storage tile, `[.., R/tr, C/tc, tr, tc/w, w]`, are merged first wherever they lie contiguous
+/// ([`merged_contiguous_fragments`]): the descriptor sees the storage tile alone, and stays within
+/// the five dims the engine takes.
+///
 /// - [`TmaLanding::Tiles`]: the descriptor is the binding as it is, and the box is one whole
 ///   storage tile, one contiguous run.
 /// - [`TmaLanding::Rows`]: the descriptor is the binding as `[R/tr, tr, C/tc, tc]`, the tiles' rows
@@ -190,6 +195,7 @@ pub fn tma_operand_tiled_typed(
     elem_ty: ElemType,
     swizzle: TensorMapSwizzle,
 ) -> TensorMapArg<Tiled> {
+    let binding = merged_contiguous_fragments(binding);
     let rank = binding.shape.len();
     let tile = (binding.shape[rank - 2], binding.shape[rank - 1]);
     let inner = (binding.strides[rank - 2], binding.strides[rank - 1]);
@@ -244,6 +250,52 @@ pub fn tma_operand_tiled_typed(
         tensor: binding.into_tensor_arg(),
         metadata: meta,
         _kind: PhantomData,
+    }
+}
+
+/// `binding` with each two adjacent physical dims that are fragments of one logical dim and lie
+/// contiguous merged into one, its tiling a fragment fewer for each: a level a reader has to find
+/// whole, a vector read inside a storage tile say, that a copy of whole tiles does not need.
+///
+/// The physical dims are level-major ([`Tiling`]), so two fragments of one logical dim are
+/// adjacent only where no other dim has a fragment between their levels, and merging them keeps
+/// the order level-major. Fragments of different logical dims are never merged, contiguous or
+/// not: the tiles' grid and the tile itself stay apart.
+///
+/// # Panics
+///
+/// A tiling that does not fit the binding's rank.
+pub fn merged_contiguous_fragments(binding: TensorBinding) -> TensorBinding {
+    let rank = binding.shape.len();
+    let logical_rank = binding.tiling.logical_rank(rank).unwrap_or_else(|err| {
+        panic!("merged_contiguous_fragments: the binding's tiling does not fit it: {err:?}")
+    });
+    let mut fragments = binding.tiling.fragments(logical_rank).to_vec();
+    // Each physical dim's logical dim: level by level, every dim still deep enough in order.
+    let deepest = fragments.iter().copied().max().unwrap_or(1);
+    let counts = &fragments;
+    let mut owners: Vec<usize> = (0..deepest)
+        .flat_map(|level| (0..logical_rank).filter(move |&dim| counts[dim] > level))
+        .collect();
+    let mut shape = binding.shape.to_vec();
+    let mut strides = binding.strides.to_vec();
+    let mut dim = shape.len();
+    while dim > 1 {
+        dim -= 1;
+        let (outer, inner) = (dim - 1, dim);
+        if owners[outer] == owners[inner] && strides[outer] == shape[inner] * strides[inner] {
+            shape[outer] *= shape[inner];
+            strides[outer] = strides[inner];
+            shape.remove(inner);
+            strides.remove(inner);
+            fragments[owners.remove(inner)] -= 1;
+        }
+    }
+    TensorBinding {
+        shape: Shape::from(shape),
+        strides: Strides::new(&strides),
+        tiling: Tiling::new(&fragments).expect("a merge only takes fragments away"),
+        ..binding
     }
 }
 
@@ -353,6 +405,79 @@ mod tests {
             &[64 * 32 * 8, 64, 64 * 32, 1]
         );
         // Two tiles down, two across, each whole.
+        let TensorMapFormat::Tiled(TiledArgs { tile_size }) = &arg.metadata.format else {
+            panic!("expected a tiled tensor map");
+        };
+        assert_eq!(&tile_size[..], &[2, 32, 2, 64]);
+    }
+
+    /// [`tiled`] with a read width of four along each tile's rows: `[8, 8, 32, 16, 4]`, `n` in
+    /// three fragments.
+    fn tiled_with_a_read_width() -> TensorBinding {
+        let mut binding = tiled();
+        binding.shape = shape![8, 8, 32, 16, 4];
+        binding.strides = strides![64 * 32 * 8, 64 * 32, 64, 4, 1];
+        binding.tiling = Tiling::new(&[2, 3]).unwrap();
+        binding
+    }
+
+    #[test]
+    fn a_read_width_inside_the_tile_merges_into_its_rows() {
+        let merged = merged_contiguous_fragments(tiled_with_a_read_width());
+        assert_eq!(&merged.shape[..], &[8, 8, 32, 64]);
+        assert_eq!(&merged.strides[..], &[64 * 32 * 8, 64 * 32, 64, 1]);
+        assert_eq!(merged.tiling, Tiling::new(&[2, 2]).unwrap());
+    }
+
+    #[test]
+    fn the_tiles_grid_and_the_tile_stay_apart() {
+        // `n/tc` and `tr` lie contiguous, but are fragments of different dims.
+        let merged = merged_contiguous_fragments(tiled());
+        assert_eq!(&merged.shape[..], &[8, 8, 32, 64]);
+        assert_eq!(merged.tiling, Tiling::new(&[2, 2]).unwrap());
+    }
+
+    #[test]
+    fn a_read_width_that_does_not_lie_contiguous_stays() {
+        let mut binding = tiled_with_a_read_width();
+        // Each read padded to eight elements: the reads are not one run.
+        binding.strides = strides![128 * 32 * 8, 128 * 32, 128, 8, 1];
+        let merged = merged_contiguous_fragments(binding);
+        assert_eq!(&merged.shape[..], &[8, 8, 32, 16, 4]);
+    }
+
+    #[test]
+    fn a_batched_tile_with_a_read_width_lands_in_five_dims() {
+        let mut binding = tiled_with_a_read_width();
+        // Two matrices: six physical dims, past the engine's five.
+        binding.shape = shape![2, 8, 8, 32, 16, 4];
+        binding.strides = strides![64 * 32 * 8 * 8, 64 * 32 * 8, 64 * 32, 64, 4, 1];
+        binding.tiling = Tiling::new(&[1, 2, 3]).unwrap();
+        let arg = tma_operand_tiled(
+            binding,
+            (32, 64),
+            TmaLanding::Tiles,
+            f32::elem_type_native(),
+            TensorMapSwizzle::None,
+        );
+        assert_eq!(&arg.metadata.metadata.shape()[..], &[2, 8, 8, 32, 64]);
+        let TensorMapFormat::Tiled(TiledArgs { tile_size }) = &arg.metadata.format else {
+            panic!("expected a tiled tensor map");
+        };
+        assert_eq!(&tile_size[..], &[1, 1, 1, 32, 64]);
+    }
+
+    #[test]
+    fn a_tile_with_a_read_width_lands_in_rows() {
+        let arg = tma_operand_tiled(
+            tiled_with_a_read_width(),
+            (64, 128),
+            TmaLanding::Rows,
+            f32::elem_type_native(),
+            TensorMapSwizzle::None,
+        );
+        // As [`tiled`] lands: the read width is gone before the rows are nested.
+        assert_eq!(&arg.metadata.metadata.shape()[..], &[8, 32, 8, 64]);
         let TensorMapFormat::Tiled(TiledArgs { tile_size }) = &arg.metadata.format else {
             panic!("expected a tiled tensor map");
         };
