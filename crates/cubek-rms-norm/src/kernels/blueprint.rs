@@ -55,7 +55,11 @@ impl<M> RmsNormBlueprint<M> {
                 ),
             });
             if problem.store.overhangs_width(partitioning.as_tile()) {
-                vectorization.require(VectorRequirement::Masked { operand });
+                vectorization.require(VectorRequirement::masked(
+                    operand,
+                    partitioning.as_tile().space(),
+                    problem.store.contiguous_axis(),
+                ));
             }
         }
         let width = vectorization.width(RmsNormOperand::Input, |_| {
