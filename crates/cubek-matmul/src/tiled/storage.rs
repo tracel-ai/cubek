@@ -119,6 +119,33 @@ pub fn stored_tile(
     ))
 }
 
+/// How a matrix of `element` is stored on `client`'s device in `tile`, a tile over its rows and
+/// its columns, `[(rows, extent), (columns, extent)]`, such as [`stored_tile`] gives. A tile's rows
+/// lie one after another, each split at the widest read the device serves that the row holds
+/// whole, and the tiles lie row-major. A reader takes a stated piece whole, so the matrix is
+/// stored for the read it is read in.
+pub fn matrix_storage(
+    client: &Client,
+    element: ElemType,
+    [(rows, tile_rows), (columns, tile_columns)]: [(Axis, usize); 2],
+) -> StoragePartitioning {
+    let read = client
+        .io_optimized_vector_sizes(element.size())
+        .filter(|&width| tile_columns.is_multiple_of(width))
+        .max()
+        .unwrap_or(1);
+    // A piece of one is no piece: stated, it would be a dim of the buffer.
+    let pieces: Vec<_> = [
+        (columns, read),
+        (columns, tile_columns / read),
+        (rows, tile_rows),
+    ]
+    .into_iter()
+    .filter(|&(_, count)| count > 1)
+    .collect();
+    StorageLevels::new(&pieces).grid(&[columns, rows])
+}
+
 /// How a tensor of one shape lies stored as a [`StoragePartitioning`] states: its metadata in
 /// values and in the words a packed one moves as, the relayout of its words into storage tiles,
 /// and the words it allocates.
