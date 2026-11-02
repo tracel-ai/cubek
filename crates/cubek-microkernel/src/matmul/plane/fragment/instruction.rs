@@ -285,6 +285,20 @@ impl PlaneFragmentInstruction {
         self.form().is_some()
     }
 
+    /// Whether it contracts a fragment deeper than its own step of `K`, one step after another
+    /// into the same sum ([`PlaneFragmentDepth::Stage`](super::PlaneFragmentDepth::Stage)): the
+    /// manual `mma` over plain operands alone. The block-scaled instruction reads one step's
+    /// codes and scales as they lie, and the device offers it at one depth.
+    pub fn contracts_deeper_fragments(self) -> bool {
+        matches!(
+            self,
+            Self::Mma {
+                operands: MmaOperands::Plain,
+                ..
+            }
+        )
+    }
+
     /// The form a block-scaled instruction's operands take: each input's codes, the scales' type
     /// and their block. `None` for any other.
     pub fn form(self) -> Option<BlockScaledOperands> {

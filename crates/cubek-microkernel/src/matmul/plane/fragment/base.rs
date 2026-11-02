@@ -235,14 +235,11 @@ impl PlaneFragmentMicrokernel {
                 .collect(),
             PlaneFragmentTransport::Wgmma => Self::wgmma(hw, item, &settings).into_iter().collect(),
         };
-        // Only the manual-mma instruction contracts a fragment deeper than itself.
         let deep = settings.fragment_depth == PlaneFragmentDepth::Stage;
         let step = MatmulStep::new(hw, MatmulOperands::all(Operand::plain()), item.elements);
         instructions
             .into_iter()
-            .filter(move |instruction| {
-                !deep || matches!(instruction, PlaneFragmentInstruction::Mma { .. })
-            })
+            .filter(move |instruction| !deep || instruction.contracts_deeper_fragments())
             .filter_map(move |instruction| {
                 let [(_, m), (_, n), (_, k)] = instruction.shape_along(settings.rows_along);
                 let step = step.clone().under(Space::new(&[(M, m), (N, n), (K, k)]));
@@ -281,6 +278,7 @@ impl PlaneFragmentMicrokernel {
         space: MatmulBlocks,
     ) -> Vec<Self> {
         let committed = hw.plane_dim().is_ok();
+        let deep = settings.fragment_depth == PlaneFragmentDepth::Stage;
         let block = space.operand(MatmulOperand::Rhs).grouping(K, space.k);
         // Each input under its own scheme, at its own block along `K`.
         let input = |input: MatmulOperand| {
@@ -316,6 +314,9 @@ impl PlaneFragmentMicrokernel {
                     && block.is_some()
                     && scale_reads.iter().all(|&read| k.is_multiple_of(read))
             })
+            // It contracts a fragment its own step deep, so a plane whose fragments span a
+            // stage's steps of `K` is not one it serves.
+            .filter(|instruction| !deep || instruction.contracts_deeper_fragments())
             .map(|instruction| Self {
                 instruction,
                 orders: instruction.orders(item.layouts),

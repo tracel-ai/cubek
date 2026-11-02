@@ -1689,4 +1689,124 @@ mod base {
         }
         assert!(past_k > 0, "no setting's stage reaches past a k of 256");
     }
+
+    /// A product of NVFP4 activations against an NVFP4 weight, Qwen3.8-27B's gate and up
+    /// projections at a prompt's rows, prepares under every setting the staged routine races on
+    /// a GPU with `sm_120`'s block-scaled instructions, and every plan admitted on the
+    /// block-scaled instruction holds fragments one instruction step deep: it contracts a
+    /// fragment of its own depth alone. A setting whose fragments span a stage, as the boxes
+    /// decoding a packed weight against a float activation have, declines rather than asking for a
+    /// `16 × 8 × 256` instruction no device offers, which on an RTX PRO 6000 failed to expand.
+    #[test]
+    fn a_w4a4_product_contracts_block_scaled_fragments_one_step_deep() {
+        use crate::kernels::select::packed::nvfp4_scheme;
+        use cubek_microkernel::matmul::MatmulDim;
+
+        let hw = devices::offering_nvfp4(devices::rtx_pro_6000());
+        let packing = |scheme: cubecl::quant::scheme::QuantScheme, axes| Packing {
+            operand: Operand::of_scheme(&scheme, K, axes).expect("NVFP4 is one block along k"),
+            scheme,
+        };
+        let problem = MatmulRoutineProblem::packed(
+            512,
+            17408,
+            5120,
+            ElemType::Float(FloatKind::F16),
+            MatmulOperands {
+                lhs: Some(packing(nvfp4_scheme(), [M, K])),
+                rhs: Some(packing(tile_order::nvfp4_scheme(), [K, N])),
+                out: None,
+            },
+        );
+        let routine = CubeStagedMatmulRoutine;
+        let raced = routine
+            .packed_settings(&hw)
+            .into_iter()
+            .chain(routine.packed_one_step_settings())
+            .chain(routine.block_scaled_settings(&hw));
+        let mut block_scaled = 0;
+        for settings in raced {
+            let Ok((blueprint, _)) = routine.prepare(&hw, &problem, &settings) else {
+                continue;
+            };
+            let plane = &blueprint.microkernel.plane;
+            if !plane.instruction.block_scaled() {
+                continue;
+            }
+            assert_eq!(
+                plane.leaf_extent(MatmulDim::K),
+                plane.instruction.shape()[2].1,
+                "{settings}"
+            );
+            block_scaled += 1;
+        }
+        assert!(
+            block_scaled > 0,
+            "no setting prepared on the block-scaled instruction"
+        );
+    }
+
+    /// Qwen3.8-27B's 48-wide gated-delta projection under W4A4: its NVFP4 activations against a
+    /// weight left in `bf16`, at a prompt's rows, and the same 44 columns wide. Over the
+    /// block-split space the float weight lies along `NI`, its columns, so every setting the staged
+    /// routine races binds it at a width dividing them wherever its box reaches past them, as a
+    /// box 32 columns wide does at 44 and at 48: the tile engine masks no wider line at an edge a
+    /// tile overhangs. On an RTX PRO 6000 a box bound eight wide past 48 columns, which no mask
+    /// stated, refused to bind and the model did not load.
+    #[test]
+    fn a_float_weight_beside_a_packed_activation_binds_past_its_columns_at_a_dividing_width() {
+        use crate::kernels::select::packed::nvfp4_scheme;
+        use cubek_std::matmul_axes::NI;
+
+        let bf16 = ElemType::Float(FloatKind::BF16);
+        let hw = devices::offering_nvfp4(devices::offering_mma(
+            devices::rtx_pro_6000(),
+            [MmaConfig {
+                a_type: bf16,
+                b_type: bf16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 16,
+                n: 8,
+                k: 16,
+            }],
+        ));
+        let scheme = nvfp4_scheme();
+        let activation = Packing {
+            operand: Operand::of_scheme(&scheme, K, [M, K]).expect("NVFP4 is one block along k"),
+            scheme,
+        };
+        let routine = CubeStagedMatmulRoutine;
+        for n in [48, 44] {
+            let problem = MatmulRoutineProblem::packed(
+                512,
+                n,
+                5120,
+                bf16,
+                MatmulOperands {
+                    lhs: Some(activation),
+                    rhs: None,
+                    out: None,
+                },
+            );
+            let mut past_columns = 0;
+            for settings in routine
+                .packed_settings(&hw)
+                .into_iter()
+                .chain(routine.packed_one_step_settings())
+            {
+                let Ok((blueprint, _)) = routine.prepare(&hw, &problem, &settings) else {
+                    continue;
+                };
+                if blueprint.partitioning.overhangs(NI) {
+                    assert!(
+                        n.is_multiple_of(blueprint.widths.rhs),
+                        "{settings}: {} wide across {n} columns",
+                        blueprint.widths.rhs
+                    );
+                    past_columns += 1;
+                }
+            }
+            assert!(past_columns > 0, "no box reaches past {n} columns");
+        }
+    }
 }

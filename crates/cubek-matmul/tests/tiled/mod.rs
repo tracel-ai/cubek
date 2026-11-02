@@ -5,6 +5,7 @@ mod elements;
 mod indexed;
 mod integers;
 mod packed;
+mod packed_activation;
 mod storage;
 
 #[cfg(feature = "benchmarks")]

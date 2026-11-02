@@ -129,8 +129,8 @@ impl TileOrder {
 
     /// The kernel's statement of the values of a matrix `k` deep and `across` an axis of some extent,
     /// stored in `tile`, over [`values_axes`], read `words_per_load` words a load
-    /// ([`values_storage`]). The bytes are the same at every read, so a reader states the one it
-    /// takes over a matrix stored for another.
+    /// ([`values_storage`](Self::values_storage)). The bytes are the same at every read, so a reader
+    /// states the one it takes over a matrix stored for another.
     pub fn kernel_values_read(
         self,
         k: usize,
@@ -187,7 +187,7 @@ impl TileOrder {
 
     /// The tile a matrix in tile order is stored in, `(k, lines)` values: every fragment of each of its
     /// dims but the coarsest. `None` for a matrix in rows, or one whose `k` fragments do not close a
-    /// block, as [`kernel_values`] declines it.
+    /// block, as [`kernel_values`](Self::kernel_values) declines it.
     pub fn tile(self, matrix: &Metadata) -> Option<(usize, usize)> {
         let [k, n] = matrix_fragments(matrix)?;
         self.block_split(&k)?;
