@@ -6,7 +6,7 @@ use cubek_std::Hardware;
 
 /// A row of this kind as its microkernels see it: the element every operand is stored in, the
 /// width of each half of the fused row, which the output takes, and how the output is stored,
-/// which decides the runs an owner may write.
+/// which decides the runs a cube may encode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SwigluWorkItem {
     pub element: ElemType,

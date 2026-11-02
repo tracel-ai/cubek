@@ -29,12 +29,12 @@ impl SwigluOperand {
 
 /// One value per operand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SwigluOperandMap<T> {
+pub struct SwigluOperands<T> {
     pub input: T,
     pub out: T,
 }
 
-impl<T: Copy> SwigluOperandMap<T> {
+impl<T: Copy> SwigluOperands<T> {
     /// The value `operand` holds.
     pub fn get(&self, operand: SwigluOperand) -> T {
         match operand {

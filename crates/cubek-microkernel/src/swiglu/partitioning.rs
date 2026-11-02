@@ -41,7 +41,7 @@ impl SwigluPartitioning {
 
     /// The partitioning a kernel compiles against: the rows of a plain store left to the launch
     /// ([`RowStore::dynamic_axes`]), the width compiled in, since it is a model's `d_ff` and the
-    /// table's key holds it exactly.
+    /// autotune key holds it exactly.
     pub fn kernel(&self) -> Partitioning {
         Partitioning::new(
             self.partitioning
@@ -52,8 +52,8 @@ impl SwigluPartitioning {
         )
     }
 
-    /// cubek's partitioning, for what the tile engine reads of it: the launch and the binding.
-    pub fn as_cubek(&self) -> &Partitioning {
+    /// The tile engine's partitioning, for the launch and the binding.
+    pub fn as_tile(&self) -> &Partitioning {
         &self.partitioning
     }
 }

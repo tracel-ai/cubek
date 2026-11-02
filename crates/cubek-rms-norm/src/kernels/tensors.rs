@@ -29,11 +29,10 @@ pub const RMS_NORM_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
 ///
 /// Every operand is read as dense rows starting on a whole read of the device: the rows as
 /// `[b, r, d]` over the input, read where they lie wherever they come in batch entries
-/// ([`PlainTensor::as_batched_rows`]) — a projection's or a residual add's fresh output, or a
-/// decode's query heads inside the fused projection's — and copied into dense ones
-/// ([`PlainTensor::into_dense_at`]) otherwise; the weight as `[d]`, whatever leading dims of one it carries, or as `[r, d]`, a row
-/// for each row of an entry ([`RmsNormWeight`]); the output allocated
-/// dense in the input's shape and written through the same `[b, r, d]` view. So every operand
+/// ([`PlainTensor::as_batched_rows`]), and copied into dense ones ([`PlainTensor::into_dense_at`])
+/// otherwise; the weight as `[d]`, whatever leading dims of one it carries, or as `[r, d]`, a row
+/// for each row of an entry; the output allocated dense in the input's shape and written through
+/// the same `[b, r, d]` view. So every operand
 /// binds at the one width a dense row does ([`RmsNormWorkItem::width`]), which is the width a
 /// tuning key prepares its candidates at.
 ///
@@ -54,7 +53,6 @@ pub struct RmsNormTensors<Out = RmsNormOutputBuffer> {
 
 impl<Out: core::fmt::Debug> core::fmt::Debug for RmsNormTensors<Out> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // The client says nothing about the norm.
         f.debug_struct("RmsNormTensors")
             .field("input", &self.input)
             .field("weight", &self.weight)
@@ -148,6 +146,31 @@ impl RmsNormInputs {
         })
     }
 
+    /// These operands, the rows in one batch entry, as a matrix of rows lies.
+    ///
+    /// # Errors
+    ///
+    /// [`RMS_NORM_ROWS_IN_ENTRIES`].
+    fn one_entry(self) -> Result<Self, Refusal> {
+        match self.batch {
+            1 => Ok(self),
+            _ => Err(RMS_NORM_ROWS_IN_ENTRIES),
+        }
+    }
+
+    /// The tensors of the norm of these operands into `out`, which lies at `placement` and stores
+    /// its rows as `store` says.
+    fn with_out<Out>(self, out: Out, placement: Placement, store: RowStore) -> RmsNormTensors<Out> {
+        let problem = self.problem(placement, store);
+        RmsNormTensors {
+            client: self.client,
+            input: self.input,
+            weight: self.weight,
+            out,
+            problem,
+        }
+    }
+
     /// The problem these operands state, the output placed at `out` and its rows stored as
     /// `store` says.
     fn problem(&self, out: Placement, store: RowStore) -> RmsNormRoutineProblem {
@@ -193,14 +216,12 @@ impl RmsNormTensors {
         );
         let (batch, rows, dim) = (operands.batch, operands.rows, operands.dim);
         let rows = tensor.viewed(Metadata::new([batch, rows, dim], [rows * dim, dim, 1]));
-        let problem = operands.problem(Placement::from(&rows), RowStore::Plain);
-        Ok(Self {
-            client: operands.client,
-            input: operands.input,
-            weight: operands.weight,
-            out: RmsNormOutputBuffer { handle, rows },
-            problem,
-        })
+        let placement = Placement::from(&rows);
+        Ok(operands.with_out(
+            RmsNormOutputBuffer { handle, rows },
+            placement,
+            RowStore::Plain,
+        ))
     }
 
     /// The output, in the input's shape.
@@ -242,14 +263,8 @@ impl RmsNormTensors<Geometry> {
     pub fn sink(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Refusal> {
         let operands = RmsNormInputs::new(client, input, weight)?;
         let out = Geometry::row_major(&[operands.batch, operands.rows, operands.dim]);
-        let problem = operands.problem(Placement::dense_rows(operands.dim), RowStore::Plain);
-        Ok(Self {
-            client: operands.client,
-            input: operands.input,
-            weight: operands.weight,
-            out,
-            problem,
-        })
+        let placement = Placement::dense_rows(operands.dim);
+        Ok(operands.with_out(out, placement, RowStore::Plain))
     }
 
     /// The three operands bound as `blueprint` states them, on `grid`, the output derived over
@@ -297,19 +312,10 @@ impl RmsNormTensors<PackedRows> {
         weight: PlainTensor,
         out: PackedTensor,
     ) -> Result<Self, Refusal> {
-        let operands = RmsNormInputs::new(client, input, weight)?;
-        if operands.batch != 1 {
-            return Err(RMS_NORM_ROWS_IN_ENTRIES);
-        }
-        let (out, store) = PackedRows::new(out, operands.rows, operands.dim)?;
-        let problem = operands.problem(Placement::dense_rows(operands.dim), store);
-        Ok(Self {
-            client: operands.client,
-            input: operands.input,
-            weight: operands.weight,
-            out,
-            problem,
-        })
+        let operands = RmsNormInputs::new(client, input, weight)?.one_entry()?;
+        let out = PackedRows::new(out, operands.rows, operands.dim)?;
+        let (placement, store) = (Placement::dense_rows(operands.dim), out.store());
+        Ok(operands.with_out(out, placement, store))
     }
 
     /// The rows and the weight bound as `blueprint` states them, on `grid`, and the output as one
@@ -349,26 +355,11 @@ impl RmsNormTensors<TiledRows> {
         weight: PlainTensor,
         out: PlainTensor,
     ) -> Result<Self, Refusal> {
-        let operands = RmsNormInputs::new(client, input, weight)?;
-        if operands.batch != 1 {
-            return Err(RMS_NORM_ROWS_IN_ENTRIES);
-        }
+        let operands = RmsNormInputs::new(client, input, weight)?.one_entry()?;
         let element = operands.input.elem;
         let out = TiledRows::new(out, operands.rows, operands.dim, element)?;
-        let problem = operands.problem(
-            Placement {
-                elem_alignment: out.elem_alignment(),
-                start_bytes: out.start_bytes(),
-            },
-            RowStore::Plain,
-        );
-        Ok(Self {
-            client: operands.client,
-            input: operands.input,
-            weight: operands.weight,
-            out,
-            problem,
-        })
+        let placement = Placement::from(&out);
+        Ok(operands.with_out(out, placement, RowStore::Plain))
     }
 
     /// The rows and the weight bound as `blueprint` states them, on `grid`, and the output over
@@ -408,7 +399,7 @@ impl<Out> RmsNormTensors<Out> {
         let launcher = grid.launcher(self.client(), || {
             (
                 partitioning.kernel(),
-                partitioning.as_cubek().space().clone(),
+                partitioning.as_tile().space().clone(),
             )
         });
         // Each operand as the store states the rows: as it lies, or its row split into blocks.
@@ -482,7 +473,7 @@ impl RmsNormWeight {
 }
 
 /// The operands of a launch bound under one launcher, the output as `Out`: bound to a buffer, or
-/// derived for a sink. Not `Debug`: cubek's `Launcher` is not.
+/// derived for a sink. Not `Debug`: cubecl's `Launcher` is not.
 pub struct RmsNormBinding<Out> {
     pub launcher: Launcher,
     pub input: Bound,

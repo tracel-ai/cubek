@@ -178,7 +178,7 @@ impl Routine for CubeSwigluRoutine {
             plane_width: microkernel.units as u32,
             shared_memory: store.stage_bytes(groups * microkernel.run(), problem.element),
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = SwigluBlueprint::new(hw, problem, microkernel, partitioning, vectorization)
@@ -197,7 +197,8 @@ impl SwigluRoutine<CubeSwigluMicrokernel> for CubeSwigluRoutine {
     ) {
         // SAFETY: every operand is bound through the launcher, and the output through `O`, which
         // mask the reads and writes of a tile the problem's edge cuts short, and the kernel
-        // indexes no buffer but through its tiles; it holds no shared memory.
+        // indexes no buffer but through its tiles; its shared memory is a packed store's stage,
+        // each group writing its own run, encoded only once the cube has synced.
         unsafe {
             cube_swiglu_kernel::launch_unchecked::<O>(
                 tensors.client(),

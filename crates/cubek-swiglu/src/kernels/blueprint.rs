@@ -55,7 +55,7 @@ impl<M> SwigluBlueprint<M> {
                     problem.element.size(),
                 ),
             });
-            if problem.store.overhangs_width(partitioning.as_cubek()) {
+            if problem.store.overhangs_width(partitioning.as_tile()) {
                 vectorization.require(VectorRequirement::Masked { operand });
             }
         }

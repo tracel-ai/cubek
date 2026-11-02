@@ -5,7 +5,7 @@ use cubecl::tile::Space;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::Work;
 use cubek_microkernel::row_store::RowStore;
-use cubek_microkernel::swiglu::{H, R, SwigluOperandMap, SwigluWorkItem};
+use cubek_microkernel::swiglu::{H, R, SwigluOperands, SwigluWorkItem};
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
 use cubek_std::routine::EstimatedProblem;
 
@@ -19,14 +19,19 @@ pub struct SwigluRoutineProblem {
     /// The element every operand is stored in.
     pub element: ElemType,
     /// The alignment of each operand's buffer in elements, over the axes this kind names.
-    pub elem_alignments: SwigluOperandMap<ElemAlignment>,
+    pub elem_alignments: SwigluOperands<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start.
-    pub start_bytes: SwigluOperandMap<u64>,
+    pub start_bytes: SwigluOperands<u64>,
     /// How the output's rows are stored.
     pub store: RowStore,
 }
 
 impl SwigluRoutineProblem {
+    /// Whether the problem has no element to gate: no rows, or rows of no width.
+    pub fn is_empty(&self) -> bool {
+        self.rows == 0 || self.dim == 0
+    }
+
     /// What every microkernel of this problem is handed.
     pub fn work_item(&self) -> SwigluWorkItem {
         SwigluWorkItem {
@@ -76,11 +81,11 @@ impl SwigluRoutineProblem {
             rows,
             dim,
             element,
-            elem_alignments: SwigluOperandMap {
+            elem_alignments: SwigluOperands {
                 input: ElemAlignment::new(&[rows, 2, dim], &[2 * dim, dim, 1]),
                 out: ElemAlignment::dense_rows(dim),
             },
-            start_bytes: SwigluOperandMap { input: 0, out: 0 },
+            start_bytes: SwigluOperands { input: 0, out: 0 },
             store: RowStore::Plain,
         }
     }

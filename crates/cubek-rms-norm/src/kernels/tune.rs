@@ -1,23 +1,23 @@
 //! The RMS-norm autotune: every routine's settings, raced per key, over the cube groups' floor.
 //!
-//! The autotune is not bounded: a norm reads the activations the step just wrote, so production
+//! The autotune is not bounded: a norm reads the activations the step just wrote, so a caller
 //! meets it warm, and a round read cold would time a kernel nobody runs.
 
 use crate::kernels::{
     CubeGroupsRmsNormRoutine, CubeGroupsRmsNormRoutineSettings, CubeRmsNormRoutine,
     CubeRmsNormRoutineSettings, PlaneRmsNormRoutine, PlaneRmsNormRoutineSettings,
-    RMS_NORM_SINK_TAKES_NO_ROWS, RmsNormBlueprint, RmsNormRoutine, RmsNormRoutineProblem,
-    RmsNormRoutineSinkLaunch, RmsNormTensors,
+    RMS_NORM_SINK_TAKES_NO_ROWS, RmsNormBinding, RmsNormBlueprint, RmsNormRoutine,
+    RmsNormRoutineProblem, RmsNormRoutineSinkLaunch, RmsNormTensors,
 };
 use cubecl::Device;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
-use cubecl::tile::launch::{Buffered, Refusal, SinkLaunchVisitor};
+use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, SinkLaunchVisitor};
 use cubecl::tune::{AutotuneOutput, LocalTuner, TunableSet, local_tuner};
 use cubecl::{self as cubecl, AutotuneKey, CubeDim, CubeTuneId};
-use cubek_matmul::kernels::tensor::{LhsOutput, PackedRows, PackedTensor, PlainTensor, TiledRows};
+use cubek_matmul::kernels::tensor::{LhsOutput, PackedTensor, PlainTensor};
 use cubek_microkernel::row_store::Encoded;
 use cubek_std::Hardware;
 use cubek_std::autotune::{Autotune, CandidateIdentity, GroupPriority, Identity};
@@ -35,41 +35,26 @@ use std::sync::Arc;
 pub struct RmsNormKey {
     elem: ElemType,
     /// The normalized row's width.
-    d: usize,
+    dim: usize,
     #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
     rows: usize,
 }
 
 impl RmsNormKey {
-    /// The element every operand is stored in.
-    pub fn element(&self) -> ElemType {
-        self.elem
-    }
-
-    /// The normalized row's width.
-    pub fn dim(&self) -> usize {
-        self.d
-    }
-
-    /// The rows, at the key's bucket.
-    pub fn rows(&self) -> usize {
-        self.rows
-    }
-
     /// What a tuning round measures for this key: the call's weight, and dense zero rows as many
     /// as the key's bucket stands for, the problem the key describes
-    /// ([`RmsNormRoutineProblem::from`](RmsNormRoutineProblem)). A weight a row scales its own
+    /// ([`RmsNormRoutineProblem::from`]). A weight a row scales its own
     /// rows' count and no other, so its round measures the call as it came.
     fn representative(&self, call: &RmsNormCall) -> RmsNormCall {
-        let rows = call.input.binding.shape.iter().product::<usize>() / self.dim();
-        let weight_a_row = call.weight.binding.shape.iter().product::<usize>() > self.dim();
-        if self.rows() <= rows || weight_a_row {
+        let rows = call.input.binding.shape.iter().product::<usize>() / self.dim;
+        let weight_a_row = call.weight.binding.shape.iter().product::<usize>() > self.dim;
+        if self.rows <= rows || weight_a_row {
             return call.clone();
         }
         let input = PlainTensor::zeros(
             &call.client,
-            &[self.rows(), self.dim()],
-            [self.dim(), 1],
+            &[self.rows, self.dim],
+            [self.dim, 1],
             call.input.elem,
         );
         RmsNormCall {
@@ -92,7 +77,7 @@ impl From<&PlainTensor> for RmsNormKey {
 /// The problem a tuning key describes, at its bucket's rows: dense operands of the key's element.
 impl From<&RmsNormKey> for RmsNormRoutineProblem {
     fn from(key: &RmsNormKey) -> Self {
-        Self::dense(key.rows(), key.dim(), key.element())
+        Self::dense(key.rows, key.dim, key.elem)
     }
 }
 
@@ -106,10 +91,9 @@ pub struct RmsNormCall {
     pub epsilon: f32,
 }
 
-/// What an autotune's candidate hands back: the norm, and the client it lives on.
+/// What an autotune's candidate hands back: the norm.
 #[derive(Clone)]
 pub struct RmsNormOutput {
-    pub client: Client,
     pub handle: TensorHandle,
 }
 
@@ -127,9 +111,10 @@ pub enum RmsNormRoutineSettings {
     Cube(CubeRmsNormRoutineSettings),
 }
 
-/// A candidate of the autotune, whichever routine it launches: what the autotune identifies a candidate
-/// by, and what the tuner hands back for the one it found fastest ([`fastest_rms_norm_routine`]),
-/// so a launch outside a round reads the launches the winner prepared in it.
+/// A candidate of the autotune, whichever routine it launches: what the autotune identifies a
+/// candidate by, and what the tuner hands back for the one it found fastest
+/// ([`fastest_rms_norm_routine`]), so a launch outside a round reads the launches the winner
+/// prepared in it.
 #[derive(Debug, Clone)]
 pub enum RmsNormCandidate {
     /// [`CubeGroupsRmsNormRoutine`], a candidate and the autotune's floor.
@@ -272,6 +257,18 @@ impl<R: Routine> RmsNormRoutineCandidate<R> {
     }
 }
 
+impl RmsNormRoutineCandidate<CubeGroupsRmsNormRoutine> {
+    /// The cube groups at their default, which serve every float row on every device: the
+    /// autotune's floor.
+    pub fn floor(hw: &Hardware) -> Self {
+        Self::new(
+            CubeGroupsRmsNormRoutine,
+            CubeGroupsRmsNormRoutineSettings::DEFAULT,
+            hw,
+        )
+    }
+}
+
 impl<R: Routine + Copy> RmsNormRoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, as candidates of the autotune, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
@@ -295,16 +292,11 @@ where
     /// Why this device cannot run the norm at this setting.
     pub fn launch(&self, call: &RmsNormCall) -> Result<TensorHandle, Refusal> {
         let tensors = RmsNormTensors::new(&call.client, call.input.clone(), call.weight.clone())?;
-        // No rows is no launch: a grid of no cubes is one no device spawns.
-        if tensors.problem().rows == 0 {
-            return Ok(tensors.into_out());
-        }
-        let (blueprint, grid) = self.prepare(tensors.problem())?;
-        let binding = tensors
-            .bind(&blueprint, &grid)
-            .map_out(|out| (out, Write::Replace));
-        self.routine
-            .dispatch::<Buffered, _>(&tensors, binding, blueprint, grid, call.epsilon);
+        self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
+            tensors
+                .bind(blueprint, grid)
+                .map_out(|out| (out, Write::Replace))
+        })?;
         Ok(tensors.into_out())
     }
 
@@ -316,47 +308,29 @@ where
     ///
     /// Why this device cannot run the norm at this setting, or why `out` cannot hold it.
     pub fn launch_tiled(&self, call: &RmsNormCall, out: PlainTensor) -> Result<(), Refusal> {
-        let tensors = RmsNormTensors::<TiledRows>::tiled(
-            &call.client,
-            call.input.clone(),
-            call.weight.clone(),
-            out,
-        )?;
-        if tensors.problem().rows == 0 {
-            return Ok(());
-        }
-        let (blueprint, grid) = self.prepare(tensors.problem())?;
-        let binding = tensors
-            .bind(&blueprint, &grid)
-            .map_out(|out| (out, Write::Replace));
-        self.routine
-            .dispatch::<Buffered, _>(&tensors, binding, blueprint, grid, call.epsilon);
-        Ok(())
+        let tensors =
+            RmsNormTensors::tiled(&call.client, call.input.clone(), call.weight.clone(), out)?;
+        self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
+            tensors
+                .bind(blueprint, grid)
+                .map_out(|out| (out, Write::Replace))
+        })
     }
 
     /// The norm of [`launch`](Self::launch), encoded into `out`, a packed `[rows, dim]` matrix
     /// the caller allocated under one level of block scales along each row: each block's scale
-    /// calibrated as burn's `quantize_dynamic` calibrates it, from the rows rounded to their
+    /// calibrated from the rows rounded to their
     /// element, so the result is the norm's output quantized ([`RmsNormTensors::packed`]).
     ///
     /// # Errors
     ///
     /// Why this device cannot encode the norm at this setting, or why `out` cannot hold it.
     pub fn launch_packed(&self, call: &RmsNormCall, out: PackedTensor) -> Result<(), Refusal> {
-        let tensors = RmsNormTensors::<PackedRows>::packed(
-            &call.client,
-            call.input.clone(),
-            call.weight.clone(),
-            out,
-        )?;
-        if tensors.problem().rows == 0 {
-            return Ok(());
-        }
-        let (blueprint, grid) = self.prepare(tensors.problem())?;
-        let binding = tensors.bind(&blueprint, &grid);
-        self.routine
-            .dispatch::<Encoded, _>(&tensors, binding, blueprint, grid, call.epsilon);
-        Ok(())
+        let tensors =
+            RmsNormTensors::packed(&call.client, call.input.clone(), call.weight.clone(), out)?;
+        self.launch_on::<Encoded, _>(call, &tensors, |blueprint, grid| {
+            tensors.bind(blueprint, grid)
+        })
     }
 
     /// The norm of [`launch`](Self::launch), written into `out` as a product reads its lhs:
@@ -395,6 +369,24 @@ where
         ))
     }
 
+    /// The norm of `call` on `tensors`, bound by `bind` and written through `O`. No rows is no
+    /// launch: a grid of no cubes is one no device spawns.
+    fn launch_on<O: DestinationLaunch, Out>(
+        &self,
+        call: &RmsNormCall,
+        tensors: &RmsNormTensors<Out>,
+        bind: impl FnOnce(&RmsNormBlueprint<M>, &Grid) -> RmsNormBinding<O::Operand>,
+    ) -> Result<(), Refusal> {
+        if tensors.problem().rows == 0 {
+            return Ok(());
+        }
+        let (blueprint, grid) = self.prepare(tensors.problem())?;
+        let binding = bind(&blueprint, &grid);
+        self.routine
+            .dispatch::<O, _>(tensors, binding, blueprint, grid, call.epsilon);
+        Ok(())
+    }
+
     /// The launch this candidate prepared for `problem`, or prepares now and holds.
     fn prepare(
         &self,
@@ -416,10 +408,7 @@ where
     /// The norm of `call` at this candidate's setting.
     fn run(&self, call: RmsNormCall) -> Result<RmsNormOutput, String> {
         self.launch(&call)
-            .map(|handle| RmsNormOutput {
-                client: call.client.clone(),
-                handle,
-            })
+            .map(|handle| RmsNormOutput { handle })
             .map_err(|error| error.to_string())
     }
 }
@@ -493,15 +482,13 @@ pub fn launch_into_tuned(
     tile: GroupPriority,
     out: LhsOutput,
 ) -> Result<(), Refusal> {
-    let floor = CubeGroupsRmsNormRoutineSettings::DEFAULT;
     if let Some(elected) = fastest_rms_norm_routine(&call.client, device, &call.input, tile)
-        .filter(|elected| elected.settings() != RmsNormRoutineSettings::from(floor))
         && elected.launch_into(call, out.clone()).is_ok()
     {
         return Ok(());
     }
     let hw = Hardware::from_client(&call.client);
-    RmsNormRoutineCandidate::new(CubeGroupsRmsNormRoutine, floor, &hw).launch_into(call, out)
+    RmsNormRoutineCandidate::floor(&hw).launch_into(call, out)
 }
 
 /// The routine, at its setting, that the autotune found fastest for the norm of `input`'s rows on
@@ -540,11 +527,7 @@ fn candidates(
             RmsNormKey::representative,
         );
     let tile = autotune.group("tile", priority);
-    let floor = RmsNormRoutineCandidate::new(
-        CubeGroupsRmsNormRoutine,
-        CubeGroupsRmsNormRoutineSettings::DEFAULT,
-        &hw,
-    );
+    let floor = RmsNormRoutineCandidate::floor(&hw);
     autotune
         .identified(
             &tile,

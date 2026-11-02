@@ -10,10 +10,6 @@
 //! A plain store writes its rows wherever its output's binding lays them: in rows, or in the
 //! storage tiles a product reads its operand from, the tiling riding the binding, so nothing is
 //! relaid out after.
-//!
-//! A packed store states its rows over the space a packed matrix binds in, the matmul's own axes
-//! split into blocks ([`cubek_std::matmul_axes`]), so the output binds exactly as a product reads
-//! its packed lhs, and the producer's own operands are restated over the same space.
 
 mod base;
 mod cube_store;

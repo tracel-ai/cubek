@@ -152,7 +152,7 @@ impl Routine for CubeGroupsRmsNormRoutine {
             plane_width: microkernel.units as u32,
             shared_memory: groups * microkernel.shared_memory() + stage,
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
@@ -176,7 +176,8 @@ impl RmsNormRoutine<CubeGroupsRmsNormMicrokernel> for CubeGroupsRmsNormRoutine {
         // SAFETY: every operand is bound through the launcher, and the output through `O`, which
         // mask the reads and writes of a tile the problem's edge cuts short, and the kernel
         // indexes no buffer but through its tiles; its shared memory is the groups' slots,
-        // indexed by group and unit.
+        // indexed by group and unit, and a packed store's stage, each group writing its own row,
+        // encoded only once the cube has synced.
         unsafe {
             cube_groups_rms_norm_kernel::launch_unchecked::<O>(
                 tensors.client(),

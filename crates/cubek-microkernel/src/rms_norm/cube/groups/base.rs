@@ -21,7 +21,7 @@ pub struct CubeGroupsRmsNormMicrokernel {
     pub units: usize,
     /// The dim the row spans. An extent the kernel compiles, the exception
     /// [`RmsNormPartitioning::kernel`](crate::rms_norm::RmsNormPartitioning::kernel)
-    /// argues: the units size their registers by it, and the table's key holds it exactly.
+    /// argues: the units size their registers by it, and the autotune key holds it exactly.
     pub dim: usize,
     /// The width the operands bind at ([`RmsNormWorkItem::width`]), which the units are sized at.
     pub width: usize,

@@ -21,7 +21,7 @@ use cubek_std::microkernel::{
 pub struct CubeSwigluMicrokernel {
     /// Lines of the row one run spans ([`candidates`](Self::candidates)). An extent the kernel
     /// compiles, as the width a [`SwigluPartitioning`] compiles in is: the units walk their share
-    /// of it, and the table's key holds the width exactly.
+    /// of it, and the autotune key holds the width exactly.
     ///
     /// [`SwigluPartitioning`]: crate::swiglu::SwigluPartitioning
     pub run_lines: usize,

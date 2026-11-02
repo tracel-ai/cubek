@@ -12,7 +12,7 @@ use cubek_matmul::kernels::tensor::{
     ELEMENT_NOT_ON_DEVICE, PackedRows, PackedTensor, Placement, PlainTensor, TiledRows,
 };
 use cubek_microkernel::row_store::RowStore;
-use cubek_microkernel::swiglu::{D, H, R, SwigluOperandMap};
+use cubek_microkernel::swiglu::{D, H, R, SwigluOperands};
 use cubek_std::Hardware;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
@@ -23,10 +23,10 @@ pub const SWIGLU_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
 
 /// The tensors of one gate, its output among them, and the problem they state.
 ///
-/// The fused rows are read as dense rows starting on a whole read of the device — a projection's
-/// fresh output, as they come on the production path — and copied into dense ones
-/// ([`PlainTensor::into_dense_at`]) otherwise, and bound as `[r, h, d]`: the gate at `h = 0` and the up at
-/// `h = 1`, a half `d` elements apart. The up half is a stride of the one binding, never a view
+/// The fused rows are read as dense rows starting on a whole read of the device, as a
+/// projection's fresh output is, and copied into dense ones ([`PlainTensor::into_dense_at`])
+/// otherwise, and bound as `[r, h, d]`: the gate at `h = 0` and the up at `h = 1`, a half `d`
+/// elements apart. The up half is a stride of the one binding, never a view
 /// starting inside the buffer, which a runtime binds only at its own offset alignment. So the
 /// input binds at the one width a dense run of `d` does ([`SwigluWorkItem::width`]), which is the
 /// width a tuning key prepares its candidates at.
@@ -46,7 +46,6 @@ pub struct SwigluTensors<Out = SwigluOutputBuffer> {
 
 impl<Out: core::fmt::Debug> core::fmt::Debug for SwigluTensors<Out> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // The client says nothing about the gate.
         f.debug_struct("SwigluTensors")
             .field("input", &self.input)
             .field("out", &self.out)
@@ -63,7 +62,7 @@ pub struct SwigluOutputBuffer {
     rows: PlainTensor,
 }
 
-/// The operands of a launch bound under one launcher, the output as `Out`. Not `Debug`: cubek's
+/// The operands of a launch bound under one launcher, the output as `Out`. Not `Debug`: cubecl's
 /// `Launcher` is not.
 pub struct SwigluBinding<Out> {
     pub launcher: Launcher,
@@ -85,15 +84,14 @@ impl SwigluTensors {
     pub fn new(client: &Client, both: PlainTensor) -> Result<Self, Refusal> {
         let input = SwigluInput::new(client, both)?;
         let (handle, tensor) =
-            PlainTensor::empty_contiguous(client, input.shape.clone().into(), input.input.elem);
+            PlainTensor::empty_contiguous(client, input.shape.clone().into(), input.fused.elem);
         let rows = tensor.viewed(Metadata::new([input.rows, input.dim], [input.dim, 1]));
-        let problem = input.problem(Placement::from(&rows), RowStore::Plain);
-        Ok(Self {
-            client: client.clone(),
-            input: input.input,
-            out: SwigluOutputBuffer { handle, rows },
-            problem,
-        })
+        let placement = Placement::from(&rows);
+        Ok(input.with_out(
+            SwigluOutputBuffer { handle, rows },
+            placement,
+            RowStore::Plain,
+        ))
     }
 
     /// The output, in the input's shape at half its width.
@@ -121,8 +119,8 @@ impl SwigluTensors {
 
 impl SwigluTensors<PackedRows> {
     /// The gate of `both`, encoded into `out`, a packed `[rows, d]` matrix over a product's lhs
-    /// axes the caller allocated under one level of block scales along each row. The gated rows are staged in each cube's
-    /// shared memory, dense, and encoded from there.
+    /// axes the caller allocated under one level of block scales along each row. The gated rows are
+    /// staged in each cube's shared memory, dense, and encoded from there.
     ///
     /// # Errors
     ///
@@ -133,14 +131,9 @@ impl SwigluTensors<PackedRows> {
     /// As [`SwigluTensors::new`], and on an `out` not shaped `[rows, d]`.
     pub fn packed(client: &Client, both: PlainTensor, out: PackedTensor) -> Result<Self, Refusal> {
         let input = SwigluInput::new(client, both)?;
-        let (out, store) = PackedRows::new(out, input.rows, input.dim)?;
-        let problem = input.problem(Placement::dense_rows(input.dim), store);
-        Ok(Self {
-            client: client.clone(),
-            input: input.input,
-            out,
-            problem,
-        })
+        let out = PackedRows::new(out, input.rows, input.dim)?;
+        let (placement, store) = (Placement::dense_rows(input.dim), out.store());
+        Ok(input.with_out(out, placement, store))
     }
 
     /// The input bound as `blueprint` states it, on `grid`, and the output as one tile of its
@@ -174,21 +167,10 @@ impl SwigluTensors<TiledRows> {
     /// As [`SwigluTensors::new`].
     pub fn tiled(client: &Client, both: PlainTensor, out: PlainTensor) -> Result<Self, Refusal> {
         let input = SwigluInput::new(client, both)?;
-        let element = input.input.elem;
+        let element = input.fused.elem;
         let out = TiledRows::new(out, input.rows, input.dim, element)?;
-        let problem = input.problem(
-            Placement {
-                elem_alignment: out.elem_alignment(),
-                start_bytes: out.start_bytes(),
-            },
-            RowStore::Plain,
-        );
-        Ok(Self {
-            client: client.clone(),
-            input: input.input,
-            out,
-            problem,
-        })
+        let placement = Placement::from(&out);
+        Ok(input.with_out(out, placement, RowStore::Plain))
     }
 
     /// The input bound as `blueprint` states it, on `grid`, and the output over the rows and the
@@ -223,7 +205,7 @@ impl<Out> SwigluTensors<Out> {
         let launcher = grid.launcher(self.client(), || {
             (
                 partitioning.kernel(),
-                partitioning.as_cubek().space().clone(),
+                partitioning.as_tile().space().clone(),
             )
         });
         let (meta, axes) = self.problem.store.restated(&self.input.meta(), &[R, H]);
@@ -250,8 +232,9 @@ impl<Out> SwigluBinding<Out> {
 
 /// The fused rows as every launch reads them, before the output is decided.
 struct SwigluInput {
+    client: Client,
     /// `[r, h, d]` over the dense fused rows.
-    input: PlainTensor,
+    fused: PlainTensor,
     /// The input's shape at half its width, which the output takes.
     shape: Vec<usize>,
     rows: usize,
@@ -283,28 +266,41 @@ impl SwigluInput {
         let rows = shape[..shape.len() - 1].iter().product();
         let read_bytes = Hardware::from_client(client).properties.io_width() as u64 / 8;
         let both = both.into_dense_at(client, read_bytes);
-        let input = both.viewed(Metadata::new([rows, 2, dim], [2 * dim, dim, 1]));
+        let fused = both.viewed(Metadata::new([rows, 2, dim], [2 * dim, dim, 1]));
         Ok(Self {
-            input,
+            client: client.clone(),
+            fused,
             shape,
             rows,
             dim,
         })
     }
 
+    /// The tensors of the gate of these rows into `out`, which lies at `placement` and stores its
+    /// rows as `store` says.
+    fn with_out<Out>(self, out: Out, placement: Placement, store: RowStore) -> SwigluTensors<Out> {
+        let problem = self.problem(placement, store);
+        SwigluTensors {
+            client: self.client,
+            input: self.fused,
+            out,
+            problem,
+        }
+    }
+
     /// The problem the fused rows state, the output placed at `out` and its rows stored as
     /// `store` says.
     fn problem(&self, out: Placement, store: RowStore) -> SwigluRoutineProblem {
-        let input = Placement::from(&self.input);
+        let input = Placement::from(&self.fused);
         SwigluRoutineProblem {
             rows: self.rows,
             dim: self.dim,
-            element: self.input.elem,
-            elem_alignments: SwigluOperandMap {
+            element: self.fused.elem,
+            elem_alignments: SwigluOperands {
                 input: input.elem_alignment,
                 out: out.elem_alignment,
             },
-            start_bytes: SwigluOperandMap {
+            start_bytes: SwigluOperands {
                 input: input.start_bytes,
                 out: out.start_bytes,
             },

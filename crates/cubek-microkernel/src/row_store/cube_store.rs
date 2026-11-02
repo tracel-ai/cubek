@@ -44,7 +44,7 @@ impl CubeStore {
     }
 
     /// Once every owner has written its lines: nothing more, or the cube meets and encodes its
-    /// stage into its window, calibrating each block's scale as burn's `quantize_dynamic` does.
+    /// stage into its window, calibrating each block's scale from its largest magnitude.
     pub fn finish(&mut self) {
         if comptime!(matches!(self.form, CubeStage::Encoded { .. })) {
             sync_cube();

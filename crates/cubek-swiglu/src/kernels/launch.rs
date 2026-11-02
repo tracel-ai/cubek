@@ -1,6 +1,7 @@
 //! The SwiGLU routine trait: what a routine states. The launches into a buffer, a packed or a
-//! tiled matrix are a candidate's ([`SwigluRoutineCandidate`](crate::kernels::SwigluRoutineCandidate)),
-//! which holds what it prepared.
+//! tiled matrix are a candidate's
+//! ([`SwigluRoutineCandidate`](crate::kernels::SwigluRoutineCandidate)), which holds what it
+//! prepared.
 
 use crate::kernels::{SwigluBinding, SwigluBlueprint, SwigluRoutineProblem, SwigluTensors};
 use cubecl::tile::launch::DestinationLaunch;

@@ -1,5 +1,4 @@
 use crate::rms_norm::{HeldRowShape, RmsNormOperand, RmsNormWorkItem};
-use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
@@ -23,7 +22,7 @@ pub struct PlaneRmsNormMicrokernel {
     /// Elements of the row the plane holds: the whole row, or a cube's plane's run of it. Like
     /// `dim`, an extent the kernel compiles, the exception
     /// [`RmsNormPartitioning::kernel`](crate::rms_norm::RmsNormPartitioning::kernel)
-    /// argues: the lanes size their registers by it, and the table's key holds the dim exactly.
+    /// argues: the lanes size their registers by it, and the autotune key holds the dim exactly.
     pub run: usize,
     /// The dim the whole row spans, which its scale divides by.
     pub dim: usize,
@@ -44,12 +43,6 @@ impl core::fmt::Display for PlaneRmsNormMicrokernelSettings {
 }
 
 impl PlaneRmsNormMicrokernel {
-    /// What a run longer than its lanes hold at [`HeldRowShape::MAX_LINES_PER_UNIT`] each is
-    /// declined with: the cube's planes split the row instead.
-    pub const RUN_OUTGROWS_REGISTERS: Refusal = Refusal::Declined {
-        why: "a plane's lanes hold at most `HeldRowShape::MAX_LINES_PER_UNIT` lines of the row each",
-    };
-
     /// The plane microkernel over `run` elements of `item`'s row on `hw`, where the device commits
     /// to a plane width and its lanes hold the run within their registers.
     pub fn new(hw: &Hardware, item: &RmsNormWorkItem, run: usize) -> Option<Self> {
@@ -59,8 +52,8 @@ impl PlaneRmsNormMicrokernel {
             dim: item.dim,
             width: item.width(hw),
         };
-        microkernel.check_registers().ok()?;
-        Some(microkernel)
+        (microkernel.held_row().per_unit() <= HeldRowShape::MAX_LINES_PER_UNIT)
+            .then_some(microkernel)
     }
 
     /// How a lane's share of the run lies at the width the operands bind at.
@@ -68,18 +61,6 @@ impl PlaneRmsNormMicrokernel {
         HeldRowShape {
             lines: self.run.div_ceil(self.width),
             units: self.lanes,
-        }
-    }
-
-    /// Whether a lane holds the run within its registers.
-    ///
-    /// # Errors
-    ///
-    /// [`RUN_OUTGROWS_REGISTERS`](Self::RUN_OUTGROWS_REGISTERS).
-    pub fn check_registers(&self) -> Result<(), Refusal> {
-        match self.held_row().per_unit() <= HeldRowShape::MAX_LINES_PER_UNIT {
-            true => Ok(()),
-            false => Err(Self::RUN_OUTGROWS_REGISTERS),
         }
     }
 }

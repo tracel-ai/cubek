@@ -10,8 +10,7 @@ pub const R: Axis = ROWS;
 /// The normalized dim, which every row spans and the weight runs along: the contraction of the
 /// product it feeds. A packed store states it as its blocks ([`RowStore::width_axes`]).
 pub const D: Axis = WIDTH;
-/// The batch the rows come in: each entry's rows lie at their own stride from the last entry's,
-/// as the query heads of a decode's sequences do inside the fused projection's output.
+/// The batch the rows come in: each entry's rows lie at their own stride from the last entry's.
 pub const B: Axis = batch_axis(0);
 
 /// How a routine of this kind places its microkernel's rows over a problem: a cube for every box
@@ -73,8 +72,8 @@ impl RmsNormPartitioning {
         )
     }
 
-    /// cubek's partitioning, for what the tile engine reads of it: the launch and the binding.
-    pub fn as_cubek(&self) -> &Partitioning {
+    /// The tile engine's partitioning, for the launch and the binding.
+    pub fn as_tile(&self) -> &Partitioning {
         &self.partitioning
     }
 }

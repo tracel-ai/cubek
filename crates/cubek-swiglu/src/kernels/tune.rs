@@ -1,10 +1,10 @@
 //! The SwiGLU autotune: the cube routine's settings, raced per key, over its default as the floor.
 //!
-//! The autotune is not bounded: the gate reads the projection the step just wrote, so production
+//! The autotune is not bounded: the gate reads the projection the step just wrote, so a caller
 //! meets it warm, and a round read cold would time a kernel nobody runs.
 
 use crate::kernels::{
-    CubeSwigluRoutine, CubeSwigluRoutineSettings, SwigluBlueprint, SwigluRoutine,
+    CubeSwigluRoutine, CubeSwigluRoutineSettings, SwigluBinding, SwigluBlueprint, SwigluRoutine,
     SwigluRoutineProblem, SwigluTensors,
 };
 use cubecl::Device;
@@ -12,10 +12,10 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
-use cubecl::tile::launch::{Buffered, Refusal};
+use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal};
 use cubecl::tune::{AutotuneOutput, LocalTuner, TunableSet, local_tuner};
 use cubecl::{self as cubecl, AutotuneKey, CubeDim, CubeTuneId};
-use cubek_matmul::kernels::tensor::{LhsOutput, PackedRows, PackedTensor, PlainTensor, TiledRows};
+use cubek_matmul::kernels::tensor::{LhsOutput, PackedTensor, PlainTensor};
 use cubek_microkernel::row_store::Encoded;
 use cubek_std::Hardware;
 use cubek_std::autotune::{Autotune, CandidateIdentity, GroupPriority, Identity};
@@ -26,14 +26,13 @@ use std::sync::Arc;
 
 /// What makes two gated activations want the same kernel.
 ///
-/// `d` is the *paired* width the input carries — gate and up together — so the output is half of
-/// it. Exact, because it is a `d_ff` fixed by the model config and the kernel compiles it; the row
-/// count is anchored, being the axis a caller varies.
+/// The width of a half is **exact**: it is a `d_ff`, fixed by the model config, and the kernel
+/// compiles it. The row count is anchored, being the axis a caller varies.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct SwigluKey {
     elem: ElemType,
-    /// The input's innermost extent: gate and up side by side.
-    d: usize,
+    /// The width of a half, which the output takes.
+    dim: usize,
     #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
     rows: usize,
 }
@@ -43,14 +42,14 @@ impl SwigluKey {
     /// stands for, the problem the key describes ([`SwigluRoutineProblem::from`]), or the call as
     /// it came where it holds as many.
     fn representative(&self, call: &SwigluCall) -> SwigluCall {
-        let rows = call.both.binding.shape.iter().product::<usize>() / self.d;
+        let rows = call.both.binding.shape.iter().product::<usize>() / (2 * self.dim);
         if self.rows <= rows {
             return call.clone();
         }
         let both = PlainTensor::zeros(
             &call.client,
-            &[self.rows, self.d],
-            [self.d, 1],
+            &[self.rows, 2 * self.dim],
+            [2 * self.dim, 1],
             call.both.elem,
         );
         SwigluCall {
@@ -65,9 +64,9 @@ impl SwigluKey {
 impl From<&PlainTensor> for SwigluKey {
     fn from(both: &PlainTensor) -> Self {
         let shape = &both.binding.shape;
-        let d = shape[shape.len() - 1];
-        let rows = shape.iter().product::<usize>() / d;
-        Self::new(both.elem, d, rows)
+        let both_halves = shape[shape.len() - 1];
+        let rows = shape.iter().product::<usize>() / both_halves;
+        Self::new(both.elem, both_halves / 2, rows)
     }
 }
 
@@ -75,7 +74,7 @@ impl From<&PlainTensor> for SwigluKey {
 /// element.
 impl From<&SwigluKey> for SwigluRoutineProblem {
     fn from(key: &SwigluKey) -> Self {
-        Self::dense(key.rows, key.d / 2, key.elem)
+        Self::dense(key.rows, key.dim, key.elem)
     }
 }
 
@@ -87,10 +86,9 @@ pub struct SwigluCall {
     pub both: PlainTensor,
 }
 
-/// What an autotune's candidate hands back: the gate, and the client it lives on.
+/// What an autotune's candidate hands back: the gate.
 #[derive(Clone)]
 pub struct SwigluOutput {
-    pub client: Client,
     pub handle: TensorHandle,
 }
 
@@ -138,6 +136,14 @@ impl<R: Routine> SwigluRoutineCandidate<R> {
     }
 }
 
+impl SwigluRoutineCandidate<CubeSwigluRoutine> {
+    /// The cube routine at its default, which gates every float row on every device: the
+    /// autotune's floor.
+    pub fn floor(hw: &Hardware) -> Self {
+        Self::new(CubeSwigluRoutine, CubeSwigluRoutineSettings::DEFAULT, hw)
+    }
+}
+
 impl<R: Routine + Copy> SwigluRoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, as candidates of the autotune, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
@@ -161,16 +167,11 @@ where
     /// Why this device cannot run the gate at this setting.
     pub fn launch(&self, call: &SwigluCall) -> Result<TensorHandle, Refusal> {
         let tensors = SwigluTensors::new(&call.client, call.both.clone())?;
-        // No elements is no launch: a grid of no cubes is one no device spawns.
-        if tensors.problem().rows == 0 || tensors.problem().dim == 0 {
-            return Ok(tensors.into_out());
-        }
-        let (blueprint, grid) = self.prepare(tensors.problem())?;
-        let binding = tensors
-            .bind(&blueprint, &grid)
-            .map_out(|out| (out, Write::Replace));
-        self.routine
-            .dispatch::<Buffered, _>(&tensors, binding, blueprint, grid);
+        self.launch_on::<Buffered, _>(&tensors, |blueprint, grid| {
+            tensors
+                .bind(blueprint, grid)
+                .map_out(|out| (out, Write::Replace))
+        })?;
         Ok(tensors.into_out())
     }
 
@@ -182,37 +183,25 @@ where
     ///
     /// Why this device cannot run the gate at this setting, or why `out` cannot hold it.
     pub fn launch_tiled(&self, call: &SwigluCall, out: PlainTensor) -> Result<(), Refusal> {
-        let tensors = SwigluTensors::<TiledRows>::tiled(&call.client, call.both.clone(), out)?;
-        if tensors.problem().rows == 0 || tensors.problem().dim == 0 {
-            return Ok(());
-        }
-        let (blueprint, grid) = self.prepare(tensors.problem())?;
-        let binding = tensors
-            .bind(&blueprint, &grid)
-            .map_out(|out| (out, Write::Replace));
-        self.routine
-            .dispatch::<Buffered, _>(&tensors, binding, blueprint, grid);
-        Ok(())
+        let tensors = SwigluTensors::tiled(&call.client, call.both.clone(), out)?;
+        self.launch_on::<Buffered, _>(&tensors, |blueprint, grid| {
+            tensors
+                .bind(blueprint, grid)
+                .map_out(|out| (out, Write::Replace))
+        })
     }
 
     /// The gate of [`launch`](Self::launch), encoded into `out`, a packed `[rows, d]` matrix the
     /// caller allocated under one level of block scales along each row: each block's scale
-    /// calibrated as burn's `quantize_dynamic` calibrates it, from the gated rows rounded to their
+    /// calibrated from the gated rows rounded to their
     /// element, so the result is the gate's output quantized ([`SwigluTensors::packed`]).
     ///
     /// # Errors
     ///
     /// Why this device cannot encode the gate at this setting, or why `out` cannot hold it.
     pub fn launch_packed(&self, call: &SwigluCall, out: PackedTensor) -> Result<(), Refusal> {
-        let tensors = SwigluTensors::<PackedRows>::packed(&call.client, call.both.clone(), out)?;
-        if tensors.problem().rows == 0 || tensors.problem().dim == 0 {
-            return Ok(());
-        }
-        let (blueprint, grid) = self.prepare(tensors.problem())?;
-        let binding = tensors.bind(&blueprint, &grid);
-        self.routine
-            .dispatch::<Encoded, _>(&tensors, binding, blueprint, grid);
-        Ok(())
+        let tensors = SwigluTensors::packed(&call.client, call.both.clone(), out)?;
+        self.launch_on::<Encoded, _>(&tensors, |blueprint, grid| tensors.bind(blueprint, grid))
     }
 
     /// The gate of [`launch`](Self::launch), written into `out` as a product reads its lhs:
@@ -226,6 +215,23 @@ where
             LhsOutput::Packed(out) => self.launch_packed(call, out),
             LhsOutput::Tiled(out) => self.launch_tiled(call, out),
         }
+    }
+
+    /// The gate on `tensors`, bound by `bind` and written through `O`. No elements is no launch: a
+    /// grid of no cubes is one no device spawns.
+    fn launch_on<O: DestinationLaunch, Out>(
+        &self,
+        tensors: &SwigluTensors<Out>,
+        bind: impl FnOnce(&SwigluBlueprint<M>, &Grid) -> SwigluBinding<O::Operand>,
+    ) -> Result<(), Refusal> {
+        if tensors.problem().is_empty() {
+            return Ok(());
+        }
+        let (blueprint, grid) = self.prepare(tensors.problem())?;
+        let binding = bind(&blueprint, &grid);
+        self.routine
+            .dispatch::<O, _>(tensors, binding, blueprint, grid);
+        Ok(())
     }
 
     /// The launch this candidate prepared for `problem`, or prepares now and holds.
@@ -249,10 +255,7 @@ where
     /// The gate of `call` at this candidate's setting.
     fn run(&self, call: SwigluCall) -> Result<SwigluOutput, String> {
         self.launch(&call)
-            .map(|handle| SwigluOutput {
-                client: call.client.clone(),
-                handle,
-            })
+            .map(|handle| SwigluOutput { handle })
             .map_err(|error| error.to_string())
     }
 }
@@ -302,13 +305,9 @@ pub fn launch_tuned(call: SwigluCall, device: &Device, tile: GroupPriority) -> T
     // round measured on it would time no launch and keep a winner for the decode bucket.
     if call.both.binding.shape.contains(&0) {
         let hw = Hardware::from_client(&call.client);
-        return SwigluRoutineCandidate::new(
-            CubeSwigluRoutine,
-            CubeSwigluRoutineSettings::DEFAULT,
-            &hw,
-        )
-        .launch(&call)
-        .expect("the floor gates every float row");
+        return SwigluRoutineCandidate::floor(&hw)
+            .launch(&call)
+            .expect("the floor gates every float row");
     }
     let client = call.client.clone();
     // Keyed by the device: the set is built from what this device supports.
@@ -333,15 +332,13 @@ pub fn launch_into_tuned(
     tile: GroupPriority,
     out: LhsOutput,
 ) -> Result<(), Refusal> {
-    let floor = CubeSwigluRoutineSettings::DEFAULT;
-    if let Some(elected) =
-        fastest_swiglu_routine(call, device, tile).filter(|elected| *elected.settings() != floor)
+    if let Some(elected) = fastest_swiglu_routine(call, device, tile)
         && elected.launch_into(call, out.clone()).is_ok()
     {
         return Ok(());
     }
     let hw = Hardware::from_client(&call.client);
-    SwigluRoutineCandidate::new(CubeSwigluRoutine, floor, &hw).launch_into(call, out)
+    SwigluRoutineCandidate::floor(&hw).launch_into(call, out)
 }
 
 /// The candidate the autotune found fastest for the gate of `call`'s rows on `device`, or `None`
@@ -377,8 +374,7 @@ fn candidates(
         SwigluKey::representative,
     );
     let tile = autotune.group("tile", priority);
-    let floor =
-        SwigluRoutineCandidate::new(CubeSwigluRoutine, CubeSwigluRoutineSettings::DEFAULT, &hw);
+    let floor = SwigluRoutineCandidate::floor(&hw);
     autotune
         .identified(
             &tile,
@@ -408,9 +404,9 @@ mod tests {
     #[test]
     fn every_device_prepares_every_setting() {
         for key in [
-            SwigluKey::new(F16, 2 * 8192, 1),
-            SwigluKey::new(F16, 2 * 2816, 512 * 4),
-            SwigluKey::new(F16, 2 * 111, 3),
+            SwigluKey::new(F16, 8192, 1),
+            SwigluKey::new(F16, 2816, 512 * 4),
+            SwigluKey::new(F16, 111, 3),
         ] {
             for hw in [
                 devices::rdna_range(),
@@ -437,9 +433,9 @@ mod tests {
         let hw = devices::strix_halo();
         let lead = SwigluRoutineCandidate::list(CubeSwigluRoutine, &hw).swap_remove(0);
         assert_eq!(
-            lead.priority(&SwigluKey::new(F16, 2 * 2816, 512 * 4)),
+            lead.priority(&SwigluKey::new(F16, 2816, 512 * 4)),
             CandidatePriority::FIRST
         );
-        assert!(lead.priority(&SwigluKey::new(F16, 2 * 2816, 1)) < CandidatePriority::FIRST);
+        assert!(lead.priority(&SwigluKey::new(F16, 2816, 1)) < CandidatePriority::FIRST);
     }
 }

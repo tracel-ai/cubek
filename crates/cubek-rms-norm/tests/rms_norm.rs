@@ -8,7 +8,6 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::rms_norm::plane::PlaneRmsNormMicrokernel;
 use cubek_rms_norm::kernels::{
     CubeGroupsRmsNormRoutine, CubeRmsNormRoutine, PlaneRmsNormRoutine, RmsNormCall, RmsNormRoutine,
     RmsNormRoutineCandidate,
@@ -142,8 +141,7 @@ fn check_routine<M: Microkernel, R: RmsNormRoutine<M> + Copy>(routine: R, declin
                 let out = match (candidate.launch(&call), declines) {
                     (Ok(out), _) => out,
                     (Err(why), Declines::AsItsMicrokernelStates)
-                        if why == (Refusal::Declined { why: M::DECLINE })
-                            || why == PlaneRmsNormMicrokernel::RUN_OUTGROWS_REGISTERS =>
+                        if why == (Refusal::Declined { why: M::DECLINE }) =>
                     {
                         continue;
                     }
