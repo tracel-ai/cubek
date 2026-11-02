@@ -248,6 +248,11 @@ impl AttentionPartitioning {
         self.partitioning.overhangs(axis)
     }
 
+    /// The problem's space: every axis at its extent, or dynamic where a launch states it.
+    pub fn space(&self) -> &Space {
+        self.partitioning.space()
+    }
+
     /// Cubes one batch and key head of the problem spawns: one for every box of queries and
     /// heads, times the cubes sharing each, or the cubes sharing the line of its boxes' steps.
     pub fn cubes(&self) -> usize {
