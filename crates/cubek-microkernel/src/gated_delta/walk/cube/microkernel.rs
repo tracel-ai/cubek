@@ -1,0 +1,76 @@
+use super::base::CubeGatedDeltaWalkMicrokernel;
+use super::held_state::HeldState;
+use super::unit_partials::UnitPartials;
+use crate::gated_delta::POSITION;
+use cubecl::tile::{Region, Tile};
+use cubecl::{self as cubecl, cube, prelude::*};
+
+/// One cube's runs of value columns, `microkernel.units` units each, walked through every position:
+/// each position decays the state, adds the delta between the value and what the state recalls of
+/// the key along the key, and reads the written state with the query, the read rounded to `E`
+/// where it is written. The state after each position from `first_kept` on is written to the next
+/// of the kept states.
+///
+/// Every operand is windowed to the cube's box: its sequence, its head, its runs of columns, every
+/// key row and every position; the queries and keys to the key head the head is grouped under. The
+/// cube's runs walk the positions together, since their units meet in its shared memory.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
+    cube: &Region,
+    query: &Tile,
+    key: &Tile,
+    value: &Tile,
+    decay: &Tile,
+    strength: &Tile,
+    state: &Tile,
+    out: &Tile,
+    kept: &Tile,
+    first_kept: usize,
+    #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,
+    #[comptime] runs: usize,
+) {
+    let width = N::value();
+    let parts = comptime!(microkernel.columns / width);
+    // A run's units lie along `x` and the cube's runs along `y`, as its resources state them.
+    let (unit, run_slot) = (UNIT_POS_X as usize, UNIT_POS_Y as usize);
+    let mut partials = UnitPartials::<N>::new(run_slot, unit, runs, microkernel);
+    let mut write = Array::<Vector<f32, N>>::new(parts);
+    for run in cube {
+        let mut held = HeldState::<N>::load(&state.at(&run), unit, microkernel);
+        for step in run.walk() {
+            let (keys, queries) = (key.at(&step), query.at(&step));
+            let value_window = value.at(&step);
+            let values = value_window.flat::<f32, N>();
+            let factor = f32::exp(scalar(&decay.at(&step)));
+            let strength_all = Vector::<f32, N>::cast_from(scalar(&strength.at(&step)));
+
+            held.decay_and_recall(&keys, factor, &mut partials);
+            partials.sum(0usize);
+            #[unroll]
+            for part in 0..parts {
+                write[part] = (values.read(part) - partials.get(part)) * strength_all;
+            }
+            held.write_and_answer(&keys, &queries, &write, &mut partials);
+            partials.sum(1usize);
+            if unit == 0 {
+                let mut answered = out.at(&step);
+                let mut writes = answered.flat_mut::<E, N>();
+                #[unroll]
+                for part in 0..parts {
+                    writes.write(part, Vector::<E, N>::cast_from(partials.get(part)));
+                }
+            }
+            let position = step.coord(POSITION);
+            if position >= first_kept {
+                held.store(&mut kept.at(&run), position - first_kept);
+            }
+        }
+    }
+}
+
+/// The one value a position's window of a per-head scalar holds: its decay, or its strength.
+#[cube]
+fn scalar(window: &Tile) -> f32 {
+    window.flat::<f32, Const<1>>().read(0usize).extract(0usize)
+}

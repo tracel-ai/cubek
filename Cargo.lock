@@ -344,6 +344,7 @@ dependencies = [
  "cubek-attention-backward",
  "cubek-convolution",
  "cubek-fft",
+ "cubek-gated-delta",
  "cubek-interpolate",
  "cubek-matmul",
  "cubek-pool",
@@ -1385,6 +1386,7 @@ dependencies = [
  "cubek-attention-backward",
  "cubek-convolution",
  "cubek-fft",
+ "cubek-gated-delta",
  "cubek-interpolate",
  "cubek-matmul",
  "cubek-microkernel",
@@ -1452,6 +1454,19 @@ dependencies = [
  "cubek-test-utils",
  "num-complex",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "cubek-gated-delta"
+version = "0.4.0-pre.1"
+dependencies = [
+ "cubecl",
+ "cubek-matmul",
+ "cubek-microkernel",
+ "cubek-std",
+ "cubek-test-utils",
+ "half",
+ "serde",
 ]
 
 [[package]]

@@ -1,0 +1,151 @@
+use crate::gated_delta::GatedDeltaHeads;
+use crate::gated_delta::walk::GatedDeltaWalkOperand;
+use crate::registers::MAX_HELD_LINES_PER_UNIT;
+use core::num::NonZeroUsize;
+use cubecl::tile::launch::Vectorization;
+use cubek_std::Hardware;
+use cubek_std::microkernel::{
+    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
+};
+
+/// A cube's runs of a head's value columns, `columns` of them a run, walked through every
+/// position one at a time by `units` units: unit `u` of a run holds key rows `u · rows ..` of the
+/// run's state in its registers, and the units' partial sums over the key rows meet in the cube's
+/// shared memory.
+///
+/// It reads no plane instruction and no plane width, only a cube of units and shared memory to
+/// meet in. It holds what it derived, not the settings it derived it from: two settings that
+/// derive one launch are one candidate, which a round compiles and times once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CubeGatedDeltaWalkMicrokernel {
+    /// Units sharing a run: any count, the last holding what the key rows leave.
+    pub units: usize,
+    /// Key rows each unit holds of the run's state, a multiple of `columns`.
+    pub rows: usize,
+    /// Value columns a run holds: a fact of the heads, and the widest line the walk reads.
+    pub columns: usize,
+    /// The state's key rows in all, which the last unit's rows may overhang.
+    pub key_features: usize,
+}
+
+/// How much of a run's state one unit holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CubeGatedDeltaWalkMicrokernelSettings {
+    /// A target, not a demand: the `f32` cells of the state one unit holds in registers. Fewer
+    /// cells is more units a run, and wider meetings.
+    pub cells: NonZeroUsize,
+}
+
+impl CubeGatedDeltaWalkMicrokernelSettings {
+    /// 64 cells a unit: a 128-row head read four columns wide in runs of eight units.
+    pub const DEFAULT: Self = Self::new(64);
+    /// The fewest cells whose lines stay within [`MAX_HELD_LINES_PER_UNIT`] at any width: what the
+    /// walk can always run.
+    pub const FLOOR: Self = Self::new(MAX_HELD_LINES_PER_UNIT);
+
+    pub const fn new(cells: usize) -> Self {
+        Self {
+            cells: NonZeroUsize::new(cells).unwrap(),
+        }
+    }
+
+    /// These settings with no more than `cells` cells a unit.
+    pub fn capped_at(self, cells: usize) -> Self {
+        Self::new(self.cells.get().min(cells))
+    }
+}
+
+impl core::fmt::Display for CubeGatedDeltaWalkMicrokernelSettings {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "cells={}", self.cells)
+    }
+}
+
+impl CubeGatedDeltaWalkMicrokernel {
+    /// Vector lines of the state a unit holds at lines of `width` columns.
+    pub fn held_lines(&self, width: usize) -> usize {
+        self.rows * self.columns / width
+    }
+
+    /// Bytes of shared memory a cube of `runs` runs meets in: two slices, one for each sum of a
+    /// position, each holding every unit's partial for the run's columns.
+    pub fn shared_memory(&self, runs: usize) -> usize {
+        2 * runs * self.units * self.columns * size_of::<f32>()
+    }
+}
+
+impl core::fmt::Display for CubeGatedDeltaWalkMicrokernel {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "units={} rows={} columns={}",
+            self.units, self.rows, self.columns
+        )
+    }
+}
+
+impl Microkernel for CubeGatedDeltaWalkMicrokernel {
+    type WorkItem = GatedDeltaHeads;
+    type Settings = CubeGatedDeltaWalkMicrokernelSettings;
+    type Operand = GatedDeltaWalkOperand;
+    type CubeSpace = ();
+
+    const DECLINE: &'static str = "a cube's units cannot hold the key rows of one run";
+
+    /// The default, then half its cells.
+    fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
+        vec![Self::Settings::DEFAULT, Self::Settings::new(32)]
+    }
+
+    /// The units holding the cells the settings target, with no more rows a unit than
+    /// [`MAX_HELD_LINES_PER_UNIT`] lines at the widest read, and none past the head.
+    /// None where even
+    /// those units outnumber a cube's.
+    fn candidates(
+        hw: &Hardware,
+        item: &GatedDeltaHeads,
+        settings: &Self::Settings,
+    ) -> impl Iterator<Item = Self> {
+        let columns = item.columns();
+        let key_features = item.key_features;
+        let rows = settings
+            .cells
+            .get()
+            .div_ceil(columns)
+            .next_multiple_of(columns)
+            .min(MAX_HELD_LINES_PER_UNIT)
+            .min(key_features);
+        let units = key_features.div_ceil(rows);
+        let hardware = &hw.properties.hardware;
+        let fits = units <= hardware.max_units_per_cube as usize
+            && units <= hardware.max_cube_dim.0 as usize;
+        fits.then_some(Self {
+            units,
+            rows,
+            columns,
+            key_features,
+        })
+        .into_iter()
+    }
+
+    /// Every operand as [`GatedDeltaWalkOperand::require`] states it, a run `columns` wide and a
+    /// unit's rows.
+    fn vectorize(&self, _: &(), vectorization: &mut Vectorization<GatedDeltaWalkOperand>) {
+        GatedDeltaWalkOperand::require(self.columns, self.rows, vectorization);
+    }
+
+    /// Each unit holds its rows of the state beside its partial sums, computed with the device's
+    /// vector arithmetic; the reads are its routine's to count.
+    fn estimate(
+        &self,
+        _item: &GatedDeltaHeads,
+        _: &(),
+        _planes: CubePlanes,
+        estimate: &mut KernelEstimate,
+    ) {
+        estimate.work = Some(UnitWork {
+            instruction: ArithmeticInstruction::Vector,
+            registers: (self.rows * self.columns + 3 * self.columns) as u32,
+        });
+    }
+}

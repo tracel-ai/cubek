@@ -27,6 +27,7 @@ cubek = { path = "crates/cubek", version = "0.4.0-pre.1", default-features = fal
 cubek-attention = { path = "crates/cubek-attention", version = "0.4.0-pre.1", default-features = false }
 cubek-attention-backward = { path = "crates/cubek-attention-backward", version = "0.4.0-pre.1", default-features = false }
 cubek-convolution = { path = "crates/cubek-convolution", version = "0.4.0-pre.1", default-features = false }
+cubek-gated-delta = { path = "crates/cubek-gated-delta", version = "0.4.0-pre.1", default-features = false }
 cubek-fft = { path = "crates/cubek-fft", version = "0.4.0-pre.1", default-features = false }
 cubek-interpolate = { path = "crates/cubek-interpolate", version = "0.4.0-pre.1", default-features = false }
 cubek-matmul = { path = "crates/cubek-matmul", version = "0.4.0-pre.1", default-features = false }
