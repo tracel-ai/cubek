@@ -1,5 +1,6 @@
-//! The reduce microkernels on rows along the reduced axis: `out[o, s]` the `s`-th cell row `o`
-//! writes (one, or `k` for a top-k), each row a plane of the launch.
+//! The reduce microkernels on one launch: `out[o, s]` the `s`-th cell row `o` writes (one, or `k`
+//! for a top-k). Along the reduced axis, `input[o, r]`, each row its owner's; across it,
+//! `input[r, o]` and `out[s, o]`, each owner `width` rows side by side, a row a lane.
 
 use crate::reduce::cube::{
     CubeReduceMicrokernel, CubeReduceMicrokernelSettings, cube_reduce_microkernel,
@@ -8,7 +9,7 @@ use crate::reduce::plane::{
     PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings, plane_reduce_microkernel,
 };
 use crate::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microkernel};
-use crate::reduce::{O, R, ReduceCarrier, ReduceWorkItem};
+use crate::reduce::{O, R, ReduceCarrier, ReduceLayout, ReduceWorkItem};
 use cubecl::prelude::*;
 use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
@@ -80,7 +81,8 @@ impl ReduceLaunch {
         })
     }
 
-    /// `out[o, s]` from `input[o, r]`, both row-major.
+    /// `out[o, s]` from `input[o, r]` along the reduced axis, `out[s, o]` from `input[r, o]`
+    /// across it, all row-major.
     ///
     /// # Errors
     ///
@@ -88,7 +90,12 @@ impl ReduceLaunch {
     pub fn launch(&self, client: &Client, input: TensorArg, out: TensorArg) -> Result<(), Refusal> {
         let cells = self.item.operation.written_per_row();
         let space = Space::new(&[(O, self.rows), (R, self.item.reduced), (S, cells)]);
-        let leaf = Levels::leaf(&[(O, 1), (R, self.item.reduced), (S, cells)]);
+        // Across, an owner holds a line's worth of rows side by side.
+        let (owned, input_axes, out_axes, out_width) = match self.item.layout {
+            ReduceLayout::Along => (1, [O, R], [O, S], 1),
+            ReduceLayout::Across => (self.width, [R, O], [S, O], self.width),
+        };
+        let leaf = Levels::leaf(&[(O, owned), (R, self.item.reduced), (S, cells)]);
         let (partitioning, cube_dim) = match self.scope {
             ReduceScope::Unit | ReduceScope::Plane => {
                 let partitioning = Partitioning::new(
@@ -118,8 +125,8 @@ impl ReduceLaunch {
             )
         };
         let elements = [self.item.input, self.item.accumulator, self.out];
-        let input = bound(input, self.item.input, self.width, &[O, R]);
-        let out = bound(out, self.out, 1, &[O, S]);
+        let input = bound(input, self.item.input, self.width, &input_axes);
+        let out = bound(out, self.out, out_width, &out_axes);
         let lanes = self.plane_width as usize;
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles.

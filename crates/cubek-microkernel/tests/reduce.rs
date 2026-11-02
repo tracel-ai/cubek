@@ -96,13 +96,25 @@ fn same(got: f32, want: f32) -> bool {
 }
 
 fn check(hw: &Hardware, operation: ReduceOperation, scope: ReduceScope, len: usize, width: usize) {
+    check_laid(hw, operation, scope, len, width, ReduceLayout::Along);
+}
+
+/// [`check`] with the rows laid as `layout` says: along, `input[o, r]`; across, `input[r, o]`.
+fn check_laid(
+    hw: &Hardware,
+    operation: ReduceOperation,
+    scope: ReduceScope,
+    len: usize,
+    width: usize,
+    layout: ReduceLayout,
+) {
     let client = cubecl::test_device().client();
     let item = ReduceWorkItem {
         operation,
         input: F32,
         accumulator: F32,
         reduced: len,
-        layout: ReduceLayout::Along,
+        layout,
     };
     let out_elem = match operation.writes() {
         ReduceWrites::Values => F32,
@@ -112,11 +124,30 @@ fn check(hw: &Hardware, operation: ReduceOperation, scope: ReduceScope, len: usi
     let cells = operation.written_per_row();
     let launch = ReduceLaunch::new(hw, item, scope, rows.len(), width, out_elem)
         .unwrap_or_else(|why| panic!("{operation:?} {scope:?}: {why:?}"));
-    let input = TestInput::builder(client.clone(), shape![rows.len(), len])
+    // Across, every row a column: as many rows as a whole number of lines.
+    let rows: Vec<Vec<f32>> = match layout {
+        ReduceLayout::Along => rows,
+        ReduceLayout::Across => rows.iter().cycle().take(2 * width).cloned().collect(),
+    };
+    let (input_shape, input_values, out_shape) = match layout {
+        ReduceLayout::Along => (
+            shape![rows.len(), len],
+            rows.concat(),
+            shape![rows.len(), cells],
+        ),
+        ReduceLayout::Across => (
+            shape![len, rows.len()],
+            (0..len)
+                .flat_map(|r| rows.iter().map(move |row| row[r]))
+                .collect(),
+            shape![cells, rows.len()],
+        ),
+    };
+    let input = TestInput::builder(client.clone(), input_shape)
         .dtype(F32)
-        .custom(rows.concat())
+        .custom(input_values)
         .generate_without_host_data();
-    let out = TestInput::builder(client.clone(), shape![rows.len(), cells])
+    let out = TestInput::builder(client.clone(), out_shape)
         .dtype(out_elem)
         .custom(vec![-7.0; rows.len() * cells])
         .generate_without_host_data();
@@ -134,14 +165,18 @@ fn check(hw: &Hardware, operation: ReduceOperation, scope: ReduceScope, len: usi
     let got = HostData::from_tensor_handle(&client, out, host);
     for (o, row) in rows.iter().enumerate() {
         for (s, want) in reference(row, operation).into_iter().enumerate() {
+            let at = match layout {
+                ReduceLayout::Along => [o, s],
+                ReduceLayout::Across => [s, o],
+            };
             let have = match out_elem {
-                I32 => got.get_i32(&[o, s]) as f32,
-                _ => got.get_f32(&[o, s]),
+                I32 => got.get_i32(&at) as f32,
+                _ => got.get_f32(&at),
             };
             assert!(
                 same(have, want),
-                "{operation:?} {scope:?} len {len} width {width} row {o} cell {s}: got {have}, \
-                 want {want}"
+                "{operation:?} {scope:?} {layout:?} len {len} width {width} row {o} cell {s}: got \
+                 {have}, want {want}"
             );
         }
     }
@@ -198,6 +233,24 @@ fn a_cube_reduces_every_operation_like_the_cpu() {
     for operation in OPERATIONS {
         for (len, width) in [(37, 1), (4096, 4)] {
             check(&hw, operation, ReduceScope::Cube { planes: 4 }, len, width);
+        }
+    }
+}
+
+/// Across the reduced axis, each lane its own row, the unit, the plane and the cube reduce every
+/// operation to the CPU's answer.
+#[test]
+fn every_scope_reduces_rows_side_by_side_like_the_cpu() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let mut scopes = vec![ReduceScope::Unit];
+    if hw.plane_dim().is_ok() {
+        scopes.extend([ReduceScope::Plane, ReduceScope::Cube { planes: 4 }]);
+    }
+    for scope in scopes {
+        for operation in OPERATIONS {
+            for (len, width) in [(37, 1), (300, 4)] {
+                check_laid(&hw, operation, scope, len, width, ReduceLayout::Across);
+            }
         }
     }
 }

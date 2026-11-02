@@ -95,3 +95,64 @@ impl Microkernel for CubeReduceMicrokernel {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reduce::plane::{PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings};
+    use crate::reduce::unit::{UnitReduceMicrokernel, UnitReduceMicrokernelSettings};
+    use crate::reduce::{ReduceLayout, ReduceOperation};
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubek_std::devices;
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    fn item() -> ReduceWorkItem {
+        ReduceWorkItem {
+            operation: ReduceOperation::ArgMax,
+            input: F32,
+            accumulator: F32,
+            reduced: 151_936,
+            layout: ReduceLayout::Along,
+        }
+    }
+
+    /// The unit runs everywhere; the plane and the cube only where the device commits to a plane
+    /// width, and decline with their reason where it does not.
+    #[test]
+    fn the_plane_and_the_cube_need_a_width_the_device_commits_to() {
+        for hw in [
+            devices::strix_halo(),
+            devices::m2_pro(),
+            devices::h100(),
+            devices::wgpu_no_subgroups(),
+            devices::rdna_range(),
+        ] {
+            let commits = hw.plane_dim().is_ok();
+            assert!(
+                UnitReduceMicrokernel::best(&hw, &item(), &UnitReduceMicrokernelSettings).is_ok()
+            );
+            assert_eq!(
+                PlaneReduceMicrokernel::best(&hw, &item(), &PlaneReduceMicrokernelSettings).is_ok(),
+                commits,
+                "{hw:?}"
+            );
+            for settings in CubeReduceMicrokernel::settings(&hw) {
+                let cube = CubeReduceMicrokernel::best(&hw, &item(), &settings);
+                assert_eq!(cube.is_ok(), commits, "{settings} on {hw:?}");
+                if let Ok(cube) = cube {
+                    assert_eq!(cube.lanes as u32, hw.plane_dim().unwrap());
+                }
+            }
+        }
+    }
+
+    /// A cube of more planes than the device holds declines.
+    #[test]
+    fn a_cube_the_device_cannot_hold_declines() {
+        let hw = devices::m2_pro();
+        let planes = hw.full_cube_planes() + 1;
+        let settings = CubeReduceMicrokernelSettings { planes };
+        assert!(CubeReduceMicrokernel::best(&hw, &item(), &settings).is_err());
+    }
+}
