@@ -1,8 +1,7 @@
 use crate::attention::plane::ScoreHolder;
 use crate::attention::{Q, S};
-use crate::matmul::MatmulAxes;
 use crate::matmul::plane::PlaneFragmentMicrokernel;
-use cubecl::tile::{Axis, Level, Region, Semiring, Space, StageStorage, Tile, Walk};
+use cubecl::tile::{Axis, Level, Levels, Region, Semiring, Space, StageStorage, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// A plane's windows of shared memory between a step's contractions: its scores and the gradient
@@ -164,65 +163,23 @@ impl ScoreWindows {
         }
     }
 
-    /// `sum += lhs · rhs` on `product`'s own grid of fragments, `sum` placed on it: each fragment
-    /// of the grid pairs the operands' fragments by position, the lhs's rows by steps of the
-    /// contraction, the rhs's columns by the same steps. An lhs of manual-mma accumulators is read
-    /// in their registers, a run of them along the contraction as one `A`.
+    /// `sum += lhs · rhs` on `product`'s own grid of fragments: one product of the whole grid a
+    /// step of the contraction at a time. An lhs of manual-mma accumulators is read in their
+    /// registers, a run of them along the contraction as one `A`.
     pub fn contract_fragments(
         sum: &Tile,
         lhs: &Tile,
         rhs: &Tile,
         #[comptime] product: PlaneFragmentMicrokernel,
     ) {
-        // Each operand's fragments, walked over its own box and paired by position.
-        let [(_, m), (_, n), (_, k)] = product.instruction.shape();
-        let MatmulAxes {
-            m: rows_axis,
-            n: columns_axis,
-            k: depth_axis,
-        } = product.axes;
-        let rows = product.settings.along_m.get();
-        let columns = product.settings.along_n.get();
-        let depth = product.settings.depth.get();
-        let lhs_fragments = lhs.over(&comptime!(Level::every(&[(rows_axis, m), (depth_axis, k)])));
-        let rhs_fragments = rhs.over(&comptime!(Level::every(&[
-            (columns_axis, n),
-            (depth_axis, k)
-        ])));
-        let fragment = comptime!(Level::every(&[(rows_axis, m), (columns_axis, n)]));
-        let sum_fragments = sum.over(&fragment);
-
-        #[unroll]
-        for step in 0..depth {
-            #[unroll]
-            for row in 0..rows {
-                #[unroll]
-                for column in 0..columns {
-                    let (at_sum, at_lhs, at_rhs) = comptime!((
-                        Self::fragment_at(
-                            &sum.space(),
-                            (rows_axis, row, rows),
-                            (columns_axis, column, columns)
-                        ),
-                        Self::fragment_at(
-                            &lhs.space(),
-                            (rows_axis, row, rows),
-                            (depth_axis, step, depth)
-                        ),
-                        Self::fragment_at(
-                            &rhs.space(),
-                            (columns_axis, column, columns),
-                            (depth_axis, step, depth)
-                        ),
-                    ));
-                    let mut cells = sum.at(&sum_fragments.region(at_sum));
-                    cells.mma(
-                        &lhs.at(&lhs_fragments.region(at_lhs)),
-                        &rhs.at(&rhs_fragments.region(at_rhs)),
-                    );
-                }
-            }
-        }
+        // Each operand re-placed on the product's own steps, so a step loads each operand's
+        // fragments once, for the whole grid, and the tile library pairs neighbours where it can.
+        let levels = comptime!(Self::product_levels(product));
+        let mut sum = sum.with_levels(0usize, comptime!(levels.clone()));
+        sum.mma(
+            &lhs.with_levels(0usize, comptime!(levels.clone())),
+            &rhs.with_levels(0usize, levels),
+        );
     }
 
     /// `lhs · rhs` summed in `EA` on `product`'s own grid of fragments, placed as `levels` state it
@@ -244,17 +201,18 @@ impl ScoreWindows {
 }
 
 impl ScoreWindows {
-    /// The place among a tile's fragments of the one at `first.1` of `first.2` along `first.0` and
-    /// `second.1` of `second.2` along `second.0`: a level's regions run along the tile's own axes
-    /// in the order its space lays them, the last fastest.
-    fn fragment_at(
-        space: &Space,
-        (first, first_at, first_count): (Axis, usize, usize),
-        (second, second_at, second_count): (Axis, usize, usize),
-    ) -> usize {
-        match space.position(first) < space.position(second) {
-            true => first_at * second_count + second_at,
-            false => second_at * first_count + first_at,
-        }
+    /// `product`'s contraction in steps of the instruction's depth, each step over its whole grid
+    /// of fragments: the levels its sum and operands are placed on, at the top, to contract a
+    /// step's grid at a time.
+    fn product_levels(product: PlaneFragmentMicrokernel) -> Vec<Level> {
+        let [(_, m), (_, n), (_, k)] = product.instruction.shape();
+        let (axes, settings) = (product.axes, product.settings);
+        Levels::leaf(&[(axes.m, m), (axes.n, n), (axes.k, k)])
+            .walk(&[
+                (axes.m, settings.along_m.get()),
+                (axes.n, settings.along_n.get()),
+            ])
+            .walk(&[(axes.k, settings.depth.get())])
+            .build()
     }
 }
