@@ -53,6 +53,15 @@ impl ReduceRoutineProblem {
             .collect()
     }
 
+    /// The axes the owners are placed along: the row axes, or the slots where there is none, a
+    /// tensor of one dim reduced whole into its one row.
+    pub fn owner_axes(&self) -> Vec<Axis> {
+        match self.rows() {
+            rows if rows.is_empty() => vec![self.slots()],
+            rows => rows,
+        }
+    }
+
     /// The input's axes, one a dim.
     pub fn input_axes(&self) -> Vec<Axis> {
         (0..self.shape.len()).map(dim_axis).collect()

@@ -366,8 +366,13 @@ impl TestCase {
         };
         let input_binding = input_handle.binding();
         let output_binding = output_handle.clone().binding();
+        // `CUBEK_REDUCE_ON_TILES` runs the suite on the tile routines instead of today's kernels.
+        let entry = match std::env::var_os("CUBEK_REDUCE_ON_TILES") {
+            Some(_) => cubek_reduce::kernels::reduce_on_tiles,
+            None => reduce,
+        };
         let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-            reduce(
+            entry(
                 c,
                 input_binding,
                 output_binding,

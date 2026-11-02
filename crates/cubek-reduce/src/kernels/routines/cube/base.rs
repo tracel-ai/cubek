@@ -70,7 +70,7 @@ impl Routine for CubeReduceRoutine {
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
-                .cubes(&problem.rows())
+                .cubes(&problem.owner_axes())
                 .build(),
         );
         let cube = CubeResources {

@@ -73,13 +73,13 @@ impl Routine for PlaneReduceRoutine {
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widths = reduce_widths(hw, problem, vectorization);
-        let rows = problem.rows();
-        let innermost = *rows.last().ok_or(REDUCE_NEEDS_A_ROW_AXIS)?;
+        let owners = problem.owner_axes();
+        let innermost = *owners.last().expect("a problem places its owners along an axis");
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
                 .launch_planes(
-                    &rows,
+                    &owners,
                     PlaneOrder::new(&[(innermost, settings.planes)], CubeOrder::RowMajor),
                 )
                 .build(),
@@ -107,12 +107,6 @@ impl Routine for PlaneReduceRoutine {
             .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 }
-
-/// What a routine declines where the problem has no row axis: a tensor of one dim, reduced whole,
-/// which its routines take as a row of one.
-pub const REDUCE_NEEDS_A_ROW_AXIS: Refusal = Refusal::Declined {
-    why: "the reduce routines place rows along a dim the reduction leaves",
-};
 
 impl ReduceRoutine<PlaneReduceMicrokernel> for PlaneReduceRoutine {
     fn dispatch(

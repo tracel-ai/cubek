@@ -4,12 +4,14 @@
 //! one folder per scope.
 
 mod blueprint;
+mod entry;
 mod launch;
 mod problem;
 mod routines;
 mod tensors;
 
 pub use blueprint::*;
+pub use entry::*;
 pub use launch::*;
 pub use problem::*;
 pub use routines::*;
