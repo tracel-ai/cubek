@@ -1,5 +1,7 @@
+use super::super::key_heads::{KeyHeads, cast_key_gradient_kernel};
 use super::kernel::{
-    cast_query_gradient_kernel, hypercube_key_gradient_kernel, plane_delta_kernel,
+    cast_query_gradient_kernel, hypercube_key_gradient_kernel, hypercube_key_gradient_sum_kernel,
+    plane_delta_kernel,
 };
 use crate::kernels::{
     AttentionBackwardBlueprint, AttentionBackwardProblem, AttentionBackwardRoutine,
@@ -12,7 +14,7 @@ use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::attention::{B, G, KV, Q, S};
+use cubek_microkernel::attention::{B, G, KV, Q};
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
 use cubek_microkernel::attention_backward::delta::plane::{
     PlaneDeltaMicrokernel, PlaneDeltaMicrokernelSettings,
@@ -51,6 +53,8 @@ pub struct HypercubeAttentionBackwardRoutineSettings {
     pub key_gradient: HypercubeKeyGradientMicrokernelSettings,
     /// How a cube holds its stages.
     pub ring: StageRing,
+    /// How the key walk's cubes take the heads of a group.
+    pub key_heads: KeyHeads,
 }
 
 impl HypercubeAttentionBackwardRoutineSettings {
@@ -58,6 +62,7 @@ impl HypercubeAttentionBackwardRoutineSettings {
         delta: PlaneDeltaMicrokernelSettings::DEFAULT,
         key_gradient: HypercubeKeyGradientMicrokernelSettings::DEFAULT,
         ring: StageRing::SINGLE,
+        key_heads: KeyHeads::Together,
     };
 }
 
@@ -65,8 +70,8 @@ impl core::fmt::Display for HypercubeAttentionBackwardRoutineSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "hypercube-attention-backward delta[{}] key-gradient[{}]{}",
-            self.delta, self.key_gradient, self.ring
+            "hypercube-attention-backward delta[{}] key-gradient[{}]{}{}",
+            self.delta, self.key_gradient, self.ring, self.key_heads
         )
     }
 }
@@ -79,7 +84,8 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
     type SharedMemory = StageRing;
 
     /// The key walk's microkernel's settings at the default ring, then each ring of stages through
-    /// registers.
+    /// registers, then each held key walk on each of them, then some of those with the key walk's
+    /// heads apart.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         let lead = HypercubeAttentionBackwardRoutineSettings::DEFAULT;
         let keys = HypercubeKeyGradientMicrokernel::settings(hw)
@@ -104,11 +110,24 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
                         ..lead
                     }
                 })
-            });
+            })
+            .collect::<Vec<_>>();
+        // The key walk's heads apart, on the held settings prefetching through registers: a
+        // launch of few cubes, each holding a whole group, leaves most of the device idle while
+        // the last ones run.
+        let apart = held
+            .iter()
+            .filter(|settings| settings.ring == StageRing::SINGLE_THROUGH_REGISTERS)
+            .map(|settings| Self::Settings {
+                key_heads: KeyHeads::Apart,
+                ..*settings
+            })
+            .collect::<Vec<_>>();
         core::iter::once(lead)
             .chain(keys)
             .chain(rings)
             .chain(held)
+            .chain(apart)
             .collect()
     }
 
@@ -157,10 +176,11 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
                 shared_memory: 0,
             },
         )?;
-        let key_partitioning = Partitioning::new(
-            problem.space(),
-            key_gradient.tiling().cubes(&[S]).batches(&[B, KV]).build(),
-        );
+        let key_cubes = settings
+            .key_heads
+            .cubes(key_gradient.tiling(), problem.group)?;
+        let key_partitioning =
+            Partitioning::new(problem.space(), key_cubes.batches(&[B, KV]).build());
         let (key_grid, ring) = WalkStages {
             stage: problem.stage(Q, key_gradient.seq_q()),
             ring: settings.ring,
@@ -243,34 +263,119 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             &sum,
             AttentionBackwardOperand::QueryGradient,
         );
-        let key_operands = key_binding.operands;
-
-        // SAFETY: as the first walk's; each plane writes only its own keys' and values' gradients,
-        // and only adds into the query's gradient's sum, atomically. It reads the dot products the
-        // first walk wrote, which the launches' order sees done.
-        unsafe {
-            hypercube_key_gradient_kernel::launch_unchecked(
-                client,
-                key_walk.grid.launch.cube_count,
-                key_walk.grid.launch.cube_dim,
-                key_operands.query.arg(),
-                key_operands.key.arg(),
-                key_operands.value.arg(),
-                key_operands.out_gradient.arg(),
-                key_operands.logsumexp.arg(),
-                key_operands.delta.arg(),
-                key_operands.key_gradient.arg(),
-                key_operands.value_gradient.arg(),
-                summed.atomic::<f32>(),
-                queries,
-                keys,
-                tensors.scale(),
-                key_binding.launcher.partitioning_arg(),
-                key_walk.microkernel,
-                key_walk.shared_memory,
-                problem.visibility,
-                elements,
+        if !KeyHeads::apart_in(&key_walk.partitioning, problem.group) {
+            let key_operands = key_binding.operands;
+            // SAFETY: as the first walk's; each plane writes only its own keys' and values'
+            // gradients, and only adds into the query's gradient's sum, atomically. It reads the
+            // dot products the first walk wrote, which the launches' order sees done.
+            unsafe {
+                hypercube_key_gradient_kernel::launch_unchecked(
+                    client,
+                    key_walk.grid.launch.cube_count.clone(),
+                    key_walk.grid.launch.cube_dim,
+                    key_operands.query.arg(),
+                    key_operands.key.arg(),
+                    key_operands.value.arg(),
+                    key_operands.out_gradient.arg(),
+                    key_operands.logsumexp.arg(),
+                    key_operands.delta.arg(),
+                    key_operands.key_gradient.arg(),
+                    key_operands.value_gradient.arg(),
+                    summed.atomic::<f32>(),
+                    queries,
+                    keys,
+                    tensors.scale(),
+                    key_binding.launcher.partitioning_arg(),
+                    key_walk.microkernel,
+                    key_walk.shared_memory,
+                    problem.visibility,
+                    elements,
+                );
+            }
+        } else {
+            // Every cube of a group adds into them too, so they start at zero.
+            let key_sum = |width: usize| {
+                PlainTensor::of_handle(TensorHandle::zeros(
+                    client,
+                    [problem.batch, problem.num_kv_heads, problem.seq_kv, width],
+                    AttentionBackwardProblem::SUM,
+                ))
+            };
+            let (key_sum, value_sum) = (key_sum(problem.head_dim), key_sum(problem.val_dim));
+            let (key_summed, value_summed) = (
+                tensors.bind_beside(
+                    &key_binding,
+                    &key_walk,
+                    &key_sum,
+                    AttentionBackwardOperand::KeyGradient,
+                ),
+                tensors.bind_beside(
+                    &key_binding,
+                    &key_walk,
+                    &value_sum,
+                    AttentionBackwardOperand::ValueGradient,
+                ),
             );
+            let key_operands = key_binding.operands;
+            // SAFETY: as the first walk's; each plane only adds into its own keys' and values'
+            // sums and the query's gradient's sum, atomically. It reads the dot products the
+            // first walk wrote, which the launches' order sees done.
+            unsafe {
+                hypercube_key_gradient_sum_kernel::launch_unchecked(
+                    client,
+                    key_walk.grid.launch.cube_count.clone(),
+                    key_walk.grid.launch.cube_dim,
+                    key_operands.query.arg(),
+                    key_operands.key.arg(),
+                    key_operands.value.arg(),
+                    key_operands.out_gradient.arg(),
+                    key_operands.logsumexp.arg(),
+                    key_operands.delta.arg(),
+                    key_summed.atomic::<f32>(),
+                    value_summed.atomic::<f32>(),
+                    summed.atomic::<f32>(),
+                    queries,
+                    keys,
+                    tensors.scale(),
+                    key_binding.launcher.partitioning_arg(),
+                    key_walk.microkernel,
+                    key_walk.shared_memory,
+                    problem.visibility,
+                    problem.element,
+                );
+            }
+
+            let cast_binding = tensors.bind(&key_walk);
+            let (key_sum, value_sum) = (
+                tensors.bind_beside(
+                    &cast_binding,
+                    &key_walk,
+                    &key_sum,
+                    AttentionBackwardOperand::KeyGradient,
+                ),
+                tensors.bind_beside(
+                    &cast_binding,
+                    &key_walk,
+                    &value_sum,
+                    AttentionBackwardOperand::ValueGradient,
+                ),
+            );
+            let cast_operands = cast_binding.operands;
+            // SAFETY: as the first walk's; each plane of the cubes on a group's first head writes
+            // only its own keys' and values' gradients, out of the sums the key walk finished
+            // adding into, which the launches' order sees done.
+            unsafe {
+                cast_key_gradient_kernel::launch_unchecked(
+                    client,
+                    key_walk.grid.launch.cube_count,
+                    key_walk.grid.launch.cube_dim,
+                    key_sum.arg(),
+                    value_sum.arg(),
+                    cast_operands.key_gradient.arg(),
+                    cast_operands.value_gradient.arg(),
+                    cast_binding.launcher.partitioning_arg(),
+                );
+            }
         }
 
         let cast_binding = tensors.bind(walk);
