@@ -50,9 +50,11 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
     );
     #[comptime]
     let left = match query_gradient {
-        ComptimeOption::Some(_) => {
-            ScoreWindows::share_window::<ES>(&shape, plane_microkernel.holder())
-        }
+        ComptimeOption::Some(_) => ScoreWindows::share_window::<ES>(
+            &shape,
+            plane_microkernel.holder(),
+            plane_microkernel.score,
+        ),
         ComptimeOption::None => ComptimeOption::<Tile>::new_None(),
     };
     let sums = KeyGradientSums::open::<EA>(

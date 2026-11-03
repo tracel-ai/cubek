@@ -1,3 +1,4 @@
+use super::stage_storage;
 use crate::attention::plane::ScoreHolder;
 use crate::attention::{Q, S};
 use crate::matmul::plane::PlaneFragmentMicrokernel;
@@ -75,17 +76,19 @@ impl ScoreWindows {
 
     /// Where a step held in fragments leaves the score's gradient cast for a share of the query's
     /// gradient to read transposed: a window of the staged element over one step of `walk`, keys
-    /// first, where `holder` keeps the score in its fragments; none where it reads the score
-    /// through windows, which leave it in their own cast window.
+    /// first, where `holder` keeps the score in its fragments, laid out as the walk's stages are
+    /// for the loads that read it ([`stage_storage`]); none where it reads the score through
+    /// windows, which leave it in their own cast window.
     pub fn share_window<ES: Float>(
         walk: &Walk,
         #[comptime] holder: ScoreHolder,
+        #[comptime] score: PlaneFragmentMicrokernel,
     ) -> ComptimeOption<Tile> {
         match comptime!(holder) {
             ScoreHolder::Fragments => ComptimeOption::new_Some(Tile::scratch::<ES>(
                 walk,
                 comptime!(vec![S, Q]),
-                StageStorage::Strided,
+                comptime!(stage_storage(holder, score)),
             )),
             ScoreHolder::Window => ComptimeOption::new_None(),
         }
