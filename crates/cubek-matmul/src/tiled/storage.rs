@@ -9,7 +9,7 @@
 //! through its layout, however many levels lie inside that tile.
 
 use cubecl::tile::{
-    Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, kind::Field, launch::Grid,
+    Geometry, Launcher, Level, Levels, Partitioning, Space, TileTensor, kind::Field, launch::Grid,
     launch::Refusal,
 };
 use cubecl::{
@@ -32,8 +32,8 @@ use crate::definition::MatmulSetupError;
 /// layout.
 #[cube(launch)]
 fn relayout<E: Numeric, V: Size>(
-    src: &TileArg<'_>,
-    dst: &TileArg<'_>,
+    src: &TileTensor<'_>,
+    dst: &TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,

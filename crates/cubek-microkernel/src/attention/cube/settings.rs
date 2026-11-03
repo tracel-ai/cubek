@@ -99,8 +99,9 @@ impl CubeAttentionMicrokernelSettings {
     /// without bank conflicts and a cmma plane declines, the one-by-eight box among them also on
     /// two planes along a head's queries, and the one-by-two box on two heads and two planes along
     /// their queries; then the lead's box with its score the whole head dim deep; then the
-    /// one-by-four box on two slots the copy engine
-    /// fills, over two and four heads. The wide steps hold one head because a step's stages and the
+    /// one-by-four box on two slots the copy engine fills, over two and four heads; then eight
+    /// planes a cube, four heads by two planes along their queries, on the boxes and rings a long
+    /// causal prompt runs fastest on. The wide steps hold one head because a step's stages and the
     /// heads' windows share one budget; one that still does not fit the device's shared memory
     /// declines there.
     fn fragments_listed(lead: Self, plane: PlaneFragmentAttentionMicrokernelSettings) -> Vec<Self> {
@@ -207,6 +208,58 @@ impl CubeAttentionMicrokernelSettings {
             layout: StageLayout::SwizzledBlocks,
             ..fragments(1, 2)
         };
+        // Eight planes a cube, four heads by two planes along their queries: the shapes that run a
+        // long causal prompt fastest. On an RTX PRO 6000, a 6016 by 8192 causal `f16` prompt
+        // (32/8 heads, head dim 128) with the boxes last first, against 1560 µs for FlashInfer:
+        // the one-by-eight box on two slots the copy engine fills, 1523 µs; on one slot with the
+        // next stage waiting in registers, 1549 µs swizzled and 1563 µs in padded tiles; the
+        // one-by-four on two such slots in padded tiles, 1584 µs; the two-by-four on two slots the
+        // copy engine fills, 1615 µs.
+        let eight_warps = [
+            (
+                1,
+                8,
+                StageRing::DOUBLE,
+                StageLayout::SwizzledBlocks,
+                CubeStagedDelivery::AsyncCopy,
+            ),
+            (
+                1,
+                8,
+                StageRing::SINGLE_THROUGH_REGISTERS,
+                StageLayout::SwizzledBlocks,
+                CubeStagedDelivery::Copy,
+            ),
+            (
+                1,
+                8,
+                StageRing::SINGLE_THROUGH_REGISTERS,
+                StageLayout::PaddedBlocks,
+                CubeStagedDelivery::Copy,
+            ),
+            (
+                1,
+                4,
+                StageRing::DOUBLE_THROUGH_REGISTERS,
+                StageLayout::PaddedBlocks,
+                CubeStagedDelivery::Copy,
+            ),
+            (
+                2,
+                4,
+                StageRing::DOUBLE,
+                StageLayout::SwizzledBlocks,
+                CubeStagedDelivery::AsyncCopy,
+            ),
+        ]
+        .map(|(rows, keys, ring, layout, delivery)| Self {
+            heads: count(4),
+            planes_along_queries: count(2),
+            ring,
+            layout,
+            delivery,
+            ..fragments(rows, keys)
+        });
         // The score's fragments the whole head dim deep: one contraction a stage of keys instead of
         // a walk of the head dim's steps. On an M2 Pro (Qwen3-0.6B's 16/8 heads and Qwen3-4B's
         // 32/8), taken last first as the lead is, it is 1.5 to 4% under the lead at 512 and 2048
@@ -240,6 +293,7 @@ impl CubeAttentionMicrokernelSettings {
             .chain(swizzled)
             .chain([swizzled_split, four_planes_split, whole_head])
             .chain(copied)
+            .chain(eight_warps)
             .collect()
     }
 

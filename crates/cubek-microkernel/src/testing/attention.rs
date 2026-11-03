@@ -12,7 +12,7 @@ use crate::attention::{
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubecl::tile::{Launcher, Partitioning, Space, Tile, TileArg, TileArgLaunch};
+use cubecl::tile::{Launcher, Partitioning, Space, Tile, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{Microkernel, StageRing};
@@ -167,7 +167,7 @@ impl PlaneFragmentAttentionLaunch {
                 value.arg(),
                 out.arg(),
                 logsumexp.map(|logsumexp| logsumexp.arg()).into(),
-                Option::<TileArgLaunch>::None.into(),
+                Option::<TileTensorLaunch>::None.into(),
                 lengths,
                 queries as u32,
                 scale,
@@ -186,12 +186,12 @@ impl PlaneFragmentAttentionLaunch {
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out: &TileArg<'_>,
-    logsumexp: ComptimeOption<&TileArg<'static>>,
-    mask: ComptimeOption<&TileArg<'static>>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    logsumexp: ComptimeOption<&TileTensor<'static>>,
+    mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,
