@@ -146,17 +146,18 @@ impl Microkernel for CubeQueryGradientMicrokernel {
             .into_iter()
             .skip(1)
             .map(|plane| Self::Settings { plane, ..lead });
-        // A held plane of one query fragment, four along the queries: a narrow plane's stage of
-        // keys read by twice the planes.
-        let held_four = Self::Settings {
-            plane: PlaneQueryGradientMicrokernelSettings::fragments(1, 4).held(),
-            planes_along_queries: NonZeroUsize::new(4).unwrap(),
-            ..lead
-        };
+        // A held plane of one query fragment four along the queries, and one a head over four
+        // heads of a group: a narrow plane's stage of keys read by four planes.
+        let narrow = PlaneQueryGradientMicrokernelSettings::fragments(1, 4).held();
+        let held_four = [(1, 4), (4, 1)].map(|(heads, planes)| Self::Settings {
+            plane: narrow,
+            heads: NonZeroUsize::new(heads).unwrap(),
+            planes_along_queries: NonZeroUsize::new(planes).unwrap(),
+        });
         core::iter::once(lead)
             .chain(cubes)
             .chain(planes)
-            .chain(core::iter::once(held_four))
+            .chain(held_four)
             .collect()
     }
 
