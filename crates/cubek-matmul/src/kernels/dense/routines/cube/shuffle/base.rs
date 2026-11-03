@@ -58,6 +58,63 @@ impl core::fmt::Display for CubeShuffleMatmulRoutineSettings {
 
 pub type CubeShuffleMatmulRoutineBlueprint = MatmulBlueprint<CubeShuffleMicrokernel, CubeBoxes>;
 
+impl Routine for CubeShuffleMatmulRoutine {
+    type Problem = MatmulRoutineProblem;
+    type Settings = CubeShuffleMatmulRoutineSettings;
+    type Blueprint = CubeShuffleMatmulRoutineBlueprint;
+    type Grid = Grid;
+
+    /// Its microkernel's settings ([`CubeShuffleMicrokernel::settings`]): it has no knob of its
+    /// own.
+    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+        CubeShuffleMicrokernel::settings(hw)
+            .into_iter()
+            .map(|microkernel| Self::Settings { microkernel })
+            .collect()
+    }
+
+    /// The first of the settings for the rhs `problem` states that prepares a launch on this
+    /// device: [`settings`](Routine::settings) against a float rhs,
+    /// [`packed_settings`](CubeShuffleMatmulRoutine::packed_settings) against a packed one.
+    ///
+    /// # Errors
+    ///
+    /// The last setting's decline, where none serves.
+    fn prepare_first_served(
+        &self,
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        let settings = match problem.packings.rhs {
+            Some(_) => self.packed_settings(hw),
+            None => self.settings(hw),
+        };
+        let mut declined = ROUTINE_LISTS_NO_SETTING;
+        for settings in settings {
+            match self.prepare(hw, problem, &settings) {
+                Ok(prepared) => return Ok(prepared),
+                Err(why) => declined = why,
+            }
+        }
+        Err(declined)
+    }
+
+    /// Against a float rhs, the cubes over `M` and `N`; against a packed one, over its
+    /// block-split space, every row in each cube.
+    fn prepare(
+        &self,
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        settings: &Self::Settings,
+    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        problem.check_unindexed()?;
+        match &problem.packings.rhs {
+            Some(packing) => self.prepare_packed(hw, problem, packing, settings),
+            None => self.prepare_float(hw, problem, settings),
+        }
+    }
+}
+
 impl CubeShuffleMatmulRoutine {
     /// The settings worth racing against a packed rhs
     /// ([`CubeShuffleMicrokernel::packed_settings`]): what the packed few-rows table races, and
@@ -210,66 +267,7 @@ impl CubeShuffleMatmulRoutine {
         let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
     }
-}
 
-impl Routine for CubeShuffleMatmulRoutine {
-    type Problem = MatmulRoutineProblem;
-    type Settings = CubeShuffleMatmulRoutineSettings;
-    type Blueprint = CubeShuffleMatmulRoutineBlueprint;
-    type Grid = Grid;
-
-    /// Its microkernel's settings ([`CubeShuffleMicrokernel::settings`]): it has no knob of its
-    /// own.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        CubeShuffleMicrokernel::settings(hw)
-            .into_iter()
-            .map(|microkernel| Self::Settings { microkernel })
-            .collect()
-    }
-
-    /// The first of the settings for the rhs `problem` states that prepares a launch on this
-    /// device: [`settings`](Routine::settings) against a float rhs,
-    /// [`packed_settings`](CubeShuffleMatmulRoutine::packed_settings) against a packed one.
-    ///
-    /// # Errors
-    ///
-    /// The last setting's decline, where none serves.
-    fn prepare_first_served(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let settings = match problem.packings.rhs {
-            Some(_) => self.packed_settings(hw),
-            None => self.settings(hw),
-        };
-        let mut declined = ROUTINE_LISTS_NO_SETTING;
-        for settings in settings {
-            match self.prepare(hw, problem, &settings) {
-                Ok(prepared) => return Ok(prepared),
-                Err(why) => declined = why,
-            }
-        }
-        Err(declined)
-    }
-
-    /// Against a float rhs, the cubes over `M` and `N`; against a packed one, over its
-    /// block-split space, every row in each cube.
-    fn prepare(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        problem.check_unindexed()?;
-        match &problem.packings.rhs {
-            Some(packing) => self.prepare_packed(hw, problem, packing, settings),
-            None => self.prepare_float(hw, problem, settings),
-        }
-    }
-}
-
-impl CubeShuffleMatmulRoutine {
     /// Nothing of its own: it only walks the cubes, and its microkernel makes every access.
     fn vectorize(
         &self,

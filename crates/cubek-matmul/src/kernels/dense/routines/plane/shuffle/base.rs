@@ -65,6 +65,139 @@ impl core::fmt::Display for PlaneShuffleMatmulRoutineSettings {
 pub type PlaneShuffleMatmulRoutineBlueprint =
     MatmulBlueprint<PlaneShuffleMicrokernel, LaunchPlanes>;
 
+/// Where the plane shuffle places a packed product: its microkernel, the axis its columns land on,
+/// and the planes one cube holds side by side along it, a target snapped to what the runs of
+/// columns divide, so no cube overhangs. The plane shuffle deals the planes the launch's columns;
+/// the decode into a float rhs places the same planes in cubes, each cube copying its box.
+pub struct PlaneShufflePackedPlacement {
+    pub microkernel: PlaneShuffleMicrokernel,
+    pub columns: Axis,
+    pub planes: usize,
+}
+
+impl PlaneShufflePackedPlacement {
+    /// The placement of `problem` at `settings` on `hw`.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_STREAMED_INPUT_FLOAT`], for a float `[k, n]` input; why `hw` cannot walk
+    /// `problem`'s steps, or run its microkernel at `settings`.
+    pub fn new(
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        settings: &PlaneShuffleMatmulRoutineSettings,
+    ) -> Result<Self, Refusal> {
+        if problem.packings.rhs.is_none() {
+            return Err(MATMUL_STREAMED_INPUT_FLOAT);
+        }
+        let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem)?;
+        view.check_steps(hw)?;
+        let microkernel =
+            PlaneShuffleMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
+        let (columns, _) = microkernel.column_cut();
+        let runs = problem.n / (microkernel.columns() * microkernel.groups_along_n);
+        let planes = divisor_at_most(
+            runs,
+            settings
+                .planes
+                .get()
+                .min(hw.strip_budget(microkernel.plane_width())),
+        );
+        Ok(Self {
+            microkernel,
+            columns,
+            planes,
+        })
+    }
+}
+
+impl Routine for PlaneShuffleMatmulRoutine {
+    type Problem = MatmulRoutineProblem;
+    type Settings = PlaneShuffleMatmulRoutineSettings;
+    type Blueprint = PlaneShuffleMatmulRoutineBlueprint;
+    type Grid = Grid;
+
+    /// Its microkernel's blocks ([`PlaneShuffleMicrokernel::settings`]) at four planes a cube, and
+    /// its own knob, planes a cube, at the default block: one and eight, since they trade cubes
+    /// for the device's compute units against a cube's size, and last a cube as full as the device
+    /// holds ([`Hardware::full_cube_planes`]). The default sits on the deepest step
+    /// whose step of `K` still divides a decode projection's (2048, 6144) on a wave64 plane. The
+    /// blocks a row rhs wins with run on one to eight planes, and the deep block on one; a col
+    /// rhs declines every one of those. The default at two rows a unit runs on four planes.
+    /// Against a packed rhs it races
+    /// [`packed_settings`](PlaneShuffleMatmulRoutine::packed_settings).
+    ///
+    /// The order is also what a caller naming the routine and no setting runs: the `PlaneShuffle`
+    /// pin and the `Tile` policy launch the first setting that serves the product
+    /// ([`launch_first_served_on`](MatmulRoutine::launch_first_served_on)), so a reorder changes
+    /// what they run, not only the order a table measures in.
+    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+        use PlaneShuffleMicrokernelSettings as Block;
+        let on = |microkernel, planes| Self::Settings {
+            microkernel,
+            planes: NonZeroUsize::new(planes).unwrap(),
+        };
+        vec![
+            on(Block::DEFAULT, 4),
+            on(Block::ONE_READ, 4),
+            on(Block::TWO_COLUMNS, 4),
+            on(Block::ONE_TRANSACTION, 4),
+            on(Block::DEFAULT, 1),
+            on(Block::DEFAULT, 8),
+            on(Block::EIGHT_READS_ONE_TRANSACTION, 1),
+            on(Block::ONE_READ_ONE_TRANSACTION, 4),
+            on(Block::TWO_ROW_VECTORS, 1),
+            on(Block::TWO_ROW_VECTORS, 4),
+            on(Block::FOUR_ROW_VECTORS, 1),
+            on(Block::FOUR_ROW_VECTORS, 4),
+            on(Block::FOUR_ROW_VECTORS, 8),
+            on(Block::TWO_ROWS_A_UNIT, 4),
+            on(Block::DEFAULT, hw.full_cube_planes()),
+        ]
+    }
+
+    /// The first of the settings for the rhs `problem` states that prepares a launch on this
+    /// device: [`settings`](Routine::settings) against a float rhs,
+    /// [`packed_settings`](PlaneShuffleMatmulRoutine::packed_settings) against a packed one.
+    ///
+    /// # Errors
+    ///
+    /// The last setting's decline, where none serves.
+    fn prepare_first_served(
+        &self,
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        let settings = match problem.packings.rhs {
+            Some(_) => self.packed_settings(),
+            None => self.settings(hw),
+        };
+        let mut declined = ROUTINE_LISTS_NO_SETTING;
+        for settings in settings {
+            match self.prepare(hw, problem, &settings) {
+                Ok(prepared) => return Ok(prepared),
+                Err(why) => declined = why,
+            }
+        }
+        Err(declined)
+    }
+
+    /// Against a float rhs, the launch's planes in cubes side by side along `n`; against a
+    /// packed one, over its block-split space, as many planes a cube as divide the runs of columns
+    /// its microkernel reads (`PlaneShufflePackedPlacement`).
+    fn prepare(
+        &self,
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        settings: &Self::Settings,
+    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        match &problem.packings.rhs {
+            Some(packing) => self.prepare_packed(hw, problem, packing, settings),
+            None => self.prepare_float(hw, problem, settings),
+        }
+    }
+}
+
 impl PlaneShuffleMatmulRoutine {
     /// The settings worth racing against a packed rhs: the lead
     /// ([`PACKED`](PlaneShuffleMatmulRoutineSettings::PACKED)), then the settings measured best, or
@@ -251,142 +384,7 @@ impl PlaneShuffleMatmulRoutine {
         let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
     }
-}
 
-/// Where the plane shuffle places a packed product: its microkernel, the axis its columns land on,
-/// and the planes one cube holds side by side along it, a target snapped to what the runs of
-/// columns divide, so no cube overhangs. The plane shuffle deals the planes the launch's columns;
-/// the decode into a float rhs places the same planes in cubes, each cube copying its box.
-pub struct PlaneShufflePackedPlacement {
-    pub microkernel: PlaneShuffleMicrokernel,
-    pub columns: Axis,
-    pub planes: usize,
-}
-
-impl PlaneShufflePackedPlacement {
-    /// The placement of `problem` at `settings` on `hw`.
-    ///
-    /// # Errors
-    ///
-    /// [`MATMUL_STREAMED_INPUT_FLOAT`], for a float `[k, n]` input; why `hw` cannot walk
-    /// `problem`'s steps, or run its microkernel at `settings`.
-    pub fn new(
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        settings: &PlaneShuffleMatmulRoutineSettings,
-    ) -> Result<Self, Refusal> {
-        if problem.packings.rhs.is_none() {
-            return Err(MATMUL_STREAMED_INPUT_FLOAT);
-        }
-        let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem)?;
-        view.check_steps(hw)?;
-        let microkernel =
-            PlaneShuffleMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
-        let (columns, _) = microkernel.column_cut();
-        let runs = problem.n / (microkernel.columns() * microkernel.groups_along_n);
-        let planes = divisor_at_most(
-            runs,
-            settings
-                .planes
-                .get()
-                .min(hw.strip_budget(microkernel.plane_width())),
-        );
-        Ok(Self {
-            microkernel,
-            columns,
-            planes,
-        })
-    }
-}
-
-impl Routine for PlaneShuffleMatmulRoutine {
-    type Problem = MatmulRoutineProblem;
-    type Settings = PlaneShuffleMatmulRoutineSettings;
-    type Blueprint = PlaneShuffleMatmulRoutineBlueprint;
-    type Grid = Grid;
-
-    /// Its microkernel's blocks ([`PlaneShuffleMicrokernel::settings`]) at four planes a cube, and
-    /// its own knob, planes a cube, at the default block: one and eight, since they trade cubes
-    /// for the device's compute units against a cube's size, and last a cube as full as the device
-    /// holds ([`Hardware::full_cube_planes`]). The default sits on the deepest step
-    /// whose step of `K` still divides a decode projection's (2048, 6144) on a wave64 plane. The
-    /// blocks a row rhs wins with run on one to eight planes, and the deep block on one; a col
-    /// rhs declines every one of those. The default at two rows a unit runs on four planes.
-    /// Against a packed rhs it races
-    /// [`packed_settings`](PlaneShuffleMatmulRoutine::packed_settings).
-    ///
-    /// The order is also what a caller naming the routine and no setting runs: the `PlaneShuffle`
-    /// pin and the `Tile` policy launch the first setting that serves the product
-    /// ([`launch_first_served_on`](MatmulRoutine::launch_first_served_on)), so a reorder changes
-    /// what they run, not only the order a table measures in.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        use PlaneShuffleMicrokernelSettings as Block;
-        let on = |microkernel, planes| Self::Settings {
-            microkernel,
-            planes: NonZeroUsize::new(planes).unwrap(),
-        };
-        vec![
-            on(Block::DEFAULT, 4),
-            on(Block::ONE_READ, 4),
-            on(Block::TWO_COLUMNS, 4),
-            on(Block::ONE_TRANSACTION, 4),
-            on(Block::DEFAULT, 1),
-            on(Block::DEFAULT, 8),
-            on(Block::EIGHT_READS_ONE_TRANSACTION, 1),
-            on(Block::ONE_READ_ONE_TRANSACTION, 4),
-            on(Block::TWO_ROW_VECTORS, 1),
-            on(Block::TWO_ROW_VECTORS, 4),
-            on(Block::FOUR_ROW_VECTORS, 1),
-            on(Block::FOUR_ROW_VECTORS, 4),
-            on(Block::FOUR_ROW_VECTORS, 8),
-            on(Block::TWO_ROWS_A_UNIT, 4),
-            on(Block::DEFAULT, hw.full_cube_planes()),
-        ]
-    }
-
-    /// The first of the settings for the rhs `problem` states that prepares a launch on this
-    /// device: [`settings`](Routine::settings) against a float rhs,
-    /// [`packed_settings`](PlaneShuffleMatmulRoutine::packed_settings) against a packed one.
-    ///
-    /// # Errors
-    ///
-    /// The last setting's decline, where none serves.
-    fn prepare_first_served(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let settings = match problem.packings.rhs {
-            Some(_) => self.packed_settings(),
-            None => self.settings(hw),
-        };
-        let mut declined = ROUTINE_LISTS_NO_SETTING;
-        for settings in settings {
-            match self.prepare(hw, problem, &settings) {
-                Ok(prepared) => return Ok(prepared),
-                Err(why) => declined = why,
-            }
-        }
-        Err(declined)
-    }
-
-    /// Against a float rhs, the launch's planes in cubes side by side along `n`; against a
-    /// packed one, over its block-split space, as many planes a cube as divide the runs of columns
-    /// its microkernel reads (`PlaneShufflePackedPlacement`).
-    fn prepare(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        match &problem.packings.rhs {
-            Some(packing) => self.prepare_packed(hw, problem, packing, settings),
-            None => self.prepare_float(hw, problem, settings),
-        }
-    }
-}
-
-impl PlaneShuffleMatmulRoutine {
     /// Nothing of its own: it walks the launch's planes, and its microkernel makes every access.
     fn vectorize(
         &self,

@@ -21,16 +21,6 @@ use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, LaunchPlanes, Ro
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UnitWholeKMatmulRoutine;
 
-impl UnitWholeKMatmulRoutine {
-    /// Blocks along `n` a plane's units take in turns under `partitioning`, as its units level
-    /// states them.
-    fn blocks_per_plane(partitioning: &MatmulPartitioning<LaunchPlanes>) -> usize {
-        partitioning
-            .distributed(N)
-            .expect("the unit whole-K routine distributes its blocks to a plane's units")
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitWholeKMatmulRoutineSettings {
     pub microkernel: UnitWholeKMicrokernelSettings,
@@ -135,6 +125,14 @@ impl Routine for UnitWholeKMatmulRoutine {
 }
 
 impl UnitWholeKMatmulRoutine {
+    /// Blocks along `n` a plane's units take in turns under `partitioning`, as its units level
+    /// states them.
+    fn blocks_per_plane(partitioning: &MatmulPartitioning<LaunchPlanes>) -> usize {
+        partitioning
+            .distributed(N)
+            .expect("the unit whole-K routine distributes its blocks to a plane's units")
+    }
+
     /// Nothing of its own: it walks the launch's planes and their units, and its microkernel makes
     /// every access.
     fn vectorize(

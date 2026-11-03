@@ -34,6 +34,48 @@ pub struct PlaneDequantizeMatmulRoutine;
 pub type PlaneDequantizeMatmulRoutineBlueprint =
     MatmulBlueprint<PlaneShuffleMicrokernel, CubeBoxes>;
 
+impl Routine for PlaneDequantizeMatmulRoutine {
+    type Problem = MatmulRoutineProblem;
+    type Settings = PlaneShuffleMatmulRoutineSettings;
+    type Blueprint = PlaneDequantizeMatmulRoutineBlueprint;
+    type Grid = Grid;
+
+    /// [`SETTINGS`](Self::SETTINGS) alone.
+    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+        vec![Self::SETTINGS]
+    }
+
+    /// The plane shuffle routine's placement of the packed `[k, n]` input alone
+    /// (`PlaneShufflePackedPlacement`): the same microkernel and planes over the same space, one
+    /// row, the planes in cubes.
+    fn prepare(
+        &self,
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        settings: &Self::Settings,
+    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        let alone = Self::alone(problem);
+        let PlaneShufflePackedPlacement {
+            microkernel,
+            columns,
+            planes,
+        } = PlaneShufflePackedPlacement::new(hw, &alone, settings)?;
+        let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
+        let partitioning = MatmulView::of::<PlaneShuffleMicrokernel>(&alone)?.cube_boxes(
+            microkernel.tiling().planes(&[(columns, planes)]),
+            &[columns],
+            CubeOrder::RowMajor,
+        );
+        let cube = CubeResources {
+            plane_width: microkernel.plane_width() as u32,
+            shared_memory: 0,
+        };
+        let blueprint = MatmulBlueprint::packed(packing, microkernel, partitioning);
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
+        Ok((blueprint, grid))
+    }
+}
+
 impl PlaneDequantizeMatmulRoutine {
     /// The settings every decode runs at: the plane shuffle routine's lead. The decode is a copy,
     /// so nothing about it is worth racing.
@@ -124,48 +166,6 @@ impl PlaneDequantizeMatmulRoutine {
             into.metadata = Box::new(Metadata::new(vec![problem.k, problem.n], vec![1, step]));
         }
         Ok(into)
-    }
-}
-
-impl Routine for PlaneDequantizeMatmulRoutine {
-    type Problem = MatmulRoutineProblem;
-    type Settings = PlaneShuffleMatmulRoutineSettings;
-    type Blueprint = PlaneDequantizeMatmulRoutineBlueprint;
-    type Grid = Grid;
-
-    /// [`SETTINGS`](Self::SETTINGS) alone.
-    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
-        vec![Self::SETTINGS]
-    }
-
-    /// The plane shuffle routine's placement of the packed `[k, n]` input alone
-    /// (`PlaneShufflePackedPlacement`): the same microkernel and planes over the same space, one
-    /// row, the planes in cubes.
-    fn prepare(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let alone = Self::alone(problem);
-        let PlaneShufflePackedPlacement {
-            microkernel,
-            columns,
-            planes,
-        } = PlaneShufflePackedPlacement::new(hw, &alone, settings)?;
-        let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
-        let partitioning = MatmulView::of::<PlaneShuffleMicrokernel>(&alone)?.cube_boxes(
-            microkernel.tiling().planes(&[(columns, planes)]),
-            &[columns],
-            CubeOrder::RowMajor,
-        );
-        let cube = CubeResources {
-            plane_width: microkernel.plane_width() as u32,
-            shared_memory: 0,
-        };
-        let blueprint = MatmulBlueprint::packed(packing, microkernel, partitioning);
-        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
-        Ok((blueprint, grid))
     }
 }
 

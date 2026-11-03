@@ -63,39 +63,6 @@ impl core::fmt::Display for HypercubeStreamFragmentAttentionRoutineSettings {
 pub type HypercubeStreamFragmentAttentionRoutineBlueprint =
     AttentionBlueprint<HypercubeAttentionMicrokernel, CubeLine, StageStorage>;
 
-impl HypercubeStreamFragmentAttentionRoutine {
-    /// What it declines on a device that does not say how many workers it has, the count its grid
-    /// is sized by.
-    pub const UNSIZED: Refusal = Refusal::Declined {
-        why: "the stream routine sizes its grid by the device's workers, which this device does \
-              not report",
-    };
-
-    /// The cubes its grid holds on `hw` at `settings`, or [`UNSIZED`](Self::UNSIZED) on a device
-    /// that does not say how many workers it has.
-    fn cubes(
-        hw: &Hardware,
-        settings: &HypercubeStreamFragmentAttentionRoutineSettings,
-    ) -> Result<NonZeroUsize, Refusal> {
-        let workers = hw
-            .workers()
-            .and_then(|workers| NonZeroUsize::new(workers as usize))
-            .ok_or(Self::UNSIZED)?;
-        Ok(workers.saturating_mul(settings.cubes_per_worker))
-    }
-
-    /// Slots every row holds: as many as runs can share a box. A run holds at least
-    /// `boxes / cubes` boxes' steps, so at most `cubes / boxes` runs fit inside one box, and one
-    /// more ends in it.
-    fn splits(
-        problem: &AttentionRoutineProblem,
-        partitioning: &AttentionPartitioning<CubeLine>,
-    ) -> usize {
-        let boxes = problem.batch * problem.num_kv_heads * partitioning.boxes();
-        partitioning.cubes().div_ceil(boxes) + 1
-    }
-}
-
 impl Routine for HypercubeStreamFragmentAttentionRoutine {
     type Problem = AttentionRoutineProblem;
     type Settings = HypercubeStreamFragmentAttentionRoutineSettings;
@@ -180,6 +147,37 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
 }
 
 impl HypercubeStreamFragmentAttentionRoutine {
+    /// What it declines on a device that does not say how many workers it has, the count its grid
+    /// is sized by.
+    pub const UNSIZED: Refusal = Refusal::Declined {
+        why: "the stream routine sizes its grid by the device's workers, which this device does \
+              not report",
+    };
+
+    /// The cubes its grid holds on `hw` at `settings`, or [`UNSIZED`](Self::UNSIZED) on a device
+    /// that does not say how many workers it has.
+    fn cubes(
+        hw: &Hardware,
+        settings: &HypercubeStreamFragmentAttentionRoutineSettings,
+    ) -> Result<NonZeroUsize, Refusal> {
+        let workers = hw
+            .workers()
+            .and_then(|workers| NonZeroUsize::new(workers as usize))
+            .ok_or(Self::UNSIZED)?;
+        Ok(workers.saturating_mul(settings.cubes_per_worker))
+    }
+
+    /// Slots every row holds: as many as runs can share a box. A run holds at least
+    /// `boxes / cubes` boxes' steps, so at most `cubes / boxes` runs fit inside one box, and one
+    /// more ends in it.
+    fn splits(
+        problem: &AttentionRoutineProblem,
+        partitioning: &AttentionPartitioning<CubeLine>,
+    ) -> usize {
+        let boxes = problem.batch * problem.num_kv_heads * partitioning.boxes();
+        partitioning.cubes().div_ceil(boxes) + 1
+    }
+
     /// Its cubes' microkernel's, and the output an element at a time: the last arrival merges a
     /// row's slots one element a unit, as the slots are written, and writes them as it holds them.
     fn vectorize(

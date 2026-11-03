@@ -74,52 +74,6 @@ impl core::fmt::Display for HypercubeLastArrivalMatmulRoutineSettings {
 pub type HypercubeLastArrivalMatmulRoutineBlueprint =
     MatmulBlueprint<HypercubeStagedMicrokernel, CubeLine, StageStorage>;
 
-impl HypercubeLastArrivalMatmulRoutine {
-    /// What it declines on a device that does not say how many workers it has, the count its grid
-    /// is sized by.
-    pub const UNSIZED: Refusal = Refusal::Declined {
-        why: "the last-arrival routine sizes its grid by the device's workers, which this device does not report",
-    };
-
-    /// The cubes its grid holds on `hw` at `settings`, or [`UNSIZED`](Self::UNSIZED) on a device
-    /// that does not say how many workers it has.
-    fn cubes(
-        hw: &Hardware,
-        settings: &HypercubeLastArrivalMatmulRoutineSettings,
-    ) -> Result<NonZeroUsize, Refusal> {
-        let workers = hw
-            .workers()
-            .and_then(|workers| NonZeroUsize::new(workers as usize))
-            .ok_or(Self::UNSIZED)?;
-        Ok(workers.saturating_mul(settings.cubes_per_worker))
-    }
-
-    /// `partitioning` with one cube's box stretched to its run of the line: the tiles' steps of
-    /// `K`, end to end, shared between `cubes`, the longest run as one tile's contraction.
-    fn one_run(
-        partitioning: &MatmulPartitioning<CubeLine>,
-        cubes: usize,
-    ) -> MatmulPartitioning<CubeLine> {
-        let space = partitioning.as_tile().space();
-        let (boxes_m, boxes_n) = partitioning.cubes();
-        let batches: usize = partitioning
-            .batch_axes()
-            .iter()
-            .map(|&axis| space.extent(axis))
-            .product();
-        let tiles = boxes_m * boxes_n * batches;
-        let cube = partitioning.cube_space().space;
-        let depth = partitioning.stage().extent(K);
-        let line = tiles * cube.extent(K).div_ceil(depth);
-        let run = line.div_ceil(cubes) * depth;
-        partitioning.covering(Space::new(&[
-            (M, cube.extent(M)),
-            (N, cube.extent(N)),
-            (K, run),
-        ]))
-    }
-}
-
 impl Routine for HypercubeLastArrivalMatmulRoutine {
     type Problem = MatmulRoutineProblem;
     type Settings = HypercubeLastArrivalMatmulRoutineSettings;
@@ -211,6 +165,52 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let blueprint = hypercube_blueprint(hw, problem, &item, microkernel, partitioning, storage);
         Ok((blueprint, grid))
+    }
+}
+
+impl HypercubeLastArrivalMatmulRoutine {
+    /// What it declines on a device that does not say how many workers it has, the count its grid
+    /// is sized by.
+    pub const UNSIZED: Refusal = Refusal::Declined {
+        why: "the last-arrival routine sizes its grid by the device's workers, which this device does not report",
+    };
+
+    /// The cubes its grid holds on `hw` at `settings`, or [`UNSIZED`](Self::UNSIZED) on a device
+    /// that does not say how many workers it has.
+    fn cubes(
+        hw: &Hardware,
+        settings: &HypercubeLastArrivalMatmulRoutineSettings,
+    ) -> Result<NonZeroUsize, Refusal> {
+        let workers = hw
+            .workers()
+            .and_then(|workers| NonZeroUsize::new(workers as usize))
+            .ok_or(Self::UNSIZED)?;
+        Ok(workers.saturating_mul(settings.cubes_per_worker))
+    }
+
+    /// `partitioning` with one cube's box stretched to its run of the line: the tiles' steps of
+    /// `K`, end to end, shared between `cubes`, the longest run as one tile's contraction.
+    fn one_run(
+        partitioning: &MatmulPartitioning<CubeLine>,
+        cubes: usize,
+    ) -> MatmulPartitioning<CubeLine> {
+        let space = partitioning.as_tile().space();
+        let (boxes_m, boxes_n) = partitioning.cubes();
+        let batches: usize = partitioning
+            .batch_axes()
+            .iter()
+            .map(|&axis| space.extent(axis))
+            .product();
+        let tiles = boxes_m * boxes_n * batches;
+        let cube = partitioning.cube_space().space;
+        let depth = partitioning.stage().extent(K);
+        let line = tiles * cube.extent(K).div_ceil(depth);
+        let run = line.div_ceil(cubes) * depth;
+        partitioning.covering(Space::new(&[
+            (M, cube.extent(M)),
+            (N, cube.extent(N)),
+            (K, run),
+        ]))
     }
 }
 

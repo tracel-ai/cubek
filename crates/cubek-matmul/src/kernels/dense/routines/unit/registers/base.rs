@@ -27,57 +27,6 @@ use cubek_std::selector::divisor_at_most;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UnitRegistersMatmulRoutine;
 
-impl UnitRegistersMatmulRoutine {
-    /// Steps a unit holds at once: it loads a step once the last is computed.
-    pub const STAGES_IN_FLIGHT: usize = 1;
-
-    /// Blocks along `n` a plane's units take in turns under `partitioning`, as its units level
-    /// states them.
-    fn blocks_per_plane(partitioning: &MatmulPartitioning<LaunchPlanes>) -> usize {
-        partitioning
-            .distributed(N)
-            .expect("the unit routine distributes its blocks to a plane's units")
-    }
-
-    /// Blocks along `n` per plane. A one-unit plane (CPU runtime) takes the largest divisor of
-    /// `n / columns` up to `setting`, so no plane's row overhangs `n` and masks its accesses.
-    /// Wider planes keep `setting`, since fewer blocks would idle their units, as does an `n`
-    /// that `columns` does not divide.
-    fn fitted_blocks_per_plane(
-        setting: usize,
-        n: usize,
-        columns: usize,
-        plane_width: u32,
-    ) -> usize {
-        match plane_width == 1 && n.is_multiple_of(columns) {
-            true => divisor_at_most(n / columns, setting),
-            false => setting,
-        }
-    }
-
-    /// The width [`prepare`](Routine::prepare) launches a plane at, beside `planes`
-    /// others in a cube.
-    pub fn plane_width(hw: &Hardware, planes: usize) -> u32 {
-        (hw.properties.hardware.max_units_per_cube / planes as u32)
-            .min(hw.dispatch_plane_size())
-            .max(1)
-    }
-
-    /// `microkernel` placed by `partitioning`, its widths settled. A register block reads its
-    /// operands from global memory and drains cell by cell, so the walk holds no shared memory.
-    pub fn blueprint(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        microkernel: UnitRegistersMicrokernel,
-        partitioning: MatmulPartitioning<LaunchPlanes>,
-    ) -> UnitRegistersMatmulRoutineBlueprint {
-        let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
-        MatmulBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ())
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitRegistersMatmulRoutineSettings {
     pub microkernel: UnitRegistersMicrokernelSettings,
@@ -210,6 +159,55 @@ impl Routine for UnitRegistersMatmulRoutine {
 }
 
 impl UnitRegistersMatmulRoutine {
+    /// Steps a unit holds at once: it loads a step once the last is computed.
+    pub const STAGES_IN_FLIGHT: usize = 1;
+
+    /// Blocks along `n` a plane's units take in turns under `partitioning`, as its units level
+    /// states them.
+    fn blocks_per_plane(partitioning: &MatmulPartitioning<LaunchPlanes>) -> usize {
+        partitioning
+            .distributed(N)
+            .expect("the unit routine distributes its blocks to a plane's units")
+    }
+
+    /// Blocks along `n` per plane. A one-unit plane (CPU runtime) takes the largest divisor of
+    /// `n / columns` up to `setting`, so no plane's row overhangs `n` and masks its accesses.
+    /// Wider planes keep `setting`, since fewer blocks would idle their units, as does an `n`
+    /// that `columns` does not divide.
+    fn fitted_blocks_per_plane(
+        setting: usize,
+        n: usize,
+        columns: usize,
+        plane_width: u32,
+    ) -> usize {
+        match plane_width == 1 && n.is_multiple_of(columns) {
+            true => divisor_at_most(n / columns, setting),
+            false => setting,
+        }
+    }
+
+    /// The width [`prepare`](Routine::prepare) launches a plane at, beside `planes`
+    /// others in a cube.
+    pub fn plane_width(hw: &Hardware, planes: usize) -> u32 {
+        (hw.properties.hardware.max_units_per_cube / planes as u32)
+            .min(hw.dispatch_plane_size())
+            .max(1)
+    }
+
+    /// `microkernel` placed by `partitioning`, its widths settled. A register block reads its
+    /// operands from global memory and drains cell by cell, so the walk holds no shared memory.
+    pub fn blueprint(
+        &self,
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        microkernel: UnitRegistersMicrokernel,
+        partitioning: MatmulPartitioning<LaunchPlanes>,
+    ) -> UnitRegistersMatmulRoutineBlueprint {
+        let mut vectorization = Vectorization::new();
+        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        MatmulBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ())
+    }
+
     /// Nothing of its own: it walks the launch's planes and their units, and its microkernel makes
     /// every access.
     fn vectorize(
