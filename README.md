@@ -31,6 +31,7 @@ specialized implementations for matrix multiplication, convolution, attention, r
 | [Convolution](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-convolution)               | `mma` `unit` `tma` `multi-stage` `im2col`                                |
 | [Attention](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-attention)                   | `mma` `unit` `multi-rows`                                                |
 | [Attention backward](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-attention-backward) | `mma` `unit` `plane` `cube`                                              |
+| [Gated delta rule](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-gated-delta)          | `cube` `walk`                                                            |
 
 ## Runtime configuration
 
