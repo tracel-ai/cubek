@@ -23,6 +23,15 @@ pub trait Folded<Acc: Numeric, N: Size>: Carrier + CubeType<ExpandType: Assign +
     /// written anew. Every unit of the cube is left with the total.
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self;
 
+    /// `acc` stored as partial `part` of a row its cubes split, for the cube that merges them
+    /// ([`load`](Folded::load)): its lines, one for the values and for an [`Indexed`], `k` for a
+    /// top-k, written that many lines times `part` into `values`, in `Acc`, and its indices at
+    /// the same lines of `indices`, in `u32`, where it carries any.
+    fn store(acc: Self, values: &mut Tile, indices: &mut Tile, part: usize);
+
+    /// Partial `part`, as [`store`](Folded::store) left it.
+    fn load(values: &Tile, indices: &Tile, part: usize) -> Self;
+
     /// What `acc` holds written as `writes` says, its lanes folded into one first where they
     /// hold one row ([`ReduceLayout::Along`]): to `out`'s first cell along the row, or its first
     /// line across rows (its first `k` of either, for a top-k). With [`ReduceWrites::Both`] the
@@ -105,6 +114,15 @@ impl<Acc: Numeric, N: Size> Folded<Acc, N> for Vector<Acc, N> {
         total
     }
 
+    fn store(acc: Self, values: &mut Tile, _indices: &mut Tile, part: usize) {
+        let mut lines = values.flat_mut::<Acc, N>();
+        lines.write(part, acc);
+    }
+
+    fn load(values: &Tile, _indices: &Tile, part: usize) -> Self {
+        values.flat::<Acc, N>().read(part)
+    }
+
     fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
@@ -178,6 +196,20 @@ impl<Acc: Numeric, N: Size> Folded<Acc, N> for Indexed<Acc, N> {
         }
         sync_cube();
         total
+    }
+
+    fn store(acc: Self, values: &mut Tile, indices: &mut Tile, part: usize) {
+        let mut value_lines = values.flat_mut::<Acc, N>();
+        value_lines.write(part, acc.value);
+        let mut index_lines = indices.flat_mut::<u32, N>();
+        index_lines.write(part, acc.index);
+    }
+
+    fn load(values: &Tile, indices: &Tile, part: usize) -> Self {
+        Indexed::<Acc, N> {
+            value: values.flat::<Acc, N>().read(part),
+            index: indices.flat::<u32, N>().read(part),
+        }
     }
 
     fn write<Out: Numeric, Idx: Numeric>(
@@ -271,6 +303,31 @@ impl<Acc: Numeric, N: Size, K: Size> Folded<Acc, N> for TopK<Acc, N, K> {
         }
         sync_cube();
         total
+    }
+
+    fn store(acc: Self, values: &mut Tile, indices: &mut Tile, part: usize) {
+        let k = K::value();
+        let mut value_lines = values.flat_mut::<Acc, N>();
+        let mut index_lines = indices.flat_mut::<u32, N>();
+        #[unroll(k <= TOP_K_UNROLL_BUDGET)]
+        for slot in 0..k {
+            value_lines.write(part * k + slot, acc.values[slot]);
+            index_lines.write(part * k + slot, acc.indices[slot]);
+        }
+    }
+
+    fn load(values: &Tile, indices: &Tile, part: usize) -> Self {
+        let k = K::value();
+        let value_lines = values.flat::<Acc, N>();
+        let index_lines = indices.flat::<u32, N>();
+        let mut kept_values = Array::new(k);
+        let mut kept_indices = Array::new(k);
+        #[unroll(k <= TOP_K_UNROLL_BUDGET)]
+        for slot in 0..k {
+            kept_values[slot] = value_lines.read(part * k + slot);
+            kept_indices[slot] = index_lines.read(part * k + slot);
+        }
+        TopK::<Acc, N, K>::new(kept_values, kept_indices)
     }
 
     fn write<Out: Numeric, Idx: Numeric>(
