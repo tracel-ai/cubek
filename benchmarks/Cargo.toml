@@ -49,6 +49,7 @@ cubek = { workspace = true, features = [
 cubek-attention-backward = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-convolution = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-fft = {workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-gated-delta = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-interpolate = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-matmul = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-pool = { workspace = true, default-features = true, features = ["benchmarks"] }
@@ -63,6 +64,10 @@ half = { workspace = true }
 [[bench]]
 harness = false
 name = "attention_backward"
+
+[[bench]]
+harness = false
+name = "gated_delta_walk"
 
 [[bench]]
 harness = false
