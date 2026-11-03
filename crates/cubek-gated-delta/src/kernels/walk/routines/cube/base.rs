@@ -164,7 +164,6 @@ impl Routine for CubeGatedDeltaWalkRoutine {
 
     /// A run is launched as the cube's `x`, its units the run's, and the runs along `y`: the
     /// units meet in shared memory, so the width a plane runs at is not read.
-
     fn prepare(
         &self,
         hw: &Hardware,
