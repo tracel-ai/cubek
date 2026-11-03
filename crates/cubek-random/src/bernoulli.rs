@@ -59,14 +59,24 @@ impl PrngArgs for Bernoulli {
     }
 }
 
-/// Pseudo-random generator with bernoulli distribution
+/// Samples a bernoulli distribution from an explicit seed.
+///
+/// Uses the supplied seed without accessing the global RNG.
 pub fn random_bernoulli(
     client: &Client,
     probability: f32,
     out: TensorBinding,
     dtype: ElemType,
+    seed: u64,
 ) -> Result<(), LaunchError> {
-    random_bernoulli_with_strategy(client, probability, out, dtype, PrngStrategy::Inferred)
+    random_bernoulli_with_strategy(
+        client,
+        probability,
+        out,
+        dtype,
+        PrngStrategy::Inferred,
+        seed,
+    )
 }
 
 pub(crate) fn random_bernoulli_with_strategy(
@@ -75,6 +85,14 @@ pub(crate) fn random_bernoulli_with_strategy(
     out: TensorBinding,
     dtype: ElemType,
     strategy: PrngStrategy,
+    seed: u64,
 ) -> Result<(), LaunchError> {
-    random::<BernoulliFamily>(client, Bernoulli { probability }, out, dtype, strategy)
+    random::<BernoulliFamily>(
+        client,
+        Bernoulli { probability },
+        out,
+        dtype,
+        strategy,
+        seed,
+    )
 }

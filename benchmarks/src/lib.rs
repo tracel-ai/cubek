@@ -5,6 +5,7 @@ pub use cubek_convolution::eval::benchmarks as conv2d;
 pub use cubek_convolution::eval::benchmarks::depthwise;
 pub use cubek_convolution::eval::benchmarks::direct as direct_conv;
 pub use cubek_fft::eval::benchmarks as fft;
+pub use cubek_gated_delta::eval::benchmarks as gated_delta_walk;
 pub use cubek_interpolate::eval::benchmarks as interpolate;
 pub use cubek_matmul::eval::benchmarks::gemm;
 pub use cubek_matmul::eval::benchmarks::gemm_cpu;
@@ -33,6 +34,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::conv2d::Category,
         &crate::depthwise::Category,
         &crate::fft::Category,
+        &crate::gated_delta_walk::Category,
         &crate::gemm::Category,
         &crate::gemm_cpu::Category,
         &crate::gemv::Category,
