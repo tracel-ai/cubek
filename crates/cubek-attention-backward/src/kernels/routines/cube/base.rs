@@ -158,14 +158,11 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
             })
             .collect::<Vec<_>>();
         // The key walk's heads apart, on the settings of both walks held whose key walk prefetches
-        // through registers on two planes: where the first keys' cube, walking every head, is what
-        // the launch waits on.
+        // through registers: where the first keys' cube, walking every head, is what the launch
+        // waits on.
         let apart = both
             .iter()
-            .filter(|settings| {
-                settings.ring == StageRing::SINGLE_THROUGH_REGISTERS
-                    && settings.key_gradient.planes_along_keys.get() == 2
-            })
+            .filter(|settings| settings.ring == StageRing::SINGLE_THROUGH_REGISTERS)
             .map(|settings| Self::Settings {
                 key_heads: KeyHeads::Apart,
                 ..*settings
