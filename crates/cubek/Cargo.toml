@@ -24,14 +24,17 @@ default = [
     "cubek-quant?/default",
     "cubek-random?/default",
     "cubek-reduce?/default",
+    "cubek-rms-norm?/default",
     "cubek-matmul?/default",
     "cubek-microkernel?/default",
     "cubek-convolution?/default",
     "cubek-attention?/default",
     "cubek-attention-backward?/default",
+    "cubek-gated-delta?/default",
     "cubek-interpolate?/default",
     "cubek-pool?/default",
     "cubek-fft?/default",
+    "cubek-swiglu?/default",
 ]
 
 std = [
@@ -39,19 +42,24 @@ std = [
     "cubek-quant?/std",
     "cubek-random?/std",
     "cubek-reduce?/std",
+    "cubek-rms-norm?/std",
     "cubek-matmul?/std",
     "cubek-microkernel?/std",
     "cubek-convolution?/std",
     "cubek-attention?/std",
     "cubek-attention-backward?/std",
+    "cubek-gated-delta?/std",
     "cubek-interpolate?/std",
     "cubek-pool?/std",
     "cubek-fft?/std",
+    "cubek-swiglu?/std",
 ]
 
 attention = ["cubek-attention"]
 # Attention's backward pass, for training: its own crate, off unless a caller asks for it.
 attention-backward = ["cubek-attention-backward"]
+# The gated delta rule's walk.
+gated-delta = ["cubek-gated-delta"]
 interpolate = ["cubek-interpolate"]
 pool = ["cubek-pool"]
 convolution = ["cubek-convolution"]
@@ -66,10 +74,12 @@ attention-tiled = ["cubek-attention?/tiled"]
 quantization = ["cubek-quant/kernels"]
 random = ["cubek-random"]
 reduce = ["cubek-reduce"]
+rms-norm = ["cubek-rms-norm"]
+swiglu = ["cubek-swiglu"]
 stdlib = ["cubek-std"]
 fft = ["cubek-fft"]
 # Autotune compares every candidate's output against the first's: a debugging instrument.
-autotune-checks = ["cubek-matmul?/autotune-checks"]
+autotune-checks = ["cubek-matmul?/autotune-checks", "cubek-gated-delta?/autotune-checks"]
 
 
 [dependencies]
@@ -78,6 +88,7 @@ cubek-attention = { workspace = true, optional = true }
 cubek-attention-backward = { workspace = true, optional = true }
 cubek-convolution = { workspace = true, optional = true }
 cubek-fft = { workspace = true, optional = true }
+cubek-gated-delta = { workspace = true, optional = true }
 cubek-interpolate = { workspace = true, optional = true }
 cubek-matmul = { workspace = true, optional = true }
 cubek-microkernel = { workspace = true, optional = true }
@@ -85,4 +96,6 @@ cubek-pool = { workspace = true, optional = true }
 cubek-quant = { workspace = true, optional = true }
 cubek-random = { workspace = true, optional = true }
 cubek-reduce = { workspace = true, optional = true }
+cubek-rms-norm = { workspace = true, optional = true }
 cubek-std = { workspace = true, optional = true }
+cubek-swiglu = { workspace = true, optional = true }

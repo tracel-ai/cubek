@@ -31,9 +31,8 @@ pub enum Strategy {
     Unit(UnitStrategy),
 }
 
-/// The convolution-side algorithm enum. Subsumes the previous
-/// `ReadingStrategy` axis and the Simple/Specialized split. A single value
-/// here picks one concrete `Routine` impl (see `crate::routines`).
+/// The convolution-side algorithm enum. A single value here picks one concrete
+/// `Routine` impl (see `crate::routines`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ConvAlgorithm {
     SimpleSyncCyclic,
@@ -42,9 +41,6 @@ pub enum ConvAlgorithm {
     SimpleAsyncCyclic,
     SimpleAsyncStrided,
     SimpleAsyncTma,
-    SpecializedAsyncCyclic,
-    SpecializedAsyncStrided,
-    SpecializedTma,
 }
 
 impl Display for ConvAlgorithm {
@@ -56,9 +52,6 @@ impl Display for ConvAlgorithm {
             ConvAlgorithm::SimpleAsyncCyclic => "simple_async_cyclic",
             ConvAlgorithm::SimpleAsyncStrided => "simple_async_strided",
             ConvAlgorithm::SimpleAsyncTma => "simple_async_tma",
-            ConvAlgorithm::SpecializedAsyncCyclic => "specialized_async_cyclic",
-            ConvAlgorithm::SpecializedAsyncStrided => "specialized_async_strided",
-            ConvAlgorithm::SpecializedTma => "specialized_tma",
         };
         f.write_str(s)
     }

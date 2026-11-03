@@ -5,18 +5,29 @@
 //! keys with a matmul microkernel.
 //!
 //! Nothing here is launched. A kernel places microkernels over a grid, binds its tensors and
-//! launches; the kernels are their family's crate's (`cubek-matmul`'s and `cubek-attention`'s
-//! `kernels`).
+//! launches; the kernels are their family's crate's (`cubek-matmul`'s, `cubek-attention`'s,
+//! `cubek-rms-norm`'s and `cubek-swiglu`'s `kernels`).
 //!
 //! A folder per problem, behind its family's feature: what the problem is in its `base`, beside a
 //! folder per scope. What every family shares, as the ring a staged walk holds its stages in, is
-//! cubek-std's.
+//! cubek-std's; what the producers of a product's lhs share, how they store their rows, is
+//! `row_store`.
 
 #[cfg(feature = "attention")]
 pub mod attention;
 #[cfg(feature = "attention-backward")]
 pub mod attention_backward;
+#[cfg(feature = "gated-delta")]
+pub mod gated_delta;
 #[cfg(feature = "matmul")]
 pub mod matmul;
+#[cfg(feature = "rms-norm")]
+pub mod rms_norm;
+#[cfg(feature = "row-store")]
+pub mod row_store;
 #[cfg(feature = "attention")]
 pub mod split_keys_merge;
+#[cfg(feature = "swiglu")]
+pub mod swiglu;
+#[cfg(feature = "testing")]
+pub mod testing;

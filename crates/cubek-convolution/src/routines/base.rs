@@ -24,10 +24,6 @@ pub trait Routine {
     type MatmulRoutine: MatmulRoutine<RuntimeArgs, Blueprint = Self::Blueprint, Strategy = Self::Strategy>;
     type Args: MatmulArgs<Config = RuntimeArgs>;
 
-    /// Whether to select specialized load flow in tests. Should replace with something cleaner
-    /// eventually, but this is nice and simple.
-    const IS_SPECIALIZED: bool = false;
-
     fn correct_layout(
         client: &Client,
         handle: TensorBinding,

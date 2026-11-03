@@ -272,10 +272,7 @@ fn strided_reader_loads_an_unevenly_split_stage(algorithm: ConvAlgorithm) {
             && cfg.cd_type == dtypes.acc_register
             && (cfg.m, cfg.n, cfg.k) == (16, 8, 16)
     });
-    let async_copy = matches!(
-        algorithm,
-        ConvAlgorithm::SimpleAsyncStrided | ConvAlgorithm::SpecializedAsyncStrided
-    );
+    let async_copy = algorithm == ConvAlgorithm::SimpleAsyncStrided;
     if !offered {
         return skip("the device offers no 16x8x16 f16 mma");
     }
@@ -307,11 +304,6 @@ fn simple_sync_strided_loads_an_unevenly_split_stage() {
 #[test]
 fn simple_async_strided_loads_an_unevenly_split_stage() {
     strided_reader_loads_an_unevenly_split_stage(ConvAlgorithm::SimpleAsyncStrided);
-}
-
-#[test]
-fn specialized_async_strided_loads_an_unevenly_split_stage() {
-    strided_reader_loads_an_unevenly_split_stage(ConvAlgorithm::SpecializedAsyncStrided);
 }
 
 /// A stage wider than the weight gradient's `n` writes only the gradient's own channels. Regression

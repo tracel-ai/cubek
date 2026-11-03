@@ -15,7 +15,9 @@ use cubek_std::microkernel::StageRing;
 pub struct PlaneFragmentAttention<EA: Float, ES: Float> {
     sum: Tile,
     score: StageScore,
-    softmax: OnlineSoftmax<EA>,
+    /// The softmax state of every plane's rows: what the cube merges where its planes split the
+    /// same rows' keys ([`OnlineSoftmax::normalizer`]).
+    pub(crate) softmax: OnlineSoftmax<EA>,
     query: Tile,
     /// The element the keys and values are staged at, which the probabilities are cast to.
     #[cube(comptime)]
@@ -94,20 +96,9 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
         sum
     }
 
-    /// Every plane's rows of `region` normalized and written into `out`, `region`'s window of the
-    /// output, read off the walk's first step whether or not the walk took one: what the softmax
-    /// and the output read how many planes share a plane's rows from. The output sums the planes
-    /// that split the same rows' keys.
-    pub fn store_normalized(&mut self, region: &Region, out: &Tile) {
-        let mut output = out.planes_output::<EA>(region);
-
-        for plane in region.planes() {
-            let sum = self.sum.at(&plane);
-            sum.along(DV).mul(&self.softmax.normalizer(&plane));
-            output.drain(&sum, &plane);
-        }
-
-        output.write();
+    /// `plane`'s rows of the sum its stages' products add into, undivided.
+    pub fn sum_at(&self, plane: &Region) -> Tile {
+        self.sum.at(plane)
     }
 
     /// Each plane's rows' logsumexp, `max + ln(sum)` of their scaled scores, written into

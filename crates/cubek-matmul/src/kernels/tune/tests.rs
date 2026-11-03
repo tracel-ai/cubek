@@ -364,7 +364,6 @@ mod candidate {
         fn every_routine_estimates_every_setting_whole() {
             assert_every_estimate_is_whole(UnitRegistersMatmulRoutine);
             assert_every_estimate_is_whole(CubeStagedMatmulRoutine);
-            assert_every_estimate_is_whole(crate::kernels::HypercubeRelayMatmulRoutine);
             assert_every_estimate_is_whole(crate::kernels::HypercubeLastArrivalMatmulRoutine);
         }
     }

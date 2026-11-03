@@ -20,9 +20,24 @@ std = ["cubecl/std", "cubek-std/std"]
 matmul = []
 attention = ["matmul"]
 attention-backward = ["attention"]
+rms-norm = ["row-store"]
+swiglu = ["row-store"]
+gated-delta = []
+# Where a producer of rows writes them, as computed or packed for a product's lhs.
+row-store = []
+# A launch of one microkernel on one work item, for tests: what a routine adds around it,
+# kept to the least that runs it.
+testing = []
 
 [dependencies]
 cubek-std = { workspace = true }
 
 cubecl = { workspace = true, features = ["stdlib", "tile"] }
 serde = { workspace = true }
+
+[dev-dependencies]
+cubek-test-utils = { workspace = true }
+
+[[test]]
+name = "testing"
+required-features = ["testing"]
