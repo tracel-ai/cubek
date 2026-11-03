@@ -1,5 +1,5 @@
 use cubecl::ir::ElemType;
-use cubecl::tile::{Partitioning, Tile, TileArg};
+use cubecl::tile::{Partitioning, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::unit::{UnitAttentionMicrokernel, unit_attention_microkernel};
 use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
@@ -9,12 +9,12 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn unit_attention_kernel<EA: Float>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out: &TileArg<'_>,
-    logsumexp: ComptimeOption<&TileArg<'static>>,
-    mask: ComptimeOption<&TileArg<'static>>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    logsumexp: ComptimeOption<&TileTensor<'static>>,
+    mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,

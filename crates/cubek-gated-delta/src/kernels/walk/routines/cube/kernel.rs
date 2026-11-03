@@ -1,5 +1,5 @@
 use cubecl::ir::ElemType;
-use cubecl::tile::{Partitioning, TileArg};
+use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::gated_delta::walk::cube::{
     CubeGatedDeltaWalkMicrokernel, cube_gated_delta_walk_microkernel,
@@ -10,14 +10,14 @@ use cubek_microkernel::gated_delta::walk::cube::{
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_gated_delta_walk_kernel<E: Float, N: Size>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    decay: &TileArg<'_>,
-    strength: &TileArg<'_>,
-    state: &TileArg<'_>,
-    out: &TileArg<'_>,
-    kept: &TileArg<'_>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    decay: &TileTensor<'_>,
+    strength: &TileTensor<'_>,
+    state: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    kept: &TileTensor<'_>,
     first_kept: usize,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,

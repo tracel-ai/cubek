@@ -24,7 +24,7 @@
 use crate::definition::{MatmulCost, MatmulGlobalElems};
 use cubecl::tile::{
     Instruction, Launcher, Levels, Monoid, Partitioning, Projection, RegisterBlock, Semiring,
-    Space, TileArg, TileArgLaunch, TileSpec,
+    Space, TileSpec, TileTensor, TileTensorLaunch,
     launch::{AccumulateArg, AccumulateArgLaunch, Grid},
     layout::PhysicalAxisMap,
 };
@@ -51,7 +51,7 @@ const COLS: usize = 1;
 const SUM_COLS: usize = 32;
 
 #[cube(launch)]
-fn plain_matmul(a: &TileArg<'_>, b: &TileArg<'_>, c: &TileArg<'_>, space: Partitioning) {
+fn plain_matmul(a: &TileTensor<'_>, b: &TileTensor<'_>, c: &TileTensor<'_>, space: Partitioning) {
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
@@ -66,8 +66,8 @@ fn plain_matmul(a: &TileArg<'_>, b: &TileArg<'_>, c: &TileArg<'_>, space: Partit
 /// This cube's slice of `K` contracted into a register block, drained through the atomic merge.
 #[cube(launch)]
 fn atomic_matmul<E: Numeric>(
-    a: &TileArg<'_>,
-    b: &TileArg<'_>,
+    a: &TileTensor<'_>,
+    b: &TileTensor<'_>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
@@ -96,8 +96,8 @@ fn atomic_matmul<E: Numeric>(
 /// contracts its own slice into the block, the plane combines in registers at the drain.
 #[cube(launch)]
 fn atomic_matmul_units<E: Numeric>(
-    a: &TileArg<'_>,
-    b: &TileArg<'_>,
+    a: &TileTensor<'_>,
+    b: &TileTensor<'_>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
@@ -126,7 +126,7 @@ fn atomic_matmul_units<E: Numeric>(
 }
 
 #[cube(launch)]
-fn sum_splits(partials: &TileArg<'_>, out: &TileArg<'_>, space: Partitioning) {
+fn sum_splits(partials: &TileTensor<'_>, out: &TileTensor<'_>, space: Partitioning) {
     let partials = partials.tile(&space);
     let out = out.tile(&space);
     for region in space {
@@ -390,8 +390,8 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
+                    TileTensorLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
+                    TileTensorLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
                     AccumulateArgLaunch::new(self.c.tensor_arg(1), 1, self.out_spec.clone()),
                     self.launcher.partitioning_arg(),
                     dtype,
@@ -402,8 +402,8 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
+                    TileTensorLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
+                    TileTensorLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
                     AccumulateArgLaunch::new(self.c.tensor_arg(1), 1, self.out_spec.clone()),
                     self.launcher.partitioning_arg(),
                     dtype,
@@ -414,9 +414,14 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
-                    TileArgLaunch::new(self.c.tensor_arg(1), dtype, 1, TileSpec::direct(&[M, N])),
+                    TileTensorLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
+                    TileTensorLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
+                    TileTensorLaunch::new(
+                        self.c.tensor_arg(1),
+                        dtype,
+                        1,
+                        TileSpec::direct(&[M, N]),
+                    ),
                     self.launcher.partitioning_arg(),
                 );
             }
@@ -425,9 +430,9 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
-                    TileArgLaunch::new(
+                    TileTensorLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
+                    TileTensorLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
+                    TileTensorLaunch::new(
                         self.c.tensor_arg(1),
                         dtype,
                         1,
@@ -439,13 +444,13 @@ impl Bound {
                     &self.client,
                     self.sum_cube_count.clone(),
                     self.sum_cube_dim,
-                    TileArgLaunch::new(
+                    TileTensorLaunch::new(
                         self.c.tensor_arg(1),
                         dtype,
                         1,
                         TileSpec::direct(&[KB, M, N]),
                     ),
-                    TileArgLaunch::new(
+                    TileTensorLaunch::new(
                         self.summed.tensor_arg(1),
                         dtype,
                         1,

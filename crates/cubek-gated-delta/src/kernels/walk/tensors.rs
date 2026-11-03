@@ -8,7 +8,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::{Axis, Launcher, TileArgLaunch};
+use cubecl::tile::{Axis, Launcher, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
@@ -92,7 +92,7 @@ pub struct GatedDeltaWalkTensors {
 /// The operands of a launch bound under one launcher. Not `Debug`: cubek's `Launcher` is not.
 pub struct GatedDeltaWalkBinding {
     pub launcher: Launcher,
-    pub operands: GatedDeltaWalkOperandMap<TileArgLaunch>,
+    pub operands: GatedDeltaWalkOperandMap<TileTensorLaunch>,
 }
 
 impl GatedDeltaWalkTensors {
