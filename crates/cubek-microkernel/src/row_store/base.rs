@@ -2,7 +2,7 @@ use cubecl::features::Plane;
 use cubecl::ir::ElemType;
 use cubecl::quant::scheme::QuantScheme;
 use cubecl::tile::kind::Field;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{MaskedExtent, Refusal, VectorRequirement};
 use cubecl::tile::{Axis, Partitioning, Space};
 use cubecl::zspace::metadata::Metadata;
 use cubek_std::Hardware;
@@ -197,20 +197,25 @@ impl RowStore {
         }
     }
 
-    /// The axis a row's lines run along, which a masked line is tested against: the row's width
-    /// plain, the position inside a block packed.
-    pub fn contiguous_axis(&self) -> Axis {
+    /// The mask `partitioning`'s tiles put on `operand`'s row where they overhang it anywhere
+    /// along the axes it is stated over, or none where they do not: a plain row's lines are tested
+    /// against its width, which a dividing width never straddles; a packed row's edge spans its
+    /// blocks and the position inside one, two axes no line can be tested along whole, so it binds
+    /// one element at a time.
+    pub fn mask<O: Copy + Eq>(
+        &self,
+        operand: O,
+        partitioning: &Partitioning,
+    ) -> Option<VectorRequirement<O>> {
         match self {
-            Self::Plain => WIDTH,
-            Self::Packed { .. } => KI,
-        }
-    }
-
-    /// Whether `partitioning`'s tiles overhang the row anywhere along the axes it is stated over.
-    pub fn overhangs_width(&self, partitioning: &Partitioning) -> bool {
-        match self {
-            Self::Plain => partitioning.overhangs(WIDTH),
-            Self::Packed { .. } => partitioning.overhangs(KB) || partitioning.overhangs(KI),
+            Self::Plain => partitioning
+                .overhangs(WIDTH)
+                .then(|| VectorRequirement::masked(operand, partitioning.space(), WIDTH)),
+            Self::Packed { .. } => (partitioning.overhangs(KB) || partitioning.overhangs(KI))
+                .then_some(VectorRequirement::Masked {
+                    operand,
+                    extent: MaskedExtent::Unknown,
+                }),
         }
     }
 
@@ -283,6 +288,46 @@ pub enum CubeStage {
 mod tests {
     use super::*;
     use cubecl::quant::scheme::{QuantStore, QuantValue, ScaleDtype};
+    use cubecl::tile::Levels;
+
+    /// A plain row its tiles overhang is masked at its width, which a width dividing it never
+    /// straddles; a packed row its blocks overhang at an unknown edge, one element at a time; a
+    /// row no tile overhangs is not masked at all.
+    #[test]
+    fn a_row_its_tiles_overhang_is_masked_at_its_edge() {
+        let plain = |width: usize| {
+            let space = Space::new(&[(ROWS, 4), (WIDTH, width)]);
+            let levels = Levels::leaf(&[(ROWS, 1), (WIDTH, 64)])
+                .planes(&[(ROWS, 1)])
+                .cubes(&[WIDTH, ROWS])
+                .build();
+            RowStore::Plain.mask('x', &Partitioning::new(space, levels))
+        };
+        assert_eq!(
+            plain(100),
+            Some(VectorRequirement::Masked {
+                operand: 'x',
+                extent: MaskedExtent::Known(100),
+            })
+        );
+        assert_eq!(plain(128), None);
+        let packed = RowStore::Packed {
+            block: 32,
+            scales_per_word: 4,
+        };
+        let space = Space::new(&[(MB, 1), (MI, 4), (KB, 3), (KI, 32)]);
+        let levels = Levels::leaf(&[(MI, 1), (KB, 2), (KI, 32)])
+            .planes(&[(MI, 1)])
+            .cubes(&[KB, MI])
+            .build();
+        assert_eq!(
+            packed.mask('x', &Partitioning::new(space, levels)),
+            Some(VectorRequirement::Masked {
+                operand: 'x',
+                extent: MaskedExtent::Unknown,
+            })
+        );
+    }
 
     /// A one-level scheme along the row is a packed store, its scales as many a word as their
     /// width fits; two levels, a block across the rows, or a row of a part-word of scales is not.

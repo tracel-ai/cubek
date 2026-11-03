@@ -63,6 +63,15 @@ impl StoredTensor {
             .collect()
     }
 
+    /// The bytes it binds: its values' and a packed one's scales', each the region its binding
+    /// names rather than the buffer that region lies in. A framework stores a packed tensor's words
+    /// and scales in one buffer, so each of them lies in the whole of it.
+    pub fn bytes(&self) -> usize {
+        self.tensors()
+            .map(|tensor| tensor.binding.handle.size_in_used() as usize)
+            .sum()
+    }
+
     /// How each of [`buffers`](Self::buffers) lies, in its order: what a binding derived over them
     /// reads of them, so a kept binding is reused only over buffers that lie the same.
     pub fn layouts(&self) -> impl Iterator<Item = Metadata> + '_ {
