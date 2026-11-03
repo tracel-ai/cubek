@@ -20,7 +20,7 @@ use crate::{
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::InvalidConfigError;
 
-use super::{LoadingJob, LoadingValidation, ReaderMode};
+use super::{LoadingJob, LoadingValidation, ReaderMode, unevenly_split_stage};
 
 #[derive(CubeType, Clone, Copy)]
 /// Loads the content of all the stage using all planes,
@@ -39,10 +39,7 @@ impl LoadingValidation for SyncFullStridedLoading {
             let total_units = config.loading_units_count();
 
             if !num_stage_vectors.is_multiple_of(total_units) {
-                return Err(Box::new(format!(
-                "Too many data will be loaded, resulting in out of bounds.
-        Try setting vector size and number of planes so that total unit count {total_units:?} divides number of vectors in stage.",
-            )));
+                return Err(unevenly_split_stage(num_stage_vectors, total_units));
             }
         }
 
