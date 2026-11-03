@@ -153,13 +153,13 @@ pub fn launch_tuned_padded(
 }
 
 /// `routine` at `settings`, launched on the grouped product, under the setting's name.
-fn candidate<Mk, SM, R>(
+fn candidate<Mk, P, SM, R>(
     routine: R,
     settings: MGroupedSettings<R::Settings>,
 ) -> Tunable<MGroupedMatmulKey, MGroupedMatmulTensors, PaddedRows>
 where
     Mk: MatmulMicrokernel,
-    R: MatmulRoutine<Mk, SM> + Send + Sync + 'static,
+    R: MatmulRoutine<Mk, P, SM> + Send + Sync + 'static,
     R::Settings: Send + Sync + 'static,
 {
     Tunable::new(

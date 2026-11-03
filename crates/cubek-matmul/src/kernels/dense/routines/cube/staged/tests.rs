@@ -29,14 +29,14 @@ mod base {
     use cubek_std::layout::{BindingOrder, tile_order};
     use cubek_std::matmul_axes::{K, M, N};
     use cubek_std::microkernel::{Microkernel, StageLayout, StageRing};
-    use cubek_std::routine::{EstimatedRoutine, Routine};
+    use cubek_std::routine::{CubeBoxes, EstimatedRoutine, Routine};
     use cubek_std::{Hardware, devices};
 
     /// Why `hw` cannot deliver `problem`'s stages under `partitioning` by the TMA engine.
     fn tma_refusal(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
-        partitioning: &MatmulPartitioning,
+        partitioning: &MatmulPartitioning<CubeBoxes>,
         storage: &StageStorage,
         ring: &StageRing,
         plane: &PlaneFragmentMicrokernel,
@@ -1000,12 +1000,7 @@ mod base {
         assert_eq!(blueprint.microkernel.fill.filling_planes, 1);
         let placed = MatmulView::of::<CubeStagedMicrokernel>(&problem)
             .expect(MatmulView::PREPARED)
-            .partitioning(
-                blueprint.microkernel.tiling(),
-                &[M, N],
-                settings.cube_order,
-                MatmulView::ONE_CUBE_A_BOX,
-            );
+            .cube_boxes(blueprint.microkernel.tiling(), &[M, N], settings.cube_order);
         let launched = &blueprint.partitioning;
         assert_eq!(launched.cube_space().space, placed.cube_space().space);
         assert_eq!(launched.stage(), placed.stage());

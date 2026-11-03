@@ -177,7 +177,7 @@ impl RoutedMatmulTensors {
     ///
     /// Why `hw` cannot run the product at these settings, or why the routine declines a table or
     /// the stack as it is stored.
-    pub fn launch<Mk, SM, R>(
+    pub fn launch<Mk, P, SM, R>(
         &self,
         hw: &Hardware,
         routine: &R,
@@ -185,7 +185,7 @@ impl RoutedMatmulTensors {
     ) -> Result<TensorHandle, Refusal>
     where
         Mk: MatmulMicrokernel,
-        R: MatmulRoutine<Mk, SM>,
+        R: MatmulRoutine<Mk, P, SM>,
     {
         let out = self.output();
         self.launch_into(hw, routine, settings, &out)?;
@@ -198,7 +198,7 @@ impl RoutedMatmulTensors {
     /// # Errors
     ///
     /// As [`launch`](Self::launch).
-    pub fn launch_into<Mk, SM, R>(
+    pub fn launch_into<Mk, P, SM, R>(
         &self,
         hw: &Hardware,
         routine: &R,
@@ -207,7 +207,7 @@ impl RoutedMatmulTensors {
     ) -> Result<(), Refusal>
     where
         Mk: MatmulMicrokernel,
-        R: MatmulRoutine<Mk, SM>,
+        R: MatmulRoutine<Mk, P, SM>,
     {
         if self.rows() == 0 {
             return Ok(());
@@ -222,7 +222,7 @@ impl RoutedMatmulTensors {
     /// # Errors
     ///
     /// As [`launch`](Self::launch).
-    pub fn served_by<Mk, SM, R>(
+    pub fn served_by<Mk, P, SM, R>(
         &self,
         hw: &Hardware,
         routine: &R,
@@ -230,7 +230,7 @@ impl RoutedMatmulTensors {
     ) -> Result<(), Refusal>
     where
         Mk: MatmulMicrokernel,
-        R: MatmulRoutine<Mk, SM>,
+        R: MatmulRoutine<Mk, P, SM>,
     {
         let (lhs, stack, table) = self.operands()?;
         // Left unwritten: preparing a launch reads only how its output lies.

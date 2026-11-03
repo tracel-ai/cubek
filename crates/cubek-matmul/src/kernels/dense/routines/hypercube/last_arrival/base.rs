@@ -15,7 +15,7 @@ use cubek_microkernel::matmul::hypercube::{
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeLine, CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// `out = lhs · rhs` with every tile's steps of `K` laid end to end and shared between a fixed
 /// grid of cubes, one run each: a run may start inside one tile and end inside another,
@@ -72,7 +72,7 @@ impl core::fmt::Display for HypercubeLastArrivalMatmulRoutineSettings {
 /// The last-arrival routine's blueprint: how a stage its cubes' microkernel walks holds its cells,
 /// as the cube routine's does.
 pub type HypercubeLastArrivalMatmulRoutineBlueprint =
-    MatmulBlueprint<HypercubeStagedMicrokernel, StageStorage>;
+    MatmulBlueprint<HypercubeStagedMicrokernel, CubeLine, StageStorage>;
 
 impl HypercubeLastArrivalMatmulRoutine {
     /// What it declines on a device that does not say how many workers it has, the count its grid
@@ -96,7 +96,10 @@ impl HypercubeLastArrivalMatmulRoutine {
 
     /// `partitioning` with one cube's box stretched to its run of the line: the tiles' steps of
     /// `K`, end to end, shared between `cubes`, the longest run as one tile's contraction.
-    fn one_run(partitioning: &MatmulPartitioning, cubes: usize) -> MatmulPartitioning {
+    fn one_run(
+        partitioning: &MatmulPartitioning<CubeLine>,
+        cubes: usize,
+    ) -> MatmulPartitioning<CubeLine> {
         let space = partitioning.as_tile().space();
         let (boxes_m, boxes_n) = partitioning.cubes();
         let batches: usize = partitioning
@@ -109,12 +112,11 @@ impl HypercubeLastArrivalMatmulRoutine {
         let depth = partitioning.stage().extent(K);
         let line = tiles * cube.extent(K).div_ceil(depth);
         let run = line.div_ceil(cubes) * depth;
-        MatmulPartitioning::new(
-            partitioning.as_tile().clone(),
-            Space::new(&[(M, cube.extent(M)), (N, cube.extent(N)), (K, run)]),
-            partitioning.batch_axes().to_vec(),
-            partitioning.rows_kind(),
-        )
+        partitioning.covering(Space::new(&[
+            (M, cube.extent(M)),
+            (N, cube.extent(N)),
+            (K, run),
+        ]))
     }
 }
 
@@ -180,13 +182,16 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             hw,
             &microkernel.cube.contracted(&item),
             &problem.buffers(microkernel.cube.plane.orders),
-            <Self as MatmulRoutine<HypercubeStagedMicrokernel, StageStorage>>::WRITE,
+            <Self as MatmulRoutine<HypercubeStagedMicrokernel, CubeLine, StageStorage>>::WRITE,
             &view
-                .shared_partitioning(microkernel.cube.tiling(), &axes, target)
+                .cube_line(microkernel.cube.tiling(), &axes, CubeLine { cubes: target })
                 .cube_space(),
         )?;
-        let partitioning =
-            view.shared_partitioning(resolved.microkernel.launch_tiling(), &axes, target);
+        let partitioning = view.cube_line(
+            resolved.microkernel.launch_tiling(),
+            &axes,
+            CubeLine { cubes: target },
+        );
         let past_k = || {
             [KB, KI]
                 .into_iter()
@@ -264,7 +269,9 @@ impl HypercubeLastArrivalMatmulRoutine {
     }
 }
 
-impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastArrivalMatmulRoutine {
+impl MatmulRoutine<HypercubeStagedMicrokernel, CubeLine, StageStorage>
+    for HypercubeLastArrivalMatmulRoutine
+{
     const WRITE: MatmulCubeWrite = MatmulCubeWrite::LastArrival;
 
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(

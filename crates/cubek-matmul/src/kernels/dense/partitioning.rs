@@ -1,12 +1,14 @@
 use cubecl::tile::{
     Axis, Partitioning, Space, TileSpec,
-    space::{ComputeScope, Coverage, CubeOrder, PlaneOrder},
+    space::{ComputeScope, Coverage, CubeOrder},
 };
 use cubek_microkernel::matmul::cube::MatmulCubeSpace;
 use cubek_microkernel::matmul::{MatmulAxesKind, MatmulRowsKind, MatmulStage};
 use cubek_std::matmul_axes::{M, MB, MI, N, NB, NI};
+use cubek_std::routine::{CubeBoxes, LaunchPlanes, Partition, Partitioned};
 
-/// How a matmul product places its microkernel's work items over a problem: the tile DSL's levels,
+/// How a matmul product places its microkernel's work items over a problem, handing its boxes out
+/// by `P` ([`Partition`]): the tile DSL's levels,
 /// which the kernel launches and walks, and the box each cube is handed. Each product builds one
 /// from its problem; a cube microkernel is handed the space its cube covers
 /// ([`cube_space`](Self::cube_space)). Stated along
@@ -17,8 +19,8 @@ use cubek_std::matmul_axes::{M, MB, MI, N, NB, NI};
 /// in cubes. Either way the box one cube covers and the one a step of its walk stages are
 /// questions this answers for every routine alike.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MatmulPartitioning {
-    partitioning: Partitioning,
+pub struct MatmulPartitioning<P> {
+    partitioning: Partitioned<P>,
     /// The box one cube covers, its `k` a cube's run of the walk where several share a box.
     cube: Space,
     batch_axes: Vec<Axis>,
@@ -26,16 +28,16 @@ pub struct MatmulPartitioning {
     axes_kind: MatmulAxesKind,
 }
 
-impl MatmulPartitioning {
+impl<P> MatmulPartitioning<P> {
     /// `partitioning`, its cubes each covering `cube`, one batch along each of `batch_axes`, the
     /// rows held as `rows_kind` says.
     pub fn new(
-        partitioning: Partitioning,
+        partitioning: Partitioned<P>,
         cube: Space,
         batch_axes: Vec<Axis>,
         rows_kind: MatmulRowsKind,
     ) -> Self {
-        let axes_kind = MatmulAxesKind::of(partitioning.space());
+        let axes_kind = MatmulAxesKind::of(partitioning.as_tile().space());
         Self {
             partitioning,
             cube,
@@ -44,26 +46,43 @@ impl MatmulPartitioning {
             axes_kind,
         }
     }
+}
 
-    /// `partitioning`, its cubes each handed the box its cube level cuts.
+impl<P: Clone> MatmulPartitioning<P> {
+    /// This partitioning, its cubes each covering `cube` instead: a box the routine sizes itself,
+    /// such as a cube's run of a line.
+    pub fn covering(&self, cube: Space) -> Self {
+        Self {
+            cube,
+            ..self.clone()
+        }
+    }
+}
+
+impl<P: Partition> MatmulPartitioning<P> {
+    /// `partitioning`, its cubes each handed the box its cube level cuts: a cube owns a box, or
+    /// shares the line of every box's steps.
     pub fn of_cubes(
-        partitioning: Partitioning,
+        partitioning: Partitioned<P>,
         batch_axes: Vec<Axis>,
         rows_kind: MatmulRowsKind,
     ) -> Self {
-        let cube = partitioning.box_of(ComputeScope::Cube);
+        let cube = partitioning.as_tile().box_of(ComputeScope::Cube);
         Self::new(partitioning, cube, batch_axes, rows_kind)
     }
+}
 
-    /// `partitioning`, whose outermost level spans the launch's planes in `order`: a cube's box is
-    /// one block of that order, a plane's box wider by the tiles the block holds along each axis.
+impl MatmulPartitioning<LaunchPlanes> {
+    /// `partitioning`, whose outermost level spans the launch's planes in its partition's order: a
+    /// cube's box is one block of that order, a plane's box wider by the tiles the block holds
+    /// along each axis.
     pub fn of_launch_planes(
-        partitioning: Partitioning,
-        order: &PlaneOrder,
+        partitioning: Partitioned<LaunchPlanes>,
         batch_axes: Vec<Axis>,
         rows_kind: MatmulRowsKind,
     ) -> Self {
-        let plane = partitioning.box_of(ComputeScope::Plane);
+        let order = &partitioning.partition().order;
+        let plane = partitioning.owner_box();
         let cube = Space::new(
             &plane
                 .extents()
@@ -73,7 +92,19 @@ impl MatmulPartitioning {
         );
         Self::new(partitioning, cube, batch_axes, rows_kind)
     }
+}
 
+impl MatmulPartitioning<CubeBoxes> {
+    /// The order the cubes take their boxes in.
+    pub fn cube_order(&self) -> CubeOrder {
+        self.as_tile()
+            .level_distributed(ComputeScope::Cube)
+            .expect("a cube a box is distributed at the cube level")
+            .order()
+    }
+}
+
+impl<P> MatmulPartitioning<P> {
     /// How the launch it places reads the rows.
     pub fn rows_kind(&self) -> MatmulRowsKind {
         self.rows_kind
@@ -105,21 +136,21 @@ impl MatmulPartitioning {
                 .collect(),
             MatmulAxesKind::BlockSplit => {
                 let rows_free = self.rows_kind.dynamic_axes().contains(&M)
-                    && self.partitioning.space().extent(MB) == 1
+                    && self.as_tile().space().extent(MB) == 1
                     && !compiled.contains(&MI);
                 rows_free.then_some(MI).into_iter().collect()
             }
         };
         Partitioning::new(
             self.compiled_space().with_dynamic(&dynamic),
-            self.partitioning.levels().to_vec(),
+            self.as_tile().levels().to_vec(),
         )
     }
 
     /// The space a kernel states before any extent is freed: the problem's, its rows the ones a
     /// cube's box holds where every row is held whole.
     fn compiled_space(&self) -> Space {
-        let space = self.partitioning.space();
+        let space = self.as_tile().space();
         match self.rows_kind {
             MatmulRowsKind::Tiled => space.clone(),
             MatmulRowsKind::Whole => {
@@ -185,62 +216,24 @@ impl MatmulPartitioning {
 
     /// Boxes of the output the cubes cover along `m` and along `n`, one batch of it.
     pub fn cubes(&self) -> (usize, usize) {
-        let (space, cube) = (self.partitioning.space(), self.cube.clone());
+        let (space, cube) = (self.as_tile().space(), self.cube.clone());
         let boxes = |axis| space.extent(axis).div_ceil(cube.extent(axis));
         (boxes(M), boxes(N))
     }
 
-    /// The order the cubes take their boxes in: where the planes span the launch, the order its
-    /// blocks are taken in.
-    pub fn cube_order(&self) -> CubeOrder {
-        match self.partitioning.levels()[0].plane_order() {
-            Some(order) => order.block_order(),
-            None => self
-                .partitioning
-                .level_distributed(ComputeScope::Cube)
-                .expect("every matmul partitioning hands its cubes a box or its planes the launch")
-                .order(),
-        }
-    }
-
-    /// The box one step of the walk through `K` covers: what a staged routine or microkernel
-    /// stages at once. The walk is the first level inside the cubes that steps `K` in sequence
-    /// (its blocks, in a block-split space):
-    /// the cube's own, where it stages for all its planes, or each plane's, where the cube's
-    /// planes each stage their own.
-    ///
-    /// # Panics
-    ///
-    /// A partitioning that walks no `K` inside its cubes.
-    pub fn stage(&self) -> MatmulStage {
-        // Where the planes span the launch, the levels inside the outermost cut a plane's box.
-        let mut enclosing = match self.partitioning.levels()[0].plane_order() {
-            Some(_) => self.partitioning.box_of(ComputeScope::Plane),
-            None => self.cube.clone(),
-        };
-        for level in &self.partitioning.levels()[1..] {
-            let tile = level.child(&enclosing);
-            if level.coverage() == Coverage::Walk && level.tile(self.axes_kind.walked()).is_some() {
-                return MatmulStage::new(tile, self.axes_kind.stage_axes());
-            }
-            enclosing = tile;
-        }
-        panic!("the partitioning walks no `K` inside its cubes")
-    }
-
     /// The innermost box: what one instruction, or one unit's block, covers.
     pub fn leaf(&self) -> Space {
-        self.partitioning.leaf()
+        self.as_tile().leaf()
     }
 
     /// Whether the tiles overhang `axis`: a tile the problem's edge cuts short along it.
     pub fn overhangs(&self, axis: Axis) -> bool {
-        self.partitioning.overhangs(axis)
+        self.as_tile().overhangs(axis)
     }
 
     /// The problem's space: every axis at its extent, or dynamic where a launch states it.
     pub fn space(&self) -> &Space {
-        self.partitioning.space()
+        self.as_tile().space()
     }
 
     /// Whether the tiles overhang the output: a tile the output's edge cuts short, which a write
@@ -270,12 +263,39 @@ impl MatmulPartitioning {
     /// Tiles along `axis` a level distributes its units in turns, where one does
     /// ([`Partitioning::distributed`]).
     pub fn distributed(&self, axis: Axis) -> Option<usize> {
-        self.partitioning.distributed(axis)
+        self.as_tile().distributed(axis)
     }
 
     /// The tile DSL's partitioning, for what it reads of it: the launch and the binding.
     pub fn as_tile(&self) -> &Partitioning {
-        &self.partitioning
+        self.partitioning.as_tile()
+    }
+}
+
+impl<P: Partition> MatmulPartitioning<P> {
+    /// The box one step of the walk through `K` covers: what a staged routine or microkernel
+    /// stages at once. The walk is the first level inside the cubes that steps `K` in sequence
+    /// (its blocks, in a block-split space):
+    /// the cube's own, where it stages for all its planes, or each plane's, where the cube's
+    /// planes each stage their own.
+    ///
+    /// # Panics
+    ///
+    /// A partitioning that walks no `K` inside its cubes.
+    pub fn stage(&self) -> MatmulStage {
+        // Where the planes span the launch, the levels inside the outermost cut a plane's box.
+        let mut enclosing = match P::OWNER {
+            ComputeScope::Cube => self.cube.clone(),
+            owner => self.as_tile().box_of(owner),
+        };
+        for level in &self.as_tile().levels()[1..] {
+            let tile = level.child(&enclosing);
+            if level.coverage() == Coverage::Walk && level.tile(self.axes_kind.walked()).is_some() {
+                return MatmulStage::new(tile, self.axes_kind.stage_axes());
+            }
+            enclosing = tile;
+        }
+        panic!("the partitioning walks no `K` inside its cubes")
     }
 }
 
@@ -286,7 +306,7 @@ mod tests {
     use cubek_std::matmul_axes::{KB, KI};
 
     /// A packed product of `rows` in `row_blocks` blocks along `M`, its rows tiled.
-    fn packed(row_blocks: usize, rows: usize) -> MatmulPartitioning {
+    fn packed(row_blocks: usize, rows: usize) -> MatmulPartitioning<CubeBoxes> {
         let space = Space::new(&[
             (MB, row_blocks),
             (MI, rows),
@@ -301,7 +321,7 @@ mod tests {
             .batches(&[])
             .build();
         MatmulPartitioning::of_cubes(
-            Partitioning::new(space, levels),
+            Partitioned::new(Partitioning::new(space, levels), CubeBoxes),
             Vec::new(),
             MatmulRowsKind::Tiled,
         )

@@ -1,11 +1,7 @@
 use crate::kernels::MatmulPartitioning;
 use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem};
-use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::{
-    Axis, Levels, Partitioning, Space,
-    space::{ComputeScope, CubeOrder, PlaneOrder},
-};
+use cubecl::tile::{Axis, Levels, Partitioning, Space, space::CubeOrder};
 use cubek_microkernel::matmul::{
     MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulReading,
     MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
@@ -13,7 +9,8 @@ use cubek_microkernel::matmul::{
 use cubek_std::Hardware;
 use cubek_std::config::MatmulConfig;
 use cubek_std::layout::stored::Operand;
-use cubek_std::matmul_axes::{K, M, N, blocked};
+use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::routine::{CubeBoxes, CubeLine, LaunchPlanes, Partitioned};
 
 /// What a launch holding every row whole declines whatever the device: an lhs or an output
 /// that does not hold every batch, whose batches no merge makes rows of one matrix.
@@ -54,9 +51,6 @@ pub struct MatmulView<'a> {
 }
 
 impl<'a> MatmulView<'a> {
-    /// One cube a box of the output: the count every routine but the hypercube's distributes.
-    pub const ONE_CUBE_A_BOX: NonZeroUsize = NonZeroUsize::MIN;
-
     /// Why a problem a routine prepared has a view: `prepare` derives it first and declines what
     /// has none, so `estimate`, `time` and the launch read one that exists. Handing them a problem
     /// `prepare` declined panics with it.
@@ -119,115 +113,65 @@ impl<'a> MatmulView<'a> {
         self.read().rows
     }
 
-    /// The problem partitioned with `inside` a cube's box, the cubes cutting `axes` and taking
-    /// their boxes in `order`, and `cubes_along_k` of them sharing every box
-    /// ([`ONE_CUBE_A_BOX`](Self::ONE_CUBE_A_BOX) for a box to itself), each taking a run of its `K`
-    /// walk (the tile DSL's [`Levels::across`]). A box's cubes ride the grid's third dimension
-    /// beside the batches, so an order still strips the first two. Where every row is held whole,
-    /// `inside` holds them all and there are no batches left to distribute, so the cubes cut only
-    /// the columns.
-    ///
-    /// The count is the one asked for, whatever the walk: it is part of what a kernel compiles, and
-    /// one fitted to each problem's steps would compile a kernel per `K`. The tile DSL distributes
-    /// each cube the walk's steps over the count rounded up, so where the count does not divide the
-    /// steps the trailing cubes' runs come up short or empty; an empty one sums nothing and skips
-    /// its drain.
-    pub fn partitioning(
+    /// The problem partitioned with `inside` a cube's box, a cube a box, the cubes cutting `axes`
+    /// and taking their boxes in `order`. Where every row is held whole, `inside` holds them all
+    /// and there are no batches left to distribute, so the cubes cut only the columns.
+    pub fn cube_boxes(
         &self,
         inside: Levels,
         axes: &[Axis],
         order: CubeOrder,
-        cubes_along_k: NonZeroUsize,
-    ) -> MatmulPartitioning {
-        let distributed_batch_axes = self.distributed_batch_axes();
-        let walked = self.walked();
-        let cubes = match cubes_along_k.get() {
-            1 => inside.cubes(axes),
-            cubes => inside
-                .cubes(&[axes, &[walked]].concat())
-                .across(walked, cubes),
-        };
-        let levels = cubes
-            .ordered(order)
-            .batches(&distributed_batch_axes)
-            .build();
-        let partitioning = Partitioning::new(self.space(), levels);
-        let tile = self.one_slab(partitioning.box_of(ComputeScope::Cube));
-        let cube = match cubes_along_k.get() {
-            1 => tile,
-            // The cube level's own tile is one step of the walked axis where cubes share a box,
-            // distributed in runs: the box states the run, as long as the longest cube's.
-            cubes => {
-                let step = tile.extent(walked);
-                let run = self
-                    .space()
-                    .extent(walked)
-                    .div_ceil(step)
-                    .max(1)
-                    .div_ceil(cubes)
-                    * step;
-                Space::new(
-                    &tile
-                        .extents()
-                        .into_iter()
-                        .map(|(axis, extent)| (axis, if axis == walked { run } else { extent }))
-                        .collect::<Vec<_>>(),
-                )
-            }
-        };
-        MatmulPartitioning::new(partitioning, cube, distributed_batch_axes, self.rows_kind)
-    }
-
-    /// The axis a cube's run of `K` walks: `K`, or the blocks a block-split space states it in,
-    /// so cubes sharing a box each take whole blocks under their scales.
-    fn walked(&self) -> Axis {
-        match self.blocks() {
-            None => K,
-            Some(_) => blocked(K).0,
-        }
-    }
-
-    /// The problem partitioned with `inside` a plane's box, every box `axes` cut a plane of the
-    /// launch's, the planes taking them in `order`: what a routine whose planes share nothing
-    /// launches, which cube holds a plane being the launch's grouping alone. The batches ride
-    /// outermost, each plane one batch's box. A cube's box is a block's of the order.
-    pub fn plane_partitioning(
-        &self,
-        inside: Levels,
-        axes: &[Axis],
-        order: PlaneOrder,
-    ) -> MatmulPartitioning {
-        let distributed_batch_axes = self.distributed_batch_axes();
-        let levels = inside
-            .launch_planes(&[axes, &distributed_batch_axes].concat(), order.clone())
-            .build();
-        MatmulPartitioning::of_launch_planes(
-            Partitioning::new(self.space(), levels),
-            &order,
-            distributed_batch_axes,
-            self.rows_kind,
-        )
-    }
-
-    /// The problem partitioned with `inside` a cube's box, the cubes cutting `axes`, every box's
-    /// steps of `K` laid end to end and shared between `cubes` cubes, each taking a run of them
-    /// that may start inside one box and end inside another (the tile DSL's [`Levels::shared_by`]).
-    /// A cube's box holds the whole of `K`. The runs follow the boxes in the order of the line, so
-    /// no cube order applies.
-    pub fn shared_partitioning(
-        &self,
-        inside: Levels,
-        axes: &[Axis],
-        cubes: NonZeroUsize,
-    ) -> MatmulPartitioning {
+    ) -> MatmulPartitioning<CubeBoxes> {
         let distributed_batch_axes = self.distributed_batch_axes();
         let levels = inside
             .cubes(axes)
-            .shared_by(cubes.get())
+            .ordered(order)
+            .batches(&distributed_batch_axes)
+            .build();
+        let partitioning = Partitioned::new(Partitioning::new(self.space(), levels), CubeBoxes);
+        let cube = self.one_slab(partitioning.owner_box());
+        MatmulPartitioning::new(partitioning, cube, distributed_batch_axes, self.rows_kind)
+    }
+
+    /// The problem partitioned with `inside` a plane's box, every box `axes` cut a plane of the
+    /// launch's, the planes taking them as `partition` orders them: what a routine whose planes
+    /// share nothing launches, which cube holds a plane being the launch's grouping alone. The
+    /// batches ride outermost, each plane one batch's box. A cube's box is a block's of the order.
+    pub fn launch_planes(
+        &self,
+        inside: Levels,
+        axes: &[Axis],
+        partition: LaunchPlanes,
+    ) -> MatmulPartitioning<LaunchPlanes> {
+        let distributed_batch_axes = self.distributed_batch_axes();
+        let partitioning = Partitioned::launch_planes(
+            self.space(),
+            inside,
+            &[axes, &distributed_batch_axes].concat(),
+            partition,
+        );
+        MatmulPartitioning::of_launch_planes(partitioning, distributed_batch_axes, self.rows_kind)
+    }
+
+    /// The problem partitioned with `inside` a cube's box, the cubes cutting `axes`, every box's
+    /// steps of `K` laid end to end and shared between the cubes of `line`, each taking a run of
+    /// them that may start inside one box and end inside another (the tile DSL's
+    /// [`Levels::shared_by`]). A cube's box holds the whole of `K`. The runs follow the boxes in
+    /// the order of the line, so no cube order applies.
+    pub fn cube_line(
+        &self,
+        inside: Levels,
+        axes: &[Axis],
+        line: CubeLine,
+    ) -> MatmulPartitioning<CubeLine> {
+        let distributed_batch_axes = self.distributed_batch_axes();
+        let levels = inside
+            .cubes(axes)
+            .shared_by(line.cubes.get())
             .batches(&distributed_batch_axes)
             .build();
         MatmulPartitioning::of_cubes(
-            Partitioning::new(self.space(), levels),
+            Partitioned::new(Partitioning::new(self.space(), levels), line),
             distributed_batch_axes,
             self.rows_kind,
         )
@@ -470,11 +414,10 @@ mod tests {
         let kernel = |rows_kind| {
             MatmulView::new(&problem, rows_kind)
                 .expect("a shared rhs merges")
-                .partitioning(
+                .cube_boxes(
                     Levels::leaf(&[(M, 2), (N, 16), (K, 16)]),
                     &[M, N],
                     CubeOrder::RowMajor,
-                    MatmulView::ONE_CUBE_A_BOX,
                 )
                 .kernel()
         };
@@ -503,11 +446,10 @@ mod tests {
             let MatmulRows::Whole(held) = view.work_item().rows else {
                 unreachable!("a launch holding every row whole holds a count of them")
             };
-            view.partitioning(
+            view.cube_boxes(
                 Levels::leaf(&[(M, held), (N, 16), (K, 16)]),
                 &[M, N],
                 CubeOrder::RowMajor,
-                MatmulView::ONE_CUBE_A_BOX,
             )
             .kernel()
         };
@@ -569,11 +511,10 @@ mod tests {
             ..routed()
         };
         let view = MatmulView::new(&problem, MatmulRowsKind::Tiled).unwrap();
-        let partitioning = view.partitioning(
+        let partitioning = view.cube_boxes(
             Levels::leaf(&[(M, 16), (N, 16), (K, 16)]),
             &[M, N],
             CubeOrder::RowMajor,
-            MatmulView::ONE_CUBE_A_BOX,
         );
         assert_eq!(view.space().extent(EXPERT), 4);
         assert_eq!(partitioning.cube_space().extent(EXPERT), 1);

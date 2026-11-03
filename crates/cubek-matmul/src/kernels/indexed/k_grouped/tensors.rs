@@ -99,7 +99,7 @@ impl KGroupedMatmulTensors {
     /// # Errors
     ///
     /// Why `hw` cannot run the product at these settings, or why the routine declines a table.
-    pub fn launch<Mk, SM, R>(
+    pub fn launch<Mk, P, SM, R>(
         &self,
         hw: &Hardware,
         routine: &R,
@@ -107,7 +107,7 @@ impl KGroupedMatmulTensors {
     ) -> Result<TensorHandle, Refusal>
     where
         Mk: MatmulMicrokernel,
-        R: MatmulRoutine<Mk, SM>,
+        R: MatmulRoutine<Mk, P, SM>,
     {
         let shape = self.output_shape();
         let elem = self.lhs.elem;

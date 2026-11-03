@@ -548,9 +548,9 @@ impl MatmulTensors {
 
     /// The three operands bound as `blueprint` states them, on `grid`: under its partitioning, at
     /// its widths, the output its buffer.
-    pub fn bind<Mk: MatmulMicrokernel, SM>(
+    pub fn bind<Mk: MatmulMicrokernel, P, SM>(
         &self,
-        blueprint: &MatmulBlueprint<Mk, SM>,
+        blueprint: &MatmulBlueprint<Mk, P, SM>,
         grid: &Grid,
     ) -> MatmulBinding<Bound, TileArgLaunch, TileArgLaunch> {
         match (&self.lhs, &self.rhs) {
@@ -562,11 +562,11 @@ impl MatmulTensors {
     }
 
     /// The operands bound as float ones, each read in the order its microkernel reads it.
-    fn bind_float<Mk: MatmulMicrokernel, SM>(
+    fn bind_float<Mk: MatmulMicrokernel, P, SM>(
         &self,
         lhs: &PlainTensor,
         rhs: &PlainTensor,
-        blueprint: &MatmulBlueprint<Mk, SM>,
+        blueprint: &MatmulBlueprint<Mk, P, SM>,
         grid: &Grid,
     ) -> MatmulBinding<Bound, TileArgLaunch, TileArgLaunch> {
         let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid);
@@ -590,9 +590,9 @@ impl MatmulTensors {
 
     /// The operands bound where either input is packed, the output restated over the block-split
     /// space.
-    fn bind_packed<Mk: MatmulMicrokernel, SM>(
+    fn bind_packed<Mk: MatmulMicrokernel, P, SM>(
         &self,
-        blueprint: &MatmulBlueprint<Mk, SM>,
+        blueprint: &MatmulBlueprint<Mk, P, SM>,
         grid: &Grid,
     ) -> MatmulBinding<Bound, TileArgLaunch, TileArgLaunch> {
         let launcher = self.packed_launcher(blueprint, grid);
@@ -674,9 +674,9 @@ impl MatmulTensors<Geometry> {
     /// The three operands bound as `blueprint` states them, on `grid`, the output derived over the
     /// sink's layout rather than a buffer: its spec, and the geometry the derivation settled, which
     /// the caller's sink addresses through.
-    pub fn bind<Mk: MatmulMicrokernel, SM>(
+    pub fn bind<Mk: MatmulMicrokernel, P, SM>(
         &self,
-        blueprint: &MatmulBlueprint<Mk, SM>,
+        blueprint: &MatmulBlueprint<Mk, P, SM>,
         grid: &Grid,
     ) -> MatmulBinding<Unbound, TileArgLaunch, TileArgLaunch> {
         match (&self.lhs, &self.rhs) {
@@ -688,11 +688,11 @@ impl MatmulTensors<Geometry> {
     }
 
     /// The operands bound as float ones, each read in the order its microkernel reads it.
-    fn bind_float<Mk: MatmulMicrokernel, SM>(
+    fn bind_float<Mk: MatmulMicrokernel, P, SM>(
         &self,
         lhs: &PlainTensor,
         rhs: &PlainTensor,
-        blueprint: &MatmulBlueprint<Mk, SM>,
+        blueprint: &MatmulBlueprint<Mk, P, SM>,
         grid: &Grid,
     ) -> MatmulBinding<Unbound, TileArgLaunch, TileArgLaunch> {
         let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid);
@@ -717,9 +717,9 @@ impl MatmulTensors<Geometry> {
     /// The operands bound where either input is packed, the output stated as a buffer output is
     /// ([`MatmulBlocks::restated`]): a dim for each axis of the block-split space, each at its own
     /// stride over the sink's dense rows.
-    fn bind_packed<Mk: MatmulMicrokernel, SM>(
+    fn bind_packed<Mk: MatmulMicrokernel, P, SM>(
         &self,
-        blueprint: &MatmulBlueprint<Mk, SM>,
+        blueprint: &MatmulBlueprint<Mk, P, SM>,
         grid: &Grid,
     ) -> MatmulBinding<Unbound, TileArgLaunch, TileArgLaunch> {
         let launcher = self.packed_launcher(blueprint, grid);
@@ -945,9 +945,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// The launcher over the blueprint's partitioning, as its kernel compiles it: the blocks in,
     /// and the rows inside the one block along `M` read at launch where they are tiled and no
     /// packed input's scales vary along them ([`MatmulBlocks::scaled_axes`]).
-    fn packed_launcher<Mk, SM>(
+    fn packed_launcher<Mk, P, SM>(
         &self,
-        blueprint: &MatmulBlueprint<Mk, SM>,
+        blueprint: &MatmulBlueprint<Mk, P, SM>,
         grid: &Grid,
     ) -> Launcher {
         grid.launcher(self.client(), || {
@@ -974,10 +974,10 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// its scales, each float one restated over the block-split space, each moved into the stages
     /// as the microkernel says ([`delivery`](MatmulMicrokernel::delivery),
     /// [`words_delivery`](MatmulMicrokernel::words_delivery)).
-    fn bind_packed_inputs<Mk: MatmulMicrokernel, SM, O>(
+    fn bind_packed_inputs<Mk: MatmulMicrokernel, P, SM, O>(
         &self,
         launcher: Launcher,
-        blueprint: &MatmulBlueprint<Mk, SM>,
+        blueprint: &MatmulBlueprint<Mk, P, SM>,
         out: O,
     ) -> MatmulBinding<O, TileArgLaunch, TileArgLaunch> {
         let blocks = self.blocks();
@@ -1201,9 +1201,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// On float tensors read for every row whole: only a launch tiling its rows shares its boxes'
     /// `K`. Packed ones merge their batches into the rows whatever the launch.
-    pub fn bind_last_arrival<Mk: MatmulMicrokernel, SM>(
+    pub fn bind_last_arrival<Mk: MatmulMicrokernel, P, SM>(
         &self,
-        blueprint: &MatmulBlueprint<Mk, SM>,
+        blueprint: &MatmulBlueprint<Mk, P, SM>,
         launcher: &Launcher,
     ) -> MatmulLastArrivalBinding {
         let partitioning = blueprint.partitioning.as_tile();
@@ -1254,11 +1254,11 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 
     /// The launcher `blueprint`'s partitioning launches on `grid`, and the lhs and the rhs bound
     /// under it, each reading the table where it is one of its readers.
-    fn bind_operands<Mk: MatmulMicrokernel, SM>(
+    fn bind_operands<Mk: MatmulMicrokernel, P, SM>(
         &self,
         lhs: &PlainTensor,
         rhs: &PlainTensor,
-        blueprint: &MatmulBlueprint<Mk, SM>,
+        blueprint: &MatmulBlueprint<Mk, P, SM>,
         grid: &Grid,
     ) -> (Launcher, [TileArgLaunch; 2]) {
         let partitioning = blueprint.partitioning.as_tile();

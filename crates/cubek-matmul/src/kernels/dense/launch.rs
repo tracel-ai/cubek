@@ -28,8 +28,8 @@ const ALLOCATED: &str = "a launch allocating its output hands it back";
 /// dispatches, and the launch around those is written once, here, whether the microkernel holds
 /// every row whole or tiles them, and however each input is stored: its kernel reads each input
 /// as the tile it is bound as. A routine declines a problem whose inputs it does not read.
-pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
-    Routine<Problem = MatmulRoutineProblem, Grid = Grid, Blueprint = MatmulBlueprint<M, SM>>
+pub trait MatmulRoutine<M: MatmulMicrokernel, P, SM = ()>:
+    Routine<Problem = MatmulRoutineProblem, Grid = Grid, Blueprint = MatmulBlueprint<M, P, SM>>
 {
     /// How the routine's cubes reach the output.
     const WRITE: MatmulCubeWrite = MatmulCubeWrite::Replace;
@@ -40,7 +40,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileArgLaunch, TileArgLaunch>,
-        blueprint: MatmulBlueprint<M, SM>,
+        blueprint: MatmulBlueprint<M, P, SM>,
         grid: Grid,
     );
 
@@ -49,7 +49,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     fn dispatch_into_buffer(
         &self,
         tensors: &MatmulTensors,
-        blueprint: MatmulBlueprint<M, SM>,
+        blueprint: MatmulBlueprint<M, P, SM>,
         grid: Grid,
     ) {
         let binding = tensors
@@ -94,7 +94,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         lhs: StoredTensor,
         rhs: StoredTensor,
         settings: &Self::Settings,
-    ) -> Result<MatmulSinkLaunch<Self, M, SM>, Refusal>
+    ) -> Result<MatmulSinkLaunch<Self, M, P, SM>, Refusal>
     where
         Self: Sized,
     {
@@ -202,21 +202,21 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
 ///
 /// A fused element-wise tail is one such sink: its block stores in lines of the width the kernel
 /// settled ([`SinkLaunch::width`]), so the caller plans it around this launch before binding it.
-pub struct MatmulSinkLaunch<R, M, SM = ()> {
+pub struct MatmulSinkLaunch<R, M, P, SM = ()> {
     routine: R,
     tensors: MatmulTensors<Geometry>,
-    blueprint: MatmulBlueprint<M, SM>,
+    blueprint: MatmulBlueprint<M, P, SM>,
     grid: Grid,
     binding: MatmulBinding<Unbound, TileArgLaunch, TileArgLaunch>,
 }
 
-impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, SM> {
+impl<R: MatmulRoutine<M, P, SM>, M: MatmulMicrokernel, P, SM> MatmulSinkLaunch<R, M, P, SM> {
     /// `tensors`' product on `routine`, launched as `blueprint` and `grid` state it, its operands
     /// bound now.
     pub fn new(
         routine: R,
         tensors: MatmulTensors<Geometry>,
-        blueprint: MatmulBlueprint<M, SM>,
+        blueprint: MatmulBlueprint<M, P, SM>,
         grid: Grid,
     ) -> Self {
         let binding = tensors.bind(&blueprint, &grid);
@@ -230,10 +230,11 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, S
     }
 }
 
-impl<R, M, SM> core::fmt::Debug for MatmulSinkLaunch<R, M, SM>
+impl<R, M, P, SM> core::fmt::Debug for MatmulSinkLaunch<R, M, P, SM>
 where
     R: core::fmt::Debug,
     M: core::fmt::Debug,
+    P: core::fmt::Debug,
     SM: core::fmt::Debug,
 {
     // The binding is left out: the tile DSL's `Launcher` is not `Debug`.
@@ -247,7 +248,9 @@ where
     }
 }
 
-impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> SinkLaunch for MatmulSinkLaunch<R, M, SM> {
+impl<R: MatmulRoutine<M, P, SM>, M: MatmulMicrokernel, P, SM> SinkLaunch
+    for MatmulSinkLaunch<R, M, P, SM>
+{
     fn width(&self) -> usize {
         self.blueprint.widths.out
     }

@@ -102,12 +102,12 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     /// Two float inputs, which the packed settings are not listed for, before compiling anything,
     /// what [`MatmulTensors::written_in`] declines, and why the routine cannot run the product at
     /// this setting.
-    pub fn launch<M: MatmulMicrokernel, SM>(
+    pub fn launch<M: MatmulMicrokernel, P, SM>(
         &self,
         call: MatmulCall,
     ) -> Result<MatmulProduct, String>
     where
-        R: MatmulRoutine<M, SM>,
+        R: MatmulRoutine<M, P, SM>,
     {
         if !call.is_packed() {
             return Err("listed for a packed input; both are float".into());
@@ -159,12 +159,12 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     ///
     /// A float lhs, which the candidate as stored serves; and every error of
     /// [`launch`](Self::launch).
-    pub fn launch_activation_decoded<M: MatmulMicrokernel, SM>(
+    pub fn launch_activation_decoded<M: MatmulMicrokernel, P, SM>(
         &self,
         call: MatmulCall,
     ) -> Result<MatmulProduct, String>
     where
-        R: MatmulRoutine<M, SM>,
+        R: MatmulRoutine<M, P, SM>,
     {
         if matches!(call.lhs.tensor, StoredTensor::Plain(_)) {
             return Err("the lhs is float: the candidate reading it as stored serves it".into());

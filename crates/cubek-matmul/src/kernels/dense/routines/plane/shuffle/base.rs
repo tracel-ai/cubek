@@ -15,7 +15,7 @@ use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{
-    CubeResources, EstimatedRoutine, Grid, ROUTINE_LISTS_NO_SETTING, Routine,
+    CubeResources, EstimatedRoutine, Grid, LaunchPlanes, ROUTINE_LISTS_NO_SETTING, Routine,
 };
 use cubek_std::selector::divisor_at_most;
 
@@ -62,7 +62,8 @@ impl core::fmt::Display for PlaneShuffleMatmulRoutineSettings {
     }
 }
 
-pub type PlaneShuffleMatmulRoutineBlueprint = MatmulBlueprint<PlaneShuffleMicrokernel>;
+pub type PlaneShuffleMatmulRoutineBlueprint =
+    MatmulBlueprint<PlaneShuffleMicrokernel, LaunchPlanes>;
 
 impl PlaneShuffleMatmulRoutine {
     /// The settings worth racing against a packed rhs: the lead
@@ -97,7 +98,7 @@ impl PlaneShuffleMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         microkernel: PlaneShuffleMicrokernel,
-        partitioning: MatmulPartitioning,
+        partitioning: MatmulPartitioning<LaunchPlanes>,
     ) -> Result<PlaneShuffleMatmulRoutineBlueprint, Refusal> {
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
@@ -206,10 +207,12 @@ impl PlaneShuffleMatmulRoutine {
         let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem)?;
         let microkernel =
             PlaneShuffleMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
-        let partitioning = view.plane_partitioning(
+        let partitioning = view.launch_planes(
             microkernel.tiling(),
             &[M, N],
-            PlaneOrder::new(&[(N, settings.planes.get())], CubeOrder::RowMajor),
+            LaunchPlanes {
+                order: PlaneOrder::new(&[(N, settings.planes.get())], CubeOrder::RowMajor),
+            },
         );
         let blueprint = self.blueprint(hw, problem, microkernel, partitioning)?;
         let cube = CubeResources {
@@ -233,10 +236,12 @@ impl PlaneShuffleMatmulRoutine {
             columns,
             planes,
         } = PlaneShufflePackedPlacement::new(hw, problem, settings)?;
-        let partitioning = MatmulView::of::<PlaneShuffleMicrokernel>(problem)?.plane_partitioning(
+        let partitioning = MatmulView::of::<PlaneShuffleMicrokernel>(problem)?.launch_planes(
             microkernel.tiling(),
             &[columns],
-            PlaneOrder::new(&[(columns, planes)], CubeOrder::RowMajor),
+            LaunchPlanes {
+                order: PlaneOrder::new(&[(columns, planes)], CubeOrder::RowMajor),
+            },
         );
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
@@ -386,7 +391,7 @@ impl PlaneShuffleMatmulRoutine {
     fn vectorize(
         &self,
         microkernel: &PlaneShuffleMicrokernel,
-        _: &MatmulPartitioning,
+        _: &MatmulPartitioning<LaunchPlanes>,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
@@ -411,7 +416,7 @@ impl EstimatedRoutine for PlaneShuffleMatmulRoutine {
     }
 }
 
-impl MatmulRoutine<PlaneShuffleMicrokernel> for PlaneShuffleMatmulRoutine {
+impl MatmulRoutine<PlaneShuffleMicrokernel, LaunchPlanes> for PlaneShuffleMatmulRoutine {
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,

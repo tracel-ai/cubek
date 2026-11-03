@@ -31,12 +31,12 @@ fn product(lhs: &[i32], rhs: &[i32], [m, k, n]: [usize; 3]) -> Vec<i32> {
 
 /// Every setting `routine` lists, launched on an `m × k` by `k × n` product of `i32`: the ones
 /// that serve it write the exact product. How many served, so a caller can say a routine must.
-fn every_setting_is_exact<R, M: MatmulMicrokernel, SM: PartialEq + Clone + 'static>(
+fn every_setting_is_exact<R, M: MatmulMicrokernel, P, SM: PartialEq + Clone + 'static>(
     routine: R,
     [m, k, n]: [usize; 3],
 ) -> usize
 where
-    R: MatmulRoutine<M, SM> + Copy,
+    R: MatmulRoutine<M, P, SM> + Copy,
 {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);

@@ -7,6 +7,7 @@ use cubek_microkernel::matmul::hypercube::HypercubeStagedMicrokernel;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulWorkItem};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
+use cubek_std::routine::CubeLine;
 
 /// The blueprint of a hypercube routine whose cubes run `microkernel` on `item`, placed as
 /// `partitioning` places them and staging as `storage` lays the stages out. Over a float product,
@@ -19,9 +20,9 @@ pub(super) fn hypercube_blueprint(
     problem: &MatmulRoutineProblem,
     item: &MatmulWorkItem,
     microkernel: HypercubeStagedMicrokernel,
-    partitioning: MatmulPartitioning,
+    partitioning: MatmulPartitioning<CubeLine>,
     storage: StageStorage,
-) -> MatmulBlueprint<HypercubeStagedMicrokernel, StageStorage> {
+) -> MatmulBlueprint<HypercubeStagedMicrokernel, CubeLine, StageStorage> {
     match item.blocks {
         None => {
             assert_eq!(

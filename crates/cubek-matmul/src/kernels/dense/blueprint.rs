@@ -14,19 +14,19 @@ use cubek_std::matmul_axes::{K, N};
 /// One type for every routine, named per routine by an alias
 /// ([`UnitRegistersMatmulRoutineBlueprint`](crate::kernels::UnitRegistersMatmulRoutineBlueprint),
 /// [`PlaneShuffleMatmulRoutineBlueprint`](crate::kernels::PlaneShuffleMatmulRoutineBlueprint) and their
-/// siblings): what differs between them is the microkernel, and the shared memory only the
-/// routine that walks at that level decides. The order each operand binds in is the
+/// siblings): what differs between them is the microkernel `M`, the way `P` its boxes are handed
+/// out ([`Partition`](cubek_std::routine::Partition)), and the shared memory only the routine that walks at that level decides. The order each operand binds in is the
 /// microkernel's ([`MatmulMicrokernel::orders`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MatmulBlueprint<M, SM = ()> {
+pub struct MatmulBlueprint<M, P, SM = ()> {
     pub microkernel: M,
-    pub partitioning: MatmulPartitioning,
+    pub partitioning: MatmulPartitioning<P>,
     pub widths: MatmulOperands<usize>,
     /// How the routine lays out the shared memory its walk holds; `()` for one that holds none.
     pub shared_memory: SM,
 }
 
-impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
+impl<M: MatmulMicrokernel, P, SM> MatmulBlueprint<M, P, SM> {
     /// `microkernel` placed by `partitioning`, shared memory laid out as `shared_memory`: the
     /// blueprint once its widths are settled.
     ///
@@ -43,7 +43,7 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         microkernel: M,
-        partitioning: MatmulPartitioning,
+        partitioning: MatmulPartitioning<P>,
         mut vectorization: Vectorization<MatmulOperand>,
         shared_memory: SM,
     ) -> Self {
@@ -98,14 +98,14 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
     }
 }
 
-impl<M> MatmulBlueprint<M> {
+impl<M, P> MatmulBlueprint<M, P> {
     /// `microkernel` placed by `partitioning` for a product against an rhs packed as `rhs`
     /// says, each operand bound at the width the packing reads it at: a vector count of a float
     /// element means nothing for words. In values: the rhs's a whole read, every axis it spans,
     /// the lhs and the output that read's run along the axis they share with it, one value across
     /// it. A packed lhs is contracted in those runs too, whole words of it
     /// ([`MatmulView::check_steps`](crate::kernels::MatmulView::check_steps)).
-    pub fn packed(rhs: &Packing, microkernel: M, partitioning: MatmulPartitioning) -> Self {
+    pub fn packed(rhs: &Packing, microkernel: M, partitioning: MatmulPartitioning<P>) -> Self {
         let operand = &rhs.operand;
         let lined = operand.lined();
         let along = |axis| match lined == axis {

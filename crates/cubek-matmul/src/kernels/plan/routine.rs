@@ -1,4 +1,5 @@
 use super::MatmulCall;
+use crate::kernels::MatmulBlueprint;
 use crate::kernels::MatmulRoutine;
 use crate::kernels::MatmulTensors;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
@@ -8,25 +9,28 @@ use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::plan::{Declined, Plan, PlanTree};
 
+/// The blueprint a plan's routine prepares, held as a type only.
+type Prepares<M, P, SM> = fn() -> MatmulBlueprint<M, P, SM>;
+
 /// One routine as a plan: at the first of its settings that serves the product, or at one setting.
 ///
 /// A packed input is read as it is stored. A routine that does not read packed inputs declines
 /// them while it prepares, and one at a setting is listed for float products only.
-pub struct RoutinePlan<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM = ()> {
+pub struct RoutinePlan<R: MatmulRoutine<M, P, SM>, M: MatmulMicrokernel, P, SM = ()> {
     routine: R,
     name: &'static str,
     settings: Option<R::Settings>,
-    _microkernel: PhantomData<fn() -> (M, SM)>,
+    _blueprint: PhantomData<Prepares<M, P, SM>>,
 }
 
-impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> RoutinePlan<R, M, SM> {
+impl<R: MatmulRoutine<M, P, SM>, M: MatmulMicrokernel, P, SM> RoutinePlan<R, M, P, SM> {
     /// `routine`, named `name`, at the first of its settings that serves.
     pub fn first_served(routine: R, name: &'static str) -> Self {
         Self {
             routine,
             name,
             settings: None,
-            _microkernel: PhantomData,
+            _blueprint: PhantomData,
         }
     }
 
@@ -36,12 +40,12 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> RoutinePlan<R, M, SM> {
             routine,
             name,
             settings: Some(settings),
-            _microkernel: PhantomData,
+            _blueprint: PhantomData,
         }
     }
 }
 
-impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> RoutinePlan<R, M, SM> {
+impl<R: MatmulRoutine<M, P, SM>, M: MatmulMicrokernel, P, SM> RoutinePlan<R, M, P, SM> {
     /// The product into a buffer the launch allocates.
     fn launch_allocating(&self, call: &MatmulCall) -> Result<TensorHandle, Refusal> {
         let (hw, client) = (&call.hw, &call.client);
@@ -81,7 +85,9 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> RoutinePlan<R, M, SM> {
     }
 }
 
-impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> Plan<MatmulCall> for RoutinePlan<R, M, SM> {
+impl<R: MatmulRoutine<M, P, SM>, M: MatmulMicrokernel, P, SM> Plan<MatmulCall>
+    for RoutinePlan<R, M, P, SM>
+{
     type Output = TensorHandle;
 
     /// Into the call's destination where it has one. Otherwise a float product is written in its

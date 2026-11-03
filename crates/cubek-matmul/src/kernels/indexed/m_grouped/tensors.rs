@@ -160,7 +160,7 @@ impl MGroupedMatmulTensors {
     /// # Errors
     ///
     /// As [`launch`](Self::launch).
-    pub fn served_by<Mk, SM, R>(
+    pub fn served_by<Mk, P, SM, R>(
         &self,
         hw: &Hardware,
         routine: &R,
@@ -168,7 +168,7 @@ impl MGroupedMatmulTensors {
     ) -> Result<(), Refusal>
     where
         Mk: MatmulMicrokernel,
-        R: MatmulRoutine<Mk, SM>,
+        R: MatmulRoutine<Mk, P, SM>,
     {
         let rows = self.chunk_rows(hw, routine, settings)?;
         routine
@@ -188,7 +188,7 @@ impl MGroupedMatmulTensors {
     /// # Panics
     ///
     /// On no row: a layout holds one at least.
-    pub fn launch<Mk, SM, R>(
+    pub fn launch<Mk, P, SM, R>(
         &self,
         hw: &Hardware,
         routine: &R,
@@ -196,7 +196,7 @@ impl MGroupedMatmulTensors {
     ) -> Result<PaddedRows, Refusal>
     where
         Mk: MatmulMicrokernel,
-        R: MatmulRoutine<Mk, SM>,
+        R: MatmulRoutine<Mk, P, SM>,
     {
         assert!(
             self.source.rows() > 0,
@@ -248,7 +248,7 @@ impl MGroupedMatmulTensors {
     ///
     /// For the rows of a cube's tile, [`MATMUL_PACKED_UNREAD`] for a packed stack, and why `hw`
     /// cannot run the product at these settings.
-    fn chunk_rows<Mk, SM, R>(
+    fn chunk_rows<Mk, P, SM, R>(
         &self,
         hw: &Hardware,
         routine: &R,
@@ -256,7 +256,7 @@ impl MGroupedMatmulTensors {
     ) -> Result<usize, Refusal>
     where
         Mk: MatmulMicrokernel,
-        R: MatmulRoutine<Mk, SM>,
+        R: MatmulRoutine<Mk, P, SM>,
     {
         match settings.chunk {
             MGroupedChunk::Rows(rows) => Ok(rows.get()),
@@ -271,7 +271,7 @@ impl MGroupedMatmulTensors {
     ///
     /// [`MATMUL_PACKED_UNREAD`] for a packed stack, whose blocks the rows are not counted in, and
     /// why `hw` cannot run the product at these settings.
-    fn rows_a_cube_holds<Mk, SM, R>(
+    fn rows_a_cube_holds<Mk, P, SM, R>(
         &self,
         hw: &Hardware,
         routine: &R,
@@ -279,7 +279,7 @@ impl MGroupedMatmulTensors {
     ) -> Result<usize, Refusal>
     where
         Mk: MatmulMicrokernel,
-        R: MatmulRoutine<Mk, SM>,
+        R: MatmulRoutine<Mk, P, SM>,
     {
         if matches!(self.rhs, StoredTensor::Packed(_)) {
             return Err(MATMUL_PACKED_UNREAD);

@@ -13,7 +13,7 @@ use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStagingCoun
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, LaunchPlanes, Routine};
 use cubek_std::selector::divisor_at_most;
 
 /// `out = lhs · rhs` with every unit owning a block of the output. The floor of both tables: it
@@ -33,7 +33,7 @@ impl UnitRegistersMatmulRoutine {
 
     /// Blocks along `n` a plane's units take in turns under `partitioning`, as its units level
     /// states them.
-    fn blocks_per_plane(partitioning: &MatmulPartitioning) -> usize {
+    fn blocks_per_plane(partitioning: &MatmulPartitioning<LaunchPlanes>) -> usize {
         partitioning
             .distributed(N)
             .expect("the unit routine distributes its blocks to a plane's units")
@@ -70,7 +70,7 @@ impl UnitRegistersMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         microkernel: UnitRegistersMicrokernel,
-        partitioning: MatmulPartitioning,
+        partitioning: MatmulPartitioning<LaunchPlanes>,
     ) -> UnitRegistersMatmulRoutineBlueprint {
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
@@ -131,7 +131,8 @@ impl core::fmt::Display for UnitRegistersMatmulRoutineSettings {
     }
 }
 
-pub type UnitRegistersMatmulRoutineBlueprint = MatmulBlueprint<UnitRegistersMicrokernel>;
+pub type UnitRegistersMatmulRoutineBlueprint =
+    MatmulBlueprint<UnitRegistersMicrokernel, LaunchPlanes>;
 
 impl Routine for UnitRegistersMatmulRoutine {
     type Problem = MatmulRoutineProblem;
@@ -191,10 +192,12 @@ impl Routine for UnitRegistersMatmulRoutine {
             settings.microkernel.columns.get(),
             plane_width,
         );
-        let partitioning = view.plane_partitioning(
+        let partitioning = view.launch_planes(
             microkernel.tiling().units_distributed(N, blocks_per_plane),
             &[M, N],
-            PlaneOrder::new(&planes.counts(), settings.cube_order),
+            LaunchPlanes {
+                order: PlaneOrder::new(&planes.counts(), settings.cube_order),
+            },
         );
         let cube = CubeResources {
             plane_width,
@@ -212,7 +215,7 @@ impl UnitRegistersMatmulRoutine {
     fn vectorize(
         &self,
         microkernel: &UnitRegistersMicrokernel,
-        _: &MatmulPartitioning,
+        _: &MatmulPartitioning<LaunchPlanes>,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
@@ -261,7 +264,7 @@ impl EstimatedRoutine for UnitRegistersMatmulRoutine {
     }
 }
 
-impl MatmulRoutine<UnitRegistersMicrokernel> for UnitRegistersMatmulRoutine {
+impl MatmulRoutine<UnitRegistersMicrokernel, LaunchPlanes> for UnitRegistersMatmulRoutine {
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,

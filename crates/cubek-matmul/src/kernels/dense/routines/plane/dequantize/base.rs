@@ -17,7 +17,7 @@ use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeBoxes, CubeResources, EstimatedRoutine, Grid, Routine};
 
 /// A packed input decoded into a float one, in dense rows of the axis its words do not run along:
 /// the first launch of a product that then runs the float routine. It places the plane shuffle
@@ -31,7 +31,8 @@ use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlaneDequantizeMatmulRoutine;
 
-pub type PlaneDequantizeMatmulRoutineBlueprint = MatmulBlueprint<PlaneShuffleMicrokernel>;
+pub type PlaneDequantizeMatmulRoutineBlueprint =
+    MatmulBlueprint<PlaneShuffleMicrokernel, CubeBoxes>;
 
 impl PlaneDequantizeMatmulRoutine {
     /// The settings every decode runs at: the plane shuffle routine's lead. The decode is a copy,
@@ -153,11 +154,10 @@ impl Routine for PlaneDequantizeMatmulRoutine {
             planes,
         } = PlaneShufflePackedPlacement::new(hw, &alone, settings)?;
         let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
-        let partitioning = MatmulView::of::<PlaneShuffleMicrokernel>(&alone)?.partitioning(
+        let partitioning = MatmulView::of::<PlaneShuffleMicrokernel>(&alone)?.cube_boxes(
             microkernel.tiling().planes(&[(columns, planes)]),
             &[columns],
             CubeOrder::RowMajor,
-            MatmulView::ONE_CUBE_A_BOX,
         );
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,

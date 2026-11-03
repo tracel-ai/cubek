@@ -16,7 +16,7 @@ use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{
-    CubeResources, EstimatedRoutine, Grid, ROUTINE_LISTS_NO_SETTING, Routine,
+    CubeBoxes, CubeResources, EstimatedRoutine, Grid, ROUTINE_LISTS_NO_SETTING, Routine,
 };
 
 /// `out = lhs · rhs` with every cube owning every row of a run of the output's columns, and its
@@ -56,7 +56,7 @@ impl core::fmt::Display for CubeShuffleMatmulRoutineSettings {
     }
 }
 
-pub type CubeShuffleMatmulRoutineBlueprint = MatmulBlueprint<CubeShuffleMicrokernel>;
+pub type CubeShuffleMatmulRoutineBlueprint = MatmulBlueprint<CubeShuffleMicrokernel, CubeBoxes>;
 
 impl CubeShuffleMatmulRoutine {
     /// The settings worth racing against a packed rhs
@@ -173,12 +173,7 @@ impl CubeShuffleMatmulRoutine {
         let view = MatmulView::of::<CubeShuffleMicrokernel>(problem)?;
         let item = view.work_item();
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
-        let partitioning = view.partitioning(
-            microkernel.tiling(),
-            &[M, N],
-            CubeOrder::RowMajor,
-            MatmulView::ONE_CUBE_A_BOX,
-        );
+        let partitioning = view.cube_boxes(microkernel.tiling(), &[M, N], CubeOrder::RowMajor);
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
@@ -206,12 +201,7 @@ impl CubeShuffleMatmulRoutine {
         let item = view.work_item();
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
         let columns = microkernel.plane.column_axis();
-        let partitioning = view.partitioning(
-            microkernel.tiling(),
-            &[columns],
-            CubeOrder::RowMajor,
-            MatmulView::ONE_CUBE_A_BOX,
-        );
+        let partitioning = view.cube_boxes(microkernel.tiling(), &[columns], CubeOrder::RowMajor);
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
             shared_memory: microkernel.shared_memory(&item, partitioning.cells()),
@@ -284,7 +274,7 @@ impl CubeShuffleMatmulRoutine {
     fn vectorize(
         &self,
         microkernel: &CubeShuffleMicrokernel,
-        _: &MatmulPartitioning,
+        _: &MatmulPartitioning<CubeBoxes>,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
@@ -308,7 +298,7 @@ impl EstimatedRoutine for CubeShuffleMatmulRoutine {
     }
 }
 
-impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
+impl MatmulRoutine<CubeShuffleMicrokernel, CubeBoxes> for CubeShuffleMatmulRoutine {
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,

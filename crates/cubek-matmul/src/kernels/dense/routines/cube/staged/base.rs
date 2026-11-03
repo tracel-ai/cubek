@@ -28,7 +28,7 @@ use cubek_std::matmul_axes::{K, KB, KI, M, MI, N, NI};
 use cubek_std::microkernel::{
     CubeStaging, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
 };
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeBoxes, CubeResources, EstimatedRoutine, Grid, Routine};
 use cubek_std::{Hardware, UNIT_REGISTERS, block_scaled_for, block_scaled_mma};
 
 /// `out = lhs · rhs` with every cube owning a box of the output: it stages the box for its planes,
@@ -463,7 +463,7 @@ impl CubeStagedMatmulRoutine {
         problem: &MatmulRoutineProblem,
         item: &MatmulWorkItem,
         microkernel: CubeStagedMicrokernel,
-        partitioning: MatmulPartitioning,
+        partitioning: MatmulPartitioning<CubeBoxes>,
         storage: StageStorage,
     ) -> CubeStagedMatmulRoutineBlueprint {
         let mut vectorization = Vectorization::new();
@@ -491,7 +491,7 @@ impl CubeStagedMatmulRoutine {
         problem: &MatmulRoutineProblem,
         item: &MatmulWorkItem,
         mut microkernel: CubeStagedMicrokernel,
-        partitioning: MatmulPartitioning,
+        partitioning: MatmulPartitioning<CubeBoxes>,
         storage: StageStorage,
     ) -> CubeStagedMatmulRoutineBlueprint {
         let widths =
@@ -520,12 +520,12 @@ impl CubeStagedMatmulRoutine {
     /// [`decoded_width`](Self::decoded_width); every other input at a device's load of the element
     /// its planes contract it at, at most a block, a float one narrowed as its axes require
     /// ([`float_width_in_blocks`](Self::float_width_in_blocks)); the output one value wide.
-    pub(crate) fn widths_in_blocks(
+    pub(crate) fn widths_in_blocks<P>(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         item: &MatmulWorkItem,
         microkernel: &CubeStagedMicrokernel,
-        partitioning: &MatmulPartitioning,
+        partitioning: &MatmulPartitioning<P>,
         storage: &StageStorage,
     ) -> MatmulOperands<usize> {
         let block = partitioning.cube_space().extent(KI);
@@ -564,10 +564,10 @@ impl CubeStagedMatmulRoutine {
     /// owes its innermost one ([`MatmulBlueprint::new`]): its buffer's alignment and its start's,
     /// and, where the tiles overhang it, a width dividing its extent, the widest line the tile
     /// engine masks at an edge.
-    fn float_width_in_blocks(
+    fn float_width_in_blocks<P>(
         problem: &MatmulRoutineProblem,
         blocks: &MatmulBlocks,
-        partitioning: &MatmulPartitioning,
+        partitioning: &MatmulPartitioning<P>,
         operand: MatmulOperand,
         widest: usize,
     ) -> usize {
@@ -626,7 +626,8 @@ impl core::fmt::Display for CubeStagedMatmulRoutineSettings {
 
 /// The cube routine's blueprint: how a stage its microkernel walks holds its cells is the one
 /// layout of shared memory that depends on the problem; the rest is the microkernel's.
-pub type CubeStagedMatmulRoutineBlueprint = MatmulBlueprint<CubeStagedMicrokernel, StageStorage>;
+pub type CubeStagedMatmulRoutineBlueprint =
+    MatmulBlueprint<CubeStagedMicrokernel, CubeBoxes, StageStorage>;
 
 impl Routine for CubeStagedMatmulRoutine {
     type Problem = MatmulRoutineProblem;
@@ -697,19 +698,13 @@ impl Routine for CubeStagedMatmulRoutine {
             view.check_steps(hw)?;
         }
         let contracted = microkernel.contracted(&item);
-        let place = |tiling| {
-            view.partitioning(
-                tiling,
-                &[item.axes.m, item.axes.n],
-                settings.cube_order,
-                MatmulView::ONE_CUBE_A_BOX,
-            )
-        };
+        let place =
+            |tiling| view.cube_boxes(tiling, &[item.axes.m, item.axes.n], settings.cube_order);
         let resolved = microkernel.resolve(
             hw,
             &contracted,
             &problem.buffers(microkernel.plane.orders),
-            <Self as MatmulRoutine<CubeStagedMicrokernel, StageStorage>>::WRITE,
+            <Self as MatmulRoutine<CubeStagedMicrokernel, CubeBoxes, StageStorage>>::WRITE,
             &place(microkernel.tiling()).cube_space(),
         )?;
         let (microkernel, storage) = (resolved.microkernel, resolved.storage);
@@ -747,7 +742,7 @@ impl CubeStagedMatmulRoutine {
     fn vectorize(
         &self,
         microkernel: &CubeStagedMicrokernel,
-        partitioning: &MatmulPartitioning,
+        partitioning: &MatmulPartitioning<CubeBoxes>,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
         assert_eq!(
@@ -785,7 +780,7 @@ impl EstimatedRoutine for CubeStagedMatmulRoutine {
     }
 }
 
-impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedMatmulRoutine {
+impl MatmulRoutine<CubeStagedMicrokernel, CubeBoxes, StageStorage> for CubeStagedMatmulRoutine {
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,

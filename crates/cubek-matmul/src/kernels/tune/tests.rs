@@ -333,8 +333,9 @@ mod candidate {
         /// asks.
         fn assert_every_estimate_is_whole<
             M: MatmulMicrokernel,
+            P,
             SM,
-            R: MatmulRoutine<M, SM> + EstimatedRoutine,
+            R: MatmulRoutine<M, P, SM> + EstimatedRoutine,
         >(
             routine: R,
         ) {
@@ -404,7 +405,8 @@ mod candidate {
         /// problem asks.
         fn assert_every_estimate_is_whole<
             Mk: MatmulMicrokernel,
-            R: MatmulRoutine<Mk> + EstimatedRoutine,
+            P,
+            R: MatmulRoutine<Mk, P> + EstimatedRoutine,
         >(
             routine: R,
         ) {

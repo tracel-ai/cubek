@@ -66,12 +66,12 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     /// A packed input, which a float routine's settings are not listed for, what the tensors
     /// decline ([`MatmulTensors::writing_into`], [`MatmulTensors::new`]), and why the routine
     /// cannot run the product at this setting.
-    pub fn launch<M: MatmulMicrokernel, SM>(
+    pub fn launch<M: MatmulMicrokernel, P, SM>(
         &self,
         call: MatmulCall,
     ) -> Result<MatmulProduct, String>
     where
-        R: MatmulRoutine<M, SM>,
+        R: MatmulRoutine<M, P, SM>,
     {
         if call.is_packed() {
             return Err("listed for float inputs; an input is packed".into());
@@ -116,14 +116,14 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     }
 }
 
-impl<R, M: MatmulMicrokernel, SM> MatmulRoutineCandidate<R>
+impl<R, M: MatmulMicrokernel, P, SM> MatmulRoutineCandidate<R>
 where
-    R: Routine<Problem = MatmulRoutineProblem, Grid = Grid, Blueprint = MatmulBlueprint<M, SM>>,
+    R: Routine<Problem = MatmulRoutineProblem, Grid = Grid, Blueprint = MatmulBlueprint<M, P, SM>>,
 {
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// key names a packed input, which a float routine does not read, or the routine declines the
     /// problem on this device.
-    fn prepared(&self, key: &MatmulTuneKey) -> Option<(MatmulBlueprint<M, SM>, CubeDim)> {
+    fn prepared(&self, key: &MatmulTuneKey) -> Option<(MatmulBlueprint<M, P, SM>, CubeDim)> {
         match key.is_packed() {
             true => None,
             false => self.prepared_float(key),
@@ -132,7 +132,10 @@ where
 
     /// The launch this candidate prepares for the float product of `key`'s extents, whatever its
     /// packing: what a packed key's product becomes once its inputs are decoded.
-    pub fn prepared_float(&self, key: &MatmulTuneKey) -> Option<(MatmulBlueprint<M, SM>, CubeDim)> {
+    pub fn prepared_float(
+        &self,
+        key: &MatmulTuneKey,
+    ) -> Option<(MatmulBlueprint<M, P, SM>, CubeDim)> {
         let problem = MatmulRoutineProblem::from(&key.shape());
         let (blueprint, grid) = self
             .routine
@@ -146,7 +149,7 @@ where
     pub fn ranked(
         hw: &Hardware,
         key: &MatmulTuneKey,
-        prepared: Option<(MatmulBlueprint<M, SM>, CubeDim)>,
+        prepared: Option<(MatmulBlueprint<M, P, SM>, CubeDim)>,
     ) -> CandidatePriority {
         let Some((blueprint, _)) = prepared else {
             return CandidatePriority::LAST;
@@ -165,9 +168,10 @@ where
     }
 }
 
-impl<R, M: MatmulMicrokernel, SM: PartialEq> TuneCandidate for MatmulRoutineCandidate<R>
+impl<R, M: MatmulMicrokernel, P: PartialEq, SM: PartialEq> TuneCandidate
+    for MatmulRoutineCandidate<R>
 where
-    R: Routine<Problem = MatmulRoutineProblem, Grid = Grid, Blueprint = MatmulBlueprint<M, SM>>,
+    R: Routine<Problem = MatmulRoutineProblem, Grid = Grid, Blueprint = MatmulBlueprint<M, P, SM>>,
 {
     type Strategy = R::Settings;
     type Key = MatmulTuneKey;

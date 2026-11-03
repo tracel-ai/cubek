@@ -58,13 +58,13 @@ fn values(count: usize, seed: usize) -> Vec<f32> {
 /// Every setting of `routine` that prepares on this device, launched on the tensors `inputs`
 /// makes and checked against `expected`; at least one prepares, unless every setting asks for a
 /// cube larger than the device holds (the CPU runtime's few units), which skips the test.
-fn check_every_setting<M, SM, R>(
+fn check_every_setting<M, P, SM, R>(
     routine: R,
     inputs: impl Fn() -> (PlainTensor, PlainTensor, MatmulIndexTable),
     expected: &[f32],
 ) where
     M: MatmulMicrokernel,
-    R: MatmulRoutine<M, SM>,
+    R: MatmulRoutine<M, P, SM>,
 {
     check_settings(
         routine,
@@ -80,7 +80,7 @@ fn check_every_setting<M, SM, R>(
 
 /// [`check_every_setting`] over the settings `settings` names, on a stack that may be packed. The
 /// tolerance is relative to one or the element, so an `f16` output can ask for more than `f32`.
-fn check_settings<M, SM, R>(
+fn check_settings<M, P, SM, R>(
     routine: R,
     settings: impl Fn(&R, &Hardware) -> Vec<R::Settings>,
     inputs: impl Fn() -> (PlainTensor, StoredTensor, MatmulIndexTable),
@@ -88,7 +88,7 @@ fn check_settings<M, SM, R>(
     tolerance: f32,
 ) where
     M: MatmulMicrokernel,
-    R: MatmulRoutine<M, SM>,
+    R: MatmulRoutine<M, P, SM>,
 {
     let client = client();
     let hw = Hardware::from_client(&client);

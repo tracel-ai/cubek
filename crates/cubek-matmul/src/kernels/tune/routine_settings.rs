@@ -127,13 +127,13 @@ impl From<HypercubeLastArrivalMatmulRoutineSettings> for MatmulRoutineSettings {
 }
 
 /// `routine` at `settings` on `call`'s inputs, written in the element they make.
-fn launch<R, M, SM>(
+fn launch<R, M, P, SM>(
     routine: R,
     call: &MatmulCall,
     settings: &R::Settings,
 ) -> Result<TensorHandle, Refusal>
 where
-    R: MatmulRoutine<M, SM>,
+    R: MatmulRoutine<M, P, SM>,
     M: cubek_microkernel::matmul::MatmulMicrokernel,
 {
     routine.launch_on(
@@ -146,14 +146,14 @@ where
 }
 
 /// `routine` at `settings` on `call`'s inputs, prepared for a sink and handed to `visitor`.
-fn sink_launch<R, M, SM, V>(
+fn sink_launch<R, M, P, SM, V>(
     routine: R,
     call: &MatmulCall,
     settings: &R::Settings,
     visitor: V,
 ) -> V::Output
 where
-    R: MatmulRoutine<M, SM>,
+    R: MatmulRoutine<M, P, SM>,
     M: cubek_microkernel::matmul::MatmulMicrokernel,
     V: SinkLaunchVisitor,
 {

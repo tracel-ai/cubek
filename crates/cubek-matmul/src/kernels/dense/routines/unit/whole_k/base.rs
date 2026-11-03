@@ -13,7 +13,7 @@ use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, Routine};
+use cubek_std::routine::{CubeResources, EstimatedRoutine, Grid, LaunchPlanes, Routine};
 
 /// `out = lhs · rhs` with every unit owning every row of a run of the output's columns, walking all
 /// of `K` alone. The routine that does not stage on a device that commits to no plane width: a
@@ -24,7 +24,7 @@ pub struct UnitWholeKMatmulRoutine;
 impl UnitWholeKMatmulRoutine {
     /// Blocks along `n` a plane's units take in turns under `partitioning`, as its units level
     /// states them.
-    fn blocks_per_plane(partitioning: &MatmulPartitioning) -> usize {
+    fn blocks_per_plane(partitioning: &MatmulPartitioning<LaunchPlanes>) -> usize {
         partitioning
             .distributed(N)
             .expect("the unit whole-K routine distributes its blocks to a plane's units")
@@ -59,7 +59,7 @@ impl core::fmt::Display for UnitWholeKMatmulRoutineSettings {
     }
 }
 
-pub type UnitWholeKMatmulRoutineBlueprint = MatmulBlueprint<UnitWholeKMicrokernel>;
+pub type UnitWholeKMatmulRoutineBlueprint = MatmulBlueprint<UnitWholeKMicrokernel, LaunchPlanes>;
 
 impl Routine for UnitWholeKMatmulRoutine {
     type Problem = MatmulRoutineProblem;
@@ -111,12 +111,14 @@ impl Routine for UnitWholeKMatmulRoutine {
         let plane_width = (hw.properties.hardware.max_units_per_cube / planes as u32)
             .min(hw.dispatch_plane_size())
             .max(1);
-        let partitioning = view.plane_partitioning(
+        let partitioning = view.launch_planes(
             microkernel
                 .tiling()
                 .units_distributed(N, settings.blocks_per_plane.get()),
             &[M, N],
-            PlaneOrder::new(&[(N, planes)], CubeOrder::RowMajor),
+            LaunchPlanes {
+                order: PlaneOrder::new(&[(N, planes)], CubeOrder::RowMajor),
+            },
         );
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
@@ -138,7 +140,7 @@ impl UnitWholeKMatmulRoutine {
     fn vectorize(
         &self,
         microkernel: &UnitWholeKMicrokernel,
-        _: &MatmulPartitioning,
+        _: &MatmulPartitioning<LaunchPlanes>,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
@@ -189,7 +191,7 @@ impl EstimatedRoutine for UnitWholeKMatmulRoutine {
     }
 }
 
-impl MatmulRoutine<UnitWholeKMicrokernel> for UnitWholeKMatmulRoutine {
+impl MatmulRoutine<UnitWholeKMicrokernel, LaunchPlanes> for UnitWholeKMatmulRoutine {
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
