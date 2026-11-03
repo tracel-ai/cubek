@@ -3,7 +3,7 @@
 
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Levels, Partitioning, TileArg};
+use cubecl::tile::{Levels, Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::{G, S};
 
@@ -60,10 +60,10 @@ impl KeyHeads {
 /// group cover the same keys.
 #[cube(launch_unchecked)]
 pub fn cast_key_gradient_kernel(
-    key_sum: &TileArg<'_>,
-    value_sum: &TileArg<'_>,
-    key_gradient: &TileArg<'_>,
-    value_gradient: &TileArg<'_>,
+    key_sum: &TileTensor<'_>,
+    value_sum: &TileTensor<'_>,
+    key_gradient: &TileTensor<'_>,
+    value_gradient: &TileTensor<'_>,
     partitioning: Partitioning,
 ) {
     let (key_sum, value_sum) = (key_sum.tile(&partitioning), value_sum.tile(&partitioning));

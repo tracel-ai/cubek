@@ -1,6 +1,6 @@
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Output;
-use cubecl::tile::{Partitioning, Tile, TileArg};
+use cubecl::tile::{Partitioning, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::attention_backward::key_gradient::cube::{
@@ -16,14 +16,14 @@ use cubek_std::microkernel::StageRing;
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_staged_query_gradient_kernel<EA: Float, ES: Float>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out: &TileArg<'_>,
-    out_gradient: &TileArg<'_>,
-    logsumexp: &TileArg<'_>,
-    delta: &TileArg<'_>,
-    query_gradient: &TileArg<'_>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    out_gradient: &TileTensor<'_>,
+    logsumexp: &TileTensor<'_>,
+    delta: &TileTensor<'_>,
+    query_gradient: &TileTensor<'_>,
     queries: u32,
     keys: u32,
     scale: f32,
@@ -71,14 +71,14 @@ pub fn cube_staged_query_gradient_kernel<EA: Float, ES: Float>(
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_staged_key_gradient_kernel<EA: Float, ES: Float>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out_gradient: &TileArg<'_>,
-    logsumexp: &TileArg<'_>,
-    delta: &TileArg<'_>,
-    key_gradient: &TileArg<'_>,
-    value_gradient: &TileArg<'_>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out_gradient: &TileTensor<'_>,
+    logsumexp: &TileTensor<'_>,
+    delta: &TileTensor<'_>,
+    key_gradient: &TileTensor<'_>,
+    value_gradient: &TileTensor<'_>,
     queries: u32,
     keys: u32,
     scale: f32,
@@ -113,12 +113,12 @@ pub fn cube_staged_key_gradient_kernel<EA: Float, ES: Float>(
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_staged_key_gradient_sum_kernel<ES: Float>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out_gradient: &TileArg<'_>,
-    logsumexp: &TileArg<'_>,
-    delta: &TileArg<'_>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out_gradient: &TileTensor<'_>,
+    logsumexp: &TileTensor<'_>,
+    delta: &TileTensor<'_>,
     key_gradient: &Output<'_, f32>,
     value_gradient: &Output<'_, f32>,
     queries: u32,

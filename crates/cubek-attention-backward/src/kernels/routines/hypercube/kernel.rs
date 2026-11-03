@@ -1,6 +1,6 @@
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Output;
-use cubecl::tile::{Partitioning, Tile, TileArg};
+use cubecl::tile::{Partitioning, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::attention_backward::delta::plane::plane_delta_microkernel;
@@ -13,9 +13,9 @@ use cubek_std::microkernel::StageRing;
 /// Every plane of the launch writing its queries' dot product of the output with its gradient.
 #[cube(launch_unchecked)]
 pub fn plane_delta_kernel<EA: Float>(
-    out: &TileArg<'_>,
-    out_gradient: &TileArg<'_>,
-    delta: &TileArg<'_>,
+    out: &TileTensor<'_>,
+    out_gradient: &TileTensor<'_>,
+    delta: &TileTensor<'_>,
     partitioning: Partitioning,
     #[define(EA)] _sum: ElemType,
 ) {
@@ -33,14 +33,14 @@ pub fn plane_delta_kernel<EA: Float>(
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out_gradient: &TileArg<'_>,
-    logsumexp: &TileArg<'_>,
-    delta: &TileArg<'_>,
-    key_gradient: &TileArg<'_>,
-    value_gradient: &TileArg<'_>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out_gradient: &TileTensor<'_>,
+    logsumexp: &TileTensor<'_>,
+    delta: &TileTensor<'_>,
+    key_gradient: &TileTensor<'_>,
+    value_gradient: &TileTensor<'_>,
     query_gradient: &Output<'_, f32>,
     queries: u32,
     keys: u32,
@@ -77,12 +77,12 @@ pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_key_gradient_sum_kernel<ES: Float>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out_gradient: &TileArg<'_>,
-    logsumexp: &TileArg<'_>,
-    delta: &TileArg<'_>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out_gradient: &TileTensor<'_>,
+    logsumexp: &TileTensor<'_>,
+    delta: &TileTensor<'_>,
     key_gradient: &Output<'_, f32>,
     value_gradient: &Output<'_, f32>,
     query_gradient: &Output<'_, f32>,
@@ -170,8 +170,8 @@ fn hypercube_key_gradient_walks<EA: Float, ES: Float>(
 /// Every plane of the launch casting its queries' gradient out of the sum every cube added into.
 #[cube(launch_unchecked)]
 pub fn cast_query_gradient_kernel(
-    sum: &TileArg<'_>,
-    query_gradient: &TileArg<'_>,
+    sum: &TileTensor<'_>,
+    query_gradient: &TileTensor<'_>,
     partitioning: Partitioning,
 ) {
     let (sum, d_q) = (sum.tile(&partitioning), query_gradient.tile(&partitioning));
