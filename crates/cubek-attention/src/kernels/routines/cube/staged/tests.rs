@@ -9,7 +9,9 @@ mod fragment {
     use cubek_microkernel::matmul::cube::CubeStagedDelivery;
     use cubek_microkernel::matmul::plane::PlaneFragmentDepth;
 
-    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernelSettings;
+    use cubek_microkernel::attention::plane::{
+        BLOCK_ROW_BYTES, PlaneFragmentAttentionMicrokernelSettings,
+    };
     use cubek_std::routine::Routine;
     use cubek_std::{Hardware, devices};
 
@@ -218,8 +220,9 @@ mod fragment {
     /// A padded stage costs one chunk a row of its keys and values, and of the query staged beside
     /// them in the same layout, and a blocked one lays the same cells out at no cost: what the
     /// cube counts, so a layout that does not fit the device declines instead of overflowing.
-    /// Padded blocks of the instruction's tiles cost nothing either here: a tile's row of eight
-    /// `f16` is one chunk, which the tile DSL keeps in order.
+    /// Padded blocks cost one chunk a row of a block whose row spans more than one: a stage block
+    /// is a cache line wide along the keys' and values' dims, the query's an instruction's tile,
+    /// whose row of eight `f16` is one chunk the tile DSL keeps in order.
     #[test]
     fn a_padded_stage_costs_a_chunk_a_row() {
         let hw = offering(devices::m2_pro(), 8);
@@ -259,7 +262,32 @@ mod fragment {
             panic!("the routine runs plane fragments")
         };
         assert_eq!(plane.out_edge() * F16.size(), RowChunks::CHUNK_BYTES);
-        assert_eq!(bytes(StageLayout::PaddedBlocks), strided);
+        let block = plane.stage_tile();
+        let padded_block_rows: usize = stage
+            .iter()
+            .map(|operand| {
+                let (_, row) = *block
+                    .iter()
+                    .find(|(axis, _)| *axis == operand.innermost)
+                    .expect("a stage block spans every axis of the stage");
+                let dim = operand.space.extent(operand.innermost);
+                if operand.innermost != S {
+                    assert_eq!(
+                        row * F16.size(),
+                        BLOCK_ROW_BYTES.min(dim * F16.size()),
+                        "a block row spans a cache line, or its whole dim"
+                    );
+                }
+                match row * F16.size() > RowChunks::CHUNK_BYTES {
+                    true => operand.cells() / row,
+                    false => 0,
+                }
+            })
+            .sum();
+        assert_eq!(
+            bytes(StageLayout::PaddedBlocks),
+            strided + padded_block_rows * chunk
+        );
     }
 
     /// The copy engine fills a stage where the device has one and the ring lands the lines in
