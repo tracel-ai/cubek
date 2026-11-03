@@ -183,24 +183,39 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
                 // all the cube's keys ([`QueryGradientShare`]), which the planes split evenly.
                 let [(_, m), (_, n), (_, k)] = plane.score.instruction.shape();
                 let head_columns = PlaneKeyGradientMicrokernel::steps(head, n)?;
-                let (rows, keys) = match plane.holder() {
-                    ScoreHolder::Window => (plane.seq_q(), plane.seq_kv()),
+                // Held, the planes split the stage's part in a grid: as many ways along its rows
+                // as whole fragments of rows allow, the rest of them along the head dim.
+                let (rows, columns, keys) = match plane.holder() {
+                    ScoreHolder::Window => (plane.seq_q(), head_columns.get(), plane.seq_kv()),
                     ScoreHolder::Fragments => {
                         let planes = cube.plane_count();
-                        plane
-                            .seq_q()
-                            .is_multiple_of(planes)
-                            .then(|| (plane.seq_q() / planes, cube.seq_kv()))?
+                        let along_rows = (1..=planes).rev().find(|&ways| {
+                            planes.is_multiple_of(ways) && plane.seq_q().is_multiple_of(ways * m)
+                        })?;
+                        let along_columns = planes / along_rows;
+                        head_columns.get().is_multiple_of(along_columns).then(|| {
+                            (
+                                plane.seq_q() / along_rows,
+                                head_columns.get() / along_columns,
+                                cube.seq_kv(),
+                            )
+                        })?
                     }
                 };
                 let query_rows = PlaneKeyGradientMicrokernel::steps(rows, m)?;
+                let part_columns = NonZeroUsize::new(columns)?;
+                // A part of one fragment contracts at no grid level: the held contraction steps a
+                // grid of fragments.
+                if query_rows.get() * part_columns.get() == 1 {
+                    return None;
+                }
                 let key_steps = PlaneKeyGradientMicrokernel::steps(keys, k)?;
                 Some(Self {
                     cube,
                     query_gradient: PlaneKeyGradientMicrokernel::beside(
                         plane.score,
                         &query_item,
-                        (query_rows, head_columns, key_steps),
+                        (query_rows, part_columns, key_steps),
                     ),
                     settings: hypercube,
                 })

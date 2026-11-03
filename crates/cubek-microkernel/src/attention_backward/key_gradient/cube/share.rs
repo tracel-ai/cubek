@@ -1,4 +1,4 @@
-use crate::attention::{DV, Q, S};
+use crate::attention::{D, DV, Q, S};
 use crate::attention_backward::key_gradient::plane::PlaneKeyGradientMicrokernel;
 use crate::attention_backward::{ScoreWindows, scale_rows};
 use crate::matmul::MatmulOperands;
@@ -55,17 +55,32 @@ impl QueryGradientShare {
         #[comptime] planes: usize,
         #[comptime] rows: usize,
     ) {
-        let share = comptime!(rows / planes);
-        let own = comptime!(Level::every(&[(Q, share)]));
-        let at = plane.coord(S);
-        let sum = self.sum.at(stage);
-        let sum = sum.at(&sum.over(&own).region(at));
-        let score_gradient = score_gradient.at(&score_gradient.over(&own).region(at));
-        // The part is the plane's own, on the product's grid with no planes above it.
+        // The planes split the stage's part in a grid of the product's own shape: its rows along
+        // the stage's queries, its columns along the head dim, the plane's place in it its place
+        // along the keys.
         let product = comptime!(self.product);
+        let [(_, m), (_, n), _] = product.instruction.shape();
+        let (share, columns) = comptime!((
+            product.settings.along_m.get() * m,
+            product.settings.along_n.get() * n
+        ));
+        let sum = self.sum.at(stage);
+        let along_columns = comptime!(sum.space().extent(D) / columns);
+        comptime!(assert!(
+            rows == planes / along_columns * share,
+            "QueryGradientShare::add_rows: {planes} planes split {rows} rows by {share} and the \
+             head dim by {columns}"
+        ));
+        let at = plane.coord(S);
+        let (row, column) = (at / along_columns, at % along_columns);
+        let (own, run) = comptime!((Level::every(&[(Q, share)]), Level::every(&[(D, columns)])));
+        let sum = sum.at(&sum.over(&own).region(row));
+        let sum = sum.at(&sum.over(&run).region(column));
+        let score_gradient = score_gradient.at(&score_gradient.over(&own).region(row));
+        // The part is the plane's own, on the product's grid with no planes above it.
         let part = ScoreWindows::contract_held::<EA>(
             &score_gradient,
-            key,
+            &key.at(&key.over(&run).region(column)),
             comptime!(sum.space()),
             product,
             comptime!(PlaneKeyGradientMicrokernel::grid_levels(product, &[])),

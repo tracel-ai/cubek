@@ -178,3 +178,39 @@ fn every_held_hypercube_setting_masks_causally_over_several_stages_in_f16() {
         );
     }
 }
+
+/// Every held setting on eight planes on a head of 128, under a causal mask over several stages:
+/// eight planes split their share of the query's gradient along the head dim as well as along the
+/// stage's rows, which a narrow head leaves no room for. The host's reference at this head is
+/// slow, so the settings that never split are left to the narrow head's tests.
+#[test]
+fn every_held_hypercube_setting_splits_a_wide_head_in_f16() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let case = Case {
+        heads: 4,
+        seq_q: 150,
+        seq_kv: 150,
+        head_dim: 128,
+        val_dim: 128,
+        visibility: AttentionVisibility::Causal {
+            queries: QueryPlacement::Last,
+        },
+        ..CASE
+    };
+    let held = HypercubeAttentionBackwardRoutine
+        .settings(&hw)
+        .into_iter()
+        .filter(|settings| {
+            settings.key_gradient.holds_its_score()
+                && settings.key_gradient.cube.planes_along_keys.get() == 8
+        });
+    for settings in held {
+        Reference::run(
+            HypercubeAttentionBackwardRoutine,
+            case,
+            half::f16::elem_type_native(),
+            3e-2,
+            Some(settings),
+        );
+    }
+}
