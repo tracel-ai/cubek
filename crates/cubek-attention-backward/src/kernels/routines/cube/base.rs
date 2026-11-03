@@ -1,5 +1,6 @@
+use super::super::key_heads::{KeyHeads, cast_key_gradient_kernel};
 use super::kernel::{
-    cast_key_gradient_kernel, cube_staged_key_gradient_kernel, cube_staged_key_gradient_sum_kernel,
+    cube_staged_key_gradient_kernel, cube_staged_key_gradient_sum_kernel,
     cube_staged_query_gradient_kernel,
 };
 use crate::kernels::{
@@ -9,7 +10,6 @@ use crate::kernels::{
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::space::ComputeScope;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{B, G, KV, Q, S};
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
@@ -50,32 +50,6 @@ impl CubeStagedAttentionBackwardRoutineSettings {
         ring: StageRing::SINGLE,
         key_heads: KeyHeads::Together,
     };
-}
-
-/// What heads apart decline: a group of one head has none to set apart.
-const ONE_HEAD_A_GROUP: Refusal = Refusal::Declined {
-    why: "the key walk's heads apart need a group of more than one head",
-};
-
-/// How the key walk's cubes take the heads of a group, which all read the same keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum KeyHeads {
-    /// Each cube walks every head of the group in turn and writes its keys' gradients.
-    Together,
-    /// Each cube walks one head and adds its part of the keys' gradients into sums every cube of
-    /// the group adds into, cast once they are done. Under a causal mask the cube with the first
-    /// keys walks every query of every head; apart, its heads run side by side.
-    Apart,
-}
-
-/// Nothing for heads together, so the settings that hold it keep their names.
-impl core::fmt::Display for KeyHeads {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Together => Ok(()),
-            Self::Apart => write!(f, " key_heads=apart"),
-        }
-    }
 }
 
 impl core::fmt::Display for CubeStagedAttentionBackwardRoutineSettings {
@@ -200,14 +174,9 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
         };
         let query_partitioning =
             Partitioning::new(problem.space(), query_cubes.batches(&[B, KV]).build());
-        let key_cubes = match settings.key_heads {
-            KeyHeads::Together => key_gradient.tiling().cubes(&[S]),
-            KeyHeads::Apart if problem.group > 1 => key_gradient
-                .tiling()
-                .cubes(&[S, G])
-                .across(G, problem.group),
-            KeyHeads::Apart => return Err(ONE_HEAD_A_GROUP),
-        };
+        let key_cubes = settings
+            .key_heads
+            .cubes(key_gradient.tiling(), problem.group)?;
         let key_partitioning =
             Partitioning::new(problem.space(), key_cubes.batches(&[B, KV]).build());
         let (query_grid, query_ring) = WalkStages {
@@ -292,7 +261,7 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
         let binding = tensors.bind(&walk);
         // A cube holding fewer heads than the group's shares its keys with the group's other
         // cubes: they add into sums, cast once every cube is done.
-        let apart = walk.partitioning.box_of(ComputeScope::Cube).extent(G) < problem.group;
+        let apart = KeyHeads::apart_in(&walk.partitioning, problem.group);
         if !apart {
             let operands = binding.operands;
             // SAFETY: as the first walk's; each plane writes only its own keys' and values'

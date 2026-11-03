@@ -2,7 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::Output;
 use cubecl::tile::{Partitioning, Tile, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::attention::{AttentionVisibility, G, VisibleKeys};
+use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::attention_backward::key_gradient::cube::{
     CubeKeyGradientMicrokernel, cube_staged_key_gradient_microkernel,
 };
@@ -147,33 +147,6 @@ pub fn cube_staged_key_gradient_sum_kernel<ES: Float>(
         ring,
         visibility,
     );
-}
-
-/// Every plane of the launch whose cube took the first head of its group casting its keys' and
-/// values' gradients out of the sums every cube of the group added into: the other cubes of the
-/// group cover the same keys.
-#[cube(launch_unchecked)]
-pub fn cast_key_gradient_kernel(
-    key_sum: &TileArg<'_>,
-    value_sum: &TileArg<'_>,
-    key_gradient: &TileArg<'_>,
-    value_gradient: &TileArg<'_>,
-    partitioning: Partitioning,
-) {
-    let (key_sum, value_sum) = (key_sum.tile(&partitioning), value_sum.tile(&partitioning));
-    let (d_k, d_v) = (
-        key_gradient.tile(&partitioning),
-        value_gradient.tile(&partitioning),
-    );
-
-    for plane in &partitioning {
-        if plane.origin(G) == 0 {
-            let mut d_k = d_k.at(&plane);
-            d_k.copy_cast_from(&key_sum.at(&plane));
-            let mut d_v = d_v.at(&plane);
-            d_v.copy_cast_from(&value_sum.at(&plane));
-        }
-    }
 }
 
 /// Every cube's walk of its keys, the gradients written into `key_gradient` and
