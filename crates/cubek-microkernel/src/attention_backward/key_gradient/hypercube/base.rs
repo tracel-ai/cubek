@@ -225,8 +225,11 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
             out: Some(Operand::QueryGradient),
         }
         .restate(vectorization);
-        vectorization.require(VectorRequirement::Elementwise {
+        // A unit of a manual-mma fragment holds its cells in pairs along a row: the sum takes a
+        // pair at a time, one atomic add of both where the device adds vectors.
+        vectorization.require(VectorRequirement::Access {
             operand: Operand::QueryGradient,
+            elements: 2,
         });
     }
 
