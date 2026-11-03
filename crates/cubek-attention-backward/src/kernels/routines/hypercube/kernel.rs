@@ -23,7 +23,7 @@ pub fn plane_delta_kernel<EA: Float>(
     let delta = delta.tile(&partitioning);
 
     for plane in &partitioning {
-        plane_delta_microkernel::<EA>(&delta.at(&plane), &d_o.at(&plane), &o.at(&plane));
+        plane_delta_microkernel::<EA>(&plane, &delta.at(&plane), &d_o.at(&plane), &o.at(&plane));
     }
 }
 
