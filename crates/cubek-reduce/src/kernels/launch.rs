@@ -8,7 +8,7 @@ use cubek_std::routine::{Grid, Routine};
 /// A routine of this kind around microkernel `M`: it prepares a [`ReduceRoutineBlueprint`] and
 /// launches it on tensors.
 pub trait ReduceRoutine<M>:
-    Routine<Problem = ReduceRoutineProblem, Microkernel = M, Blueprint = ReduceRoutineBlueprint<M>>
+    Routine<Problem = ReduceRoutineProblem, Blueprint = ReduceRoutineBlueprint<M>>
 {
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`.
     fn dispatch(
