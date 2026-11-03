@@ -388,6 +388,29 @@ impl MatmulRoutineProblem {
         }
     }
 
+    /// Whether `operand`, bound in `order`, may be rows one element wide, more than one of them:
+    /// a `[k, 1]` rhs, or its `[m, 1]` output. Each row steps to the next by the one element it
+    /// holds, a stride no tensor map takes, while its alignment, which a dim of one element leaves
+    /// out, reads as the column it is.
+    ///
+    /// Read as stated, those are its columns. Read in its buffer's order, a col operand's two
+    /// dims swap only where its strides say the second is the coarser, which a dense `[k, 1]`
+    /// buffer, both strides one, does not: so either extent of one counts there.
+    pub fn rows_one_element_wide(&self, operand: MatmulOperand, order: BindingOrder) -> bool {
+        let [rows, columns] = match operand {
+            MatmulOperand::Lhs => [self.stated_rows, self.k],
+            MatmulOperand::Rhs => [self.k, self.n],
+            MatmulOperand::Out => [self.stated_rows, self.n],
+        };
+        let one_wide = |rows: usize, columns: usize| columns == 1 && rows > 1;
+        match (order, self.layouts.get(operand)) {
+            (BindingOrder::InBufferOrder, MatmulLayout::Col) => {
+                one_wide(rows, columns) || one_wide(columns, rows)
+            }
+            _ => one_wide(rows, columns),
+        }
+    }
+
     /// The element the product sums in, whatever it reads and writes: an integer product its own
     /// integer, which sums exactly, and a float one `f32`. An output its cubes add into is held in
     /// it too.
@@ -460,6 +483,14 @@ pub const MATMUL_INDEX_UNREAD: Refusal = Refusal::Declined {
 /// tensor map, addressing its tensor whole, does not.
 pub const MATMUL_INDEX_UNREAD_BY_TMA: Refusal = Refusal::Declined {
     why: "a tensor map reads no table; an indexed input is staged by the cube's units",
+};
+
+/// What a fill or a store the TMA engine moves declines: an operand of rows one element wide
+/// ([`rows_one_element_wide`](MatmulRoutineProblem::rows_one_element_wide)), whose rows a tensor
+/// map cannot step between, so the cube's units move them.
+pub const MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA: Refusal = Refusal::Declined {
+    why: "a tensor map steps between rows by whole 16-byte lines, and this operand's rows are one \
+          element wide; the cube's units move them",
 };
 
 /// What a launch over a packed input declines where its levels reach past the end of `K`: the
