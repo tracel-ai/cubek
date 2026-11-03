@@ -314,7 +314,6 @@ mod tests {
         let mut problem = walk(batch, positions, heads, 1);
         problem.state = GatedDeltaWalkStateLayout::Slots {
             slots: NonZeroUsize::new(slots).expect("a store holds a slot"),
-            kept: NonZeroUsize::MIN,
         };
         problem
     }

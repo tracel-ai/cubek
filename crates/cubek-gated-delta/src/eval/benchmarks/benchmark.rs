@@ -51,7 +51,7 @@ impl SlotRotation {
     fn new(client: &Client, spec: &GatedDeltaWalkSpec) -> Self {
         let tables = match spec.state {
             GatedDeltaWalkStateLayout::Owned { .. } => Vec::new(),
-            GatedDeltaWalkStateLayout::Slots { slots, .. } => (0..slots.get() / spec.batch)
+            GatedDeltaWalkStateLayout::Slots { slots } => (0..slots.get() / spec.batch)
                 .map(|turn| {
                     let rows: Vec<u32> = (0..spec.batch)
                         .map(|row| ((turn * spec.batch + row) % slots.get()) as u32)
@@ -111,15 +111,16 @@ impl Benchmark for GatedDeltaWalkBench {
         } = self.spec;
         let (b, t, kh, h) = (batch, positions, heads.key_heads, heads.value_heads());
         let state = match state {
-            GatedDeltaWalkStateLayout::Owned { .. } => {
-                GatedDeltaWalkStateInputs::Owned(self.uniform(
+            GatedDeltaWalkStateLayout::Owned { .. } => GatedDeltaWalkStateInputs::Owned {
+                state: self.uniform(
                     vec![b, h, heads.key_features, heads.value_features],
                     5,
                     -0.2,
                     0.2,
-                ))
-            }
-            GatedDeltaWalkStateLayout::Slots { slots, .. } => GatedDeltaWalkStateInputs::Slots {
+                ),
+                kept: NonZeroUsize::MIN,
+            },
+            GatedDeltaWalkStateLayout::Slots { slots } => GatedDeltaWalkStateInputs::Slots {
                 store: self.uniform(
                     vec![slots.get(), h, 1, heads.key_features * heads.value_features],
                     5,
@@ -139,7 +140,6 @@ impl Benchmark for GatedDeltaWalkBench {
             strength: self.uniform(vec![b, t, h], 4, 0.0, 1.0),
             state,
             output_element: f32::elem_type_native(),
-            kept: NonZeroUsize::MIN,
         }
     }
 

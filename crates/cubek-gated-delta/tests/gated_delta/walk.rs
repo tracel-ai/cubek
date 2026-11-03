@@ -233,12 +233,14 @@ impl Case {
             value: up(&[b, t, h, heads.value_features], &operands.value),
             decay: up(&[b, t, h], &operands.decay),
             strength: up(&[b, t, h], &operands.strength),
-            state: GatedDeltaWalkStateInputs::Owned(up(
-                &[b, h, heads.key_features, heads.value_features],
-                &operands.state,
-            )),
+            state: GatedDeltaWalkStateInputs::Owned {
+                state: up(
+                    &[b, h, heads.key_features, heads.value_features],
+                    &operands.state,
+                ),
+                kept: NonZeroUsize::new(self.kept).expect("a state is kept"),
+            },
             output_element: element,
-            kept: NonZeroUsize::new(self.kept).expect("a state is kept"),
         }
     }
 

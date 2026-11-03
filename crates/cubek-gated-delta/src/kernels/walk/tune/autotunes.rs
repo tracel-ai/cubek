@@ -2,9 +2,9 @@
 //!
 //! # A walk in a store's slots is measured on a scratch store
 //!
-//! It writes the states in place, so a round measures on a store of its own (`measured`), laid
-//! out as the call's: a round on the call's store would advance every live row's state once per
-//! candidate. A walk over states it owns is measured on the call's inputs.
+//! It writes the states in place, so a round measures on a store of its own (`measured`), one slot
+//! for each row it places: a round on the call's store would advance every live row's state once
+//! per candidate. A walk over states it owns is measured on the call's inputs.
 
 use crate::kernels::walk::tune::GatedDeltaWalkCandidate;
 use crate::kernels::walk::tune::key::GatedDeltaWalkKey;
@@ -72,12 +72,12 @@ pub fn launch_tuned(
     TUNER.execute(&id, &client, tunables, inputs)
 }
 
-/// Whether the table serves a layer of `heads` with the output written at `output_element` on
-/// `hw`, its states laid out as `state`: the inputs are `f32`, the output is a plain float the walk is verified at (a packed one is
-/// declined, for the caller to unpack) that the device runs, and the problem is admitted, which
-/// includes the floor preparing it at one sequence and one position. An `Ok` is the guarantee that
-/// [`launch_tuned`] runs the layer, whichever candidate wins, for as many sequences and positions
-/// as the device's grid holds.
+/// Whether the table serves a layer of `heads` with its states laid out as `state` and the output
+/// written at `output_element` on `hw`: the inputs are `f32`, the output is a plain float the walk
+/// is verified at (a packed one is declined, for the caller to unpack) that the device runs, and
+/// the problem is admitted, which includes the floor preparing it at one sequence and one
+/// position. An `Ok` is the guarantee that [`launch_tuned`] runs the layer, whichever candidate
+/// wins, for as many sequences and positions as the device's grid holds.
 ///
 /// # Errors
 ///
@@ -101,15 +101,16 @@ pub fn serves(
 }
 
 /// What a round runs on: the call's inputs, but for a walk in a store's slots, whose store is
-/// zeros of the call's shape, each row at a slot of its own and past its first position.
+/// zeros with a slot for each row (as many as the call's store holds, if fewer), each row at a slot
+/// of its own and past its first position.
 fn measured(_key: &GatedDeltaWalkKey, inputs: &GatedDeltaWalkInputs) -> GatedDeltaWalkInputs {
     let GatedDeltaWalkStateInputs::Slots { store, .. } = &inputs.state else {
         return inputs.clone();
     };
     let client = &inputs.client;
-    let shape = store.shape();
-    let slots = shape.dims::<4>()[0];
+    let [slots, heads, one, cells] = store.shape().dims::<4>();
     let rows = inputs.decay.shape().dims::<3>()[0];
+    let scratch = [rows.min(slots), heads, one, cells];
     let table = |entry: &dyn Fn(usize) -> u32| {
         let entries: Vec<u32> = (0..rows).map(entry).collect();
         PlainTensor::of_u32s(client, &[rows], &entries)
@@ -118,11 +119,11 @@ fn measured(_key: &GatedDeltaWalkKey, inputs: &GatedDeltaWalkInputs) -> GatedDel
         state: GatedDeltaWalkStateInputs::Slots {
             store: PlainTensor::zeros(
                 client,
-                shape.as_slice(),
-                row_major_contiguous_strides(shape.as_slice()),
+                &scratch,
+                row_major_contiguous_strides(scratch),
                 store.elem,
             ),
-            slots: table(&|row| (row % slots) as u32),
+            slots: table(&|row| (row % scratch[0]) as u32),
             positions: table(&|_| 1),
         },
         ..inputs.clone()
@@ -135,7 +136,6 @@ mod tests {
     use crate::kernels::refusals::{
         GATED_DELTA_WALK_BINDINGS_PAST_DEVICE, GATED_DELTA_WALK_ELEMENT_NOT_FLOAT,
         GATED_DELTA_WALK_HEADS_EMPTY, GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS,
-        GATED_DELTA_WALK_SLOTS_KEEP_RING,
     };
     use core::num::NonZeroUsize;
     use cubecl::ir::{FloatKind, UIntKind};
@@ -161,10 +161,9 @@ mod tests {
         }
     }
 
-    fn slots(slots: usize, kept: usize) -> GatedDeltaWalkStateLayout {
+    fn slots(slots: usize) -> GatedDeltaWalkStateLayout {
         GatedDeltaWalkStateLayout::Slots {
             slots: NonZeroUsize::new(slots).unwrap(),
-            kept: NonZeroUsize::new(kept).unwrap(),
         }
     }
 
@@ -182,7 +181,7 @@ mod tests {
     #[test]
     fn the_table_serves_what_admission_admits() {
         let h100 = running(devices::h100(), &[F32, F16]);
-        for state in [owned(), slots(32, 1)] {
+        for state in [owned(), slots(32)] {
             assert_eq!(serves(&h100, heads(), state, F32), Ok(()));
             assert_eq!(serves(&h100, heads(), state, F16), Ok(()));
             for hw in [
@@ -207,17 +206,8 @@ mod tests {
         devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS - 1;
         assert_eq!(serves(&hw, heads(), owned(), F32), Ok(()));
         assert_eq!(
-            serves(&hw, heads(), slots(8, 1), F32),
+            serves(&hw, heads(), slots(8), F32),
             Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE)
-        );
-    }
-
-    /// A ring of states kept in a store's slots is declined by name, not walked into one slot.
-    #[test]
-    fn a_ring_kept_in_slots_is_declined() {
-        assert_eq!(
-            serves(&running(devices::h100(), &[F32]), heads(), slots(8, 4), F32),
-            Err(GATED_DELTA_WALK_SLOTS_KEEP_RING)
         );
     }
 

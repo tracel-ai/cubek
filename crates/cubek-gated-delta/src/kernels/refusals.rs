@@ -16,12 +16,6 @@ pub const GATED_DELTA_WALK_HEADS_EMPTY: Refusal = Refusal::Declined {
     why: "the gated delta walk needs a key head, a value head, a key feature and a value feature",
 };
 
-/// What admission declines a walk in a store's slots with that keeps more than the one state each
-/// slot holds: a ring of states is walked over states it owns.
-pub const GATED_DELTA_WALK_SLOTS_KEEP_RING: Refusal = Refusal::Declined {
-    why: "the gated delta walk in a store's slots keeps one state, not a ring of them",
-};
-
 /// What admission declines a device with that binds fewer buffers to a kernel than the walk's
 /// launch does.
 pub const GATED_DELTA_WALK_BINDINGS_PAST_DEVICE: Refusal = Refusal::Declined {

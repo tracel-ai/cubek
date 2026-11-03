@@ -1,9 +1,9 @@
 //! The gated delta walk in a store's slots against the host reference: each row's state is read
 //! from, and written back to, the slot its table names.
 //!
-//! The store holds NaN wherever the walk must not read it, in the slots no row reads, in the slot
-//! of a row that has walked no position, and in the gaps between its slots and heads; the slots no
-//! row holds and the gaps must come back bit for bit.
+//! The store holds NaN wherever the walk must not read it: the slot of a row that has walked no
+//! position, and the gaps between its slots and heads. The slots no row holds and the gaps must
+//! come back bit for bit.
 
 use super::harness::{F16, F32, elements, read, round_to};
 use super::walk::{
@@ -34,12 +34,38 @@ struct Pitch {
     start: usize,
 }
 
-/// A walk of `rows`, each a `(slot, positions walked already)`, over a store of `slots`.
+/// Stores with a gap after each slot, after each head, and a start off their buffer's.
+const STRIDED_PITCHES: [Pitch; 4] = [
+    Pitch {
+        head_gap: 0,
+        slot_gap: 3,
+        start: 0,
+    },
+    Pitch {
+        head_gap: 1,
+        slot_gap: 0,
+        start: 2,
+    },
+    Pitch {
+        head_gap: 4,
+        slot_gap: 8,
+        start: 4,
+    },
+    Pitch {
+        head_gap: 0,
+        slot_gap: 5,
+        start: 1,
+    },
+];
+
+/// A walk of `rows`, each a `(slot, positions walked already)`, over a store of `slots`. Rows
+/// `parked` share a slot with others, so their output and their slot are whatever the race left.
 #[derive(Debug, Clone)]
 struct SlotCase {
     case: Case,
     slots: usize,
     rows: Vec<(usize, usize)>,
+    parked: Vec<usize>,
 }
 
 impl SlotCase {
@@ -66,16 +92,19 @@ impl SlotCase {
             },
             slots,
             rows: rows.to_vec(),
+            parked: Vec::new(),
+        }
+    }
+
+    fn parked(self, parked: &[usize]) -> Self {
+        Self {
+            parked: parked.to_vec(),
+            ..self
         }
     }
 
     fn cells(&self) -> usize {
         self.case.heads.key_features * self.case.heads.value_features
-    }
-
-    /// The slots a row reads: those of rows that have walked a position.
-    fn is_read(&self, slot: usize) -> bool {
-        self.rows.iter().any(|&(s, walked)| s == slot && walked > 0)
     }
 
     /// The slots an unlisted row leaves alone, and a listed one rewrites.
@@ -214,17 +243,34 @@ impl SlotCase {
         }
     }
 
-    /// The output and the store against the reference: each row not `parked`, its slot holds its state after the walk, and everything else in the buffer is bit for bit
-    /// what was uploaded.
+    /// Walks the case as `settings` places it, and checks it where the device admits it.
+    fn walk_and_check(
+        &self,
+        hw: &Hardware,
+        client: &Client,
+        element: ElemType,
+        settings: &CubeGatedDeltaWalkRoutineSettings,
+        pitch: Pitch,
+    ) {
+        let slotted = self.slotted(client, pitch);
+        let inputs = self.inputs(client, &slotted, element);
+        let what = format!("{settings} {pitch:?} {self:?}");
+        if let Some(walked) = walk_or_skip(hw, inputs, settings, &what) {
+            self.check(client, &slotted, walked, element, &what);
+        }
+    }
+
+    /// The output and the store against the reference: each row not parked, its slot holds its
+    /// state after the walk, and everything else in the buffer is bit for bit what was uploaded.
     fn check(
         &self,
         client: &Client,
         slotted: &Slotted,
         walked: GatedDeltaWalkOutputs,
         element: ElemType,
-        parked: &[usize],
         what: &str,
     ) {
+        let parked = &self.parked;
         assert!(
             walked.kept.is_none(),
             "{what}: a store keeps its states in place"
@@ -232,7 +278,6 @@ impl SlotCase {
         let heads = self.case.value_heads();
         let cells = self.cells();
         let (out, kept) = self.case.reference(&slotted.operands);
-        // A parked row races other rows on its slot, so its output is whatever it read.
         let got = read(client, walked.out.handle.clone(), element);
         let per_row = out.len() / self.rows.len();
         for row in (0..self.rows.len()).filter(|row| !parked.contains(row)) {
@@ -243,7 +288,7 @@ impl SlotCase {
             assert_close_within(
                 got[row * per_row..(row + 1) * per_row].to_vec(),
                 &rounded,
-                &format!("{what} {element:?} {self:?}: row {row}'s output"),
+                &format!("{what} {element:?}: row {row}'s output"),
                 output_tolerance(element),
             );
         }
@@ -259,7 +304,7 @@ impl SlotCase {
                 assert_close(
                     after[to..to + cells].to_vec(),
                     &kept[from..from + cells],
-                    &format!("{what} {self:?}: row {row} head {head} of slot {slot}"),
+                    &format!("{what}: row {row} head {head} of slot {slot}"),
                 );
             }
         }
@@ -274,103 +319,28 @@ impl SlotCase {
                 assert_eq!(
                     after[i].to_bits(),
                     slotted.before[i].to_bits(),
-                    "{what} {self:?}: element {i} outside the listed slots changed"
+                    "{what}: element {i} outside the listed slots changed"
                 );
             }
         }
     }
 }
 
-/// Every setting the cube routine lists walks every case in the slots of a store at every element
-/// the device runs, and leaves what no row holds as it was.
+/// Every setting the cube routine lists, and the floor, walks every case in the slots of a store
+/// at every element the device runs, and leaves what no row holds as it was.
 #[test]
 fn the_slots_walk_matches_the_reference() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
+    let settings: Vec<_> = CubeGatedDeltaWalkRoutine
+        .settings(&hw)
+        .into_iter()
+        .chain([CubeGatedDeltaWalkRoutineSettings::FLOOR])
+        .collect();
     for element in elements(&client) {
-        for settings in CubeGatedDeltaWalkRoutine.settings(&hw) {
+        for settings in &settings {
             for case in cases() {
-                let slotted = case.slotted(&client, Pitch::default());
-                let inputs = case.inputs(&client, &slotted, element);
-                let what = format!("{settings} {case:?}");
-                if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
-                    case.check(
-                        &client,
-                        &slotted,
-                        walked,
-                        element,
-                        &[],
-                        &settings.to_string(),
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// The floor, which serves every admitted problem, walks every case.
-#[test]
-fn the_slots_floor_matches_the_reference() {
-    let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
-    let settings = CubeGatedDeltaWalkRoutineSettings::FLOOR;
-    for case in cases() {
-        let slotted = case.slotted(&client, Pitch::default());
-        let inputs = case.inputs(&client, &slotted, F32);
-        let what = format!("{settings} {case:?}");
-        if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
-            case.check(&client, &slotted, walked, F32, &[], "the floor");
-        }
-    }
-}
-
-/// A row that has walked no position starts from zeros: its slot holds NaN, which reaches no sum.
-#[test]
-fn a_fresh_row_reads_nothing_of_its_slot() {
-    let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
-    let case = SlotCase::new(1, (4, 3, 128, 128), 4, &[(2, 0), (3, 0), (1, 5)], &[]);
-    for settings in [
-        CubeGatedDeltaWalkRoutineSettings::DEFAULT,
-        CubeGatedDeltaWalkRoutineSettings::FLOOR,
-    ] {
-        let slotted = case.slotted(&client, Pitch::default());
-        assert!(slotted.before[slotted.at[2][0]].is_nan() && !case.is_read(2));
-        let inputs = case.inputs(&client, &slotted, F32);
-        let what = format!("{settings} {case:?}");
-        if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
-            case.check(&client, &slotted, walked, F32, &[], "a fresh row");
-        }
-    }
-}
-
-/// A walk of three positions reads each row's state once, at the start, and writes it once, at
-/// the end.
-#[test]
-fn three_positions_in_slots_advance_each_state_once() {
-    let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
-    let case = SlotCase::new(
-        3,
-        (4, 3, 64, 64),
-        6,
-        &[(5, 4), (2, 0), (4, 1), (1, 2)],
-        &[1],
-    );
-    for element in elements(&client) {
-        for settings in CubeGatedDeltaWalkRoutine.settings(&hw) {
-            let slotted = case.slotted(&client, Pitch::default());
-            let inputs = case.inputs(&client, &slotted, element);
-            let what = format!("{settings} {case:?}");
-            if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
-                case.check(
-                    &client,
-                    &slotted,
-                    walked,
-                    element,
-                    &[],
-                    &settings.to_string(),
-                );
+                case.walk_and_check(&hw, &client, element, settings, Pitch::default());
             }
         }
     }
@@ -383,46 +353,13 @@ fn three_positions_in_slots_advance_each_state_once() {
 fn the_slots_walk_reads_a_strided_store_where_it_lies() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    let pitches = [
-        Pitch {
-            slot_gap: 3,
-            ..Pitch::default()
-        },
-        Pitch {
-            head_gap: 1,
-            start: 2,
-            ..Pitch::default()
-        },
-        Pitch {
-            head_gap: 4,
-            slot_gap: 8,
-            start: 4,
-        },
-        Pitch {
-            slot_gap: 5,
-            start: 1,
-            ..Pitch::default()
-        },
-    ];
-    for pitch in pitches {
+    for pitch in STRIDED_PITCHES {
         for settings in [
             CubeGatedDeltaWalkRoutineSettings::DEFAULT,
             CubeGatedDeltaWalkRoutineSettings::FLOOR,
         ] {
             for case in cases() {
-                let slotted = case.slotted(&client, pitch);
-                let inputs = case.inputs(&client, &slotted, F16);
-                let what = format!("{settings} {case:?}");
-                if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
-                    case.check(
-                        &client,
-                        &slotted,
-                        walked,
-                        F16,
-                        &[],
-                        &format!("{pitch:?} {settings}"),
-                    );
-                }
+                case.walk_and_check(&hw, &client, F16, &settings, pitch);
             }
         }
     }
@@ -440,23 +377,19 @@ fn rows_parked_on_the_null_slot_leave_the_others_whole() {
         6,
         &[(0, 0), (3, 4), (0, 2), (5, 1), (0, 0)],
         &[],
-    );
-    let parked = [0, 2, 4];
+    )
+    .parked(&[0, 2, 4]);
     for settings in [
         CubeGatedDeltaWalkRoutineSettings::DEFAULT,
         CubeGatedDeltaWalkRoutineSettings::FLOOR,
     ] {
-        let slotted = case.slotted(&client, Pitch::default());
-        let inputs = case.inputs(&client, &slotted, F32);
-        let what = format!("{settings} {case:?}");
-        if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
-            case.check(&client, &slotted, walked, F32, &parked, "parked rows");
-        }
+        case.walk_and_check(&hw, &client, F32, &settings, Pitch::default());
     }
 }
 
-/// The autotune runs the walk and leaves the call's store advanced by exactly one walk: its rounds
-/// write stores of their own.
+/// The autotune runs the walk and leaves the call's store advanced by exactly one walk, its
+/// rounds writing stores of their own, whether the call's store lies dense or strided: the key a
+/// dense store tuned is met again by the strided ones.
 #[test]
 fn the_tuned_walk_advances_the_store_once() {
     let device = cubecl::test_device();
@@ -464,39 +397,14 @@ fn the_tuned_walk_advances_the_store_once() {
     let hw = Hardware::from_client(&client);
     for element in elements(&client) {
         for case in cases() {
-            let slotted = case.slotted(&client, Pitch::default());
-            let inputs = case.inputs(&client, &slotted, element);
-            if let Some(walked) = tuned_or_skip(&hw, &device, inputs, "the table") {
-                case.check(&client, &slotted, walked, element, &[], "the table");
+            for pitch in [Pitch::default(), STRIDED_PITCHES[0], STRIDED_PITCHES[2]] {
+                let slotted = case.slotted(&client, pitch);
+                let inputs = case.inputs(&client, &slotted, element);
+                let what = format!("the table {pitch:?} {case:?}");
+                if let Some(walked) = tuned_or_skip(&hw, &device, inputs, &what) {
+                    case.check(&client, &slotted, walked, element, &what);
+                }
             }
-        }
-    }
-}
-
-/// A key tuned over a dense store is met again by calls whose store lies strided: the winner
-/// serves them, and each call advances its own store once.
-#[test]
-fn the_table_serves_a_strided_store_after_a_dense_one() {
-    let device = cubecl::test_device();
-    let client = device.client();
-    let hw = Hardware::from_client(&client);
-    let case = SlotCase::new(1, (4, 3, 128, 128), 6, &[(4, 9), (1, 3), (2, 1)], &[]);
-    for pitch in [
-        Pitch::default(),
-        Pitch {
-            slot_gap: 3,
-            start: 1,
-            ..Pitch::default()
-        },
-        Pitch {
-            head_gap: 4,
-            ..Pitch::default()
-        },
-    ] {
-        let slotted = case.slotted(&client, pitch);
-        let inputs = case.inputs(&client, &slotted, F32);
-        if let Some(walked) = tuned_or_skip(&hw, &device, inputs, "the table") {
-            case.check(&client, &slotted, walked, F32, &[], &format!("{pitch:?}"));
         }
     }
 }

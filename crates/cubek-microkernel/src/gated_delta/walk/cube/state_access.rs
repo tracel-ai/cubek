@@ -1,13 +1,12 @@
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
-/// Where a walk reads the state it resumes from and writes the states it keeps, the one thing
-/// that differs between a walk over states it owns and one in a store's slots.
+/// Where a walk reads the state it resumes from and writes the states it keeps: the one thing a
+/// walk over states it owns and one in a store's slots differ in.
 ///
-/// Owned, `read` is the state tensor, `write` the kept states, and no row is fresh. In a slot,
-/// `read` and `write` are one tile placed by the row's slot, the last position's state is the one
-/// written, and a row that has walked no position yet is fresh: its slot holds whatever it held
-/// before, which the walk never reads.
+/// In a slot, `read` and `write` are one tile, the row's slot, and the state after the last
+/// position is the one written back. A row that has walked no position is `fresh`: it starts from
+/// zeros and never reads its slot, which holds whatever it held before.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct StateAccess {
@@ -19,7 +18,8 @@ pub struct StateAccess {
 
 #[cube]
 impl StateAccess {
-    /// The walk over `state`, keeping the states from position `first_kept` on in `kept`.
+    /// The walk over `state`, keeping the states from position `first_kept` on in `kept`; no row
+    /// is fresh.
     pub fn owned(state: &Tile, kept: &Tile, first_kept: usize) -> StateAccess {
         StateAccess {
             read: state.clone(),

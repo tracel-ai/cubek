@@ -41,7 +41,6 @@ pub fn problems() -> Vec<CatalogEntry<GatedDeltaWalkSpec>> {
         heads,
         state: GatedDeltaWalkStateLayout::Slots {
             slots: NonZeroUsize::new(STORE_SLOTS).unwrap(),
-            kept: NonZeroUsize::MIN,
         },
     };
     vec![

@@ -4,7 +4,6 @@ use crate::kernels::refusals::{
     GATED_DELTA_WALK_BINDING_BUFFERS, GATED_DELTA_WALK_BINDINGS_PAST_DEVICE,
     GATED_DELTA_WALK_ELEMENT_NOT_FLOAT, GATED_DELTA_WALK_ELEMENT_UNVERIFIED,
     GATED_DELTA_WALK_HEADS_EMPTY, GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS,
-    GATED_DELTA_WALK_SLOTS_KEEP_RING,
 };
 use crate::kernels::walk::{CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings};
 use core::num::NonZeroUsize;
@@ -52,19 +51,17 @@ pub enum GatedDeltaWalkStateLayout {
     /// of their own: the state after each of the last `kept` positions.
     Owned { kept: NonZeroUsize },
     /// A store of `slots` states, a table placing each sequence at its slot: the walk reads the
-    /// sequence's state there and writes the state after its last position back. It keeps `kept`
-    /// states for a rewind, which admission declines above one.
-    Slots {
-        slots: NonZeroUsize,
-        kept: NonZeroUsize,
-    },
+    /// sequence's state there and writes the state after its last position back, which is the one
+    /// state a slot holds.
+    Slots { slots: NonZeroUsize },
 }
 
 impl GatedDeltaWalkStateLayout {
     /// States kept for a rewind: the state after each of the last this many positions.
     pub fn kept(&self) -> NonZeroUsize {
         match self {
-            Self::Owned { kept } | Self::Slots { kept, .. } => *kept,
+            Self::Owned { kept } => *kept,
+            Self::Slots { .. } => NonZeroUsize::MIN,
         }
     }
 
@@ -115,7 +112,8 @@ pub struct GatedDeltaWalkProblem {
     /// Where the states live, and how many are kept.
     pub state: GatedDeltaWalkStateLayout,
     /// The alignment of each operand's buffer in elements, over the axes the walk names. The kept
-    /// states are read by the owned walk alone.
+    /// states are bound by the owned walk alone: a walk in a store's slots holds
+    /// [`ElemAlignment::ONE`] for them, which nothing reads.
     pub alignments: GatedDeltaWalkOperandMap<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start.
     pub start_bytes: GatedDeltaWalkOperandMap<u64>,
@@ -160,9 +158,8 @@ impl GatedDeltaWalkProblem {
     ///
     /// # Errors
     ///
-    /// The first of: no head ([`GATED_DELTA_WALK_HEADS_EMPTY`]), a ring kept in a store's slots
-    /// ([`GATED_DELTA_WALK_SLOTS_KEEP_RING`]), more buffers bound than the device binds
-    /// ([`GATED_DELTA_WALK_BINDINGS_PAST_DEVICE`]).
+    /// The first of: no head ([`GATED_DELTA_WALK_HEADS_EMPTY`]), more buffers bound than the device
+    /// binds ([`GATED_DELTA_WALK_BINDINGS_PAST_DEVICE`]).
     pub fn admit_launch(&self, hw: &Hardware) -> Result<(), Refusal> {
         let heads = &self.heads;
         if [
@@ -174,9 +171,6 @@ impl GatedDeltaWalkProblem {
         .contains(&0)
         {
             return Err(GATED_DELTA_WALK_HEADS_EMPTY);
-        }
-        if matches!(self.state, GatedDeltaWalkStateLayout::Slots { kept, .. } if kept.get() > 1) {
-            return Err(GATED_DELTA_WALK_SLOTS_KEEP_RING);
         }
         if self.state.binding_buffers() > hw.properties.hardware.max_bindings {
             return Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE);
@@ -256,14 +250,17 @@ impl GatedDeltaWalkProblem {
                     value_features,
                 ]),
                 out: rows(&[batch, positions, key_heads, group, value_features]),
-                kept: rows(&[
-                    state.kept().get(),
-                    batch,
-                    key_heads,
-                    group,
-                    key_features,
-                    value_features,
-                ]),
+                kept: match state {
+                    GatedDeltaWalkStateLayout::Owned { kept } => rows(&[
+                        kept.get(),
+                        batch,
+                        key_heads,
+                        group,
+                        key_features,
+                        value_features,
+                    ]),
+                    GatedDeltaWalkStateLayout::Slots { .. } => ElemAlignment::ONE,
+                },
             },
             start_bytes: GatedDeltaWalkOperandMap::splat(0),
         }
@@ -373,11 +370,10 @@ mod tests {
         assert_eq!(problem.admit(&hw), Ok(()));
     }
 
-    fn in_slots(kept: usize) -> GatedDeltaWalkProblem {
+    fn in_slots() -> GatedDeltaWalkProblem {
         let mut problem = walk(sixteen_heads());
         problem.state = GatedDeltaWalkStateLayout::Slots {
             slots: NonZeroUsize::new(32).unwrap(),
-            kept: NonZeroUsize::new(kept).unwrap(),
         };
         problem
     }
@@ -386,7 +382,7 @@ mod tests {
     /// ten declines the one in a store's slots by name and admits the one over states it owns.
     #[test]
     fn the_slots_walk_binds_one_buffer_more_than_the_owned_walk() {
-        let problem = in_slots(1);
+        let problem = in_slots();
         let mut hw = devices::h100();
         devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS - 1;
         assert_eq!(
@@ -404,19 +400,6 @@ mod tests {
             assert_eq!(
                 problem.admit(&hw),
                 Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE)
-            );
-        }
-    }
-
-    /// A store's slot holds one state: a ring of kept states is declined by name, on a device that
-    /// binds enough and on one that does not.
-    #[test]
-    fn a_kept_ring_in_slots_is_declined_by_name() {
-        assert_eq!(in_slots(1).admit(&devices::h100()), Ok(()));
-        for hw in [devices::h100(), devices::strix_halo()] {
-            assert_eq!(
-                in_slots(4).admit(&hw),
-                Err(GATED_DELTA_WALK_SLOTS_KEEP_RING)
             );
         }
     }
