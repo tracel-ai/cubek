@@ -2,7 +2,6 @@
 //! against the ceiling each autotune's routines are bound by.
 
 use crate::kernels::plan::MatmulCall;
-use crate::kernels::tensor::StoredTensor;
 use crate::kernels::tune::key::{MatmulBatching, MatmulTuneKey};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::throughput::{MemoryAccess, compute_throughput_key};
@@ -16,22 +15,15 @@ use cubek_std::autotune::{Ceiling, Roofline};
 /// read through routes counts the slabs its batches can reach, one a batch at most.
 fn work(key: &MatmulTuneKey, call: &MatmulCall) -> Work {
     let shape = key.shape();
-    let bytes = |tensor: &StoredTensor| -> usize {
-        tensor
-            .buffers()
-            .iter()
-            .map(|buffer| buffer.size as usize)
-            .sum()
-    };
     let output = shape.m * shape.n * shape.batch * shape.elem.size();
-    let stack = bytes(&call.rhs.tensor);
+    let stack = call.rhs.tensor.bytes();
     let rhs = match shape.rhs.batching {
         MatmulBatching::Slabs { slabs } => stack / slabs * shape.batch.min(slabs),
         MatmulBatching::Shared | MatmulBatching::Batched => stack,
     };
     Work {
         compute_ops: 2 * shape.m * shape.n * shape.k * shape.batch,
-        bytes: bytes(&call.lhs.tensor) + rhs + output,
+        bytes: call.lhs.tensor.bytes() + rhs + output,
     }
 }
 
