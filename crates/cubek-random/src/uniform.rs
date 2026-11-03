@@ -65,13 +65,16 @@ impl PrngArgs for Uniform {
     }
 }
 
-/// Pseudo-random generator with uniform distribution
+/// Samples a uniform distribution from an explicit seed.
+///
+/// Uses the supplied seed without accessing the global RNG.
 pub fn random_uniform(
     client: &Client,
     lower_bound: f32,
     upper_bound: f32,
     out: TensorBinding,
     dtype: ElemType,
+    seed: u64,
 ) -> Result<(), LaunchError> {
     random_uniform_with_strategy(
         client,
@@ -80,6 +83,7 @@ pub fn random_uniform(
         out,
         dtype,
         PrngStrategy::Inferred,
+        seed,
     )
 }
 
@@ -90,6 +94,7 @@ pub(crate) fn random_uniform_with_strategy(
     out: TensorBinding,
     dtype: ElemType,
     strategy: PrngStrategy,
+    seed: u64,
 ) -> Result<(), LaunchError> {
     random::<UniformFamily>(
         client,
@@ -100,5 +105,6 @@ pub(crate) fn random_uniform_with_strategy(
         out,
         dtype,
         strategy,
+        seed,
     )
 }
