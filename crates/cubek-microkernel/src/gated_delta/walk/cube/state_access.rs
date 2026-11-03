@@ -10,7 +10,7 @@ use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 /// before, which the walk never reads.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct WalkState {
+pub struct StateAccess {
     pub read: Tile,
     pub write: Tile,
     pub fresh: bool,
@@ -18,10 +18,10 @@ pub struct WalkState {
 }
 
 #[cube]
-impl WalkState {
+impl StateAccess {
     /// The walk over `state`, keeping the states from position `first_kept` on in `kept`.
-    pub fn owned(state: &Tile, kept: &Tile, first_kept: usize) -> WalkState {
-        WalkState {
+    pub fn owned(state: &Tile, kept: &Tile, first_kept: usize) -> StateAccess {
+        StateAccess {
             read: state.clone(),
             write: kept.clone(),
             fresh: false,
@@ -31,12 +31,12 @@ impl WalkState {
 
     /// The walk over `slot`, the row's tile of its store, fresh where its `positions` tile holds
     /// zero; the state after position `first_kept` is written back.
-    pub fn in_slot(slot: &Tile, positions: &Tile, first_kept: usize) -> WalkState {
+    pub fn in_slot(slot: &Tile, positions: &Tile, first_kept: usize) -> StateAccess {
         let walked = positions
             .flat::<u32, Const<1>>()
             .read(0usize)
             .extract(0usize);
-        WalkState {
+        StateAccess {
             read: slot.clone(),
             write: slot.clone(),
             fresh: walked == 0u32,

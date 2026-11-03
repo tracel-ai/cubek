@@ -1,7 +1,7 @@
 use super::base::CubeGatedDeltaWalkMicrokernel;
 use super::held_state::HeldState;
+use super::state_access::StateAccess;
 use super::unit_partials::UnitPartials;
-use super::walk_state::WalkState;
 use crate::gated_delta::{KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -25,7 +25,7 @@ pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
     value: &Tile,
     decay: &Tile,
     strength: &Tile,
-    state: &WalkState,
+    state: &StateAccess,
     out: &Tile,
     #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,
     #[comptime] runs: usize,

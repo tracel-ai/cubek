@@ -2,7 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::gated_delta::walk::cube::{
-    CubeGatedDeltaWalkMicrokernel, WalkState, cube_gated_delta_walk_microkernel,
+    CubeGatedDeltaWalkMicrokernel, StateAccess, cube_gated_delta_walk_microkernel,
 };
 
 /// Every cube, walking its runs of value columns through every position over states it
@@ -33,7 +33,7 @@ pub fn cube_gated_delta_walk_owned_kernel<E: Float, N: Size>(
     let out = out.tile(&partitioning);
     let kept = kept.tile(&partitioning);
     for cube in &partitioning {
-        let walk = WalkState::owned(&state.at(&cube), &kept.at(&cube), first_kept);
+        let access = StateAccess::owned(&state.at(&cube), &kept.at(&cube), first_kept);
         cube_gated_delta_walk_microkernel::<E, N>(
             &cube,
             &query.at(&cube),
@@ -41,7 +41,7 @@ pub fn cube_gated_delta_walk_owned_kernel<E: Float, N: Size>(
             &value.at(&cube),
             &decay.at(&cube),
             &strength.at(&cube),
-            &walk,
+            &access,
             &out.at(&cube),
             microkernel,
             runs,
@@ -77,7 +77,7 @@ pub fn cube_gated_delta_walk_slots_kernel<E: Float, N: Size>(
     let out = out.tile(&partitioning);
     let positions = positions.tile(&partitioning);
     for cube in &partitioning {
-        let walk = WalkState::in_slot(&store.at(&cube), &positions.at(&cube), first_kept);
+        let access = StateAccess::in_slot(&store.at(&cube), &positions.at(&cube), first_kept);
         cube_gated_delta_walk_microkernel::<E, N>(
             &cube,
             &query.at(&cube),
@@ -85,7 +85,7 @@ pub fn cube_gated_delta_walk_slots_kernel<E: Float, N: Size>(
             &value.at(&cube),
             &decay.at(&cube),
             &strength.at(&cube),
-            &walk,
+            &access,
             &out.at(&cube),
             microkernel,
             runs,
