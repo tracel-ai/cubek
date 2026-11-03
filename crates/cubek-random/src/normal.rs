@@ -84,15 +84,18 @@ impl PrngArgs for Normal {
     }
 }
 
-/// Pseudo-random generator with normal distribution
+/// Samples a normal distribution from an explicit seed.
+///
+/// Uses the supplied seed without accessing the global RNG.
 pub fn random_normal(
     client: &Client,
     mean: f32,
     std: f32,
     out: TensorBinding,
     dtype: ElemType,
+    seed: u64,
 ) -> Result<(), LaunchError> {
-    random_normal_with_strategy(client, mean, std, out, dtype, PrngStrategy::Inferred)
+    random_normal_with_strategy(client, mean, std, out, dtype, PrngStrategy::Inferred, seed)
 }
 
 pub(crate) fn random_normal_with_strategy(
@@ -102,6 +105,7 @@ pub(crate) fn random_normal_with_strategy(
     out: TensorBinding,
     dtype: ElemType,
     strategy: PrngStrategy,
+    seed: u64,
 ) -> Result<(), LaunchError> {
-    random::<NormalFamily>(client, Normal { mean, std }, out, dtype, strategy)
+    random::<NormalFamily>(client, Normal { mean, std }, out, dtype, strategy, seed)
 }
