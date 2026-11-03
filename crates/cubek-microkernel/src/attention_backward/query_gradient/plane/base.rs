@@ -272,6 +272,7 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
             Self::Settings::fragments(4, 2).held(),
             Self::Settings::fragments(2, 4).held(),
             Self::Settings::fragments(1, 4).held(),
+            Self::Settings::fragments(1, 2).held(),
         ]
     }
 
