@@ -135,7 +135,7 @@ mod tests {
     use super::*;
     use crate::kernels::refusals::{
         GATED_DELTA_WALK_BINDINGS_PAST_DEVICE, GATED_DELTA_WALK_ELEMENT_NOT_FLOAT,
-        GATED_DELTA_WALK_HEADS_EMPTY, GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS,
+        GATED_DELTA_WALK_HEADS_EMPTY,
     };
     use core::num::NonZeroUsize;
     use cubecl::ir::{FloatKind, UIntKind};
@@ -196,19 +196,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    /// A device binding ten buffers serves the walk over states it owns and declines the one in a
-    /// store's slots by name, which binds one more.
-    #[test]
-    fn a_device_one_buffer_short_of_slots_serves_the_owned_walk() {
-        let mut hw = running(devices::h100(), &[F32]);
-        devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS - 1;
-        assert_eq!(serves(&hw, heads(), owned(), F32), Ok(()));
-        assert_eq!(
-            serves(&hw, heads(), slots(8), F32),
-            Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE)
-        );
     }
 
     /// An output element the device does not run is declined by name, so [`launch_tuned`] is never

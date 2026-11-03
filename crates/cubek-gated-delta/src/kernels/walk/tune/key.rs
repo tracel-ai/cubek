@@ -77,16 +77,13 @@ impl From<&GatedDeltaWalkKey> for GatedDeltaWalkProblem {
 mod tests {
     use super::*;
 
-    fn slots(slots: usize) -> GatedDeltaWalkStateLayout {
-        GatedDeltaWalkStateLayout::Slots {
-            slots: NonZeroUsize::new(slots).unwrap(),
-        }
-    }
-
     /// A store that grows reuses what its smaller sizes tuned, and the owned layout is untouched.
     #[test]
     fn a_stores_slots_are_anchored_and_the_owned_layout_is_not() {
         let anchored = GatedDeltaWalkKey::anchored;
+        let slots = |slots| GatedDeltaWalkStateLayout::Slots {
+            slots: NonZeroUsize::new(slots).unwrap(),
+        };
         assert_eq!(anchored(slots(33)), anchored(slots(64)));
         assert_ne!(anchored(slots(64)), anchored(slots(65)));
         let owned = GatedDeltaWalkStateLayout::Owned {

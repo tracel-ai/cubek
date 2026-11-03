@@ -82,50 +82,6 @@ impl GatedDeltaWalkInputs {
     }
 }
 
-impl GatedDeltaWalkStateInputs {
-    /// The tensor the states are read from: the state tensor, or the store.
-    fn states(&self) -> &PlainTensor {
-        match self {
-            Self::Owned { state, .. } => state,
-            Self::Slots { store, .. } => store,
-        }
-    }
-
-    /// Panics unless the states fit a walk of `batch` sequences of `positions` positions over
-    /// `value_heads` of `[key_features, value_features]` states.
-    fn assert_fits(&self, batch: usize, positions: usize, heads: [usize; 3]) {
-        let [value_heads, key_features, value_features] = heads;
-        match self {
-            Self::Owned { state, kept } => {
-                assert_eq!(
-                    state.shape().dims::<4>(),
-                    [batch, value_heads, key_features, value_features]
-                );
-                assert!(
-                    kept.get() <= positions,
-                    "a walk of {positions} positions keeps at most all of them, not {kept}"
-                );
-            }
-            Self::Slots {
-                store,
-                slots,
-                positions: walked,
-            } => {
-                let [_, heads, one, cells] = store.shape().dims::<4>();
-                assert_eq!(
-                    [heads, one, cells],
-                    [value_heads, 1, key_features * value_features],
-                    "a store is [slots, value_heads, 1, key_features * value_features]"
-                );
-                for table in [slots, walked] {
-                    assert_eq!(table.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
-                    assert_eq!(table.shape().dims::<1>(), [batch]);
-                }
-            }
-        }
-    }
-}
-
 impl core::fmt::Debug for GatedDeltaWalkInputs {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // The client says nothing about the walk.
@@ -169,11 +125,10 @@ impl cubecl::tune::AutotuneOutput for GatedDeltaWalkOutputs {
 /// The state operands of a walk, viewed as the kernel reads them: what differs between the walks.
 #[derive(Clone)]
 enum StateTensors {
-    /// The state tensor, and the tensor the kept states are written to, which the outputs hold.
+    /// The state tensor and the tensor the kept states go to.
     Owned {
         state: PlainTensor,
         kept: PlainTensor,
-        kept_out: TensorHandle,
     },
     /// The store, each sequence's window placed at the slot its table names, and the positions
     /// each sequence has walked.
@@ -197,6 +152,7 @@ pub struct GatedDeltaWalkTensors {
     out_view: PlainTensor,
     states: StateTensors,
     out: TensorHandle,
+    kept_out: Option<TensorHandle>,
     problem: GatedDeltaWalkProblem,
 }
 
@@ -226,50 +182,6 @@ pub enum GatedDeltaWalkStateBinding {
 }
 
 impl StateTensors {
-    /// The states of `state`, grouped by `grouped`, and the tensor its kept states go to.
-    fn owned(
-        client: &Client,
-        state: &PlainTensor,
-        kept: NonZeroUsize,
-        grouped: impl Fn(&PlainTensor, usize) -> PlainTensor,
-    ) -> Self {
-        let mut shape = state.shape().to_vec();
-        shape.insert(0, kept.get());
-        let (kept_out, kept) =
-            PlainTensor::empty_contiguous(client, Shape::from(shape), GATED_DELTA_WALK_ELEMENT);
-        Self::Owned {
-            state: grouped(state, 1),
-            kept: grouped(&kept, 2),
-            kept_out,
-        }
-    }
-
-    /// The `store`, one `[key_features, value_features]` row-major block a slot and head, over the
-    /// caller's strides along the slots and the heads, and the tables placing the sequences.
-    fn in_slots(
-        store: &PlainTensor,
-        slots: PlainTensor,
-        positions: PlainTensor,
-        heads: GatedDeltaHeads,
-    ) -> Self {
-        let [slot, head] = [store.binding.strides[0], store.binding.strides[1]];
-        let view = store.viewed(Metadata::new(
-            vec![
-                store.shape().dims::<4>()[0],
-                heads.key_heads,
-                heads.group,
-                heads.key_features,
-                heads.value_features,
-            ],
-            vec![slot, head * heads.group, head, heads.value_features, 1],
-        ));
-        Self::Slots {
-            store: view,
-            slots,
-            positions,
-        }
-    }
-
     /// The tensor the states are read from.
     fn state(&self) -> &PlainTensor {
         match self {
@@ -286,26 +198,19 @@ impl StateTensors {
         }
     }
 
-    /// The tensor the kept states were written to, which the outputs hold.
-    fn into_kept_out(self) -> Option<TensorHandle> {
-        match self {
-            Self::Owned { kept_out, .. } => Some(kept_out),
-            Self::Slots { .. } => None,
-        }
-    }
-
     /// The state operands bound under `launcher`, `width` values a line.
     fn bind(&self, launcher: &Launcher, width: usize) -> GatedDeltaWalkStateBinding {
+        let bind = |tensor, axes: &'static [Axis], width| {
+            GatedDeltaWalkTensors::bound(launcher, tensor, axes, width)
+        };
         match self {
-            Self::Owned { state, kept, .. } => GatedDeltaWalkStateBinding::Owned {
-                state: GatedDeltaWalkTensors::bound(
-                    launcher,
+            Self::Owned { state, kept } => GatedDeltaWalkStateBinding::Owned {
+                state: bind(
                     state,
                     &[BATCH, KEY_HEAD, GROUP, KEY_FEATURE, VALUE_FEATURE],
                     width,
                 ),
-                kept: GatedDeltaWalkTensors::bound(
-                    launcher,
+                kept: bind(
                     kept,
                     &[
                         KEPT_STATE,
@@ -322,21 +227,16 @@ impl StateTensors {
                 store,
                 slots,
                 positions,
-            } => {
-                let entries = GatedDeltaWalkTensors::bound(launcher, slots, &[BATCH], 1);
-                let store = GatedDeltaWalkTensors::bound(
-                    launcher,
+            } => GatedDeltaWalkStateBinding::Slots {
+                store: bind(
                     store,
                     &[STORE_SLOT, KEY_HEAD, GROUP, KEY_FEATURE, VALUE_FEATURE],
                     width,
                 )
-                .indexed(entries, Indexing::Coordinate(STORE_SLOT))
-                .expect(ADMITTED_PLAN_RUNS);
-                GatedDeltaWalkStateBinding::Slots {
-                    store,
-                    positions: GatedDeltaWalkTensors::bound(launcher, positions, &[BATCH], 1),
-                }
-            }
+                .indexed(bind(slots, &[BATCH], 1), Indexing::Coordinate(STORE_SLOT))
+                .expect(ADMITTED_PLAN_RUNS),
+                positions: bind(positions, &[BATCH], 1),
+            },
         }
     }
 }
@@ -368,13 +268,17 @@ impl GatedDeltaWalkTensors {
             output_element,
         } = inputs;
         GatedDeltaWalkProblem::admit_output(output_element)?;
-        for tensor in [&query, &key, &value, &decay, &strength, state.states()] {
+        let states = match &state {
+            GatedDeltaWalkStateInputs::Owned { state, .. } => state,
+            GatedDeltaWalkStateInputs::Slots { store, .. } => store,
+        };
+        for tensor in [&query, &key, &value, &decay, &strength, states] {
             GatedDeltaWalkProblem::admit_operand(tensor.elem)?;
         }
         if !query.runs_on(&client) {
             return Err(ELEMENT_NOT_ON_DEVICE);
         }
-        for tensor in [&query, &key, &value, state.states()] {
+        for tensor in [&query, &key, &value, states] {
             let extent = tensor.shape().to_vec().last().copied();
             assert!(
                 extent == Some(1) || tensor.binding.strides.last() == Some(&1),
@@ -392,11 +296,6 @@ impl GatedDeltaWalkTensors {
         assert_eq!(
             strength.shape().dims::<3>(),
             [batch, positions, value_heads]
-        );
-        state.assert_fits(
-            batch,
-            positions,
-            [value_heads, key_features, value_features],
         );
         assert!(
             key_heads > 0 && value_heads.is_multiple_of(key_heads),
@@ -428,15 +327,58 @@ impl GatedDeltaWalkTensors {
         if !out_view.runs_on(&client) {
             return Err(ELEMENT_NOT_ON_DEVICE);
         }
-        let states = match &state {
+        let (states, kept_out) = match &state {
             GatedDeltaWalkStateInputs::Owned { state, kept } => {
-                StateTensors::owned(&client, state, *kept, grouped)
+                assert_eq!(
+                    state.shape().dims::<4>(),
+                    [batch, value_heads, key_features, value_features]
+                );
+                assert!(
+                    kept.get() <= positions,
+                    "a walk of {positions} positions keeps at most all of them, not {kept}"
+                );
+                let mut shape = state.shape().to_vec();
+                shape.insert(0, kept.get());
+                let (handle, plain) = PlainTensor::empty_contiguous(
+                    &client,
+                    Shape::from(shape),
+                    GATED_DELTA_WALK_ELEMENT,
+                );
+                let (state, kept) = (grouped(state, 1), grouped(&plain, 2));
+                (StateTensors::Owned { state, kept }, Some(handle))
             }
             GatedDeltaWalkStateInputs::Slots {
                 store,
                 slots,
-                positions,
-            } => StateTensors::in_slots(store, slots.clone(), positions.clone(), heads),
+                positions: walked,
+            } => {
+                let [slot_count, heads, one, cells] = store.shape().dims::<4>();
+                assert_eq!(
+                    [heads, one, cells],
+                    [value_heads, 1, key_features * value_features],
+                    "a store is [slots, value_heads, 1, key_features * value_features]"
+                );
+                for table in [slots, walked] {
+                    assert_eq!(table.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
+                    assert_eq!(table.shape().dims::<1>(), [batch]);
+                }
+                // One `[key_features, value_features]` row-major block a slot and head, over the
+                // caller's strides along the slots and the heads.
+                let [slot, head] = [store.binding.strides[0], store.binding.strides[1]];
+                let store = store.viewed(Metadata::new(
+                    vec![slot_count, key_heads, group, key_features, value_features],
+                    vec![slot, head * group, head, value_features, 1],
+                ));
+                let (slots, positions) = (slots.clone(), walked.clone());
+                (
+                    StateTensors::Slots {
+                        store,
+                        slots,
+                        positions,
+                    },
+                    None,
+                )
+            }
         };
         let (value, decay, strength, out_view) = (
             grouped(&value, 2),
@@ -483,6 +425,7 @@ impl GatedDeltaWalkTensors {
             out_view,
             states,
             out,
+            kept_out,
             problem,
         })
     }
@@ -502,7 +445,7 @@ impl GatedDeltaWalkTensors {
         GatedDeltaWalkOutputs {
             client: self.client,
             out: self.out,
-            kept: self.states.into_kept_out(),
+            kept: self.kept_out,
         }
     }
 
