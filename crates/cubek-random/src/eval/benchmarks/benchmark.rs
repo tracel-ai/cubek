@@ -61,14 +61,20 @@ impl Benchmark for RandomBench {
         let strategy = self.strategy;
 
         match self.distribution {
-            Distribution::Uniform(lower_bound, upper_bound) => {
-                random_uniform_with_strategy(client, lower_bound, upper_bound, out, dtype, strategy)
-            }
+            Distribution::Uniform(lower_bound, upper_bound) => random_uniform_with_strategy(
+                client,
+                lower_bound,
+                upper_bound,
+                out,
+                dtype,
+                strategy,
+                0,
+            ),
             Distribution::Normal(mean, std) => {
-                random_normal_with_strategy(client, mean, std, out, dtype, strategy)
+                random_normal_with_strategy(client, mean, std, out, dtype, strategy, 0)
             }
             Distribution::Bernoulli(probability) => {
-                random_bernoulli_with_strategy(client, probability, out, dtype, strategy)
+                random_bernoulli_with_strategy(client, probability, out, dtype, strategy, 0)
             }
         }
         .map_err(|e| format!("{e}"))
