@@ -1,6 +1,6 @@
 use crate::quantized_arg;
 use cubecl::tile::{
-    Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec, kind::Field,
+    Launcher, Partitioning, Projection, Space, TileSpec, TileTensor, TileTensorLaunch, kind::Field,
     launch::Grid, layout::PhysicalAxisMap,
 };
 use cubecl::{
@@ -102,7 +102,7 @@ pub fn launch_ref(
         cube_count,
         cube_dim,
         values,
-        TileArgLaunch::new(
+        TileTensorLaunch::new(
             output.into_tensor_arg(),
             output_dtype,
             per_word,
@@ -117,7 +117,7 @@ pub fn launch_ref(
 #[cube(launch)]
 /// The values are fields of the scheme's element read out of `u32` words, served as the output's
 /// element under their scale, which the copy that says so multiplies in.
-pub fn dequantize(input: &TileArg<'_>, output: &TileArg<'_>, space: Partitioning) {
+pub fn dequantize(input: &TileTensor<'_>, output: &TileTensor<'_>, space: Partitioning) {
     let input = input.tile(&space);
     let mut output = output.tile(&space);
     output.dequantize_from(&input);

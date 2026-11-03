@@ -13,7 +13,7 @@ use cubecl::tile::launch::{
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{BlockScaledOperands, Space, StageStorage, TileArgLaunch};
+use cubecl::tile::{BlockScaledOperands, Space, StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedStore, MatmulPlaneLayout,
@@ -796,7 +796,7 @@ impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedMatmulRout
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
-        binding: MatmulBinding<O::Operand, TileArgLaunch, TileArgLaunch>,
+        binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: CubeStagedMatmulRoutineBlueprint,
         grid: Grid,
     ) {

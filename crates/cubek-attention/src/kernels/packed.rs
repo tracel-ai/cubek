@@ -3,7 +3,7 @@
 
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::tile::kind::Field;
-use cubecl::tile::{Axis, Launcher, TileArgLaunch, TileSpec};
+use cubecl::tile::{Axis, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{B, D, DV, KV, S};
@@ -172,9 +172,9 @@ impl PackedAttentionCache {
 
 /// A packed cache bound for a launch ([`PackedAttentionCache::bind`]).
 pub struct PackedCacheBinding {
-    pub key: TileArgLaunch,
-    pub value: TileArgLaunch,
-    pub fixup: Option<TileArgLaunch>,
+    pub key: TileTensorLaunch,
+    pub value: TileTensorLaunch,
+    pub fixup: Option<TileTensorLaunch>,
 }
 
 /// The axis of a codebook's table, its positions: outside every kernel's space.
@@ -188,7 +188,7 @@ impl PackedAttentionOperand {
     /// The operand bound under `launcher` along `[B, KV, S, head]`: its words' `bits`-wide fields
     /// indices into its codebook, each vector under its norm. Bound a word a line, the width a
     /// decoding read takes.
-    fn bind(&self, launcher: &Launcher, bits: u32, head: Axis) -> TileArgLaunch {
+    fn bind(&self, launcher: &Launcher, bits: u32, head: Axis) -> TileTensorLaunch {
         const TABLE: ElemType = ElemType::Float(FloatKind::F32);
         let axes = [B, KV, S, head];
         // A norm per vector, `[b, kv, s, 1]`, scales the vector along `[b, kv, s]`.
@@ -203,7 +203,7 @@ impl PackedAttentionOperand {
             .build()
             .expect(CHECKED_BY_NEW)
             .arg();
-        let codebook = TileArgLaunch::new(
+        let codebook = TileTensorLaunch::new(
             self.codebook.binding.clone().into_tensor_arg(),
             TABLE,
             1,

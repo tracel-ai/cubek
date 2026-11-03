@@ -1,5 +1,5 @@
 use cubecl::tile::launch::Destination;
-use cubecl::tile::{Instruction, Partitioning, Semiring, TileArg};
+use cubecl::tile::{Instruction, Partitioning, Semiring, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_microkernel::matmul::plane::plane_shuffle_microkernel;
@@ -12,8 +12,8 @@ use cubek_microkernel::matmul::plane::plane_shuffle_microkernel;
 /// slab holds nothing, so its plane takes no step and writes zeros; a plain one is walked whole.
 #[cube(launch_unchecked)]
 pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destination>(
-    lhs: &TileArg<'_>,
-    rhs: &TileArg<'_>,
+    lhs: &TileTensor<'_>,
+    rhs: &TileTensor<'_>,
     out: &O::Arg<E>,
     partitioning: Partitioning,
     #[comptime] instruction: Instruction,

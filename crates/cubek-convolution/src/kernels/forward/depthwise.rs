@@ -179,9 +179,9 @@ impl DepthwiseSpace {
 /// each cell.
 #[cube(launch)]
 fn depthwise_kernel(
-    weight: &TileArg<'_>,
-    input: &TileArg<'_>,
-    out: &TileArg<'_>,
+    weight: &TileTensor<'_>,
+    input: &TileTensor<'_>,
+    out: &TileTensor<'_>,
     space: Partitioning,
 ) {
     let weight = weight.tile(&space);
@@ -481,9 +481,9 @@ pub fn launch_depthwise(
         client,
         launch.cube_count(),
         launch.cube_dim(),
-        TileArgLaunch::new(weight.into_tensor_arg(), dtype, width, w_spec),
-        TileArgLaunch::new(input.into_tensor_arg(), dtype, width, in_spec),
-        TileArgLaunch::new(out.into_tensor_arg(), dtype, width, out_spec),
+        TileTensorLaunch::new(weight.into_tensor_arg(), dtype, width, w_spec),
+        TileTensorLaunch::new(input.into_tensor_arg(), dtype, width, in_spec),
+        TileTensorLaunch::new(out.into_tensor_arg(), dtype, width, out_spec),
         launch.partitioning_arg(),
     );
 
