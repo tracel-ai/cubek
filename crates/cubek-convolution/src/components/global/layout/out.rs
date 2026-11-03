@@ -104,11 +104,13 @@ impl OutLayoutLaunch {
         Self::new(shape, shape_m, shape_n, config)
     }
 
+    /// The out gradient is the weight gradient's lhs, read through a `Transpose`: its rows are
+    /// the matmul's `k` and its columns the matmul's `m`, so the bounds checks swap with them.
     fn from_args_wgrad(problem: &ConvolutionProblem, config: GlobalLayoutConfig) -> Self {
         let shape_out = problem.out_shape.iter().map(|s| *s as u32).collect();
         let shape_m = problem.m as u32;
         let shape_k = problem.k as u32;
 
-        Self::new(shape_out, shape_k, shape_m, config)
+        Self::new(shape_out, shape_k, shape_m, config.transposed())
     }
 }

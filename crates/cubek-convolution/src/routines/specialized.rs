@@ -5,9 +5,7 @@ use cubek_matmul::{
     multi_level::{
         args::{TensorArgs, TensorMapArgs},
         components::global::read::{
-            AsyncPartialLoadingStrategy, async_partial_cyclic::AsyncPartialCyclicLoading,
-            async_partial_strided::AsyncPartialStridedLoading,
-            async_partial_tma::AsyncPartialTmaLoading,
+            AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading,
         },
         definition::BatchMatmulBlueprint,
         routines::batch::specialized::{SpecializedAlgorithm, SpecializedStrategy},
@@ -18,7 +16,13 @@ use std::marker::PhantomData;
 use crate::{
     components::{
         ConvolutionOperation,
-        global::{args::RuntimeArgs, read::strategy::sync_bias::SyncBiasLoading},
+        global::{
+            args::RuntimeArgs,
+            read::strategy::{
+                async_partial_cyclic::AsyncPartialCyclicLoading,
+                async_partial_strided::AsyncPartialStridedLoading, sync_bias::SyncBiasLoading,
+            },
+        },
     },
     routines::{Routine, contiguous_pitched_layout, into_tensor_handle_tma},
 };
