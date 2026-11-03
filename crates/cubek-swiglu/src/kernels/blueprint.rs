@@ -55,12 +55,8 @@ impl<M> SwigluBlueprint<M> {
                     problem.element.size(),
                 ),
             });
-            if problem.store.overhangs_width(partitioning.as_tile()) {
-                vectorization.require(VectorRequirement::masked(
-                    operand,
-                    partitioning.as_tile().space(),
-                    problem.store.contiguous_axis(),
-                ));
+            if let Some(mask) = problem.store.mask(operand, partitioning.as_tile()) {
+                vectorization.require(mask);
             }
         }
         let width =
@@ -85,5 +81,45 @@ impl<M> SwigluBlueprint<M> {
             true => Ok(self),
             false => Err(SWIGLU_WIDTH_UNPLANNED),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::kernels::{CubeSwigluRoutine, SwigluRoutineProblem};
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubek_microkernel::row_store::WIDTH;
+    use cubek_std::devices;
+    use cubek_std::routine::Routine;
+
+    /// No setting overhangs a plain row, whatever its width: a run is whole lines of the row and
+    /// divides it. What keeps [`RowStore::mask`](cubek_microkernel::row_store::RowStore::mask)'s
+    /// plain arm unreached, so an output no wide masked line binds — a row stored in a product's
+    /// tiles — never meets one; a setting that overhangs fails here before a launch does.
+    #[test]
+    fn no_setting_overhangs_a_plain_row() {
+        let element = ElemType::Float(FloatKind::F16);
+        // The routine prepares somewhere, so the check is never vacuous.
+        let mut prepared = 0usize;
+        for hw in [
+            devices::strix_halo(),
+            devices::rdna_range(),
+            devices::cdna_wave64(),
+            devices::wgpu_no_subgroups(),
+            devices::cpu_12(),
+        ] {
+            for (rows, dim) in [(1, 96), (1, 1003), (7, 2816), (3, 5003), (1, 11008)] {
+                let problem = SwigluRoutineProblem::dense(rows, dim, element);
+                for settings in CubeSwigluRoutine.settings(&hw) {
+                    if let Ok((blueprint, _)) = CubeSwigluRoutine.prepare(&hw, &problem, &settings)
+                    {
+                        let overhangs = blueprint.partitioning.as_tile().overhangs(WIDTH);
+                        assert!(!overhangs, "{dim} {settings:?}");
+                        prepared += 1;
+                    }
+                }
+            }
+        }
+        assert!(prepared > 0);
     }
 }
