@@ -13,26 +13,16 @@ pub(crate) const N_VALUES_PER_THREAD: usize = 128;
 
 static SEED: Mutex<Option<StdRng>> = Mutex::new(None);
 
-/// Held across a "seed → derive seeds → submit random kernel" sequence so two
-/// threads can't interleave their `seed()` and `get_seeds()` calls (which would
-/// make each thread's launched kernel use the other thread's seeded state).
-static SEED_GUARD: Mutex<()> = Mutex::new(());
-
+/// Resets the convenience generator used by [`next_seed`].
+/// Already reserved operation seeds are unaffected.
 pub fn seed(seed: u64) {
-    let rng = StdRng::seed_from_u64(seed);
-    let mut seed = SEED.lock();
-    *seed = Some(rng);
+    *SEED.lock() = Some(StdRng::seed_from_u64(seed));
 }
 
-/// Install `seed` as the active RNG state and run `f` while holding a
-/// process-wide guard. Use this whenever `f` calls one of the `random_*`
-/// launchers: it keeps the seed-set and the kernel launch as a single
-/// critical section, so parallel callers don't stomp on each other's seeds
-/// between the two steps.
-pub fn with_seed<R>(seed_value: u64, f: impl FnOnce() -> R) -> R {
-    let _guard = SEED_GUARD.lock();
-    seed(seed_value);
-    f()
+/// Reserves a seed for one operation. Call before queueing asynchronous work.
+/// Sampling functions use only their explicit seed and never advance this generator.
+pub fn next_seed() -> u64 {
+    SEED.lock().get_or_insert_with(get_seeded_rng).random()
 }
 
 /// Pseudo-random generator
@@ -42,8 +32,9 @@ pub(crate) fn random<F: RandomFamily>(
     output: TensorBinding,
     dtype: ElemType,
     strategy: PrngStrategy,
+    seed: u64,
 ) -> Result<(), LaunchError> {
-    let seeds = get_seeds();
+    let seeds: [u32; 4] = StdRng::seed_from_u64(seed).random();
     let args = prng.args();
     let launch = PrngLaunchSettings::new(
         client,
@@ -71,21 +62,6 @@ pub(crate) fn random<F: RandomFamily>(
     );
 
     Ok(())
-}
-
-pub(crate) fn get_seeds() -> [u32; 4] {
-    let mut seed = SEED.lock();
-    let mut rng: StdRng = match seed.take() {
-        Some(rng_seeded) => rng_seeded,
-        None => get_seeded_rng(),
-    };
-    let mut seeds: Vec<u32> = Vec::with_capacity(4);
-    for _ in 0..4 {
-        seeds.push(rng.random());
-    }
-    *seed = Some(rng);
-
-    seeds.try_into().unwrap()
 }
 
 pub(crate) trait PrngArgs: Send + Sync + 'static {
@@ -246,6 +222,22 @@ mod tests {
 
     const BLUEPRINTS: [PrngBlueprint; 2] = [PrngBlueprint::Interleaved, PrngBlueprint::Blocked];
 
+    #[test]
+    fn explicit_draws_do_not_depend_on_or_advance_the_global_rng() {
+        let draw = |seed| {
+            draw_over_zeros(vec![4, 6], |client, output, dtype| {
+                crate::random_uniform(client, 0., 1., output, dtype, seed)
+            })
+        };
+        let expected = draw(7);
+        seed(19);
+        let next = next_seed();
+        seed(19);
+        assert_ne!(draw(23), expected);
+        assert_eq!(draw(7), expected);
+        assert_eq!(next_seed(), next);
+    }
+
     /// Both blueprints write every value of the output, on whichever device runs the
     /// suite.
     ///
@@ -263,6 +255,7 @@ mod tests {
                     output,
                     dtype,
                     PrngStrategy::Forced(blueprint),
+                    0,
                 )
             });
 
@@ -294,6 +287,7 @@ mod tests {
                     output,
                     dtype,
                     PrngStrategy::Forced(blueprint),
+                    0,
                 )
             });
 
@@ -316,6 +310,7 @@ mod tests {
                     output,
                     dtype,
                     PrngStrategy::Forced(blueprint),
+                    0,
                 )
             });
 
@@ -361,16 +356,15 @@ mod tests {
             settings.vectors_per_unit,
         );
 
-        with_seed(0, || {
-            random_uniform_with_strategy(
-                &client,
-                5.0,
-                17.0,
-                output.clone().binding(),
-                dtype,
-                PrngStrategy::Forced(PrngBlueprint::Blocked),
-            )
-        })
+        random_uniform_with_strategy(
+            &client,
+            5.0,
+            17.0,
+            output.clone().binding(),
+            dtype,
+            PrngStrategy::Forced(PrngBlueprint::Blocked),
+            0,
+        )
         .unwrap();
 
         let read = client.read_one_unchecked_tensor(output.into_copy_descriptor());
@@ -403,7 +397,7 @@ mod tests {
             dtype,
         );
 
-        with_seed(0, || launch(&client, output.clone().binding(), dtype)).unwrap();
+        launch(&client, output.clone().binding(), dtype).unwrap();
 
         let read = client.read_one_unchecked_tensor(output.into_copy_descriptor());
 
