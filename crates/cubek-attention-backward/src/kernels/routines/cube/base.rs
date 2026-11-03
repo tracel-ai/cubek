@@ -7,6 +7,7 @@ use crate::kernels::{
     AttentionBackwardBlueprint, AttentionBackwardProblem, AttentionBackwardRoutine,
     AttentionBackwardRoutineBlueprint, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
 };
+use core::num::NonZeroUsize;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Refusal;
@@ -16,6 +17,7 @@ use cubek_microkernel::attention_backward::AttentionBackwardOperand;
 use cubek_microkernel::attention_backward::key_gradient::cube::{
     CubeKeyGradientMicrokernel, CubeKeyGradientMicrokernelSettings,
 };
+use cubek_microkernel::attention_backward::key_gradient::plane::PlaneKeyGradientMicrokernelSettings;
 use cubek_microkernel::attention_backward::query_gradient::cube::{
     CubeQueryGradientMicrokernel, CubeQueryGradientMicrokernelSettings,
 };
@@ -70,8 +72,8 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
     type SharedMemory = StageRing;
 
     /// Each walk's microkernel's settings, the other's and the ring at their default, then each
-    /// ring of stages through registers, then each held key walk on each of them, then both walks
-    /// held, then some of those with the key walk's heads apart.
+    /// ring of stages through registers, then each held key walk prefetching through registers,
+    /// then both walks held on the narrow key walks, then those with the key walk's heads apart.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         let lead = CubeStagedAttentionBackwardRoutineSettings::DEFAULT;
         let queries = CubeQueryGradientMicrokernel::settings(hw)
@@ -91,52 +93,47 @@ impl AttentionBackwardRoutine for CubeStagedAttentionBackwardRoutine {
         let rings = [StageRing::DOUBLE, StageRing::SINGLE_THROUGH_REGISTERS]
             .map(|ring| Self::Settings { ring, ..lead });
         // A key walk holding its score in fragments runs nothing but its products between two
-        // fills, so its next stage lands under them: each held setting on each ring.
+        // fills, so its next stage lands under them: each held setting prefetching through
+        // registers.
         let held = CubeKeyGradientMicrokernel::settings(hw)
             .into_iter()
             .filter(|key_gradient| key_gradient.holds_its_score())
-            .flat_map(|key_gradient| {
-                [StageRing::DOUBLE, StageRing::SINGLE_THROUGH_REGISTERS].map(|ring| {
-                    Self::Settings {
-                        key_gradient,
-                        ring,
-                        ..lead
-                    }
-                })
+            .map(|key_gradient| Self::Settings {
+                key_gradient,
+                ring: StageRing::SINGLE_THROUGH_REGISTERS,
+                ..lead
             });
-        // Both walks holding their scores in fragments, the key walk on up to four planes, on a
-        // ring of one stage and on the one prefetching through registers.
+        // Both walks holding their scores in fragments, prefetching through registers: every held
+        // query walk with each narrow held key walk, one key fragment a plane on two or four
+        // planes. Wider key walks and a ring of one stage never won once the stages were swizzled,
+        // so they are left to the lists above.
         let query_held: Vec<_> = CubeQueryGradientMicrokernel::settings(hw)
             .into_iter()
             .filter(|query_gradient| query_gradient.holds_its_score())
             .collect();
-        let both = CubeKeyGradientMicrokernel::settings(hw)
+        let narrow_keys = [(2, 2), (2, 4), (4, 2), (4, 4), (8, 4)].map(|(queries, planes)| {
+            CubeKeyGradientMicrokernelSettings {
+                plane: PlaneKeyGradientMicrokernelSettings::fragments(1, queries).held(),
+                planes_along_keys: NonZeroUsize::new(planes).unwrap(),
+            }
+        });
+        let both = narrow_keys
             .into_iter()
-            .filter(|key_gradient| {
-                key_gradient.holds_its_score() && key_gradient.planes_along_keys.get() <= 4
-            })
-            .flat_map(move |key_gradient| {
+            .flat_map(|key_gradient| {
                 query_held
-                    .clone()
-                    .into_iter()
-                    .flat_map(move |query_gradient| {
-                        [StageRing::SINGLE, StageRing::SINGLE_THROUGH_REGISTERS].map(|ring| {
-                            Self::Settings {
-                                query_gradient,
-                                key_gradient,
-                                ring,
-                                ..lead
-                            }
-                        })
+                    .iter()
+                    .map(move |&query_gradient| Self::Settings {
+                        query_gradient,
+                        key_gradient,
+                        ring: StageRing::SINGLE_THROUGH_REGISTERS,
+                        ..lead
                     })
             })
             .collect::<Vec<_>>();
-        // The key walk's heads apart, on the settings of both walks held whose key walk prefetches
-        // through registers: where the first keys' cube, walking every head, is what the launch
-        // waits on.
+        // Each of those with the key walk's heads apart: where the first keys' cube, walking every
+        // head, is what the launch waits on.
         let apart = both
             .iter()
-            .filter(|settings| settings.ring == StageRing::SINGLE_THROUGH_REGISTERS)
             .map(|settings| Self::Settings {
                 key_heads: KeyHeads::Apart,
                 ..*settings
