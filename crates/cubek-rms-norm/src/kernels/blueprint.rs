@@ -54,12 +54,8 @@ impl<M> RmsNormBlueprint<M> {
                     problem.element.size(),
                 ),
             });
-            if problem.store.overhangs_width(partitioning.as_tile()) {
-                vectorization.require(VectorRequirement::masked(
-                    operand,
-                    partitioning.as_tile().space(),
-                    problem.store.contiguous_axis(),
-                ));
+            if let Some(mask) = problem.store.mask(operand, partitioning.as_tile()) {
+                vectorization.require(mask);
             }
         }
         let width = vectorization.width(RmsNormOperand::Input, |_| {
@@ -85,5 +81,75 @@ impl<M> RmsNormBlueprint<M> {
             true => Ok(self),
             false => Err(RMS_NORM_WIDTH_UNPLANNED),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::kernels::{
+        CubeGroupsRmsNormRoutine, CubeRmsNormRoutine, PlaneRmsNormRoutine, RmsNormRoutineProblem,
+    };
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubek_microkernel::rms_norm::RmsNormPartitioning;
+    use cubek_microkernel::row_store::WIDTH;
+    use cubek_std::devices;
+    use cubek_std::routine::Routine;
+
+    /// No setting of any routine overhangs a plain row, whatever its width: a run is whole lines
+    /// of the row and divides it. What keeps
+    /// [`RowStore::mask`](cubek_microkernel::row_store::RowStore::mask)'s plain arm unreached, so
+    /// an output no wide masked line binds — a row stored in a product's tiles — never meets one;
+    /// a setting that overhangs fails here before a launch does.
+    #[test]
+    fn no_setting_overhangs_a_plain_row() {
+        let element = ElemType::Float(FloatKind::F16);
+        let overhangs =
+            |partitioning: &RmsNormPartitioning| partitioning.as_tile().overhangs(WIDTH);
+        // Each routine prepares somewhere, so the check is never vacuous.
+        let mut prepared = [0usize; 3];
+        for hw in [
+            devices::strix_halo(),
+            devices::rdna_range(),
+            devices::cdna_wave64(),
+            devices::wgpu_no_subgroups(),
+            devices::cpu_12(),
+        ] {
+            for (rows, dim) in [(1, 96), (1, 1003), (7, 2560), (3, 4097), (1, 11008)] {
+                let problem = RmsNormRoutineProblem::dense(rows, dim, element);
+                for settings in CubeRmsNormRoutine.settings(&hw) {
+                    if let Ok((blueprint, _)) = CubeRmsNormRoutine.prepare(&hw, &problem, &settings)
+                    {
+                        assert!(
+                            !overhangs(&blueprint.partitioning),
+                            "cube {dim} {settings:?}"
+                        );
+                        prepared[0] += 1;
+                    }
+                }
+                for settings in CubeGroupsRmsNormRoutine.settings(&hw) {
+                    if let Ok((blueprint, _)) =
+                        CubeGroupsRmsNormRoutine.prepare(&hw, &problem, &settings)
+                    {
+                        assert!(
+                            !overhangs(&blueprint.partitioning),
+                            "groups {dim} {settings:?}"
+                        );
+                        prepared[1] += 1;
+                    }
+                }
+                for settings in PlaneRmsNormRoutine.settings(&hw) {
+                    if let Ok((blueprint, _)) =
+                        PlaneRmsNormRoutine.prepare(&hw, &problem, &settings)
+                    {
+                        assert!(
+                            !overhangs(&blueprint.partitioning),
+                            "plane {dim} {settings:?}"
+                        );
+                        prepared[2] += 1;
+                    }
+                }
+            }
+        }
+        assert!(prepared.iter().all(|&count| count > 0), "{prepared:?}");
     }
 }
