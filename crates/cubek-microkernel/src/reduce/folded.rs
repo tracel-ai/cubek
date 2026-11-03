@@ -1,5 +1,5 @@
 use crate::reduce::{ReadMap, ReduceLayout, ReduceOperation, ReduceWrites};
-use cubecl::tile::{Carrier, Indexed, Monoid, Tile, TopK};
+use cubecl::tile::{Carrier, Indexed, Monoid, TOP_K_UNROLL_BUDGET, Tile, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// What a reduction folds a unit's lines into, `N` lanes of `Acc`: how a line read at a position
@@ -264,7 +264,7 @@ impl<Acc: Numeric, N: Size, K: Size> Folded<Acc, N> for TopK<Acc, N, K> {
         let mut total = TopK::<Acc, N, K>::identity(monoid);
         #[unroll]
         for plane in 0..planes {
-            #[unroll]
+            #[unroll(k * k <= TOP_K_UNROLL_BUDGET)]
             for slot in 0..k {
                 total = total.insert(values[plane * k + slot], indices[plane * k + slot], monoid);
             }
@@ -290,7 +290,7 @@ impl<Acc: Numeric, N: Size, K: Size> Folded<Acc, N> for TopK<Acc, N, K> {
                 let mut best = TopK::<Acc, Const<1>, K>::identity(monoid);
                 #[unroll]
                 for lane in 0..N::value() {
-                    #[unroll]
+                    #[unroll(k * k <= TOP_K_UNROLL_BUDGET)]
                     for slot in 0..k {
                         best = best.insert(
                             Vector::new(acc.values[slot].extract(lane)),
