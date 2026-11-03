@@ -130,7 +130,7 @@ impl Microkernel for CubeKeyGradientMicrokernel {
         // A fragment of keys a plane, held, on two, four and eight planes: a cube's box as wide as
         // two fragments a plane's, each plane's gradients half as many registers; and stages of
         // eight query fragments, which four planes still share in whole rows of the instruction.
-        let narrow = [(2, 4), (2, 8), (4, 4), (4, 8), (8, 2), (8, 4)].map(|(queries, planes)| {
+        let narrow = [(2, 4), (2, 8), (4, 4), (4, 8), (8, 2), (8, 4), (8, 8)].map(|(queries, planes)| {
             Self::Settings {
                 plane: PlaneKeyGradientMicrokernelSettings::fragments(1, queries).held(),
                 planes_along_keys: NonZeroUsize::new(planes).unwrap(),
