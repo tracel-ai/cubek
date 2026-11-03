@@ -1,4 +1,4 @@
-use super::kernel::cube_reduce_kernel;
+use super::kernel::{cube_reduce_kernel, cube_reduce_with_indices_kernel};
 use crate::kernels::{
     ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
     reduce_widths,
@@ -121,18 +121,34 @@ impl ReduceRoutine<CubeReduceMicrokernel> for CubeReduceRoutine {
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles; its shared memory is the slots its microkernel declares, which the grid
         // counted.
-        unsafe {
-            cube_reduce_kernel::launch_unchecked(
-                tensors.client(),
-                grid.launch.cube_count,
-                grid.launch.cube_dim,
-                blueprint.width,
-                binding.input.arg(),
-                binding.out.arg(),
-                binding.launcher.partitioning_arg(),
-                blueprint.microkernel,
-                [elements.input, elements.accumulator, elements.out],
-            );
+        match (binding.indices, tensors.problem().indices) {
+            (Some(indices), Some(index)) => unsafe {
+                cube_reduce_with_indices_kernel::launch_unchecked(
+                    tensors.client(),
+                    grid.launch.cube_count,
+                    grid.launch.cube_dim,
+                    blueprint.width,
+                    binding.input.arg(),
+                    binding.out.arg(),
+                    indices.arg(),
+                    binding.launcher.partitioning_arg(),
+                    blueprint.microkernel,
+                    [elements.input, elements.accumulator, elements.out, index],
+                )
+            },
+            _ => unsafe {
+                cube_reduce_kernel::launch_unchecked(
+                    tensors.client(),
+                    grid.launch.cube_count,
+                    grid.launch.cube_dim,
+                    blueprint.width,
+                    binding.input.arg(),
+                    binding.out.arg(),
+                    binding.launcher.partitioning_arg(),
+                    blueprint.microkernel,
+                    [elements.input, elements.accumulator, elements.out],
+                )
+            },
         }
     }
 }

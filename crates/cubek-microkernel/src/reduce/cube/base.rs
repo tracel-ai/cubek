@@ -114,6 +114,7 @@ mod tests {
             accumulator: F32,
             reduced: 151_936,
             layout: ReduceLayout::Along,
+            with_indices: false,
         }
     }
 

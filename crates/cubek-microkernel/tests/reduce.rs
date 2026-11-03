@@ -115,9 +115,10 @@ fn check_laid(
         accumulator: F32,
         reduced: len,
         layout,
+        with_indices: false,
     };
     let out_elem = match operation.writes() {
-        ReduceWrites::Values => F32,
+        ReduceWrites::Values | ReduceWrites::Both => F32,
         ReduceWrites::Indices => I32,
     };
     let rows = rows(len, operation == ReduceOperation::Prod);

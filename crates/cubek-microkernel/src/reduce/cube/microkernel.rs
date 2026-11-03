@@ -13,11 +13,13 @@ pub fn cube_reduce_microkernel<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
+    Idx: Numeric,
     N: Size,
     C: Folded<Acc, N>,
 >(
     input: &Tile,
     out: &mut Tile,
+    indices: &mut Tile,
     #[comptime] microkernel: CubeReduceMicrokernel,
 ) {
     let operation = comptime!(microkernel.item.operation);
@@ -45,6 +47,14 @@ pub fn cube_reduce_microkernel<
             ReduceLayout::Along => count * N::value(),
             ReduceLayout::Across => count,
         };
-        C::write::<Out>(total, out, values, layout, operation);
+        C::write::<Out, Idx>(
+            total,
+            out,
+            indices,
+            values,
+            layout,
+            operation,
+            comptime!(microkernel.item.writes()),
+        );
     }
 }

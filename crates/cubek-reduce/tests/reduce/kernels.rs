@@ -155,7 +155,7 @@ fn check(scope: Scope, shape: &[usize], axis: usize, operation: ReduceOperation)
     let hw = Hardware::from_client(&client);
     let input_values = values(shape.iter().product(), operation == ReduceOperation::Prod);
     let out_elem = match operation.writes() {
-        ReduceWrites::Values => F32,
+        ReduceWrites::Values | ReduceWrites::Both => F32,
         ReduceWrites::Indices => I32,
     };
     let mut out_shape = shape.to_vec();

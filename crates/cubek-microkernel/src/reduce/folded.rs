@@ -23,16 +23,19 @@ pub trait Folded<Acc: Numeric, N: Size>: Carrier + CubeType<ExpandType: Assign +
     /// written anew. Every unit of the cube is left with the total.
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self;
 
-    /// What `acc` holds written to `out` as `operation` asks, its lanes folded into one first
-    /// where they hold one row ([`ReduceLayout::Along`]): `out`'s first cell along the row, or its
-    /// first line across rows (its first `k` of either, for a top-k). `count` is the number of
-    /// values reduced, which a mean divides by.
-    fn write<Out: Numeric>(
+    /// What `acc` holds written as `writes` says, its lanes folded into one first where they
+    /// hold one row ([`ReduceLayout::Along`]): to `out`'s first cell along the row, or its first
+    /// line across rows (its first `k` of either, for a top-k). With [`ReduceWrites::Both`] the
+    /// indices go to `indices` at the same places, in `Idx`; `indices` is written only then.
+    /// `count` is the number of values reduced, which a mean divides by.
+    fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
+        indices: &mut Tile,
         count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
+        #[comptime] writes: ReduceWrites,
     );
 }
 
@@ -102,13 +105,19 @@ impl<Acc: Numeric, N: Size> Folded<Acc, N> for Vector<Acc, N> {
         total
     }
 
-    fn write<Out: Numeric>(
+    fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
+        _indices: &mut Tile,
         count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
+        #[comptime] writes: ReduceWrites,
     ) {
+        comptime!(assert!(
+            writes == ReduceWrites::Values,
+            "Folded: {operation:?} folds the values themselves, which carry no index to write"
+        ));
         let monoid = comptime!(operation.monoid());
         match comptime!(layout) {
             ReduceLayout::Along => {
@@ -171,12 +180,14 @@ impl<Acc: Numeric, N: Size> Folded<Acc, N> for Indexed<Acc, N> {
         total
     }
 
-    fn write<Out: Numeric>(
+    fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
+        indices: &mut Tile,
         _count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
+        #[comptime] writes: ReduceWrites,
     ) {
         let monoid = comptime!(operation.monoid());
         match comptime!(layout) {
@@ -191,19 +202,36 @@ impl<Acc: Numeric, N: Size> Folded<Acc, N> for Indexed<Acc, N> {
                     };
                     best = OneIndexed::<Acc>::combine(best, one, monoid);
                 }
-                let mut cells = out.flat_mut::<Out, Const<1>>();
-                match comptime!(operation.writes()) {
-                    ReduceWrites::Values => cells.write(0, Vector::cast_from(best.value)),
-                    ReduceWrites::Indices => cells.write(0, Vector::cast_from(best.index)),
-                }
+                write_line::<Out, Idx, Acc, Const<1>>(
+                    out, indices, 0, best.value, best.index, writes,
+                );
             }
             ReduceLayout::Across => {
-                let mut lines = out.flat_mut::<Out, N>();
-                match comptime!(operation.writes()) {
-                    ReduceWrites::Values => lines.write(0, Vector::cast_from(acc.value)),
-                    ReduceWrites::Indices => lines.write(0, Vector::cast_from(acc.index)),
-                }
+                write_line::<Out, Idx, Acc, N>(out, indices, 0, acc.value, acc.index, writes);
             }
+        }
+    }
+}
+
+/// Line `at` of what an owner writes, `value` and its `index`, written as `writes` says: one of
+/// them to `out`, or the value to `out` and the index to `indices`, which nothing else writes.
+#[cube]
+fn write_line<Out: Numeric, Idx: Numeric, Acc: Numeric, W: Size>(
+    out: &mut Tile,
+    indices: &mut Tile,
+    at: usize,
+    value: Vector<Acc, W>,
+    index: Vector<u32, W>,
+    #[comptime] writes: ReduceWrites,
+) {
+    let mut lines = out.flat_mut::<Out, W>();
+    match comptime!(writes) {
+        ReduceWrites::Values => lines.write(at, Vector::cast_from(value)),
+        ReduceWrites::Indices => lines.write(at, Vector::cast_from(index)),
+        ReduceWrites::Both => {
+            lines.write(at, Vector::cast_from(value));
+            let mut index_lines = indices.flat_mut::<Idx, W>();
+            index_lines.write(at, Vector::cast_from(index));
         }
     }
 }
@@ -245,12 +273,14 @@ impl<Acc: Numeric, N: Size, K: Size> Folded<Acc, N> for TopK<Acc, N, K> {
         total
     }
 
-    fn write<Out: Numeric>(
+    fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
+        indices: &mut Tile,
         _count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
+        #[comptime] writes: ReduceWrites,
     ) {
         let monoid = comptime!(operation.monoid());
         let k = K::value();
@@ -269,31 +299,30 @@ impl<Acc: Numeric, N: Size, K: Size> Folded<Acc, N> for TopK<Acc, N, K> {
                         );
                     }
                 }
-                let mut cells = out.flat_mut::<Out, Const<1>>();
                 #[unroll]
                 for slot in 0..k {
-                    match comptime!(operation.writes()) {
-                        ReduceWrites::Values => {
-                            cells.write(slot, Vector::cast_from(best.values[slot]))
-                        }
-                        ReduceWrites::Indices => {
-                            cells.write(slot, Vector::cast_from(best.indices[slot]))
-                        }
-                    }
+                    write_line::<Out, Idx, Acc, Const<1>>(
+                        out,
+                        indices,
+                        slot,
+                        best.values[slot],
+                        best.indices[slot],
+                        writes,
+                    );
                 }
             }
-            ReduceLayout::Across => {
-                let mut lines = out.flat_mut::<Out, N>();
+            ReduceLayout::Across =>
+            {
                 #[unroll]
                 for slot in 0..k {
-                    match comptime!(operation.writes()) {
-                        ReduceWrites::Values => {
-                            lines.write(slot, Vector::cast_from(acc.values[slot]))
-                        }
-                        ReduceWrites::Indices => {
-                            lines.write(slot, Vector::cast_from(acc.indices[slot]))
-                        }
-                    }
+                    write_line::<Out, Idx, Acc, N>(
+                        out,
+                        indices,
+                        slot,
+                        acc.values[slot],
+                        acc.indices[slot],
+                        writes,
+                    );
                 }
             }
         }

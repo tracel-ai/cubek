@@ -1,4 +1,4 @@
-use crate::reduce::{ReduceOperand, ReduceOperation};
+use crate::reduce::{ReduceOperand, ReduceOperation, ReduceWrites};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 
@@ -25,9 +25,21 @@ pub struct ReduceWorkItem {
     /// Values along the reduced axis.
     pub reduced: usize,
     pub layout: ReduceLayout,
+    /// Whether the indices are written beside the values, to a second output laid out as the
+    /// first: an argmax's or a top-k's both halves from one launch.
+    pub with_indices: bool,
 }
 
 impl ReduceWorkItem {
+    /// What the owner writes: both halves where the indices go beside the values, what the
+    /// operation writes otherwise.
+    pub fn writes(&self) -> ReduceWrites {
+        match self.with_indices {
+            true => ReduceWrites::Both,
+            false => self.operation.writes(),
+        }
+    }
+
     /// What every microkernel of this kind asks of the operands: along the reduced axis, the
     /// input reads stretches of the row and the output takes one cell per row (`k` for a top-k);
     /// across it, a line of the input is a line of the output, one row a lane.

@@ -17,23 +17,82 @@ pub fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     let o = out.tile(&partitioning);
     for cube in &partitioning {
         let mut rows_out = o.at(&cube);
+        // One output: the indices are never written, so they get the output's own window.
+        let mut unwritten = o.at(&cube);
         let rows = x.at(&cube);
         match comptime!(microkernel.item.operation.carrier()) {
-            ReduceCarrier::Values => cube_reduce_microkernel::<In, Acc, Out, N, Vector<Acc, N>>(
-                &rows,
-                &mut rows_out,
-                microkernel,
-            ),
-            ReduceCarrier::Indexed => cube_reduce_microkernel::<In, Acc, Out, N, Indexed<Acc, N>>(
-                &rows,
-                &mut rows_out,
-                microkernel,
-            ),
-            ReduceCarrier::TopK { k } => {
-                let size!(K) = k;
-                cube_reduce_microkernel::<In, Acc, Out, N, TopK<Acc, N, K>>(
+            ReduceCarrier::Values => {
+                cube_reduce_microkernel::<In, Acc, Out, Out, N, Vector<Acc, N>>(
                     &rows,
                     &mut rows_out,
+                    &mut unwritten,
+                    microkernel,
+                )
+            }
+            ReduceCarrier::Indexed => {
+                cube_reduce_microkernel::<In, Acc, Out, Out, N, Indexed<Acc, N>>(
+                    &rows,
+                    &mut rows_out,
+                    &mut unwritten,
+                    microkernel,
+                )
+            }
+            ReduceCarrier::TopK { k } => {
+                let size!(K) = k;
+                cube_reduce_microkernel::<In, Acc, Out, Out, N, TopK<Acc, N, K>>(
+                    &rows,
+                    &mut rows_out,
+                    &mut unwritten,
+                    microkernel,
+                )
+            }
+        }
+    }
+}
+
+/// Every cube of the launch, reducing its rows into the carrier its operation folds into, and
+/// writing the values to `out` and their indices to `indices`, laid out as `out`.
+#[cube(launch_unchecked)]
+#[allow(clippy::too_many_arguments)]
+pub fn cube_reduce_with_indices_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+>(
+    input: &TileArg<'_>,
+    out: &TileArg<'_>,
+    indices: &TileArg<'_>,
+    partitioning: Partitioning,
+    #[comptime] microkernel: CubeReduceMicrokernel,
+    #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
+) {
+    let x = input.tile(&partitioning);
+    let o = out.tile(&partitioning);
+    let i = indices.tile(&partitioning);
+    for cube in &partitioning {
+        let mut rows_out = o.at(&cube);
+        let mut rows_indices = i.at(&cube);
+        let rows = x.at(&cube);
+        match comptime!(microkernel.item.operation.carrier()) {
+            ReduceCarrier::Values => {
+                comptime!(panic!("the values themselves carry no index to write"))
+            }
+            ReduceCarrier::Indexed => {
+                cube_reduce_microkernel::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
+                    &rows,
+                    &mut rows_out,
+                    &mut rows_indices,
+                    microkernel,
+                )
+            }
+            ReduceCarrier::TopK { k } => {
+                let size!(K) = k;
+                cube_reduce_microkernel::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
+                    &rows,
+                    &mut rows_out,
+                    &mut rows_indices,
                     microkernel,
                 )
             }

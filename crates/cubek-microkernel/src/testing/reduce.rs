@@ -192,27 +192,32 @@ fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     for plane in &partitioning {
         if UNIT_POS_PLANE == 0 {
             let mut row_out = o.at(&plane);
+            // One output: the indices are never written, so they get the output's own window.
+            let mut unwritten = o.at(&plane);
             let row = x.at(&plane);
             match comptime!(microkernel.item.operation.carrier()) {
                 ReduceCarrier::Values => {
-                    unit_reduce_microkernel::<In, Acc, Out, N, Vector<Acc, N>>(
+                    unit_reduce_microkernel::<In, Acc, Out, Out, N, Vector<Acc, N>>(
                         &row,
                         &mut row_out,
+                        &mut unwritten,
                         microkernel,
                     )
                 }
                 ReduceCarrier::Indexed => {
-                    unit_reduce_microkernel::<In, Acc, Out, N, Indexed<Acc, N>>(
+                    unit_reduce_microkernel::<In, Acc, Out, Out, N, Indexed<Acc, N>>(
                         &row,
                         &mut row_out,
+                        &mut unwritten,
                         microkernel,
                     )
                 }
                 ReduceCarrier::TopK { k } => {
                     let size!(K) = k;
-                    unit_reduce_microkernel::<In, Acc, Out, N, TopK<Acc, N, K>>(
+                    unit_reduce_microkernel::<In, Acc, Out, Out, N, TopK<Acc, N, K>>(
                         &row,
                         &mut row_out,
+                        &mut unwritten,
                         microkernel,
                     )
                 }
@@ -234,23 +239,32 @@ fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     let o = out.tile(&partitioning);
     for plane in &partitioning {
         let mut row_out = o.at(&plane);
+        // One output: the indices are never written, so they get the output's own window.
+        let mut unwritten = o.at(&plane);
         let row = x.at(&plane);
         match comptime!(microkernel.item.operation.carrier()) {
-            ReduceCarrier::Values => plane_reduce_microkernel::<In, Acc, Out, N, Vector<Acc, N>>(
-                &row,
-                &mut row_out,
-                microkernel,
-            ),
-            ReduceCarrier::Indexed => plane_reduce_microkernel::<In, Acc, Out, N, Indexed<Acc, N>>(
-                &row,
-                &mut row_out,
-                microkernel,
-            ),
-            ReduceCarrier::TopK { k } => {
-                let size!(K) = k;
-                plane_reduce_microkernel::<In, Acc, Out, N, TopK<Acc, N, K>>(
+            ReduceCarrier::Values => {
+                plane_reduce_microkernel::<In, Acc, Out, Out, N, Vector<Acc, N>>(
                     &row,
                     &mut row_out,
+                    &mut unwritten,
+                    microkernel,
+                )
+            }
+            ReduceCarrier::Indexed => {
+                plane_reduce_microkernel::<In, Acc, Out, Out, N, Indexed<Acc, N>>(
+                    &row,
+                    &mut row_out,
+                    &mut unwritten,
+                    microkernel,
+                )
+            }
+            ReduceCarrier::TopK { k } => {
+                let size!(K) = k;
+                plane_reduce_microkernel::<In, Acc, Out, Out, N, TopK<Acc, N, K>>(
+                    &row,
+                    &mut row_out,
+                    &mut unwritten,
                     microkernel,
                 )
             }
@@ -271,23 +285,32 @@ fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     let o = out.tile(&partitioning);
     for cube in &partitioning {
         let mut row_out = o.at(&cube);
+        // One output: the indices are never written, so they get the output's own window.
+        let mut unwritten = o.at(&cube);
         let row = x.at(&cube);
         match comptime!(microkernel.item.operation.carrier()) {
-            ReduceCarrier::Values => cube_reduce_microkernel::<In, Acc, Out, N, Vector<Acc, N>>(
-                &row,
-                &mut row_out,
-                microkernel,
-            ),
-            ReduceCarrier::Indexed => cube_reduce_microkernel::<In, Acc, Out, N, Indexed<Acc, N>>(
-                &row,
-                &mut row_out,
-                microkernel,
-            ),
-            ReduceCarrier::TopK { k } => {
-                let size!(K) = k;
-                cube_reduce_microkernel::<In, Acc, Out, N, TopK<Acc, N, K>>(
+            ReduceCarrier::Values => {
+                cube_reduce_microkernel::<In, Acc, Out, Out, N, Vector<Acc, N>>(
                     &row,
                     &mut row_out,
+                    &mut unwritten,
+                    microkernel,
+                )
+            }
+            ReduceCarrier::Indexed => {
+                cube_reduce_microkernel::<In, Acc, Out, Out, N, Indexed<Acc, N>>(
+                    &row,
+                    &mut row_out,
+                    &mut unwritten,
+                    microkernel,
+                )
+            }
+            ReduceCarrier::TopK { k } => {
+                let size!(K) = k;
+                cube_reduce_microkernel::<In, Acc, Out, Out, N, TopK<Acc, N, K>>(
+                    &row,
+                    &mut row_out,
+                    &mut unwritten,
                     microkernel,
                 )
             }

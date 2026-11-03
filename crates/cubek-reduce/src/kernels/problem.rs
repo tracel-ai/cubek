@@ -32,6 +32,9 @@ pub struct ReduceRoutineProblem {
     pub contiguous: Option<usize>,
     /// The alignment of the input's and the output's buffers in elements.
     pub elem_alignments: [ElemAlignment; 2],
+    /// The element of the indices written beside the values, to a second output laid out as
+    /// the first, where they are.
+    pub indices: Option<ElemType>,
 }
 
 impl ReduceRoutineProblem {
@@ -104,6 +107,7 @@ impl ReduceRoutineProblem {
             accumulator: self.elements.accumulator,
             reduced: self.reduced_extent(),
             layout: self.layout(),
+            with_indices: self.indices.is_some(),
         }
     }
 

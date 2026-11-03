@@ -59,6 +59,8 @@ pub enum ReduceCarrier {
 pub enum ReduceWrites {
     Values,
     Indices,
+    /// The values to the output, and their indices to a second output beside it.
+    Both,
 }
 
 impl ReduceOperation {

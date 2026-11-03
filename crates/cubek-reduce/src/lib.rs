@@ -181,7 +181,7 @@ pub fn reduce_with_indices(
     )
 }
 
-fn operation_name(operation: &ReduceOperationConfig) -> &'static str {
+pub(crate) fn operation_name(operation: &ReduceOperationConfig) -> &'static str {
     match operation {
         ReduceOperationConfig::Sum => "Sum",
         ReduceOperationConfig::Prod => "Prod",

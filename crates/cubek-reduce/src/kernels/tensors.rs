@@ -6,7 +6,7 @@ use cubecl::prelude::TensorBinding;
 use cubecl::tile::Launcher;
 use cubecl::tile::launch::Bound;
 use cubecl::tile::layout::ElemAlignment;
-use cubek_microkernel::reduce::ReduceOperation;
+use cubek_microkernel::reduce::{ReduceCarrier, ReduceOperation};
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
 /// The input and the output of one reduction, and the problem they state.
@@ -18,6 +18,8 @@ pub struct ReduceTensors {
     client: Client,
     input: TensorBinding,
     out: TensorBinding,
+    /// The indices written beside the values, laid out as `out`, where they are.
+    indices: Option<TensorBinding>,
     problem: ReduceRoutineProblem,
 }
 
@@ -72,13 +74,47 @@ impl ReduceTensors {
             operation,
             elements,
             contiguous,
+            indices: None,
         };
         Self {
             client: client.clone(),
             input,
             out,
+            indices: None,
             problem,
         }
+    }
+
+    /// `values = operation(input)` along dim `axis`, and the indices of those values to
+    /// `indices`, in `index_element`, from one launch: `indices` has `values`' shape and strides.
+    ///
+    /// # Panics
+    ///
+    /// As [`new`](Self::new), and where the operation's values carry no index (a sum's do not),
+    /// or `indices` is not laid out as `values`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_indices(
+        client: &Client,
+        input: TensorBinding,
+        values: TensorBinding,
+        indices: TensorBinding,
+        axis: usize,
+        operation: ReduceOperation,
+        elements: ReduceElements,
+        index_element: cubecl::ir::ElemType,
+    ) -> Self {
+        assert!(
+            !matches!(operation.carrier(), ReduceCarrier::Values),
+            "{operation:?} folds the values themselves, which carry no index"
+        );
+        assert!(
+            indices.shape == values.shape && indices.strides == values.strides,
+            "the indices are laid out as the values"
+        );
+        let mut tensors = Self::new(client, input, values, axis, operation, elements);
+        tensors.problem.indices = Some(index_element);
+        tensors.indices = Some(indices);
+        tensors
     }
 
     pub fn problem(&self) -> &ReduceRoutineProblem {
@@ -109,10 +145,24 @@ impl ReduceTensors {
             .vectorize(blueprint.out_width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
+        let indices = self.indices.as_ref().map(|indices| {
+            launcher
+                .arg(
+                    indices.clone(),
+                    self.problem
+                        .indices
+                        .expect("indices beside the values have an element"),
+                )
+                .axes(&self.problem.out_axes())
+                .vectorize(blueprint.out_width)
+                .build()
+                .expect(ADMITTED_PLAN_RUNS)
+        });
         ReduceBinding {
             launcher,
             input,
             out,
+            indices,
         }
     }
 }
@@ -122,4 +172,6 @@ pub struct ReduceBinding {
     pub launcher: Launcher,
     pub input: Bound,
     pub out: Bound,
+    /// The indices beside the values, where the launch writes both.
+    pub indices: Option<Bound>,
 }
