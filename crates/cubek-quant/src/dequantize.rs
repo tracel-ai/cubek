@@ -85,7 +85,7 @@ pub fn dequantize_symmetric_packed_value<
     #[unroll]
     for i in 0..vector_size_values {
         let floats = unpack_cast_u32::<F, Const<1>, NF>(
-            Vector::<u32, Const<1>>::new(u32::cast_from(values.extract(i))),
+            Vector::cast_from(values.extract(i)),
             ComptimeOption::new_None(),
             scheme,
         );
