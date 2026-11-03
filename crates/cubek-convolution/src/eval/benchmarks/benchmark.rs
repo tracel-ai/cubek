@@ -68,18 +68,22 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
     type Input = (TensorHandle, TensorHandle, TensorHandle);
     type Output = ();
 
+    /// NHWC input and `[co, kh, kw, ci]` weight, the layout `launch_ref` reads; the problem states
+    /// its shapes channels first.
     fn prepare(&self) -> Self::Input {
         let client = self.device.client();
+        let [n, c_in, h_in, w_in] = self.problem.input_shape;
+        let [c_out, _, k_h, k_w] = self.problem.weight_shape;
 
         let input = make_uniform_4d(
             &client,
-            self.problem.input_shape,
+            [n, h_in, w_in, c_in],
             LhsG::<MP>::elem_type_native(),
             0,
         );
         let weight = make_uniform_4d(
             &client,
-            self.problem.weight_shape,
+            [c_out, k_h, k_w, c_in],
             RhsG::<MP>::elem_type_native(),
             1,
         );
@@ -106,7 +110,7 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
         let elems = MatmulElems::new_deprecated::<MP>();
 
         let out: TensorHandle =
-            TensorHandle::empty(&client, vec![n, c_out, h_out, w_out], elems.acc_global);
+            TensorHandle::empty(&client, vec![n, h_out, w_out, c_out], elems.acc_global);
 
         launch_ref::<2>(
             &self.strategy,
