@@ -17,7 +17,7 @@ use cubecl::{
     },
 };
 use cubek_matmul::{
-    definition::{AccumulatorOperand, AvailableVectorSizes, MatmulElems},
+    definition::{AccumulatorOperand, AvailableVectorSizes, MatmulElems, MatmulProblem},
     multi_level::{
         BatchMatmulRoutine,
         args::{BatchedCoords, TensorArgs, TensorInputsLaunch, TensorOutputLaunch},
@@ -25,7 +25,9 @@ use cubek_matmul::{
             BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutLaunch, NoopLayout,
             NoopLayoutLaunch, Transpose, TransposeLaunch,
         },
+        components::tile::TileMatmulKind,
         definition::Blueprint,
+        routines::batch::simple::SimpleArgs,
     },
 };
 use cubek_std::{InputBinding, MatrixLayout};
@@ -43,10 +45,7 @@ use crate::{
             },
         },
     },
-    routines::{
-        Routine,
-        unit::{UnitConv, UnitMatmul},
-    },
+    routines::{Routine, simple::SimpleSyncStridedConv, unit::UnitConv},
 };
 
 /// Reduction rows one split should cover at least; fewer splits leave the
@@ -63,10 +62,13 @@ pub(crate) fn split_count(rows: usize) -> usize {
     1 << by_rows.ilog2()
 }
 
-/// Each split writes its own small matrix, followed by a deterministic sum.
-/// The final split may be short; its missing rows are masked in `SplitKLayout`.
-#[allow(clippy::too_many_arguments, clippy::result_large_err)]
-pub(crate) fn launch_split<const N: usize>(
+struct SplitOptions<Build> {
+    blueprint: Build,
+    rows_per_split: usize,
+}
+
+/// Launches register-tiled split weight gradients for NHWC tensors of rank `N + 2`.
+pub(crate) fn launch_unit<const N: usize>(
     client: &Client,
     input: InputBinding,
     out_grad: InputBinding,
@@ -76,24 +78,173 @@ pub(crate) fn launch_split<const N: usize>(
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError> {
     let dtype = f32::elem_type_native();
-    if dtypes.lhs_global != dtype
-        || dtypes.rhs_global != dtype
-        || dtypes.acc_global != dtype
-        || input.scale().is_some()
-        || out_grad.scale().is_some()
+    if dtypes.lhs_global != dtype || dtypes.rhs_global != dtype || dtypes.acc_global != dtype {
+        return Err(ConvSetupError::Unknown);
+    }
+    launch_split::<N, false, UnitConv, _>(
+        client,
+        input,
+        out_grad,
+        weight_grad,
+        args,
+        SplitOptions {
+            blueprint: |problem: &MatmulProblem, dtypes: &MatmulElems| {
+                strategy.blueprint(client, problem, dtypes)
+            },
+            rows_per_split: ROWS_PER_SPLIT,
+        },
+        dtypes,
+    )
+}
+
+/// Launches accelerated split weight gradients for NHWC input and output gradients.
+/// The output has shape `[out_channels, ...kernel, in_channels]`, with rank `N + 2`.
+/// `SPATIAL_LAST` stores partial columns with spatial axes inside the channel axis.
+/// F16 and BF16 partial sums stay F32 until the final output write.
+pub fn launch_accelerated<const N: usize, const SPATIAL_LAST: bool>(
+    client: &Client,
+    input: InputBinding,
+    out_grad: InputBinding,
+    weight_grad: TensorBinding,
+    args: ConvolutionArgs<N>,
+    tile_kind: crate::AcceleratedTileKind,
+    dtypes: MatmulElems,
+) -> Result<(), ConvSetupError> {
+    launch_split::<N, SPATIAL_LAST, SimpleSyncStridedConv, _>(
+        client,
+        input,
+        out_grad,
+        weight_grad,
+        args,
+        SplitOptions {
+            blueprint: |_: &MatmulProblem, _: &MatmulElems| {
+                cubek_matmul::routine::BlueprintStrategy::Inferred(SimpleArgs {
+                    tile_matmul: match tile_kind {
+                        crate::AcceleratedTileKind::Cmma => TileMatmulKind::Cmma,
+                        crate::AcceleratedTileKind::Mma => TileMatmulKind::Mma,
+                    },
+                    multi_rows: false,
+                })
+            },
+            rows_per_split: 512,
+        },
+        dtypes,
+    )
+}
+
+/// Checks logical NHWC shapes and the signed coordinates used by convolution layouts.
+fn coordinates_fit<const N: usize>(
+    input: &InputBinding,
+    out_grad: &InputBinding,
+    weight_grad: &TensorBinding,
+    args: &ConvolutionArgs<N>,
+) -> bool {
+    if !(1..=3).contains(&N) {
+        return false;
+    }
+    let tensors = [input.data(), out_grad.data(), weight_grad];
+    if tensors.iter().any(|tensor| {
+        tensor.shape.len() != N + 2
+            || tensor.strides.len() != N + 2
+            || tensor.tiling.is_tiled()
+            || tensor.shape.contains(&0)
+            || tensor
+                .shape
+                .iter()
+                .try_fold(1usize, |count, size| count.checked_mul(*size))
+                .is_none_or(|count| count > u32::MAX as usize)
+    }) {
+        return false;
+    }
+    if input.shape()[0] != out_grad.shape()[0]
+        || input.shape()[N + 1] != weight_grad.shape[N + 1]
+        || out_grad.shape()[N + 1] != weight_grad.shape[0]
+    {
+        return false;
+    }
+    let mut rows = input.shape()[0] as u128;
+    (0..N).all(|axis| {
+        let extent = cubecl::tune::anchor(input.shape()[axis + 1], None, None, None) as u128;
+        let output = cubecl::tune::anchor(out_grad.shape()[axis + 1], None, None, None) as u128;
+        let kernel = weight_grad.shape[axis + 1] as u128;
+        let stride = args.stride[axis] as u128;
+        let dilation = args.dilation[axis] as u128;
+        let padding = args.padding[axis] as u128;
+        let limit = i32::MAX as u128;
+        rows *= output;
+        stride > 0
+            && dilation > 0
+            && padding <= limit
+            && extent <= limit + 1
+            && (output - 1) * stride + (kernel - 1) * dilation <= limit
+            && rows <= u32::MAX as u128
+    })
+}
+
+/// Each split writes its own small matrix, followed by a deterministic sum.
+/// The final split may be short; its missing rows are masked in `SplitKLayout`.
+#[allow(clippy::too_many_arguments, clippy::result_large_err)]
+fn launch_split<const N: usize, const SPATIAL_LAST: bool, Rt, Build>(
+    client: &Client,
+    input: InputBinding,
+    out_grad: InputBinding,
+    weight_grad: TensorBinding,
+    args: ConvolutionArgs<N>,
+    options: SplitOptions<Build>,
+    mut dtypes: MatmulElems,
+) -> Result<(), ConvSetupError>
+where
+    Rt: Routine<Args = TensorArgs<RuntimeArgs>>,
+    Build: FnOnce(
+        &MatmulProblem,
+        &MatmulElems,
+    ) -> cubek_matmul::routine::BlueprintStrategy<Rt::MatmulRoutine>,
+{
+    let dtype = f32::elem_type_native();
+    let output_dtype = dtypes.acc_global;
+    if input.scale().is_some() || out_grad.scale().is_some() {
+        return Err(ConvSetupError::Unknown);
+    }
+    if !coordinates_fit(&input, &out_grad, &weight_grad, &args) {
+        return Err(ConvSetupError::InvalidConfig(Box::new(
+            "split weight-gradient shapes or coordinates exceed the layout index range",
+        )));
+    }
+    let supported = [
+        f32::elem_type_native(),
+        half::f16::elem_type_native(),
+        half::bf16::elem_type_native(),
+    ];
+    if !supported.contains(&dtypes.lhs_global)
+        || !supported.contains(&dtypes.rhs_global)
+        || !supported.contains(&output_dtype)
     {
         return Err(ConvSetupError::Unknown);
     }
+    dtypes.acc_global = dtype;
+    dtypes.acc_stage = dtype;
+    dtypes.acc_register = dtype;
     let op = ConvolutionOperation::BackwardWeight;
-    let input = UnitConv::correct_layout(client, input.into_data(), dtype, op)?;
-    let out_grad = UnitConv::correct_layout(client, out_grad.into_data(), dtype, op)?;
+    let input = if const { SPATIAL_LAST } {
+        input.into_data()
+    } else {
+        Rt::correct_layout(client, input.into_data(), dtypes.rhs_global, op)?
+    };
+    let out_grad = Rt::correct_layout(client, out_grad.into_data(), dtypes.lhs_global, op)?;
     let channels = input.shape[N + 1];
     let out_channels = out_grad.shape[N + 1];
     let rows = out_grad.shape[..N + 1].iter().product::<usize>();
     let taps = weight_grad.shape[1..N + 1].iter().product::<usize>();
-    let padded_channels = channels.next_multiple_of(client.properties().io_width() as usize / 32);
-    let width = taps * padded_channels;
-    let mut split = split_count(rows);
+    let padded_channels = channels
+        .checked_next_multiple_of(
+            (client.properties().io_width() as usize / dtypes.rhs_global.size_bits()).max(1),
+        )
+        .ok_or(ConvSetupError::Unknown)?;
+    let width = taps
+        .checked_mul(padded_channels)
+        .ok_or(ConvSetupError::Unknown)?;
+    let by_rows = (rows / options.rows_per_split).clamp(1, MAX_SPLITS);
+    let mut split = 1usize << by_rows.ilog2();
     let Some(partial_bytes) = out_channels
         .checked_mul(width)
         .and_then(|n| n.checked_mul(4))
@@ -101,10 +252,13 @@ pub(crate) fn launch_split<const N: usize>(
     else {
         return Err(ConvSetupError::Unknown);
     };
-    while split > 1 && partial_bytes * split > MAX_PARTIAL_BYTES {
+    while split > 1 && split > MAX_PARTIAL_BYTES / partial_bytes {
         split /= 2;
     }
-    let per = rows.div_ceil(split).next_multiple_of(32);
+    let per = rows
+        .div_ceil(split)
+        .checked_next_multiple_of(32)
+        .ok_or(ConvSetupError::Unknown)?;
     if rows > u32::MAX as usize || width > u32::MAX as usize || per > u32::MAX as usize {
         return Err(ConvSetupError::Unknown);
     }
@@ -138,16 +292,38 @@ pub(crate) fn launch_split<const N: usize>(
         },
         global_dtypes: dtypes.as_global_elems(),
         address_type: input
-            .required_address_type(4)
-            .max(out_grad.required_address_type(4))
+            .required_address_type(dtypes.rhs_global.size())
+            .max(out_grad.required_address_type(dtypes.lhs_global.size()))
             .max(partials.clone().binding().required_address_type(4)),
     };
-    let vector_sizes =
-        UnitConv::filter_vector_sizes(AvailableVectorSizes::from_type_sizes(client, 4, 4, 4))
-            .filter_lhs_with_tensor(&out_grad.strides, &out_grad.shape, MatrixLayout::RowMajor)
-            .filter_rhs_with_tensor(&input.strides, &input.shape, MatrixLayout::RowMajor)
-            .filter_out_with_tensor(partials.strides(), partials.shape())
-            .pick_max()?;
+    let vector_sizes = Rt::filter_vector_sizes(AvailableVectorSizes::from_type_sizes(
+        client,
+        dtypes.lhs_global.size(),
+        dtypes.rhs_global.size(),
+        4,
+    ))
+    .filter_lhs_with_tensor(&out_grad.strides, &out_grad.shape, MatrixLayout::RowMajor);
+    let vector_sizes = if const { SPATIAL_LAST } {
+        vector_sizes.filter_rhs(|size| {
+            *size == 1
+                || (input.strides[N] == 1
+                    && input.shape[N].is_multiple_of(*size)
+                    && args.dilation[N - 1] == 1
+                    && weight_grad.shape[N].is_multiple_of(*size)
+                    && args.stride[N - 1].is_multiple_of(*size)
+                    && args.padding[N - 1].is_multiple_of(*size)
+                    && input
+                        .strides
+                        .iter()
+                        .enumerate()
+                        .all(|(axis, stride)| axis == N || stride.is_multiple_of(*size)))
+        })
+    } else {
+        vector_sizes.filter_rhs_with_tensor(&input.strides, &input.shape, MatrixLayout::RowMajor)
+    };
+    let vector_sizes = vector_sizes
+        .filter_out_with_tensor(partials.strides(), partials.shape())
+        .pick_max()?;
     let mut matmul_problem = problem.as_matmul_problem(AccumulatorOperand::Absent);
     matmul_problem.k = per;
     matmul_problem.lhs_batches = vec![split].into();
@@ -156,19 +332,32 @@ pub(crate) fn launch_split<const N: usize>(
     matmul_problem.lhs_shape = vec![split, out_channels, per].into();
     matmul_problem.rhs_shape = vec![split, per, width].into();
     matmul_problem.out_shape = vec![split, out_channels, width].into();
-    matmul_problem.lhs_strides = vec![per * out_channels, 1, out_channels].into();
-    matmul_problem.rhs_strides = vec![per * width, width, 1].into();
+    matmul_problem.lhs_strides = vec![
+        per.checked_mul(out_channels)
+            .ok_or(ConvSetupError::Unknown)?,
+        1,
+        out_channels,
+    ]
+    .into();
+    matmul_problem.rhs_strides = vec![
+        per.checked_mul(width).ok_or(ConvSetupError::Unknown)?,
+        width,
+        1,
+    ]
+    .into();
     matmul_problem.out_strides = partials.strides().into();
 
-    let settings =
-        <UnitMatmul as BatchMatmulRoutine<RuntimeArgs>>::device_settings(client, vector_sizes);
-    let strategy = strategy.blueprint(client, &matmul_problem, &dtypes);
-    let expand = <UnitMatmul as BatchMatmulRoutine<RuntimeArgs>>::expand_blueprint(
+    let settings = <Rt::MatmulRoutine as BatchMatmulRoutine<RuntimeArgs>>::device_settings(
+        client,
+        vector_sizes,
+    );
+    let strategy = (options.blueprint)(&matmul_problem, &dtypes);
+    let expand = <Rt::MatmulRoutine as BatchMatmulRoutine<RuntimeArgs>>::expand_blueprint(
         &matmul_problem,
         &settings,
         &strategy,
     )?;
-    let launch = <UnitMatmul as BatchMatmulRoutine<RuntimeArgs>>::prepare(
+    let launch = <Rt::MatmulRoutine as BatchMatmulRoutine<RuntimeArgs>>::prepare(
         &matmul_problem,
         &settings,
         expand,
@@ -192,6 +381,9 @@ pub(crate) fn launch_split<const N: usize>(
             rows as u32,
             per as u32,
             true,
+            false,
+            1,
+            1,
         ),
     );
     let mut checks = EnumSet::empty();
@@ -217,6 +409,9 @@ pub(crate) fn launch_split<const N: usize>(
             rows as u32,
             per as u32,
             false,
+            SPATIAL_LAST,
+            taps as u32,
+            padded_channels as u32,
         ),
     );
     let inputs = TensorInputsLaunch::new(
@@ -239,7 +434,7 @@ pub(crate) fn launch_split<const N: usize>(
         VirtualLayoutLaunch::new::<BatchLayout>(batch),
     );
     let runtime = RuntimeArgsLaunch::new(per as u32, channels as u32, padded_channels as u32, op);
-    cubek_matmul::multi_level::launch_kernel::<TensorArgs<RuntimeArgs>, UnitMatmul>(
+    cubek_matmul::multi_level::launch_kernel::<TensorArgs<RuntimeArgs>, Rt::MatmulRoutine>(
         client, inputs, output, runtime, launch,
     )?;
 
@@ -249,7 +444,7 @@ pub(crate) fn launch_split<const N: usize>(
         .clone()
         .binding()
         .required_address_type(4)
-        .max(weight_grad.required_address_type(4));
+        .max(weight_grad.required_address_type(output_dtype.size()));
     finish::launch(
         client,
         calculate_cube_count_elemwise(client, elements, cube_dim),
@@ -262,6 +457,8 @@ pub(crate) fn launch_split<const N: usize>(
         padded_channels,
         elements,
         N,
+        SPATIAL_LAST,
+        output_dtype,
     );
     Ok(())
 }
@@ -276,6 +473,12 @@ struct SplitKLayout {
     per: u32,
     #[cube(comptime)]
     lhs: bool,
+    #[cube(comptime)]
+    spatial_last: bool,
+    #[cube(comptime)]
+    taps: u32,
+    #[cube(comptime)]
+    channels: u32,
 }
 
 #[cube]
@@ -289,6 +492,11 @@ impl Layout for SplitKLayout {
         if self.lhs {
             (0, row, col + offset)
         } else {
+            let col = if self.spatial_last.comptime() {
+                (col % self.taps) * self.channels + col / self.taps
+            } else {
+                col
+            };
             (0, row + offset, col)
         }
     }
@@ -312,14 +520,16 @@ impl Layout for SplitKLayout {
 }
 
 #[cube(launch, address_type = "dynamic")]
-fn finish(
+fn finish<Out: Float>(
     partials: &Tensor<f32>,
-    weight_grad: &mut Tensor<f32>,
+    weight_grad: &mut Tensor<Out>,
     channels: FastDivmod<usize>,
     taps: FastDivmod<usize>,
     padded_channels: usize,
     elements: usize,
     #[comptime] dims: usize,
+    #[comptime] spatial_last: bool,
+    #[define(Out)] _output_dtype: ElemType,
 ) {
     let index = ABSOLUTE_POS;
     if index >= elements {
@@ -327,8 +537,12 @@ fn finish(
     }
     let (row, channel) = channels.div_mod(index);
     let (out_channel, tap) = taps.div_mod(row);
-    let base =
-        out_channel * partials.stride(1) + (tap * padded_channels + channel) * partials.stride(2);
+    let column = if comptime!(spatial_last) {
+        channel * (partials.shape(2) / padded_channels) + tap
+    } else {
+        tap * padded_channels + channel
+    };
+    let base = out_channel * partials.stride(1) + column * partials.stride(2);
     let mut value = 0.0f32;
     for split in 0..partials.shape(0) {
         value += partials[split * partials.stride(0) + base];
@@ -341,5 +555,5 @@ fn finish(
         offset += (tap % weight_grad.shape(axis)) * weight_grad.stride(axis);
         tap /= weight_grad.shape(axis);
     }
-    weight_grad[offset] = value;
+    weight_grad[offset] = Out::cast_from(value);
 }

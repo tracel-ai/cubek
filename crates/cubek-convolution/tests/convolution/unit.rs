@@ -7,7 +7,12 @@ use cubek_convolution::{
 use cubek_matmul::{definition::MatmulElems, multi_level::routines::TileSizeSelection};
 use cubek_std::InputBinding;
 
-fn upload(client: &Client, shape: &[usize], values: &[f32], channel_first: bool) -> TensorHandle {
+pub(super) fn upload(
+    client: &Client,
+    shape: &[usize],
+    values: &[f32],
+    channel_first: bool,
+) -> TensorHandle {
     let rank = shape.len();
     let mut order = vec![0];
     if channel_first {
@@ -48,7 +53,7 @@ fn offset(mut index: usize, shape: &[usize], strides: &[usize]) -> usize {
     offset
 }
 
-fn assert_close(client: &Client, tensor: TensorHandle, expected: &[f64], context: &str) {
+pub(super) fn assert_close(client: &Client, tensor: TensorHandle, expected: &[f64], context: &str) {
     let strides = tensor.strides().to_vec();
     let shape = tensor.shape().to_vec();
     let bytes = client.read_one_unchecked(tensor.handle);
@@ -62,11 +67,11 @@ fn assert_close(client: &Client, tensor: TensorHandle, expected: &[f64], context
     }
 }
 
-fn binding(tensor: &TensorHandle) -> InputBinding {
+pub(super) fn binding(tensor: &TensorHandle) -> InputBinding {
     InputBinding::new(tensor.clone().binding(), f32::elem_type_native())
 }
 
-fn values(size: usize, seed: usize) -> Vec<f32> {
+pub(super) fn values(size: usize, seed: usize) -> Vec<f32> {
     (0..size)
         .map(|i| (((i * 17 + seed) % 67) as f32 - 33.0) / 64.0)
         .collect()
