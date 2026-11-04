@@ -10,7 +10,7 @@ use cubecl::tile::Axis;
 use cubecl::zspace::Shape;
 use cubecl_common::e4m3;
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
-use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor, WordsLaid};
+use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::{K, N};
@@ -89,7 +89,6 @@ impl PackedSlabs {
         let across = across(spec.operand);
         let tensor = PackedTensor::new(
             PlainTensor::of_handle(quantized.handle),
-            WordsLaid::InRows,
             PlainTensor::of_handle(scales),
             global,
             scheme,
@@ -272,7 +271,6 @@ fn a_packed_tensor_binds_its_parts_not_the_buffer_they_share() {
     let u32 = ElemType::UInt(cubecl::ir::UIntKind::U32);
     let packed = PackedTensor::new(
         part(0, words, [rows, words / rows], u32),
-        WordsLaid::InRows,
         part(words * word, scale_words, [rows, scale_words / rows], u32),
         Some(part((words + scale_words) * word, 1, [1, 1], u32)),
         scheme,

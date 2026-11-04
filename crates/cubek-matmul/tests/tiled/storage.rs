@@ -595,7 +595,7 @@ fn packed_codes_are_stored_in_whole_blocks() {
     for input in MatmulOperand::INPUTS {
         if let Some(tile) = stored_tile(&hw, input, StoredValues::Packed(scheme), f16) {
             assert!(
-                tile.extent(K).is_multiple_of(TileOrder::NVFP4.block),
+                tile.extent(K).is_multiple_of(cubek_std::NVFP4_BLOCK),
                 "{input:?} tile {tile:?}"
             );
         }
@@ -611,7 +611,7 @@ fn codes_tile_order_does_not_store_take_no_tile() {
     let along_n = QuantScheme::default()
         .with_value(QuantValue::Q8S)
         .with_store(QuantStore::PackedU32(0));
-    assert_eq!(TileOrder::of(&along_n), None);
+    assert!(!TileOrder::stores(&along_n));
     assert_eq!(
         stored_tile(&hw, MatmulOperand::Rhs, StoredValues::Packed(along_n), f16),
         None

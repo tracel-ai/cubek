@@ -20,7 +20,8 @@ use cubek_microkernel::matmul::cube::{
 };
 use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDim, MatmulOperand, MatmulOperands, MatmulStep, MatmulWorkItem,
+    MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulStep,
+    MatmulWorkItem,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{Operand, Packing};
@@ -766,6 +767,7 @@ impl Routine for CubeStagedMatmulRoutine {
         if filled_by_tma || stored_by_tma {
             return Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA);
         }
+        problem.check_block_scales(microkernel.block_scales())?;
         let partitioning = place(microkernel.launch_tiling());
         // Only a block-split space has `KB` and `KI` to ask about: a float product's has `K`, and
         // masks its reads past it.
