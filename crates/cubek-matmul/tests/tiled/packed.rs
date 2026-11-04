@@ -10,10 +10,10 @@ use cubecl::tile::Axis;
 use cubecl::zspace::Shape;
 use cubecl_common::e4m3;
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
-use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor, WordsLaid};
+use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::layout::stored::Operand;
-use cubek_std::matmul_axes::K;
+use cubek_std::matmul_axes::{K, N};
 use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
 
 /// The per-tensor scale a two-level format is built under.
@@ -89,7 +89,6 @@ impl PackedSlabs {
         let across = across(spec.operand);
         let tensor = PackedTensor::new(
             PlainTensor::of_handle(quantized.handle),
-            WordsLaid::InRows,
             PlainTensor::of_handle(scales),
             global,
             scheme,
@@ -243,4 +242,41 @@ fn stored_scales(
         client.create_from_slice(&bytes),
         ElemType::from_scale_dtype(stored),
     )
+}
+
+/// A packed tensor counts the bytes its words and scales bind, not the buffer they share: a
+/// framework stores the three in one, each bound over its own region of it. An autotune's
+/// roofline reads these bytes, and counting the shared buffer once a part tripled them.
+#[test]
+fn a_packed_tensor_binds_its_parts_not_the_buffer_they_share() {
+    let client = cubek_test_utils::client();
+    let scheme = nvfp4_scheme();
+    let (rows, k) = (16, 64);
+    let word = ElemType::UInt(cubecl::ir::UIntKind::U32).size();
+    let words = rows * k / scheme.num_quants();
+    let scale_words = rows * k / block_of(&scheme) / word;
+    let total = (words + scale_words + 1) * word;
+    let buffer = client.empty(total);
+    let part = |from: usize, words: usize, shape: [usize; 2], elem: ElemType| {
+        let handle = buffer
+            .clone()
+            .offset_start(from as u64)
+            .offset_end((total - from - words * word) as u64);
+        PlainTensor::of_handle(TensorHandle::new_contiguous(
+            Shape::from(shape.to_vec()),
+            handle,
+            elem,
+        ))
+    };
+    let u32 = ElemType::UInt(cubecl::ir::UIntKind::U32);
+    let packed = PackedTensor::new(
+        part(0, words, [rows, words / rows], u32),
+        part(words * word, scale_words, [rows, scale_words / rows], u32),
+        Some(part((words + scale_words) * word, 1, [1, 1], u32)),
+        scheme,
+        Operand::of_scheme(&scheme, K, [N, K]).expect("one block along k"),
+        [(N, rows), (K, k)],
+    );
+
+    assert_eq!(StoredTensor::Packed(packed).bytes(), total);
 }

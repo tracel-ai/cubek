@@ -1,6 +1,6 @@
 use super::CubeStage;
 use cubecl::tile::launch::{Destination, DestinationLaunch};
-use cubecl::tile::{Partitioning, Region, StageStorage, Tile, TileArg, TileArgLaunch};
+use cubecl::tile::{Partitioning, Region, StageStorage, Tile, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// A cube's window of a producer's output, and where the cube's owners write their lines: the
@@ -84,7 +84,7 @@ pub struct Encoded;
 
 #[cube]
 impl Destination for Encoded {
-    type Arg<E: Numeric> = TileArg<'static>;
+    type Arg<E: Numeric> = TileTensor<'static>;
 
     fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
         arg.tile(partitioning)
@@ -92,9 +92,9 @@ impl Destination for Encoded {
 }
 
 impl DestinationLaunch for Encoded {
-    type Operand = TileArgLaunch;
+    type Operand = TileTensorLaunch;
 
-    fn arg<E: Numeric>(operand: TileArgLaunch) -> TileArgLaunch {
+    fn arg<E: Numeric>(operand: TileTensorLaunch) -> TileTensorLaunch {
         operand
     }
 }

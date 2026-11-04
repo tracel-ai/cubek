@@ -26,10 +26,10 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
 /// where it is read (`b_s.at(&unit).mul(..)`), which is the decode this bench measures.
 #[cube(launch)]
 fn staged_matmul_quant_rhs(
-    a: &TileArg<'_>,
-    b: &TileArg<'_>,
-    scales: &TileArg<'_>,
-    c: &TileArg<'_>,
+    a: &TileTensor<'_>,
+    b: &TileTensor<'_>,
+    scales: &TileTensor<'_>,
+    c: &TileTensor<'_>,
     space: Partitioning,
 ) {
     let a = a.tile(&space);
@@ -216,7 +216,7 @@ impl Benchmark for TileQuantStageBench {
             a.arg(),
             b.values_arg(1, TileSpec::new(b_projection.clone())),
             b.scales_arg(1, TileSpec::new(b_projection.scales_per(NB))),
-            TileArgLaunch::new(c.tensor_arg(self.pack), element, self.pack, c_spec),
+            TileTensorLaunch::new(c.tensor_arg(self.pack), element, self.pack, c_spec),
             launcher.partitioning_arg(),
         );
         Ok(())

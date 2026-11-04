@@ -1,8 +1,8 @@
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::{
-    CUBE_STRIPS, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_PACKED_WALK_PAST_K, MatmulBinding,
-    MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
-    MatmulTensors, MatmulView, cube_order_name,
+    CUBE_STRIPS, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
+    MATMUL_PACKED_WALK_PAST_K, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
+    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView, cube_order_name,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
@@ -13,14 +13,15 @@ use cubecl::tile::launch::{
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{BlockScaledOperands, Space, StageStorage, TileArgLaunch};
+use cubecl::tile::{BlockScaledOperands, Space, StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedStore, MatmulPlaneLayout,
 };
 use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDim, MatmulOperand, MatmulOperands, MatmulStep, MatmulWorkItem,
+    MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulStep,
+    MatmulWorkItem,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{Operand, Packing};
@@ -756,6 +757,17 @@ impl Routine for CubeStagedMatmulRoutine {
         if problem.index.is_some() && microkernel.fill.delivery == CubeStagedDelivery::Tma {
             return Err(MATMUL_INDEX_UNREAD_BY_TMA);
         }
+        let orders = microkernel.plane.orders;
+        let one_element_rows =
+            |operand: MatmulOperand| problem.rows_one_element_wide(operand, orders.get(operand));
+        let filled_by_tma = microkernel.fill.delivery == CubeStagedDelivery::Tma
+            && MatmulOperand::INPUTS.into_iter().any(one_element_rows);
+        let stored_by_tma =
+            microkernel.store == CubeStagedStore::Tma && one_element_rows(MatmulOperand::Out);
+        if filled_by_tma || stored_by_tma {
+            return Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA);
+        }
+        problem.check_block_scales(microkernel.block_scales())?;
         let partitioning = place(microkernel.launch_tiling());
         // Only a block-split space has `KB` and `KI` to ask about: a float product's has `K`, and
         // masks its reads past it.
@@ -786,7 +798,7 @@ impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedMatmulRout
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
-        binding: MatmulBinding<O::Operand, TileArgLaunch, TileArgLaunch>,
+        binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: CubeStagedMatmulRoutineBlueprint,
         grid: Grid,
     ) {

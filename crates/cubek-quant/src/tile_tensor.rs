@@ -1,7 +1,7 @@
 //! A quantized operand as the one tile a kernel reads.
 
 use cubecl::tile::{
-    TileArgLaunch,
+    TileTensorLaunch,
     kind::Field,
     launch::{Arg, Labelled, Refusal},
 };
@@ -15,7 +15,7 @@ pub fn quantized_arg<'a>(
     scheme: &QuantScheme,
     values: Arg<'a, Labelled>,
     scales: impl IntoIterator<Item = Arg<'a, Labelled>>,
-) -> Result<TileArgLaunch, Refusal> {
+) -> Result<TileTensorLaunch, Refusal> {
     let fields = scheme
         .block_scale()
         .map(|block| block.dtype)

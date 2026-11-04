@@ -305,7 +305,7 @@ mod tests {
     /// The NVFP4 packing a tile-order operand carries, packed down `k`.
     fn nvfp4() -> Option<Packing> {
         Some(Packing {
-            operand: Operand::packed(K, 8, K, tile_order::TileOrder::NVFP4.block, 4),
+            operand: Operand::packed(K, 8, K, cubek_std::NVFP4_BLOCK, 4),
             scheme: tile_order::nvfp4_scheme(),
         })
     }

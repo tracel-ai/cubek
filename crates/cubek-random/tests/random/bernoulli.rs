@@ -35,14 +35,13 @@ fn get_random_bernoulli_data(shape: &[usize], prob: f32) -> Vec<TestDType> {
     let client = cubecl::test_device().client();
     let output = TensorHandle::empty(&client, shape.to_vec(), TestDType::elem_type_native());
 
-    with_seed(0, || {
-        random_bernoulli(
-            &client,
-            prob,
-            output.clone().binding(),
-            TestDType::elem_type_native(),
-        )
-    })
+    random_bernoulli(
+        &client,
+        prob,
+        output.clone().binding(),
+        TestDType::elem_type_native(),
+        0,
+    )
     .unwrap();
 
     let output_data = client.read_one_unchecked_tensor(output.into_copy_descriptor());

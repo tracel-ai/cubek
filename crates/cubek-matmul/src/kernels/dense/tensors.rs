@@ -12,7 +12,7 @@ use cubecl::prelude::{BufferArg, TensorMapArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Arg, Labelled, Refusal, TmaCoordinates, TmaTerm};
 use cubecl::tile::{
-    Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, TileSpec, launch::Bound,
+    Axis, Geometry, Launcher, Space, StageStorage, TileSpec, TileTensorLaunch, launch::Bound,
     launch::TmaBox, launch::Unbound,
 };
 use cubecl::zspace::metadata::Metadata;
@@ -552,7 +552,7 @@ impl MatmulTensors {
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> MatmulBinding<Bound, TileArgLaunch, TileArgLaunch> {
+    ) -> MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch> {
         match (&self.lhs, &self.rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 self.bind_float(lhs, rhs, blueprint, grid)
@@ -568,7 +568,7 @@ impl MatmulTensors {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> MatmulBinding<Bound, TileArgLaunch, TileArgLaunch> {
+    ) -> MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch> {
         let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid);
         let out = launcher
             .arg(self.out.bound.binding.clone(), self.out.bound.elem)
@@ -594,7 +594,7 @@ impl MatmulTensors {
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> MatmulBinding<Bound, TileArgLaunch, TileArgLaunch> {
+    ) -> MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch> {
         let launcher = self.packed_launcher(blueprint, grid);
         let batches = self.table_batches();
         let (out, out_axes) = self.out.bound.restated(&self.blocks(), M, N, &batches);
@@ -678,7 +678,7 @@ impl MatmulTensors<Geometry> {
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> MatmulBinding<Unbound, TileArgLaunch, TileArgLaunch> {
+    ) -> MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch> {
         match (&self.lhs, &self.rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 self.bind_float(lhs, rhs, blueprint, grid)
@@ -694,7 +694,7 @@ impl MatmulTensors<Geometry> {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> MatmulBinding<Unbound, TileArgLaunch, TileArgLaunch> {
+    ) -> MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch> {
         let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid);
         let out = launcher
             .unbound(&self.out)
@@ -721,7 +721,7 @@ impl MatmulTensors<Geometry> {
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> MatmulBinding<Unbound, TileArgLaunch, TileArgLaunch> {
+    ) -> MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch> {
         let launcher = self.packed_launcher(blueprint, grid);
         let dims = self
             .blocks()
@@ -750,7 +750,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// On tensors read for every row whole, and on a sink, which no descriptor addresses: the
     /// store that chose the engine refused both.
-    pub fn tma_output(&self, stage: &MatmulStage) -> TileArgLaunch {
+    pub fn tma_output(&self, stage: &MatmulStage) -> TileTensorLaunch {
         self.assert_tiled();
         let out = self
             .out
@@ -764,7 +764,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             out.elem,
             TensorMapSwizzle::None,
         );
-        TileArgLaunch::tensor_map(
+        TileTensorLaunch::tensor_map(
             map,
             &[M, N],
             TmaBox {
@@ -979,7 +979,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         launcher: Launcher,
         blueprint: &MatmulBlueprint<Mk, SM>,
         out: O,
-    ) -> MatmulBinding<O, TileArgLaunch, TileArgLaunch> {
+    ) -> MatmulBinding<O, TileTensorLaunch, TileTensorLaunch> {
         let blocks = self.blocks();
         let batches = self.table_batches();
         let bind = |operand: &StoredTensor, [rows, columns]: [Axis; 2], width: usize| match operand
@@ -1080,7 +1080,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         stage: &MatmulStage,
         storage: &StageStorage,
         orders: MatmulOperands<BindingOrder>,
-    ) -> (TileArgLaunch, TileArgLaunch) {
+    ) -> (TileTensorLaunch, TileTensorLaunch) {
         self.assert_tiled();
         let problem = self.problem();
         let [lhs, rhs] = self.plain();
@@ -1122,7 +1122,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         storage: &StageStorage,
         orders: MatmulOperands<BindingOrder>,
         widths: MatmulOperands<usize>,
-    ) -> (TileArgLaunch, TileArgLaunch) {
+    ) -> (TileTensorLaunch, TileTensorLaunch) {
         let blocks = self.blocks();
         let batches = self.table_batches();
         let (StoredTensor::Plain(lhs), StoredTensor::Packed(rhs)) = (&self.lhs, &self.rhs) else {
@@ -1170,11 +1170,15 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             ],
         };
         let extents: Vec<u32> = lhs.binding.shape.iter().map(|&e| e as u32).collect();
-        let lhs = TileArgLaunch::tensor_map_folded(map, &axes, &extents, coordinates)
+        let lhs = TileTensorLaunch::tensor_map_folded(map, &axes, &extents, coordinates)
             .served_wide(widths.lhs);
         let values_axes = tile_order::values_axes(N);
         let rhs_stage = stage.landed_space(MatmulOperand::Rhs, orders, &values_axes);
-        let values_per_word = rhs.tile_order().values_per_word;
+        let values_per_word = rhs
+            .operand()
+            .tile_order()
+            .expect("a tensor map reads an rhs in tile order")
+            .values_per_word();
         let rhs_swizzle = storage
             .tma_swizzle(
                 &rhs_stage,
@@ -1260,7 +1264,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> (Launcher, [TileArgLaunch; 2]) {
+    ) -> (Launcher, [TileTensorLaunch; 2]) {
         let partitioning = blueprint.partitioning.as_tile();
         let launcher = grid.launcher(self.client(), || {
             (
@@ -1324,10 +1328,14 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 
     /// `operand`, bound, reading its entry of the table where it is one of its readers, the
     /// table's dims the batches; as bound otherwise.
-    fn read_through_table(&self, operand: MatmulOperand, bound: TileArgLaunch) -> TileArgLaunch {
+    fn read_through_table(
+        &self,
+        operand: MatmulOperand,
+        bound: TileTensorLaunch,
+    ) -> TileTensorLaunch {
         match &self.table {
             Some(table) if table.index.readers().get(operand) => {
-                let entries = TileArgLaunch::new(
+                let entries = TileTensorLaunch::new(
                     table.entries.binding.clone().into_tensor_arg(),
                     table.entries.elem,
                     1,
@@ -1347,7 +1355,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         tensor: &PlainTensor,
         [(rows, row_count), (columns, column_count)]: [(Axis, usize); 2],
         landing: TmaLanding,
-    ) -> TileArgLaunch {
+    ) -> TileTensorLaunch {
         let matrices = 1;
         let (map, transposed) = tma_operand(
             tensor.binding.clone(),
@@ -1357,7 +1365,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             tensor.elem,
             landing.swizzle,
         );
-        TileArgLaunch::tensor_map(
+        TileTensorLaunch::tensor_map(
             map,
             &[rows, columns],
             TmaBox {

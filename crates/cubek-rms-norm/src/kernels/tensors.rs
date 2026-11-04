@@ -4,7 +4,7 @@ use crate::kernels::{RmsNormBlueprint, RmsNormRoutineProblem};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::TileArgLaunch;
+use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{
     Axis, Geometry, Launcher,
@@ -324,7 +324,7 @@ impl RmsNormTensors<PackedRows> {
         &self,
         blueprint: &RmsNormBlueprint<M>,
         grid: &Grid,
-    ) -> RmsNormBinding<TileArgLaunch> {
+    ) -> RmsNormBinding<TileTensorLaunch> {
         let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
         let out = self.out.bind(&launcher, blueprint.width);
         RmsNormBinding {
