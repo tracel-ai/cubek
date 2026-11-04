@@ -404,9 +404,9 @@ pub fn create_key(
     let operand = |meta: &Metadata, kind: OperandKind, operand: MatmulOperand| {
         let shape = logical(meta);
         let words = match kind {
-            OperandKind::Quantized(scheme) => TileOrder::of(&scheme)
-                .and_then(|order| order.words_of(meta))
-                .unwrap_or(TileWords::RowByRow),
+            OperandKind::Quantized(scheme) => {
+                TileOrder::of_matrix(&scheme, meta).map_or(TileWords::RowByRow, TileOrder::words)
+            }
             _ => TileWords::RowByRow,
         };
         OperandKey {

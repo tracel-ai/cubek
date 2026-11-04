@@ -1560,34 +1560,24 @@ mod base {
     fn scale_words_are_declined_over_scales_in_tiles() {
         use crate::kernels::MATMUL_SCALE_WORDS_IN_TILES;
         use cubek_std::NVFP4_FORM;
-        use cubek_std::layout::stored::{BlockScales, ScalesLaid};
+        use cubek_std::layout::stored::BlockScales;
         use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 
         let hw = devices::offering_block_scaled(devices::h100());
         let mut inputs = CubeStagedMatmulRoutine::block_scaled_inputs(&NVFP4_FORM)
             .expect("NVFP4 is a packed input");
         let mut rhs = inputs.rhs.expect("the weight is packed");
-        let order = TileOrder::NVFP4.with_words(TileWords::BlockByBlock);
-        let tile = (128, 8);
+        let order = TileOrder::laid(
+            &tile_order::nvfp4_scheme(),
+            TileWords::BlockByBlock,
+            (128, 8),
+        )
+        .expect("NVFP4 is tile order");
+        assert_eq!(order.words(), TileWords::BlockByBlock);
         rhs.operand = rhs
             .operand
-            .stored(
-                N,
-                4,
-                Some((
-                    &tile_order::values_axes(N),
-                    order.values_storage(N, tile, 4).tiles(),
-                )),
-                Some((
-                    &tile_order::scales_axes(N),
-                    order
-                        .scales_storage(N, tile, order.rows_a_load(N, tile, 4))
-                        .expect("block by block, the scales are in tiles")
-                        .tiles(),
-                )),
-            )
+            .in_tile_order(order, N, 4)
             .expect("tile order block by block is read");
-        assert_eq!(rhs.operand.scales_laid(), ScalesLaid::InTiles);
         inputs.rhs = Some(rhs);
         let problem =
             MatmulRoutineProblem::packed(128, 256, 512, ElemType::Float(FloatKind::F16), inputs);

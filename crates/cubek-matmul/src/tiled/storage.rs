@@ -105,15 +105,15 @@ pub fn tile_words(hw: &Hardware) -> TileWords {
 }
 
 /// The tile order a writer lays a matrix packed under `scheme` in on `hw`, in `tile`: the order
-/// the device's readers take ([`tile_words`]), where the tile holds it ([`TileOrder::laid_in`]).
-/// Readers read it back off the matrix ([`TileOrder::words_of`]), never off a device. `None` for a
-/// scheme tile order does not store.
+/// the device's readers take ([`tile_words`]), where the tile holds it ([`TileOrder::laid`]).
+/// Readers read it back off the matrix ([`TileOrder::of_matrix`]), never off a device. `None` for
+/// a scheme tile order does not store, or a tile not whole blocks of `k`.
 pub fn tile_order_on(
     hw: &Hardware,
     scheme: &QuantScheme,
     tile: (usize, usize),
 ) -> Option<TileOrder> {
-    Some(TileOrder::of(scheme)?.laid_in(tile_words(hw), tile))
+    TileOrder::laid(scheme, tile_words(hw), tile)
 }
 
 /// The tile a load stores matmul input `input` in on `hw`, over the input's two axes: the step a
@@ -121,7 +121,7 @@ pub fn tile_order_on(
 /// ([`MatmulStep::stored_on`]), the other input contracted at `contracted`.
 ///
 /// `None` where no tile is worth storing: no instruction contracts the input on `hw`; codes under
-/// a scheme tile order does not store ([`TileOrder::of`]); or elements on a device whose TMA
+/// a scheme tile order does not store ([`TileOrder::stores`]); or elements on a device whose TMA
 /// engine fills the stages, which the fastest float routine fills from rows.
 ///
 /// The tile does not depend on the matrix's extents: a caller stores the input in it where it
@@ -134,7 +134,9 @@ pub fn stored_tile(
 ) -> Option<Space> {
     let (operand, element) = match values {
         StoredValues::Packed(scheme) => {
-            TileOrder::of(&scheme)?;
+            if !TileOrder::stores(&scheme) {
+                return None;
+            }
             let operand = Operand::of_scheme(&scheme, K, input.axes())?;
             (operand, value_element(scheme.value)?)
         }

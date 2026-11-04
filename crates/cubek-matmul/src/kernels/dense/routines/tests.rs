@@ -49,32 +49,20 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
     };
     let nvfp4 = tile_order::nvfp4_scheme();
     let words = devices::m2_pro().load_values(ElemType::UInt(UIntKind::U32));
-    let in_tiles = |order: TileOrder| {
-        let tile = (128, 8);
-        let scale_axes = tile_order::scales_axes(N);
-        let scales = order.scales_storage(N, tile, order.rows_a_load(N, tile, words));
+    let in_tiles = |words_laid: TileWords| {
+        let order = TileOrder::laid(&nvfp4, words_laid, (128, 8)).expect("NVFP4 is tile order");
         let operand = Operand::of_scheme(&nvfp4, K, [K, N])
             .expect("one axis a block")
-            .stored(
-                N,
-                words,
-                Some((
-                    &tile_order::values_axes(N),
-                    order.values_storage(N, tile, words).tiles(),
-                )),
-                scales
-                    .as_ref()
-                    .map(|storage| (&scale_axes[..], storage.tiles())),
-            )
+            .in_tile_order(order, N, words)
             .expect("tile order is read");
         problem(m, nvfp4, operand)
     };
     vec![
         ("nvfp4 rows", in_rows(nvfp4, K)),
-        ("nvfp4 tile order", in_tiles(TileOrder::NVFP4)),
+        ("nvfp4 tile order", in_tiles(TileWords::RowByRow)),
         (
             "nvfp4 tile order block by block",
-            in_tiles(TileOrder::NVFP4.with_words(TileWords::BlockByBlock)),
+            in_tiles(TileWords::BlockByBlock),
         ),
         (
             "mxfp4",

@@ -11,7 +11,8 @@ use cubek_microkernel::matmul::{
     MatmulStoredTile,
 };
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::{BlockScales, Packing, ScalesLaid};
+use cubek_std::layout::stored::{BlockScales, Packing};
+use cubek_std::layout::tile_order::TileWords;
 use cubek_std::matmul_axes::{EXPERT, K, batch_axis};
 use cubek_std::routine::EstimatedProblem;
 
@@ -147,7 +148,8 @@ impl MatmulRoutineProblem {
         let scales_in_tiles = [self.packings.lhs, self.packings.rhs]
             .into_iter()
             .flatten()
-            .any(|packing| packing.operand.scales_laid() == ScalesLaid::InTiles);
+            .filter_map(|packing| packing.operand.tile_order())
+            .any(|order| order.words() == TileWords::BlockByBlock);
         match block_scales == BlockScales::Words && scales_in_tiles {
             true => Err(MATMUL_SCALE_WORDS_IN_TILES),
             false => Ok(()),
