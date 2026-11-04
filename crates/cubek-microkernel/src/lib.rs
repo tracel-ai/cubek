@@ -21,6 +21,8 @@ pub mod attention_backward;
 pub mod gated_delta;
 #[cfg(feature = "matmul")]
 pub mod matmul;
+#[cfg(feature = "reduce")]
+pub mod reduce;
 #[cfg(feature = "rms-norm")]
 pub mod rms_norm;
 #[cfg(feature = "row-store")]

@@ -1,0 +1,49 @@
+use super::base::PlaneReduceMicrokernel;
+use crate::reduce::{ReduceAccumulator, ReduceLayout, read_mapped};
+use cubecl::tile::Tile;
+use cubecl::tile::space::UnitShare;
+use cubecl::{self as cubecl, cube, prelude::*};
+
+/// One plane's row: each lane accumulates every `lanes`-th line of `input`, the plane's window of the
+/// rows it reduces, into its own `C`, consecutive lanes reading consecutive lines; the lanes'
+/// partials meet across the plane ([`Carrier::across`](cubecl::tile::Carrier::across)), and the
+/// first lane writes the total to `out`, the plane's window of the output.
+#[cube]
+pub fn plane_reduce_microkernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    C: ReduceAccumulator<Acc, N>,
+>(
+    input: &Tile,
+    out: &mut Tile,
+    #[comptime] microkernel: PlaneReduceMicrokernel,
+) {
+    let operation = comptime!(microkernel.item.operation);
+    let monoid = comptime!(operation.monoid());
+    let layout = comptime!(microkernel.item.layout);
+    let lanes = comptime!(microkernel.lanes);
+    let lane = UNIT_POS_PLANE as usize;
+    let lines = input.flat::<In, N>();
+    let count = lines.shape();
+    let mut acc = C::identity(monoid);
+    for step in 0..count.div_ceil(lanes) {
+        let line = lane + step * lanes;
+        if line < count {
+            let read = read_mapped::<Acc, N>(
+                Vector::<Acc, N>::cast_from(lines.read(line)),
+                comptime!(operation.read_map()),
+            );
+            acc = C::accumulate(acc, read, line, layout, monoid);
+        }
+    }
+    let total = C::across(acc, UnitShare::Plane, monoid);
+    if lane == 0 {
+        let values = match comptime!(layout) {
+            ReduceLayout::Along => count * N::value(),
+            ReduceLayout::Across => count,
+        };
+        C::write::<Out>(total, out, values, layout, operation);
+    }
+}
