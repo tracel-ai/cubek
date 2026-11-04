@@ -59,7 +59,7 @@ pub enum PlaneFragmentKStatement {
 impl PlaneFragmentMicrokernel {
     /// The most rows a plane holds against a packed rhs: one fragment's, the decoding
     /// instruction's `m`, every row held whole.
-    pub(crate) const MAX_PACKED_ROWS: usize = 16;
+    pub const MAX_PACKED_ROWS: usize = 16;
 
     /// The one instruction whose fragments decode a packed rhs as they load, as `(m, n, k)`: the
     /// 16-bit `16 × 8 × 16`, whose `B` fragment's lanes the tile DSL's lane runs are laid over.
