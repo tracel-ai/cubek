@@ -23,8 +23,8 @@ pub struct ReduceRoutineBlueprint<M> {
 
 /// The widths the operands bind at on `hw`, at most the widest line the operation keeps apart: to
 /// the requirements the microkernel enqueued in `vectorization`, the binding adds each buffer's
-/// alignment, and across the reduced dim a line that never runs past the rows. Settled before the partitioning, whose owners hold a line of
-/// rows across the reduced dim.
+/// alignment, and a line that never runs past a row along the reduced dim, or past the rows across
+/// it. Settled before the partitioning, whose owners hold a line of rows across the reduced dim.
 pub fn reduce_widths(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
@@ -36,12 +36,14 @@ pub fn reduce_widths(
     {
         vectorization.require(VectorRequirement::Aligned { operand, alignment });
     }
-    if let (ReduceLayout::Across, Some(inner)) = (problem.layout(), problem.contiguous) {
-        vectorization.require(VectorRequirement::Access {
-            operand: ReduceOperand::Input,
-            elements: problem.shape[inner],
-        });
-    }
+    let line_stays_in = match (problem.layout(), problem.contiguous) {
+        (ReduceLayout::Across, Some(inner)) => problem.shape[inner],
+        _ => problem.reduced_extent(),
+    };
+    vectorization.require(VectorRequirement::Access {
+        operand: ReduceOperand::Input,
+        elements: line_stays_in,
+    });
     let ceiling = hw.vector_ceiling(problem.elements.input);
     let widest = problem
         .operation

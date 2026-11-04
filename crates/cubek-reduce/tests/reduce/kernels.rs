@@ -2,13 +2,16 @@
 //! each of its dims, every operation, its values and its rows as they lie.
 
 use cubecl::ir::{ElemType, FloatKind, IntKind};
+use cubecl::tile::layout::ElemAlignment;
 use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_reduce::kernels::{
-    CubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceRoutine, ReduceTensors,
-    UnitReduceRoutine, launch_reduce_routine,
+    CubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceRoutine, ReduceRoutineProblem,
+    ReduceTensors, UnitReduceRoutine, launch_reduce_routine,
 };
 use cubek_std::Hardware;
+use cubek_std::devices;
+use cubek_std::routine::Routine;
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -112,13 +115,14 @@ fn rows_along(values: &[f32], shape: &[usize], axis: usize) -> Vec<Vec<f32>> {
         .collect()
 }
 
-/// Small whole numbers, so every sum is exact; a NaN and some ties and zeros; for a product,
-/// `±1` and some `2`.
+/// Small whole numbers, so every sum is exact; some ties and zeros, and a NaN rare enough that
+/// most rows, even long ones, hold none and check their numbers; for a product,
+/// `±1`, `2` and `0.5`, as many of each so that a long row's product stays exact and finite.
 fn values(len: usize, product: bool) -> Vec<f32> {
     (0..len)
         .map(|i| match (product, i % 97) {
-            (true, _) => [1.0, -1.0, 1.0, 2.0, 1.0][i % 5],
-            (false, 13) => f32::NAN,
+            (true, _) => [1.0, -1.0, 2.0, 0.5, 1.0][i % 5],
+            (false, _) if i % 9973 == 13 => f32::NAN,
             (false, 29 | 30) => 9.0,
             (false, 50) => 0.0,
             _ => ((i * 7) % 11) as f32 - 5.0,
@@ -244,4 +248,43 @@ fn every_routine_reduces_every_dim_like_the_cpu() {
             }
         }
     }
+}
+
+/// The problem a host states for `shape` reduced along `axis`, its rows contiguous.
+fn problem(shape: &[usize], axis: usize) -> ReduceRoutineProblem {
+    let inner = shape.len() - 1;
+    ReduceRoutineProblem {
+        shape: shape.to_vec(),
+        axis,
+        operation: ReduceOperation::ArgMax,
+        elements: ReduceElements {
+            input: F32,
+            accumulator: F32,
+            out: I32,
+        },
+        contiguous: Some(inner),
+        elem_alignments: [ElemAlignment::new(shape, &strides(shape)); 2],
+        indices: None,
+    }
+}
+
+/// One kernel serves every shape of a rank, layout and width: the extents are the launch's, so a
+/// sequence that grows by a token recompiles nothing.
+#[test]
+fn every_shape_of_a_layout_compiles_one_kernel() {
+    let hw = devices::m2_pro();
+    let compiled = |shape: &[usize], axis: usize| {
+        let problem = problem(shape, axis);
+        let settings = UnitReduceRoutine.settings(&hw)[0];
+        let (blueprint, _) = UnitReduceRoutine
+            .prepare(&hw, &problem, &settings)
+            .expect("the unit routine runs everywhere");
+        (
+            blueprint.microkernel,
+            blueprint.width,
+            problem.kernel(&blueprint.partitioning),
+        )
+    };
+    assert_eq!(compiled(&[2, 5, 300], 2), compiled(&[3, 7, 308], 2));
+    assert_eq!(compiled(&[2, 5, 300], 1), compiled(&[2, 9, 300], 1));
 }

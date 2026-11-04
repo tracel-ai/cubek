@@ -1,16 +1,16 @@
 use super::base::HypercubeReduceMicrokernel;
-use crate::reduce::{Folded, read_mapped};
+use crate::reduce::{Folded, ReduceLayout, read_mapped};
 use cubecl::tile::Tile;
 use cubecl::tile::space::UnitShare;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's part of a row its `parts` cubes split: the cube folds `input`, its window of the
 /// part, as the cube's microkernel folds a row, each line indexed `first_line` lines further, its
-/// place in the whole row. Its first unit stores the partial as partial `part` of the row's
+/// place in the whole row; a part the row's end cuts short folds no line past it. Its first unit stores the partial as partial `part` of the row's
 /// `partials` and `partial_indices` ([`Folded::store`]), and the cube counts itself in at the
 /// row's `counter` of `arrivals`. The row's last cube to count merges every partial and writes the
 /// row to `out`, and to `indices` where both halves are written, as the cube's microkernel writes
-/// a row.
+/// a row, a mean dividing by `values`, the values the whole row holds.
 ///
 /// `arrivals` holds a counter for every row, at zero; the row's last cube leaves it at zero again.
 /// The cube meets on `sync_storage` before it counts, so its partial lands first, and again before
@@ -35,6 +35,7 @@ pub fn hypercube_reduce_microkernel<
     part: usize,
     parts: usize,
     first_line: usize,
+    values: usize,
     #[comptime] microkernel: HypercubeReduceMicrokernel,
 ) {
     let operation = comptime!(microkernel.item.operation);
@@ -43,7 +44,12 @@ pub fn hypercube_reduce_microkernel<
     let units = comptime!(microkernel.lanes * microkernel.planes);
     let unit = PLANE_POS as usize * comptime!(microkernel.lanes) + UNIT_POS_PLANE as usize;
     let lines = input.flat::<In, N>();
-    let count = lines.shape();
+    // The tile reads zero past the row's end, which no carrier folds as its identity.
+    let row_lines = match comptime!(layout) {
+        ReduceLayout::Along => values / N::value(),
+        ReduceLayout::Across => values,
+    };
+    let count = lines.shape().min(row_lines - first_line);
     let mut acc = C::identity(monoid);
     for step in 0..count.div_ceil(units) {
         let line = unit + step * units;
@@ -86,7 +92,7 @@ pub fn hypercube_reduce_microkernel<
                 merged,
                 out,
                 indices,
-                comptime!(microkernel.item.reduced),
+                values,
                 layout,
                 operation,
                 comptime!(microkernel.item.writes()),

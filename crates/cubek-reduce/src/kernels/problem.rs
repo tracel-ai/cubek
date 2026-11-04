@@ -2,7 +2,7 @@
 
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Space};
+use cubecl::tile::{Axis, Partitioning, Space};
 use cubecl::tune::Work;
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation, ReduceWorkItem};
 use cubek_std::routine::EstimatedProblem;
@@ -105,7 +105,6 @@ impl ReduceRoutineProblem {
             operation: self.operation,
             input: self.elements.input,
             accumulator: self.elements.accumulator,
-            reduced: self.reduced_extent(),
             layout: self.layout(),
             with_indices: self.indices.is_some(),
         }
@@ -123,14 +122,15 @@ impl ReduceRoutineProblem {
         Space::new(&axes)
     }
 
-    /// The box an owner holds: one row along the reduced dim, or `width` rows side by side across
-    /// it, every row of it whole along the reduced dim, and the cells it writes.
+    /// The box an owner holds: one row, or `width` rows side by side across the reduced dim, and
+    /// the cells it writes. It leaves the reduced dim to the space, so every owner spans its rows
+    /// whole, however long the launch states them.
     pub fn owner_box(&self, width: usize) -> Vec<(Axis, usize)> {
         let mut extents: Vec<(Axis, usize)> = (0..self.shape.len())
+            .filter(|d| *d != self.axis)
             .map(|d| {
-                let extent = match (d == self.axis, self.layout(), self.contiguous) {
-                    (true, _, _) => self.reduced_extent(),
-                    (false, ReduceLayout::Across, Some(inner)) if d == inner => width,
+                let extent = match (self.layout(), self.contiguous) {
+                    (ReduceLayout::Across, Some(inner)) if d == inner => width,
                     _ => 1,
                 };
                 (dim_axis(d), extent)
@@ -138,6 +138,17 @@ impl ReduceRoutineProblem {
             .collect();
         extents.push((self.slots(), self.operation.written_per_row()));
         extents
+    }
+
+    /// `partitioning` as a kernel compiles it: every axis but the cells a row writes left to the
+    /// launch, so one kernel serves every shape of the same rank, layout, elements and widths.
+    pub fn kernel(&self, partitioning: &Partitioning) -> Partitioning {
+        let space = partitioning.space();
+        let dynamic: Vec<Axis> = space.axes().filter(|axis| *axis != self.slots()).collect();
+        Partitioning::new(
+            space.clone().with_dynamic(&dynamic),
+            partitioning.levels().to_vec(),
+        )
     }
 }
 

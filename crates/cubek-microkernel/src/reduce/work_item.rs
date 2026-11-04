@@ -14,7 +14,8 @@ pub enum ReduceLayout {
 }
 
 /// A reduced row as its microkernels see it: what it reduces with, what it reads and folds in,
-/// and how its lines lie.
+/// and how its lines lie. Not how long it is: a microkernel reads its row's length at run time, so
+/// one kernel serves rows of every length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReduceWorkItem {
     pub operation: ReduceOperation,
@@ -22,8 +23,6 @@ pub struct ReduceWorkItem {
     pub input: ElemType,
     /// The element the values fold in.
     pub accumulator: ElemType,
-    /// Values along the reduced axis.
-    pub reduced: usize,
     pub layout: ReduceLayout,
     /// Whether the indices are written beside the values, to a second output laid out as the
     /// first: an argmax's or a top-k's both halves from one launch.
@@ -41,15 +40,12 @@ impl ReduceWorkItem {
     }
 
     /// What every microkernel of this kind asks of the operands: along the reduced axis, the
-    /// input reads stretches of the row and the output takes one cell per row (`k` for a top-k);
-    /// across it, a line of the input is a line of the output, one row a lane.
+    /// output takes one cell per row (`k` for a top-k); across it, a line of the input is a line
+    /// of the output, one row a lane. That a line never runs past a row is the launch's to
+    /// require, which knows the rows' length.
     pub fn require(&self, vectorization: &mut Vectorization<ReduceOperand>) {
         match self.layout {
             ReduceLayout::Along => {
-                vectorization.require(VectorRequirement::Access {
-                    operand: ReduceOperand::Input,
-                    elements: self.reduced,
-                });
                 vectorization.require(VectorRequirement::Elementwise {
                     operand: ReduceOperand::Out,
                 });

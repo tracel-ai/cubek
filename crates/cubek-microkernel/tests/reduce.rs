@@ -116,7 +116,6 @@ fn check_laid(
         operation,
         input: F32,
         accumulator: F32,
-        reduced: len,
         layout,
         with_indices: false,
     };
@@ -131,7 +130,7 @@ fn check_laid(
         ReduceLayout::Along => rows,
         ReduceLayout::Across => rows.iter().cycle().take(2 * width).cloned().collect(),
     };
-    let launch = ReduceLaunch::new(hw, item, scope, rows.len(), width, out_elem)
+    let launch = ReduceLaunch::new(hw, item, scope, rows.len(), len, width, out_elem)
         .unwrap_or_else(|why| panic!("{operation:?} {scope:?}: {why:?}"));
     // A hypercube's input is the same values with the reduced axis split into its parts.
     let (input_shape, input_values, out_shape) = match layout {
@@ -280,7 +279,10 @@ fn a_hypercube_reduces_every_operation_like_the_cpu() {
             let scope = ReduceScope::Hypercube { planes: 4, parts };
             check(&hw, operation, scope, len, width);
         }
-        let scope = ReduceScope::Hypercube { planes: 4, parts: 3 };
+        let scope = ReduceScope::Hypercube {
+            planes: 4,
+            parts: 3,
+        };
         check_laid(&hw, operation, scope, 300, 4, ReduceLayout::Across);
     }
 }

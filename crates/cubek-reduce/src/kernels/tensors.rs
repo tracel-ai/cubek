@@ -129,7 +129,7 @@ impl ReduceTensors {
     pub fn bind<M>(&self, blueprint: &ReduceRoutineBlueprint<M>, grid: &Grid) -> ReduceBinding {
         let launcher = grid.launcher(&self.client, || {
             (
-                blueprint.partitioning.clone(),
+                self.problem.kernel(&blueprint.partitioning),
                 blueprint.partitioning.space().clone(),
             )
         });

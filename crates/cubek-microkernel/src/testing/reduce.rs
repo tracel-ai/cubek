@@ -48,13 +48,15 @@ pub enum ReduceScope {
     Hypercube { planes: usize, parts: usize },
 }
 
-/// A reduce microkernel ready to launch on `rows` rows, each `item.reduced` values long and
+/// A reduce microkernel ready to launch on `rows` rows, each `reduced` values long and
 /// contiguous, read `width` values a line.
 #[derive(Debug, Clone)]
 pub struct ReduceLaunch {
     pub item: ReduceWorkItem,
     pub scope: ReduceScope,
     pub rows: usize,
+    /// Values a row holds.
+    pub reduced: usize,
     pub width: usize,
     /// The element the output is written in: the values', or an index's.
     pub out: ElemType,
@@ -70,6 +72,7 @@ impl ReduceLaunch {
         item: ReduceWorkItem,
         scope: ReduceScope,
         rows: usize,
+        reduced: usize,
         width: usize,
         out: ElemType,
     ) -> Result<Self, Refusal> {
@@ -92,6 +95,7 @@ impl ReduceLaunch {
             item,
             scope,
             rows,
+            reduced,
             width,
             out,
             plane_width,
@@ -116,15 +120,20 @@ impl ReduceLaunch {
     }
 
     /// Every row reduced by one owner.
-    fn launch_whole(&self, client: &Client, input: TensorArg, out: TensorArg) -> Result<(), Refusal> {
+    fn launch_whole(
+        &self,
+        client: &Client,
+        input: TensorArg,
+        out: TensorArg,
+    ) -> Result<(), Refusal> {
         let cells = self.item.operation.written_per_row();
-        let space = Space::new(&[(O, self.rows), (R, self.item.reduced), (S, cells)]);
+        let space = Space::new(&[(O, self.rows), (R, self.reduced), (S, cells)]);
         // Across, an owner holds a line's worth of rows side by side.
         let (owned, input_axes, out_axes, out_width) = match self.item.layout {
             ReduceLayout::Along => (1, [O, R], [O, S], 1),
             ReduceLayout::Across => (self.width, [R, O], [S, O], self.width),
         };
-        let leaf = Levels::leaf(&[(O, owned), (R, self.item.reduced), (S, cells)]);
+        let leaf = Levels::leaf(&[(O, owned), (R, self.reduced), (S, cells)]);
         let (partitioning, cube_dim) = match self.scope {
             ReduceScope::Unit | ReduceScope::Plane => {
                 let partitioning = Partitioning::new(
@@ -220,28 +229,23 @@ impl ReduceLaunch {
         parts: usize,
     ) -> Result<(), Refusal> {
         let cells = self.item.operation.written_per_row();
-        let part = self.item.reduced / parts;
-        assert_eq!(part * parts, self.item.reduced, "the parts split the row evenly");
+        let part = self.reduced / parts;
+        assert_eq!(part * parts, self.reduced, "the parts split the row evenly");
         // A partial is `cells` lines; along, each line holds `width` lanes of one row.
-        let (owned, input_axes, out_axes, partial_axes, partial_lines, part_lines) =
-            match self.item.layout {
-                ReduceLayout::Along => (
-                    1,
-                    [O, P, R],
-                    [O, S],
-                    [O, Q],
-                    parts * cells * self.width,
-                    part / self.width,
-                ),
-                ReduceLayout::Across => (
-                    self.width,
-                    [P, R, O],
-                    [S, O],
-                    [Q, O],
-                    parts * cells,
-                    part,
-                ),
-            };
+        let (owned, input_axes, out_axes, partial_axes, partial_lines, part_lines) = match self
+            .item
+            .layout
+        {
+            ReduceLayout::Along => (
+                1,
+                [O, P, R],
+                [O, S],
+                [O, Q],
+                parts * cells * self.width,
+                part / self.width,
+            ),
+            ReduceLayout::Across => (self.width, [P, R, O], [S, O], [Q, O], parts * cells, part),
+        };
         let space = Space::new(&[
             (O, self.rows),
             (R, part),
@@ -310,6 +314,7 @@ impl ReduceLaunch {
                 launcher.partitioning_arg(),
                 parts,
                 part_lines,
+                self.reduced,
                 microkernel,
                 [self.item.input, self.item.accumulator, self.out],
             )
@@ -470,6 +475,7 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     partitioning: Partitioning,
     #[comptime] parts: usize,
     #[comptime] part_lines: usize,
+    #[comptime] values: usize,
     #[comptime] microkernel: HypercubeReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
@@ -500,6 +506,7 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
                     part,
                     parts,
                     first_line,
+                    values,
                     microkernel,
                 )
             }
@@ -515,6 +522,7 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
                     part,
                     parts,
                     first_line,
+                    values,
                     microkernel,
                 )
             }
@@ -531,6 +539,7 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
                     part,
                     parts,
                     first_line,
+                    values,
                     microkernel,
                 )
             }
