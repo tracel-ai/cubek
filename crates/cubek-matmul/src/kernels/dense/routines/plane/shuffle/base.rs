@@ -65,6 +65,10 @@ impl core::fmt::Display for PlaneShuffleMatmulRoutineSettings {
 pub type PlaneShuffleMatmulRoutineBlueprint = MatmulBlueprint<PlaneShuffleMicrokernel>;
 
 impl PlaneShuffleMatmulRoutine {
+    /// Steps of `K` a unit holds at once: its plane shuffles stage nothing in shared memory, and
+    /// load a step once the last is summed.
+    const STAGES_IN_FLIGHT: u32 = 1;
+
     /// The settings worth racing against a packed rhs: the lead
     /// ([`PACKED`](PlaneShuffleMatmulRoutineSettings::PACKED)), then the settings measured best, or
     /// within five percent of it, on the Qwen3-4B projections at one, four and eight rows on an
@@ -148,7 +152,7 @@ impl PlaneShuffleMatmulRoutine {
             ],
             writes: vec![stream(MatmulOperand::Out, rows * columns, columns)],
             stages: k.div_ceil(k_per_stage as u64),
-            stages_in_flight: PlaneShuffleMicrokernel::STAGES_IN_FLIGHT as u32,
+            stages_in_flight: Self::STAGES_IN_FLIGHT,
             drain_atomics: 0,
         });
         microkernel.estimate(&item, &(), grid.planes(), estimate);
