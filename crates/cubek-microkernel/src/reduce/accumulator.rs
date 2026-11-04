@@ -2,14 +2,16 @@ use crate::reduce::{ReadMap, ReduceLayout, ReduceOperation, ReduceWrites};
 use cubecl::tile::{Carrier, Indexed, Monoid, TOP_K_UNROLL_BUDGET, Tile, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// What a reduction folds a unit's lines into, `N` lanes of `Acc`: how a line read at a position
-/// joins it, and how what it holds is written out. Which monoid folds it, and how the units
+/// What a reduction accumulates a unit's lines into, `N` lanes of `Acc`: how a line read at a position
+/// joins it, and how what it holds is written out. Which monoid combines it, and how the units
 /// holding partials meet, is its [`Carrier`]'s.
 #[cube]
-pub trait Folded<Acc: Numeric, N: Size>: Carrier + CubeType<ExpandType: Assign + Copy> {
-    /// `acc` with `line` folded in, the line read `line_index` lines into the row, under
+pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
+    Carrier + CubeType<ExpandType: Assign + Copy>
+{
+    /// `acc` with `line` accumulated, the line read `line_index` lines into the row, under
     /// `monoid`.
-    fn fold(
+    fn accumulate(
         acc: Self,
         line: Vector<Acc, N>,
         line_index: usize,
@@ -19,20 +21,20 @@ pub trait Folded<Acc: Numeric, N: Size>: Carrier + CubeType<ExpandType: Assign +
 
     /// The partials of a cube's `planes` planes, each already met across its own lanes, met in
     /// shared memory: every plane's first lane writes its partial to a slot of its plane, the
-    /// cube meets, every unit folds every slot, and the cube meets again so the slots may be
+    /// cube meets, every unit combines every slot, and the cube meets again so the slots may be
     /// written anew. Every unit of the cube is left with the total.
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self;
 
     /// `acc` stored as partial `part` of a row its cubes split, for the cube that merges them
-    /// ([`load`](Folded::load)): its lines, one for the values and for an [`Indexed`], `k` for a
+    /// ([`load`](ReduceAccumulator::load)): its lines, one for the values and for an [`Indexed`], `k` for a
     /// top-k, written that many lines times `part` into `values`, in `Acc`, and its indices at
     /// the same lines of `indices`, in `u32`, where it carries any.
     fn store(acc: Self, values: &mut Tile, indices: &mut Tile, part: usize);
 
-    /// Partial `part`, as [`store`](Folded::store) left it.
+    /// Partial `part`, as [`store`](ReduceAccumulator::store) left it.
     fn load(values: &Tile, indices: &Tile, part: usize) -> Self;
 
-    /// What `acc` holds written as `writes` says, its lanes folded into one first where they
+    /// What `acc` holds written as `writes` says, its lanes reduced to one first where they
     /// hold one row ([`ReduceLayout::Along`]): to `out`'s first cell along the row, or its first
     /// line across rows (its first `k` of either, for a top-k). With [`ReduceWrites::Both`] the
     /// indices go to `indices` at the same places, in `Idx`; `indices` is written only then.
@@ -48,7 +50,7 @@ pub trait Folded<Acc: Numeric, N: Size>: Carrier + CubeType<ExpandType: Assign +
     );
 }
 
-/// One lane's value and index, what an [`Indexed`] row's lanes fold into.
+/// One lane's value and index, what an [`Indexed`] row's lanes reduce to.
 type OneIndexed<Acc> = Indexed<Acc, Const<1>>;
 
 /// `line` as `map` reads it.
@@ -88,8 +90,8 @@ fn lane_indices<N: Size>(line_index: usize, #[comptime] layout: ReduceLayout) ->
 
 /// The values themselves, pointwise on the line.
 #[cube]
-impl<Acc: Numeric, N: Size> Folded<Acc, N> for Vector<Acc, N> {
-    fn fold(
+impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
+    fn accumulate(
         acc: Self,
         line: Vector<Acc, N>,
         _line_index: usize,
@@ -134,7 +136,7 @@ impl<Acc: Numeric, N: Size> Folded<Acc, N> for Vector<Acc, N> {
     ) {
         comptime!(assert!(
             writes == ReduceWrites::Values,
-            "Folded: {operation:?} folds the values themselves, which carry no index to write"
+            "ReduceAccumulator: {operation:?} accumulates the values themselves, which carry no index to write"
         ));
         let monoid = comptime!(operation.monoid());
         match comptime!(layout) {
@@ -162,8 +164,8 @@ impl<Acc: Numeric, N: Size> Folded<Acc, N> for Vector<Acc, N> {
 
 /// A value with the index it was read at: the argmax and the argmin.
 #[cube]
-impl<Acc: Numeric, N: Size> Folded<Acc, N> for Indexed<Acc, N> {
-    fn fold(
+impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
+    fn accumulate(
         acc: Self,
         line: Vector<Acc, N>,
         line_index: usize,
@@ -224,7 +226,7 @@ impl<Acc: Numeric, N: Size> Folded<Acc, N> for Indexed<Acc, N> {
         let monoid = comptime!(operation.monoid());
         match comptime!(layout) {
             ReduceLayout::Along => {
-                // The lanes hold one row: fold them, lane by lane, as one-lane carriers.
+                // The lanes hold one row: reduce them, lane by lane, as one-lane carriers.
                 let mut best = OneIndexed::<Acc>::identity(monoid);
                 #[unroll]
                 for lane in 0..N::value() {
@@ -270,8 +272,8 @@ fn write_line<Out: Numeric, Idx: Numeric, Acc: Numeric, W: Size>(
 
 /// The `K` best values with their indices: the top-k.
 #[cube]
-impl<Acc: Numeric, N: Size, K: Size> Folded<Acc, N> for TopK<Acc, N, K> {
-    fn fold(
+impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, K> {
+    fn accumulate(
         acc: Self,
         line: Vector<Acc, N>,
         line_index: usize,

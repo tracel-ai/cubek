@@ -1,10 +1,10 @@
 use super::base::UnitReduceMicrokernel;
-use crate::reduce::{Folded, ReduceLayout, read_mapped};
+use crate::reduce::{ReduceAccumulator, ReduceLayout, read_mapped};
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One unit's row: every line of `input`, the unit's window of the rows it reduces, read in
-/// `In`, mapped and folded in `Acc` into `C`, and the total written to `out`, its window of the
+/// `In`, mapped and accumulated in `Acc` into `C`, and the total written to `out`, its window of the
 /// output, in `Out`.
 #[cube]
 pub fn unit_reduce_microkernel<
@@ -13,7 +13,7 @@ pub fn unit_reduce_microkernel<
     Out: Numeric,
     Idx: Numeric,
     N: Size,
-    C: Folded<Acc, N>,
+    C: ReduceAccumulator<Acc, N>,
 >(
     input: &Tile,
     out: &mut Tile,
@@ -31,7 +31,7 @@ pub fn unit_reduce_microkernel<
             Vector::<Acc, N>::cast_from(lines.read(line)),
             comptime!(operation.read_map()),
         );
-        acc = C::fold(acc, read, line, layout, monoid);
+        acc = C::accumulate(acc, read, line, layout, monoid);
     }
     let values = match comptime!(layout) {
         ReduceLayout::Along => count * N::value(),

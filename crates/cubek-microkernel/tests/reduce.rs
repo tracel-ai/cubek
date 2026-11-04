@@ -33,14 +33,14 @@ fn ranked(row: &[f32], largest: bool, k: usize) -> Vec<(f32, usize)> {
 /// What `operation` writes for `row`: its cells, values or indices as numbers.
 fn reference(row: &[f32], operation: ReduceOperation) -> Vec<f32> {
     let nan = row.iter().any(|v| v.is_nan());
-    let fold = |init: f32, f: fn(f32, f32) -> f32| row.iter().copied().fold(init, f);
+    let reduce_row = |init: f32, f: fn(f32, f32) -> f32| row.iter().copied().fold(init, f);
     let keeping_nan = |v: f32| if nan { f32::NAN } else { v };
     match operation {
         ReduceOperation::Sum => vec![row.iter().sum()],
         ReduceOperation::Prod => vec![row.iter().product()],
         ReduceOperation::Mean => vec![row.iter().sum::<f32>() / row.len() as f32],
-        ReduceOperation::Max => vec![keeping_nan(fold(f32::NEG_INFINITY, f32::max))],
-        ReduceOperation::Min => vec![keeping_nan(fold(f32::INFINITY, f32::min))],
+        ReduceOperation::Max => vec![keeping_nan(reduce_row(f32::NEG_INFINITY, f32::max))],
+        ReduceOperation::Min => vec![keeping_nan(reduce_row(f32::INFINITY, f32::min))],
         ReduceOperation::MaxAbs => vec![keeping_nan(
             row.iter()
                 .map(|v| v.abs())

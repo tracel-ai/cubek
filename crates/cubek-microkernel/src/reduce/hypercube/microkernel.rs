@@ -1,13 +1,13 @@
 use super::base::HypercubeReduceMicrokernel;
-use crate::reduce::{Folded, ReduceLayout, read_mapped};
+use crate::reduce::{ReduceAccumulator, ReduceLayout, read_mapped};
 use cubecl::tile::Tile;
 use cubecl::tile::space::UnitShare;
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// One cube's part of a row its `parts` cubes split: the cube folds `input`, its window of the
-/// part, as the cube's microkernel folds a row, each line indexed `first_line` lines further, its
-/// place in the whole row; a part the row's end cuts short folds no line past it. Its first unit stores the partial as partial `part` of the row's
-/// `partials` and `partial_indices` ([`Folded::store`]), and the cube counts itself in at the
+/// One cube's part of a row its `parts` cubes split: the cube reduces `input`, its window of the
+/// part, as the cube's microkernel reduces a row, each line indexed `first_line` lines further, its
+/// place in the whole row; a part the row's end cuts short reads no line past it. Its first unit stores the partial as partial `part` of the row's
+/// `partials` and `partial_indices` ([`ReduceAccumulator::store`]), and the cube counts itself in at the
 /// row's `counter` of `arrivals`. The row's last cube to count merges every partial and writes the
 /// row to `out`, and to `indices` where both halves are written, as the cube's microkernel writes
 /// a row, a mean dividing by `values`, the values the whole row holds.
@@ -23,7 +23,7 @@ pub fn hypercube_reduce_microkernel<
     Out: Numeric,
     Idx: Numeric,
     N: Size,
-    C: Folded<Acc, N>,
+    C: ReduceAccumulator<Acc, N>,
 >(
     input: &Tile,
     out: &mut Tile,
@@ -44,7 +44,7 @@ pub fn hypercube_reduce_microkernel<
     let units = comptime!(microkernel.lanes * microkernel.planes);
     let unit = PLANE_POS as usize * comptime!(microkernel.lanes) + UNIT_POS_PLANE as usize;
     let lines = input.flat::<In, N>();
-    // The tile reads zero past the row's end, which no carrier folds as its identity.
+    // The tile reads zero past the row's end, which no carrier holds as its identity.
     let row_lines = match comptime!(layout) {
         ReduceLayout::Along => values / N::value(),
         ReduceLayout::Across => values,
@@ -58,7 +58,7 @@ pub fn hypercube_reduce_microkernel<
                 Vector::<Acc, N>::cast_from(lines.read(line)),
                 comptime!(operation.read_map()),
             );
-            acc = C::fold(acc, read, first_line + line, layout, monoid);
+            acc = C::accumulate(acc, read, first_line + line, layout, monoid);
         }
     }
     let plane = C::across(acc, UnitShare::Plane, monoid);

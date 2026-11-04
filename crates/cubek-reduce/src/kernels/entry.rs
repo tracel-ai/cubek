@@ -104,7 +104,7 @@ pub fn reduce_with_indices_on_tiles(
             indices_strides: indices.strides.to_vec(),
         });
     }
-    // Max and ArgMax fold the same carrier; with both halves written they are one launch.
+    // Max and ArgMax accumulate into the same carrier; with both halves written they are one launch.
     let operation = match operation_of(operation) {
         ReduceOperation::Max => ReduceOperation::ArgMax,
         ReduceOperation::Min => ReduceOperation::ArgMin,

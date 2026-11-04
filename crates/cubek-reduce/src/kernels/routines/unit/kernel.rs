@@ -4,7 +4,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::ReduceCarrier;
 use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microkernel};
 
-/// Every unit of the launch, reducing its rows into the carrier its operation folds into.
+/// Every unit of the launch, reducing its rows into the carrier its operation accumulates into.
 #[cube(launch_unchecked)]
 pub fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
@@ -50,7 +50,7 @@ pub fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     }
 }
 
-/// Every unit of the launch, reducing its rows into the carrier its operation folds into, and
+/// Every unit of the launch, reducing its rows into the carrier its operation accumulates into, and
 /// writing the values to `out` and their indices to `indices`, laid out as `out`.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]

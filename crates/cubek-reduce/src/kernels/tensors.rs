@@ -105,7 +105,7 @@ impl ReduceTensors {
     ) -> Self {
         assert!(
             !matches!(operation.carrier(), ReduceCarrier::Values),
-            "{operation:?} folds the values themselves, which carry no index"
+            "{operation:?} accumulates the values themselves, which carry no index"
         );
         assert!(
             indices.shape == values.shape && indices.strides == values.strides,

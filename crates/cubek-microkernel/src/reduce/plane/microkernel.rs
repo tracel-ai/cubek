@@ -1,10 +1,10 @@
 use super::base::PlaneReduceMicrokernel;
-use crate::reduce::{Folded, ReduceLayout, read_mapped};
+use crate::reduce::{ReduceAccumulator, ReduceLayout, read_mapped};
 use cubecl::tile::Tile;
 use cubecl::tile::space::UnitShare;
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// One plane's row: each lane folds every `lanes`-th line of `input`, the plane's window of the
+/// One plane's row: each lane accumulates every `lanes`-th line of `input`, the plane's window of the
 /// rows it reduces, into its own `C`, consecutive lanes reading consecutive lines; the lanes'
 /// partials meet across the plane ([`Carrier::across`](cubecl::tile::Carrier::across)), and the
 /// first lane writes the total to `out`, the plane's window of the output.
@@ -15,7 +15,7 @@ pub fn plane_reduce_microkernel<
     Out: Numeric,
     Idx: Numeric,
     N: Size,
-    C: Folded<Acc, N>,
+    C: ReduceAccumulator<Acc, N>,
 >(
     input: &Tile,
     out: &mut Tile,
@@ -37,7 +37,7 @@ pub fn plane_reduce_microkernel<
                 Vector::<Acc, N>::cast_from(lines.read(line)),
                 comptime!(operation.read_map()),
             );
-            acc = C::fold(acc, read, line, layout, monoid);
+            acc = C::accumulate(acc, read, line, layout, monoid);
         }
     }
     let total = C::across(acc, UnitShare::Plane, monoid);

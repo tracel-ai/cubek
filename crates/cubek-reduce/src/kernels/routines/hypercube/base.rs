@@ -28,7 +28,7 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, CubeResources, Grid, Routine};
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HypercubeReduceRoutine;
 
-/// The cube microkernel's planes, and how many lines each unit folds of a part.
+/// The cube microkernel's planes, and how many lines each unit reads of a part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeReduceRoutineSettings {
     pub microkernel: HypercubeReduceMicrokernelSettings,
@@ -36,7 +36,7 @@ pub struct HypercubeReduceRoutineSettings {
 }
 
 impl HypercubeReduceRoutineSettings {
-    /// Lines each unit folds of a part, the longest parts first: the fewest partials that still
+    /// Lines each unit reads of a part, the longest parts first: the fewest partials that still
     /// spread a row over the device.
     pub const UNIT_LINES: [usize; 3] = [32, 8, 2];
 }

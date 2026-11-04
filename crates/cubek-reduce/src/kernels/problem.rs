@@ -7,7 +7,7 @@ use cubecl::tune::Work;
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation, ReduceWorkItem};
 use cubek_std::routine::EstimatedProblem;
 
-/// The elements of a reduction: what the input is stored in, what it folds in, and what the
+/// The elements of a reduction: what the input is stored in, what it accumulates in, and what the
 /// output is written in (an index's, where it writes indices).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReduceElements {
@@ -209,7 +209,7 @@ pub fn dim_axis(d: usize) -> Axis {
 }
 
 impl EstimatedProblem for ReduceRoutineProblem {
-    /// Every value read once and folded once, every cell written once.
+    /// Every value read once and accumulated once, every cell written once.
     fn demand(&self) -> Work {
         let values: usize = self.shape.iter().product();
         let cells = self.row_count() * self.operation.written_per_row();

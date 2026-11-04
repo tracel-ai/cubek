@@ -61,7 +61,7 @@ fn split_place<N: Size>(
     }
 }
 
-/// Every cube's part of its rows, folded into the carrier its operation folds into; the last of
+/// Every cube's part of its rows, accumulated into the carrier its operation accumulates into; the last of
 /// a box of rows' cubes merges their partials and writes the rows.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
