@@ -305,10 +305,10 @@ fn problem(shape: &[usize], axis: usize) -> ReduceRoutineProblem {
     }
 }
 
-/// One kernel serves every shape of a rank, layout and width: the extents are the launch's, so a
-/// sequence that grows by a token recompiles nothing.
+/// One kernel serves every count of rows of a rank, layout, row length and width: the rows are the
+/// launch's, so a sequence that grows by a token recompiles nothing. The row length is compiled in.
 #[test]
-fn every_shape_of_a_layout_compiles_one_kernel() {
+fn every_count_of_rows_compiles_one_kernel() {
     let hw = devices::m2_pro();
     let compiled = |shape: &[usize], axis: usize| {
         let problem = problem(shape, axis);
@@ -322,6 +322,8 @@ fn every_shape_of_a_layout_compiles_one_kernel() {
             problem.kernel(&blueprint.partitioning),
         )
     };
-    assert_eq!(compiled(&[2, 5, 300], 2), compiled(&[3, 7, 308], 2));
-    assert_eq!(compiled(&[2, 5, 300], 1), compiled(&[2, 9, 300], 1));
+    assert_eq!(compiled(&[2, 5, 300], 2), compiled(&[3, 7, 300], 2));
+    assert_eq!(compiled(&[2, 5, 300], 1), compiled(&[4, 5, 308], 1));
+    assert_ne!(compiled(&[2, 5, 300], 2), compiled(&[2, 5, 308], 2));
 }
+

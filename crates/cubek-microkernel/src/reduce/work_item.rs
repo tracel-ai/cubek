@@ -14,8 +14,8 @@ pub enum ReduceLayout {
 }
 
 /// A reduced row as its microkernels see it: what it reduces with, what it reads and folds in,
-/// and how its lines lie. Not how long it is: a microkernel reads its row's length at run time, so
-/// one kernel serves rows of every length.
+/// and how its lines lie. Not how long it is: a microkernel reads its row's length off its tile, so
+/// whether the length is compiled in is its launch's choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReduceWorkItem {
     pub operation: ReduceOperation,

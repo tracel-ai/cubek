@@ -153,7 +153,7 @@ impl ReduceRoutineProblem {
 
     /// The box an owner holds: one row, or `width` rows side by side across the reduced dim, and
     /// the cells it writes. It leaves the reduced dim to the space, so every owner spans its rows
-    /// whole, however long the launch states them.
+    /// whole.
     pub fn owner_box(&self, width: usize) -> Vec<(Axis, usize)> {
         let mut extents: Vec<(Axis, usize)> = (0..self.shape.len())
             .filter(|d| *d != self.axis)
@@ -185,11 +185,17 @@ impl ReduceRoutineProblem {
             .collect()
     }
 
-    /// `partitioning` as a kernel compiles it: every axis but the cells a row writes left to the
-    /// launch, so one kernel serves every shape of the same rank, layout, elements and widths.
+    /// `partitioning` as a kernel compiles it: the rows, and a hypercube's partials, left to the
+    /// launch, so one kernel serves every count of rows of a rank, layout, row length, elements
+    /// and widths. The reduced dim stays compiled in, as RMS norm compiles its dim: left to the
+    /// launch, it cost up to twice the time on Metal (every read of the row checked against a
+    /// runtime edge).
     pub fn kernel(&self, partitioning: &Partitioning) -> Partitioning {
         let space = partitioning.space();
-        let dynamic: Vec<Axis> = space.axes().filter(|axis| *axis != self.slots()).collect();
+        let dynamic: Vec<Axis> = space
+            .axes()
+            .filter(|axis| *axis != self.slots() && *axis != self.reduced())
+            .collect();
         Partitioning::new(
             space.clone().with_dynamic(&dynamic),
             partitioning.levels().to_vec(),
