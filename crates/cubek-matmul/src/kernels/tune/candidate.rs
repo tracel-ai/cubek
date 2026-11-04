@@ -82,13 +82,14 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
             (None, destination) => {
                 let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
                 let tensors = match &destination {
-                    Some(destination) => MatmulTensors::writing_into::<M>(
+                    Some(destination) => MatmulTensors::writing_into(
                         &call.client,
                         lhs,
                         rhs,
                         PlainTensor::of_handle(destination.clone()),
+                        R::ROWS_KIND,
                     ),
-                    None => MatmulTensors::new::<M>(&call.client, lhs, rhs),
+                    None => MatmulTensors::new(&call.client, lhs, rhs, R::ROWS_KIND),
                 };
                 tensors.and_then(|tensors| {
                     let (blueprint, grid) = self.prepared.prepare(

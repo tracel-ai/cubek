@@ -14,6 +14,8 @@ use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{BlockScaledOperands, Space, StageStorage, TileTensorLaunch};
+use cubek_microkernel::matmul::MatmulMicrokernel;
+use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedStore, MatmulPlaneLayout,
@@ -361,7 +363,7 @@ impl CubeStagedMatmulRoutine {
         let Ok((blueprint, grid)) = CubeStagedMatmulRoutine.prepare(hw, &problem, settings) else {
             return false;
         };
-        let item = MatmulView::of::<CubeStagedMicrokernel>(&problem)
+        let item = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item()
             .as_stored()
@@ -411,7 +413,7 @@ impl CubeStagedMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let item = MatmulView::of::<CubeStagedMicrokernel>(problem)
+        let item = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let contracted = blueprint.microkernel.contracted(&item);
@@ -701,7 +703,7 @@ impl Routine for CubeStagedMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let item = MatmulView::of::<CubeStagedMicrokernel>(problem)
+        let item = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         match item.blocks {
@@ -730,7 +732,7 @@ impl Routine for CubeStagedMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let view = MatmulView::of::<CubeStagedMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         let microkernel = CubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
         if microkernel.walk().decoded().is_some() {
@@ -793,6 +795,9 @@ impl Routine for CubeStagedMatmulRoutine {
 }
 
 impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedMatmulRoutine {
+    /// A cube owns a box of the rows.
+    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,

@@ -4,8 +4,8 @@ use crate::matmul::plane::{
     PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, plane_fragment_staged_microkernel,
 };
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
-    MatmulStage, MatmulWorkItem,
+    MatmulAxes, MatmulDestination, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulReading,
+    MatmulRows, MatmulStage, MatmulWorkItem,
 };
 use cubecl::prelude::*;
 use cubecl::tile::kind::Boundary;
