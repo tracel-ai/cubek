@@ -7,7 +7,7 @@ use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::{Axis, Space};
 use cubek_microkernel::matmul::{MatmulOperands, MatmulStep};
 use cubek_std::layout::stored::{Operand, Packing};
-use cubek_std::layout::tile_order;
+use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::{Hardware, devices};
 
@@ -49,23 +49,33 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
     };
     let nvfp4 = tile_order::nvfp4_scheme();
     let words = devices::m2_pro().load_values(ElemType::UInt(UIntKind::U32));
-    let tile_order = Operand::of_scheme(&nvfp4, K, [K, N])
-        .expect("one axis a block")
-        .stored(
-            N,
-            words,
-            Some((
-                &tile_order::values_axes(N),
-                tile_order::TileOrder::NVFP4
-                    .values_storage(N, (128, 8), words)
-                    .tiles(),
-            )),
-            None,
-        )
-        .expect("tile order is read");
+    let in_tiles = |order: TileOrder| {
+        let tile = (128, 8);
+        let scale_axes = tile_order::scales_axes(N);
+        let scales = order.scales_storage(N, tile, order.lines_a_load(N, tile, words));
+        let operand = Operand::of_scheme(&nvfp4, K, [K, N])
+            .expect("one axis a block")
+            .stored(
+                N,
+                words,
+                Some((
+                    &tile_order::values_axes(N),
+                    order.values_storage(N, tile, words).tiles(),
+                )),
+                scales
+                    .as_ref()
+                    .map(|storage| (&scale_axes[..], storage.tiles())),
+            )
+            .expect("tile order is read");
+        problem(m, nvfp4, operand)
+    };
     vec![
         ("nvfp4 rows", in_rows(nvfp4, K)),
-        ("nvfp4 tile order", problem(m, nvfp4, tile_order)),
+        ("nvfp4 tile order", in_tiles(TileOrder::NVFP4)),
+        (
+            "nvfp4 tile order block by block",
+            in_tiles(TileOrder::NVFP4.with_words(TileWords::BlockByBlock)),
+        ),
         (
             "mxfp4",
             in_rows(scheme(QuantValue::E2M1, K, 32, ScaleDtype::UE8M0), K),
@@ -222,7 +232,7 @@ mod cube_staged {
                     }
                     Err(error) => panic!("{name} at {settings}: {error:?}"),
                 };
-                if name == "nvfp4 tile order" {
+                if name.starts_with("nvfp4 tile order") {
                     tile_order_prepared += 1;
                 }
                 let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.instruction.shape();

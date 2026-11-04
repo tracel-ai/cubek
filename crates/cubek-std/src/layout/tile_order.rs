@@ -49,7 +49,7 @@ pub fn scales_axes(across: Axis) -> [Axis; 2] {
 }
 
 /// The order a tile's words lie in, past a block's words of one line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TileWords {
     /// Each line's words down the tile's `k` one run, the lines one after another: a row of the
     /// tile is a line's run, which the TMA engine copies and a tensor-core plane reads whole. The
@@ -77,8 +77,8 @@ pub struct TileOrder {
 }
 
 impl TileOrder {
-    /// Block scales one stored word holds: tile order stores byte scales ([`of`](Self::of)), four
-    /// to a `u32`.
+    /// Block scales one stored word holds: tile order stores byte scales, four to a `u32`, and
+    /// [`of`](Self::of) and [`of_operand`](Self::of_operand) refuse any other.
     pub const SCALES_PER_WORD: usize = 4;
 
     /// NVFP4's tile order: a scale every sixteen values, eight to a word, its tiles line by line.
@@ -120,8 +120,19 @@ impl TileOrder {
     /// What every reader asks: the matrix carries its order, and a reader that worked it out again
     /// from its own device could disagree with the writer that laid it.
     pub fn words_of(self, matrix: &Metadata) -> Option<TileWords> {
+        self.laid_out(matrix).map(|(order, _)| order.words)
+    }
+
+    /// This order as `matrix` lays it out, and the tile it is stored in, `(k, lines)` values:
+    /// [`words_of`](Self::words_of) and [`tile`](Self::tile) read in one pass over its fragments,
+    /// what a reader binding the matrix asks on every launch. `None` for a matrix in rows, or one
+    /// whose `k` fragments do not close a block.
+    pub fn laid_out(self, matrix: &Metadata) -> Option<(Self, (usize, usize))> {
         let [k, lines] = matrix_fragments(matrix)?;
         let (blocks, _) = k.split_at(self.block_split(&k)?);
+        let inside =
+            |dim: &[(usize, usize)]| dim.iter().skip(1).map(|&(extent, _)| extent).product();
+        let tile = (inside(&k), inside(&lines));
         let finest = |dim: &[(usize, usize)]| {
             dim.iter()
                 .filter(|&&(extent, _)| extent > 1)
@@ -132,7 +143,7 @@ impl TileOrder {
             (Some(line), Some(block)) if line < block => TileWords::BlockByBlock,
             _ => TileWords::LineByLine,
         };
-        Some(self.laid_in(stated, self.tile(matrix)?).words)
+        Some((self.laid_in(stated, tile), tile))
     }
 
     /// The tile order of a matrix packed under `scheme`: a symmetric scheme whose words run down
@@ -161,15 +172,15 @@ impl TileOrder {
     /// words as the matrix's own fragments say ([`words_of`](Self::words_of)). `None` for a scheme
     /// tile order does not store, or a matrix in rows.
     pub fn of_matrix(scheme: &QuantScheme, matrix: &Metadata) -> Option<Self> {
-        let order = Self::of(scheme)?;
-        Some(order.with_words(order.words_of(matrix)?))
+        Self::of(scheme)?.laid_out(matrix).map(|(order, _)| order)
     }
 
     /// The tile order of a matrix read as `operand`: its words down `K`, each a whole read, under a
-    /// scale every whole number of them along `K`, its tiles line by line as [`of`](Self::of)'s
-    /// are. `None` for an operand tile order does not store.
+    /// scale every whole number of them along `K`, byte scales
+    /// [`SCALES_PER_WORD`](Self::SCALES_PER_WORD) to a word, its tiles line by line as
+    /// [`of`](Self::of)'s are. `None` for an operand tile order does not store.
     pub fn of_operand(operand: &Operand) -> Option<Self> {
-        if operand.lined() != K {
+        if operand.lined() != K || operand.scales_per_word() != Self::SCALES_PER_WORD {
             return None;
         }
         Self::in_whole_words(operand.scale(K)?, operand.read(K))
@@ -210,16 +221,15 @@ impl TileOrder {
 
     /// A tile's pieces of values above the word, finest first, each a count of the piece below
     /// it: a block's words, then a line's blocks and the lines, or a block's lines and the blocks,
-    /// as [`words`](Self::words) orders them.
-    fn values_pieces(
-        self,
-        across: Axis,
-        (tile_k, tile_lines): (usize, usize),
-    ) -> [(Axis, usize); 3] {
+    /// as [`words`](Self::words) orders them where the tile holds that order
+    /// ([`laid_in`](Self::laid_in)), so values are never laid in an order the matrix reads back
+    /// as another.
+    fn values_pieces(self, across: Axis, tile: (usize, usize)) -> [(Axis, usize); 3] {
+        let (tile_k, tile_lines) = tile;
         let block = (KI, self.block / self.values_per_word);
         let down_k = (KB, tile_k / self.block);
         let across_lines = (blocked(across).1, tile_lines);
-        match self.words {
+        match self.laid_in(self.words, tile).words {
             TileWords::LineByLine => [block, down_k, across_lines],
             TileWords::BlockByBlock => [block, across_lines, down_k],
         }
@@ -644,6 +654,29 @@ mod tests {
                 .words,
             TileWords::BlockByBlock
         );
+    }
+
+    /// Values asked block by block in a tile that holds no block-by-block order are laid line by
+    /// line, the order the matrix then reads back: a writer that skips
+    /// [`laid_in`](TileOrder::laid_in) still writes what readers read.
+    #[test]
+    fn values_asked_block_by_block_in_a_shallow_tile_are_laid_line_by_line() {
+        let (k, n) = (256, 48);
+        let asked = NVFP4.with_words(TileWords::BlockByBlock);
+        for tile in [(32, 8), (64, 1)] {
+            let laid = asked.kernel_values_read(k, (N, n), tile, 4);
+            assert_eq!(
+                laid,
+                NVFP4.kernel_values_read(k, (N, n), tile, 4),
+                "{tile:?}"
+            );
+            assert_eq!(
+                asked.words_of(&matrix_values(&laid)),
+                Some(TileWords::LineByLine),
+                "{tile:?}"
+            );
+            assert_eq!(asked.lines_a_load(N, tile, 4), 1, "{tile:?}");
+        }
     }
 
     /// Block by block, every read stores the block scales at the same bytes: the read is a

@@ -25,7 +25,7 @@ use cubek_microkernel::matmul::{
     MatmulWorkItem,
 };
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::{BlockScales, Operand, Packing};
+use cubek_std::layout::stored::{BlockScales, Operand, Packing, ScalesLaid};
 use cubek_std::matmul_axes::{K, KB, KI, M, MI, N, NI};
 use cubek_std::microkernel::{
     CubeStaging, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
@@ -768,13 +768,13 @@ impl Routine for CubeStagedMatmulRoutine {
         if filled_by_tma || stored_by_tma {
             return Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA);
         }
-        // Scales read as words are bound from their rows: a matrix keeping them in tiles across
-        // its lines, laid block by block, is not read so.
-        let scales_across_lines = problem
-            .packings
-            .rhs
-            .is_some_and(|packing| packing.operand.scale_read(N) > 1);
-        if microkernel.block_scales() == BlockScales::Words && scales_across_lines {
+        // Scales read as words are bound from their rows: an input keeping them in tiles of their
+        // own, laid block by block, is not read so.
+        let scales_in_tiles = [problem.packings.lhs, problem.packings.rhs]
+            .into_iter()
+            .flatten()
+            .any(|packing| packing.operand.scales_laid() == ScalesLaid::InTiles);
+        if microkernel.block_scales() == BlockScales::Words && scales_in_tiles {
             return Err(MATMUL_SCALE_WORDS_IN_TILES);
         }
         let partitioning = place(microkernel.launch_tiling());

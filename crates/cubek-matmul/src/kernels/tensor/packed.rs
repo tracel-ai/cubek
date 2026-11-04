@@ -19,7 +19,7 @@ use cubek_microkernel::matmul::MatmulStoredTile;
 use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
 use cubek_std::launch::tma::tma_operand_tiled_typed;
-use cubek_std::layout::stored::{BlockScales, Operand, Packing};
+use cubek_std::layout::stored::{BlockScales, Operand, Packing, ScalesLaid};
 use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 use cubek_std::matmul_axes::{EXPERT, K, blocked};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
@@ -97,14 +97,17 @@ pub enum WordsLaid {
 
 impl PackedTensor {
     /// A packed matrix over `axes`, each with its extent, its words `laid` so, read as `operand`
-    /// says under `scheme`: its words in the order their buffer steps, its block scales as rows of
-    /// whole words, and its per-tensor scale, as whole words, where `scheme` has one. Its caller
-    /// reads these parts off however it stores a packed tensor.
+    /// says under `scheme`: its words in the order their buffer steps, its block scales as whole
+    /// words where they lie (rows of them, or for words laid block by block the tiles tile order
+    /// stores them in), and its per-tensor scale, as whole words, where `scheme` has one. Its
+    /// caller reads these parts off however it stores a packed tensor, and states `laid` and
+    /// `operand` as [`read_in_tiles`](Self::read_in_tiles) returns them for a matrix in tiles.
     ///
     /// # Panics
     ///
     /// A per-tensor scale given for a one-level scheme, or none for a two-level one: it would
-    /// bind none and drop it.
+    /// bind none and drop it. And an `operand` whose scales lie elsewhere than `laid` says
+    /// ([`ScalesLaid`]): it would be bound reading scales where none are.
     pub fn new(
         words: PlainTensor,
         laid: WordsLaid,
@@ -118,6 +121,15 @@ impl PackedTensor {
             global_scale.is_some(),
             scheme.num_levels() > 1,
             "a two-level scheme carries a per-tensor scale and a one-level one does not"
+        );
+        let scales_laid = match laid {
+            WordsLaid::InTiles(_, TileWords::BlockByBlock) => ScalesLaid::InTiles,
+            WordsLaid::InTiles(_, TileWords::LineByLine) | WordsLaid::InRows => ScalesLaid::InRows,
+        };
+        assert_eq!(
+            operand.scales_laid(),
+            scales_laid,
+            "the operand reads its scales where its words' layout keeps them"
         );
         Self {
             words,
@@ -236,9 +248,9 @@ impl PackedTensor {
             return Err(STORED_TILES_UNREAD);
         };
         let block = operand.grouping(K, k).ok_or(STORED_TILES_UNREAD)?;
-        let order = TileOrder::of_operand(&operand).ok_or(STORED_TILES_UNREAD)?;
-        let order = order.with_words(order.words_of(matrix).ok_or(STORED_TILES_UNREAD)?);
-        let tile = order.tile(matrix).ok_or(STORED_TILES_UNREAD)?;
+        let (order, tile) = TileOrder::of_operand(&operand)
+            .and_then(|order| order.laid_out(matrix))
+            .ok_or(STORED_TILES_UNREAD)?;
         if order.block != block || !tile.0.is_multiple_of(block) {
             return Err(STORED_TILES_UNREAD);
         }
@@ -523,6 +535,13 @@ impl PackedTensor {
                 )
             }
             BlockScales::Words => {
+                // A launch taking its scales as words declines scales in tiles before it binds
+                // (`MATMUL_SCALE_WORDS_IN_TILES`): their rows are no tile's.
+                assert_eq!(
+                    operand.scales_laid(),
+                    ScalesLaid::InRows,
+                    "bind: block scales are bound as words of their rows, and these lie in tiles"
+                );
                 let per_word = operand.scales_per_word();
                 let block_scales = launcher
                     .arg(

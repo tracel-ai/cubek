@@ -180,6 +180,19 @@ pub struct Operand {
     /// (as many as share a word, which is what their own field says), and the columns beside it
     /// where the scales are stored so. One scale where this operand carries none.
     scale_read: MicroTile,
+    /// Where its block scales lie: in the rows they are packed in, or in tiles of their own.
+    scales: ScalesLaid,
+}
+
+/// Where an operand's block scales lie, which a reader binding them as rows of words asks.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ScalesLaid {
+    /// In the rows they are packed in, a line's blocks one run: a matrix in rows, or one in tile
+    /// order laid line by line.
+    InRows,
+    /// In tiles of their own beside values laid block by block, a tile's lines' words side by
+    /// side ([`TileOrder::scales_storage`](crate::layout::tile_order::TileOrder::scales_storage)).
+    InTiles,
 }
 
 impl Operand {
@@ -189,6 +202,7 @@ impl Operand {
             read: MicroTile::unit(),
             scale: None,
             scale_read: MicroTile::unit(),
+            scales: ScalesLaid::InRows,
         }
     }
 
@@ -199,7 +213,13 @@ impl Operand {
             read: self.read.renamed(from, to),
             scale: self.scale.map(|scale| scale.renamed(from, to)),
             scale_read: self.scale_read.renamed(from, to),
+            scales: self.scales,
         }
+    }
+
+    /// Where its block scales lie.
+    pub fn scales_laid(&self) -> ScalesLaid {
+        self.scales
     }
 
     /// The operand `scheme` describes when its words run along `axis`.
@@ -225,6 +245,7 @@ impl Operand {
             read: MicroTile::along(axis, read),
             scale: Some(MicroTile::along(axis, scale)),
             scale_read: MicroTile::along(axis, scales_per_word),
+            scales: ScalesLaid::InRows,
         })
     }
 
@@ -298,7 +319,11 @@ impl Operand {
     /// the next block's, under another scale. Its scales, in rows, are read a word of four blocks
     /// down one column. Block by block, a block's words of every column side by side, it is read
     /// a whole load: one block of two columns, each inside its own scale; and its scales, in tiles,
-    /// a word of four blocks down each of four columns side by side.
+    /// a word of four blocks down each of those two columns side by side.
+    ///
+    /// Scales stored in tiles (`scales`) are read the lines a read of the values spans, one word
+    /// of them a line: every scale that read needs and no other reader's. The operand records that
+    /// its scales lie so ([`ScalesLaid::InTiles`]).
     ///
     /// `None` for a stored buffer read some other way: one that does not start with the word
     /// this operand's scheme reads, along its own axis or along `across`, so no read of it is
@@ -317,15 +342,21 @@ impl Operand {
         let read = self
             .read
             .read_off(self.lined(), across, words, inside, values)?;
+        // Scales in tiles a word a line: a read of them takes the lines a read of values does.
+        let (scales_laid, scale_words) = match scales {
+            Some(_) => (ScalesLaid::InTiles, read.extent(across).max(1)),
+            None => (self.scales, words),
+        };
         let scale_read = match self.scaled_along() {
             Some(axis) => self
                 .scale_read
-                .read_off(axis, across, words, &unit, scales)?,
+                .read_off(axis, across, scale_words, &unit, scales)?,
             None => self.scale_read,
         };
         Some(Operand {
             read,
             scale_read,
+            scales: scales_laid,
             ..self
         })
     }
@@ -542,6 +573,7 @@ impl Operand {
             read: MicroTile::along(lined, read),
             scale: Some(MicroTile::along(tiled, scale)),
             scale_read: MicroTile::along(tiled, scales_per_word),
+            scales: ScalesLaid::InRows,
         }
     }
 }
@@ -622,7 +654,7 @@ pub enum Walked {
 
 #[cfg(test)]
 mod tests {
-    use crate::layout::stored::Operand;
+    use crate::layout::stored::{Operand, ScalesLaid};
     use crate::layout::tile_order;
     use crate::matmul_axes::{K, KB, KI, N, NI};
 
@@ -682,6 +714,42 @@ mod tests {
             "a read of scales covers a word of blocks"
         );
         assert_eq!(stored.lined(), K);
+    }
+
+    /// Block by block, a read of the scales spans the lines a read of the values does whatever the
+    /// tile, and the operand records that its scales lie in tiles: a tile of four lines, whose scales
+    /// a whole load could read four lines of, and one of two lines, whose next scale tile lies down
+    /// `k`. Line by line, its scales lie in rows.
+    #[test]
+    fn a_read_of_scales_in_tiles_spans_the_lines_of_a_read_of_values() {
+        let order = tile_order::TileOrder::NVFP4.with_words(tile_order::TileWords::BlockByBlock);
+        for tile in [(128, 4), (128, 2), (128, 8)] {
+            let values = order.values_storage(N, tile, WORDS);
+            let scales = order
+                .scales_storage(N, tile, order.lines_a_load(N, tile, WORDS))
+                .expect("block by block, the scales are in tiles");
+            let stored = nvfp4()
+                .stored(
+                    N,
+                    WORDS,
+                    Some((&tile_order::values_axes(N), values.tiles())),
+                    Some((&tile_order::scales_axes(N), scales.tiles())),
+                )
+                .unwrap_or_else(|| panic!("{tile:?}: tile order is read"));
+            assert_eq!(stored.read(N), 2, "{tile:?}");
+            assert_eq!(stored.scale_read(N), stored.read(N), "{tile:?}");
+            assert_eq!(stored.scales_laid(), ScalesLaid::InTiles, "{tile:?}");
+        }
+        let values = tile_order::TileOrder::NVFP4.values_storage(N, (128, 8), WORDS);
+        let line_by_line = nvfp4()
+            .stored(
+                N,
+                WORDS,
+                Some((&tile_order::values_axes(N), values.tiles())),
+                None,
+            )
+            .expect("tile order is read");
+        assert_eq!(line_by_line.scales_laid(), ScalesLaid::InRows);
     }
 
     /// A stated tile is taken whole or not at all: a tile of sixteen columns stated as one level

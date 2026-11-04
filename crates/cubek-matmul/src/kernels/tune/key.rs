@@ -26,6 +26,7 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_std::layout::contiguous;
 
 use cubek_std::layout;
+use cubek_std::layout::tile_order::{TileOrder, TileWords};
 
 /// One input as the key tells problems apart: what it is, how it lies, and whether its batches
 /// read one matrix.
@@ -97,9 +98,12 @@ pub enum OperandLayout {
     Along(Axis),
     /// Contiguous along neither axis: a strided or broadcast view, read one element at a time.
     Strided,
-    /// Contiguous along this axis inside tiles of these extents over the operand's two axes: a
-    /// buffer stored a tile at a time. One of one value a tile is [`Along`](Self::Along).
-    Tiles(Axis, (usize, usize)),
+    /// Contiguous along this axis inside tiles of these extents over the operand's two axes, the
+    /// tiles' words lying as the order says: a buffer stored a tile at a time. One of one value a
+    /// tile is [`Along`](Self::Along). A float buffer's tiles, and a packed one's laid line by
+    /// line, are a line's run a row; a packed one's laid block by block are not, and a kernel may
+    /// decline one where it reads the other.
+    Tiles(Axis, (usize, usize), TileWords),
 }
 
 impl OperandLayout {
@@ -112,7 +116,7 @@ impl OperandLayout {
     /// pieces run along; `None` for a strided one.
     pub fn axis(self) -> Option<Axis> {
         match self {
-            Self::Along(axis) | Self::Tiles(axis, _) => Some(axis),
+            Self::Along(axis) | Self::Tiles(axis, ..) => Some(axis),
             Self::Strided => None,
         }
     }
@@ -123,11 +127,18 @@ impl core::fmt::Debug for OperandLayout {
         match self {
             Self::Along(axis) => f.write_str(cubek_std::matmul_axes::axis_name(*axis)),
             Self::Strided => f.write_str("strided"),
-            Self::Tiles(axis, (first, second)) => write!(
-                f,
-                "{} in {first}x{second} tiles",
-                cubek_std::matmul_axes::axis_name(*axis)
-            ),
+            Self::Tiles(axis, (first, second), words) => {
+                write!(
+                    f,
+                    "{} in {first}x{second} tiles",
+                    cubek_std::matmul_axes::axis_name(*axis)
+                )?;
+                // Line by line is the tiles every key named before the order did.
+                match words {
+                    TileWords::LineByLine => Ok(()),
+                    TileWords::BlockByBlock => f.write_str(" block by block"),
+                }
+            }
         }
     }
 }
@@ -387,16 +398,23 @@ pub fn create_key(
     let MatmulProblem {
         m, k, n, batches, ..
     } = MatmulProblem::new((&lhs_shape, lhs_kind), (&rhs_shape, rhs_kind));
-    // An operand keys by the axis it is contiguous along and the tile it is stored in, so a
-    // winner elected on one layout is never served to another, which its kernel may decline.
+    // An operand keys by the axis it is contiguous along, the tile it is stored in and the order
+    // the tile's words lie in, so a winner elected on one layout is never served to another, which
+    // its kernel may decline.
     let operand = |meta: &Metadata, kind: OperandKind, operand: MatmulOperand| {
         let shape = logical(meta);
+        let words = match kind {
+            OperandKind::Quantized(scheme) => TileOrder::of(&scheme)
+                .and_then(|order| order.words_of(meta))
+                .unwrap_or(TileWords::LineByLine),
+            _ => TileWords::LineByLine,
+        };
         OperandKey {
             kind,
             layout: match (contiguous(meta, operand.axes()), layout::tile(meta)) {
                 (None, _) => OperandLayout::Strided,
                 (Some(axis), (1, 1)) => OperandLayout::Along(axis),
-                (Some(axis), tile) => OperandLayout::Tiles(axis, tile),
+                (Some(axis), tile) => OperandLayout::Tiles(axis, tile, words),
             },
             batching: MatmulBatching::new(&shape.as_slice()[..shape.rank() - 2]),
         }

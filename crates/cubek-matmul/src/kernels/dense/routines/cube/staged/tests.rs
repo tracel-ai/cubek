@@ -1560,6 +1560,7 @@ mod base {
     fn scale_words_are_declined_over_scales_in_tiles() {
         use crate::kernels::MATMUL_SCALE_WORDS_IN_TILES;
         use cubek_std::NVFP4_FORM;
+        use cubek_std::layout::stored::ScalesLaid;
         use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 
         let hw = devices::offering_block_scaled(devices::h100());
@@ -1586,7 +1587,7 @@ mod base {
                 )),
             )
             .expect("tile order block by block is read");
-        assert!(rhs.operand.scale_read(N) > 1);
+        assert_eq!(rhs.operand.scales_laid(), ScalesLaid::InTiles);
         inputs.rhs = Some(rhs);
         let problem =
             MatmulRoutineProblem::packed(128, 256, 512, ElemType::Float(FloatKind::F16), inputs);
