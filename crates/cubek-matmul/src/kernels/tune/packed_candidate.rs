@@ -6,8 +6,8 @@ use crate::kernels::tune::key::MatmulTuneKey;
 use crate::kernels::tune::{MatmulProduct, RoutineIdentity};
 use crate::kernels::{
     CubeShuffleMatmulRoutineSettings, CubeStagedMatmulRoutineSettings,
-    HypercubeLastArrivalMatmulRoutineSettings, MatmulRoutine, MatmulTensors,
-    PlaneShuffleMatmulRoutineSettings,
+    HypercubeLastArrivalMatmulRoutineSettings, HypercubeLastArrivalShuffleMatmulRoutineSettings,
+    MatmulRoutine, MatmulTensors, PlaneShuffleMatmulRoutineSettings,
 };
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
@@ -46,6 +46,12 @@ impl PackedContraction for CubeStagedMatmulRoutineSettings {
 impl PackedContraction for HypercubeLastArrivalMatmulRoutineSettings {
     fn on_matrix_instructions(&self) -> bool {
         true
+    }
+}
+
+impl PackedContraction for HypercubeLastArrivalShuffleMatmulRoutineSettings {
+    fn on_matrix_instructions(&self) -> bool {
+        false
     }
 }
 

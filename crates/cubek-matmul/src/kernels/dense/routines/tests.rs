@@ -127,7 +127,12 @@ mod plane_shuffle {
             for (name, problem) in problems(m) {
                 for settings in PlaneShuffleMatmulRoutine.packed_settings() {
                     // A step ahead holds only byte block scales: not the q4 and q8 schemes.
-                    if settings.microkernel.fetch.admits(&problem.packings).is_err() {
+                    if settings
+                        .microkernel
+                        .fetch
+                        .admits(&problem.packings)
+                        .is_err()
+                    {
                         continue;
                     }
                     let (blueprint, _) = PlaneShuffleMatmulRoutine
@@ -508,5 +513,51 @@ mod hypercube_last_arrival {
                 );
             }
         }
+    }
+}
+
+mod hypercube_last_arrival_shuffle {
+    use super::*;
+    use crate::kernels::HypercubeLastArrivalShuffleMatmulRoutine;
+    use cubek_std::devices;
+    use cubek_std::routine::Routine;
+
+    /// Every setting prepares against NVFP4, in rows and in tile order, at one row and at eight,
+    /// on a device whose cubes meet within a launch; against any scheme, a setting that prepares
+    /// cuts its unit box in whole steps.
+    #[test]
+    fn every_setting_prepares_against_nvfp4_in_whole_steps() {
+        let hw = devices::strix_halo();
+        let settings = HypercubeLastArrivalShuffleMatmulRoutine.packed_settings(&hw);
+        assert!(
+            !settings.is_empty(),
+            "Strix Halo's cubes meet within a launch"
+        );
+        for m in [1, 8] {
+            for (name, problem) in problems(m) {
+                for settings in &settings {
+                    match HypercubeLastArrivalShuffleMatmulRoutine.prepare(&hw, &problem, settings)
+                    {
+                        Ok((blueprint, _)) => assert!(
+                            whole_steps(&step(&hw, &problem), &blueprint.partitioning.leaf()),
+                            "{name} at {settings}"
+                        ),
+                        Err(why) => {
+                            assert!(!name.starts_with("nvfp4"), "{name} at {settings}: {why:?}")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// No setting where one cube's stores do not reach another within a launch.
+    #[test]
+    fn no_setting_where_cubes_do_not_meet() {
+        assert!(
+            HypercubeLastArrivalShuffleMatmulRoutine
+                .packed_settings(&devices::wgpu_no_subgroups())
+                .is_empty()
+        );
     }
 }

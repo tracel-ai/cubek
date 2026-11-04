@@ -731,7 +731,12 @@ mod tests {
                 for settings in PlaneShuffleMatmulRoutine.packed_settings() {
                     // A step ahead holds only byte block scales, which the q4 and q8 schemes
                     // here are not stored under.
-                    if settings.microkernel.fetch.admits(&problem.packings).is_err() {
+                    if settings
+                        .microkernel
+                        .fetch
+                        .admits(&problem.packings)
+                        .is_err()
+                    {
                         continue;
                     }
                     let (blueprint, grid) = PlaneShuffleMatmulRoutine

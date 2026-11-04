@@ -82,17 +82,17 @@ impl HypercubeLastArrivalMatmulRoutine {
         why: "the last-arrival routine sizes its grid by the device's workers, which this device does not report",
     };
 
-    /// The cubes its grid holds on `hw` at `settings`, or [`UNSIZED`](Self::UNSIZED) on a device
-    /// that does not say how many workers it has.
-    fn cubes(
+    /// The cubes a hypercube's grid holds on `hw` at `cubes_per_worker` cubes a worker, or
+    /// [`UNSIZED`](Self::UNSIZED) on a device that does not say how many workers it has.
+    pub(crate) fn cubes(
         hw: &Hardware,
-        settings: &HypercubeLastArrivalMatmulRoutineSettings,
+        cubes_per_worker: NonZeroUsize,
     ) -> Result<NonZeroUsize, Refusal> {
         let workers = hw
             .workers()
             .and_then(|workers| NonZeroUsize::new(workers as usize))
             .ok_or(Self::UNSIZED)?;
-        Ok(workers.saturating_mul(settings.cubes_per_worker))
+        Ok(workers.saturating_mul(cubes_per_worker))
     }
 
     /// `partitioning` with one cube's box stretched to its run of the line: the tiles' steps of
@@ -214,7 +214,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         if microkernel.cube.walk().decoded().is_some() {
             view.check_steps(hw)?;
         }
-        let target = Self::cubes(hw, settings)?;
+        let target = Self::cubes(hw, settings.cubes_per_worker)?;
         // Against packed inputs each cube contracts them as its microkernel reads them, over the
         // block-split space, its share of the walk whole blocks of `K`.
         let axes = [item.axes.m, item.axes.n];

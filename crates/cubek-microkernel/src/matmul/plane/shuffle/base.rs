@@ -210,6 +210,20 @@ impl PlaneShuffleMicrokernel {
         }
     }
 
+    /// [`tiling`](Self::tiling) with the unit's rows stated in its leaf even where one unit holds
+    /// every row, against a packed rhs whose units take `K` in turns: what a routine cutting the
+    /// rows into boxes of the plane's rows, as a hypercube's cubes cut them, states the plane by.
+    /// `None` where each unit walks a run of `K` of its own.
+    pub fn tiling_over_rows(&self) -> Option<Levels> {
+        let blocks = self.blocks.as_ref()?;
+        let spread = self.spread(blocks);
+        let rows = (blocked(M).1, self.rows);
+        matches!(spread.walk, Walked::Above(_)).then(|| {
+            self.in_turns_holding(blocks, &spread, Some(rows))
+                .walk_every(&[blocked(K).0])
+        })
+    }
+
     /// What one step of the plane covers where its units take `K` in turns: one unit's step, and
     /// the plane's units over `K` in turns, over `M` and over `N` beside each other. A cube whose
     /// planes share a step states them around this. `None` where each unit walks a run of a packed
@@ -320,6 +334,16 @@ impl PlaneShuffleMicrokernel {
 
     /// The unit's step and the plane's units, the units taking `K`'s scale blocks in turns.
     fn in_turns(&self, blocks: &PlaneShuffleBlocks, spread: &Spread) -> Levels {
+        self.in_turns_holding(blocks, spread, self.row_cut())
+    }
+
+    /// [`in_turns`](Self::in_turns) with the unit's leaf holding `rows`, where stated.
+    fn in_turns_holding(
+        &self,
+        blocks: &PlaneShuffleBlocks,
+        spread: &Spread,
+        rows: Option<(Axis, usize)>,
+    ) -> Levels {
         let space = &blocks.space;
         let along_k = space
             .operand(MatmulOperand::Rhs)
@@ -327,7 +351,7 @@ impl PlaneShuffleMicrokernel {
         let leaf = Levels::leaf(
             &[self.column_cut()]
                 .into_iter()
-                .chain(self.row_cut())
+                .chain(rows)
                 .chain(along_k)
                 .collect::<Vec<_>>(),
         );
