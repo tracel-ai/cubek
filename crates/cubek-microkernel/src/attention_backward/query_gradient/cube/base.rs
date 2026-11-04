@@ -3,6 +3,7 @@ use crate::attention_backward::query_gradient::plane::{
     PlaneQueryGradientMicrokernel, PlaneQueryGradientMicrokernelSettings,
 };
 use crate::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
+use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Axis, Level, Levels, Partitioning};
@@ -37,6 +38,11 @@ pub struct CubeQueryGradientMicrokernelSettings {
 }
 
 impl CubeQueryGradientMicrokernelSettings {
+    /// Whether its planes keep their score in fragments, on the manual `mma`.
+    pub fn holds_its_score(&self) -> bool {
+        self.plane.transport == PlaneFragmentTransport::Mma
+    }
+
     /// The plane microkernel's default, two planes along one head's queries.
     pub const DEFAULT: Self = Self {
         plane: PlaneQueryGradientMicrokernelSettings::DEFAULT,
@@ -140,7 +146,19 @@ impl Microkernel for CubeQueryGradientMicrokernel {
             .into_iter()
             .skip(1)
             .map(|plane| Self::Settings { plane, ..lead });
-        core::iter::once(lead).chain(cubes).chain(planes).collect()
+        // A held plane of one query fragment four along the queries, and one a head over four
+        // heads of a group: a narrow plane's stage of keys read by four planes.
+        let narrow = PlaneQueryGradientMicrokernelSettings::fragments(1, 4).held();
+        let held_four = [(1, 4), (4, 1)].map(|(heads, planes)| Self::Settings {
+            plane: narrow,
+            heads: NonZeroUsize::new(heads).unwrap(),
+            planes_along_queries: NonZeroUsize::new(planes).unwrap(),
+        });
+        core::iter::once(lead)
+            .chain(cubes)
+            .chain(planes)
+            .chain(held_four)
+            .collect()
     }
 
     /// The plane microkernel's candidates, a plane each for every head the cube holds along every
