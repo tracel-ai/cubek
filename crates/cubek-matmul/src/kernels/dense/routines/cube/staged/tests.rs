@@ -1555,6 +1555,53 @@ mod base {
         }
     }
 
+    /// NVFP4 laid block by block keeps its scales in tiles across its rows, which the block-scaled
+    /// instruction's scale words are not bound from: every setting that would take them as words
+    /// declines it, rather than read another row's scales.
+    #[test]
+    fn scale_words_are_declined_over_scales_in_tiles() {
+        use crate::kernels::MATMUL_SCALE_WORDS_IN_TILES;
+        use cubek_std::NVFP4_FORM;
+        use cubek_std::layout::stored::BlockScales;
+        use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
+
+        let hw = devices::offering_block_scaled(devices::h100());
+        let mut inputs = CubeStagedMatmulRoutine::block_scaled_inputs(&NVFP4_FORM)
+            .expect("NVFP4 is a packed input");
+        let mut rhs = inputs.rhs.expect("the weight is packed");
+        let order = TileOrder::laid(
+            &tile_order::nvfp4_scheme(),
+            TileWords::BlockByBlock,
+            (128, 8),
+        )
+        .expect("NVFP4 is tile order");
+        assert_eq!(order.words(), TileWords::BlockByBlock);
+        rhs.operand = rhs
+            .operand
+            .in_tile_order(order, N, 4)
+            .expect("tile order block by block is read");
+        inputs.rhs = Some(rhs);
+        let problem =
+            MatmulRoutineProblem::packed(128, 256, 512, ElemType::Float(FloatKind::F16), inputs);
+        assert_eq!(
+            problem.check_block_scales(BlockScales::Words),
+            Err(MATMUL_SCALE_WORDS_IN_TILES)
+        );
+        assert_eq!(problem.check_block_scales(BlockScales::Fields), Ok(()));
+        let refusals: Vec<_> = CubeStagedMatmulRoutine
+            .block_scaled_settings(&hw)
+            .iter()
+            .map(|setting| CubeStagedMatmulRoutine.prepare(&hw, &problem, setting))
+            .collect();
+        assert!(refusals.iter().all(Result::is_err));
+        assert!(
+            refusals
+                .iter()
+                .any(|refusal| refusal.as_ref().err() == Some(&MATMUL_SCALE_WORDS_IN_TILES)),
+            "a setting taking scale words declines them in tiles"
+        );
+    }
+
     /// A packed input its stages decode is estimated a stage of scale blocks at a time: as many
     /// stages as `K` holds stages of the microkernel's blocks, split between the planes sharing
     /// `K`.

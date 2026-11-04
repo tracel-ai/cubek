@@ -490,16 +490,11 @@ mod tests {
         let words = hw.load_values(ElemType::UInt(UIntKind::U32));
         let operand = Operand::of_scheme(&scheme, K, [K, N])
             .expect("one axis a block")
-            .stored(
+            .in_tile_order(
+                tile_order::TileOrder::laid(&scheme, tile_order::TileWords::RowByRow, (128, 8))
+                    .expect("NVFP4 is tile order"),
                 N,
                 words,
-                Some((
-                    &tile_order::values_axes(N),
-                    tile_order::TileOrder::NVFP4
-                        .values_storage(N, (128, 8), words)
-                        .tiles(),
-                )),
-                None,
             )
             .expect("tile order is read");
         let packing = Packing { operand, scheme };
