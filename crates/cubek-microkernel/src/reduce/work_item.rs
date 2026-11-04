@@ -6,21 +6,21 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReduceLayout {
     /// The reduced axis is the contiguous one: a line is `width` consecutive values of one row,
-    /// whose lanes fold into one value at the end.
+    /// whose lanes reduce to one value at the end.
     Along,
     /// Another axis is the contiguous one: a line is one position of `width` rows side by side,
-    /// each lane its own row's, and nothing folds across lanes.
+    /// each lane its own row's, and nothing reduces across lanes.
     Across,
 }
 
-/// A reduced row as its microkernels see it: what it reduces with, what it reads and folds in,
+/// A reduced row as its microkernels see it: what it reduces with, what it reads and accumulates,
 /// and how its lines lie.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReduceWorkItem {
     pub operation: ReduceOperation,
     /// The element the input is stored in.
     pub input: ElemType,
-    /// The element the values fold in.
+    /// The element the values accumulate in.
     pub accumulator: ElemType,
     /// Values along the reduced axis.
     pub reduced: usize,

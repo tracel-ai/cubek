@@ -5,7 +5,7 @@ use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
 
-/// A row reduced by one unit alone: it reads every line of the row and folds each in as it lands.
+/// A row reduced by one unit alone: it reads every line of the row and accumulates each as it lands.
 /// Across rows, its lines hold a row a lane, so one unit reduces `width` rows at once.
 ///
 /// Every device runs it: it asks nothing of the plane.

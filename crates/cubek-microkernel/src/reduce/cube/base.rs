@@ -5,7 +5,7 @@ use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
 
-/// A row reduced by one cube: its units read consecutive lines, each folding every `units`-th into
+/// A row reduced by one cube: its units read consecutive lines, each accumulating every `units`-th into
 /// a partial of its own; each plane's partials meet in its instructions, then the planes' in
 /// shared memory, one slot of the carrier a plane.
 ///

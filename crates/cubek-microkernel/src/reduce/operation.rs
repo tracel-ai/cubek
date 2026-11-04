@@ -1,6 +1,6 @@
 use cubecl::tile::Monoid;
 
-/// A reduction along one axis: a map on each value as it is read, a monoid that folds the
+/// A reduction along one axis: a map on each value as it is read, a monoid that combines the
 /// values, and a last step on the total.
 ///
 /// | operation | map on read | monoid | carrier | last step |
@@ -34,7 +34,7 @@ pub enum ReduceOperation {
     },
 }
 
-/// What a reduction does to each value as it reads it, before the monoid folds it.
+/// What a reduction does to each value as it reads it, before the monoid combines it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReadMap {
     AsRead,
@@ -43,7 +43,7 @@ pub enum ReadMap {
     NonZero,
 }
 
-/// What a reduction folds its values into.
+/// What a reduction accumulates its values into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReduceCarrier {
     /// The values themselves.
@@ -54,7 +54,7 @@ pub enum ReduceCarrier {
     TopK { k: usize },
 }
 
-/// What a reduction writes of what it folded.
+/// What a reduction writes of what it accumulated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReduceWrites {
     Values,
@@ -62,7 +62,7 @@ pub enum ReduceWrites {
 }
 
 impl ReduceOperation {
-    /// The monoid that folds the values.
+    /// The monoid that combines the values.
     pub const fn monoid(self) -> Monoid {
         match self {
             Self::Sum | Self::Mean => Monoid::Sum,
@@ -82,7 +82,7 @@ impl ReduceOperation {
         }
     }
 
-    /// What the values fold into.
+    /// What the values accumulate into.
     pub const fn carrier(self) -> ReduceCarrier {
         match self {
             Self::ArgMax | Self::ArgMin => ReduceCarrier::Indexed,
@@ -91,7 +91,7 @@ impl ReduceOperation {
         }
     }
 
-    /// What is written of the folded carrier.
+    /// What is written of the accumulated carrier.
     pub const fn writes(self) -> ReduceWrites {
         match self {
             Self::ArgMax | Self::ArgMin | Self::ArgTopK { .. } => ReduceWrites::Indices,
