@@ -487,7 +487,7 @@ pub const MATMUL_INDEX_UNREAD_BY_TMA: Refusal = Refusal::Declined {
 
 /// What a launch taking its block scales as words declines over a matrix whose scales are stored
 /// in tiles of their own ([`TileWords::BlockByBlock`](cubek_std::layout::tile_order::TileWords)):
-/// the words are bound from the rows a matrix in rows or laid line by line keeps them in.
+/// the words are bound from the rows a matrix in rows or laid row by row keeps them in.
 pub const MATMUL_SCALE_WORDS_IN_TILES: Refusal = Refusal::Declined {
     why: "this launch binds its block scales as words of their rows, and this matrix keeps them in \
           tiles of their own beside its values laid block by block",

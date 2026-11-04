@@ -100,8 +100,8 @@ pub enum OperandLayout {
     Strided,
     /// Contiguous along this axis inside tiles of these extents over the operand's two axes, the
     /// tiles' words lying as the order says: a buffer stored a tile at a time. One of one value a
-    /// tile is [`Along`](Self::Along). A float buffer's tiles, and a packed one's laid line by
-    /// line, are a line's run a row; a packed one's laid block by block are not, and a kernel may
+    /// tile is [`Along`](Self::Along). A float buffer's tiles, and a packed one's laid row by
+    /// row, are a row's run a tile row; a packed one's laid block by block are not, and a kernel may
     /// decline one where it reads the other.
     Tiles(Axis, (usize, usize), TileWords),
 }
@@ -133,9 +133,9 @@ impl core::fmt::Debug for OperandLayout {
                     "{} in {first}x{second} tiles",
                     cubek_std::matmul_axes::axis_name(*axis)
                 )?;
-                // Line by line is the tiles every key named before the order did.
+                // Row by row is the tiles every key named before the order did.
                 match words {
-                    TileWords::LineByLine => Ok(()),
+                    TileWords::RowByRow => Ok(()),
                     TileWords::BlockByBlock => f.write_str(" block by block"),
                 }
             }
@@ -406,8 +406,8 @@ pub fn create_key(
         let words = match kind {
             OperandKind::Quantized(scheme) => TileOrder::of(&scheme)
                 .and_then(|order| order.words_of(meta))
-                .unwrap_or(TileWords::LineByLine),
-            _ => TileWords::LineByLine,
+                .unwrap_or(TileWords::RowByRow),
+            _ => TileWords::RowByRow,
         };
         OperandKey {
             kind,

@@ -1553,9 +1553,9 @@ mod base {
         }
     }
 
-    /// NVFP4 laid block by block keeps its scales in tiles across its lines, which the block-scaled
+    /// NVFP4 laid block by block keeps its scales in tiles across its rows, which the block-scaled
     /// instruction's scale words are not bound from: every setting that would take them as words
-    /// declines it, rather than read another column's scales.
+    /// declines it, rather than read another row's scales.
     #[test]
     fn scale_words_are_declined_over_scales_in_tiles() {
         use crate::kernels::MATMUL_SCALE_WORDS_IN_TILES;
@@ -1581,7 +1581,7 @@ mod base {
                 Some((
                     &tile_order::scales_axes(N),
                     order
-                        .scales_storage(N, tile, order.lines_a_load(N, tile, 4))
+                        .scales_storage(N, tile, order.rows_a_load(N, tile, 4))
                         .expect("block by block, the scales are in tiles")
                         .tiles(),
                 )),

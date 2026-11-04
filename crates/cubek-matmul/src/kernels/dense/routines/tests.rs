@@ -52,7 +52,7 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
     let in_tiles = |order: TileOrder| {
         let tile = (128, 8);
         let scale_axes = tile_order::scales_axes(N);
-        let scales = order.scales_storage(N, tile, order.lines_a_load(N, tile, words));
+        let scales = order.scales_storage(N, tile, order.rows_a_load(N, tile, words));
         let operand = Operand::of_scheme(&nvfp4, K, [K, N])
             .expect("one axis a block")
             .stored(

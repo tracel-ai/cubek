@@ -93,13 +93,13 @@ pub enum StoredValues {
 }
 
 /// The order a packed matrix's tiles lie in on `hw` ([`TileWords`]), which its writer stores and
-/// every reader binds: line by line where a reader takes a line's run whole, the TMA engine filling
+/// every reader binds: row by row where a reader takes a row's run whole, the TMA engine filling
 /// a stage or a tensor-core plane decoding one ([`PlaneFragmentMicrokernel::decodes_on`]); block
 /// by block everywhere else, where software reads the tile a load at a time and a load is then a
-/// block of several lines.
+/// block of several rows.
 pub fn tile_words(hw: &Hardware) -> TileWords {
     match hw.bulk_tensor_copy() || PlaneFragmentMicrokernel::decodes_on(hw) {
-        true => TileWords::LineByLine,
+        true => TileWords::RowByRow,
         false => TileWords::BlockByBlock,
     }
 }
@@ -512,19 +512,19 @@ mod tests {
         }
     }
 
-    /// A device whose TMA engine fills stages, or whose tensor-core plane decodes, reads a line's
-    /// run whole, so its tiles lie line by line; every other device reads them a load at a time,
+    /// A device whose TMA engine fills stages, or whose tensor-core plane decodes, reads a row's
+    /// run whole, so its tiles lie row by row; every other device reads them a load at a time,
     /// block by block.
     #[test]
     fn a_line_reader_keeps_its_tiles_line_by_line() {
-        assert_eq!(tile_words(&devices::h100()), TileWords::LineByLine);
-        assert_eq!(tile_words(&devices::rtx_pro_6000()), TileWords::LineByLine);
+        assert_eq!(tile_words(&devices::h100()), TileWords::RowByRow);
+        assert_eq!(tile_words(&devices::rtx_pro_6000()), TileWords::RowByRow);
         assert_eq!(
             tile_words(&devices::offering_mma(
                 devices::m2_pro(),
                 [plane_fragment_mma()]
             )),
-            TileWords::LineByLine,
+            TileWords::RowByRow,
             "a tensor-core plane without TMA"
         );
         for software in [

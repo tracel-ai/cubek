@@ -187,10 +187,10 @@ pub struct Operand {
 /// Where an operand's block scales lie, which a reader binding them as rows of words asks.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ScalesLaid {
-    /// In the rows they are packed in, a line's blocks one run: a matrix in rows, or one in tile
-    /// order laid line by line.
+    /// In the rows they are packed in, a row's blocks one run: a matrix in rows, or one in tile
+    /// order laid row by row.
     InRows,
-    /// In tiles of their own beside values laid block by block, a tile's lines' words side by
+    /// In tiles of their own beside values laid block by block, a tile's rows' words side by
     /// side ([`TileOrder::scales_storage`](crate::layout::tile_order::TileOrder::scales_storage)).
     InTiles,
 }
@@ -314,15 +314,15 @@ impl Operand {
     /// whole, for as many as fill one load without leaving one scale. A buffer in rows (`None`)
     /// keeps the read the scheme states.
     ///
-    /// NVFP4 in tile order line by line, a column's eight words together and the columns side by
-    /// side, is read two words along `K`, one block, though a load holds four: the next two are
-    /// the next block's, under another scale. Its scales, in rows, are read a word of four blocks
-    /// down one column. Block by block, a block's words of every column side by side, it is read
-    /// a whole load: one block of two columns, each inside its own scale; and its scales, in tiles,
-    /// a word of four blocks down each of those two columns side by side.
+    /// NVFP4 in tile order row by row, a row's eight words together and the rows side by side, is
+    /// read two words along `K`, one block, though a load holds four: the next two are the next
+    /// block's, under another scale. Its scales, in rows, are read a word of four blocks down one
+    /// row. Block by block, a block's words of every row side by side, it is read a whole load:
+    /// one block of two rows, each inside its own scale; and its scales, in tiles, a word of four
+    /// blocks down each of those two rows side by side.
     ///
-    /// Scales stored in tiles (`scales`) are read the lines a read of the values spans, one word
-    /// of them a line: every scale that read needs and no other reader's. The operand records that
+    /// Scales stored in tiles (`scales`) are read the rows a read of the values spans, one word
+    /// of them a row: every scale that read needs and no other reader's. The operand records that
     /// its scales lie so ([`ScalesLaid::InTiles`]).
     ///
     /// `None` for a stored buffer read some other way: one that does not start with the word
@@ -342,7 +342,7 @@ impl Operand {
         let read = self
             .read
             .read_off(self.lined(), across, words, inside, values)?;
-        // Scales in tiles a word a line: a read of them takes the lines a read of values does.
+        // Scales in tiles a word a row: a read of them takes the rows a read of values does.
         let (scales_laid, scale_words) = match scales {
             Some(_) => (ScalesLaid::InTiles, read.extent(across).max(1)),
             None => (self.scales, words),
@@ -666,9 +666,9 @@ mod tests {
         Operand::packed(K, 8, K, 16, 4)
     }
 
-    /// Tile order line by line, as the writer stores it for a 128-bit load, is read two words along
+    /// Tile order row by row, as the writer stores it for a 128-bit load, is read two words along
     /// `k`, the one block a read stays inside, and its scales, in rows, a word of four blocks down
-    /// one column.
+    /// one row.
     #[test]
     fn tile_order_line_by_line_is_read_a_block_a_load() {
         let values = tile_order::TileOrder::NVFP4.values_storage(N, (128, 8), WORDS);
@@ -687,15 +687,15 @@ mod tests {
     }
 
     /// Tile order block by block, as the writer stores it for a 128-bit load, is read a load of
-    /// values and their scales at once: its values one block of two lines side by side, a read
-    /// staying inside one block of each line, and its scales a word of four blocks down each of
-    /// those two lines, side by side.
+    /// values and their scales at once: its values one block of two rows side by side, a read
+    /// staying inside one block of each row, and its scales a word of four blocks down each of
+    /// those two rows, side by side.
     #[test]
     fn tile_order_block_by_block_is_read_a_load_of_values_and_its_scales() {
         let order = tile_order::TileOrder::NVFP4.with_words(tile_order::TileWords::BlockByBlock);
         let values = order.values_storage(N, (128, 8), WORDS);
         let scales = order
-            .scales_storage(N, (128, 8), order.lines_a_load(N, (128, 8), WORDS))
+            .scales_storage(N, (128, 8), order.rows_a_load(N, (128, 8), WORDS))
             .expect("block by block, the scales are in tiles");
         let stored = nvfp4()
             .stored(
@@ -716,17 +716,17 @@ mod tests {
         assert_eq!(stored.lined(), K);
     }
 
-    /// Block by block, a read of the scales spans the lines a read of the values does whatever the
-    /// tile, and the operand records that its scales lie in tiles: a tile of four lines, whose scales
-    /// a whole load could read four lines of, and one of two lines, whose next scale tile lies down
-    /// `k`. Line by line, its scales lie in rows.
+    /// Block by block, a read of the scales spans the rows a read of the values does whatever the
+    /// tile, and the operand records that its scales lie in tiles: a tile of four rows, whose scales
+    /// a whole load could read four rows of, and one of two rows, whose next scale tile lies down
+    /// `k`. Row by row, its scales lie in rows.
     #[test]
-    fn a_read_of_scales_in_tiles_spans_the_lines_of_a_read_of_values() {
+    fn a_read_of_scales_in_tiles_spans_the_rows_of_a_read_of_values() {
         let order = tile_order::TileOrder::NVFP4.with_words(tile_order::TileWords::BlockByBlock);
         for tile in [(128, 4), (128, 2), (128, 8)] {
             let values = order.values_storage(N, tile, WORDS);
             let scales = order
-                .scales_storage(N, tile, order.lines_a_load(N, tile, WORDS))
+                .scales_storage(N, tile, order.rows_a_load(N, tile, WORDS))
                 .expect("block by block, the scales are in tiles");
             let stored = nvfp4()
                 .stored(
@@ -741,7 +741,7 @@ mod tests {
             assert_eq!(stored.scales_laid(), ScalesLaid::InTiles, "{tile:?}");
         }
         let values = tile_order::TileOrder::NVFP4.values_storage(N, (128, 8), WORDS);
-        let line_by_line = nvfp4()
+        let row_by_row = nvfp4()
             .stored(
                 N,
                 WORDS,
@@ -749,7 +749,7 @@ mod tests {
                 None,
             )
             .expect("tile order is read");
-        assert_eq!(line_by_line.scales_laid(), ScalesLaid::InRows);
+        assert_eq!(row_by_row.scales_laid(), ScalesLaid::InRows);
     }
 
     /// A stated tile is taken whole or not at all: a tile of sixteen columns stated as one level

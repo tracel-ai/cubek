@@ -1,14 +1,16 @@
 //! Tile order: a block-scaled matrix's values ([`TileOrder`]: NVFP4's, MXFP4's, MXFP8's) stored for
-//! the kernels that read a whole tile in one load — a tile of `k` by some lines of the matrix's
+//! the kernels that read a whole tile in one load — a tile of `k` by some rows of the matrix's
 //! other axis — beside its block scales, as many to a word as the scale type packs.
 //! The matrix is either input of a product: its axes are `K` and the one it is `across`, `N` for
-//! a `[k, n]` input and `M` for an `[m, k]` one.
+//! a `[k, n]` input and `M` for an `[m, k]` one. A row is one index of the axis it is across, its
+//! values running down `k`, as the kernel states it ([`values_axes`]); a line, the vector a buffer
+//! is read in, is a different thing.
 //!
 //! A tile's words lie in one of two orders ([`TileWords`]), and the device decides which: each
-//! line's words down the tile's `k`, where the TMA engine copies rows of a tile and a tensor-core
-//! plane reads a line's run, its scales in the rows they are packed in; or each block's words of
-//! every line side by side, where software reads the tile a load at a time, so a load is one block
-//! of several lines, its scales stored in tiles of their own beside the values.
+//! row's words down the tile's `k` one run, which the TMA engine copies and a tensor-core plane
+//! reads whole, its scales in the rows they are packed in; or each block's words of
+//! every row side by side, where software reads the tile a load at a time, so a load is one block
+//! of several rows, its scales stored in tiles of their own beside the values.
 //!
 //! The tile is the writer's: a load picks it for the device from the step of the product
 //! (`MatmulStep`), a whole number of blocks along `k`. Under the block-scaled
@@ -48,17 +50,17 @@ pub fn scales_axes(across: Axis) -> [Axis; 2] {
     [blocked(across).1, KB]
 }
 
-/// The order a tile's words lie in, past a block's words of one line.
+/// The order a tile's words lie in, past a block's words of one row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TileWords {
-    /// Each line's words down the tile's `k` one run, the lines one after another: a row of the
-    /// tile is a line's run, which the TMA engine copies and a tensor-core plane reads whole. The
-    /// block scales stay in the rows they are packed in, a line's blocks one run.
-    LineByLine,
-    /// Each block's words of every line of the tile side by side, the blocks one after another: a
-    /// load is one block of as many lines as it holds, each under its own scale. The block scales
-    /// are stored in tiles of their own ([`TileOrder::scales_storage`]), a tile's lines' words
-    /// side by side, so a load of them holds the scales of every line a load of values spans.
+    /// Each row's words down the tile's `k` one run, the rows one after another: the run the TMA
+    /// engine copies and a tensor-core plane reads whole. The
+    /// block scales stay in the rows they are packed in, a row's blocks one run.
+    RowByRow,
+    /// Each block's words of every row of the tile side by side, the blocks one after another: a
+    /// load is one block of as many rows as it holds, each under its own scale. The block scales
+    /// are stored in tiles of their own ([`TileOrder::scales_storage`]), a tile's rows' words
+    /// side by side, so a load of them holds the scales of every row a load of values spans.
     BlockByBlock,
 }
 
@@ -81,11 +83,11 @@ impl TileOrder {
     /// [`of`](Self::of) and [`of_operand`](Self::of_operand) refuse any other.
     pub const SCALES_PER_WORD: usize = 4;
 
-    /// NVFP4's tile order: a scale every sixteen values, eight to a word, its tiles line by line.
+    /// NVFP4's tile order: a scale every sixteen values, eight to a word, its tiles row by row.
     pub const NVFP4: Self = Self {
         block: NVFP4_BLOCK,
         values_per_word: 8,
-        words: TileWords::LineByLine,
+        words: TileWords::RowByRow,
     };
 
     /// This order with its tiles' words lying as `words` says.
@@ -93,28 +95,26 @@ impl TileOrder {
         Self { words, ..self }
     }
 
-    /// This order laid as `words` asks in `tile`, `(k, lines)`: block by block only where the
+    /// This order laid as `words` asks in `tile`, `(k, rows)`: block by block only where the
     /// tile's `k` holds whole words of block scales, which its scales' tiles are made of, and the
-    /// tile holds more than one line, the only tile the two orders lay out differently; line by
-    /// line otherwise, which lays the values out in any tile. A writer lays its tiles so, and
+    /// tile holds more than one row, the only tile the two orders lay out differently; row by
+    /// row otherwise, which lays the values out in any tile. A writer lays its tiles so, and
     /// [`words_of`](Self::words_of) reads the same order back.
-    pub fn laid_in(self, words: TileWords, (tile_k, tile_lines): (usize, usize)) -> Self {
+    pub fn laid_in(self, words: TileWords, (tile_k, tile_rows): (usize, usize)) -> Self {
         let scale_word = self.block * Self::SCALES_PER_WORD;
         match words {
-            TileWords::BlockByBlock if tile_k.is_multiple_of(scale_word) && tile_lines > 1 => {
+            TileWords::BlockByBlock if tile_k.is_multiple_of(scale_word) && tile_rows > 1 => {
                 self.with_words(words)
             }
-            TileWords::BlockByBlock | TileWords::LineByLine => {
-                self.with_words(TileWords::LineByLine)
-            }
+            TileWords::BlockByBlock | TileWords::RowByRow => self.with_words(TileWords::RowByRow),
         }
     }
 
     /// The order `matrix`'s tiles lie in, read off its own fragments: block by block where a
-    /// block's words of one line are followed by the next line's, line by line where by that
-    /// line's next block. A tile one block deep or one line wide lies the same either way, and a
+    /// block's words of one row are followed by the next row's, row by row where by that
+    /// row's next block. A tile one block deep or one row wide lies the same either way, and a
     /// tile too shallow for whole words of block scales is never laid block by block
-    /// ([`laid_in`](Self::laid_in)): both read as line by line. `None` for a matrix in rows, or one
+    /// ([`laid_in`](Self::laid_in)): both read as row by row. `None` for a matrix in rows, or one
     /// whose `k` fragments do not close a block.
     ///
     /// What every reader asks: the matrix carries its order, and a reader that worked it out again
@@ -123,36 +123,36 @@ impl TileOrder {
         self.laid_out(matrix).map(|(order, _)| order.words)
     }
 
-    /// This order as `matrix` lays it out, and the tile it is stored in, `(k, lines)` values:
+    /// This order as `matrix` lays it out, and the tile it is stored in, `(k, rows)` values:
     /// [`words_of`](Self::words_of) and [`tile`](Self::tile) read in one pass over its fragments,
     /// what a reader binding the matrix asks on every launch. `None` for a matrix in rows, or one
     /// whose `k` fragments do not close a block.
     pub fn laid_out(self, matrix: &Metadata) -> Option<(Self, (usize, usize))> {
-        let [k, lines] = matrix_fragments(matrix)?;
+        let [k, rows] = matrix_fragments(matrix)?;
         let (blocks, _) = k.split_at(self.block_split(&k)?);
         let inside =
             |dim: &[(usize, usize)]| dim.iter().skip(1).map(|&(extent, _)| extent).product();
-        let tile = (inside(&k), inside(&lines));
+        let tile = (inside(&k), inside(&rows));
         let finest = |dim: &[(usize, usize)]| {
             dim.iter()
                 .filter(|&&(extent, _)| extent > 1)
                 .map(|&(_, stride)| stride)
                 .min()
         };
-        let stated = match (finest(&lines), finest(blocks)) {
-            (Some(line), Some(block)) if line < block => TileWords::BlockByBlock,
-            _ => TileWords::LineByLine,
+        let stated = match (finest(&rows), finest(blocks)) {
+            (Some(row), Some(block)) if row < block => TileWords::BlockByBlock,
+            _ => TileWords::RowByRow,
         };
         Some((self.laid_in(stated, tile), tile))
     }
 
     /// The tile order of a matrix packed under `scheme`: a symmetric scheme whose words run down
-    /// `k` (`PackedU32(1)` of a `[k, lines]` matrix), under block scales of one byte along `k`
+    /// `k` (`PackedU32(1)` of a `[k, rows]` matrix), under block scales of one byte along `k`
     /// alone, four to a word as a block-scaled instruction reads them, each block a whole number
     /// of words. NVFP4's is sixteen values of eight a word, MXFP4's thirty-two of eight, MXFP8's
     /// thirty-two of four. `None` for a scheme tile order does not store.
     ///
-    /// The scheme says nothing of the order a matrix's tiles lie in: these tiles are line by line.
+    /// The scheme says nothing of the order a matrix's tiles lie in: these tiles are row by row.
     /// A writer chooses its order ([`laid_in`](Self::laid_in)), and a reader reads the matrix's
     /// ([`of_matrix`](Self::of_matrix)).
     pub fn of(scheme: &QuantScheme) -> Option<Self> {
@@ -177,7 +177,7 @@ impl TileOrder {
 
     /// The tile order of a matrix read as `operand`: its words down `K`, each a whole read, under a
     /// scale every whole number of them along `K`, byte scales
-    /// [`SCALES_PER_WORD`](Self::SCALES_PER_WORD) to a word, its tiles line by line as
+    /// [`SCALES_PER_WORD`](Self::SCALES_PER_WORD) to a word, its tiles row by row as
     /// [`of`](Self::of)'s are. `None` for an operand tile order does not store.
     pub fn of_operand(operand: &Operand) -> Option<Self> {
         if operand.lined() != K || operand.scales_per_word() != Self::SCALES_PER_WORD {
@@ -186,21 +186,21 @@ impl TileOrder {
         Self::in_whole_words(operand.scale(K)?, operand.read(K))
     }
 
-    /// A scale every `block` values, `values_per_word` to a word, its tiles line by line: `None`
+    /// A scale every `block` values, `values_per_word` to a word, its tiles row by row: `None`
     /// unless the words pack several values and a block is a whole number of them.
     fn in_whole_words(block: usize, values_per_word: usize) -> Option<Self> {
         (values_per_word > 1 && block.is_multiple_of(values_per_word)).then_some(Self {
             block,
             values_per_word,
-            words: TileWords::LineByLine,
+            words: TileWords::RowByRow,
         })
     }
 
-    /// How the values of a matrix `across` an axis are stored in `tile`, `(k, lines)`, over
+    /// How the values of a matrix `across` an axis are stored in `tile`, `(k, rows)`, over
     /// [`values_axes`], for a device whose load holds `words_per_load` words: a word's values along
-    /// `KI`, a block's words, then as [`words`](Self::words) orders them a line's blocks down the
-    /// tile's `k` and the tile's lines, or a block's lines and the tile's blocks, the tiles ordered
-    /// `KB` within the lines.
+    /// `KI`, a block's words, then as [`words`](Self::words) orders them a row's blocks down the
+    /// tile's `k` and the tile's rows, or a block's rows and the tile's blocks, the tiles ordered
+    /// `KB` within the rows.
     ///
     /// The read is a level of its own because a reader takes a stated tile whole or not at all:
     /// stated as one level, the same bytes are read a word a load.
@@ -210,91 +210,91 @@ impl TileOrder {
         tile: (usize, usize),
         words_per_load: usize,
     ) -> StoragePartitioning {
-        let lines = blocked(across).1;
+        let rows = blocked(across).1;
         stored_in_levels(
             (KI, self.values_per_word),
             &self.values_pieces(across, tile),
             words_per_load,
-            &[KI, KB, lines],
+            &[KI, KB, rows],
         )
     }
 
     /// A tile's pieces of values above the word, finest first, each a count of the piece below
-    /// it: a block's words, then a line's blocks and the lines, or a block's lines and the blocks,
+    /// it: a block's words, then a row's blocks and the rows, or a block's rows and the blocks,
     /// as [`words`](Self::words) orders them where the tile holds that order
     /// ([`laid_in`](Self::laid_in)), so values are never laid in an order the matrix reads back
     /// as another.
     fn values_pieces(self, across: Axis, tile: (usize, usize)) -> [(Axis, usize); 3] {
-        let (tile_k, tile_lines) = tile;
+        let (tile_k, tile_rows) = tile;
         let block = (KI, self.block / self.values_per_word);
         let down_k = (KB, tile_k / self.block);
-        let across_lines = (blocked(across).1, tile_lines);
+        let across_rows = (blocked(across).1, tile_rows);
         match self.laid_in(self.words, tile).words {
-            TileWords::LineByLine => [block, down_k, across_lines],
-            TileWords::BlockByBlock => [block, across_lines, down_k],
+            TileWords::RowByRow => [block, down_k, across_rows],
+            TileWords::BlockByBlock => [block, across_rows, down_k],
         }
     }
 
-    /// The lines one load of values `words_per_load` words wide spans in `tile`: one a load line by
-    /// line, and block by block as many as a block's words leave room for. The lines a read of
+    /// The rows one load of values `words_per_load` words wide spans in `tile`: one a load row by
+    /// row, and block by block as many as a block's words leave room for. The rows a read of
     /// their scales spans, so it brings every scale that load needs and no other reader's.
-    pub fn lines_a_load(self, across: Axis, tile: (usize, usize), words_per_load: usize) -> usize {
-        let lines = blocked(across).1;
+    pub fn rows_a_load(self, across: Axis, tile: (usize, usize), words_per_load: usize) -> usize {
+        let rows = blocked(across).1;
         let (read, _) = split_at_load(&self.values_pieces(across, tile), words_per_load);
         read.iter()
-            .find(|&&(axis, _)| axis == lines)
+            .find(|&&(axis, _)| axis == rows)
             .map_or(1, |&(_, count)| count)
     }
 
     /// How the block scales of a matrix `across` an axis are stored beside values stored in `tile`,
-    /// `(k, lines)`, over [`scales_axes`], read `lines_a_read` lines a read: a word's
-    /// [`SCALES_PER_WORD`](Self::SCALES_PER_WORD) blocks of one line along `KB`, the tile's lines'
+    /// `(k, rows)`, over [`scales_axes`], read `rows_a_read` rows a read: a word's
+    /// [`SCALES_PER_WORD`](Self::SCALES_PER_WORD) blocks of one row along `KB`, the tile's rows'
     /// words side by side, then the tile's further words down `k`, the tiles ordered as the
-    /// values' are. A line's scales of a tile's blocks are one word, so a read of `lines_a_read`
-    /// lines is that many words; the lines a load of values spans ([`lines_a_load`](Self::lines_a_load))
+    /// values' are. A row's scales of a tile's blocks are one word, so a read of `rows_a_read`
+    /// rows is that many words; the rows a load of values spans ([`rows_a_load`](Self::rows_a_load))
     /// make it the read that serves one load of values. Every read stores the same bytes.
     ///
-    /// `None` for tiles laid line by line, whose scales stay in the rows they are packed in
-    /// ([`TileWords::LineByLine`]), and for a tile too shallow for whole words of them
+    /// `None` for tiles laid row by row, whose scales stay in the rows they are packed in
+    /// ([`TileWords::RowByRow`]), and for a tile too shallow for whole words of them
     /// ([`laid_in`](Self::laid_in)).
     pub fn scales_storage(
         self,
         across: Axis,
         tile: (usize, usize),
-        lines_a_read: usize,
+        rows_a_read: usize,
     ) -> Option<StoragePartitioning> {
-        if self.laid_in(self.words, tile).words == TileWords::LineByLine {
+        if self.laid_in(self.words, tile).words == TileWords::RowByRow {
             return None;
         }
-        let (tile_k, tile_lines) = tile;
-        let lines = blocked(across).1;
+        let (tile_k, tile_rows) = tile;
+        let rows = blocked(across).1;
         let pieces = [
-            (lines, tile_lines),
+            (rows, tile_rows),
             (KB, tile_k / (self.block * Self::SCALES_PER_WORD)),
         ];
         Some(stored_in_levels(
             (KB, Self::SCALES_PER_WORD),
             &pieces,
-            lines_a_read,
-            &[KB, lines],
+            rows_a_read,
+            &[KB, rows],
         ))
     }
 
     /// The kernel's statement of the block scales of a matrix `k` deep and `across` an axis of some
-    /// extent, beside values stored in `tile`, over [`scales_axes`], read `lines_a_read` lines a
+    /// extent, beside values stored in `tile`, over [`scales_axes`], read `rows_a_read` rows a
     /// read ([`scales_storage`](Self::scales_storage)), counted in scales. `None` where they are
     /// not stored in tiles of their own.
     pub fn kernel_scales_read(
         self,
         k: usize,
-        (across, lines): (Axis, usize),
+        (across, rows): (Axis, usize),
         tile: (usize, usize),
-        lines_a_read: usize,
+        rows_a_read: usize,
     ) -> Option<Metadata> {
-        let storage = self.scales_storage(across, tile, lines_a_read)?;
+        let storage = self.scales_storage(across, tile, rows_a_read)?;
         Some(stated(
             &storage,
-            &[(blocked(across).1, lines), (KB, k / self.block)],
+            &[(blocked(across).1, rows), (KB, k / self.block)],
         ))
     }
 
@@ -305,37 +305,32 @@ impl TileOrder {
     pub fn kernel_values_read(
         self,
         k: usize,
-        (across, lines): (Axis, usize),
+        (across, rows): (Axis, usize),
         tile: (usize, usize),
         words_per_load: usize,
     ) -> Metadata {
         stated(
             &self.values_storage(across, tile, words_per_load),
             &[
-                (blocked(across).1, lines),
+                (blocked(across).1, rows),
                 (KB, k / self.block),
                 (KI, self.block),
             ],
         )
     }
 
-    /// A tile-order matrix `k` deep and `lines` across stored in `tile`'s words as the tiles a
-    /// descriptor reads: the strips of lines, the tiles along `k` in a strip, then a tile's lines, each
-    /// line's words in a tile one run. A descriptor landing rows (`TmaLanding::Rows`) lands a box of
-    /// whole tiles of it a line's words after another, as a box over rows of `k` would.
-    pub fn words_in_tiles(self, k: usize, lines: usize, tile: (usize, usize)) -> Metadata {
-        let (tile_k, tile_lines) = tile;
-        let words_per_line = tile_k / self.values_per_word;
-        let tile_words = words_per_line * tile_lines;
+    /// A tile-order matrix `k` deep and `rows` across stored in `tile`'s words as the tiles a
+    /// descriptor reads: the strips of rows, the tiles along `k` in a strip, then a tile's rows, each
+    /// row's words in a tile one run. A descriptor landing rows (`TmaLanding::Rows`) lands a box of
+    /// whole tiles of it a row's words after another, as a box over rows of `k` would.
+    pub fn words_in_tiles(self, k: usize, rows: usize, tile: (usize, usize)) -> Metadata {
+        let (tile_k, tile_rows) = tile;
+        let words_per_row = tile_k / self.values_per_word;
+        let tile_words = words_per_row * tile_rows;
         let k_tiles = k / tile_k;
         Metadata::new(
-            Shape::from(vec![
-                lines / tile_lines,
-                k_tiles,
-                tile_lines,
-                words_per_line,
-            ]),
-            Strides::from(vec![k_tiles * tile_words, tile_words, words_per_line, 1]),
+            Shape::from(vec![rows / tile_rows, k_tiles, tile_rows, words_per_row]),
+            Strides::from(vec![k_tiles * tile_words, tile_words, words_per_row, 1]),
         )
     }
 
@@ -349,7 +344,7 @@ impl TileOrder {
         Some(assemble(&[&n, kb, ki]))
     }
 
-    /// The tile a matrix in tile order is stored in, `(k, lines)` values: every fragment of each of its
+    /// The tile a matrix in tile order is stored in, `(k, rows)` values: every fragment of each of its
     /// dims but the coarsest. `None` for a matrix in rows, or one whose `k` fragments do not close a
     /// block, as [`kernel_values`](Self::kernel_values) declines it.
     pub fn tile(self, matrix: &Metadata) -> Option<(usize, usize)> {
@@ -451,7 +446,7 @@ fn split_at_load(pieces: &[(Axis, usize)], words: usize) -> (Pieces, Pieces) {
     (read, rest)
 }
 
-/// The matrix's `[k, lines]` statement of values the kernel states over [`values_axes`]: `k` is a
+/// The matrix's `[k, rows]` statement of values the kernel states over [`values_axes`]: `k` is a
 /// block's index then its offset inside it, so `KB`'s fragments come before `KI`'s, coarsest
 /// first.
 ///
@@ -459,24 +454,24 @@ fn split_at_load(pieces: &[(Axis, usize)], words: usize) -> (Pieces, Pieces) {
 ///
 /// When `kernel` is not a statement of three logical dims.
 pub fn matrix_values(kernel: &Metadata) -> Metadata {
-    let [lines, kb, ki] = fragments_of::<3>(kernel)
+    let [rows, kb, ki] = fragments_of::<3>(kernel)
         .unwrap_or_else(|rank| panic!("tile order states values over three dims, not {rank}"));
-    assemble(&[&[kb.as_slice(), ki.as_slice()].concat(), &lines])
+    assemble(&[&[kb.as_slice(), ki.as_slice()].concat(), &rows])
 }
 
-/// The matrix's `[k/block, lines]` statement of the block scales the kernel states over
-/// [`scales_axes`]: the blocks, then the lines, each dim's fragments coarsest first.
+/// The matrix's `[k/block, rows]` statement of the block scales the kernel states over
+/// [`scales_axes`]: the blocks, then the rows, each dim's fragments coarsest first.
 ///
 /// # Panics
 ///
 /// When `kernel` is not a statement of two logical dims.
 pub fn matrix_scales(kernel: &Metadata) -> Metadata {
-    let [lines, kb] = fragments_of::<2>(kernel)
+    let [rows, kb] = fragments_of::<2>(kernel)
         .unwrap_or_else(|rank| panic!("tile order states scales over two dims, not {rank}"));
-    assemble(&[kb.as_slice(), lines.as_slice()])
+    assemble(&[kb.as_slice(), rows.as_slice()])
 }
 
-/// A tiled matrix's `[k, lines]` fragments, coarsest first; `None` for one in rows.
+/// A tiled matrix's `[k, rows]` fragments, coarsest first; `None` for one in rows.
 fn matrix_fragments(matrix: &Metadata) -> Option<[Fragments; 2]> {
     if !matrix.is_tiled() {
         return None;
@@ -619,11 +614,11 @@ mod tests {
         }
     }
 
-    /// A tile too shallow for whole words of block scales, or one block deep, is laid line by line
-    /// whatever was asked, keeps its scales in rows, and reads back as line by line: NVFP4 in a
+    /// A tile too shallow for whole words of block scales, or one block deep, is laid row by row
+    /// whatever was asked, keeps its scales in rows, and reads back as row by row: NVFP4 in a
     /// tile of two blocks, and MXFP4 and MXFP8, blocks of thirty-two, in a tile of sixty-four.
     #[test]
-    fn a_tile_too_shallow_for_a_scale_word_is_laid_line_by_line() {
+    fn a_tile_too_shallow_for_a_scale_word_is_laid_row_by_row() {
         let mxfp4 = TileOrder {
             block: 32,
             values_per_word: 8,
@@ -641,11 +636,11 @@ mod tests {
             (mxfp8, (64, 8)),
         ] {
             let laid = order.laid_in(order.words, tile);
-            assert_eq!(laid.words, TileWords::LineByLine, "{order:?} in {tile:?}");
+            assert_eq!(laid.words, TileWords::RowByRow, "{order:?} in {tile:?}");
             assert!(laid.scales_storage(N, tile, 2).is_none(), "{order:?}");
             assert!(order.scales_storage(N, tile, 2).is_none(), "{order:?}");
             let matrix = matrix_values(&laid.kernel_values_read(256, (N, 48), tile, 4));
-            assert_eq!(laid.words_of(&matrix), Some(TileWords::LineByLine));
+            assert_eq!(laid.words_of(&matrix), Some(TileWords::RowByRow));
         }
         // A tile of whole scale words keeps the order asked.
         assert_eq!(
@@ -656,11 +651,11 @@ mod tests {
         );
     }
 
-    /// Values asked block by block in a tile that holds no block-by-block order are laid line by
-    /// line, the order the matrix then reads back: a writer that skips
+    /// Values asked block by block in a tile that holds no block-by-block order are laid row by
+    /// row, the order the matrix then reads back: a writer that skips
     /// [`laid_in`](TileOrder::laid_in) still writes what readers read.
     #[test]
-    fn values_asked_block_by_block_in_a_shallow_tile_are_laid_line_by_line() {
+    fn values_asked_block_by_block_in_a_shallow_tile_are_laid_row_by_row() {
         let (k, n) = (256, 48);
         let asked = NVFP4.with_words(TileWords::BlockByBlock);
         for tile in [(32, 8), (64, 1)] {
@@ -672,10 +667,10 @@ mod tests {
             );
             assert_eq!(
                 asked.words_of(&matrix_values(&laid)),
-                Some(TileWords::LineByLine),
+                Some(TileWords::RowByRow),
                 "{tile:?}"
             );
-            assert_eq!(asked.lines_a_load(N, tile, 4), 1, "{tile:?}");
+            assert_eq!(asked.rows_a_load(N, tile, 4), 1, "{tile:?}");
         }
     }
 
@@ -687,40 +682,40 @@ mod tests {
         let (k, n) = (256, 48);
         let order = NVFP4.with_words(TileWords::BlockByBlock);
         for tile in WIDE_TILES {
-            let address = |lines_a_read| {
+            let address = |rows_a_read| {
                 let scales = order
-                    .kernel_scales_read(k, (N, n), tile, lines_a_read)
+                    .kernel_scales_read(k, (N, n), tile, rows_a_read)
                     .expect("block by block, the scales are in tiles");
                 (0..n)
                     .flat_map(|ni| (0..k / BLOCK).map(move |kb| (ni, kb)))
                     .map(|(ni, kb)| offset(&scales, &[ni, kb]))
                     .collect::<Vec<_>>()
             };
-            for lines_a_read in LOADS {
+            for rows_a_read in LOADS {
                 assert_eq!(
-                    address(lines_a_read),
+                    address(rows_a_read),
                     address(1),
-                    "{tile:?}, {lines_a_read} lines a read"
+                    "{tile:?}, {rows_a_read} rows a read"
                 );
             }
         }
     }
 
-    /// A read of scales spans the lines a load of values spans: one block by block where a load
-    /// holds a block, two where it holds a block of two lines, and one line by line.
+    /// A read of scales spans the rows a load of values spans: one block by block where a load
+    /// holds a block, two where it holds a block of two rows, and one row by row.
     #[test]
-    fn a_read_of_scales_spans_the_lines_a_load_of_values_spans() {
+    fn a_read_of_scales_spans_the_rows_a_load_of_values_spans() {
         let block_by_block = NVFP4.with_words(TileWords::BlockByBlock);
-        assert_eq!(block_by_block.lines_a_load(N, (64, 8), 2), 1);
-        assert_eq!(block_by_block.lines_a_load(N, (64, 8), 4), 2);
-        assert_eq!(block_by_block.lines_a_load(N, (64, 8), 8), 4);
-        assert_eq!(NVFP4.lines_a_load(N, (64, 8), 4), 1);
+        assert_eq!(block_by_block.rows_a_load(N, (64, 8), 2), 1);
+        assert_eq!(block_by_block.rows_a_load(N, (64, 8), 4), 2);
+        assert_eq!(block_by_block.rows_a_load(N, (64, 8), 8), 4);
+        assert_eq!(NVFP4.rows_a_load(N, (64, 8), 4), 1);
     }
 
-    /// Block by block, a load of four words holds one block of two neighbouring lines: the words
+    /// Block by block, a load of four words holds one block of two neighbouring rows: the words
     /// a reader takes for a block of two columns, each under its own scale.
     #[test]
-    fn block_by_block_a_load_holds_a_block_of_two_lines() {
+    fn block_by_block_a_load_holds_a_block_of_two_rows() {
         let (k, n) = (128, 48);
         let order = NVFP4.with_words(TileWords::BlockByBlock);
         let kernel = order.kernel_values_read(k, (N, n), (64, 8), 4);
@@ -758,27 +753,27 @@ mod tests {
         }
     }
 
-    /// Tiles of more than one line, the only ones laid block by block ([`TileOrder::laid_in`]).
+    /// Tiles of more than one row, the only ones laid block by block ([`TileOrder::laid_in`]).
     const WIDE_TILES: [(usize, usize); 2] = [(128, 8), (64, 8)];
 
     /// Block by block, every scale lies at an address of its own, inside the matrix's scales, at
     /// every tile and load width; and where a load holds four words, the scales of four
-    /// neighbouring lines' blocks of one word lie side by side, a read of them those a load of
-    /// values spans. Line by line, the scales are no tiles at all: they stay in rows.
+    /// neighbouring rows' blocks of one word lie side by side, a read of them those a load of
+    /// values spans. Row by row, the scales are no tiles at all: they stay in rows.
     #[test]
-    fn a_load_of_scales_holds_neighbouring_lines() {
+    fn a_load_of_scales_holds_neighbouring_rows() {
         let (k, n) = (256, 48);
         let blocks = k / BLOCK;
         let order = NVFP4.with_words(TileWords::BlockByBlock);
         for (tile, words_per_load) in WIDE_TILES.iter().flat_map(|&tile| LOADS.map(|w| (tile, w))) {
-            let lines_a_read = order.lines_a_load(N, tile, words_per_load);
+            let rows_a_read = order.rows_a_load(N, tile, words_per_load);
             assert!(
                 NVFP4
-                    .kernel_scales_read(k, (N, n), tile, lines_a_read)
+                    .kernel_scales_read(k, (N, n), tile, rows_a_read)
                     .is_none()
             );
             let scales = order
-                .kernel_scales_read(k, (N, n), tile, lines_a_read)
+                .kernel_scales_read(k, (N, n), tile, rows_a_read)
                 .expect("block by block, the scales are in tiles");
             let mut seen = vec![false; n * blocks];
             for ni in 0..n {
@@ -791,15 +786,15 @@ mod tests {
                     );
                 }
             }
-            let (_, tile_lines) = tile;
-            if words_per_load == 4 && tile_lines >= 4 {
+            let (_, tile_rows) = tile;
+            if words_per_load == 4 && tile_rows >= 4 {
                 let per_word = TileOrder::SCALES_PER_WORD;
                 let first = offset(&scales, &[0, 0]);
-                let lines: Vec<_> = (0..4).map(|ni| offset(&scales, &[ni, 0]) - first).collect();
+                let rows: Vec<_> = (0..4).map(|ni| offset(&scales, &[ni, 0]) - first).collect();
                 assert_eq!(
-                    lines,
+                    rows,
                     [0, per_word, 2 * per_word, 3 * per_word],
-                    "{tile:?}: four lines' first words side by side"
+                    "{tile:?}: four rows' first words side by side"
                 );
                 for kb in 0..per_word {
                     assert_eq!(
@@ -838,7 +833,7 @@ mod tests {
 
     /// Tile order stores any symmetric scheme whose words run down `k` under blocks of whole
     /// words along it, and reads its block and word off the scheme: NVFP4's, MXFP4's and MXFP8's,
-    /// none of a scheme packed along the lines, scaled across them, or indexing a table.
+    /// none of a scheme packed along the rows, scaled across them, or indexing a table.
     #[test]
     fn each_scheme_down_k_has_its_tile_order() {
         use cubecl::quant::scheme::QuantMode;
@@ -852,7 +847,7 @@ mod tests {
             Some(TileOrder {
                 block,
                 values_per_word,
-                words: TileWords::LineByLine,
+                words: TileWords::RowByRow,
             })
         };
         assert_eq!(TileOrder::of(&nvfp4_scheme()), Some(TileOrder::NVFP4));
@@ -864,14 +859,14 @@ mod tests {
             TileOrder::of(&down_k(QuantValue::E4M3, 32, ScaleDtype::UE8M0)),
             order(32, 4)
         );
-        let along_lines =
+        let along_rows =
             down_k(QuantValue::E2M1, 16, ScaleDtype::UE4M3).with_store(QuantStore::PackedU32(0));
         let across = QuantScheme::default()
             .with_value(QuantValue::E2M1)
             .per_block([1, 16], ScaleDtype::UE4M3)
             .with_store(QuantStore::PackedU32(1));
         let lookup = down_k(QuantValue::Q4S, 32, ScaleDtype::F16).with_mode(QuantMode::Lookup);
-        for refused in [along_lines, across, lookup] {
+        for refused in [along_rows, across, lookup] {
             assert_eq!(TileOrder::of(&refused), None, "{refused:?}");
         }
     }
@@ -883,7 +878,7 @@ mod tests {
         let mxfp8 = TileOrder {
             block: 32,
             values_per_word: 4,
-            words: TileWords::LineByLine,
+            words: TileWords::RowByRow,
         };
         let (k, n) = (256, 16);
         for words_per_load in LOADS {
