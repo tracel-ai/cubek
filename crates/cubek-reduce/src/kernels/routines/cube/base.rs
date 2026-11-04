@@ -5,8 +5,8 @@ use crate::kernels::{
 };
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubecl::tile::{Levels, Partitioning};
+use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, CubeReduceMicrokernelSettings};
-use cubek_microkernel::reduce::{ReduceCarrier, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -105,15 +105,13 @@ impl Routine for CubeReduceRoutine {
 /// Most row dims the cubes run along: a launch grid has three.
 const MAX_ROW_DIMS: usize = 3;
 
-/// Bytes of the slot a plane meets the others through: one carrier of `width` lanes, its values
-/// in the accumulator's element and, for an argmax or a top-k, an index beside each.
+/// Bytes of the slot a plane meets the others through: one carrier of `width` lanes, in the
+/// accumulator's element.
 pub(crate) fn slot_bytes(problem: &ReduceRoutineProblem, width: usize) -> usize {
-    let value = width * problem.elements.accumulator.size();
-    match problem.operation.carrier() {
-        ReduceCarrier::Values => value,
-        ReduceCarrier::Indexed => value + width * 4,
-        ReduceCarrier::TopK { k } => k * (value + width * 4),
-    }
+    problem
+        .operation
+        .carrier()
+        .bytes(width, problem.elements.accumulator.size())
 }
 
 impl ReduceRoutine<CubeReduceMicrokernel> for CubeReduceRoutine {

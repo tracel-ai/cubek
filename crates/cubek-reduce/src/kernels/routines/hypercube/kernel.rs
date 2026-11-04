@@ -1,10 +1,10 @@
 use cubecl::ir::ElemType;
-use cubecl::tile::{Axis, Indexed, Partitioning, Region, TileTensor, TopK};
+use cubecl::tile::{Axis, Partitioning, Region, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::reduce::ReduceLayout;
 use cubek_microkernel::reduce::hypercube::{
     HypercubeReduceMicrokernel, hypercube_reduce_microkernel,
 };
-use cubek_microkernel::reduce::{ReduceCarrier, ReduceLayout};
 
 /// Where a hypercube's cubes sit, compiled into its kernel: the reduced axis cut into parts, a cube
 /// a part, and the row axes, at most two, outermost first, that its boxes of rows lie along.
@@ -89,61 +89,24 @@ pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>
         let rows = x.at(&cube);
         let mut slots = p.at(&cube);
         let mut slot_indices = pi.at(&cube);
-        match comptime!(microkernel.item.operation.carrier()) {
-            ReduceCarrier::Values => {
-                hypercube_reduce_microkernel::<In, Acc, Out, Out, N, Vector<Acc, N>>(
-                    &rows,
-                    &mut rows_out,
-                    &mut unwritten,
-                    &mut slots,
-                    &mut slot_indices,
-                    arrivals,
-                    place.counter,
-                    place.part,
-                    extents.parts as usize,
-                    place.first_line,
-                    extents.values as usize,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::Indexed => {
-                hypercube_reduce_microkernel::<In, Acc, Out, Out, N, Indexed<Acc, N>>(
-                    &rows,
-                    &mut rows_out,
-                    &mut unwritten,
-                    &mut slots,
-                    &mut slot_indices,
-                    arrivals,
-                    place.counter,
-                    place.part,
-                    extents.parts as usize,
-                    place.first_line,
-                    extents.values as usize,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::TopK { k } => {
-                let size!(K) = k;
-                hypercube_reduce_microkernel::<In, Acc, Out, Out, N, TopK<Acc, N, K>>(
-                    &rows,
-                    &mut rows_out,
-                    &mut unwritten,
-                    &mut slots,
-                    &mut slot_indices,
-                    arrivals,
-                    place.counter,
-                    place.part,
-                    extents.parts as usize,
-                    place.first_line,
-                    extents.values as usize,
-                    microkernel,
-                )
-            }
-        }
+        hypercube_reduce_microkernel::<In, Acc, Out, Out, N>(
+            &rows,
+            &mut rows_out,
+            &mut unwritten,
+            &mut slots,
+            &mut slot_indices,
+            arrivals,
+            place.counter,
+            place.part,
+            extents.parts as usize,
+            place.first_line,
+            extents.values as usize,
+            microkernel,
+        );
     }
 }
 
-/// Every cube's part of its rows, as [`hypercube_reduce_kernel`] reduces it, the values written to
+/// Every cube's part of its rows, as [`hypercube_reduce_kernel()`] reduces it, the values written to
 /// `out` and their indices to `indices`, laid out as `out`.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
@@ -178,43 +141,19 @@ pub fn hypercube_reduce_with_indices_kernel<
         let rows = x.at(&cube);
         let mut slots = p.at(&cube);
         let mut slot_indices = pi.at(&cube);
-        match comptime!(microkernel.item.operation.carrier()) {
-            ReduceCarrier::Values => {
-                comptime!(panic!("the values themselves carry no index to write"))
-            }
-            ReduceCarrier::Indexed => {
-                hypercube_reduce_microkernel::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
-                    &rows,
-                    &mut rows_out,
-                    &mut rows_indices,
-                    &mut slots,
-                    &mut slot_indices,
-                    arrivals,
-                    place.counter,
-                    place.part,
-                    extents.parts as usize,
-                    place.first_line,
-                    extents.values as usize,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::TopK { k } => {
-                let size!(K) = k;
-                hypercube_reduce_microkernel::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
-                    &rows,
-                    &mut rows_out,
-                    &mut rows_indices,
-                    &mut slots,
-                    &mut slot_indices,
-                    arrivals,
-                    place.counter,
-                    place.part,
-                    extents.parts as usize,
-                    place.first_line,
-                    extents.values as usize,
-                    microkernel,
-                )
-            }
-        }
+        hypercube_reduce_microkernel::<In, Acc, Out, Idx, N>(
+            &rows,
+            &mut rows_out,
+            &mut rows_indices,
+            &mut slots,
+            &mut slot_indices,
+            arrivals,
+            place.counter,
+            place.part,
+            extents.parts as usize,
+            place.first_line,
+            extents.values as usize,
+            microkernel,
+        );
     }
 }

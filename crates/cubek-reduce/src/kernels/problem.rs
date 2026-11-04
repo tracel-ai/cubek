@@ -142,10 +142,10 @@ impl ReduceRoutineProblem {
     /// [`space`](Self::space) and a hypercube's partials, `partial_extent` values of each box of
     /// rows' along their axis.
     pub fn split_space(&self, partial_extent: usize) -> Space {
-        let mut axes: Vec<(Axis, usize)> = self
-            .space()
+        let space = self.space();
+        let mut axes: Vec<(Axis, usize)> = space
             .axes()
-            .map(|axis| (axis, self.space().extent(axis)))
+            .map(|axis| (axis, space.extent(axis)))
             .collect();
         axes.push((self.partials(), partial_extent));
         Space::new(&axes)

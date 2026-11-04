@@ -13,7 +13,7 @@ use crate::reduce::plane::{
     PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings, plane_reduce_microkernel,
 };
 use crate::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microkernel};
-use crate::reduce::{O, R, ReduceCarrier, ReduceLayout, ReduceWorkItem};
+use crate::reduce::{O, R, ReduceLayout, ReduceWorkItem};
 use cubecl::ir::UIntKind;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
@@ -21,8 +21,7 @@ use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{
-    Axis, Indexed, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
-    TopK,
+    Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_std::Hardware;
@@ -341,33 +340,12 @@ fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
             // One output: the indices are never written, so they get the output's own window.
             let mut unwritten = o.at(&plane);
             let row = x.at(&plane);
-            match comptime!(microkernel.item.operation.carrier()) {
-                ReduceCarrier::Values => {
-                    unit_reduce_microkernel::<In, Acc, Out, Out, N, Vector<Acc, N>>(
-                        &row,
-                        &mut row_out,
-                        &mut unwritten,
-                        microkernel,
-                    )
-                }
-                ReduceCarrier::Indexed => {
-                    unit_reduce_microkernel::<In, Acc, Out, Out, N, Indexed<Acc, N>>(
-                        &row,
-                        &mut row_out,
-                        &mut unwritten,
-                        microkernel,
-                    )
-                }
-                ReduceCarrier::TopK { k } => {
-                    let size!(K) = k;
-                    unit_reduce_microkernel::<In, Acc, Out, Out, N, TopK<Acc, N, K>>(
-                        &row,
-                        &mut row_out,
-                        &mut unwritten,
-                        microkernel,
-                    )
-                }
-            }
+            unit_reduce_microkernel::<In, Acc, Out, Out, N>(
+                &row,
+                &mut row_out,
+                &mut unwritten,
+                microkernel,
+            );
         }
     }
 }
@@ -388,33 +366,12 @@ fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         // One output: the indices are never written, so they get the output's own window.
         let mut unwritten = o.at(&plane);
         let row = x.at(&plane);
-        match comptime!(microkernel.item.operation.carrier()) {
-            ReduceCarrier::Values => {
-                plane_reduce_microkernel::<In, Acc, Out, Out, N, Vector<Acc, N>>(
-                    &row,
-                    &mut row_out,
-                    &mut unwritten,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::Indexed => {
-                plane_reduce_microkernel::<In, Acc, Out, Out, N, Indexed<Acc, N>>(
-                    &row,
-                    &mut row_out,
-                    &mut unwritten,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::TopK { k } => {
-                let size!(K) = k;
-                plane_reduce_microkernel::<In, Acc, Out, Out, N, TopK<Acc, N, K>>(
-                    &row,
-                    &mut row_out,
-                    &mut unwritten,
-                    microkernel,
-                )
-            }
-        }
+        plane_reduce_microkernel::<In, Acc, Out, Out, N>(
+            &row,
+            &mut row_out,
+            &mut unwritten,
+            microkernel,
+        );
     }
 }
 
@@ -434,33 +391,12 @@ fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         // One output: the indices are never written, so they get the output's own window.
         let mut unwritten = o.at(&cube);
         let row = x.at(&cube);
-        match comptime!(microkernel.item.operation.carrier()) {
-            ReduceCarrier::Values => {
-                cube_reduce_microkernel::<In, Acc, Out, Out, N, Vector<Acc, N>>(
-                    &row,
-                    &mut row_out,
-                    &mut unwritten,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::Indexed => {
-                cube_reduce_microkernel::<In, Acc, Out, Out, N, Indexed<Acc, N>>(
-                    &row,
-                    &mut row_out,
-                    &mut unwritten,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::TopK { k } => {
-                let size!(K) = k;
-                cube_reduce_microkernel::<In, Acc, Out, Out, N, TopK<Acc, N, K>>(
-                    &row,
-                    &mut row_out,
-                    &mut unwritten,
-                    microkernel,
-                )
-            }
-        }
+        cube_reduce_microkernel::<In, Acc, Out, Out, N>(
+            &row,
+            &mut row_out,
+            &mut unwritten,
+            microkernel,
+        );
     }
 }
 
@@ -494,56 +430,19 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         let counter = cube.origin(O);
         let part = cube.origin(P);
         let first_line = part * part_lines;
-        match comptime!(microkernel.item.operation.carrier()) {
-            ReduceCarrier::Values => {
-                hypercube_reduce_microkernel::<In, Acc, Out, Out, N, Vector<Acc, N>>(
-                    &row,
-                    &mut row_out,
-                    &mut unwritten,
-                    &mut slots,
-                    &mut slot_indices,
-                    arrivals,
-                    counter,
-                    part,
-                    parts,
-                    first_line,
-                    values,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::Indexed => {
-                hypercube_reduce_microkernel::<In, Acc, Out, Out, N, Indexed<Acc, N>>(
-                    &row,
-                    &mut row_out,
-                    &mut unwritten,
-                    &mut slots,
-                    &mut slot_indices,
-                    arrivals,
-                    counter,
-                    part,
-                    parts,
-                    first_line,
-                    values,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::TopK { k } => {
-                let size!(K) = k;
-                hypercube_reduce_microkernel::<In, Acc, Out, Out, N, TopK<Acc, N, K>>(
-                    &row,
-                    &mut row_out,
-                    &mut unwritten,
-                    &mut slots,
-                    &mut slot_indices,
-                    arrivals,
-                    counter,
-                    part,
-                    parts,
-                    first_line,
-                    values,
-                    microkernel,
-                )
-            }
-        }
+        hypercube_reduce_microkernel::<In, Acc, Out, Out, N>(
+            &row,
+            &mut row_out,
+            &mut unwritten,
+            &mut slots,
+            &mut slot_indices,
+            arrivals,
+            counter,
+            part,
+            parts,
+            first_line,
+            values,
+            microkernel,
+        );
     }
 }

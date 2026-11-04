@@ -1,7 +1,6 @@
 use cubecl::ir::ElemType;
-use cubecl::tile::{Indexed, Partitioning, TileTensor, TopK};
+use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::reduce::ReduceCarrier;
 use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microkernel};
 
 /// Every unit of the launch, reducing its rows into the carrier its operation accumulates into.
@@ -20,33 +19,12 @@ pub fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         // One output: the indices are never written, so they get the output's own window.
         let mut unwritten = o.at(&unit);
         let rows = x.at(&unit);
-        match comptime!(microkernel.item.operation.carrier()) {
-            ReduceCarrier::Values => {
-                unit_reduce_microkernel::<In, Acc, Out, Out, N, Vector<Acc, N>>(
-                    &rows,
-                    &mut rows_out,
-                    &mut unwritten,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::Indexed => {
-                unit_reduce_microkernel::<In, Acc, Out, Out, N, Indexed<Acc, N>>(
-                    &rows,
-                    &mut rows_out,
-                    &mut unwritten,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::TopK { k } => {
-                let size!(K) = k;
-                unit_reduce_microkernel::<In, Acc, Out, Out, N, TopK<Acc, N, K>>(
-                    &rows,
-                    &mut rows_out,
-                    &mut unwritten,
-                    microkernel,
-                )
-            }
-        }
+        unit_reduce_microkernel::<In, Acc, Out, Out, N>(
+            &rows,
+            &mut rows_out,
+            &mut unwritten,
+            microkernel,
+        );
     }
 }
 
@@ -75,27 +53,11 @@ pub fn unit_reduce_with_indices_kernel<
         let mut rows_out = o.at(&unit);
         let mut rows_indices = i.at(&unit);
         let rows = x.at(&unit);
-        match comptime!(microkernel.item.operation.carrier()) {
-            ReduceCarrier::Values => {
-                comptime!(panic!("the values themselves carry no index to write"))
-            }
-            ReduceCarrier::Indexed => {
-                unit_reduce_microkernel::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
-                    &rows,
-                    &mut rows_out,
-                    &mut rows_indices,
-                    microkernel,
-                )
-            }
-            ReduceCarrier::TopK { k } => {
-                let size!(K) = k;
-                unit_reduce_microkernel::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
-                    &rows,
-                    &mut rows_out,
-                    &mut rows_indices,
-                    microkernel,
-                )
-            }
-        }
+        unit_reduce_microkernel::<In, Acc, Out, Idx, N>(
+            &rows,
+            &mut rows_out,
+            &mut rows_indices,
+            microkernel,
+        );
     }
 }

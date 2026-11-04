@@ -6,7 +6,7 @@ use cubecl::prelude::TensorBinding;
 use cubecl::tile::Launcher;
 use cubecl::tile::launch::Bound;
 use cubecl::tile::layout::ElemAlignment;
-use cubek_microkernel::reduce::{ReduceCarrier, ReduceOperation};
+use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
 /// The input and the output of one reduction, and the problem they state.
@@ -104,7 +104,7 @@ impl ReduceTensors {
         index_element: cubecl::ir::ElemType,
     ) -> Self {
         assert!(
-            !matches!(operation.carrier(), ReduceCarrier::Values),
+            operation.carrier().carries_indices(),
             "{operation:?} accumulates the values themselves, which carry no index"
         );
         assert!(

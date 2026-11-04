@@ -1,6 +1,6 @@
-//! The reduce microkernels, one folder per scope ([`unit`], [`plane`], [`cube`], [`hypercube`]),
-//! and what every one of them shares: the operations, the operands, the work item and what a row
-//! accumulates into.
+//! The reduce microkernels, one folder per scope ([`unit`](mod@unit), [`plane`], [`cube`],
+//! [`hypercube`]), and what every one of them shares: the operations, the operands, the work item
+//! and what a row accumulates into.
 //!
 //! A reduction reduces the values of a row under a monoid, each value mapped as it is read
 //! ([`ReduceOperation`]). The values accumulate into a carrier ([`ReduceAccumulator`]): the values themselves, a

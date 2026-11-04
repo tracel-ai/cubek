@@ -1,15 +1,38 @@
 use super::base::PlaneReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceLayout, read_mapped};
-use cubecl::tile::Tile;
+use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
 use cubecl::tile::space::UnitShare;
+use cubecl::tile::{Indexed, Tile, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One plane's row: each lane accumulates every `lanes`-th line of `input`, the plane's window of the
-/// rows it reduces, into its own `C`, consecutive lanes reading consecutive lines; the lanes'
+/// rows it reduces, into its own carrier, consecutive lanes reading consecutive lines; the lanes'
 /// partials meet across the plane ([`Carrier::across`](cubecl::tile::Carrier::across)), and the
 /// first lane writes the total to `out`, the plane's window of the output.
+///
+/// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-pub fn plane_reduce_microkernel<
+pub fn plane_reduce_microkernel<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &mut Tile,
+    #[comptime] microkernel: PlaneReduceMicrokernel,
+) {
+    match comptime!(microkernel.item.operation.carrier()) {
+        ReduceCarrier::Values => {
+            plane_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(input, out, indices, microkernel)
+        }
+        ReduceCarrier::Indexed => {
+            plane_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(input, out, indices, microkernel)
+        }
+        ReduceCarrier::TopK { k } => {
+            let size!(K) = k;
+            plane_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+        }
+    }
+}
+
+#[cube]
+fn plane_reduce<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,

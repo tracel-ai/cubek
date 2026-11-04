@@ -1,23 +1,97 @@
 use super::base::HypercubeReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceLayout, read_mapped};
-use cubecl::tile::Tile;
+use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
 use cubecl::tile::space::UnitShare;
+use cubecl::tile::{Indexed, Tile, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's part of a row its `parts` cubes split: the cube reduces `input`, its window of the
 /// part, as the cube's microkernel reduces a row, each line indexed `first_line` lines further, its
-/// place in the whole row; a part the row's end cuts short reads no line past it. Its first unit stores the partial as partial `part` of the row's
-/// `partials` and `partial_indices` ([`ReduceAccumulator::store`]), and the cube counts itself in at the
-/// row's `counter` of `arrivals`. The row's last cube to count merges every partial and writes the
+/// place in the whole row; a part the row's end cuts short reads no line past it. Its first unit
+/// stores the partial as partial `part` of the row's `partials` and `partial_indices`
+/// ([`ReduceAccumulator::store`]), and the cube counts itself in at the row's `counter` of
+/// `arrivals`. The row's last cube to count merges every partial and writes the
 /// row to `out`, and to `indices` where both halves are written, as the cube's microkernel writes
 /// a row, a mean dividing by `values`, the values the whole row holds.
 ///
 /// `arrivals` holds a counter for every row, at zero; the row's last cube leaves it at zero again.
 /// The cube meets on `sync_storage` before it counts, so its partial lands first, and again before
 /// the last cube reads the others'.
+///
+/// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_reduce_microkernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &mut Tile,
+    partials: &mut Tile,
+    partial_indices: &mut Tile,
+    arrivals: &[Atomic<u32>],
+    counter: usize,
+    part: usize,
+    parts: usize,
+    first_line: usize,
+    values: usize,
+    #[comptime] microkernel: HypercubeReduceMicrokernel,
+) {
+    match comptime!(microkernel.item.operation.carrier()) {
+        ReduceCarrier::Values => hypercube_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
+            input,
+            out,
+            indices,
+            partials,
+            partial_indices,
+            arrivals,
+            counter,
+            part,
+            parts,
+            first_line,
+            values,
+            microkernel,
+        ),
+        ReduceCarrier::Indexed => hypercube_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
+            input,
+            out,
+            indices,
+            partials,
+            partial_indices,
+            arrivals,
+            counter,
+            part,
+            parts,
+            first_line,
+            values,
+            microkernel,
+        ),
+        ReduceCarrier::TopK { k } => {
+            let size!(K) = k;
+            hypercube_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
+                input,
+                out,
+                indices,
+                partials,
+                partial_indices,
+                arrivals,
+                counter,
+                part,
+                parts,
+                first_line,
+                values,
+                microkernel,
+            )
+        }
+    }
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn hypercube_reduce<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,

@@ -59,6 +59,27 @@ pub enum ReduceCarrier {
     TopK { k: usize },
 }
 
+impl ReduceCarrier {
+    /// Whether it keeps the index each value was read at.
+    pub const fn carries_indices(self) -> bool {
+        !matches!(self, Self::Values)
+    }
+
+    /// Bytes one carrier of `width` lanes holds, its values `value_bytes` each and, where it
+    /// carries indices, a `u32` beside each.
+    pub const fn bytes(self, width: usize, value_bytes: usize) -> usize {
+        let lane = match self.carries_indices() {
+            true => value_bytes + size_of::<u32>(),
+            false => value_bytes,
+        };
+        let slots = match self {
+            Self::TopK { k } => k,
+            Self::Values | Self::Indexed => 1,
+        };
+        slots * width * lane
+    }
+}
+
 /// What a reduction writes of what it accumulated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReduceWrites {

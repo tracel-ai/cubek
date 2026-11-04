@@ -17,9 +17,8 @@ use cubek_std::routine::Routine;
 
 /// [`reduce`](crate::reduce) on the tile routines: the routine of the scope `strategy` names
 /// (unit, plane or cube) at the first of its settings this device prepares the problem at; for
-/// the cube, the hypercube where too few rows leave the device idle
-/// ([`launch_cube_or_split`]). The strategy's blueprint and vectorization are today's kernels'
-/// and are not read.
+/// the cube, the hypercube where too few rows leave the device idle. The strategy's blueprint
+/// and vectorization are today's kernels' and are not read.
 ///
 /// # Errors
 ///
@@ -150,8 +149,7 @@ fn launch_first_served<R: ReduceRoutine<M>, M>(
 ) -> Result<(), Refusal> {
     let hw = Hardware::from_client(tensors.client());
     let (blueprint, grid) = routine.prepare_first_served(&hw, tensors.problem())?;
-    let binding = tensors.bind(&blueprint, &grid);
-    routine.dispatch(tensors, binding, blueprint, grid);
+    routine.launch(tensors, blueprint, grid);
     Ok(())
 }
 
@@ -192,8 +190,7 @@ fn launch_cube_or_split(tensors: &ReduceTensors) -> Result<(), Refusal> {
     }
     match most_cubes {
         Some((_, blueprint, grid)) => {
-            let binding = tensors.bind(&blueprint, &grid);
-            routine.dispatch(tensors, binding, blueprint, grid);
+            routine.launch(tensors, blueprint, grid);
             Ok(())
         }
         None => launch_first_served(&CubeReduceRoutine, tensors),

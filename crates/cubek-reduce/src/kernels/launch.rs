@@ -18,6 +18,12 @@ pub trait ReduceRoutine<M>:
         blueprint: ReduceRoutineBlueprint<M>,
         grid: Grid,
     );
+
+    /// `tensors` bound as `blueprint` states them and reduced on `grid`.
+    fn launch(&self, tensors: &ReduceTensors, blueprint: ReduceRoutineBlueprint<M>, grid: Grid) {
+        let binding = tensors.bind(&blueprint, &grid);
+        self.dispatch(tensors, binding, blueprint, grid);
+    }
 }
 
 /// `tensors` reduced by `routine` at `settings` on this device.
@@ -32,7 +38,6 @@ pub fn launch_reduce_routine<R: ReduceRoutine<M>, M>(
 ) -> Result<(), Refusal> {
     let hw = Hardware::from_client(tensors.client());
     let (blueprint, grid) = routine.prepare(&hw, tensors.problem(), settings)?;
-    let binding = tensors.bind(&blueprint, &grid);
-    routine.dispatch(tensors, binding, blueprint, grid);
+    routine.launch(tensors, blueprint, grid);
     Ok(())
 }
