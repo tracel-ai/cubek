@@ -1,5 +1,5 @@
 use cubecl::tile::launch::Destination;
-use cubecl::tile::{Partitioning, TileArg};
+use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// Every plane of the launch writing its box of the packed matrix, its scales applied, into the
@@ -7,7 +7,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// copy, a read at a time. `O` is how the float matrix is reached: a buffer.
 #[cube(launch_unchecked)]
 pub fn plane_dequantize_kernel<ER: Numeric, VO: Size, O: Destination>(
-    packed: &TileArg<'_>,
+    packed: &TileTensor<'_>,
     out: &O::Arg<ER>,
     partitioning: Partitioning,
     #[define(ER)] _element: ElemType,

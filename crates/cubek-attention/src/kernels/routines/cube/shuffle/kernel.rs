@@ -1,5 +1,5 @@
 use core::marker::PhantomData;
-use cubecl::tile::{Partitioning, Tile, TileArg};
+use cubecl::tile::{Partitioning, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, cube_unstaged_attention_microkernel,
@@ -13,12 +13,12 @@ use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out: &TileArg<'_>,
-    logsumexp: ComptimeOption<&TileArg<'static>>,
-    mask: ComptimeOption<&TileArg<'static>>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    logsumexp: ComptimeOption<&TileTensor<'static>>,
+    mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,

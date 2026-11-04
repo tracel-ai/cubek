@@ -22,12 +22,6 @@ pub struct PlaneFragmentAttentionMicrokernelSettings {
     /// walked a step at a time, or the whole head dim, contracted in one call. Only a score kept
     /// in its fragments, on the manual `mma`, takes the whole head dim; any other declines it.
     pub score_depth: PlaneFragmentDepth,
-    /// Whether a step every row sees whole takes the softmax with no bias: its max over the raw
-    /// scores, scaled once a row, and each cell's exponential one multiply-add
-    /// ([`OnlineSoftmax::step_unbiased`](cubecl::tile::ops::softmax::OnlineSoftmax::step_unbiased)). Fewer
-    /// instructions a cell, but the raw scores and the scaled max are live together: a plane
-    /// already short of registers spills.
-    pub unbiased_steps: bool,
 }
 
 /// A matrix instruction's shape: as long as it is wide and deep, or any other.
@@ -53,7 +47,6 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         transport: PlaneFragmentTransport::Mma,
         shape: InstructionShape::Square,
         score_depth: PlaneFragmentDepth::Instruction,
-        unbiased_steps: false,
     };
 
     /// The default with every fragment of the grid bounced at once.
@@ -103,12 +96,8 @@ impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
             InstructionShape::Rectangular => write!(f, " shape=rectangular")?,
         }
         match self.score_depth {
-            PlaneFragmentDepth::Instruction => {}
-            PlaneFragmentDepth::Stage => write!(f, " score_depth=head")?,
-        }
-        match self.unbiased_steps {
-            true => write!(f, " unbiased_steps"),
-            false => Ok(()),
+            PlaneFragmentDepth::Instruction => Ok(()),
+            PlaneFragmentDepth::Stage => write!(f, " score_depth=head"),
         }
     }
 }

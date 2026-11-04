@@ -12,7 +12,7 @@ use crate::kernels::{
     MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors,
 };
 use cubecl::tile::{
-    Geometry, TileArgLaunch,
+    Geometry, TileTensorLaunch,
     kind::Write,
     launch::{Buffered, DestinationLaunch, SinkLaunch, Unbound},
 };
@@ -39,7 +39,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
-        binding: MatmulBinding<O::Operand, TileArgLaunch, TileArgLaunch>,
+        binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
     );
@@ -207,7 +207,7 @@ pub struct MatmulSinkLaunch<R, M, SM = ()> {
     tensors: MatmulTensors<Geometry>,
     blueprint: MatmulBlueprint<M, SM>,
     grid: Grid,
-    binding: MatmulBinding<Unbound, TileArgLaunch, TileArgLaunch>,
+    binding: MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>,
 }
 
 impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, SM> {

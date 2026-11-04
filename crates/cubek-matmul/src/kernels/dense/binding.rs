@@ -1,6 +1,6 @@
 use crate::kernels::tensor::{PackedTensor, PlainTensor};
 use cubecl::tile::launch::{Bound, Delivery};
-use cubecl::tile::{Launcher, TileArgLaunch};
+use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_std::layout::stored::BlockScales;
 use cubek_std::matmul_axes::{K, N};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
@@ -33,7 +33,7 @@ impl<Out, Lhs, Rhs> MatmulBinding<Out, Lhs, Rhs> {
 pub struct MatmulDequantizeBinding {
     pub launcher: Launcher,
     /// The packed matrix as one tile: its words under their scales.
-    pub packed: TileArgLaunch,
+    pub packed: TileTensorLaunch,
     pub out: Bound,
 }
 

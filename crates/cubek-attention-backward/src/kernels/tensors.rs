@@ -10,7 +10,7 @@ use cubecl::tile::Launcher;
 use cubecl::tile::launch::{Bound, Grid as LaunchGrid, Refusal};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
-use cubek_microkernel::attention::AttentionVisibility;
+use cubek_microkernel::attention::{AttentionVisibility, G};
 use cubek_microkernel::attention_backward::{AttentionBackwardOperand, AttentionBackwardOperands};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
@@ -237,9 +237,9 @@ impl AttentionBackwardTensors {
         AttentionBackwardBinding { launcher, operands }
     }
 
-    /// `tensor`, `[b, h, q, ·]` like the query's gradient, bound under `binding`'s launcher as
-    /// `operand` is under `walk`: a buffer a routine allocates beside the pass's own, such as a sum
-    /// it adds into.
+    /// `tensor`, shaped as `operand` is (`[b, h, q, ·]` like the query's gradient, `[b, kv, s, ·]`
+    /// like the keys'), bound under `binding`'s launcher as `operand` is under `walk`: a buffer a
+    /// routine allocates beside the pass's own, such as a sum it adds into.
     pub(crate) fn bind_beside<M, SM>(
         &self,
         binding: &AttentionBackwardBinding,
@@ -250,7 +250,10 @@ impl AttentionBackwardTensors {
     where
         M: AttentionBackwardMicrokernel,
     {
-        let view = Self::grouped(tensor, self.problem().group);
+        let view = match operand.axes().contains(&G) {
+            true => Self::grouped(tensor, self.problem().group),
+            false => tensor.clone(),
+        };
         binding
             .launcher
             .arg(view.binding.clone(), view.elem)

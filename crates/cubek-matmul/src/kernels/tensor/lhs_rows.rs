@@ -1,7 +1,7 @@
 use crate::kernels::tensor::{PackedTensor, Placement, PlainTensor};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Bound, Delivery, Refusal};
-use cubecl::tile::{Launcher, TileArgLaunch};
+use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_microkernel::row_store::{ROWS, RowStore, WIDTH};
 use cubek_std::layout::stored::BlockScales;
 use cubek_std::matmul_axes::{K, M};
@@ -116,7 +116,7 @@ impl PackedRows {
     /// The matrix as one tile of its words under their scales under `launcher`, a load as wide as
     /// a line of the producer's rows, `width`, or a word, whichever is wider: a line of the stage
     /// the rows are encoded from lies inside one load.
-    pub fn bind(&self, launcher: &Launcher, width: usize) -> TileArgLaunch {
+    pub fn bind(&self, launcher: &Launcher, width: usize) -> TileTensorLaunch {
         self.packed.bind(
             launcher,
             self.packed.scheme().num_quants().max(width),
