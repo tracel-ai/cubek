@@ -1,5 +1,5 @@
 use cubecl::tile::launch::Destination;
-use cubecl::tile::{Partitioning, StageStorage, TileArg};
+use cubecl::tile::{Partitioning, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeStagedWalk, cube_staged_microkernel};
 
@@ -29,8 +29,8 @@ pub fn cube_staged_matmul_kernel<
     VO: Size,
     O: Destination,
 >(
-    lhs: &TileArg<'_>,
-    rhs: &TileArg<'_>,
+    lhs: &TileTensor<'_>,
+    rhs: &TileTensor<'_>,
     out: &O::Arg<E>,
     partitioning: Partitioning,
     #[comptime] walk: CubeStagedWalk,

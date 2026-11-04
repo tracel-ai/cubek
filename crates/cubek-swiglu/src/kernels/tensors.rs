@@ -4,7 +4,7 @@ use crate::kernels::{SwigluBlueprint, SwigluRoutineProblem};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::TileArgLaunch;
+use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Launcher, launch::Bound};
 use cubecl::zspace::metadata::Metadata;
@@ -142,7 +142,7 @@ impl SwigluTensors<PackedRows> {
         &self,
         blueprint: &SwigluBlueprint<M>,
         grid: &Grid,
-    ) -> SwigluBinding<TileArgLaunch> {
+    ) -> SwigluBinding<TileTensorLaunch> {
         let (launcher, input) = self.bind_input(blueprint, grid);
         let out = self.out.bind(&launcher, blueprint.width);
         SwigluBinding {

@@ -1,5 +1,5 @@
 use cubecl::tile::launch::Destination;
-use cubecl::tile::{Partitioning, StageStorage, TileArg};
+use cubecl::tile::{Partitioning, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, hypercube_staged_last_arrival_microkernel,
@@ -23,10 +23,10 @@ pub fn hypercube_last_arrival_matmul_kernel<
     VO: Size,
     O: Destination,
 >(
-    lhs: &TileArg<'_>,
-    rhs: &TileArg<'_>,
+    lhs: &TileTensor<'_>,
+    rhs: &TileTensor<'_>,
     out: &O::Arg<E>,
-    slots: &TileArg<'_>,
+    slots: &TileTensor<'_>,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     #[comptime] microkernel: HypercubeStagedMicrokernel,

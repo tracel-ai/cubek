@@ -21,7 +21,8 @@ use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{
-    Axis, Indexed, Launcher, Levels, Partitioning, Space, TileArg, TileArgLaunch, TileSpec, TopK,
+    Axis, Indexed, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
+    TopK,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_std::Hardware;
@@ -156,7 +157,7 @@ impl ReduceLaunch {
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         let bound = |arg, element, width, axes: &[_]| {
-            TileArgLaunch::new(
+            TileTensorLaunch::new(
                 arg,
                 element,
                 width,
@@ -326,8 +327,8 @@ impl ReduceLaunch {
 /// Every plane's row, reduced by its first unit alone.
 #[cube(launch_unchecked)]
 fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
-    input: &TileArg<'_>,
-    out: &TileArg<'_>,
+    input: &TileTensor<'_>,
+    out: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
@@ -374,8 +375,8 @@ fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 /// Every plane's row, reduced by the plane.
 #[cube(launch_unchecked)]
 fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
-    input: &TileArg<'_>,
-    out: &TileArg<'_>,
+    input: &TileTensor<'_>,
+    out: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
@@ -420,8 +421,8 @@ fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 /// Every cube's row, reduced by the cube.
 #[cube(launch_unchecked)]
 fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
-    input: &TileArg<'_>,
-    out: &TileArg<'_>,
+    input: &TileTensor<'_>,
+    out: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],

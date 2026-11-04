@@ -1,7 +1,7 @@
 use crate::kernels::PackedCacheBinding;
 use cubecl::prelude::TensorArg;
 use cubecl::tile::launch::Bound;
-use cubecl::tile::{Launcher, TileArgLaunch};
+use cubecl::tile::{Launcher, TileTensorLaunch};
 
 /// The arguments of one launch, its operands bound under its launcher. Not `Debug`: the tile DSL's
 /// `Launcher` is not.
@@ -27,8 +27,8 @@ pub struct AttentionBinding {
 pub enum AttentionCacheBinding {
     /// As tiles, under the launcher.
     Tiles {
-        key: TileArgLaunch,
-        value: TileArgLaunch,
+        key: TileTensorLaunch,
+        value: TileTensorLaunch,
     },
     /// As a packed cache's tiles, which the kernel decodes as it reads them.
     Packed(PackedCacheBinding),
@@ -40,7 +40,7 @@ impl AttentionCacheBinding {
     /// # Panics
     ///
     /// On a packed cache, which a routine reading tiles declines in its `prepare`.
-    pub fn into_tiles(self) -> (TileArgLaunch, TileArgLaunch) {
+    pub fn into_tiles(self) -> (TileTensorLaunch, TileTensorLaunch) {
         match self {
             Self::Tiles { key, value } => (key, value),
             Self::Packed(_) => panic!("a packed cache binds no tile"),

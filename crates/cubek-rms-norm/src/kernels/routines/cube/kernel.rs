@@ -1,6 +1,6 @@
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Destination;
-use cubecl::tile::{Partitioning, TileArg};
+use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::rms_norm::RmsNormScale;
 use cubek_microkernel::rms_norm::cube::{CubeRmsNormMicrokernel, cube_rms_norm_microkernel};
@@ -10,8 +10,8 @@ use cubek_microkernel::row_store::CubeStage;
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_rms_norm_kernel<E: Float, N: Size, O: Destination>(
-    input: &TileArg<'_>,
-    weight: &TileArg<'_>,
+    input: &TileTensor<'_>,
+    weight: &TileTensor<'_>,
     out: &O::Arg<E>,
     epsilon: f32,
     partitioning: Partitioning,

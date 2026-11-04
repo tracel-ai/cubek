@@ -7,7 +7,7 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
-use cubecl::tile::{Space, StageStorage, TileArgLaunch};
+use cubecl::tile::{Space, StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedMicrokernel, MatmulCubeWrite};
 use cubek_microkernel::matmul::hypercube::{
@@ -286,7 +286,7 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastAr
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
-        binding: MatmulBinding<O::Operand, TileArgLaunch, TileArgLaunch>,
+        binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: HypercubeLastArrivalMatmulRoutineBlueprint,
         grid: Grid,
     ) {
