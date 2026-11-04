@@ -520,11 +520,7 @@ impl CubeAttentionMicrokernel {
                 stages.walk(unmasked, prefetch, |slot, stage| {
                     slot.consume(|key, value| {
                         for plane in stage {
-                            if comptime!(microkernel.unbiased_steps()) {
-                                planes.step_unbiased(&plane, key, value, scale);
-                            } else {
-                                planes.step(&plane, key, value, &bias.unmasked, scale);
-                            }
+                            planes.step(&plane, key, value, &bias.unmasked, scale);
                         }
                     });
                 });

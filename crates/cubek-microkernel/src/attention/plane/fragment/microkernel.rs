@@ -61,30 +61,6 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
     /// its keys and values read from `keys` and `values`, each row seeing those `visible` admits,
     /// scaled by `scale`.
     pub fn step(&mut self, plane: &Region, keys: &Tile, values: &Tile, visible: &Tile, scale: EA) {
-        self.take_step(
-            plane,
-            keys,
-            values,
-            &ComptimeOption::new_Some(visible.clone()),
-            scale,
-        );
-    }
-
-    /// `step` for a step every row sees whole: no bias read, the softmax's max taken
-    /// over the raw scores and each cell's exponential one multiply-add
-    /// ([`OnlineSoftmax::step_unbiased`]).
-    pub fn step_unbiased(&mut self, plane: &Region, keys: &Tile, values: &Tile, scale: EA) {
-        self.take_step(plane, keys, values, &ComptimeOption::new_None(), scale);
-    }
-
-    fn take_step(
-        &mut self,
-        plane: &Region,
-        keys: &Tile,
-        values: &Tile,
-        visible: &ComptimeOption<Tile>,
-        scale: EA,
-    ) {
         let mut sum = self.sum.at(plane);
         self.score.at(plane).step::<EA, ES>(
             plane,
@@ -93,7 +69,7 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
             &self.query.at(plane),
             &keys.at(plane),
             &values.at(plane),
-            &visible.clone().map(|visible| visible.at(plane)),
+            &visible.at(plane),
             scale,
             self.microkernel,
             comptime!(self.microkernel.score_levels(&self.planes)),
@@ -271,7 +247,7 @@ impl StageScore {
         query: &Tile,
         key: &Tile,
         value: &Tile,
-        bias: &ComptimeOption<Tile>,
+        bias: &Tile,
         scale: EA,
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
         #[comptime] score_levels: Vec<Level>,
@@ -321,7 +297,7 @@ impl StageScore {
         query: &Tile,
         key: &Tile,
         value: &Tile,
-        bias: &ComptimeOption<Tile>,
+        bias: &Tile,
         scale: EA,
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
         #[comptime] score_levels: Vec<Level>,
@@ -374,7 +350,7 @@ impl StageScore {
         // The score's cells were stored in the fragments' layout; the softmax reads them by rows.
         sync_plane();
 
-        let correction = Self::softmax_step(softmax, scores, bias, scale);
+        let correction = softmax.step(scores, bias, scale);
         probabilities.copy_cast_from(scores);
 
         // The probabilities land before the fragments load them.
@@ -396,21 +372,6 @@ impl StageScore {
         );
     }
 
-    /// `scores` taken into `softmax`, summed with `bias` where there is one, else as a step no bias
-    /// touches ([`OnlineSoftmax::step_unbiased`]). The correction of the rows' running sums.
-    fn softmax_step<EA: Float>(
-        softmax: &mut OnlineSoftmax<EA>,
-        scores: &Tile,
-        bias: &ComptimeOption<Tile>,
-        scale: EA,
-    ) -> Array<EA> {
-        #[comptime]
-        match bias {
-            ComptimeOption::Some(bias) => softmax.step(scores, bias, scale),
-            ComptimeOption::None => softmax.step_unbiased(scores, scale),
-        }
-    }
-
     /// [`ScoreHolder::Fragments`]: the score contracted into its fragments, the softmax read where
     /// the plane's units hold their cells, and the fragments, cast in their registers, contracted
     /// with the values. Nothing crosses the plane's units but the row reductions' shuffles, so the
@@ -424,7 +385,7 @@ impl StageScore {
         query: &Tile,
         key: &Tile,
         value: &Tile,
-        bias: &ComptimeOption<Tile>,
+        bias: &Tile,
         scale: EA,
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
     ) {
@@ -443,7 +404,7 @@ impl StageScore {
             MatmulOperands::AS_BOUND,
         );
 
-        let correction = Self::softmax_step(softmax, &logits, bias, scale);
+        let correction = softmax.step(&logits, bias, scale);
         sum.along(DV).mul(&correction);
 
         plane_fragment_microkernel(
@@ -505,7 +466,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
                 &staged_query,
                 key,
                 value,
-                &ComptimeOption::new_Some(bias_stage),
+                &bias_stage,
                 scale,
                 microkernel,
                 microkernel.score_levels(&[(Q, planes)]),
