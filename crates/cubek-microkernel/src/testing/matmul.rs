@@ -12,8 +12,8 @@ use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{
-    Launcher, Partitioning, Scratch, Semiring, Space, StageStorage, TileArg, TileArgLaunch,
-    TileSpec,
+    Launcher, Partitioning, Scratch, Semiring, Space, StageStorage, TileSpec, TileTensor,
+    TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_std::Hardware;
@@ -139,7 +139,7 @@ impl PlaneFragmentLaunch {
             out: out_element,
         } = self.elements;
         let bound = |arg, element, axes: &[_]| {
-            TileArgLaunch::new(
+            TileTensorLaunch::new(
                 arg,
                 element,
                 1,
@@ -172,9 +172,9 @@ impl PlaneFragmentLaunch {
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
-    lhs: &TileArg<'_>,
-    rhs: &TileArg<'_>,
-    out: &TileArg<'_>,
+    lhs: &TileTensor<'_>,
+    rhs: &TileTensor<'_>,
+    out: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneFragmentMicrokernel,
     #[comptime] stage: StageStorage,

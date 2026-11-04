@@ -91,3 +91,85 @@ fn a_packed_activation_against_a_float_weight_answers_at_every_setting() {
         .enforce();
     }
 }
+
+/// NVFP4 activations against an NVFP4 weight, Qwen3.8-27B's projections at a prompt's rows: every
+/// setting that prepares on this device answers the dequantized product. On an RTX PRO 6000 every
+/// setting whose planes hold a grid of block-scaled fragments, rather than one, answered zero: the
+/// grid's fragments were loaded into copies and contracted unwritten, and the model's prompt was
+/// lost. Skipped on a device where none prepares.
+#[test]
+fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
+    let (m, n, k) = (512, 128, 5120);
+    let client = client();
+    let hw = Hardware::from_client(&client);
+    let slabs = |operand, rows, seed| {
+        PackedSlabs::new(
+            &client,
+            PackedSlabsSpec {
+                format: PackedFormat::Nvfp4,
+                operand,
+                slabs: 1,
+                rows,
+                k,
+                seed,
+            },
+        )
+    };
+    let (activation, weight) = (
+        slabs(MatmulOperand::Lhs, m, 1),
+        slabs(MatmulOperand::Rhs, n, 2),
+    );
+    let expected: Vec<f32> = (0..m * n)
+        .map(|at| {
+            let (row, column) = (at / n, at % n);
+            (0..k)
+                .map(|kk| activation.cell(0, kk, row) * weight.cell(0, kk, column))
+                .sum()
+        })
+        .collect();
+    let routine = CubeStagedMatmulRoutine;
+    let mut ran = 0;
+    let mut wrong = Vec::new();
+    for settings in routine
+        .packed_settings(&hw)
+        .into_iter()
+        .chain(routine.packed_one_step_settings())
+        .chain(routine.block_scaled_settings(&hw))
+    {
+        let (out, bound) = PlainTensor::empty_contiguous(
+            &client,
+            Shape::from(vec![m, n]),
+            bf16::elem_type_native(),
+        );
+        let launched = routine.launch_into(
+            &hw,
+            &client,
+            StoredTensor::Packed(activation.matrix()),
+            StoredTensor::Packed(weight.matrix()),
+            bound,
+            &settings,
+        );
+        if launched.is_err() {
+            continue;
+        }
+        ran += 1;
+        let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+        let off = expected
+            .iter()
+            .enumerate()
+            .filter(|&(at, &want)| {
+                (got.get_f32(&[at / n, at % n]) - want).abs() > BF16_TOLERANCE * (1. + want.abs())
+            })
+            .count();
+        if off > 0 {
+            wrong.push(format!("{settings}: {off} wrong"));
+        }
+    }
+    if ran == 0 {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "no staged setting prepares two packed inputs on this device".to_string(),
+        ))
+        .enforce();
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

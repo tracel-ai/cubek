@@ -1,5 +1,5 @@
 use cubecl::tile::launch::Destination;
-use cubecl::tile::{Partitioning, Semiring, TileArg};
+use cubecl::tile::{Partitioning, Semiring, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, unit_registers_microkernel};
 
@@ -8,8 +8,8 @@ use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, unit_registers_m
 /// zeros.
 #[cube(launch_unchecked)]
 pub fn unit_registers_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destination>(
-    lhs: &TileArg<'_>,
-    rhs: &TileArg<'_>,
+    lhs: &TileTensor<'_>,
+    rhs: &TileTensor<'_>,
     out: &O::Arg<E>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitRegistersMicrokernel,
