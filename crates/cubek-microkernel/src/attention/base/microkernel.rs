@@ -27,4 +27,14 @@ pub trait AttentionMicrokernel:
     fn delivery(&self, _widths: &AttentionOperands<usize>, _item: &AttentionWorkItem) -> Delivery {
         Delivery::SyncPerUnit
     }
+
+    /// How the query it binds at `widths` is moved into the stage it is held in:
+    /// [`SyncPerUnit`](Delivery::SyncPerUnit) unless it says otherwise.
+    fn query_delivery(
+        &self,
+        _widths: &AttentionOperands<usize>,
+        _item: &AttentionWorkItem,
+    ) -> Delivery {
+        Delivery::SyncPerUnit
+    }
 }

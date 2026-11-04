@@ -20,6 +20,7 @@ std = ["cubecl/std", "cubek-std/std"]
 matmul = []
 attention = ["matmul"]
 attention-backward = ["attention"]
+reduce = []
 rms-norm = ["row-store"]
 swiglu = ["row-store"]
 gated-delta = []
@@ -41,3 +42,7 @@ cubek-test-utils = { workspace = true }
 [[test]]
 name = "testing"
 required-features = ["testing"]
+
+[[test]]
+name = "reduce"
+required-features = ["testing", "reduce"]
