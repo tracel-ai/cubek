@@ -10,7 +10,9 @@ use cubecl::prelude::TensorArg;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Delivery, Refusal};
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Indexing, Launcher, TileArgLaunch, TileSpec, launch::Grid as LaunchGrid};
+use cubecl::tile::{
+    Axis, Indexing, Launcher, TileSpec, TileTensorLaunch, launch::Grid as LaunchGrid,
+};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{
@@ -628,7 +630,7 @@ impl AttentionTensors {
                     match pages {
                         Some(pages) => arg
                             .indexed_covering(
-                                TileArgLaunch::new(
+                                TileTensorLaunch::new(
                                     pages.binding.clone().into_tensor_arg(),
                                     ElemType::UInt(UIntKind::U32),
                                     1,

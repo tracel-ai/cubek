@@ -10,7 +10,7 @@ use cubecl::prelude::{TensorBinding, TensorMapSwizzle};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal, TmaCoordinates, TmaLanding, TmaTerm};
 use cubecl::tile::{
-    Axis, Launcher, Projection, TileArgLaunch,
+    Axis, Launcher, Projection, TileTensorLaunch,
     kind::Field,
     layout::{DimsBuilder, PhysicalAxisMap, split},
 };
@@ -414,7 +414,7 @@ impl PackedTensor {
         width: usize,
         scales: BlockScales,
         delivery: Delivery,
-    ) -> TileArgLaunch {
+    ) -> TileTensorLaunch {
         let operand = &self.operand;
         let lined = operand.lined();
         // The buffer steps its rows before its words, so its dims are named that way.
@@ -561,7 +561,7 @@ impl PackedTensor {
         stage_lines: usize,
         stage_k: usize,
         swizzle: TensorMapSwizzle,
-    ) -> TileArgLaunch {
+    ) -> TileTensorLaunch {
         let WordsLaid::InTiles(tile, TileWords::LineByLine) = self.laid else {
             panic!("bind_by_tma: words stored in tiles laid line by line only");
         };
@@ -607,7 +607,7 @@ impl PackedTensor {
                 ],
             ],
         };
-        let words = TileArgLaunch::tensor_map_folded(
+        let words = TileTensorLaunch::tensor_map_folded(
             map,
             &values_axes,
             &[lines as u32, (k / order.block) as u32, order.block as u32],
@@ -662,7 +662,7 @@ impl PackedTensor {
         words: Arg<'_, Labelled>,
         block_scales: Arg<'_, Labelled>,
         global: Option<Arg<'_, Labelled>>,
-    ) -> Result<TileArgLaunch, Refusal> {
+    ) -> Result<TileTensorLaunch, Refusal> {
         let block = self
             .scheme
             .block_scale()

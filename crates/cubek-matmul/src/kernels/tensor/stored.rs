@@ -57,7 +57,8 @@ impl StoredTensor {
 
     /// Every buffer it binds, in the order its binding holds them: its values, then a packed one's
     /// block scales and its per-tensor scale. What a kept binding is rebound to, in place of the
-    /// buffers it was made over ([`TileArgLaunch::rebound`](cubecl::tile::TileArgLaunch::rebound)).
+    /// buffers it was made over
+    /// ([`TileTensorLaunch::rebound`](cubecl::tile::TileTensorLaunch::rebound)).
     pub fn buffers(&self) -> Vec<BufferBinding> {
         self.tensors()
             .map(|tensor| tensor.binding.handle.clone())
@@ -65,11 +66,12 @@ impl StoredTensor {
     }
 
     /// The bytes it occupies, what a kernel streaming it at its stored width reads: the union of
-    /// the ranges its [`buffers`](Self::buffers) view, allocation by allocation.
+    /// the regions its [`buffers`](Self::buffers) name, allocation by allocation, rather than the
+    /// buffers those regions lie in.
     ///
-    /// Not their sum: a packed tensor's words, block scales and per-tensor scale are views of one
-    /// allocation, the words' spanning the scales, and a binding's `size` is the whole
-    /// allocation's, so a sum counts an NVFP4 weight about three times over.
+    /// Not their sum either: a framework stores a packed tensor's words, block scales and
+    /// per-tensor scale in one buffer, and where the words' region spans the scales a sum counts
+    /// the scales twice.
     pub fn bytes(&self) -> usize {
         union_bytes(
             self.tensors()
