@@ -273,11 +273,12 @@ fn every_routine_reduces_every_dim_like_the_cpu() {
 
 /// The hypercube splits rows into parts, the last one short, and merges them: a `[2, 3, 5000]`
 /// tensor along its contiguous dim, in three parts; across it, a `[3, 2100, 4]` tensor along its
-/// middle dim, in five; and a row of one part. Where the device commits to a plane width.
+/// middle dim, in five; and a row of one part. Where the device commits to a plane width and one
+/// cube's stores reach another within a launch.
 #[test]
 fn the_hypercube_reduces_split_rows_like_the_cpu() {
     let hw = Hardware::from_client(&cubecl::test_device().client());
-    if hw.plane_dim().is_err() {
+    if hw.plane_dim().is_err() || !hw.properties.features.device_memory_scope {
         return;
     }
     for (shape, axis) in [([2, 3, 5000], 2), ([3, 2100, 4], 1), ([2, 3, 5000], 1)] {

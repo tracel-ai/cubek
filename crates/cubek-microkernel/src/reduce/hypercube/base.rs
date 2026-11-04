@@ -9,7 +9,10 @@ use cubek_std::microkernel::{
 /// storing its partial apart: the last of the row's cubes to finish merges the partials and writes
 /// the row.
 ///
-/// It runs where the device commits to a plane width, as the cube's does.
+/// It runs where the device commits to a plane width, as the cube's does, and where one cube's
+/// stores reach another within a launch (`device_memory_scope`), which is how the cubes meet: on
+/// WGSL, whose storage barrier orders a workgroup's own memory only, the last cube was seen reading
+/// another's partial as the zero it held before the write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeReduceMicrokernel {
     pub item: ReduceWorkItem,
@@ -52,7 +55,7 @@ impl Microkernel for HypercubeReduceMicrokernel {
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
-    const DECLINE: &'static str = "the hypercube reduce needs a plane width the device commits to, and cubes that hold their planes";
+    const DECLINE: &'static str = "the hypercube reduce needs a plane width the device commits to, cubes that hold their planes, and one cube's stores reaching another within a launch";
 
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         HypercubeReduceMicrokernelSettings::ALL.to_vec()
@@ -64,7 +67,8 @@ impl Microkernel for HypercubeReduceMicrokernel {
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
         let planes = settings.planes;
-        let fits = planes <= hw.full_cube_planes();
+        // The cubes meet through device memory, which must stay coherent across them in a launch.
+        let fits = planes <= hw.full_cube_planes() && hw.properties.features.device_memory_scope;
         hw.plane_dim()
             .ok()
             .filter(move |_| fits)

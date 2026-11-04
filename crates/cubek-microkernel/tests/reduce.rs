@@ -271,7 +271,8 @@ fn every_scope_reduces_rows_side_by_side_like_the_cpu() {
 #[test]
 fn a_hypercube_reduces_every_operation_like_the_cpu() {
     let hw = Hardware::from_client(&cubecl::test_device().client());
-    if hw.plane_dim().is_err() {
+    // The cubes meet through device memory, which the device must keep coherent within a launch.
+    if hw.plane_dim().is_err() || !hw.properties.features.device_memory_scope {
         return;
     }
     for operation in OPERATIONS {
