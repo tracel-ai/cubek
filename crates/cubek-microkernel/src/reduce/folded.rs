@@ -278,31 +278,7 @@ impl<Acc: Numeric, N: Size, K: Size> Folded<Acc, N> for TopK<Acc, N, K> {
         #[comptime] layout: ReduceLayout,
         #[comptime] monoid: Monoid,
     ) -> Self {
-        let k = K::value();
-        let read = Indexed::<Acc, N> {
-            value: line,
-            index: lane_indices::<N>(line_index, layout),
-        };
-        let last = Indexed::<Acc, N> {
-            value: acc.values[k - 1],
-            index: acc.indices[k - 1],
-        };
-        // A line that beats the last kept in no lane changes nothing, and over a long row almost
-        // every line is such a line: it skips the `K`-slot walk, the whole cost of a fold. Each
-        // value is read at its own index, so a lane beats it where their combine keeps its index.
-        let beats = Indexed::<Acc, N>::combine(last, read, monoid)
-            .index
-            .equal(&read.index);
-        let mut any = false;
-        #[unroll]
-        for lane in 0..N::value() {
-            any = any || beats.extract(lane);
-        }
-        let mut acc = acc;
-        if any {
-            acc = acc.insert(read.value, read.index, monoid);
-        }
-        acc
+        acc.insert(line, lane_indices::<N>(line_index, layout), monoid)
     }
 
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self {
