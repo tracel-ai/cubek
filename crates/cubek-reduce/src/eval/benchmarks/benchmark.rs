@@ -12,8 +12,8 @@ use cubek_test_utils::{RunSamples, TestInput};
 use crate::ReduceStrategy;
 use crate::components::instructions::ReduceOperationConfig;
 use crate::eval::benchmarks::correctness::ReduceCorrectness;
-use crate::eval::cpu_reference::ReduceEntry;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
+use crate::eval::cpu_reference::ReduceEntry;
 
 pub fn bench(
     strategy: &ReduceStrategy,
