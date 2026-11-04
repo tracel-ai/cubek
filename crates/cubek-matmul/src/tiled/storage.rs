@@ -21,8 +21,12 @@ use cubecl::{
 };
 
 use cubecl::quant::scheme::QuantScheme;
+use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulStep};
-use cubek_std::layout::{stored::Operand, tile_order::TileOrder};
+use cubek_std::layout::{
+    stored::Operand,
+    tile_order::{TileOrder, TileWords},
+};
 use cubek_std::{Hardware, matmul_axes::K, value_element};
 
 use crate::definition::MatmulSetupError;
@@ -86,6 +90,30 @@ pub enum StoredValues {
     Elements(ElemType),
     /// Codes packed under this scheme.
     Packed(QuantScheme),
+}
+
+/// The order a packed matrix's tiles lie in on `hw` ([`TileWords`]), which its writer stores and
+/// every reader binds: line by line where a reader takes a line's run whole, the TMA engine filling
+/// a stage or a tensor-core plane decoding one ([`PlaneFragmentMicrokernel::decodes_on`]); block
+/// by block everywhere else, where software reads the tile a load at a time and a load is then a
+/// block of several lines.
+pub fn tile_words(hw: &Hardware) -> TileWords {
+    match hw.bulk_tensor_copy() || PlaneFragmentMicrokernel::decodes_on(hw) {
+        true => TileWords::LineByLine,
+        false => TileWords::BlockByBlock,
+    }
+}
+
+/// The tile order a writer lays a matrix packed under `scheme` in on `hw`, in `tile`: the order
+/// the device's readers take ([`tile_words`]), where the tile holds it ([`TileOrder::laid_in`]).
+/// Readers read it back off the matrix ([`TileOrder::words_of`]), never off a device. `None` for a
+/// scheme tile order does not store.
+pub fn tile_order_on(
+    hw: &Hardware,
+    scheme: &QuantScheme,
+    tile: (usize, usize),
+) -> Option<TileOrder> {
+    Some(TileOrder::of(scheme)?.laid_in(tile_words(hw), tile))
 }
 
 /// The tile a load stores matmul input `input` in on `hw`, over the input's two axes: the step a
@@ -460,5 +488,51 @@ impl Relayout {
             dtype,
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tile_words;
+    use cubecl::features::MmaConfig;
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubek_std::devices;
+    use cubek_std::layout::tile_order::TileWords;
+
+    /// The `16 × 8 × 16` mma the tensor-core plane decodes through.
+    fn plane_fragment_mma() -> MmaConfig {
+        let f16 = ElemType::Float(FloatKind::F16);
+        MmaConfig {
+            a_type: f16,
+            b_type: f16,
+            cd_type: ElemType::Float(FloatKind::F32),
+            m: 16,
+            n: 8,
+            k: 16,
+        }
+    }
+
+    /// A device whose TMA engine fills stages, or whose tensor-core plane decodes, reads a line's
+    /// run whole, so its tiles lie line by line; every other device reads them a load at a time,
+    /// block by block.
+    #[test]
+    fn a_line_reader_keeps_its_tiles_line_by_line() {
+        assert_eq!(tile_words(&devices::h100()), TileWords::LineByLine);
+        assert_eq!(tile_words(&devices::rtx_pro_6000()), TileWords::LineByLine);
+        assert_eq!(
+            tile_words(&devices::offering_mma(
+                devices::m2_pro(),
+                [plane_fragment_mma()]
+            )),
+            TileWords::LineByLine,
+            "a tensor-core plane without TMA"
+        );
+        for software in [
+            devices::strix_halo(),
+            devices::rdna_range(),
+            devices::m2_pro(),
+        ] {
+            assert_eq!(tile_words(&software), TileWords::BlockByBlock);
+        }
     }
 }

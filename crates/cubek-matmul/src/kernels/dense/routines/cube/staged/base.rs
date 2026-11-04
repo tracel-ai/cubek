@@ -1,8 +1,8 @@
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::{
-    CUBE_STRIPS, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_PACKED_WALK_PAST_K, MatmulBinding,
-    MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
-    MatmulTensors, MatmulView, cube_order_name,
+    CUBE_STRIPS, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_PACKED_WALK_PAST_K,
+    MATMUL_SCALE_WORDS_IN_TILES, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
+    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView, cube_order_name,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
@@ -20,10 +20,11 @@ use cubek_microkernel::matmul::cube::{
 };
 use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDim, MatmulOperand, MatmulOperands, MatmulStep, MatmulWorkItem,
+    MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulStep,
+    MatmulWorkItem,
 };
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::{Operand, Packing};
+use cubek_std::layout::stored::{BlockScales, Operand, Packing};
 use cubek_std::matmul_axes::{K, KB, KI, M, MI, N, NI};
 use cubek_std::microkernel::{
     CubeStaging, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
@@ -755,6 +756,15 @@ impl Routine for CubeStagedMatmulRoutine {
         let (microkernel, storage) = (resolved.microkernel, resolved.storage);
         if problem.index.is_some() && microkernel.fill.delivery == CubeStagedDelivery::Tma {
             return Err(MATMUL_INDEX_UNREAD_BY_TMA);
+        }
+        // Scales read as words are bound from their rows: a matrix keeping them in tiles across
+        // its lines, laid block by block, is not read so.
+        let scales_across_lines = problem
+            .packings
+            .rhs
+            .is_some_and(|packing| packing.operand.scale_read(N) > 1);
+        if microkernel.block_scales() == BlockScales::Words && scales_across_lines {
+            return Err(MATMUL_SCALE_WORDS_IN_TILES);
         }
         let partitioning = place(microkernel.launch_tiling());
         // Only a block-split space has `KB` and `KI` to ask about: a float product's has `K`, and

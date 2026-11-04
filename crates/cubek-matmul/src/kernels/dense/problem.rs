@@ -462,6 +462,14 @@ pub const MATMUL_INDEX_UNREAD_BY_TMA: Refusal = Refusal::Declined {
     why: "a tensor map reads no table; an indexed input is staged by the cube's units",
 };
 
+/// What a launch taking its block scales as words declines over a matrix whose scales are stored
+/// in tiles of their own ([`TileWords::BlockByBlock`](cubek_std::layout::tile_order::TileWords)):
+/// the words are bound from the rows a matrix in rows or laid line by line keeps them in.
+pub const MATMUL_SCALE_WORDS_IN_TILES: Refusal = Refusal::Declined {
+    why: "this launch binds its block scales as words of their rows, and this matrix keeps them in \
+          tiles of their own beside its values laid block by block",
+};
+
 /// What a launch over a packed input declines where its levels reach past the end of `K`: the
 /// input is bound a whole read wide along `K`, and no mask checks a vector line of its words.
 pub const MATMUL_PACKED_WALK_PAST_K: Refusal = Refusal::Declined {
