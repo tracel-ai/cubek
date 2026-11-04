@@ -8,13 +8,11 @@ use crate::kernels::{
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::{Space, StageStorage, TileTensorLaunch};
-use cubek_microkernel::matmul::MatmulMicrokernel;
-use cubek_microkernel::matmul::MatmulOperand;
-use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedMicrokernel, MatmulCubeWrite};
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
+use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand, MatmulRowsKind};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
@@ -212,6 +210,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             return Err(MATMUL_HYPERCUBE_PACKED_LHS);
         }
         let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
+        problem.check_block_scales(microkernel.block_scales())?;
         if microkernel.cube.walk().decoded().is_some() {
             view.check_steps(hw)?;
         }

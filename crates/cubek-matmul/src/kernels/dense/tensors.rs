@@ -1177,7 +1177,11 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             .served_wide(widths.lhs);
         let values_axes = tile_order::values_axes(N);
         let rhs_stage = stage.landed_space(MatmulOperand::Rhs, orders, &values_axes);
-        let values_per_word = rhs.tile_order().values_per_word;
+        let values_per_word = rhs
+            .operand()
+            .tile_order()
+            .expect("a tensor map reads an rhs in tile order")
+            .values_per_word();
         let rhs_swizzle = storage
             .tma_swizzle(
                 &rhs_stage,
