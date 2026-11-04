@@ -276,7 +276,7 @@ impl ReduceLaunch {
         let partial_indices = TensorHandle::zeros(client, partial_shape, index);
         let arrivals = TensorHandle::zeros(client, [self.rows], index);
         let bound = |arg, element, width, axes: &[_]| {
-            TileArgLaunch::new(
+            TileTensorLaunch::new(
                 arg,
                 element,
                 width,
@@ -468,10 +468,10 @@ fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
-    input: &TileArg<'_>,
-    out: &TileArg<'_>,
-    partials: &TileArg<'_>,
-    partial_indices: &TileArg<'_>,
+    input: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    partials: &TileTensor<'_>,
+    partial_indices: &TileTensor<'_>,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     #[comptime] parts: usize,

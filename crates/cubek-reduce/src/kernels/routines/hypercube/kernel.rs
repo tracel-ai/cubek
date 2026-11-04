@@ -1,5 +1,5 @@
 use cubecl::ir::ElemType;
-use cubecl::tile::{Axis, Indexed, Partitioning, Region, TileArg, TopK};
+use cubecl::tile::{Axis, Indexed, Partitioning, Region, TileTensor, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::hypercube::{
     HypercubeReduceMicrokernel, hypercube_reduce_microkernel,
@@ -66,10 +66,10 @@ fn split_place<N: Size>(
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
-    input: &TileArg<'_>,
-    out: &TileArg<'_>,
-    partials: &TileArg<'_>,
-    partial_indices: &TileArg<'_>,
+    input: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    partials: &TileTensor<'_>,
+    partial_indices: &TileTensor<'_>,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     extents: ReduceSplitExtents,
@@ -154,11 +154,11 @@ pub fn hypercube_reduce_with_indices_kernel<
     Idx: Numeric,
     N: Size,
 >(
-    input: &TileArg<'_>,
-    out: &TileArg<'_>,
-    indices: &TileArg<'_>,
-    partials: &TileArg<'_>,
-    partial_indices: &TileArg<'_>,
+    input: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    indices: &TileTensor<'_>,
+    partials: &TileTensor<'_>,
+    partial_indices: &TileTensor<'_>,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     extents: ReduceSplitExtents,

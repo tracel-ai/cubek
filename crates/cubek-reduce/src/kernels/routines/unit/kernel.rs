@@ -1,5 +1,5 @@
 use cubecl::ir::ElemType;
-use cubecl::tile::{Indexed, Partitioning, TileArg, TopK};
+use cubecl::tile::{Indexed, Partitioning, TileTensor, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::ReduceCarrier;
 use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microkernel};
@@ -7,8 +7,8 @@ use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microke
 /// Every unit of the launch, reducing its rows into the carrier its operation folds into.
 #[cube(launch_unchecked)]
 pub fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
-    input: &TileArg<'_>,
-    out: &TileArg<'_>,
+    input: &TileTensor<'_>,
+    out: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
@@ -61,9 +61,9 @@ pub fn unit_reduce_with_indices_kernel<
     Idx: Numeric,
     N: Size,
 >(
-    input: &TileArg<'_>,
-    out: &TileArg<'_>,
-    indices: &TileArg<'_>,
+    input: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    indices: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitReduceMicrokernel,
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
