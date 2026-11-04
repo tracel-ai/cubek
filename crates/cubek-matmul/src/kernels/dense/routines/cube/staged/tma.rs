@@ -44,7 +44,7 @@ impl CubeStagedTmaMatmulRoutine {
     };
 
     /// The settings a block-scaled product read as stored races on `hw`
-    /// ([`block_scaled`](super::block_scaled)): for a prompt's rows, four by eight and two by
+    /// (`block_scaled`): for a prompt's rows, four by eight and two by
     /// eight steps on four by two planes and two by four on two by two, two stages in flight; for
     /// a decode's, a stage one step deep, the most one box lands, three or four in flight. None
     /// without a bulk tensor copy.

@@ -85,7 +85,7 @@ impl CubeStagedMatmulRoutine {
 
     /// Boxes against a packed input staged as it is stored, which the copy engine's routine races
     /// on a device with a copy engine
-    /// ([`CubeStagedAsyncCopyMatmulRoutine::STORED`](crate::kernels::CubeStagedAsyncCopyMatmulRoutine)),
+    /// ([`CubeStagedAsyncCopyMatmulRoutine`](crate::kernels::CubeStagedAsyncCopyMatmulRoutine)),
     /// and the units elsewhere.
     pub(crate) const STORED: [CubeStagedMicrokernelSettings; 3] = [
         CubeStagedMicrokernelSettings::stored((4, 4, 4), (1, 4), StageRing::TRIPLE),
@@ -181,7 +181,7 @@ impl Routine for CubeStagedMatmulRoutine {
     type Partitioning = MatmulPartitioning;
 
     /// Its microkernel's settings ([`CubeStagedMicrokernel::settings`]), its cubes in the order
-    /// their box walks ([`cube_order_of`](Self::cube_order_of)). Then its own knob around the
+    /// their box walks (`cube_order_of`). Then its own knob around the
     /// boxes it suits: the default, the default's grid on two by two planes with its stage's rows
     /// in order, and the planes splitting `K`, in strips.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
@@ -238,7 +238,7 @@ impl Routine for CubeStagedMatmulRoutine {
 
     /// A plane is as many units as its instruction runs on. One cube a box of the output, over the
     /// problem's space or, against packed inputs, its block-split space, its stages filled by its
-    /// units and its fragments stored by its planes ([`CubeStagedPlacement`]).
+    /// units and its fragments stored by its planes (`CubeStagedPlacement`).
     fn prepare(
         &self,
         hw: &Hardware,

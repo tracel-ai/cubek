@@ -154,7 +154,7 @@ impl CubeStagedTmaRefusal {
     /// Why `hw` cannot deliver the stages `microkernel` walks through the space `cube_space` of
     /// `item`'s product, over buffers as `buffers` states them, by the TMA engine, its stages held
     /// as its instruction reads a landed one
-    /// ([`landed_stage_storage`](crate::matmul::plane::PlaneFragmentMicrokernel::landed_stage_storage));
+    /// (`PlaneFragmentMicrokernel::landed_stage_storage`);
     /// `None` where it can.
     pub fn new(
         hw: &Hardware,

@@ -41,7 +41,7 @@ impl UnitWholeKMatmulRoutine {
 /// One unit's step, `columns × depth`, counted in reads of the rhs rather than elements, so one
 /// setting loads the same bytes a step at every element size and on every device. The routine
 /// sizes its microkernel's block in elements from it, as the rhs lies
-/// ([`microkernel`](Self::microkernel)).
+/// (`microkernel`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitWholeKBlock {
     /// The output's columns one unit reads a step.

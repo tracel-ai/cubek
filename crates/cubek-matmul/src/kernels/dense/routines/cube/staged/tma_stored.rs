@@ -44,7 +44,7 @@ pub struct CubeStagedTmaStoredMatmulRoutineSettings {
 
 impl CubeStagedTmaStoredMatmulRoutine {
     /// The settings a block-scaled product read as stored races on `hw`
-    /// ([`block_scaled`](super::block_scaled)): for a prompt's rows, four by four steps on two by
+    /// (`block_scaled`): for a prompt's rows, four by four steps on two by
     /// four planes, and two by four on four by two or two by four planes, three stages in flight,
     /// which a contraction of a few thousand finishes sooner with. None without a bulk tensor
     /// copy.
@@ -144,7 +144,7 @@ impl Routine for CubeStagedTmaStoredMatmulRoutine {
 
     /// As [`CubeStagedTmaMatmulRoutine`](crate::kernels::CubeStagedTmaMatmulRoutine)'s, the TMA
     /// engine checked against the box it stores too, before the box is sized
-    /// ([`CubeStagedPlacement::new`]).
+    /// (`CubeStagedPlacement::new`).
     fn prepare(
         &self,
         hw: &Hardware,

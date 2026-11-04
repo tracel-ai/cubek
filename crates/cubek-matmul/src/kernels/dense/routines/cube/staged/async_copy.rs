@@ -56,7 +56,7 @@ impl CubeStagedAsyncCopyMatmulRoutine {
 
     /// The settings a product against a packed input races on `hw`: the box handing its float
     /// input to the engine (`PACKED_FLOAT_ON_ENGINE`), then the boxes staged as stored
-    /// ([`CubeStagedMatmulRoutine::STORED`]), which by the units never were the fastest. None
+    /// (`CubeStagedMatmulRoutine::STORED`), which by the units never were the fastest. None
     /// without a copy engine. Its cubes in the grid's order.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedAsyncCopyMatmulRoutineSettings> {
         if !hw.unit_async_copy() {
@@ -73,7 +73,7 @@ impl CubeStagedAsyncCopyMatmulRoutine {
     }
 
     /// The settings a block-scaled product read as stored races on `hw`
-    /// ([`block_scaled`](super::block_scaled)): for a prompt's rows, four by four steps on two by
+    /// (`block_scaled`): for a prompt's rows, four by four steps on two by
     /// four planes, three stages in flight, and two by four on four by two planes, two; for a
     /// decode's, as deep as `K` divides. None without a copy engine.
     pub fn block_scaled_settings(
@@ -130,7 +130,7 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
     /// stages handed to the engine: whether it beats the units' loads moves with the box, by a few
     /// percent either way on an L4. A ring that prefetches through registers is not listed, which
     /// the engine refuses. None without a copy engine. The multi-row box's cubes walk in strips
-    /// along `m` ([`CubeStagedMatmulRoutine::cube_order_of`]).
+    /// along `m` (`CubeStagedMatmulRoutine::cube_order_of`).
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.unit_async_copy() {
             return Vec::new();

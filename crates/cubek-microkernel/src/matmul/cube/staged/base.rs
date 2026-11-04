@@ -345,7 +345,7 @@ impl CubeStagedMicrokernel {
     ///
     /// A matrix instruction on a device that commits to no plane width; planes set aside to fill
     /// where they cannot be ([`CubeStagedFillingRefusal`]); a warpgroup MMA its fill and drain do
-    /// not serve ([`CubeStagedWgmmaRefusal`]).
+    /// not serve (`CubeStagedWgmmaRefusal`).
     pub fn resolve(
         self,
         hw: &Hardware,
@@ -772,7 +772,7 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
     /// the cube's, whatever its fill turns out to set aside.
     ///
     /// A stage of scale blocks walks `KB`, its planes' steps inside each block
-    /// ([`PlaneFragmentMicrokernel::tiling_over`]), and its planes split `KB`.
+    /// (`PlaneFragmentMicrokernel::tiling_over`), and its planes split `KB`.
     ///
     /// An instruction several planes issue together, a warpgroup MMA's, distributes the box over
     /// groups of them instead: the layout counts groups.
