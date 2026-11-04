@@ -1,7 +1,7 @@
 use crate::matmul::cube::MatmulCubeSpace;
 use crate::matmul::plane::{
-    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
-    PlaneShuffleMicrokernelSettings,
+    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleFetch,
+    PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
 };
 use crate::matmul::{
     MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead, MatmulRowsKind,
@@ -195,6 +195,18 @@ impl CubeShuffleMicrokernel {
             cube(Shuffle(Plane::stepping(4, Some(2))), 8),
             cube(Shuffle(Plane::stepping(1, None)), 16),
         ];
+        // Each software plane again with its steps' loads fetched a step ahead.
+        let step_ahead: Vec<_> = settings
+            .iter()
+            .filter_map(|settings| match settings.plane {
+                Shuffle(plane) => Some(CubeShuffleMicrokernelSettings {
+                    plane: Shuffle(plane.fetching(PlaneShuffleFetch::StepAhead)),
+                    ..*settings
+                }),
+                CubeShufflePlaneSettings::Fragment(_) => None,
+            })
+            .collect();
+        settings.extend(step_ahead);
         if PlaneFragmentMicrokernel::decodes_on(hw) {
             settings.extend([
                 cube(fragments(1), 8),
@@ -372,6 +384,15 @@ impl CubeShufflePlane {
         match self {
             CubeShufflePlane::Shuffle(_) => MatmulOperands::AS_BOUND,
             CubeShufflePlane::Fragment(_) => item.decoding_reads(),
+        }
+    }
+
+    /// When the plane's units load a step's reads: as its settings say for the software plane,
+    /// in the step for the tensor-core one.
+    pub fn fetch(&self) -> PlaneShuffleFetch {
+        match self {
+            CubeShufflePlane::Shuffle(plane) => plane.settings.fetch,
+            CubeShufflePlane::Fragment(_) => PlaneShuffleFetch::InStep,
         }
     }
 }

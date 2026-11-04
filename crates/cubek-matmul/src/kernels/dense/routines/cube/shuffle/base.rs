@@ -8,7 +8,7 @@ use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::cube::{
-    CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
+    CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings, CubeShufflePlaneSettings,
 };
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_std::Hardware;
@@ -296,6 +296,9 @@ impl Routine for CubeShuffleMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_unindexed()?;
+        if let CubeShufflePlaneSettings::Shuffle(plane) = settings.microkernel.plane {
+            plane.fetch.admits(&problem.packings)?;
+        }
         match &problem.packings.rhs {
             Some(packing) => self.prepare_packed(hw, problem, packing, settings),
             None => self.prepare_float(hw, problem, settings),
@@ -332,6 +335,7 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
                 microkernel.split(),
                 microkernel.planes_along_k.get(),
                 microkernel.plane.reads(&item),
+                microkernel.plane.fetch(),
                 [sum, out],
             );
         }

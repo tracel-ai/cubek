@@ -1,6 +1,9 @@
-use crate::matmul::{MatmulLayout, MatmulWorkItem};
+use crate::matmul::{MatmulLayout, MatmulOperands, MatmulWorkItem};
 use core::num::NonZeroUsize;
+use cubecl::ir::ElemType;
+use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
+use cubek_std::layout::stored::Packing;
 
 /// One unit's step, `columns × depth`, and how the plane's units share `K`.
 ///
@@ -22,6 +25,8 @@ pub struct PlaneShuffleMicrokernelSettings {
     /// where `None`. Fewer rows a unit hold fewer sums in its registers, and leave fewer of the
     /// plane's units to share `K`.
     pub rows_per_unit: Option<NonZeroUsize>,
+    /// When a unit loads what a step of `K` reads: as the step contracts, or a step ahead.
+    pub fetch: PlaneShuffleFetch,
 }
 
 impl PlaneShuffleMicrokernelSettings {
@@ -32,6 +37,7 @@ impl PlaneShuffleMicrokernelSettings {
         depth: NonZeroUsize::new(4).unwrap(),
         k_split: PlaneShuffleKSplit::WholePlane,
         rows_per_unit: None,
+        fetch: PlaneShuffleFetch::InStep,
     };
 
     /// One read deep.
@@ -112,7 +118,13 @@ impl PlaneShuffleMicrokernelSettings {
                 Some(rows) => Some(NonZeroUsize::new(rows).unwrap()),
                 None => None,
             },
+            fetch: PlaneShuffleFetch::InStep,
         }
+    }
+
+    /// These settings with each step's loads issued as `fetch` says.
+    pub const fn fetching(self, fetch: PlaneShuffleFetch) -> Self {
+        Self { fetch, ..self }
     }
 
     /// Units side by side along `M` for `rows` rows on a plane `plane_width` wide: as many as
@@ -135,10 +147,62 @@ impl core::fmt::Display for PlaneShuffleMicrokernelSettings {
             "block={}x{} k_split={}",
             self.columns, self.depth, self.k_split
         )?;
-        match self.rows_per_unit {
-            Some(rows) => write!(f, " rows_per_unit={rows}"),
-            None => Ok(()),
+        if let Some(rows) = self.rows_per_unit {
+            write!(f, " rows_per_unit={rows}")?;
         }
+        match self.fetch {
+            PlaneShuffleFetch::InStep => Ok(()),
+            PlaneShuffleFetch::StepAhead => write!(f, " fetch={}", self.fetch),
+        }
+    }
+}
+
+/// When a plane's units load what a step of `K` reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PlaneShuffleFetch {
+    /// As the step contracts: each read loaded, decoded and multiplied in turn, the step's loads
+    /// left to the compiler to issue ahead of the work they feed.
+    InStep,
+    /// A step ahead: the next step's reads loaded into registers, undecoded, before this step
+    /// decodes and multiplies what it holds, so they are in flight while it does
+    /// (`Tile::mma_prefetched`). Against a packed rhs only, read as bound.
+    StepAhead,
+}
+
+impl PlaneShuffleFetch {
+    /// What a step ahead declines: a product whose operands a unit cannot hold undecoded, which is
+    /// anything but a packed rhs under byte block scales beside a float lhs.
+    pub const STEP_AHEAD_UNHELD: Refusal = Refusal::Declined {
+        why: "a step ahead holds a packed rhs under byte block scales beside a float lhs, undecoded",
+    };
+
+    /// Checks a product packed as `packings` says can be fetched as this says.
+    ///
+    /// # Errors
+    ///
+    /// [`STEP_AHEAD_UNHELD`](Self::STEP_AHEAD_UNHELD), a step ahead of anything but a packed rhs
+    /// under byte block scales beside a float lhs.
+    pub fn admits(self, packings: &MatmulOperands<Option<Packing>>) -> Result<(), Refusal> {
+        let byte_scales = |packing: &Packing| {
+            packing
+                .scheme
+                .block_scale()
+                .is_some_and(|scale| ElemType::from_scale_dtype(scale.dtype).size_bits() == 8)
+        };
+        match (self, &packings.lhs, &packings.rhs) {
+            (Self::InStep, _, _) => Ok(()),
+            (Self::StepAhead, None, Some(rhs)) if byte_scales(rhs) => Ok(()),
+            (Self::StepAhead, _, _) => Err(Self::STEP_AHEAD_UNHELD),
+        }
+    }
+}
+
+impl core::fmt::Display for PlaneShuffleFetch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::InStep => "in-step",
+            Self::StepAhead => "step-ahead",
+        })
     }
 }
 

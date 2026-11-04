@@ -1,5 +1,5 @@
 use super::base::CubeMeet;
-use crate::matmul::plane::plane_shuffle_microkernel;
+use crate::matmul::plane::{PlaneShuffleFetch, plane_shuffle_walk};
 use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::{Axis, Instruction, Region, Semiring, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -12,7 +12,8 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// Two levels under the cube: its `planes` planes, each walking its run of the steps along
 /// `split`, then their units. Each plane's drain merges its units' partials across the plane,
-/// then adds into the accumulator. The units read each operand as `reads` says.
+/// then adds into the accumulator. The units read each operand as `reads` says, and issue each
+/// step's loads as `fetch` says.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_microkernel<EA: Numeric>(
@@ -25,6 +26,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
     #[comptime] split: Axis,
     #[comptime] planes: usize,
     #[comptime] reads: MatmulOperands<MatmulRead>,
+    #[comptime] fetch: PlaneShuffleFetch,
 ) {
     let mut c = c.clone();
     let (a, a_factor) = a.factor(c.space(), instruction);
@@ -39,9 +41,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
                     .accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
             sum.zero();
 
-            for step in cube {
-                plane_shuffle_microkernel(&step, &sum, &a, &b, reads);
-            }
+            plane_shuffle_walk(cube.walk(), &sum, &a, &b, reads, fetch);
 
             accumulator
                 .sink
@@ -59,9 +59,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
 
             // A plane's place along the split, which is its slot among the writers.
             let writer = steps.position(split);
-            for step in steps {
-                plane_shuffle_microkernel(&step, &sum, &a, &b, reads);
-            }
+            plane_shuffle_walk(steps, &sum, &a, &b, reads, fetch);
 
             accumulator.drain(&sum.scaled(&a_factor).scaled(&b_factor), writer);
             c.copy_from(&accumulator.source);

@@ -126,6 +126,10 @@ mod plane_shuffle {
         for m in [1, 8] {
             for (name, problem) in problems(m) {
                 for settings in PlaneShuffleMatmulRoutine.packed_settings() {
+                    // A step ahead holds only byte block scales: not the q4 and q8 schemes.
+                    if settings.microkernel.fetch.admits(&problem.packings).is_err() {
+                        continue;
+                    }
                     let (blueprint, _) = PlaneShuffleMatmulRoutine
                         .prepare(&hw, &problem, &settings)
                         .unwrap_or_else(|error| panic!("{name} at {settings}: {error:?}"));

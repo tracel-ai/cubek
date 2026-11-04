@@ -8,7 +8,9 @@ use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Axis, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_microkernel::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
+use cubek_microkernel::matmul::plane::{
+    PlaneShuffleFetch, PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
+};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Packing;
@@ -76,13 +78,19 @@ impl PlaneShuffleMatmulRoutine {
             microkernel,
             planes: NonZeroUsize::new(planes).unwrap(),
         };
-        vec![
+        let in_step = [
             PlaneShuffleMatmulRoutineSettings::PACKED,
             on(Block::stepping(1, None), 1),
             on(Block::stepping(2, None), 4),
             on(Block::stepping(2, Some(2)), 1),
             on(Block::stepping(4, Some(2)), 8),
-        ]
+        ];
+        // Each again with its steps' loads fetched a step ahead.
+        let step_ahead = in_step.map(|settings| PlaneShuffleMatmulRoutineSettings {
+            microkernel: settings.microkernel.fetching(PlaneShuffleFetch::StepAhead),
+            ..settings
+        });
+        in_step.into_iter().chain(step_ahead).collect()
     }
 
     /// `microkernel` placed by `partitioning`, its widths settled.
@@ -399,6 +407,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        settings.microkernel.fetch.admits(&problem.packings)?;
         match &problem.packings.rhs {
             Some(packing) => self.prepare_packed(hw, problem, packing, settings),
             None => self.prepare_float(hw, problem, settings),
@@ -429,6 +438,7 @@ impl MatmulRoutine<PlaneShuffleMicrokernel> for PlaneShuffleMatmulRoutine {
                 O::arg(binding.out),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel.tile_instruction(),
+                blueprint.microkernel.settings.fetch,
                 [sum, out],
             );
         }
@@ -685,10 +695,14 @@ mod tests {
             .chain([devices::wgpu_no_subgroups(), devices::rdna_range()])
         {
             for settings in PlaneShuffleMatmulRoutine.packed_settings() {
+                let held = settings.microkernel.fetch.admits(&problem.packings);
                 match (
                     PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings),
                     hw.plane_size().is_ok(),
                 ) {
+                    (Err(refusal), _) if held.is_err() => {
+                        assert_eq!(refusal, PlaneShuffleFetch::STEP_AHEAD_UNHELD, "{settings}")
+                    }
                     (Ok(_), true) => {}
                     (Err(Refusal::Declined { why: details }), false) => {
                         assert_eq!(details, PlaneShuffleMicrokernel::DECLINE, "{settings}")
@@ -715,6 +729,11 @@ mod tests {
         for hw in committed() {
             for problem in &problems {
                 for settings in PlaneShuffleMatmulRoutine.packed_settings() {
+                    // A step ahead holds only byte block scales, which the q4 and q8 schemes
+                    // here are not stored under.
+                    if settings.microkernel.fetch.admits(&problem.packings).is_err() {
+                        continue;
+                    }
                     let (blueprint, grid) = PlaneShuffleMatmulRoutine
                         .prepare(&hw, problem, &settings)
                         .expect("a committed width places the projection");
