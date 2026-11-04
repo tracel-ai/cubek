@@ -106,3 +106,28 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.cubecl-llvm]
 opt-level = 3
+
+# Local cubecl carrying the register prefetch (`feat/register-prefetch`). Not for merge.
+[patch."https://github.com/tracel-ai/cubecl"]
+cubecl = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl" }
+cubecl-common = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-common" }
+cubecl-core = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-core" }
+cubecl-cpp = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-cpp" }
+cubecl-cpu = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-cpu" }
+cubecl-cuda = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-cuda" }
+cubecl-environment = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-environment" }
+cubecl-hip = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-hip" }
+cubecl-ir = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-ir" }
+cubecl-llvm = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-llvm" }
+cubecl-macros = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-macros" }
+cubecl-macros-internal = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-macros-internal" }
+cubecl-metal = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-metal" }
+cubecl-monitoring = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-monitoring" }
+cubecl-opt = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-opt" }
+cubecl-runtime = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-runtime" }
+cubecl-server = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-server" }
+cubecl-spirv = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-spirv" }
+cubecl-std = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-std" }
+cubecl-tile = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-tile" }
+cubecl-wgpu = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-wgpu" }
+cubecl-zspace = { path = "/home/nathaniel/Projects/cubecl-register-prefetch/crates/cubecl-zspace" }
