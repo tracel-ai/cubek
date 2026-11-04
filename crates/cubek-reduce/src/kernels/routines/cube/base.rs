@@ -13,7 +13,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Every owner a cube, whose units reduce its rows together: few long rows, a cube each. The
 /// cube's units are its `x`, as many as its microkernel's planes hold, and the hardware splits them
-/// into its planes.
+/// into its planes. Its cubes run along at most three row dims; it declines more.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CubeReduceRoutine;
 
@@ -62,6 +62,11 @@ impl Routine for CubeReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        if problem.owner_axes().len() > MAX_ROW_DIMS {
+            return Err(Refusal::Declined {
+                why: "the cube reduce runs a cube per box of rows along at most three row dims",
+            });
+        }
         let microkernel =
             CubeReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
@@ -96,6 +101,9 @@ impl Routine for CubeReduceRoutine {
             .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 }
+
+/// Most row dims the cubes run along: a launch grid has three.
+const MAX_ROW_DIMS: usize = 3;
 
 /// Bytes of the slot a plane meets the others through: one carrier of `width` lanes, its values
 /// in the accumulator's element and, for an argmax or a top-k, an index beside each.

@@ -327,3 +327,30 @@ fn every_count_of_rows_compiles_one_kernel() {
     assert_ne!(compiled(&[2, 5, 300], 2), compiled(&[2, 5, 308], 2));
 }
 
+/// Where a launch grid has too few dims for the rows, the cube and the hypercube decline rather
+/// than panic, and the unit and the plane still run: a rank-5 tensor, four row dims.
+#[test]
+fn routines_decline_more_row_dims_than_the_grid_holds() {
+    let hw = devices::m2_pro();
+    let problem = problem(&[2, 2, 2, 2, 64], 4);
+    let declines = |prepared: Result<(), cubecl::tile::launch::Refusal>| {
+        matches!(
+            prepared,
+            Err(cubecl::tile::launch::Refusal::Declined { .. })
+        )
+    };
+    let cube = CubeReduceRoutine.settings(&hw)[0];
+    assert!(declines(
+        CubeReduceRoutine.prepare(&hw, &problem, &cube).map(|_| ())
+    ));
+    let hypercube = HypercubeReduceRoutine.settings(&hw)[0];
+    assert!(declines(
+        HypercubeReduceRoutine
+            .prepare(&hw, &problem, &hypercube)
+            .map(|_| ())
+    ));
+    let unit = UnitReduceRoutine.settings(&hw)[0];
+    assert!(UnitReduceRoutine.prepare(&hw, &problem, &unit).is_ok());
+    let plane = PlaneReduceRoutine.settings(&hw)[0];
+    assert!(PlaneReduceRoutine.prepare(&hw, &problem, &plane).is_ok());
+}
