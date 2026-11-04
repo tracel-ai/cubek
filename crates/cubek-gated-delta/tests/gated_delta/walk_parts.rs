@@ -6,7 +6,7 @@
 use super::harness::{F32, read};
 use super::walk::{Case, assert_close};
 use cubecl::bytes::Bytes;
-use cubecl::tile::{Partitioning, Region, Tile, TileArg};
+use cubecl::tile::{Partitioning, Region, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_gated_delta::kernels::walk::{
     CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkStateBinding,
@@ -219,10 +219,10 @@ fn held_state_part<N: Size>(
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 fn held_state_probe<N: Size>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    state: &TileArg<'_>,
-    kept: &TileArg<'_>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    state: &TileTensor<'_>,
+    kept: &TileTensor<'_>,
     dump: &mut [f32],
     first_kept: usize,
     partitioning: Partitioning,

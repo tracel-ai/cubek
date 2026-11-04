@@ -5,7 +5,7 @@ use cubecl::bytes::Bytes;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Grid as LaunchGrid;
-use cubecl::tile::{Indexing, Launcher, Levels, Partitioning, Space, TileArg};
+use cubecl::tile::{Indexing, Launcher, Levels, Partitioning, Space, TileTensor};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_gated_delta::kernels::walk::GATED_DELTA_WALK_ELEMENT;
@@ -16,7 +16,7 @@ use cubek_std::routine::ADMITTED_PLAN_RUNS;
 /// Every cube doubles its row's slot of the store and adds one, each element read, then written
 /// where it lies.
 #[cube(launch_unchecked)]
-fn indexed_write_probe(store: &TileArg<'_>, partitioning: Partitioning, #[comptime] cells: usize) {
+fn indexed_write_probe(store: &TileTensor<'_>, partitioning: Partitioning, #[comptime] cells: usize) {
     let store = store.tile(&partitioning);
     for cube in &partitioning {
         let mut slab = store.at(&cube);

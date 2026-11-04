@@ -10,7 +10,7 @@ use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Indexing, Launcher, TileArgLaunch};
+use cubecl::tile::{Axis, Indexing, Launcher, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
@@ -159,25 +159,25 @@ pub struct GatedDeltaWalkTensors {
 /// The operands of a launch bound under one launcher. Not `Debug`: cubek's `Launcher` is not.
 pub struct GatedDeltaWalkBinding {
     pub launcher: Launcher,
-    pub query: TileArgLaunch,
-    pub key: TileArgLaunch,
-    pub value: TileArgLaunch,
-    pub decay: TileArgLaunch,
-    pub strength: TileArgLaunch,
-    pub out: TileArgLaunch,
+    pub query: TileTensorLaunch,
+    pub key: TileTensorLaunch,
+    pub value: TileTensorLaunch,
+    pub decay: TileTensorLaunch,
+    pub strength: TileTensorLaunch,
+    pub out: TileTensorLaunch,
     pub state: GatedDeltaWalkStateBinding,
 }
 
 /// The state operands of a launch: what differs between the walks.
 pub enum GatedDeltaWalkStateBinding {
     Owned {
-        state: TileArgLaunch,
-        kept: TileArgLaunch,
+        state: TileTensorLaunch,
+        kept: TileTensorLaunch,
     },
     /// The store, placed by the slot table, and the positions table.
     Slots {
-        store: TileArgLaunch,
-        positions: TileArgLaunch,
+        store: TileTensorLaunch,
+        positions: TileTensorLaunch,
     },
 }
 
@@ -498,7 +498,7 @@ impl GatedDeltaWalkTensors {
         tensor: &PlainTensor,
         axes: &'static [Axis],
         width: usize,
-    ) -> TileArgLaunch {
+    ) -> TileTensorLaunch {
         launcher
             .arg(tensor.binding.clone(), tensor.elem)
             .axes(axes)

@@ -3,7 +3,7 @@ use crate::kernels::{
     MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
-use cubecl::tile::TileArgLaunch;
+use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::MatmulOperand;
@@ -307,7 +307,7 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
-        binding: MatmulBinding<O::Operand, TileArgLaunch, TileArgLaunch>,
+        binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: CubeShuffleMatmulRoutineBlueprint,
         grid: Grid,
     ) {

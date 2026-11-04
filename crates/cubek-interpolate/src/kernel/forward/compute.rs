@@ -4,7 +4,7 @@ use super::{
 };
 use crate::InputStage;
 use cubecl::tile::{
-    Axis, Partitioning, Region, RegisterBlock, Semiring, StageStorage, Stages, Tile, TileArg,
+    Axis, Partitioning, Region, RegisterBlock, Semiring, StageStorage, Stages, Tile, TileTensor,
     procedural::{Factors, Phase, Procedural, affine_along, sum_of},
 };
 use cubecl::{ir::ElemType, prelude::*};
@@ -39,8 +39,8 @@ fn tap_distance<E: Float>(
 
 #[cube(launch)]
 pub fn interpolate_tile_kernel<E: Float, F: SeparableFilterFamily>(
-    input: &TileArg<'_>,
-    output: &TileArg<'_>,
+    input: &TileTensor<'_>,
+    output: &TileTensor<'_>,
     space: Partitioning,
     #[comptime] row_scale: u32,
     #[comptime] row_offset: i32,
