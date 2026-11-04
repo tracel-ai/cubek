@@ -1,4 +1,4 @@
-use cubecl::tile::{Partitioning, StageStorage, Tile, TileArg};
+use cubecl::tile::{Partitioning, StageStorage, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_staged_attention_shared_microkernel;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
@@ -19,16 +19,16 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out: &TileArg<'_>,
-    logsumexp: ComptimeOption<&TileArg<'static>>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    logsumexp: ComptimeOption<&TileTensor<'static>>,
     slot_out: &mut Tensor<Vector<EA, Const<1>>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
     arrivals: &[Atomic<u32>],
-    mask: ComptimeOption<&TileArg<'static>>,
+    mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,

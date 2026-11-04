@@ -1,5 +1,5 @@
 use core::marker::PhantomData;
-use cubecl::tile::{Partitioning, TileArg};
+use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
@@ -12,13 +12,13 @@ use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
-    mask: ComptimeOption<&TileArg<'static>>,
+    mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,
@@ -78,14 +78,14 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    key_fixup: ComptimeOption<&TileArg<'static>>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    key_fixup: ComptimeOption<&TileTensor<'static>>,
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
-    mask: ComptimeOption<&TileArg<'static>>,
+    mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,
