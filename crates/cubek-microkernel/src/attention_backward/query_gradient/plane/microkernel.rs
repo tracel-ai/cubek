@@ -3,7 +3,7 @@ use crate::attention::{G, Q, S};
 use crate::attention_backward::{ScoreWindows, drain_scaled};
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
-use cubecl::tile::{Level, Region, Semiring, StageStorage, Stages, Tile};
+use cubecl::tile::{Level, Region, Semiring, Space, StageStorage, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
 
@@ -48,7 +48,8 @@ pub fn plane_fragment_query_gradient_microkernel<EA: Float, ES: Float>(
     staged_query.copy_from(query);
     let mut staged_out_gradient = out_gradient.stage_for(&walk, StageStorage::Strided, None);
     staged_out_gradient.copy_from(out_gradient);
-    let windows = ScoreWindows::open::<EA, ES>(&walk, comptime!(vec![G, Q, S]));
+    let windows =
+        ScoreWindows::held_or_open::<EA, ES>(&walk, comptime!(vec![G, Q, S]), microkernel.holder());
 
     // The query, the output's gradient and the dot products land before any is read.
     sync_plane();
@@ -65,7 +66,7 @@ pub fn plane_fragment_query_gradient_microkernel<EA: Float, ES: Float>(
     stages.walk(walk, ring.prefetch, |slot, stage| {
         let bias = bias.at(stage);
         slot.consume(|key, value| {
-            PlaneQueryGradientMicrokernel::step::<EA>(
+            PlaneQueryGradientMicrokernel::step::<EA, ES>(
                 stage,
                 &sum,
                 &windows,
@@ -104,7 +105,7 @@ impl PlaneQueryGradientMicrokernel {
                 microkernel.query_gradient.tile_instruction(),
                 Semiring::SUM_PROD,
             )
-            .with_scratch(microkernel.settings.scratch);
+            .with_scratch(microkernel.sum_scratch());
         sum.zero();
         sum
     }
@@ -116,7 +117,61 @@ impl PlaneQueryGradientMicrokernel {
     /// `stage` is the plane's region of the stage; every tile is windowed to the plane. The levels
     /// are each window's own grid under the walker's planes, which a window is placed in.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn step<EA: Float>(
+    pub(crate) fn step<EA: Float, ES: Float>(
+        stage: &Region,
+        sum: &Tile,
+        windows: &ComptimeOption<ScoreWindows>,
+        query: &Tile,
+        out_gradient: &Tile,
+        key: &Tile,
+        value: &Tile,
+        bias: &Tile,
+        logsumexp: &Tile,
+        delta: &Tile,
+        scale: EA,
+        #[comptime] microkernel: Self,
+        #[comptime] score_levels: Vec<Level>,
+        #[comptime] score_gradient_levels: Vec<Level>,
+    ) {
+        #[comptime]
+        match windows {
+            ComptimeOption::Some(windows) => Self::window_step::<EA>(
+                stage,
+                sum,
+                windows,
+                query,
+                out_gradient,
+                key,
+                value,
+                bias,
+                logsumexp,
+                delta,
+                scale,
+                microkernel,
+                score_levels,
+                score_gradient_levels,
+            ),
+            ComptimeOption::None => Self::held_step::<EA, ES>(
+                sum,
+                query,
+                out_gradient,
+                key,
+                value,
+                bias,
+                logsumexp,
+                delta,
+                scale,
+                microkernel,
+                score_levels,
+                score_gradient_levels,
+            ),
+        }
+    }
+
+    /// [`step`](Self::step) with the score and the gradient against its probabilities in the
+    /// plane's windows, met on `sync_plane` around each.
+    #[allow(clippy::too_many_arguments)]
+    fn window_step<EA: Float>(
         stage: &Region,
         sum: &Tile,
         windows: &ScoreWindows,
@@ -173,6 +228,57 @@ impl PlaneQueryGradientMicrokernel {
             microkernel.query_gradient.tile_instruction(),
             None,
             MatmulOperands::AS_BOUND,
+        );
+    }
+
+    /// [`step`](Self::step) with the score and the gradient against its probabilities held in
+    /// their own manual-mma fragments, queries first: the probabilities and the gradient against
+    /// the score taken in place, each row reading its query's logsumexp and dot product, and the
+    /// gradient cast in its registers as the `A` of the query's gradient, a run of two along the
+    /// stage's keys. Nothing passes through shared memory, so the plane meets on nothing.
+    #[allow(clippy::too_many_arguments)]
+    fn held_step<EA: Float, ES: Float>(
+        sum: &Tile,
+        query: &Tile,
+        out_gradient: &Tile,
+        key: &Tile,
+        value: &Tile,
+        bias: &Tile,
+        logsumexp: &Tile,
+        delta: &Tile,
+        scale: EA,
+        #[comptime] microkernel: Self,
+        #[comptime] score_levels: Vec<Level>,
+        #[comptime] score_gradient_levels: Vec<Level>,
+    ) {
+        let space = comptime!(Space::new(&[
+            (G, 1),
+            (Q, microkernel.seq_q()),
+            (S, microkernel.seq_kv())
+        ]));
+        let scores = ScoreWindows::contract_held::<EA>(
+            query,
+            key,
+            comptime!(space.clone()),
+            microkernel.score,
+            score_levels,
+        );
+        scores.along(S).probabilities::<EA>(scale, bias, logsumexp);
+        let gradients = ScoreWindows::contract_held::<EA>(
+            out_gradient,
+            value,
+            space,
+            microkernel.score_gradient,
+            score_gradient_levels,
+        );
+        gradients
+            .along(S)
+            .softmax_gradient::<EA>(&scores.along(S), delta);
+        ScoreWindows::contract_fragments(
+            sum,
+            &gradients.cast::<ES>(),
+            key,
+            microkernel.query_gradient,
         );
     }
 }

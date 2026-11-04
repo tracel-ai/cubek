@@ -6,8 +6,8 @@ use cubecl::tile::{Levels, Partitioning};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
-/// Queries of one head a plane owns: their dot product of the output with its gradient, its units
-/// sharing the queries' rows a line of each at a time along the whole value dim.
+/// Queries of one head a plane owns, one a unit: each unit's dot product of the output with its
+/// gradient along the whole value dim, a line of each at a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneDeltaMicrokernel {
     pub settings: PlaneDeltaMicrokernelSettings,
@@ -15,7 +15,7 @@ pub struct PlaneDeltaMicrokernel {
     pub val_dim: NonZeroUsize,
 }
 
-/// The queries a plane owns.
+/// The queries a plane owns, one a unit: as many as the plane's units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneDeltaMicrokernelSettings {
     pub seq_q: NonZeroUsize,
@@ -23,7 +23,7 @@ pub struct PlaneDeltaMicrokernelSettings {
 
 impl PlaneDeltaMicrokernelSettings {
     pub const DEFAULT: Self = Self {
-        seq_q: NonZeroUsize::new(16).unwrap(),
+        seq_q: NonZeroUsize::new(32).unwrap(),
     };
 }
 
@@ -35,13 +35,10 @@ impl core::fmt::Display for PlaneDeltaMicrokernelSettings {
 
 impl PlaneDeltaMicrokernel {
     /// The levels inside one plane's queries, which a routine states the rest of the partitioning
-    /// around: its queries of one head, the whole value dim.
+    /// around: its queries of one head, one a unit, each over the whole value dim.
     pub fn tiling(&self) -> Levels {
-        Levels::leaf(&[
-            (Q, self.settings.seq_q.get()),
-            (G, 1),
-            (DV, self.val_dim.get()),
-        ])
+        Levels::leaf(&[(Q, 1), (G, 1), (DV, self.val_dim.get())])
+            .units(&[(Q, self.settings.seq_q.get())])
     }
 }
 
@@ -58,22 +55,26 @@ impl Microkernel for PlaneDeltaMicrokernel {
     type Operand = AttentionBackwardOperand;
     type CubeSpace = Partitioning;
 
-    const DECLINE: &'static str = "the plane dot product runs on a device that commits to one plane \
-         width";
+    const DECLINE: &'static str = "the plane dot product runs a query a unit, on a device that \
+         commits to a plane of as many units as its queries";
 
-    /// Sixteen queries a plane.
+    /// Thirty-two queries a plane, one a unit of a plane of thirty-two.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         vec![Self::Settings::DEFAULT]
     }
 
     /// One, at the item's value dim; an item with no value dim has nothing to sum.
     fn candidates(
-        _hw: &Hardware,
+        hw: &Hardware,
         item: &AttentionBackwardWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
         let settings = *settings;
+        let one_a_unit = hw
+            .plane_dim()
+            .is_ok_and(|units| units as usize == settings.seq_q.get());
         NonZeroUsize::new(item.val_dim)
+            .filter(|_| one_a_unit)
             .map(|val_dim| Self { settings, val_dim })
             .into_iter()
     }
