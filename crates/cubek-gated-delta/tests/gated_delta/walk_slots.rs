@@ -5,7 +5,7 @@
 //! position, and the gaps between its slots and heads. The slots no row holds and the gaps must
 //! come back bit for bit.
 
-use super::harness::{F16, F32, elements, read, round_to};
+use super::harness::{F32, elements, read, round_to};
 use super::walk::{
     Case, Layout, Operands, assert_close, assert_close_within, output_tolerance, tuned_or_skip,
     walk_or_skip,
@@ -120,6 +120,8 @@ fn cases() -> Vec<SlotCase> {
     vec![
         SlotCase::new(1, (16, 3, 128, 128), 6, &[(4, 9), (1, 3), (2, 1)], &[]),
         SlotCase::new(1, (4, 3, 128, 128), 5, &[(3, 2), (1, 0), (4, 7)], &[]),
+        SlotCase::new(1, (4, 3, 64, 64), 1, &[(0, 2)], &[]),
+        SlotCase::new(1, (4, 3, 64, 64), 6, &[(5, 3)], &[]),
         SlotCase::new(
             3,
             (4, 3, 128, 128),
@@ -353,13 +355,15 @@ fn the_slots_walk_matches_the_reference() {
 fn the_slots_walk_reads_a_strided_store_where_it_lies() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    for pitch in STRIDED_PITCHES {
-        for settings in [
-            CubeGatedDeltaWalkRoutineSettings::DEFAULT,
-            CubeGatedDeltaWalkRoutineSettings::FLOOR,
-        ] {
-            for case in cases() {
-                case.walk_and_check(&hw, &client, F16, &settings, pitch);
+    for element in elements(&client) {
+        for pitch in STRIDED_PITCHES {
+            for settings in [
+                CubeGatedDeltaWalkRoutineSettings::DEFAULT,
+                CubeGatedDeltaWalkRoutineSettings::FLOOR,
+            ] {
+                for case in cases() {
+                    case.walk_and_check(&hw, &client, element, &settings, pitch);
+                }
             }
         }
     }

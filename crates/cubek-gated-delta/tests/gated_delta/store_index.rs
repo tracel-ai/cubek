@@ -16,7 +16,11 @@ use cubek_std::routine::ADMITTED_PLAN_RUNS;
 /// Every cube doubles its row's slot of the store and adds one, each element read, then written
 /// where it lies.
 #[cube(launch_unchecked)]
-fn indexed_write_probe(store: &TileTensor<'_>, partitioning: Partitioning, #[comptime] cells: usize) {
+fn indexed_write_probe(
+    store: &TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] cells: usize,
+) {
     let store = store.tile(&partitioning);
     for cube in &partitioning {
         let mut slab = store.at(&cube);
@@ -35,7 +39,6 @@ fn indexed_write_probe(store: &TileTensor<'_>, partitioning: Partitioning, #[com
 #[test]
 fn an_indexed_store_is_read_and_written_in_place() {
     for (start, gap) in [(0, 0), (0, 3), (2, 0), (2, 3)] {
-        println!("start {start} gap {gap}");
         indexed_store(start, gap);
     }
 }

@@ -94,7 +94,7 @@ impl GatedDeltaWalkStateLayout {
     pub fn store_axis(&self) -> Option<(Axis, usize)> {
         match self {
             Self::Owned { .. } => None,
-            Self::Slots { slots, .. } => Some((STORE_SLOT, slots.get())),
+            Self::Slots { slots } => Some((STORE_SLOT, slots.get())),
         }
     }
 }

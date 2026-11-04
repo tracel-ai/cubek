@@ -59,7 +59,7 @@ pub enum GatedDeltaWalkStateInputs {
     /// `u32`) and the positions it has walked already (`positions`, `[batch]`, `u32`). A sequence
     /// that has walked none starts from zeros and reads nothing of its slot. The walk writes the
     /// state after its last position back to the sequence's slot. Two rows may share a slot only if
-    /// it is never read.
+    /// it is never read. A slot past the store's last reads and writes the last.
     Slots {
         store: PlainTensor,
         slots: PlainTensor,
@@ -253,8 +253,8 @@ impl GatedDeltaWalkTensors {
     /// # Panics
     ///
     /// On operands whose shapes disagree, whose innermost axis is strided, on value heads that
-    /// are not a multiple of the key heads, on tables that are not `u32`, and on more kept states
-    /// than positions or none.
+    /// are not a multiple of the key heads, on tables that are not `u32`, on more kept states
+    /// than positions or none, on a store of no slot, and on a walk in slots of no position.
     pub fn new(inputs: GatedDeltaWalkInputs) -> Result<Self, Refusal> {
         let layout = inputs.state_layout();
         let GatedDeltaWalkInputs {
@@ -352,6 +352,7 @@ impl GatedDeltaWalkTensors {
                 slots,
                 positions: walked,
             } => {
+                assert!(positions > 0, "a walk in a store's slots walks a position");
                 let [slot_count, heads, one, cells] = store.shape().dims::<4>();
                 assert_eq!(
                     [heads, one, cells],

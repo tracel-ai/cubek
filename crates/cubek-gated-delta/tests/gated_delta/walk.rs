@@ -330,7 +330,7 @@ pub fn output_tolerance(element: ElemType) -> f64 {
 }
 
 /// The problem `inputs` state, which a device admits or declines.
-pub fn problem_of(inputs: &GatedDeltaWalkInputs) -> GatedDeltaWalkProblem {
+fn problem_of(inputs: &GatedDeltaWalkInputs) -> GatedDeltaWalkProblem {
     GatedDeltaWalkTensors::new(inputs.clone())
         .expect("the harness hands elements the device runs")
         .problem()

@@ -6,7 +6,6 @@ use crate::kernels::walk::{
 use core::num::NonZeroUsize;
 use cubecl::AutotuneKey;
 use cubecl::ir::ElemType;
-use cubecl::tune::anchor;
 use cubek_microkernel::gated_delta::GatedDeltaHeads;
 use serde::{Deserialize, Serialize};
 
@@ -14,8 +13,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// The heads, the output element and the states' layout are exact: a model's config fixes the
 /// heads and the element, and the kernel compiles the widths and the count of kept states, which a
-/// cache's ring fixes. The sequences, the positions and a store's slots are anchored, being the
-/// axes a caller varies: the kernel leaves the slots dynamic.
+/// cache's ring fixes. The sequences and the positions are anchored, being the axes a caller
+/// varies. A store's slot count is no part of it: the kernel leaves the slots dynamic and a round
+/// measures on a scratch store of its rows.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct GatedDeltaWalkKey {
     heads: GatedDeltaHeads,
@@ -40,7 +40,7 @@ impl From<&GatedDeltaWalkInputs> for GatedDeltaWalkKey {
         Self::new(
             heads,
             inputs.output_element,
-            Self::anchored(inputs.state_layout()),
+            Self::slotless(inputs.state_layout()),
             batch,
             positions,
         )
@@ -48,12 +48,11 @@ impl From<&GatedDeltaWalkInputs> for GatedDeltaWalkKey {
 }
 
 impl GatedDeltaWalkKey {
-    /// `state` with a store's slots anchored like the sequences and the positions.
-    fn anchored(state: GatedDeltaWalkStateLayout) -> GatedDeltaWalkStateLayout {
+    /// `state` with any store's slots dropped to one.
+    fn slotless(state: GatedDeltaWalkStateLayout) -> GatedDeltaWalkStateLayout {
         match state {
-            GatedDeltaWalkStateLayout::Slots { slots } => GatedDeltaWalkStateLayout::Slots {
-                slots: NonZeroUsize::new(anchor(slots.get(), Some(65536), None, Some(2)))
-                    .expect("the anchor of a slot count is a slot count"),
+            GatedDeltaWalkStateLayout::Slots { .. } => GatedDeltaWalkStateLayout::Slots {
+                slots: NonZeroUsize::MIN,
             },
             owned @ GatedDeltaWalkStateLayout::Owned { .. } => owned,
         }
@@ -79,16 +78,15 @@ mod tests {
 
     /// A store that grows reuses what its smaller sizes tuned, and the owned layout is untouched.
     #[test]
-    fn a_stores_slots_are_anchored_and_the_owned_layout_is_not() {
-        let anchored = GatedDeltaWalkKey::anchored;
+    fn a_stores_slot_count_is_no_part_of_the_key() {
+        let slotless = GatedDeltaWalkKey::slotless;
         let slots = |slots| GatedDeltaWalkStateLayout::Slots {
             slots: NonZeroUsize::new(slots).unwrap(),
         };
-        assert_eq!(anchored(slots(33)), anchored(slots(64)));
-        assert_ne!(anchored(slots(64)), anchored(slots(65)));
+        assert_eq!(slotless(slots(3)), slotless(slots(65)));
         let owned = GatedDeltaWalkStateLayout::Owned {
             kept: NonZeroUsize::new(3).unwrap(),
         };
-        assert_eq!(anchored(owned), owned);
+        assert_eq!(slotless(owned), owned);
     }
 }

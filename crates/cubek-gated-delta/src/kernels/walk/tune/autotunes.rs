@@ -17,7 +17,6 @@ use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tune::{LocalTuner, Tunable, local_tuner};
-use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::{CubeTuneId, Device};
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::gated_delta::GatedDeltaHeads;
@@ -101,16 +100,15 @@ pub fn serves(
 }
 
 /// What a round runs on: the call's inputs, but for a walk in a store's slots, whose store is
-/// zeros with a slot for each row (as many as the call's store holds, if fewer), each row at a slot
-/// of its own and past its first position.
+/// zeros laid out as the call's, with a slot for each row, each row at its own and past its first
+/// position.
 fn measured(_key: &GatedDeltaWalkKey, inputs: &GatedDeltaWalkInputs) -> GatedDeltaWalkInputs {
     let GatedDeltaWalkStateInputs::Slots { store, .. } = &inputs.state else {
         return inputs.clone();
     };
     let client = &inputs.client;
-    let [slots, heads, one, cells] = store.shape().dims::<4>();
+    let [_, heads, one, cells] = store.shape().dims::<4>();
     let rows = inputs.decay.shape().dims::<3>()[0];
-    let scratch = [rows.min(slots), heads, one, cells];
     let table = |entry: &dyn Fn(usize) -> u32| {
         let entries: Vec<u32> = (0..rows).map(entry).collect();
         PlainTensor::of_u32s(client, &[rows], &entries)
@@ -119,11 +117,11 @@ fn measured(_key: &GatedDeltaWalkKey, inputs: &GatedDeltaWalkInputs) -> GatedDel
         state: GatedDeltaWalkStateInputs::Slots {
             store: PlainTensor::zeros(
                 client,
-                &scratch,
-                row_major_contiguous_strides(scratch),
+                &[rows, heads, one, cells],
+                store.binding.strides.clone(),
                 store.elem,
             ),
-            slots: table(&|row| (row % scratch[0]) as u32),
+            slots: table(&|row| row as u32),
             positions: table(&|_| 1),
         },
         ..inputs.clone()

@@ -20,7 +20,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// The walk with every run of a head's value columns held by a few units, a cube holding several
 /// runs of one head side by side. It reads no plane feature; it needs units, shared memory and 9
-/// bindings: this kind's floor.
+/// bindings, 10 in a store's slots: this kind's floor.
 ///
 /// A unit owns a tile of the run's key rows: the partitioning's leaf holds `rows` of them and its
 /// units level cuts `KEY_FEATURE` into one leaf for each of a run's `units` units, a power of two.
