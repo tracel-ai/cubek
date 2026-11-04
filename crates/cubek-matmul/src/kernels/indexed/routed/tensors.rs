@@ -235,7 +235,7 @@ impl RoutedMatmulTensors {
         let (lhs, stack, table) = self.operands()?;
         // Left unwritten: preparing a launch reads only how its output lies.
         let out = self.batched(&self.output());
-        let tensors = MatmulTensors::indexed::<Mk>(&self.client, lhs, stack, table, out)?;
+        let tensors = MatmulTensors::indexed(&self.client, lhs, stack, table, out, R::ROWS_KIND)?;
         routine
             .prepare(hw, &tensors.problem(), settings)
             .map(|_| ())

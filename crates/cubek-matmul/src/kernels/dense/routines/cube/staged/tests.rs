@@ -2,6 +2,7 @@
 
 mod base {
     use super::super::*;
+    use crate::kernels::MatmulRoutine;
     use crate::kernels::{
         CUBE_STRIPS, MATMUL_PACKED_WALK_PAST_K, MatmulPartitioning, MatmulRoutineProblem,
         MatmulView,
@@ -14,6 +15,7 @@ mod base {
     use cubecl::tile::space::CubeOrder;
     use cubecl::tile::stage::RowChunks;
     use cubecl::tile::{Scratch, StageStorage};
+    use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::{
         CubeStagedDelivery, CubeStagedFill, CubeStagedFillingRefusal, CubeStagedMicrokernel,
         CubeStagedMicrokernelSettings, CubeStagedStore, CubeStagedTmaRefusal, MatmulPlaneLayout,
@@ -43,7 +45,7 @@ mod base {
     ) -> Option<CubeStagedTmaRefusal> {
         CubeStagedTmaRefusal::new(
             hw,
-            &MatmulView::of::<CubeStagedMicrokernel>(problem)
+            &MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
             &problem.buffers(plane.orders),
@@ -246,7 +248,7 @@ mod base {
     #[test]
     fn the_candidates_are_the_matrix_instructions_then_the_software_one() {
         let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
-        let item = MatmulView::of::<CubeStagedMicrokernel>(&problem())
+        let item = MatmulView::new(&problem(), CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let settings = PlaneFragmentMicrokernelSettings::DEFAULT;
@@ -270,7 +272,7 @@ mod base {
     #[test]
     fn a_transport_setting_orders_the_two_transports() {
         let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
-        let item = MatmulView::of::<CubeStagedMicrokernel>(&problem())
+        let item = MatmulView::new(&problem(), CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let settings = PlaneFragmentMicrokernelSettings {
@@ -627,7 +629,7 @@ mod base {
         let planes = grid.planes();
         let cube_units = planes.count * planes.width;
         let one_unit = 1;
-        let item = MatmulView::of::<CubeStagedMicrokernel>(&problem)
+        let item = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let operands = partitioning
@@ -1050,7 +1052,7 @@ mod base {
             .prepare(&devices::h100(), &problem, &settings)
             .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.fill.filling_planes, 1);
-        let placed = MatmulView::of::<CubeStagedMicrokernel>(&problem)
+        let placed = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .partitioning(
                 blueprint.microkernel.tiling(),
@@ -1551,6 +1553,53 @@ mod base {
                 assert_eq!(blueprint.microkernel.block_scales(), scales, "{form:?}");
             }
         }
+    }
+
+    /// NVFP4 laid block by block keeps its scales in tiles across its rows, which the block-scaled
+    /// instruction's scale words are not bound from: every setting that would take them as words
+    /// declines it, rather than read another row's scales.
+    #[test]
+    fn scale_words_are_declined_over_scales_in_tiles() {
+        use crate::kernels::MATMUL_SCALE_WORDS_IN_TILES;
+        use cubek_std::NVFP4_FORM;
+        use cubek_std::layout::stored::BlockScales;
+        use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
+
+        let hw = devices::offering_block_scaled(devices::h100());
+        let mut inputs = CubeStagedMatmulRoutine::block_scaled_inputs(&NVFP4_FORM)
+            .expect("NVFP4 is a packed input");
+        let mut rhs = inputs.rhs.expect("the weight is packed");
+        let order = TileOrder::laid(
+            &tile_order::nvfp4_scheme(),
+            TileWords::BlockByBlock,
+            (128, 8),
+        )
+        .expect("NVFP4 is tile order");
+        assert_eq!(order.words(), TileWords::BlockByBlock);
+        rhs.operand = rhs
+            .operand
+            .in_tile_order(order, N, 4)
+            .expect("tile order block by block is read");
+        inputs.rhs = Some(rhs);
+        let problem =
+            MatmulRoutineProblem::packed(128, 256, 512, ElemType::Float(FloatKind::F16), inputs);
+        assert_eq!(
+            problem.check_block_scales(BlockScales::Words),
+            Err(MATMUL_SCALE_WORDS_IN_TILES)
+        );
+        assert_eq!(problem.check_block_scales(BlockScales::Fields), Ok(()));
+        let refusals: Vec<_> = CubeStagedMatmulRoutine
+            .block_scaled_settings(&hw)
+            .iter()
+            .map(|setting| CubeStagedMatmulRoutine.prepare(&hw, &problem, setting))
+            .collect();
+        assert!(refusals.iter().all(Result::is_err));
+        assert!(
+            refusals
+                .iter()
+                .any(|refusal| refusal.as_ref().err() == Some(&MATMUL_SCALE_WORDS_IN_TILES)),
+            "a setting taking scale words declines them in tiles"
+        );
     }
 
     /// A packed input its stages decode is estimated a stage of scale blocks at a time: as many

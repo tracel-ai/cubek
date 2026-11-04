@@ -280,17 +280,16 @@ mod tests {
 
     /// NVFP4 in tile order as the writer stores it for a 128-bit load.
     fn tile_order() -> Operand {
-        Operand::packed(K, 8, K, tile_order::TileOrder::NVFP4.block, 4)
-            .stored(
+        Operand::packed(K, 8, K, cubek_std::NVFP4_BLOCK, 4)
+            .in_tile_order(
+                tile_order::TileOrder::laid(
+                    &tile_order::nvfp4_scheme(),
+                    tile_order::TileWords::RowByRow,
+                    (128, 8),
+                )
+                .expect("NVFP4 is tile order"),
                 N,
                 4,
-                Some((
-                    &tile_order::values_axes(N),
-                    tile_order::TileOrder::NVFP4
-                        .values_storage(N, (128, 8), 4)
-                        .tiles(),
-                )),
-                None,
             )
             .expect("tile order is read")
     }
@@ -456,17 +455,16 @@ mod tests {
                     hw
                 };
                 let words = hw.load_values(ElemType::UInt(UIntKind::U32));
-                let rhs = Operand::packed(K, 8, K, tile_order::TileOrder::NVFP4.block, 4)
-                    .stored(
+                let rhs = Operand::packed(K, 8, K, cubek_std::NVFP4_BLOCK, 4)
+                    .in_tile_order(
+                        tile_order::TileOrder::laid(
+                            &tile_order::nvfp4_scheme(),
+                            tile_order::TileWords::RowByRow,
+                            (k, n),
+                        )
+                        .expect("NVFP4 is tile order"),
                         N,
                         words,
-                        Some((
-                            &tile_order::values_axes(N),
-                            tile_order::TileOrder::NVFP4
-                                .values_storage(N, (k, n), words)
-                                .tiles(),
-                        )),
-                        None,
                     )
                     .expect("tile order is read at every load");
                 let step = step_against(&hw, &rhs, F16);
@@ -492,18 +490,17 @@ mod tests {
                 hw
             };
             let words = hw.load_values(ElemType::UInt(UIntKind::U32));
-            let in_rows = Operand::packed(K, 8, K, tile_order::TileOrder::NVFP4.block, 4);
+            let in_rows = Operand::packed(K, 8, K, cubek_std::NVFP4_BLOCK, 4);
             let stored = in_rows
-                .stored(
+                .in_tile_order(
+                    tile_order::TileOrder::laid(
+                        &tile_order::nvfp4_scheme(),
+                        tile_order::TileWords::RowByRow,
+                        (128, 8),
+                    )
+                    .expect("NVFP4 is tile order"),
                     N,
                     words,
-                    Some((
-                        &tile_order::values_axes(N),
-                        tile_order::TileOrder::NVFP4
-                            .values_storage(N, (128, 8), words)
-                            .tiles(),
-                    )),
-                    None,
                 )
                 .expect("tile order is read at every load");
             for rhs in [in_rows, stored] {
@@ -540,7 +537,7 @@ mod tests {
         let features = devices::features(&mut block_scaled);
         features.tma = Tma::Base.into();
         features.types.opaque.insert(OpaqueType::Barrier);
-        let nvfp4 = Operand::packed(K, 8, K, tile_order::TileOrder::NVFP4.block, 4);
+        let nvfp4 = Operand::packed(K, 8, K, cubek_std::NVFP4_BLOCK, 4);
         let float = Operand::plain();
         let tile = |hw: &Hardware, rhs: &Operand, values| {
             MatmulStep::stored_on(hw, MatmulOperand::Rhs, *rhs, values, F16)

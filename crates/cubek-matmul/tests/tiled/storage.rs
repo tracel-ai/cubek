@@ -9,7 +9,8 @@ use cubecl::{
 use cubek_matmul::{
     definition::MatmulSetupError,
     tiled::storage::{
-        StorageLevels, StoragePartitioning, StoredValues, empty, stored_tile, tile, untile,
+        StorageLevels, StoragePartitioning, StoredValues, empty, matrix_storage, stored_tile, tile,
+        untile,
     },
 };
 use cubek_microkernel::matmul::{MatmulOperand, MatmulStep};
@@ -261,6 +262,52 @@ fn tiling_stores_a_tile_column_first() {
         tiles_and_comes_back(storage, 64, 96, |r, c| vec![r / 16, c / 32, r % 16, c % 32]);
     assert_eq!(shape, vec![4, 3, 16, 32]);
     assert_eq!(strides, vec![1536, 512, 1, 16]);
+}
+
+/// A matrix stored for a product, in 4 x 16 tiles: in memory, a tile's rows lie one after
+/// another and the tiles row-major, and the finest piece stated is the widest read the device
+/// serves that a row of the tile holds whole.
+#[test]
+fn a_matrix_is_stored_for_the_read_it_is_read_in() {
+    let client = client();
+    let dtype: ElemType = f32::elem_type_native();
+    let (rows, cols) = (8, 32);
+    let data: Vec<f32> = (0..rows * cols).map(|i| i as f32).collect();
+    let (src, _) = TestInput::builder(client.clone(), Shape::from(vec![rows, cols]))
+        .dtype(dtype)
+        .custom(data.clone())
+        .generate_with_f32_host_data();
+    let storage = matrix_storage(&client, dtype, [(ROWS, 4), (COLS, 16)]);
+    let tiled = tile(&client, src.binding(), &[ROWS, COLS], dtype, None, storage).unwrap();
+
+    let read = client
+        .io_optimized_vector_sizes(dtype.size())
+        .filter(|&width| 16usize.is_multiple_of(width))
+        .max()
+        .unwrap_or(1);
+    // A read of one value is no piece: the tile's row is then the finest.
+    let finest = tiled
+        .metadata
+        .strides()
+        .iter()
+        .position(|&stride| stride == 1);
+    let piece = if read > 1 { read } else { 16 };
+    assert_eq!(finest.map(|dim| tiled.shape()[dim]), Some(piece));
+
+    let raw = f32::from_bytes(&client.read_one_unchecked(tiled.handle.clone())).to_vec();
+    for r in 0..rows {
+        for c in 0..cols {
+            let at = (r / 4 * (cols / 16) + c / 16) * 64 + r % 4 * 16 + c % 16;
+            assert_eq!(raw[at], data[r * cols + c], "cell ({r}, {c}) at {at}");
+        }
+    }
+    let back = untile(&client, tiled.binding(), dtype).unwrap();
+    let got = HostData::from_tensor_handle(&client, back, HostDataType::F32);
+    for r in 0..rows {
+        for c in 0..cols {
+            assert_eq!(got.get_f32(&[r, c]), data[r * cols + c], "cell ({r}, {c})");
+        }
+    }
 }
 
 /// Where the value at `coords` (one per named axis) sits in a stored tensor, in values: each
@@ -595,7 +642,7 @@ fn packed_codes_are_stored_in_whole_blocks() {
     for input in MatmulOperand::INPUTS {
         if let Some(tile) = stored_tile(&hw, input, StoredValues::Packed(scheme), f16) {
             assert!(
-                tile.extent(K).is_multiple_of(TileOrder::NVFP4.block),
+                tile.extent(K).is_multiple_of(cubek_std::NVFP4_BLOCK),
                 "{input:?} tile {tile:?}"
             );
         }
@@ -611,7 +658,7 @@ fn codes_tile_order_does_not_store_take_no_tile() {
     let along_n = QuantScheme::default()
         .with_value(QuantValue::Q8S)
         .with_store(QuantStore::PackedU32(0));
-    assert_eq!(TileOrder::of(&along_n), None);
+    assert!(!TileOrder::stores(&along_n));
     assert_eq!(
         stored_tile(&hw, MatmulOperand::Rhs, StoredValues::Packed(along_n), f16),
         None

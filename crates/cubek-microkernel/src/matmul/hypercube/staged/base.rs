@@ -3,12 +3,10 @@ use crate::matmul::cube::{
     MatmulPlaneLayout,
 };
 use crate::matmul::plane::PlaneFragmentMicrokernelSettings;
-use crate::matmul::{
-    MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind, MatmulWorkItem,
-};
+use crate::matmul::{MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulWorkItem};
 use cubecl::ir::ElemType;
-use cubecl::tile::Scratch;
 use cubecl::tile::launch::{Delivery, Refusal, Vectorization};
+use cubecl::tile::{Levels, Scratch};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
@@ -219,8 +217,10 @@ impl core::fmt::Display for HypercubeStagedMicrokernel {
 }
 
 impl MatmulMicrokernel for HypercubeStagedMicrokernel {
-    /// Its cubes own a box of the rows together.
-    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
+    /// Its cube's levels: each cube of the hypercube runs one cube microkernel's box.
+    fn tiling(&self) -> Levels {
+        self.cube.tiling()
+    }
 
     /// Its cubes' order: their planes read the rhs's tiles out of their stages.
     fn orders(&self) -> MatmulOperands<BindingOrder> {

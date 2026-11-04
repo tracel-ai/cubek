@@ -6,7 +6,9 @@ use crate::kernels::{
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
+use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulOperand;
+use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
 };
@@ -80,7 +82,8 @@ impl CubeShuffleMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let view = MatmulView::of::<CubeShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
+        let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)
+            .expect(MatmulView::PREPARED);
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let partitioning = &blueprint.partitioning;
         let (cube, leaf) = (&partitioning.cube_space().space, partitioning.leaf());
@@ -124,7 +127,8 @@ impl CubeShuffleMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let view = MatmulView::of::<CubeShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
+        let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)
+            .expect(MatmulView::PREPARED);
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let [rows, k] = [view.rows(), problem.k].map(|extent| extent as u64);
         let leaf = blueprint.partitioning.leaf();
@@ -168,7 +172,7 @@ impl CubeShuffleMatmulRoutine {
         settings: &CubeShuffleMatmulRoutineSettings,
     ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
         problem.check_plain()?;
-        let view = MatmulView::of::<CubeShuffleMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
         let partitioning = view.partitioning(
@@ -181,7 +185,6 @@ impl CubeShuffleMatmulRoutine {
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
             MatmulBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ());
-        microkernel.plane.check_vectors(&blueprint.widths)?;
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
             shared_memory: microkernel.shared_memory(&item, blueprint.partitioning.cells()),
@@ -199,7 +202,7 @@ impl CubeShuffleMatmulRoutine {
         packing: &Packing,
         settings: &CubeShuffleMatmulRoutineSettings,
     ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
-        let view = MatmulView::of::<CubeShuffleMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?;
         view.check_steps(hw)?;
         let item = view.work_item();
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
@@ -304,6 +307,9 @@ impl Routine for CubeShuffleMatmulRoutine {
 }
 
 impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
+    /// Its planes each hold every row.
+    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
@@ -484,16 +490,11 @@ mod tests {
         let words = hw.load_values(ElemType::UInt(UIntKind::U32));
         let operand = Operand::of_scheme(&scheme, K, [K, N])
             .expect("one axis a block")
-            .stored(
+            .in_tile_order(
+                tile_order::TileOrder::laid(&scheme, tile_order::TileWords::RowByRow, (128, 8))
+                    .expect("NVFP4 is tile order"),
                 N,
                 words,
-                Some((
-                    &tile_order::values_axes(N),
-                    tile_order::TileOrder::NVFP4
-                        .values_storage(N, (128, 8), words)
-                        .tiles(),
-                )),
-                None,
             )
             .expect("tile order is read");
         let packing = Packing { operand, scheme };

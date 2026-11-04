@@ -5,7 +5,7 @@ use crate::matmul::plane::{
 };
 use crate::matmul::{
     MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,
-    MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStage, MatmulStep, MatmulWorkItem,
+    MatmulOperands, MatmulRows, MatmulStage, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
@@ -465,14 +465,6 @@ impl PlaneFragmentMicrokernel {
         Some(fragments.units(&[]))
     }
 
-    /// The levels inside one plane's tile, which a routine states the rest of the partitioning
-    /// around: the steps of `K` it walks through one stage, and below them the instructions the
-    /// plane holds — a grid of fragments, one matrix instruction each, or each unit's block of the
-    /// software instruction's cells, one cell of every instruction it holds.
-    pub fn tiling(&self) -> Levels {
-        self.tiling_levels(&[], &[])
-    }
-
     /// [`tiling`](Self::tiling), its leaf also spanning `held`: axes of the caller's that this
     /// product does not name, each whole at every leaf, as attention's value holds the head dim
     /// its score contracts.
@@ -808,8 +800,13 @@ impl core::fmt::Display for PlaneFragmentMicrokernel {
 }
 
 impl MatmulMicrokernel for PlaneFragmentMicrokernel {
-    /// A plane owns a tile of the along_m.
-    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
+    /// The levels inside one plane's tile, which a routine states the rest of the partitioning
+    /// around: the steps of `K` it walks through one stage, and below them the instructions the
+    /// plane holds — a grid of fragments, one matrix instruction each, or each unit's block of the
+    /// software instruction's cells, one cell of every instruction it holds.
+    fn tiling(&self) -> Levels {
+        self.tiling_levels(&[], &[])
+    }
 
     fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.orders

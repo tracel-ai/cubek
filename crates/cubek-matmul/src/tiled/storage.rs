@@ -21,8 +21,12 @@ use cubecl::{
 };
 
 use cubecl::quant::scheme::QuantScheme;
+use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulStep};
-use cubek_std::layout::{stored::Operand, tile_order::TileOrder};
+use cubek_std::layout::{
+    stored::Operand,
+    tile_order::{TileOrder, TileWords},
+};
 use cubek_std::{Hardware, matmul_axes::K, value_element};
 
 use crate::definition::MatmulSetupError;
@@ -88,12 +92,36 @@ pub enum StoredValues {
     Packed(QuantScheme),
 }
 
+/// The order a packed matrix's tiles lie in on `hw` ([`TileWords`]), which its writer stores and
+/// every reader binds: row by row where a reader takes a row's run whole, the TMA engine filling
+/// a stage or a tensor-core plane decoding one ([`PlaneFragmentMicrokernel::decodes_on`]); block
+/// by block everywhere else, where software reads the tile a load at a time and a load is then a
+/// block of several rows.
+pub fn tile_words(hw: &Hardware) -> TileWords {
+    match hw.bulk_tensor_copy() || PlaneFragmentMicrokernel::decodes_on(hw) {
+        true => TileWords::RowByRow,
+        false => TileWords::BlockByBlock,
+    }
+}
+
+/// The tile order a writer lays a matrix packed under `scheme` in on `hw`, in `tile`: the order
+/// the device's readers take ([`tile_words`]), where the tile holds it ([`TileOrder::laid`]).
+/// Readers read it back off the matrix ([`TileOrder::of_matrix`]), never off a device. `None` for
+/// a scheme tile order does not store, or a tile not whole blocks of `k`.
+pub fn tile_order_on(
+    hw: &Hardware,
+    scheme: &QuantScheme,
+    tile: (usize, usize),
+) -> Option<TileOrder> {
+    TileOrder::laid(scheme, tile_words(hw), tile)
+}
+
 /// The tile a load stores matmul input `input` in on `hw`, over the input's two axes: the step a
 /// product against it takes under the largest instruction `hw` offers
 /// ([`MatmulStep::stored_on`]), the other input contracted at `contracted`.
 ///
 /// `None` where no tile is worth storing: no instruction contracts the input on `hw`; codes under
-/// a scheme tile order does not store ([`TileOrder::of`]); or elements on a device whose TMA
+/// a scheme tile order does not store ([`TileOrder::stores`]); or elements on a device whose TMA
 /// engine fills the stages, which the fastest float routine fills from rows.
 ///
 /// The tile does not depend on the matrix's extents: a caller stores the input in it where it
@@ -106,7 +134,9 @@ pub fn stored_tile(
 ) -> Option<Space> {
     let (operand, element) = match values {
         StoredValues::Packed(scheme) => {
-            TileOrder::of(&scheme)?;
+            if !TileOrder::stores(&scheme) {
+                return None;
+            }
             let operand = Operand::of_scheme(&scheme, K, input.axes())?;
             (operand, value_element(scheme.value)?)
         }
@@ -117,6 +147,33 @@ pub fn stored_tile(
     Some(Space::new(
         &input.axes().map(|axis| (axis, step.along(axis))),
     ))
+}
+
+/// How a matrix of `element` is stored on `client`'s device in `tile`, a tile over its rows and
+/// its columns, `[(rows, extent), (columns, extent)]`, such as [`stored_tile`] gives. A tile's rows
+/// lie one after another, each split at the widest read the device serves that the row holds
+/// whole, and the tiles lie row-major. A reader takes a stated piece whole, so the matrix is
+/// stored for the read it is read in.
+pub fn matrix_storage(
+    client: &Client,
+    element: ElemType,
+    [(rows, tile_rows), (columns, tile_columns)]: [(Axis, usize); 2],
+) -> StoragePartitioning {
+    let read = client
+        .io_optimized_vector_sizes(element.size())
+        .filter(|&width| tile_columns.is_multiple_of(width))
+        .max()
+        .unwrap_or(1);
+    // A piece of one is no piece: stated, it would be a dim of the buffer.
+    let pieces: Vec<_> = [
+        (columns, read),
+        (columns, tile_columns / read),
+        (rows, tile_rows),
+    ]
+    .into_iter()
+    .filter(|&(_, count)| count > 1)
+    .collect();
+    StorageLevels::new(&pieces).grid(&[columns, rows])
 }
 
 /// How a tensor of one shape lies stored as a [`StoragePartitioning`] states: its metadata in
@@ -460,5 +517,51 @@ impl Relayout {
             dtype,
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tile_words;
+    use cubecl::features::MmaConfig;
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubek_std::devices;
+    use cubek_std::layout::tile_order::TileWords;
+
+    /// The `16 × 8 × 16` mma the tensor-core plane decodes through.
+    fn plane_fragment_mma() -> MmaConfig {
+        let f16 = ElemType::Float(FloatKind::F16);
+        MmaConfig {
+            a_type: f16,
+            b_type: f16,
+            cd_type: ElemType::Float(FloatKind::F32),
+            m: 16,
+            n: 8,
+            k: 16,
+        }
+    }
+
+    /// A device whose TMA engine fills stages, or whose tensor-core plane decodes, reads a row's
+    /// run whole, so its tiles lie row by row; every other device reads them a load at a time,
+    /// block by block.
+    #[test]
+    fn a_line_reader_keeps_its_tiles_line_by_line() {
+        assert_eq!(tile_words(&devices::h100()), TileWords::RowByRow);
+        assert_eq!(tile_words(&devices::rtx_pro_6000()), TileWords::RowByRow);
+        assert_eq!(
+            tile_words(&devices::offering_mma(
+                devices::m2_pro(),
+                [plane_fragment_mma()]
+            )),
+            TileWords::RowByRow,
+            "a tensor-core plane without TMA"
+        );
+        for software in [
+            devices::strix_halo(),
+            devices::rdna_range(),
+            devices::m2_pro(),
+        ] {
+            assert_eq!(tile_words(&software), TileWords::BlockByBlock);
+        }
     }
 }
