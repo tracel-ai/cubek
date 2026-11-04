@@ -50,10 +50,11 @@ impl HypercubeStagedMicrokernelSettings {
         Self::boxed(PlaneFragmentMicrokernelSettings::grid(4, 4, 2), (2, 4));
 
     /// Eight by two fragments two steps deep on each of two by two planes.
-    pub const SQUARE: Self = Self::boxed(PlaneFragmentMicrokernelSettings::grid(8, 2, 2), (2, 2));
+    pub(crate) const SQUARE: Self =
+        Self::boxed(PlaneFragmentMicrokernelSettings::grid(8, 2, 2), (2, 2));
 
     /// The default plane's grid two steps deep on four planes along `m`.
-    pub const DEEP_ALONG_M: Self =
+    pub(crate) const DEEP_ALONG_M: Self =
         Self::boxed(PlaneFragmentMicrokernelSettings::grid(4, 4, 2), (4, 1));
 
     /// `plane` on each of `planes` (along `m` by along `n`), the cube's other settings
