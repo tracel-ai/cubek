@@ -11,7 +11,7 @@ use cubek_microkernel::matmul::{
     MatmulStoredTile,
 };
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::Packing;
+use cubek_std::layout::stored::{BlockScales, Packing, ScalesLaid};
 use cubek_std::matmul_axes::{EXPERT, K, batch_axis};
 use cubek_std::routine::EstimatedProblem;
 
@@ -132,6 +132,25 @@ impl MatmulRoutineProblem {
         match self.index {
             None => Ok(()),
             Some(_) => Err(MATMUL_INDEX_UNREAD),
+        }
+    }
+
+    /// Checks every packed input's block scales lie where a launch binding them as
+    /// `block_scales` reads them: what a routine whose microkernel may take them as words
+    /// declines, those words being bound from rows.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_SCALE_WORDS_IN_TILES`], for scales taken as words over an input keeping them in
+    /// tiles of their own.
+    pub fn check_block_scales(&self, block_scales: BlockScales) -> Result<(), Refusal> {
+        let scales_in_tiles = [self.packings.lhs, self.packings.rhs]
+            .into_iter()
+            .flatten()
+            .any(|packing| packing.operand.scales_laid() == ScalesLaid::InTiles);
+        match block_scales == BlockScales::Words && scales_in_tiles {
+            true => Err(MATMUL_SCALE_WORDS_IN_TILES),
+            false => Ok(()),
         }
     }
 

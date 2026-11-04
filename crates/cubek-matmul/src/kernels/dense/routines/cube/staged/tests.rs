@@ -1560,7 +1560,7 @@ mod base {
     fn scale_words_are_declined_over_scales_in_tiles() {
         use crate::kernels::MATMUL_SCALE_WORDS_IN_TILES;
         use cubek_std::NVFP4_FORM;
-        use cubek_std::layout::stored::ScalesLaid;
+        use cubek_std::layout::stored::{BlockScales, ScalesLaid};
         use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 
         let hw = devices::offering_block_scaled(devices::h100());
@@ -1591,6 +1591,11 @@ mod base {
         inputs.rhs = Some(rhs);
         let problem =
             MatmulRoutineProblem::packed(128, 256, 512, ElemType::Float(FloatKind::F16), inputs);
+        assert_eq!(
+            problem.check_block_scales(BlockScales::Words),
+            Err(MATMUL_SCALE_WORDS_IN_TILES)
+        );
+        assert_eq!(problem.check_block_scales(BlockScales::Fields), Ok(()));
         let refusals: Vec<_> = CubeStagedMatmulRoutine
             .block_scaled_settings(&hw)
             .iter()
