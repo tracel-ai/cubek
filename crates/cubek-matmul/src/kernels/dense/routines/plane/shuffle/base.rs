@@ -7,7 +7,9 @@ use core::num::NonZeroUsize;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Axis, TileTensorLaunch};
+use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulOperand;
+use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -99,10 +101,14 @@ impl PlaneShuffleMatmulRoutine {
     ) -> Result<PlaneShuffleMatmulRoutineBlueprint, Refusal> {
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
-        let blueprint =
-            MatmulBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ());
-        microkernel.check_vectors(&blueprint.widths)?;
-        Ok(blueprint)
+        Ok(MatmulBlueprint::new(
+            hw,
+            problem,
+            microkernel,
+            partitioning,
+            vectorization,
+            (),
+        ))
     }
 
     /// [`Routine::estimate`] against a float rhs.
@@ -113,7 +119,8 @@ impl PlaneShuffleMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
+        let view = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)
+            .expect(MatmulView::PREPARED);
         let (item, partitioning) = (view.work_item(), &blueprint.partitioning);
         let microkernel = &blueprint.microkernel;
         let (cube, leaf) = (partitioning.cube_space().space, partitioning.leaf());
@@ -156,7 +163,8 @@ impl PlaneShuffleMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
+        let view = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)
+            .expect(MatmulView::PREPARED);
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let [rows, k] = [view.rows(), problem.k].map(|extent| extent as u64);
         // A step of the plane: one unit's block of `K`, over both axes it is split into, by the
@@ -201,7 +209,7 @@ impl PlaneShuffleMatmulRoutine {
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Refusal> {
         problem.check_plain()?;
-        let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?;
         let microkernel =
             PlaneShuffleMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
         let partitioning = view.plane_partitioning(
@@ -231,11 +239,12 @@ impl PlaneShuffleMatmulRoutine {
             columns,
             planes,
         } = PlaneShufflePackedPlacement::new(hw, problem, settings)?;
-        let partitioning = MatmulView::of::<PlaneShuffleMicrokernel>(problem)?.plane_partitioning(
-            microkernel.tiling(),
-            &[columns],
-            PlaneOrder::new(&[(columns, planes)], CubeOrder::RowMajor),
-        );
+        let partitioning = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?
+            .plane_partitioning(
+                microkernel.tiling(),
+                &[columns],
+                PlaneOrder::new(&[(columns, planes)], CubeOrder::RowMajor),
+            );
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
             shared_memory: 0,
@@ -271,7 +280,7 @@ impl PlaneShufflePackedPlacement {
         if problem.packings.rhs.is_none() {
             return Err(MATMUL_STREAMED_INPUT_FLOAT);
         }
-        let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?;
         view.check_steps(hw)?;
         let microkernel =
             PlaneShuffleMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
@@ -407,6 +416,9 @@ impl Routine for PlaneShuffleMatmulRoutine {
 }
 
 impl MatmulRoutine<PlaneShuffleMicrokernel> for PlaneShuffleMatmulRoutine {
+    /// It holds every row, compiled in, against each step of the rhs.
+    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
@@ -474,7 +486,8 @@ mod tests {
     }
 
     /// Every setting prepares wherever the device commits to a plane width, and declines with its
-    /// reason wherever it does not; a block of more than one column declines a col rhs.
+    /// reason wherever it does not; a block of more than one column writes a col rhs's output
+    /// one element at a time.
     #[test]
     fn a_setting_runs_where_the_device_commits_to_a_width() {
         let problem = projection(1, MatmulLayout::Col);
@@ -487,9 +500,10 @@ mod tests {
                     PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings),
                     hw.plane_size().is_ok(),
                 ) {
-                    (Ok(_), true) => {}
-                    (Err(error), true) if settings.microkernel.columns.get() > 1 => {
-                        assert_eq!(error, PlaneShuffleMicrokernel::COL_RHS_ONE_COLUMN_A_UNIT)
+                    (Ok((blueprint, _)), true) => {
+                        if settings.microkernel.columns.get() > 1 {
+                            assert_eq!(blueprint.widths.out, 1, "{settings} on {hw:?}");
+                        }
                     }
                     (Err(Refusal::Declined { why: details }), false) => {
                         assert_eq!(details, PlaneShuffleMicrokernel::DECLINE, "{settings}")
@@ -521,21 +535,21 @@ mod tests {
         assert_eq!(widths(MatmulLayout::Row), (4, 8, 8));
     }
 
-    /// A col rhs whose `K` no line wider than one divides binds one element at a time, which the
-    /// plane shuffle cannot read; a row rhs of the same shape runs, and so does a col rhs whose
-    /// overhanging `K` a wide line divides, its mask testing whole lines.
+    /// A col rhs whose `K` no line wider than one divides binds one element at a time and runs,
+    /// as a row rhs of the same shape does; a col rhs whose overhanging `K` a wide line divides
+    /// is read in whole lines, its mask testing them.
     #[test]
-    fn a_col_rhs_needs_vectors_along_k() {
+    fn a_col_rhs_reads_whatever_width_k_allows() {
         let hw = devices::strix_halo();
         let problem = |k, rhs_layout| {
             MatmulRoutineProblem::dense(1, 2048, k, F16).laid(MatmulOperand::Rhs, rhs_layout)
         };
         let ragged = |rhs_layout| problem(2041, rhs_layout);
         let settings = PlaneShuffleMatmulRoutineSettings::DEFAULT;
-        assert!(matches!(
-            PlaneShuffleMatmulRoutine.prepare(&hw, &ragged(MatmulLayout::Col), &settings),
-            Err(error) if error == PlaneShuffleMicrokernel::COL_RHS_NEEDS_VECTORS_ALONG_K
-        ));
+        let (ragged_col, _) = PlaneShuffleMatmulRoutine
+            .prepare(&hw, &ragged(MatmulLayout::Col), &settings)
+            .expect("a col rhs one element wide runs");
+        assert_eq!(ragged_col.widths.rhs, 1);
         assert!(
             PlaneShuffleMatmulRoutine
                 .prepare(&hw, &ragged(MatmulLayout::Row), &settings)
@@ -610,9 +624,10 @@ mod tests {
     fn a_transactions_worth_of_units_moves_with_the_depth() {
         let hw = devices::strix_halo();
         let units = |element, depth, rhs_layout| {
-            let item = MatmulView::of::<PlaneShuffleMicrokernel>(
+            let item = MatmulView::new(
                 &MatmulRoutineProblem::dense(1, 2048, 2048, element)
                     .laid(MatmulOperand::Rhs, rhs_layout),
+                PlaneShuffleMatmulRoutine::ROWS_KIND,
             )
             .expect("an rhs lined along an axis")
             .work_item();

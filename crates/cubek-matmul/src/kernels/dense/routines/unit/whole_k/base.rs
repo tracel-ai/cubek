@@ -7,8 +7,11 @@ use core::num::NonZeroUsize;
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubek_microkernel::matmul::unit::{UnitWholeKMicrokernel, UnitWholeKMicrokernelSettings};
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStagingCount};
+use cubek_microkernel::matmul::MatmulMicrokernel;
+use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
+use cubek_microkernel::matmul::{
+    MatmulLayout, MatmulOperand, MatmulOperands, MatmulRowsKind, MatmulStagingCount, MatmulWorkItem,
+};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, M, N};
@@ -16,12 +19,16 @@ use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// `out = lhs · rhs` with every unit owning every row of a run of the output's columns, walking all
-/// of `K` alone. The routine that does not stage on a device that commits to no plane width: a
-/// plane's units share nothing, so any width is correct.
+/// of `K` alone: the unit registers microkernel, its block holding every row. The routine that does
+/// not stage on a device that commits to no plane width: a plane's units share nothing, so any
+/// width is correct.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UnitWholeKMatmulRoutine;
 
 impl UnitWholeKMatmulRoutine {
+    /// Steps of `K` a unit holds at once: it loads a step once the last is summed.
+    const STAGES_IN_FLIGHT: u32 = 1;
+
     /// Blocks along `n` a plane's units take in turns under `partitioning`, as its units level
     /// states them.
     fn blocks_per_plane(partitioning: &MatmulPartitioning) -> usize {
@@ -31,9 +38,64 @@ impl UnitWholeKMatmulRoutine {
     }
 }
 
+/// One unit's step, `columns × depth`, counted in reads of the rhs rather than elements, so one
+/// setting loads the same bytes a step at every element size and on every device. The routine
+/// sizes its microkernel's block in elements from it, as the rhs lies
+/// ([`microkernel`](Self::microkernel)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UnitWholeKBlock {
+    /// The output's columns one unit reads a step.
+    pub columns: NonZeroUsize,
+    /// The steps of `K` one unit reads a step, their loads issued together.
+    pub depth: NonZeroUsize,
+}
+
+impl UnitWholeKBlock {
+    pub const DEFAULT: Self = Self {
+        columns: NonZeroUsize::MIN,
+        depth: NonZeroUsize::new(8).unwrap(),
+    };
+
+    /// The default's columns, `depth` steps of `K` a step.
+    pub const fn deep(depth: usize) -> Self {
+        Self {
+            depth: NonZeroUsize::new(depth).unwrap(),
+            ..Self::DEFAULT
+        }
+    }
+
+    /// The microkernel's block for `item` on `hw`: each read the widest vector the device reads
+    /// the rhs in, along `K` for a col rhs and along `N` for a row rhs. Its rows are unread,
+    /// since the item holds every row whole.
+    fn microkernel(
+        &self,
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+    ) -> UnitRegistersMicrokernelSettings {
+        let vector = hw.vector_ceiling(item.elements.rhs);
+        let (columns, depth) = match item.layouts.rhs {
+            MatmulLayout::Col => (self.columns.get(), self.depth.get() * vector),
+            MatmulLayout::Row | MatmulLayout::Strided => {
+                (self.columns.get() * vector, self.depth.get())
+            }
+        };
+        UnitRegistersMicrokernelSettings {
+            rows: NonZeroUsize::MIN,
+            columns: NonZeroUsize::new(columns).unwrap(),
+            depth: NonZeroUsize::new(depth).unwrap(),
+        }
+    }
+}
+
+impl core::fmt::Display for UnitWholeKBlock {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "block={}x{}", self.columns, self.depth)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitWholeKMatmulRoutineSettings {
-    pub microkernel: UnitWholeKMicrokernelSettings,
+    pub block: UnitWholeKBlock,
     /// Planes the launch groups in one cube, side by side along `n`.
     pub planes: NonZeroUsize,
     /// Blocks along `n` one plane's units take in turns, however many units the plane has.
@@ -43,7 +105,7 @@ pub struct UnitWholeKMatmulRoutineSettings {
 impl UnitWholeKMatmulRoutineSettings {
     /// The setting that reads a col rhs, the layout an rhs is most often stored in, fastest.
     pub const DEFAULT: Self = Self {
-        microkernel: UnitWholeKMicrokernelSettings::DEFAULT,
+        block: UnitWholeKBlock::DEFAULT,
         planes: NonZeroUsize::new(4).unwrap(),
         blocks_per_plane: NonZeroUsize::new(8).unwrap(),
     };
@@ -54,22 +116,23 @@ impl core::fmt::Display for UnitWholeKMatmulRoutineSettings {
         write!(
             f,
             "unit-whole-k-matmul {} planes={} blocks_per_plane={}",
-            self.microkernel, self.planes, self.blocks_per_plane
+            self.block, self.planes, self.blocks_per_plane
         )
     }
 }
 
-pub type UnitWholeKMatmulRoutineBlueprint = MatmulBlueprint<UnitWholeKMicrokernel>;
+pub type UnitWholeKMatmulRoutineBlueprint = MatmulBlueprint<UnitRegistersMicrokernel>;
 
 impl Routine for UnitWholeKMatmulRoutine {
     type Problem = MatmulRoutineProblem;
-    type Microkernel = UnitWholeKMicrokernel;
+    type Microkernel = UnitRegistersMicrokernel;
     type Settings = UnitWholeKMatmulRoutineSettings;
     type Blueprint = UnitWholeKMatmulRoutineBlueprint;
     type Partitioning = MatmulPartitioning;
 
     /// Empty where the device commits to a plane width, since the shuffles serve it. Otherwise a
-    /// star off the default, which leads:
+    /// star off the default, which leads (a shallower and a deeper block: a deeper step issues
+    /// more loads together and holds more registers):
     /// [`launch_first_served_on`](MatmulRoutine::launch_first_served_on) runs the first setting
     /// that serves.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
@@ -78,12 +141,8 @@ impl Routine for UnitWholeKMatmulRoutine {
         }
         let lead = Self::Settings::DEFAULT;
         let count = |n: usize| NonZeroUsize::new(n).unwrap();
-        let microkernels = UnitWholeKMicrokernel::settings(hw)
-            .into_iter()
-            .map(|microkernel| Self::Settings {
-                microkernel,
-                ..lead
-            });
+        let blocks = [UnitWholeKBlock::deep(4), UnitWholeKBlock::deep(16)]
+            .map(|block| Self::Settings { block, ..lead });
         let planes = [1, 8].map(|planes| Self::Settings {
             planes: count(planes),
             ..lead
@@ -92,14 +151,19 @@ impl Routine for UnitWholeKMatmulRoutine {
             blocks_per_plane: count(blocks),
             ..lead
         });
-        microkernels.chain(planes).chain(shares).collect()
+        [lead]
+            .into_iter()
+            .chain(blocks)
+            .chain(planes)
+            .chain(shares)
+            .collect()
     }
 
     /// Nothing of its own: it walks the launch's planes and their units, and its microkernel makes
     /// every access.
     fn vectorize(
         &self,
-        microkernel: &UnitWholeKMicrokernel,
+        microkernel: &UnitRegistersMicrokernel,
         _: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
@@ -116,7 +180,7 @@ impl Routine for UnitWholeKMatmulRoutine {
         estimate: &mut KernelEstimate,
     ) {
         let (item, partitioning) = (
-            MatmulView::of::<UnitWholeKMicrokernel>(problem)
+            MatmulView::new(problem, Self::ROWS_KIND)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
             &blueprint.partitioning,
@@ -129,7 +193,7 @@ impl Routine for UnitWholeKMatmulRoutine {
         };
         let staging = MatmulStagingCount {
             depth: block.extent(K),
-            stages_in_flight: UnitWholeKMicrokernel::STAGES_IN_FLIGHT as u32,
+            stages_in_flight: Self::STAGES_IN_FLIGHT,
             runs: MatmulOperands {
                 lhs: cube.extent(K),
                 rhs: rhs_run,
@@ -158,9 +222,10 @@ impl Routine for UnitWholeKMatmulRoutine {
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_plain()?;
         problem.check_unindexed()?;
-        let view = MatmulView::of::<UnitWholeKMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, Self::ROWS_KIND)?;
+        let item = view.work_item();
         let microkernel =
-            UnitWholeKMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
+            UnitRegistersMicrokernel::best(hw, &item, &settings.block.microkernel(hw, &item))?;
         let planes = settings.planes.get();
         let plane_width = (hw.properties.hardware.max_units_per_cube / planes as u32)
             .min(hw.dispatch_plane_size())
@@ -176,7 +241,6 @@ impl Routine for UnitWholeKMatmulRoutine {
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
             MatmulBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ());
-        microkernel.check_vectors(&blueprint.widths)?;
         let cube = CubeResources {
             plane_width,
             shared_memory: 0,
@@ -186,7 +250,10 @@ impl Routine for UnitWholeKMatmulRoutine {
     }
 }
 
-impl MatmulRoutine<UnitWholeKMicrokernel> for UnitWholeKMatmulRoutine {
+impl MatmulRoutine<UnitRegistersMicrokernel> for UnitWholeKMatmulRoutine {
+    /// A unit holds every row, compiled in, against each step of the rhs.
+    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
@@ -219,7 +286,7 @@ impl MatmulRoutine<UnitWholeKMicrokernel> for UnitWholeKMatmulRoutine {
 mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::matmul::MatmulLayout;
+    use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -267,7 +334,7 @@ mod tests {
     fn the_default_prepares_every_few_row_projection_where_the_shuffles_decline() {
         let settings = UnitWholeKMatmulRoutineSettings::DEFAULT;
         for hw in uncommitted() {
-            for m in 1..=UnitWholeKMicrokernel::MAX_ROWS {
+            for m in 1..=PlaneShuffleMicrokernel::MAX_ROWS {
                 for (n, k) in [(4096, 2048), (2048, 2048), (6144, 2048), (2048, 6144)] {
                     for rhs in [MatmulLayout::Col, MatmulLayout::Row] {
                         let prepared =
@@ -315,10 +382,10 @@ mod tests {
                 &settings,
             )
         };
-        assert!(rows(UnitWholeKMicrokernel::MAX_ROWS).is_ok());
+        assert!(rows(PlaneShuffleMicrokernel::MAX_ROWS).is_ok());
         assert_eq!(
-            rows(UnitWholeKMicrokernel::MAX_ROWS + 1).err(),
-            Some(UnitWholeKMicrokernel::ROWS_OUT_OF_RANGE)
+            rows(PlaneShuffleMicrokernel::MAX_ROWS + 1).err(),
+            Some(UnitRegistersMicrokernel::WHOLE_ROWS_OUT_OF_RANGE)
         );
     }
 

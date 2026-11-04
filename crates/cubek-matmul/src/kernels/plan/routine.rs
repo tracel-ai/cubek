@@ -66,11 +66,12 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> RoutinePlan<R, M, SM> {
         destination: &TensorHandle,
     ) -> Result<TensorHandle, Refusal> {
         let (hw, client) = (&call.hw, &call.client);
-        let tensors = MatmulTensors::writing_into::<M>(
+        let tensors = MatmulTensors::writing_into(
             client,
             call.lhs.tensor.clone(),
             call.rhs.tensor.clone(),
             PlainTensor::of_handle(destination.clone()),
+            R::ROWS_KIND,
         )?;
         let (blueprint, grid) = match &self.settings {
             None => self.routine.prepare_first_served(hw, &tensors.problem())?,

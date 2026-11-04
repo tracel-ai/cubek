@@ -1,5 +1,6 @@
-use crate::matmul::{MatmulOperand, MatmulOperands, MatmulRowsKind, MatmulWorkItem};
+use crate::matmul::{MatmulOperand, MatmulOperands, MatmulWorkItem};
 use cubecl::ir::ElemType;
+use cubecl::tile::Levels;
 use cubecl::tile::launch::Delivery;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
@@ -13,9 +14,8 @@ use cubek_std::microkernel::Microkernel;
 pub trait MatmulMicrokernel:
     Microkernel<WorkItem = MatmulWorkItem, Operand = MatmulOperand> + core::fmt::Display + 'static
 {
-    /// How its launches hold a product's rows, which decides how their tensors and their view read
-    /// the problem and what their kernels compile in.
-    const ROWS_KIND: MatmulRowsKind;
+    /// The levels inside one owner, which its routine lays the rest of the partitioning around.
+    fn tiling(&self) -> Levels;
 
     /// The order it reads each operand's tiles in, which the launch binds the operand in.
     fn orders(&self) -> MatmulOperands<BindingOrder>;
