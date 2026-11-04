@@ -109,7 +109,7 @@ impl PlaneFragmentMicrokernel {
 
     /// Whether `hw` runs a plane against a packed rhs for any lhs: for one of the
     /// 16-bit floats, summed in `f32`.
-    pub(crate) fn decodes_on(hw: &Hardware) -> bool {
+    pub fn decodes_on(hw: &Hardware) -> bool {
         let f32 = ElemType::Float(FloatKind::F32);
         [FloatKind::F16, FloatKind::BF16]
             .into_iter()
