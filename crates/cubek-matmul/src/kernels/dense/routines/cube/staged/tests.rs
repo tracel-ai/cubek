@@ -116,14 +116,7 @@ mod base {
     {
         settings
             .iter()
-            .map(|settings| {
-                (
-                    settings.to_string(),
-                    routine
-                        .prepare(hw, problem, settings)
-                        .map_err(|refusal| refusal),
-                )
-            })
+            .map(|settings| (settings.to_string(), routine.prepare(hw, problem, settings)))
             .collect()
     }
 

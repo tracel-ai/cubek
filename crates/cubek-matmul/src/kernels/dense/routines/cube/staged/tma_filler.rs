@@ -26,9 +26,9 @@ use cubek_std::routine::{Grid, Routine};
 /// rest walk them contracting, then each stores its own fragments. The two meet only on each
 /// slot's barriers.
 ///
-/// Refused where the TMA engine is ([`CubeStagedMatmulRoutine`](crate::kernels::CubeStagedMatmulRoutine)
-/// over a TMA fill), and where planes cannot be set aside: one stage in flight, a fragment that can
-/// bounce through a scratch, or planes splitting `K`
+/// Refused where the TMA engine cannot land the stages, as the TMA routine is, and where planes
+/// cannot be set aside: one stage in flight, a fragment that can bounce through a scratch, or
+/// planes splitting `K`
 /// ([`CubeStagedFillingRefusal`](cubek_microkernel::matmul::cube::CubeStagedFillingRefusal)).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedTmaFillerMatmulRoutine;
