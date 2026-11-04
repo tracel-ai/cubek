@@ -4,10 +4,12 @@
 
 mod cube;
 mod hypercube;
+mod key_heads;
 mod plane;
 mod unit;
 
 pub use cube::*;
 pub use hypercube::*;
+pub use key_heads::KeyHeads;
 pub use plane::*;
 pub use unit::*;
