@@ -55,6 +55,8 @@ impl<'a> CubeStagedPlacement<'a> {
     /// The first of `settings`' microkernels on `hw` for `problem`, its stages filled by `fill`
     /// and its box stored by `store`, placed one cube a box in `cube_order` and resolved. A
     /// microkernel decoding a packed input reads it in whole steps ([`MatmulView::check_steps`]).
+    /// A box the TMA engine stores is checked before resolving, which sizes the shared memory it
+    /// is drained into ([`CubeStagedTmaStoreRefusal`]).
     /// A stage an engine fills lands as it lies, so there a float product's planes read their
     /// stages undecoded, never rounded by the units on the way in.
     pub(crate) fn new(
@@ -93,6 +95,9 @@ impl<'a> CubeStagedPlacement<'a> {
                 MatmulView::ONE_CUBE_A_BOX,
             )
             .cube_space();
+        if store == CubeStagedStore::Tma {
+            check_tma_store(hw, problem, &contracted, &cube_space, &microkernel)?;
+        }
         let resolved = microkernel.resolve(hw, &contracted, &cube_space)?;
         Ok(Self {
             problem,
@@ -132,34 +137,6 @@ impl<'a> CubeStagedPlacement<'a> {
                 .rows_one_element_wide(operand, orders.get(operand))
         });
         match one_element_rows {
-            true => Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA),
-            false => Ok(()),
-        }
-    }
-
-    /// Whether the TMA engine can store its box, its cubes reaching the output as `write`
-    /// ([`CubeStagedTmaStoreRefusal`]), the output's rows more than one element wide.
-    pub(crate) fn check_tma_store(
-        &self,
-        hw: &Hardware,
-        write: MatmulCubeWrite,
-    ) -> Result<(), Refusal> {
-        let microkernel = self.microkernel();
-        let orders = microkernel.plane.orders;
-        if let Some(refusal) = CubeStagedTmaStoreRefusal::new(
-            hw,
-            &self.contracted,
-            &self.problem.buffers(orders),
-            &self.cube_space,
-            write,
-            microkernel.planes_along_k,
-        ) {
-            return Err(refusal.into());
-        }
-        match self
-            .problem
-            .rows_one_element_wide(MatmulOperand::Out, orders.out)
-        {
             true => Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA),
             false => Ok(()),
         }
@@ -218,6 +195,33 @@ impl<'a> CubeStagedPlacement<'a> {
             Some(_) => blueprint_in_blocks(hw, problem, &item, microkernel, partitioning, storage),
         };
         Ok((blueprint, grid))
+    }
+}
+
+/// Whether the TMA engine can store `microkernel`'s box of `problem`, stated as `contracted`, in the
+/// box `cube_space`, each cube writing its own box once ([`CubeStagedTmaStoreRefusal`]), the
+/// output's rows more than one element wide.
+fn check_tma_store(
+    hw: &Hardware,
+    problem: &MatmulRoutineProblem,
+    contracted: &MatmulWorkItem,
+    cube_space: &MatmulCubeSpace,
+    microkernel: &CubeStagedMicrokernel,
+) -> Result<(), Refusal> {
+    let orders = microkernel.plane.orders;
+    if let Some(refusal) = CubeStagedTmaStoreRefusal::new(
+        hw,
+        contracted,
+        &problem.buffers(orders),
+        cube_space,
+        MatmulCubeWrite::Replace,
+        microkernel.planes_along_k,
+    ) {
+        return Err(refusal.into());
+    }
+    match problem.rows_one_element_wide(MatmulOperand::Out, orders.out) {
+        true => Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA),
+        false => Ok(()),
     }
 }
 

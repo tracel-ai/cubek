@@ -445,35 +445,42 @@ mod base {
         devices::offering_wgmma(offering(devices::h100()), [WGMMA_F16])
     }
 
-    /// On a device with a warpgroup MMA, only the setting that asks for it runs it, on a col
-    /// rhs, and declines a row rhs it cannot read; every other setting prepares as it does
-    /// without one, on any other instruction.
+    /// On a device with a warpgroup MMA, only the warpgroup routine's setting runs it, on a col
+    /// rhs, and declines a row rhs it cannot read; every setting of the units' routine prepares as
+    /// it does without one, on any other instruction.
     #[test]
     fn only_the_setting_that_asks_for_it_runs_the_warpgroup_mma() {
         let hw = hopper();
-        let settings = CubeStagedMatmulRoutine.settings(&hw);
-        let asks = |settings: &CubeStagedMatmulRoutineSettings| {
-            settings.microkernel.plane.transport == PlaneFragmentTransport::Wgmma
-        };
-        assert_eq!(settings.iter().filter(|s| asks(s)).count(), 1);
+        let wgmma = CubeStagedWgmmaMatmulRoutine.settings(&hw);
+        assert_eq!(wgmma.len(), 1);
+        assert!(
+            CubeStagedMatmulRoutine
+                .settings(&hw)
+                .iter()
+                .all(|settings| settings.microkernel.plane.transport
+                    != PlaneFragmentTransport::Wgmma)
+        );
         for (problem, col) in [(problem(), false), (col_rhs(), true)] {
-            for (position, settings) in settings.iter().enumerate() {
-                let prepared = CubeStagedMatmulRoutine.prepare(&hw, &problem, settings);
-                match (asks(settings), col, prepared) {
-                    (true, true, Ok((blueprint, _))) => assert!(matches!(
-                        blueprint.microkernel.plane.instruction,
-                        PlaneFragmentInstruction::Wgmma { n: 128, .. }
-                    )),
-                    (true, false, Err(Refusal::Declined { .. })) => {}
-                    (false, _, Ok((blueprint, _))) => assert!(
+            let prepared = CubeStagedWgmmaMatmulRoutine.prepare(&hw, &problem, &wgmma[0]);
+            match (col, prepared) {
+                (true, Ok((blueprint, _))) => assert!(matches!(
+                    blueprint.microkernel.plane.instruction,
+                    PlaneFragmentInstruction::Wgmma { n: 128, .. }
+                )),
+                (false, Err(Refusal::Declined { .. })) => {}
+                (_, prepared) => panic!("on a col rhs {col}: {prepared:?}"),
+            }
+            for (position, settings) in CubeStagedMatmulRoutine.settings(&hw).iter().enumerate() {
+                match CubeStagedMatmulRoutine.prepare(&hw, &problem, settings) {
+                    Ok((blueprint, _)) => assert!(
                         !matches!(
                             blueprint.microkernel.plane.instruction,
                             PlaneFragmentInstruction::Wgmma { .. }
                         ),
                         "{settings}"
                     ),
-                    (false, _, Err(Refusal::SharedMemoryPastDevice { .. })) if position > 0 => {}
-                    (_, _, prepared) => panic!("{settings} on a col rhs {col}: {prepared:?}"),
+                    Err(Refusal::SharedMemoryPastDevice { .. }) if position > 0 => {}
+                    prepared => panic!("{settings} on a col rhs {col}: {prepared:?}"),
                 }
             }
         }

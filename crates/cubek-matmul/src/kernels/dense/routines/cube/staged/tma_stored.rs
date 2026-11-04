@@ -143,7 +143,8 @@ impl Routine for CubeStagedTmaStoredMatmulRoutine {
     }
 
     /// As [`CubeStagedTmaMatmulRoutine`](crate::kernels::CubeStagedTmaMatmulRoutine)'s, the TMA
-    /// engine checked against the box it stores too.
+    /// engine checked against the box it stores too, before the box is sized
+    /// ([`CubeStagedPlacement::new`]).
     fn prepare(
         &self,
         hw: &Hardware,
@@ -162,7 +163,6 @@ impl Routine for CubeStagedTmaStoredMatmulRoutine {
             fill,
             CubeStagedStore::Tma,
         )?;
-        placement.check_tma_store(hw, Self::WRITE)?;
         placement.check_tma_fill(hw)?;
         placement.prepare(hw)
     }
