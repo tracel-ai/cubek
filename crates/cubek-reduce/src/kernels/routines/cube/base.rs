@@ -99,7 +99,7 @@ impl Routine for CubeReduceRoutine {
 
 /// Bytes of the slot a plane meets the others through: one carrier of `width` lanes, its values
 /// in the accumulator's element and, for an argmax or a top-k, an index beside each.
-fn slot_bytes(problem: &ReduceRoutineProblem, width: usize) -> usize {
+pub(crate) fn slot_bytes(problem: &ReduceRoutineProblem, width: usize) -> usize {
     let value = width * problem.elements.accumulator.size();
     match problem.operation.carrier() {
         ReduceCarrier::Values => value,

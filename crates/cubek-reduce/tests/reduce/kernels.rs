@@ -1,13 +1,14 @@
 //! The reduce routines on the tile stack, against a CPU reference: a rank-3 tensor reduced along
-//! each of its dims, every operation, its values and its rows as they lie.
+//! each of its dims, every operation, its values and its rows as they lie; and the hypercube's
+//! rows split into parts.
 
 use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_reduce::kernels::{
-    CubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceRoutine, ReduceRoutineProblem,
-    ReduceTensors, UnitReduceRoutine, launch_reduce_routine,
+    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceRoutine,
+    ReduceRoutineProblem, ReduceTensors, UnitReduceRoutine, launch_reduce_routine,
 };
 use cubek_std::Hardware;
 use cubek_std::devices;
@@ -146,12 +147,31 @@ fn launch<R: ReduceRoutine<M> + core::fmt::Debug, M>(
         .unwrap_or_else(|why| panic!("{routine:?} {problem:?}: {why:?}"));
 }
 
+/// The last setting of `routine` this device prepares the problem at, launched: the hypercube's
+/// shortest parts, so that short rows still split.
+fn launch_last<R: ReduceRoutine<M> + core::fmt::Debug, M>(
+    routine: &R,
+    hw: &Hardware,
+    tensors: &ReduceTensors,
+) {
+    let problem = tensors.problem();
+    let settings = routine
+        .settings(hw)
+        .into_iter()
+        .rev()
+        .find(|settings| routine.prepare(hw, problem, settings).is_ok())
+        .unwrap_or_else(|| panic!("{routine:?} prepares no setting for {problem:?}"));
+    launch_reduce_routine(routine, tensors, &settings)
+        .unwrap_or_else(|why| panic!("{routine:?} {problem:?}: {why:?}"));
+}
+
 /// Which routine a check launches.
 #[derive(Debug, Clone, Copy)]
 enum Scope {
     Unit,
     Plane,
     Cube,
+    Hypercube,
 }
 
 fn check(scope: Scope, shape: &[usize], axis: usize, operation: ReduceOperation) {
@@ -188,6 +208,7 @@ fn check(scope: Scope, shape: &[usize], axis: usize, operation: ReduceOperation)
         Scope::Unit => launch(&UnitReduceRoutine, &hw, &tensors),
         Scope::Plane => launch(&PlaneReduceRoutine, &hw, &tensors),
         Scope::Cube => launch(&CubeReduceRoutine, &hw, &tensors),
+        Scope::Hypercube => launch_last(&HypercubeReduceRoutine, &hw, &tensors),
     }
     let host = match out_elem {
         I32 => HostDataType::I32,
@@ -246,6 +267,22 @@ fn every_routine_reduces_every_dim_like_the_cpu() {
             for operation in OPERATIONS {
                 check(scope, &[2, 5, 300], axis, operation);
             }
+        }
+    }
+}
+
+/// The hypercube splits rows into parts, the last one short, and merges them: a `[2, 3, 5000]`
+/// tensor along its contiguous dim, in three parts; across it, a `[3, 2100, 4]` tensor along its
+/// middle dim, in five; and a row of one part. Where the device commits to a plane width.
+#[test]
+fn the_hypercube_reduces_split_rows_like_the_cpu() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    if hw.plane_dim().is_err() {
+        return;
+    }
+    for (shape, axis) in [([2, 3, 5000], 2), ([3, 2100, 4], 1), ([2, 3, 5000], 1)] {
+        for operation in OPERATIONS {
+            check(Scope::Hypercube, &shape, axis, operation);
         }
     }
 }

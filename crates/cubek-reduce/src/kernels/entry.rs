@@ -2,8 +2,8 @@
 //! once the routines have been measured against today's kernels, and what the suite runs on both.
 
 use crate::kernels::{
-    CubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceRoutine, ReduceTensors,
-    UnitReduceRoutine,
+    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceRoutine,
+    ReduceSplitExtents, ReduceTensors, UnitReduceRoutine,
 };
 use crate::launch::RoutineStrategy;
 use crate::{
@@ -13,10 +13,13 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::Hardware;
+use cubek_std::routine::Routine;
 
 /// [`reduce`](crate::reduce) on the tile routines: the routine of the scope `strategy` names
-/// (unit, plane or cube) at the first of its settings this device prepares the problem at. The
-/// strategy's blueprint and vectorization are today's kernels' and are not read.
+/// (unit, plane or cube) at the first of its settings this device prepares the problem at; for
+/// the cube, the hypercube where too few rows leave the device idle
+/// ([`launch_cube_or_split`]). The strategy's blueprint and vectorization are today's kernels'
+/// and are not read.
 ///
 /// # Errors
 ///
@@ -130,7 +133,7 @@ fn launched_by_scope(strategy: ReduceStrategy, tensors: &ReduceTensors) -> Resul
     let launched = match strategy.routine {
         RoutineStrategy::Unit(_) => launch_first_served(&UnitReduceRoutine, tensors),
         RoutineStrategy::Plane(_) => launch_first_served(&PlaneReduceRoutine, tensors),
-        RoutineStrategy::Cube(_) => launch_first_served(&CubeReduceRoutine, tensors),
+        RoutineStrategy::Cube(_) => launch_cube_or_split(tensors),
     };
     launched.map_err(|why| ReduceError::Validation {
         details: match why {
@@ -150,6 +153,51 @@ fn launch_first_served<R: ReduceRoutine<M>, M>(
     let binding = tensors.bind(&blueprint, &grid);
     routine.dispatch(tensors, binding, blueprint, grid);
     Ok(())
+}
+
+/// `tensors` reduced a box of rows a cube where the boxes fill the device, otherwise split along
+/// the reduced dim by the hypercube: at the first of its settings, the longest parts first, whose
+/// cubes fill the device, or at the one with the most cubes where none does. Where the device does
+/// not say how wide it is, or every row is a single part, the cube routine.
+fn launch_cube_or_split(tensors: &ReduceTensors) -> Result<(), Refusal> {
+    let hw = Hardware::from_client(tensors.client());
+    let problem = tensors.problem();
+    let routine = HypercubeReduceRoutine;
+    let mut most_cubes = None;
+    for settings in routine.settings(&hw) {
+        let Ok((blueprint, grid)) = routine.prepare(&hw, problem, &settings) else {
+            continue;
+        };
+        let units = (blueprint.microkernel.lanes * blueprint.microkernel.planes) as u32;
+        let Some(fill) = hw.cubes_to_fill(units).map(|fill| fill as usize) else {
+            break;
+        };
+        let boxes = ReduceSplitExtents::row_boxes(problem, blueprint.width);
+        let parts = ReduceSplitExtents::new(problem, &blueprint.partitioning, blueprint.width).parts
+            as usize;
+        if boxes >= fill {
+            break;
+        }
+        if parts < 2 {
+            continue;
+        }
+        let cubes = boxes * parts;
+        if cubes >= fill {
+            most_cubes = Some((cubes, blueprint, grid));
+            break;
+        }
+        if most_cubes.as_ref().is_none_or(|(most, _, _)| cubes > *most) {
+            most_cubes = Some((cubes, blueprint, grid));
+        }
+    }
+    match most_cubes {
+        Some((_, blueprint, grid)) => {
+            let binding = tensors.bind(&blueprint, &grid);
+            routine.dispatch(tensors, binding, blueprint, grid);
+            Ok(())
+        }
+        None => launch_first_served(&CubeReduceRoutine, tensors),
+    }
 }
 
 /// Today's operation, as the microkernels name it.

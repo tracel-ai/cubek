@@ -48,6 +48,12 @@ impl ReduceRoutineProblem {
         dim_axis(self.shape.len())
     }
 
+    /// The axis a hypercube's partials run along in place of the reduced one: every part's
+    /// carrier for a row, side by side.
+    pub fn partials(&self) -> Axis {
+        dim_axis(self.shape.len() + 1)
+    }
+
     /// Every row axis, outermost first.
     pub fn rows(&self) -> Vec<Axis> {
         (0..self.shape.len())
@@ -75,6 +81,17 @@ impl ReduceRoutineProblem {
         (0..self.shape.len())
             .map(|d| match d == self.axis {
                 true => self.slots(),
+                false => dim_axis(d),
+            })
+            .collect()
+    }
+
+    /// A hypercube's partials' axes, one a dim: the input's, the reduced dim's being the
+    /// partials.
+    pub fn partial_axes(&self) -> Vec<Axis> {
+        (0..self.shape.len())
+            .map(|d| match d == self.axis {
+                true => self.partials(),
                 false => dim_axis(d),
             })
             .collect()
@@ -122,6 +139,18 @@ impl ReduceRoutineProblem {
         Space::new(&axes)
     }
 
+    /// [`space`](Self::space) and a hypercube's partials, `partial_extent` values of each box of
+    /// rows' along their axis.
+    pub fn split_space(&self, partial_extent: usize) -> Space {
+        let mut axes: Vec<(Axis, usize)> = self
+            .space()
+            .axes()
+            .map(|axis| (axis, self.space().extent(axis)))
+            .collect();
+        axes.push((self.partials(), partial_extent));
+        Space::new(&axes)
+    }
+
     /// The box an owner holds: one row, or `width` rows side by side across the reduced dim, and
     /// the cells it writes. It leaves the reduced dim to the space, so every owner spans its rows
     /// whole, however long the launch states them.
@@ -138,6 +167,22 @@ impl ReduceRoutineProblem {
             .collect();
         extents.push((self.slots(), self.operation.written_per_row()));
         extents
+    }
+
+    /// How many boxes of rows the owners, `width` rows across the reduced dim, take along each
+    /// row axis, outermost first.
+    pub fn row_boxes(&self, width: usize) -> Vec<(Axis, usize)> {
+        let owner = self.owner_box(width);
+        self.rows()
+            .into_iter()
+            .map(|axis| {
+                let tile = owner
+                    .iter()
+                    .find_map(|&(a, extent)| (a == axis).then_some(extent))
+                    .expect("the owner's box names every row axis");
+                (axis, self.shape[usize::from(axis.0)].div_ceil(tile))
+            })
+            .collect()
     }
 
     /// `partitioning` as a kernel compiles it: every axis but the cells a row writes left to the
