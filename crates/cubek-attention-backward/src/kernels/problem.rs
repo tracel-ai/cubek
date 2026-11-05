@@ -83,10 +83,12 @@ impl AttentionBackwardProblem {
     /// `D` and `DV`: the keys and values the query walk stages, or the queries and output
     /// gradient the key walk does.
     pub(crate) fn stage(&self, walked: Axis, extent: usize) -> [StagedOperand; 2] {
-        let operand = |row: Axis, width: usize| StagedOperand {
-            element: self.element,
-            space: Space::new(&[(walked, extent), (row, width)]),
-            innermost: row,
+        let operand = |row: Axis, width: usize| {
+            StagedOperand::new(
+                self.element,
+                Space::new(&[(walked, extent), (row, width)]),
+                row,
+            )
         };
         [operand(D, self.head_dim), operand(DV, self.val_dim)]
     }

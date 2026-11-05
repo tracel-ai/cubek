@@ -8,13 +8,14 @@
 //! [`k_grouped`](crate::kernels::indexed::k_grouped).
 
 use crate::kernels::indexed::m_grouped::{
-    GroupedRows, MGroupedMatmulTensors, MGroupedRowSource, MGroupedRowSourceKind, MGroupedSettings,
-    PaddedRows, RouteSort, upload,
+    GroupedRows, MGroupedFloors, MGroupedMatmulTensors, MGroupedRowSource, MGroupedRowSourceKind,
+    MGroupedSettings, PaddedRows, RouteSort, upload,
 };
 use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
+use crate::kernels::tune::{ListedFor, Listing, Product, first_served};
 use crate::kernels::{
     CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings,
     MatmulRoutine, PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
@@ -45,7 +46,6 @@ pub struct MGroupedMatmulKey {
     /// Slabs in the stack, one per group.
     groups: usize,
     /// Grouped rows, anchored to the power of two above them.
-    #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
     m: usize,
     /// Whether the stack is float or packed, and how: a packed stack is read packed, by other
     /// kernels than a float one.
@@ -57,18 +57,6 @@ pub struct MGroupedMatmulKey {
     /// Where the rows come from: a candidate is timed with the pass that pads them.
     source: MGroupedRowSourceKind,
 }
-
-/// The floors' settings, named once because the entry asks them of a problem too: a round must
-/// reach a candidate that answers. Each declines where another runs: the plane shuffle where the
-/// device commits to no plane width, its default against a packed stack, which its lead against
-/// a packed rhs reads, and the cube staged routine on a CPU runtime, which holds fewer units a
-/// cube than its planes, and against a packed stack.
-const PLANE_SHUFFLE_FLOOR: MGroupedSettings<PlaneShuffleMatmulRoutineSettings> =
-    MGroupedSettings::PLANE_SHUFFLE;
-const PLANE_SHUFFLE_PACKED_FLOOR: MGroupedSettings<PlaneShuffleMatmulRoutineSettings> =
-    MGroupedSettings::PLANE_SHUFFLE_PACKED;
-const CUBE_STAGED_FLOOR: MGroupedSettings<CubeStagedMatmulRoutineSettings> =
-    MGroupedSettings::CUBE_STAGED;
 
 /// The grouped product `tensors` states, through whichever setting measures fastest for it on
 /// `device`, unpadded: `[rows, n]` at the rows' element. `routines` is the priority of the
@@ -96,8 +84,8 @@ pub fn launch_tuned(
 ///
 /// # Errors
 ///
-/// A product neither floor serves, a packed stack on a device whose plane shuffle declines it
-/// among them, so no candidate of the autotune is known to: the caller names what runs instead.
+/// A product no floor serves, so no candidate of the autotune is known to: the caller names what
+/// runs instead.
 ///
 /// # Panics
 ///
@@ -109,16 +97,14 @@ pub fn launch_tuned_padded(
 ) -> Result<PaddedRows, Refusal> {
     let client = tensors.client().clone();
     let hw = Hardware::from_client(&client);
-    // A round must reach a floor that answers: the plane shuffle declines a device that commits
-    // to no plane width, the cube staged routine a CPU runtime, which holds fewer units a cube
-    // than its planes, and a packed stack.
-    let cube_staged_served = tensors.served_by(&hw, &CubeStagedMatmulRoutine, &CUBE_STAGED_FLOOR);
-    let packed_served =
-        tensors.served_by(&hw, &PlaneShuffleMatmulRoutine, &PLANE_SHUFFLE_PACKED_FLOOR);
-    tensors
-        .served_by(&hw, &PlaneShuffleMatmulRoutine, &PLANE_SHUFFLE_FLOOR)
-        .or(packed_served)
-        .or(cube_staged_served)?;
+    // A round must reach a floor that answers, and only a floor listed for the stack's kind can.
+    let stack = Product::of([tensors.stack_kind()]);
+    let floors = MGroupedFloors::LISTED;
+    let plane_shuffle = Listing::admitted(&floors.plane_shuffle, stack)
+        .map(|floor| tensors.served_by(&hw, &PlaneShuffleMatmulRoutine, &floor.settings));
+    let cube_staged = Listing::admitted(&floors.cube_staged, stack)
+        .map(|floor| tensors.served_by(&hw, &CubeStagedMatmulRoutine, &floor.settings));
+    first_served(plane_shuffle.chain(cube_staged))?;
 
     // Named rather than `module_path!()`, so the cached winners stay this autotune's wherever the
     // code lives; a cached winner is an index into the candidate list.
@@ -129,42 +115,66 @@ pub fn launch_tuned_padded(
         let mut autotune =
             Autotune::measured_on(MGroupedMatmulTensors::key, "evenly-spread", evenly_spread);
         let microkernel = autotune.group("microkernel", routines);
-        let autotune = MGroupedSettings::plane_shuffle(&hw).into_iter().fold(
-            autotune,
-            |autotune, settings| {
-                autotune.candidate(&microkernel, candidate(PlaneShuffleMatmulRoutine, settings))
-            },
-        );
-        let autotune =
-            MGroupedSettings::cube_staged(&hw)
-                .into_iter()
-                .fold(autotune, |autotune, settings| {
-                    autotune.candidate(&microkernel, candidate(CubeStagedMatmulRoutine, settings))
-                });
-        MGroupedSettings::cube_staged_async_copy(&hw)
+        let autotune = MGroupedSettings::<PlaneShuffleMatmulRoutineSettings>::listed(&hw)
+            .into_iter()
+            .fold(autotune, |autotune, listing| {
+                autotune.candidate(
+                    &microkernel,
+                    candidate(PlaneShuffleMatmulRoutine, listing.settings, listing.kind),
+                )
+            });
+        let autotune = MGroupedSettings::<CubeStagedMatmulRoutineSettings>::listed(&hw)
+            .into_iter()
+            .fold(autotune, |autotune, listing| {
+                autotune.candidate(
+                    &microkernel,
+                    candidate(CubeStagedMatmulRoutine, listing.settings, listing.kind),
+                )
+            });
+        let autotune = MGroupedSettings::cube_staged_async_copy(&hw)
             .into_iter()
             .fold(autotune, |autotune, settings| {
                 autotune.candidate(
                     &microkernel,
-                    candidate(CubeStagedAsyncCopyMatmulRoutine, settings),
+                    candidate(
+                        CubeStagedAsyncCopyMatmulRoutine,
+                        settings,
+                        ListedFor::Either,
+                    ),
                 )
+            });
+        let autotune = floors
+            .plane_shuffle
+            .into_iter()
+            .fold(autotune, |autotune, floor| {
+                autotune.floor(candidate(
+                    PlaneShuffleMatmulRoutine,
+                    floor.settings,
+                    floor.kind,
+                ))
+            });
+        floors
+            .cube_staged
+            .into_iter()
+            .fold(autotune, |autotune, floor| {
+                autotune.floor(candidate(
+                    CubeStagedMatmulRoutine,
+                    floor.settings,
+                    floor.kind,
+                ))
             })
-            .floor(candidate(PlaneShuffleMatmulRoutine, PLANE_SHUFFLE_FLOOR))
-            .floor(candidate(
-                PlaneShuffleMatmulRoutine,
-                PLANE_SHUFFLE_PACKED_FLOOR,
-            ))
-            .floor(candidate(CubeStagedMatmulRoutine, CUBE_STAGED_FLOOR))
             .finish()
     });
 
     Ok(TUNER.execute(&id, &client, tunables, tensors))
 }
 
-/// `routine` at `settings`, launched on the grouped product, under the setting's name.
+/// `routine` at `settings`, launched on the grouped product of the stacks it is `listed` for,
+/// under the setting's name.
 fn candidate<Mk, SM, R>(
     routine: R,
     settings: MGroupedSettings<R::Settings>,
+    listed: ListedFor,
 ) -> Tunable<MGroupedMatmulKey, MGroupedMatmulTensors, PaddedRows>
 where
     Mk: MatmulMicrokernel,
@@ -174,6 +184,9 @@ where
     Tunable::new(
         &settings.to_string(),
         move |tensors: MGroupedMatmulTensors| {
+            listed
+                .admits(Product::of([tensors.stack_kind()]))
+                .map_err(|refusal| format!("{settings} {refusal:?}"))?;
             let hw = Hardware::from_client(tensors.client());
             tensors
                 .launch(&hw, &routine, &settings)

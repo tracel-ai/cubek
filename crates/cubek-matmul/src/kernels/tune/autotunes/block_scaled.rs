@@ -79,9 +79,6 @@ where
     RoutineIdentity::named(
         &format!("block-scaled {settings}"),
         move |call: MatmulCall| {
-            if call.routes.is_some() {
-                return Err("reads no routes; the rhs is a stack read through them".to_string());
-            }
             let declined = |why| format!("{settings} does not serve this product: {why:?}");
             let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
             let tensors = match &call.destination {
