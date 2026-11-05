@@ -2,8 +2,8 @@
 
 use crate::kernels::plan::MatmulCall;
 use crate::kernels::tensor::PlainTensor;
-use crate::kernels::tune::MatmulProduct;
 use crate::kernels::tune::key::{CubeBlock, MaskedCells, MatmulTuneKey};
+use crate::kernels::tune::{ListedFor, MatmulProduct};
 use crate::kernels::{MatmulBlueprint, MatmulRoutine, MatmulRoutineProblem, MatmulTensors};
 use cubecl::CubeDim;
 use cubecl::ir::{ElemType, FloatKind};
@@ -73,9 +73,9 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     where
         R: MatmulRoutine<M, SM>,
     {
-        if call.is_packed() {
-            return Err("listed for float inputs; an input is packed".into());
-        }
+        ListedFor::Float
+            .admits(call.product())
+            .map_err(|refusal| format!("{refusal:?}"))?;
         let settings = &self.settings;
         let launched = match (&call.routes, call.destination) {
             (Some(routes), _) => routes.launch(&call.hw, &self.routine, settings),

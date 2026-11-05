@@ -3,7 +3,7 @@
 use crate::kernels::plan::{Decoded, MatmulCall};
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::MatmulTuneKey;
-use crate::kernels::tune::{MatmulProduct, RoutineIdentity};
+use crate::kernels::tune::{ListedFor, MatmulProduct, RoutineIdentity};
 use crate::kernels::{
     CubeShuffleMatmulRoutineSettings, CubeStagedMatmulRoutineSettings,
     HypercubeLastArrivalMatmulRoutineSettings, MatmulRoutine, MatmulTensors,
@@ -109,9 +109,9 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     where
         R: MatmulRoutine<M, SM>,
     {
-        if !call.is_packed() {
-            return Err("listed for a packed input; both are float".into());
-        }
+        ListedFor::Packed
+            .admits(call.product())
+            .map_err(|refusal| format!("{refusal:?}"))?;
         let settings = &self.settings;
         let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
         let launched = match (&call.routes, call.destination) {
