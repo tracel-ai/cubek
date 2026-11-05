@@ -1,5 +1,6 @@
 use crate::kernels::indexed::routed::RoutedMatmulTensors;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::tune::Product;
 use crate::kernels::tune::key::{MatmulTuneKey, create_key};
 use cubecl::CubeTuneId;
 use cubecl::client::Client;
@@ -48,12 +49,9 @@ impl MatmulCall {
         )
     }
 
-    /// Whether either input is packed: what a candidate listed for float inputs declines, and one
-    /// listed for packed inputs serves.
-    pub fn is_packed(&self) -> bool {
-        [&self.lhs, &self.rhs]
-            .iter()
-            .any(|input| matches!(input.tensor, StoredTensor::Packed(_)))
+    /// The kind of product its inputs make: what a candidate listed for the other kind declines.
+    pub(crate) fn product(&self) -> Product {
+        Product::of([self.lhs.tensor.kind(), self.rhs.tensor.kind()])
     }
 
     /// What a tuning round measures for `key`: the call's rhs, and a zero float lhs as many rows
