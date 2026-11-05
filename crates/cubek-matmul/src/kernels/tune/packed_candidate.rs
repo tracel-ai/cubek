@@ -20,7 +20,8 @@ use cubek_std::routine::Routine;
 pub trait PackedContraction {
     /// Whether one row of the product pads out to several: a matrix instruction laying the rows
     /// along its sixteen-row side, rather than units' registers taking a row at a time, or an
-    /// instruction laying them along its eight-column side.
+    /// instruction laying them along its eight-column side (NVIDIA's `16 × 8 × 16`). On RDNA3's
+    /// `16 × 16 × 16` both sides are sixteen, which the settings alone do not say.
     fn pads_one_row(&self) -> bool;
 }
 

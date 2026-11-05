@@ -12,7 +12,7 @@ use cubecl::ir::{
 };
 use cubecl::profile::TimingMethod;
 
-use crate::Hardware;
+use crate::{Hardware, LaneRunLayout};
 
 /// The dev machine's AMD Radeon 8060S (Strix Halo, gfx1151): wave32 planes, 1024 units per
 /// cube, 64 KiB shared memory.
@@ -27,7 +27,10 @@ pub fn strix_halo() -> Hardware {
     device.features.device_memory_scope = true;
     f32_atomic_add(&mut device);
     shared_f32_atomic_add(&mut device);
-    hardware(device)
+    Hardware {
+        lane_runs: Some(LaneRunLayout::Rdna3M16N16K16),
+        ..hardware(device)
+    }
 }
 
 /// A WebGPU adapter with no subgroup support, reporting the plane width the wgpu runtime
@@ -108,6 +111,7 @@ pub fn h100() -> Hardware {
     shared_f32_atomic_add(&mut device);
     Hardware {
         accumulator_as_a: true,
+        lane_runs: Some(LaneRunLayout::M16N8K16),
         ..hardware(device)
     }
 }
@@ -135,6 +139,7 @@ pub fn rtx_pro_6000() -> Hardware {
     shared_f32_atomic_add(&mut device);
     Hardware {
         accumulator_as_a: true,
+        lane_runs: Some(LaneRunLayout::M16N8K16),
         ..hardware(device)
     }
 }
@@ -302,6 +307,7 @@ fn hardware(device: DeviceProperties) -> Hardware {
     Hardware {
         properties: Arc::new(device),
         accumulator_as_a: false,
+        lane_runs: None,
     }
 }
 

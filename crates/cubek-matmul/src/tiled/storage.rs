@@ -501,15 +501,15 @@ mod tests {
     use cubek_std::devices;
     use cubek_std::layout::tile_order::TileWords;
 
-    /// The `16 × 8 × 16` mma the tensor-core plane decodes through.
-    fn plane_fragment_mma() -> MmaConfig {
+    /// RDNA3's `16 × 16 × 16` mma, which the tensor-core plane decodes through on Strix Halo.
+    fn rdna3_mma() -> MmaConfig {
         let f16 = ElemType::Float(FloatKind::F16);
         MmaConfig {
             a_type: f16,
             b_type: f16,
             cd_type: ElemType::Float(FloatKind::F32),
             m: 16,
-            n: 8,
+            n: 16,
             k: 16,
         }
     }
@@ -522,10 +522,7 @@ mod tests {
         assert_eq!(tile_words(&devices::h100()), TileWords::RowByRow);
         assert_eq!(tile_words(&devices::rtx_pro_6000()), TileWords::RowByRow);
         assert_eq!(
-            tile_words(&devices::offering_mma(
-                devices::m2_pro(),
-                [plane_fragment_mma()]
-            )),
+            tile_words(&devices::offering_mma(devices::strix_halo(), [rdna3_mma()])),
             TileWords::RowByRow,
             "a tensor-core plane without TMA"
         );

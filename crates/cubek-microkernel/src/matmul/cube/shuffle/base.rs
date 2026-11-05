@@ -153,7 +153,7 @@ impl CubeShuffleMicrokernel {
     };
 
     /// What a cube of tensor-core planes declines.
-    pub const FRAGMENT_DECLINE: &'static str = "the cube shuffle's plane fragment needs the device's 16-bit 16x8x16 manual mma on a 32-unit plane, a packed rhs, columns whole fragments (eight wide, or sixteen with its rows along n), and K whole windows each unit reads in whole loads";
+    pub const FRAGMENT_DECLINE: &'static str = "the cube shuffle's plane fragment needs the device's 16-bit manual mma its lane runs decode into (NVIDIA's 16x8x16 or RDNA3's 16x16x16) on a 32-unit plane, a packed rhs, columns whole fragments (the instruction's n wide with its rows along m, its m with them along n), and K whole windows each unit reads in whole loads";
 
     /// The fewest planes a cube holds: a run one plane owns is the plane routine's.
     const FEWEST_PLANES: usize = 2;
@@ -175,7 +175,8 @@ impl CubeShuffleMicrokernel {
     /// projections best from one to sixteen rows on the RTX PRO 6000: one fragment a plane nearly
     /// everywhere, two at eight planes beside it. Beside them the same planes laid with their rows
     /// along `n`, the rhs filling the instruction's sixteen-row `A` and the lhs's few rows its
-    /// eight-column `B`, so a decode pads eight columns rather than fifteen rows: one fragment on
+    /// eight-column `B`, so a decode pads eight columns rather than fifteen rows (on RDNA3's
+    /// `16 × 16 × 16` either way pads sixteen): one fragment on
     /// two, four and eight planes and two on eight, which read the Qwen3-8B projections at one row
     /// within five percent of the device's read probe on an RTX 3070 Laptop. None on a device that
     /// does not offer the plane's decoding instruction: there they would only be tried and
