@@ -348,9 +348,12 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         let monoid = comptime!(operation.monoid());
         let k = K::value();
         let unrolled = comptime!(k * k <= TOP_K_UNROLL_BUDGET);
-        match comptime!(layout) {
-            ReduceLayout::Along => {
-                // The lanes hold one row: every lane's list inserted into one one-lane list.
+        // The lanes hold one row: every lane's list inserted into one one-lane list. One lane
+        // already holds the row's list, best first, and writes it as it is.
+        let lanes = N::value();
+        let lanes_share_a_row = comptime!(matches!(layout, ReduceLayout::Along) && lanes > 1);
+        match comptime!(lanes_share_a_row) {
+            true => {
                 let mut best = TopK::<Acc, Const<1>, K>::identity(monoid);
                 #[unroll]
                 for lane in 0..N::value() {
@@ -375,7 +378,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
                     );
                 }
             }
-            ReduceLayout::Across =>
+            false =>
             {
                 #[unroll]
                 for slot in 0..k {
@@ -463,9 +466,12 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
         let monoid = comptime!(operation.monoid());
         let k = K::value();
         let unrolled = comptime!(k * k <= TOP_K_UNROLL_BUDGET);
-        match comptime!(layout) {
-            ReduceLayout::Along => {
-                // The lanes hold one row: every lane's list inserted into one one-lane list.
+        // The lanes hold one row: every lane's list inserted into one one-lane list. One lane
+        // already holds the row's list, best first, and writes it as it is.
+        let lanes = N::value();
+        let lanes_share_a_row = comptime!(matches!(layout, ReduceLayout::Along) && lanes > 1);
+        match comptime!(lanes_share_a_row) {
+            true => {
                 let mut best = TopValues::<Acc, Const<1>, K>::identity(monoid);
                 #[unroll]
                 for lane in 0..N::value() {
@@ -480,7 +486,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
                     lines.write(slot, Vector::cast_from(best.values[slot]));
                 }
             }
-            ReduceLayout::Across => {
+            false => {
                 let mut lines = out.flat_mut::<Out, N>();
                 #[unroll]
                 for slot in 0..k {
