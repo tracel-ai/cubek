@@ -7,17 +7,22 @@ mod packed;
 
 use cubecl::bytes::Bytes;
 use cubecl::client::Client;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::Shape;
+use cubek_matmul::kernels::indexed::m_grouped::{MGroupedMatmulTensors, MGroupedSettings};
+use cubek_matmul::kernels::indexed::routed::{RoutedMatmulTensors, launch_tuned};
+use cubek_matmul::kernels::indexed::stack::SlabAxis;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{
-    CubeStagedMatmulRoutine, MatmulIndex, MatmulIndexTable, MatmulRoutine,
+    CubeStagedMatmulRoutine, MatmulIndex, MatmulIndexTable, MatmulRoutine, MatmulRoutineProblem,
     PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine,
 };
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
+use cubek_std::autotune::GroupPriority;
 use cubek_std::matmul_axes::{K, N};
 use cubek_std::routine::Routine;
 use cubek_test_utils::{HostData, HostDataType, TestOutcome, ValidationResult, client};
@@ -384,6 +389,48 @@ fn a_routed_product_on_the_unit_registers_reads_each_route_s_slab() {
     );
 }
 
+/// The routed product through the routed autotune, against the host reference: the stack a col
+/// one, its buffer `[slabs · n, k]` behind the `[k, slabs · n]` view.
+#[test]
+fn a_tuned_routed_product_reads_each_route_s_slab() {
+    let client = client();
+    let Routed {
+        tokens,
+        picks,
+        slabs,
+        k,
+        n,
+    } = ROUTED;
+    let stack = values(slabs * k * n, 2);
+    let buffer: Vec<f32> = (0..slabs * n)
+        .flat_map(|row| (0..k).map(move |kk| (row, kk)))
+        .map(|(row, kk)| stack[((row / n) * k + kk) * n + row % n])
+        .collect();
+    let col_stack = TensorHandle::new(
+        client.create(Bytes::from_elems(buffer)),
+        [k, slabs * n],
+        [1, k],
+        f32::elem_type_native(),
+    );
+    let tensors = RoutedMatmulTensors::new(
+        &client,
+        upload(&client, &[tokens, k], &values(tokens * k, 1)),
+        StoredTensor::Plain(PlainTensor::of_handle(col_stack)),
+        upload(&client, &[tokens, picks], &ROUTED.routes()),
+        slabs,
+        SlabAxis::Output,
+    )
+    .expect("a col stack of whole slabs derives a routed launch");
+    let launched = launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT);
+    let mut walk = Walk::new();
+    if let Some(out) = walk.ran(launched) {
+        let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+        let shape = [tokens, picks, n];
+        assert_close(&got, &shape, &ROUTED.expected(), FLOAT_TOLERANCE, &"routed");
+    }
+    walk.settle();
+}
+
 #[test]
 fn a_grouped_product_on_the_cube_staged_sums_each_group_s_run() {
     let grouped = Grouped {
@@ -428,4 +475,43 @@ fn a_chunked_product_on_the_plane_shuffle_reads_each_chunk_s_slab() {
         || chunked.inputs(),
         &chunked.expected(),
     );
+}
+
+/// The chunk rows of a cube staged setting are read from a prepare over every grouped row, and
+/// the launch prepares again on the chunk rows alone: the cube tile it launches on is the rows
+/// the groups were padded to, or the padded rows are read past their tiles.
+#[test]
+fn a_cube_staged_launch_holds_the_rows_its_groups_were_padded_to() {
+    let (k, n, groups) = (64usize, 48usize, 4usize);
+    let ends = [128u32, 128, 384, 512];
+    let rows = *ends.last().unwrap() as usize;
+    let client = client();
+    let hw = Hardware::from_client(&client);
+    let mut walk = Walk::new();
+    for settings in MGroupedSettings::cube_staged(&hw) {
+        let tensors = MGroupedMatmulTensors::new(
+            &client,
+            upload(&client, &[rows, k], &vec![0f32; rows * k]),
+            StoredTensor::Plain(upload(
+                &client,
+                &[k, groups * n],
+                &vec![0f32; k * groups * n],
+            )),
+            upload(&client, &[groups], &ends),
+            SlabAxis::Output,
+        )
+        .expect("a float stack derives a grouped launch");
+        let Some(padded) = walk.ran(tensors.launch(&hw, &CubeStagedMatmulRoutine, &settings))
+        else {
+            continue;
+        };
+        let chunk = padded.layout().align();
+        let problem = MatmulRoutineProblem::dense(chunk, n, k, ElemType::Float(FloatKind::F32));
+        let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings.routine)
+        else {
+            continue;
+        };
+        assert_eq!(blueprint.partitioning.rows() as usize, chunk, "{settings}");
+    }
+    walk.settle();
 }

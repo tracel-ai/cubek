@@ -1,8 +1,8 @@
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::{
-    CUBE_STRIPS, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_PACKED_WALK_PAST_K, MatmulBinding,
-    MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
-    MatmulTensors, MatmulView, cube_order_name,
+    CUBE_STRIPS, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
+    MATMUL_PACKED_WALK_PAST_K, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
+    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView, cube_order_name,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
@@ -13,14 +13,16 @@ use cubecl::tile::launch::{
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{BlockScaledOperands, Space, StageStorage, TileArgLaunch};
+use cubecl::tile::{BlockScaledOperands, Space, StageStorage, TileTensorLaunch};
+use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedStore, MatmulPlaneLayout,
 };
 use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDim, MatmulOperand, MatmulOperands, MatmulStep, MatmulWorkItem,
+    MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulStep,
+    MatmulWorkItem,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{Operand, Packing};
@@ -48,6 +50,13 @@ pub struct CubeStagedMatmulRoutineSettings {
 impl CubeStagedMatmulRoutineSettings {
     pub const DEFAULT: Self = Self {
         microkernel: CubeStagedMicrokernelSettings::DEFAULT,
+        cube_order: CubeOrder::RowMajor,
+    };
+
+    /// The lead against a packed input ([`CubeStagedMicrokernelSettings::PACKED`]), its cubes in
+    /// the grid's order.
+    pub const PACKED: Self = Self {
+        microkernel: CubeStagedMicrokernelSettings::PACKED,
         cube_order: CubeOrder::RowMajor,
     };
 
@@ -361,7 +370,7 @@ impl CubeStagedMatmulRoutine {
         let Ok((blueprint, grid)) = CubeStagedMatmulRoutine.prepare(hw, &problem, settings) else {
             return false;
         };
-        let item = MatmulView::of::<CubeStagedMicrokernel>(&problem)
+        let item = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item()
             .as_stored()
@@ -411,7 +420,7 @@ impl CubeStagedMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let item = MatmulView::of::<CubeStagedMicrokernel>(problem)
+        let item = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let contracted = blueprint.microkernel.contracted(&item);
@@ -701,7 +710,7 @@ impl Routine for CubeStagedMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let item = MatmulView::of::<CubeStagedMicrokernel>(problem)
+        let item = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         match item.blocks {
@@ -730,7 +739,7 @@ impl Routine for CubeStagedMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let view = MatmulView::of::<CubeStagedMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         let microkernel = CubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
         if microkernel.walk().decoded().is_some() {
@@ -756,6 +765,17 @@ impl Routine for CubeStagedMatmulRoutine {
         if problem.index.is_some() && microkernel.fill.delivery == CubeStagedDelivery::Tma {
             return Err(MATMUL_INDEX_UNREAD_BY_TMA);
         }
+        let orders = microkernel.plane.orders;
+        let one_element_rows =
+            |operand: MatmulOperand| problem.rows_one_element_wide(operand, orders.get(operand));
+        let filled_by_tma = microkernel.fill.delivery == CubeStagedDelivery::Tma
+            && MatmulOperand::INPUTS.into_iter().any(one_element_rows);
+        let stored_by_tma =
+            microkernel.store == CubeStagedStore::Tma && one_element_rows(MatmulOperand::Out);
+        if filled_by_tma || stored_by_tma {
+            return Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA);
+        }
+        problem.check_block_scales(microkernel.block_scales())?;
         let partitioning = place(microkernel.launch_tiling());
         // Only a block-split space has `KB` and `KI` to ask about: a float product's has `K`, and
         // masks its reads past it.
@@ -783,10 +803,13 @@ impl Routine for CubeStagedMatmulRoutine {
 }
 
 impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedMatmulRoutine {
+    /// A cube owns a box of the rows.
+    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
-        binding: MatmulBinding<O::Operand, TileArgLaunch, TileArgLaunch>,
+        binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: CubeStagedMatmulRoutineBlueprint,
         grid: Grid,
     ) {

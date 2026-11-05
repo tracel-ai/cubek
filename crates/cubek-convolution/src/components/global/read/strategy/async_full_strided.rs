@@ -12,7 +12,8 @@ use cubek_matmul::{
             memory::GlobalIterator,
             multi_stage::LoadMaxRoundPlaneCount,
             read::{
-                FullLoadingStrategy, LoadingJob, LoadingValidation, async_barrier::AsyncCopy,
+                FullLoadingStrategy, LoadingJob, LoadingValidation, ReaderMode,
+                async_barrier::AsyncCopy,
                 async_full_strided::AsyncFullStridedLoading as MatmulStridedLoading,
                 stage::FullStageLayout,
             },
@@ -81,7 +82,8 @@ impl FullLoadingStrategy<RuntimeArgs> for AsyncFullStridedLoading {
         let vector_size = ASYNC_COPY_WIDTH / type_size as u32;
         let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = num_stage_vectors / unit_count;
+        let num_tasks_per_unit = num_stage_vectors.div_ceil(unit_count);
+        let balanced_workload = num_stage_vectors.is_multiple_of(unit_count);
 
         let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
@@ -94,6 +96,9 @@ impl FullLoadingStrategy<RuntimeArgs> for AsyncFullStridedLoading {
             num_tasks_per_unit,
             unit_count,
             copy_vector_size: vector_size,
+            balanced_workload,
+            num_stage_vectors,
+            reader_mode: config.reader_mode,
         }
     }
 }
@@ -110,6 +115,12 @@ pub struct AsyncFullStridedJob {
     unit_count: u32,
     #[cube(comptime)]
     copy_vector_size: u32,
+    #[cube(comptime)]
+    balanced_workload: bool,
+    #[cube(comptime)]
+    num_stage_vectors: u32,
+    #[cube(comptime)]
+    reader_mode: ReaderMode,
 }
 
 #[cube]
@@ -127,27 +138,46 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.unit_count;
-        let unit_position_abs = unit_position * this.copy_vector_size;
 
-        let layout = FullStageLayout::new(config.smem_config);
-        let view = global_iter.view();
-
-        let pos = layout.to_source_pos(unit_position_abs);
-        let stage_offset = unit_position_abs / stage.smem.vector_size() as u32;
-
-        async_copy_from(
-            view,
-            pos,
-            stage,
-            stage_offset,
-            &this.runtime_args,
-            global_iter.offset(),
-            config,
-            this.copy_vector_size,
-        );
+        #[allow(clippy::collapsible_else_if)]
+        if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
+            copy_vector::<EG, NG, ES, NS>(&*this, unit_position, global_iter, stage, config);
+        } else {
+            if unit_position < this.num_stage_vectors {
+                copy_vector::<EG, NG, ES, NS>(&*this, unit_position, global_iter, stage, config);
+            }
+        }
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {
         this.num_tasks_per_unit
     }
+}
+
+#[cube]
+fn copy_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
+    job: &AsyncFullStridedJob,
+    unit_position: u32,
+    global_iter: &GlobalIterator<Vector<EG, NG>>,
+    stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
+    #[comptime] config: GlobalReaderConfig,
+) {
+    let unit_position_abs = unit_position * job.copy_vector_size;
+
+    let layout = FullStageLayout::new(config.smem_config);
+    let view = global_iter.view();
+
+    let pos = layout.to_source_pos(unit_position_abs);
+    let stage_offset = unit_position_abs / stage.smem.vector_size() as u32;
+
+    async_copy_from(
+        view,
+        pos,
+        stage,
+        stage_offset,
+        &job.runtime_args,
+        global_iter.offset(),
+        config,
+        job.copy_vector_size,
+    );
 }

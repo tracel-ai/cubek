@@ -8,18 +8,19 @@ use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Axis;
 use cubecl::zspace::Shape;
-use cubecl_common::e4m3;
+use cubecl_common::{e4m3, ue8m0};
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
-use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor, WordsLaid};
+use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::layout::stored::Operand;
-use cubek_std::matmul_axes::K;
+use cubek_std::matmul_axes::{K, N};
 use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
 
 /// The per-tensor scale a two-level format is built under.
 const GLOBAL_SCALE: f32 = 2.;
 
-/// Block scales with one or two mantissa bits, which the quantizer and a `ue4m3` byte hold exactly.
+/// Block scales with one or two mantissa bits, which the quantizer and a `ue4m3` byte hold exactly;
+/// a `ue8m0` byte holds only the first.
 const MANTISSAS: [f32; 4] = [1., 1.5, 2., 3.];
 
 /// The block-scaled formats a packed test matrix is built in.
@@ -28,6 +29,7 @@ pub(super) enum PackedFormat {
     Q8,
     Q4,
     Nvfp4,
+    Mxfp4,
 }
 
 impl PackedFormat {
@@ -42,6 +44,10 @@ impl PackedFormat {
             Self::Q8 => blocks_of_32(QuantValue::Q8S),
             Self::Q4 => blocks_of_32(QuantValue::Q4S),
             Self::Nvfp4 => nvfp4_scheme(),
+            Self::Mxfp4 => QuantScheme::default()
+                .with_value(QuantValue::E2M1)
+                .per_block([32], ScaleDtype::UE8M0)
+                .with_store(QuantStore::PackedU32(0)),
         }
     }
 }
@@ -89,7 +95,6 @@ impl PackedSlabs {
         let across = across(spec.operand);
         let tensor = PackedTensor::new(
             PlainTensor::of_handle(quantized.handle),
-            WordsLaid::InRows,
             PlainTensor::of_handle(scales),
             global,
             scheme,
@@ -164,7 +169,11 @@ impl PackedSlabsSpec {
             .map(|i| {
                 let (block_at, within) = (i / block, i % block);
                 let h = hashed(block_at, self.seed);
-                let scale = MANTISSAS[h % 4] * 2f32.powi(-headroom - ((h / 4) % 3) as i32);
+                let mantissa = match scheme.scale_dtype() {
+                    ScaleDtype::UE8M0 => MANTISSAS[0],
+                    _ => MANTISSAS[h % 4],
+                };
+                let scale = mantissa * 2f32.powi(-headroom - ((h / 4) % 3) as i32);
                 let pick = hashed(i, self.seed) % (2 * codes.len());
                 let code = match within {
                     0 => peak,
@@ -229,18 +238,55 @@ fn stored_scales(
     if stored == ScaleDtype::F32 {
         return scales;
     }
-    assert_eq!(
-        stored,
-        ScaleDtype::UE4M3,
-        "only `f32` and `ue4m3` scales are built here"
-    );
     let host = HostData::from_tensor_handle(client, scales, HostDataType::F32);
+    let byte = |scale: f32| match stored {
+        ScaleDtype::UE4M3 => e4m3::from_f32(scale).to_bits(),
+        ScaleDtype::UE8M0 => ue8m0::from_f32(scale).to_bits(),
+        other => panic!("only `f32`, `ue4m3` and `ue8m0` scales are built here, not {other:?}"),
+    };
     let bytes: Vec<u8> = (0..rows * blocks)
-        .map(|i| e4m3::from_f32(host.get_f32(&[i / blocks, i % blocks])).to_bits())
+        .map(|i| byte(host.get_f32(&[i / blocks, i % blocks])))
         .collect();
     TensorHandle::new_contiguous(
         Shape::from(vec![rows, blocks]),
         client.create_from_slice(&bytes),
         ElemType::from_scale_dtype(stored),
     )
+}
+
+/// A packed tensor counts the bytes its words and scales bind, not the buffer they share: a
+/// framework stores the three in one, each bound over its own region of it. An autotune's
+/// roofline reads these bytes, and counting the shared buffer once a part tripled them.
+#[test]
+fn a_packed_tensor_binds_its_parts_not_the_buffer_they_share() {
+    let client = cubek_test_utils::client();
+    let scheme = nvfp4_scheme();
+    let (rows, k) = (16, 64);
+    let word = ElemType::UInt(cubecl::ir::UIntKind::U32).size();
+    let words = rows * k / scheme.num_quants();
+    let scale_words = rows * k / block_of(&scheme) / word;
+    let total = (words + scale_words + 1) * word;
+    let buffer = client.empty(total);
+    let part = |from: usize, words: usize, shape: [usize; 2], elem: ElemType| {
+        let handle = buffer
+            .clone()
+            .offset_start(from as u64)
+            .offset_end((total - from - words * word) as u64);
+        PlainTensor::of_handle(TensorHandle::new_contiguous(
+            Shape::from(shape.to_vec()),
+            handle,
+            elem,
+        ))
+    };
+    let u32 = ElemType::UInt(cubecl::ir::UIntKind::U32);
+    let packed = PackedTensor::new(
+        part(0, words, [rows, words / rows], u32),
+        part(words * word, scale_words, [rows, scale_words / rows], u32),
+        Some(part((words + scale_words) * word, 1, [1, 1], u32)),
+        scheme,
+        Operand::of_scheme(&scheme, K, [N, K]).expect("one block along k"),
+        [(N, rows), (K, k)],
+    );
+
+    assert_eq!(StoredTensor::Packed(packed).bytes(), total);
 }

@@ -28,6 +28,7 @@ impl HypercubeAttentionMicrokernelSettings {
             ring: StageRing::SINGLE,
             layout: StageLayout::Strided,
             delivery: CubeStagedDelivery::Copy,
+            query_as_keys: false,
         },
     };
 
@@ -48,6 +49,7 @@ impl HypercubeAttentionMicrokernelSettings {
             ring: StageRing::SINGLE,
             layout: StageLayout::Strided,
             delivery: CubeStagedDelivery::Copy,
+            query_as_keys: false,
         },
     };
 

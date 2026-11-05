@@ -4,15 +4,15 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::cube::MatmulCubeWrite;
+use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulRowsKind};
 use cubek_std::Hardware;
 
 use crate::kernels::{
     MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors,
 };
 use cubecl::tile::{
-    Geometry, TileArgLaunch,
+    Geometry, TileTensorLaunch,
     kind::Write,
     launch::{Buffered, DestinationLaunch, SinkLaunch, Unbound},
 };
@@ -31,6 +31,11 @@ const ALLOCATED: &str = "a launch allocating its output hands it back";
 pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     Routine<Problem = MatmulRoutineProblem, Microkernel = M, Blueprint = MatmulBlueprint<M, SM>>
 {
+    /// How its launches hold a product's rows: every row whole, compiled into the kernel, or a
+    /// tile of them a box. It decides how its tensors and its view read the problem, before any
+    /// microkernel is chosen.
+    const ROWS_KIND: MatmulRowsKind;
+
     /// How the routine's cubes reach the output.
     const WRITE: MatmulCubeWrite = MatmulCubeWrite::Replace;
 
@@ -39,7 +44,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
-        binding: MatmulBinding<O::Operand, TileArgLaunch, TileArgLaunch>,
+        binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
     );
@@ -74,7 +79,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         rhs: StoredTensor,
         settings: &Self::Settings,
     ) -> Result<TensorHandle, Refusal> {
-        let tensors = MatmulTensors::new::<M>(client, lhs, rhs)?;
+        let tensors = MatmulTensors::new(client, lhs, rhs, Self::ROWS_KIND)?;
         let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
         self.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(tensors.into_out().expect(ALLOCATED))
@@ -98,7 +103,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     where
         Self: Sized,
     {
-        let tensors = MatmulTensors::sink::<M>(client, lhs, rhs)?;
+        let tensors = MatmulTensors::sink(client, lhs, rhs, Self::ROWS_KIND)?;
         let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
         Ok(MatmulSinkLaunch::new(self, tensors, blueprint, grid))
     }
@@ -119,7 +124,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         out: PlainTensor,
         settings: &Self::Settings,
     ) -> Result<(), Refusal> {
-        let tensors = MatmulTensors::writing_into::<M>(client, lhs, rhs, out)?;
+        let tensors = MatmulTensors::writing_into(client, lhs, rhs, out, Self::ROWS_KIND)?;
         let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
         self.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(())
@@ -147,7 +152,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         out: PlainTensor,
         settings: &Self::Settings,
     ) -> Result<(), Refusal> {
-        let tensors = MatmulTensors::indexed::<M>(client, lhs, rhs, table, out)?;
+        let tensors = MatmulTensors::indexed(client, lhs, rhs, table, out, Self::ROWS_KIND)?;
         let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
         self.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(())
@@ -167,7 +172,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         lhs: StoredTensor,
         rhs: StoredTensor,
     ) -> Result<TensorHandle, Refusal> {
-        let tensors = MatmulTensors::new::<M>(client, lhs, rhs)?;
+        let tensors = MatmulTensors::new(client, lhs, rhs, Self::ROWS_KIND)?;
         let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
         self.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(tensors.into_out().expect(ALLOCATED))
@@ -207,7 +212,7 @@ pub struct MatmulSinkLaunch<R, M, SM = ()> {
     tensors: MatmulTensors<Geometry>,
     blueprint: MatmulBlueprint<M, SM>,
     grid: Grid,
-    binding: MatmulBinding<Unbound, TileArgLaunch, TileArgLaunch>,
+    binding: MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>,
 }
 
 impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, SM> {

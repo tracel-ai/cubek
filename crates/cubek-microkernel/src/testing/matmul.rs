@@ -1,19 +1,20 @@
 //! The matmul microkernels on one work item: `out = lhs · rhs` over a problem one tile wide.
 
 use crate::matmul::plane::{
-    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, plane_fragment_staged_microkernel,
+    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, plane_fragment_microkernel,
+    plane_fragment_partial,
 };
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
-    MatmulStage, MatmulWorkItem,
+    MatmulAxes, MatmulDestination, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulReading,
+    MatmulRows, MatmulStage, MatmulWorkItem,
 };
 use cubecl::prelude::*;
 use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{
-    Launcher, Partitioning, Scratch, Semiring, Space, StageStorage, TileArg, TileArgLaunch,
-    TileSpec,
+    Launcher, Partitioning, Region, Scratch, Semiring, Space, StageStorage, Stages, Tile, TileSpec,
+    TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_std::Hardware;
@@ -139,7 +140,7 @@ impl PlaneFragmentLaunch {
             out: out_element,
         } = self.elements;
         let bound = |arg, element, axes: &[_]| {
-            TileArgLaunch::new(
+            TileTensorLaunch::new(
                 arg,
                 element,
                 1,
@@ -172,9 +173,9 @@ impl PlaneFragmentLaunch {
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
-    lhs: &TileArg<'_>,
-    rhs: &TileArg<'_>,
-    out: &TileArg<'_>,
+    lhs: &TileTensor<'_>,
+    rhs: &TileTensor<'_>,
+    out: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneFragmentMicrokernel,
     #[comptime] stage: StageStorage,
@@ -203,4 +204,46 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
         );
         sum.drained_into(&c);
     }
+}
+
+/// One plane's tile walked through stages of its own: the plane stages its operands a step of its
+/// walk at a time, holding as many stages as `ring` says, and contracts every stage into `sum`
+/// with the plane microkernel. `sum`, `c`, `a` and `b` are windowed to the plane; a narrow step's
+/// partial is opened over `c`. A walk below the planes' level is the plane's own, so its stages
+/// are too: each plane fills a copy of its own, met on its own barriers.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn plane_fragment_staged_microkernel<EL: Numeric>(
+    plane: &Region,
+    sum: &Tile,
+    c: &Tile,
+    a: &Tile,
+    b: &Tile,
+    #[comptime] microkernel: PlaneFragmentMicrokernel,
+    #[comptime] stage: StageStorage,
+    #[comptime] ring: StageRing,
+) {
+    let instruction = microkernel.tile_instruction();
+    let step_sum = microkernel.instruction.step_sum();
+    let partial = plane_fragment_partial::<EL>(c, a, b, step_sum, instruction);
+
+    let walk = plane.walk();
+    let in_flight = ring.stages_in_flight.get();
+    let mut stages = Stages::smem(&walk, a, b, stage, in_flight, None);
+
+    stages.walk(walk, ring.prefetch, |slot, step| {
+        let sum_step = sum.at(step);
+        slot.consume(|a_step, b_step| {
+            plane_fragment_microkernel(
+                step,
+                &sum_step,
+                &partial,
+                a_step,
+                b_step,
+                instruction,
+                None,
+                MatmulOperands::AS_BOUND,
+            );
+        });
+    });
 }

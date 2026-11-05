@@ -5,7 +5,6 @@ use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::MatmulTuneKey;
 use crate::kernels::{CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulTensors};
 use cubecl::tune::Tunable;
-use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::{GroupPriority, Identity};
 use cubek_std::routine::Routine;
@@ -41,17 +40,15 @@ fn candidate(
     RoutineIdentity::named(
         &format!("block-scaled {settings}"),
         move |call: MatmulCall| {
-            if call.routes.is_some() {
-                return Err("reads no routes; the rhs is a stack read through them".to_string());
-            }
             let declined = |why| format!("{settings} does not serve this product: {why:?}");
             let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
             let tensors = match &call.destination {
-                Some(destination) => MatmulTensors::writing_into::<CubeStagedMicrokernel>(
+                Some(destination) => MatmulTensors::writing_into(
                     &call.client,
                     lhs,
                     rhs,
                     PlainTensor::of_handle(destination.clone()),
+                    CubeStagedMatmulRoutine::ROWS_KIND,
                 ),
                 None => MatmulTensors::written_in(&call.client, lhs, rhs, call.out),
             }

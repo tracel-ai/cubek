@@ -34,11 +34,6 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
     /// binding adds its own: each operand's buffer alignment in the order the microkernel binds the
     /// rhs in, and the masking of an operand whose innermost bound axis the tiles overhang. Each
     /// operand then binds at the widest width this device reads its element in that they admit.
-    ///
-    /// # Panics
-    ///
-    /// A partitioning holding its rows other than the microkernel does
-    /// ([`MatmulMicrokernel::ROWS_KIND`]).
     pub fn new(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
@@ -47,11 +42,6 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
         mut vectorization: Vectorization<MatmulOperand>,
         shared_memory: SM,
     ) -> Self {
-        assert_eq!(
-            partitioning.rows_kind(),
-            M::ROWS_KIND,
-            "a partitioning holds its rows as its microkernel does"
-        );
         let orders = microkernel.orders();
         let alignments = orders.map(|operand, order| problem.alignment(operand, order));
         for operand in MatmulOperand::ALL {

@@ -15,6 +15,8 @@ pub enum GatedDeltaWalkOperand {
     /// `[batch, position, key_head, group]`: the strength of each write.
     Strength,
     /// `[batch, key_head, group, key_feature, value_feature]`: the state the walk resumes from.
+    /// In a store's slots the first axis is the store's, `[store_slot, ..]`, and the walk writes
+    /// the state after its last position back to it.
     State,
     /// `[batch, position, key_head, group, value_feature]`: what each position reads of the state
     /// it wrote.

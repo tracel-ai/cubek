@@ -99,3 +99,58 @@ fn every_cube_setting_matches_the_reference() {
         );
     }
 }
+
+/// Every setting in `f16` on the same case: what the settings holding the score in their
+/// fragments run on, the manual `mma` taking 16-bit operands only.
+#[test]
+fn every_cube_setting_matches_the_reference_in_f16() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let case = Case {
+        heads: 4,
+        val_dim: 16,
+        ..CASE
+    };
+    for settings in CubeStagedAttentionBackwardRoutine.settings(&hw) {
+        Reference::run(
+            CubeStagedAttentionBackwardRoutine,
+            case,
+            half::f16::elem_type_native(),
+            3e-2,
+            Some(settings),
+        );
+    }
+}
+
+/// Every setting holding both walks' scores in fragments, under a causal mask, on queries and keys
+/// spanning several stages and several boxes: the key walks start past their first stages and the
+/// query walks stop short of their last, which a case shorter than one stage never shows, and the
+/// heads of a group set apart add their keys' gradients into one sum.
+#[test]
+fn every_held_cube_setting_masks_causally_over_several_stages_in_f16() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let case = Case {
+        heads: 4,
+        seq_q: 150,
+        seq_kv: 150,
+        val_dim: 16,
+        visibility: AttentionVisibility::Causal {
+            queries: QueryPlacement::Last,
+        },
+        ..CASE
+    };
+    let held = CubeStagedAttentionBackwardRoutine
+        .settings(&hw)
+        .into_iter()
+        .filter(|settings| {
+            settings.query_gradient.holds_its_score() && settings.key_gradient.holds_its_score()
+        });
+    for settings in held {
+        Reference::run(
+            CubeStagedAttentionBackwardRoutine,
+            case,
+            half::f16::elem_type_native(),
+            3e-2,
+            Some(settings),
+        );
+    }
+}

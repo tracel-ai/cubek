@@ -127,10 +127,12 @@ impl AttentionWorkItem {
     /// One stage of `keys` keys and their values, each over its own axes and bound innermost
     /// along the axis its lines run along, the keys in `key_order`.
     pub fn stage(&self, keys: usize, key_order: BindingOrder) -> [StagedOperand; 2] {
-        let operand = |operand: AttentionOperand, row: Axis, extent: usize| StagedOperand {
-            element: self.elements.get(operand),
-            space: Space::new(&[(S, keys), (row, extent)]),
-            innermost: operand.innermost(key_order),
+        let operand = |operand: AttentionOperand, row: Axis, extent: usize| {
+            StagedOperand::new(
+                self.elements.get(operand),
+                Space::new(&[(S, keys), (row, extent)]),
+                operand.innermost(key_order),
+            )
         };
         [
             operand(AttentionOperand::Key, D, self.head_dim),
@@ -141,16 +143,16 @@ impl AttentionWorkItem {
     /// The query as a cube stages it once for its walk: one batch and one head of keys, `queries`
     /// rows of each of `heads` of its heads, over the whole head dim, its lines along it.
     pub fn staged_query(&self, heads: usize, queries: usize) -> StagedOperand {
-        StagedOperand {
-            element: self.elements.get(AttentionOperand::Query),
-            space: Space::new(&[
+        StagedOperand::new(
+            self.elements.get(AttentionOperand::Query),
+            Space::new(&[
                 (B, 1),
                 (KV, 1),
                 (G, heads),
                 (Q, queries),
                 (D, self.head_dim),
             ]),
-            innermost: D,
-        }
+            D,
+        )
     }
 }

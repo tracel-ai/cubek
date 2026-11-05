@@ -1,4 +1,4 @@
-use cubecl::tile::{Partitioning, StageStorage, TileArg};
+use cubecl::tile::{Partitioning, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_staged_attention_partial_microkernel;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
@@ -12,14 +12,14 @@ use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out: &TileArg<'_>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out: &TileTensor<'_>,
     slot_out: &mut Tensor<Vector<EA, Const<1>>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
-    mask: ComptimeOption<&TileArg<'static>>,
+    mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,

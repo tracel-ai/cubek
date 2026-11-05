@@ -4,9 +4,11 @@ use crate::kernels::{
     MatmulRoutineProblem, MatmulTensors, MatmulView, cube_order_name,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::TileArgLaunch;
+use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubek_microkernel::matmul::MatmulMicrokernel;
+use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStagingCount};
@@ -193,7 +195,7 @@ impl Routine for UnitRegistersMatmulRoutine {
         estimate: &mut KernelEstimate,
     ) {
         let (item, partitioning) = (
-            MatmulView::of::<UnitRegistersMicrokernel>(problem)
+            MatmulView::new(problem, UnitRegistersMatmulRoutine::ROWS_KIND)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
             &blueprint.partitioning,
@@ -232,7 +234,7 @@ impl Routine for UnitRegistersMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_plain()?;
-        let view = MatmulView::of::<UnitRegistersMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, UnitRegistersMatmulRoutine::ROWS_KIND)?;
         let microkernel =
             UnitRegistersMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
         let planes = settings.planes;
@@ -259,10 +261,13 @@ impl Routine for UnitRegistersMatmulRoutine {
 }
 
 impl MatmulRoutine<UnitRegistersMicrokernel> for UnitRegistersMatmulRoutine {
+    /// A unit owns a block of the rows.
+    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
-        binding: MatmulBinding<O::Operand, TileArgLaunch, TileArgLaunch>,
+        binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: UnitRegistersMatmulRoutineBlueprint,
         grid: Grid,
     ) {

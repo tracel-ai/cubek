@@ -3,6 +3,7 @@ use crate::attention_backward::key_gradient::plane::{
     PlaneKeyGradientMicrokernel, PlaneKeyGradientMicrokernelSettings,
 };
 use crate::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
+use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Axis, Level, Levels, Partitioning};
@@ -30,6 +31,11 @@ pub struct CubeKeyGradientMicrokernelSettings {
 }
 
 impl CubeKeyGradientMicrokernelSettings {
+    /// Whether its planes keep their score in fragments, on the manual `mma`.
+    pub fn holds_its_score(&self) -> bool {
+        self.plane.transport == PlaneFragmentTransport::Mma
+    }
+
     /// The plane microkernel's default, two planes along the keys.
     pub const DEFAULT: Self = Self {
         plane: PlaneKeyGradientMicrokernelSettings::DEFAULT,
@@ -121,11 +127,25 @@ impl Microkernel for CubeKeyGradientMicrokernel {
             planes_along_keys: NonZeroUsize::new(planes).unwrap(),
             ..lead
         });
+        // A fragment of keys a plane, held, on two, four and eight planes: a cube's box as wide as
+        // two fragments a plane's, each plane's gradients half as many registers; and stages of
+        // eight query fragments, which four planes still share in whole rows of the instruction.
+        let narrow =
+            [(2, 4), (2, 8), (4, 4), (4, 8), (8, 2), (8, 4), (8, 8)].map(|(queries, planes)| {
+                Self::Settings {
+                    plane: PlaneKeyGradientMicrokernelSettings::fragments(1, queries).held(),
+                    planes_along_keys: NonZeroUsize::new(planes).unwrap(),
+                }
+            });
         let planes = PlaneKeyGradientMicrokernel::settings(hw)
             .into_iter()
             .skip(1)
             .map(|plane| Self::Settings { plane, ..lead });
-        core::iter::once(lead).chain(cubes).chain(planes).collect()
+        core::iter::once(lead)
+            .chain(cubes)
+            .chain(planes)
+            .chain(narrow)
+            .collect()
     }
 
     /// The plane microkernel's candidates, a plane each along the cube's keys.

@@ -6,7 +6,7 @@
 use super::harness::{F32, read};
 use super::walk::{Case, assert_close};
 use cubecl::bytes::Bytes;
-use cubecl::tile::{Partitioning, Region, Tile, TileArg};
+use cubecl::tile::{Partitioning, Region, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_gated_delta::kernels::walk::{
     CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkTensors,
@@ -168,7 +168,7 @@ fn held_state_part<N: Size>(
             let slot = unit.coord(KEY_FEATURE);
             let mut partials =
                 UnitPartials::<N>::new(run.coord(VALUE_FEATURE), slot, runs, microkernel);
-            let mut held = HeldState::<N>::load(&state.at(&unit), microkernel);
+            let mut held = HeldState::<N>::load(&state.at(&unit), false, microkernel);
             let origin = unit.origin(VALUE_FEATURE);
             for step in unit.walk() {
                 let position = step.coord(POSITION);
@@ -218,10 +218,10 @@ fn held_state_part<N: Size>(
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 fn held_state_probe<N: Size>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    state: &TileArg<'_>,
-    kept: &TileArg<'_>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    state: &TileTensor<'_>,
+    kept: &TileTensor<'_>,
     dump: &mut [f32],
     first_kept: usize,
     partitioning: Partitioning,
@@ -289,7 +289,7 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
             let len = runs * microkernel.units * stride;
             let dump = client.create(Bytes::from_elems(vec![f32::NAN; len]));
             let binding = tensors.bind(&blueprint, &grid);
-            let operands = binding.operands;
+            let kept = binding.kept.expect("the case owns its states");
             // SAFETY: every operand is bound through the launcher as the real kernel's are, and
             // each unit writes its own `stride` floats of `dump`, within `len`.
             unsafe {
@@ -298,10 +298,10 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
                     grid.launch.cube_count.clone(),
                     grid.launch.cube_dim,
                     blueprint.width,
-                    operands.query,
-                    operands.key,
-                    operands.state,
-                    operands.kept,
+                    binding.query,
+                    binding.key,
+                    binding.state,
+                    kept,
                     BufferArg::from_raw_parts(dump.clone(), len),
                     tensors.problem().first_kept(),
                     binding.launcher.partitioning_arg(),
@@ -337,7 +337,7 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
             }
             // The states after each position.
             let walked = tensors.into_outputs();
-            let kept = read(&client, walked.kept.handle.clone(), F32);
+            let kept = read(&client, walked.kept.unwrap().handle.clone(), F32);
             let mut s: Vec<f64> = o.state.iter().map(|&x| x as f64).collect();
             let mut expected = Vec::new();
             for t in 0..case.positions {

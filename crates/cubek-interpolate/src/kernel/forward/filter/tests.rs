@@ -40,7 +40,7 @@ impl<T: Float> Recipe<T> for AxisValue {
 #[cube]
 fn materialize(
     source: &Tile,
-    output: &TileArg<'_>,
+    output: &TileTensor<'_>,
     space: &Partitioning,
     #[comptime] level: Level,
 ) {
@@ -96,8 +96,8 @@ impl Harness {
     }
 
     /// The output launch argument.
-    fn output_arg(&self, output: &TensorHandle) -> TileArgLaunch {
-        TileArgLaunch::new(
+    fn output_arg(&self, output: &TensorHandle) -> TileTensorLaunch {
+        TileTensorLaunch::new(
             output.clone().binding().into_tensor_arg(),
             self.dtype,
             1,
@@ -129,7 +129,7 @@ type LinearScaled = Linear<AxisValue>;
 
 #[cube(launch)]
 fn linear_kernel<E: Float>(
-    output: &TileArg<'_>,
+    output: &TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
@@ -149,7 +149,7 @@ fn linear_kernel<E: Float>(
 
 #[cube(launch)]
 fn cubic_kernel<E: Float>(
-    output: &TileArg<'_>,
+    output: &TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
@@ -171,7 +171,7 @@ fn cubic_kernel<E: Float>(
 
 #[cube(launch)]
 fn lanczos_kernel<E: Float>(
-    output: &TileArg<'_>,
+    output: &TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
@@ -195,7 +195,7 @@ fn lanczos_kernel<E: Float>(
 /// generic over their inner recipe buys.
 #[cube(launch)]
 fn linear_over_axis_value_kernel<E: Float>(
-    output: &TileArg<'_>,
+    output: &TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
