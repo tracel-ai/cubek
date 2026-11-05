@@ -15,7 +15,7 @@ use cubecl::tile::{Levels, Partitioning};
 use cubek_microkernel::reduce::hypercube::{
     HypercubeReduceMicrokernel, HypercubeReduceMicrokernelSettings,
 };
-use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand};
+use cubek_microkernel::reduce::{ReduceCarrier, ReduceLayout, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, CubeResources, Grid, Routine};
@@ -147,6 +147,15 @@ impl Routine for HypercubeReduceRoutine {
         if problem.rows().len() > MAX_ROW_DIMS {
             return Err(Refusal::Declined {
                 why: "the hypercube reduce runs its cubes along at most two row dims",
+            });
+        }
+        // The last cube merges a row's top-k lists one after another, `k` inserts a part, so the
+        // shorter parts cost more in the merge than their extra cubes save.
+        if matches!(problem.operation.carrier(), ReduceCarrier::TopK { .. })
+            && settings.unit_lines < HypercubeReduceRoutineSettings::UNIT_LINES[0]
+        {
+            return Err(Refusal::Declined {
+                why: "the hypercube splits a top-k's rows into its longest parts only",
             });
         }
         let microkernel =
