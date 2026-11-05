@@ -302,7 +302,11 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         for plane in 0..planes {
             #[unroll(unrolled)]
             for slot in 0..k {
-                total.insert(values[plane * k + slot], indices[plane * k + slot], monoid);
+                total.insert_in_full_order(
+                    values[plane * k + slot],
+                    indices[plane * k + slot],
+                    monoid,
+                );
             }
         }
         sync_cube();
@@ -359,7 +363,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
                 for lane in 0..N::value() {
                     #[unroll(unrolled)]
                     for slot in 0..k {
-                        best.insert(
+                        best.insert_in_full_order(
                             Vector::new(acc.values[slot].extract(lane)),
                             Vector::new(acc.indices[slot].extract(lane)),
                             monoid,
