@@ -3,7 +3,9 @@ use super::{
 };
 use crate::kernels::tune::{MatmulPackedCandidate, MatmulRoutineCandidate};
 use crate::kernels::{
-    CubeStagedMatmulRoutine, HypercubeLastArrivalMatmulRoutine, UnitRegistersMatmulRoutine,
+    CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine, CubeStagedTmaFillerMatmulRoutine,
+    CubeStagedTmaMatmulRoutine, CubeStagedTmaStoredMatmulRoutine, CubeStagedWgmmaMatmulRoutine,
+    HypercubeLastArrivalMatmulRoutine, UnitRegistersMatmulRoutine,
 };
 use cubek_std::Hardware;
 
@@ -30,6 +32,36 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
         )
         .identified(
             &microkernel,
+            MatmulRoutineCandidate::list(CubeStagedAsyncCopyMatmulRoutine, &hw),
+            RoutineIdentity::new,
+            MatmulRoutineCandidate::launch,
+        )
+        .identified(
+            &microkernel,
+            MatmulRoutineCandidate::list(CubeStagedTmaMatmulRoutine, &hw),
+            RoutineIdentity::new,
+            MatmulRoutineCandidate::launch,
+        )
+        .identified(
+            &microkernel,
+            MatmulRoutineCandidate::list(CubeStagedTmaFillerMatmulRoutine, &hw),
+            RoutineIdentity::new,
+            MatmulRoutineCandidate::launch,
+        )
+        .identified(
+            &microkernel,
+            MatmulRoutineCandidate::list(CubeStagedTmaStoredMatmulRoutine, &hw),
+            RoutineIdentity::new,
+            MatmulRoutineCandidate::launch,
+        )
+        .identified(
+            &microkernel,
+            MatmulRoutineCandidate::list(CubeStagedWgmmaMatmulRoutine, &hw),
+            RoutineIdentity::new,
+            MatmulRoutineCandidate::launch,
+        )
+        .identified(
+            &microkernel,
             MatmulRoutineCandidate::list(HypercubeLastArrivalMatmulRoutine, &hw),
             RoutineIdentity::new,
             MatmulRoutineCandidate::launch,
@@ -50,12 +82,52 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
             RoutineIdentity::new,
             MatmulPackedCandidate::launch,
         )
+        .identified(
+            &microkernel,
+            MatmulPackedCandidate::of(
+                CubeStagedAsyncCopyMatmulRoutine,
+                CubeStagedAsyncCopyMatmulRoutine.packed_settings(&hw),
+                &hw,
+            ),
+            RoutineIdentity::new,
+            MatmulPackedCandidate::launch,
+        )
+        .identified(
+            &microkernel,
+            MatmulPackedCandidate::of(
+                CubeStagedTmaFillerMatmulRoutine,
+                CubeStagedTmaFillerMatmulRoutine.packed_settings(&hw),
+                &hw,
+            ),
+            RoutineIdentity::new,
+            MatmulPackedCandidate::launch,
+        )
         // The same, against a packed activation decoded first.
         .identified(
             &microkernel,
             MatmulPackedCandidate::of(
                 CubeStagedMatmulRoutine,
                 CubeStagedMatmulRoutine.packed_settings(&hw),
+                &hw,
+            ),
+            MatmulPackedCandidate::activation_decoded_identity,
+            MatmulPackedCandidate::launch_activation_decoded,
+        )
+        .identified(
+            &microkernel,
+            MatmulPackedCandidate::of(
+                CubeStagedAsyncCopyMatmulRoutine,
+                CubeStagedAsyncCopyMatmulRoutine.packed_settings(&hw),
+                &hw,
+            ),
+            MatmulPackedCandidate::activation_decoded_identity,
+            MatmulPackedCandidate::launch_activation_decoded,
+        )
+        .identified(
+            &microkernel,
+            MatmulPackedCandidate::of(
+                CubeStagedTmaFillerMatmulRoutine,
+                CubeStagedTmaFillerMatmulRoutine.packed_settings(&hw),
                 &hw,
             ),
             MatmulPackedCandidate::activation_decoded_identity,

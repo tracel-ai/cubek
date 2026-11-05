@@ -3,22 +3,24 @@
 use crate::kernels::refusals::{
     GATED_DELTA_WALK_BINDING_BUFFERS, GATED_DELTA_WALK_BINDINGS_PAST_DEVICE,
     GATED_DELTA_WALK_ELEMENT_NOT_FLOAT, GATED_DELTA_WALK_ELEMENT_UNVERIFIED,
-    GATED_DELTA_WALK_HEADS_EMPTY,
+    GATED_DELTA_WALK_HEADS_EMPTY, GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS,
 };
 use crate::kernels::walk::{CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::Space;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
+use cubecl::tile::{Axis, Space};
 use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
-use cubek_microkernel::gated_delta::walk::GatedDeltaWalkOperandMap;
+use cubek_microkernel::gated_delta::walk::{GatedDeltaWalkOperand, GatedDeltaWalkOperandMap};
 use cubek_microkernel::gated_delta::{
-    BATCH, GROUP, GatedDeltaHeads, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, VALUE_FEATURE,
+    BATCH, GROUP, GatedDeltaHeads, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, STORE_SLOT,
+    VALUE_FEATURE,
 };
 use cubek_std::Hardware;
 use cubek_std::routine::{EstimatedProblem, Routine};
+use serde::{Deserialize, Serialize};
 
 /// The element every operand of the walk but its output is in: `f32`, as the recurrence sums a
 /// decayed running state, which is where a narrow float costs accuracy.
@@ -31,6 +33,101 @@ const OUTPUT_ELEMENTS: [ElemType; 3] = [
     GATED_DELTA_WALK_ELEMENT,
 ];
 
+/// The operands a walk in a store's slots binds: every one but the kept states.
+const SLOTS_OPERANDS: [GatedDeltaWalkOperand; 7] = [
+    GatedDeltaWalkOperand::Query,
+    GatedDeltaWalkOperand::Key,
+    GatedDeltaWalkOperand::Value,
+    GatedDeltaWalkOperand::Decay,
+    GatedDeltaWalkOperand::Strength,
+    GatedDeltaWalkOperand::State,
+    GatedDeltaWalkOperand::Out,
+];
+
+/// Where a walk's states live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GatedDeltaWalkStateLayout {
+    /// A state tensor the walk resumes from, one a sequence, and kept states it writes to a tensor
+    /// of their own: the state after each of the last `kept` positions.
+    Owned { kept: NonZeroUsize },
+    /// A store of `slots` states, a table placing each sequence at its slot: the walk reads the
+    /// sequence's state there and writes the state after its last position back, which is the one
+    /// state a slot holds.
+    Slots { slots: NonZeroUsize },
+}
+
+impl GatedDeltaWalkStateLayout {
+    /// States kept for a rewind: the state after each of the last this many positions.
+    pub fn kept(&self) -> NonZeroUsize {
+        match self {
+            Self::Owned { kept } => *kept,
+            Self::Slots { .. } => NonZeroUsize::MIN,
+        }
+    }
+
+    /// The buffers a walk over this layout binds, the metadata buffer included.
+    pub fn binding_buffers(&self) -> u32 {
+        match self {
+            Self::Owned { .. } => GATED_DELTA_WALK_BINDING_BUFFERS,
+            Self::Slots { .. } => GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS,
+        }
+    }
+
+    /// The operands of the walk this layout binds: the kept states are an operand of the owned
+    /// walk alone.
+    pub fn operands(&self) -> &'static [GatedDeltaWalkOperand] {
+        match self {
+            Self::Owned { .. } => &GatedDeltaWalkOperand::ALL,
+            Self::Slots { .. } => &SLOTS_OPERANDS,
+        }
+    }
+
+    /// The axis a level cuts for the kept states, and its extent: the owned walk's.
+    pub fn kept_axis(&self) -> Option<(Axis, usize)> {
+        match self {
+            Self::Owned { kept } => Some((KEPT_STATE, kept.get())),
+            Self::Slots { .. } => None,
+        }
+    }
+
+    /// The axis of a store's slots, and its extent: no level cuts it.
+    pub fn store_axis(&self) -> Option<(Axis, usize)> {
+        match self {
+            Self::Owned { .. } => None,
+            Self::Slots { slots } => Some((STORE_SLOT, slots.get())),
+        }
+    }
+}
+
+/// Where a walk's states live, as far as its kernel cares: a [`GatedDeltaWalkStateLayout`] without
+/// the store's size, which the kernel leaves to the launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GatedDeltaWalkStateKind {
+    Owned { kept: NonZeroUsize },
+    Slots,
+}
+
+impl GatedDeltaWalkStateKind {
+    /// The layout a problem of this kind prepares on: a store of one slot, as no level cuts them.
+    pub fn layout(self) -> GatedDeltaWalkStateLayout {
+        match self {
+            Self::Owned { kept } => GatedDeltaWalkStateLayout::Owned { kept },
+            Self::Slots => GatedDeltaWalkStateLayout::Slots {
+                slots: NonZeroUsize::MIN,
+            },
+        }
+    }
+}
+
+impl From<GatedDeltaWalkStateLayout> for GatedDeltaWalkStateKind {
+    fn from(layout: GatedDeltaWalkStateLayout) -> Self {
+        match layout {
+            GatedDeltaWalkStateLayout::Owned { kept } => Self::Owned { kept },
+            GatedDeltaWalkStateLayout::Slots { .. } => Self::Slots,
+        }
+    }
+}
+
 /// The gated delta rule over `batch` sequences of `positions` positions, as the host describes it:
 /// `key_heads · group` value heads, each reading the queries and keys of the key head it is
 /// grouped under.
@@ -41,9 +138,11 @@ pub struct GatedDeltaWalkProblem {
     pub heads: GatedDeltaHeads,
     /// The element the output is written at, rounded from the `f32` read: the activations'.
     pub output_element: ElemType,
-    /// States kept for a rewind: the state after each of the last this many positions.
-    pub kept: NonZeroUsize,
-    /// The alignment of each operand's buffer in elements, over the axes the walk names.
+    /// Where the states live, and how many are kept.
+    pub state: GatedDeltaWalkStateLayout,
+    /// The alignment of each operand's buffer in elements, over the axes the walk names. The kept
+    /// states are bound by the owned walk alone: a walk in a store's slots holds
+    /// [`ElemAlignment::ONE`] for them, which nothing reads.
     pub alignments: GatedDeltaWalkOperandMap<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start.
     pub start_bytes: GatedDeltaWalkOperandMap<u64>,
@@ -80,7 +179,7 @@ impl GatedDeltaWalkProblem {
 
     /// The first position whose state is kept.
     pub fn first_kept(&self) -> usize {
-        self.positions - self.kept.get()
+        self.positions - self.state.kept().get()
     }
 
     /// Whether a device launches the walk as a routine prepares it, whichever routine places it:
@@ -102,7 +201,7 @@ impl GatedDeltaWalkProblem {
         {
             return Err(GATED_DELTA_WALK_HEADS_EMPTY);
         }
-        if GATED_DELTA_WALK_BINDING_BUFFERS > hw.properties.hardware.max_bindings {
+        if self.state.binding_buffers() > hw.properties.hardware.max_bindings {
             return Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE);
         }
         Ok(())
@@ -126,15 +225,21 @@ impl GatedDeltaWalkProblem {
     /// outside the state's rows and columns, so each is a whole state.
     pub fn space(&self) -> Space {
         let heads = &self.heads;
-        Space::new(&[
+        let mut axes = vec![
             (BATCH, self.batch),
             (POSITION, self.positions),
             (KEY_HEAD, heads.key_heads),
             (GROUP, heads.group),
-            (KEPT_STATE, self.kept.get()),
             (KEY_FEATURE, heads.key_features),
             (VALUE_FEATURE, heads.value_features),
-        ])
+        ];
+        axes.extend(
+            self.state
+                .kept_axis()
+                .into_iter()
+                .chain(self.state.store_axis()),
+        );
+        Space::new(&axes)
     }
 
     /// A problem of dense operands, each starting where its buffer does: what a key describes, and
@@ -144,7 +249,7 @@ impl GatedDeltaWalkProblem {
         positions: usize,
         heads: GatedDeltaHeads,
         output_element: ElemType,
-        kept: NonZeroUsize,
+        state: GatedDeltaWalkStateLayout,
     ) -> Self {
         let rows =
             |shape: &[usize]| ElemAlignment::new(shape, &row_major_contiguous_strides(shape));
@@ -159,23 +264,32 @@ impl GatedDeltaWalkProblem {
             positions,
             heads,
             output_element,
-            kept,
+            state,
             alignments: GatedDeltaWalkOperandMap {
                 query: rows(&[batch, positions, key_heads, key_features]),
                 key: rows(&[batch, positions, key_heads, key_features]),
                 value: rows(&[batch, positions, key_heads, group, value_features]),
                 decay: rows(&[batch, positions, key_heads, group]),
                 strength: rows(&[batch, positions, key_heads, group]),
-                state: rows(&[batch, key_heads, group, key_features, value_features]),
-                out: rows(&[batch, positions, key_heads, group, value_features]),
-                kept: rows(&[
-                    kept.get(),
-                    batch,
+                state: rows(&[
+                    state.store_axis().map_or(batch, |(_, slots)| slots),
                     key_heads,
                     group,
                     key_features,
                     value_features,
                 ]),
+                out: rows(&[batch, positions, key_heads, group, value_features]),
+                kept: match state {
+                    GatedDeltaWalkStateLayout::Owned { kept } => rows(&[
+                        kept.get(),
+                        batch,
+                        key_heads,
+                        group,
+                        key_features,
+                        value_features,
+                    ]),
+                    GatedDeltaWalkStateLayout::Slots { .. } => ElemAlignment::ONE,
+                },
             },
             start_bytes: GatedDeltaWalkOperandMap::splat(0),
         }
@@ -198,7 +312,7 @@ impl EstimatedProblem for GatedDeltaWalkProblem {
         let keyed = self.batch * heads.key_heads * positions * 2 * heads.key_features;
         let valued = value_heads * positions * (heads.value_features + 2);
         let read = value_heads * positions * heads.value_features * self.output_element.size();
-        let states = value_heads * (1 + self.kept.get()) * self.state_bytes();
+        let states = value_heads * (1 + self.state.kept().get()) * self.state_bytes();
         Work {
             compute_ops: 7 * value_heads * positions * heads.key_features * heads.value_features,
             bytes: (keyed + valued) * input_bytes + read + states,
@@ -237,7 +351,15 @@ mod tests {
     }
 
     fn walk(heads: GatedDeltaHeads) -> GatedDeltaWalkProblem {
-        GatedDeltaWalkProblem::dense(1, 8, heads, GATED_DELTA_WALK_ELEMENT, NonZeroUsize::MIN)
+        GatedDeltaWalkProblem::dense(
+            1,
+            8,
+            heads,
+            GATED_DELTA_WALK_ELEMENT,
+            GatedDeltaWalkStateLayout::Owned {
+                kept: NonZeroUsize::MIN,
+            },
+        )
     }
 
     /// The launch needs eight buffers and the metadata buffer: a device binding fewer declines it,
@@ -275,6 +397,40 @@ mod tests {
         );
         devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_BINDING_BUFFERS;
         assert_eq!(problem.admit(&hw), Ok(()));
+    }
+
+    fn in_slots() -> GatedDeltaWalkProblem {
+        let mut problem = walk(sixteen_heads());
+        problem.state = GatedDeltaWalkStateLayout::Slots {
+            slots: NonZeroUsize::new(32).unwrap(),
+        };
+        problem
+    }
+
+    /// The walk in a store's slots binds nine operands and the metadata buffer: a device binding
+    /// ten declines the one in a store's slots by name and admits the one over states it owns.
+    #[test]
+    fn the_slots_walk_binds_one_buffer_more_than_the_owned_walk() {
+        let problem = in_slots();
+        let mut hw = devices::h100();
+        devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS - 1;
+        assert_eq!(
+            problem.admit(&hw),
+            Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE)
+        );
+        assert_eq!(walk(sixteen_heads()).admit(&hw), Ok(()));
+        devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS;
+        assert_eq!(problem.admit(&hw), Ok(()));
+        for hw in [
+            devices::wgpu_no_subgroups(),
+            devices::rdna_range(),
+            devices::strix_halo(),
+        ] {
+            assert_eq!(
+                problem.admit(&hw),
+                Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE)
+            );
+        }
     }
 
     /// An output element that is packed or an integer is declined as not a float, a float the walk

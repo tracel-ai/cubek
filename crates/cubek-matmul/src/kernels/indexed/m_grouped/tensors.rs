@@ -2,11 +2,12 @@ use crate::kernels::indexed::m_grouped::{
     MGroupedChunk, MGroupedMatmulKey, MGroupedRowSource, MGroupedSettings, PaddedRows,
 };
 use crate::kernels::indexed::stack::{SlabAxis, SlabView};
+use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::key::OperandLayout;
+use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
 use crate::kernels::{
-    MATMUL_PACKED_UNREAD, MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable,
-    MatmulInputs, MatmulRoutine, MatmulRoutineProblem,
+    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
+    MatmulRoutineProblem,
 };
 use cubecl::client::Client;
 use cubecl::tile::launch::Refusal;
@@ -15,7 +16,7 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::layout::contiguous;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_axes::{K, N};
 
 /// The operands of one grouped product, `out[r] = lhs[r] · rhs[group(r)]`: where the rows come
 /// from, sorted by group, the stack of slabs laid `along`, float or packed, and each group's
@@ -35,6 +36,9 @@ pub struct MGroupedMatmulTensors {
 }
 
 impl MGroupedMatmulTensors {
+    /// The most rows a key tells apart: past it a grid is full whatever the count.
+    const ROWS_KEYED: usize = 65536;
+
     /// The rows `source` holds against `rhs` on `client`'s device, grouped by `ends` (each group's
     /// cumulative end row as a `u32`, one group a slab), the slabs laid along `along`. A float
     /// stack is read where it lies, and copied only where it overlaps itself or is contiguous
@@ -138,6 +142,11 @@ impl MGroupedMatmulTensors {
         self.along.slab_shape(&self.rhs, self.groups())
     }
 
+    /// Whether the stack is float or packed, and how.
+    pub fn stack_kind(&self) -> OperandKind {
+        self.rhs.kind()
+    }
+
     /// The key the grouped autotune measures these operands under.
     pub fn key(&self) -> MGroupedMatmulKey {
         let [k, n] = self.slab_shape();
@@ -146,8 +155,8 @@ impl MGroupedMatmulTensors {
             k,
             n,
             self.groups(),
-            self.source.rows(),
-            self.rhs.kind(),
+            MatmulTuneKey::anchored(self.source.rows(), Self::ROWS_KEYED),
+            self.stack_kind(),
             OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
             self.along,
             self.source.kind(),
@@ -246,8 +255,7 @@ impl MGroupedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// For the rows of a cube's tile, [`MATMUL_PACKED_UNREAD`] for a packed stack, and why `hw`
-    /// cannot run the product at these settings.
+    /// What [`rows_a_cube_holds`](Self::rows_a_cube_holds) declines, for the rows of a cube's tile.
     fn chunk_rows<Mk, SM, R>(
         &self,
         hw: &Hardware,
@@ -264,13 +272,13 @@ impl MGroupedMatmulTensors {
         }
     }
 
-    /// The rows one cube of `routine` at `settings` holds against a float stack, prepared for
-    /// `hw` over every grouped row as one dense product.
+    /// The rows one cube of `routine` at `settings` holds against the stack, float or packed,
+    /// prepared for `hw` over every grouped row as one dense product.
     ///
     /// # Errors
     ///
-    /// [`MATMUL_PACKED_UNREAD`] for a packed stack, whose blocks the rows are not counted in, and
-    /// why `hw` cannot run the product at these settings.
+    /// What reading a packed stack slab by slab declines, and why `hw` cannot run the product at
+    /// these settings.
     fn rows_a_cube_holds<Mk, SM, R>(
         &self,
         hw: &Hardware,
@@ -281,12 +289,9 @@ impl MGroupedMatmulTensors {
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
     {
-        if matches!(self.rhs, StoredTensor::Packed(_)) {
-            return Err(MATMUL_PACKED_UNREAD);
-        }
         let problem = self.slab_problem(self.source.rows())?;
         let (blueprint, _) = routine.prepare(hw, &problem, settings)?;
-        Ok(blueprint.partitioning.cube_space().extent(M))
+        Ok(blueprint.partitioning.rows() as usize)
     }
 
     /// `rows` rows against one slab, as a dense product states it, the slab aligned as a slab of

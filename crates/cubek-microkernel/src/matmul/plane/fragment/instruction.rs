@@ -101,7 +101,7 @@ impl PlaneFragmentInstruction {
     }
 
     /// Planes that issue one instruction together: a warpgroup's
-    /// [`WARPGROUP_PLANES`](Self::WARPGROUP_PLANES), one elsewhere. The warpgroup MMA runs only
+    /// `WARPGROUP_PLANES`, one elsewhere. The warpgroup MMA runs only
     /// where planes are [`WARPGROUP_PLANE_UNITS`](Self::WARPGROUP_PLANE_UNITS) wide
     /// ([`PlaneFragmentMicrokernel`](super::PlaneFragmentMicrokernel)'s candidates).
     pub fn planes(self) -> usize {

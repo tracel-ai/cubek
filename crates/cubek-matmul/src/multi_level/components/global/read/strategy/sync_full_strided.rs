@@ -20,7 +20,7 @@ use crate::{
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::InvalidConfigError;
 
-use super::{LoadingJob, LoadingValidation};
+use super::{LoadingJob, LoadingValidation, ReaderMode, unevenly_split_stage};
 
 #[derive(CubeType, Clone, Copy)]
 /// Loads the content of all the stage using all planes,
@@ -32,16 +32,15 @@ impl LoadingValidation for SyncFullStridedLoading {
         _device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
     ) -> Result<(), InvalidConfigError> {
-        let vector_size = config.gmem_config.vector_size;
+        if let ReaderMode::Strict = config.reader_mode {
+            let vector_size = config.gmem_config.vector_size;
 
-        let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size as u32;
-        let total_units = config.loading_units_count();
+            let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size as u32;
+            let total_units = config.loading_units_count();
 
-        if !num_stage_vectors.is_multiple_of(total_units) {
-            return Err(Box::new(format!(
-                "Too many data will be loaded, resulting in out of bounds.
-        Try setting vector size and number of planes so that total unit count {total_units:?} divides number of vectors in stage.",
-            )));
+            if !num_stage_vectors.is_multiple_of(total_units) {
+                return Err(unevenly_split_stage(num_stage_vectors, total_units));
+            }
         }
 
         validate_swizzle_atom_size(config.smem_config)?;
@@ -86,7 +85,8 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullStridedLoading {
         let vector_size = NG::value().comptime() as u32;
         let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = num_stage_vectors / unit_count;
+        let num_tasks_per_unit = num_stage_vectors.div_ceil(unit_count);
+        let balanced_workload = num_stage_vectors.is_multiple_of(unit_count);
 
         let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
@@ -97,6 +97,9 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullStridedLoading {
             unit_position_base,
             num_tasks_per_unit,
             unit_count,
+            balanced_workload,
+            num_stage_vectors,
+            reader_mode: config.reader_mode,
         }
     }
 }
@@ -110,6 +113,12 @@ pub struct SyncFullStridedJob {
     num_tasks_per_unit: u32,
     #[cube(comptime)]
     unit_count: u32,
+    #[cube(comptime)]
+    balanced_workload: bool,
+    #[cube(comptime)]
+    num_stage_vectors: u32,
+    #[cube(comptime)]
+    reader_mode: ReaderMode,
 }
 
 #[cube]
@@ -128,17 +137,34 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
     ) {
         let unit_position = this.unit_position_base + task_id * this.unit_count;
 
-        let layout = FullStageLayout::new(config.smem_config);
-        let view = global_iter.view().view(layout);
-
-        let vector_read = view.read_checked(unit_position * NG::value() as u32);
-        let type_size = Vector::<ES, NS>::size();
-        let stage_offs = stage.swizzle.apply(unit_position, type_size);
-
-        stage.as_slice_mut::<NS>()[stage_offs as usize] = Vector::cast_from(vector_read);
+        #[allow(clippy::collapsible_else_if)]
+        if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
+            load_and_store_vector::<EG, NG, ES, NS>(unit_position, global_iter, stage, config);
+        } else {
+            if unit_position < this.num_stage_vectors {
+                load_and_store_vector::<EG, NG, ES, NS>(unit_position, global_iter, stage, config);
+            }
+        }
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {
         this.num_tasks_per_unit
     }
+}
+
+#[cube]
+fn load_and_store_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
+    unit_position: u32,
+    global_iter: &GlobalIterator<Vector<EG, NG>>,
+    stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
+    #[comptime] config: GlobalReaderConfig,
+) {
+    let layout = FullStageLayout::new(config.smem_config);
+    let view = global_iter.view().view(layout);
+
+    let vector_read = view.read_checked(unit_position * NG::value() as u32);
+    let type_size = Vector::<ES, NS>::size();
+    let stage_offs = stage.swizzle.apply(unit_position, type_size);
+
+    stage.as_slice_mut::<NS>()[stage_offs as usize] = Vector::cast_from(vector_read);
 }

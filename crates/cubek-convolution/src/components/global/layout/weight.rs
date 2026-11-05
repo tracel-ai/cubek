@@ -127,6 +127,8 @@ impl WeightLayoutLaunch {
         WeightLayoutLaunch::new(padded_channels, shape_k, shape_n, params, config)
     }
 
+    /// The weight gradient is written through a `Transpose`: its rows are the matmul's `n` and
+    /// its columns the matmul's `m`, so the bounds checks swap with them.
     fn from_args_out(problem: &ConvolutionProblem, config: GlobalLayoutConfig) -> Self {
         let padded_channels = problem.padded_channels as u32;
         let shape_m = problem.m as u32;
@@ -134,6 +136,12 @@ impl WeightLayoutLaunch {
 
         let params = ConvolutionParams::from_problem(problem);
 
-        WeightLayoutLaunch::new(padded_channels, shape_n, shape_m, params, config)
+        WeightLayoutLaunch::new(
+            padded_channels,
+            shape_n,
+            shape_m,
+            params,
+            config.transposed(),
+        )
     }
 }

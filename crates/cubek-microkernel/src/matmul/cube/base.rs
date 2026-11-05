@@ -37,7 +37,7 @@ impl MatmulCubeSpace {
     ///
     /// # Errors
     ///
-    /// [`OTHER_AXES`](Self::OTHER_AXES), for an item on other axes.
+    /// `OTHER_AXES`, for an item on other axes.
     pub fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         match item.axes == MatmulAxes::MNK {
             true => Ok(()),

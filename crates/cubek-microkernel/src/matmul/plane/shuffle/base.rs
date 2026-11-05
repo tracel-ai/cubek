@@ -173,7 +173,7 @@ impl PlaneShuffleMicrokernel {
         matches!(spread.walk, Walked::Above(_)).then(|| self.in_turns(blocks, &spread))
     }
 
-    /// [`step_levels`](Self::step_levels) for a float rhs.
+    /// `step_levels` for a float rhs.
     ///
     /// An axis the units do not spread over is not stated: the tile DSL reads a stated level of one
     /// as a level the accumulator has to shape itself to.
@@ -520,7 +520,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
 
 impl MatmulMicrokernel for PlaneShuffleMicrokernel {
     /// The levels inside one plane, which a routine states the rest of the partitioning around:
-    /// [`step_levels`](Self::step_levels), then the walk through all of `K`, above the units where
+    /// `step_levels`, then the walk through all of `K`, above the units where
     /// they take `K` in turns, below them where each takes a run of a packed rhs's `K`.
     fn tiling(&self) -> Levels {
         let Some(blocks) = &self.blocks else {

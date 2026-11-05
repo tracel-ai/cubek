@@ -3,9 +3,10 @@
 use crate::kernels::plan::{Decoded, MatmulCall};
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::MatmulTuneKey;
-use crate::kernels::tune::{MatmulProduct, RoutineIdentity};
+use crate::kernels::tune::{ListedFor, MatmulProduct, RoutineIdentity};
 use crate::kernels::{
-    CubeShuffleMatmulRoutineSettings, CubeStagedMatmulRoutineSettings,
+    CubeShuffleMatmulRoutineSettings, CubeStagedAsyncCopyMatmulRoutineSettings,
+    CubeStagedMatmulRoutineSettings, CubeStagedTmaFillerMatmulRoutineSettings,
     HypercubeLastArrivalMatmulRoutineSettings, MatmulRoutine, MatmulTensors,
     PlaneShuffleMatmulRoutineSettings,
 };
@@ -38,6 +39,18 @@ impl PackedContraction for CubeShuffleMatmulRoutineSettings {
 }
 
 impl PackedContraction for CubeStagedMatmulRoutineSettings {
+    fn on_matrix_instructions(&self) -> bool {
+        true
+    }
+}
+
+impl PackedContraction for CubeStagedAsyncCopyMatmulRoutineSettings {
+    fn on_matrix_instructions(&self) -> bool {
+        true
+    }
+}
+
+impl PackedContraction for CubeStagedTmaFillerMatmulRoutineSettings {
     fn on_matrix_instructions(&self) -> bool {
         true
     }
@@ -93,9 +106,9 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     }
 
     /// `call`'s product by this candidate's routine at its setting, reading the packed inputs as
-    /// stored, or the reason it did not run: through the call's routes where it states them,
-    /// otherwise into its destination ([`MatmulRoutine::launch_into`]) or into an output the
-    /// launch allocates, written in the call's element.
+    /// stored, or the reason it did not run: into its destination
+    /// ([`MatmulRoutine::launch_into`]) or into an output the launch allocates, written in the
+    /// call's element.
     ///
     /// # Errors
     ///
@@ -109,14 +122,13 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     where
         R: MatmulRoutine<M, SM>,
     {
-        if !call.is_packed() {
-            return Err("listed for a packed input; both are float".into());
-        }
+        ListedFor::Packed
+            .admits(call.product())
+            .map_err(|refusal| format!("{refusal:?}"))?;
         let settings = &self.settings;
         let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
-        let launched = match (&call.routes, call.destination) {
-            (Some(routes), _) => routes.launch(&call.hw, &self.routine, settings),
-            (None, Some(destination)) => self
+        let launched = match call.destination {
+            Some(destination) => self
                 .routine
                 .launch_into(
                     &self.hw,
@@ -127,7 +139,7 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
                     settings,
                 )
                 .map(|()| destination),
-            (None, None) => {
+            None => {
                 MatmulTensors::written_in(&call.client, lhs, rhs, call.out).and_then(|tensors| {
                     let (blueprint, grid) =
                         self.routine

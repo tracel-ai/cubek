@@ -1,775 +1,179 @@
+//! What every cube staged routine shares: its blueprint, how it places and resolves its
+//! microkernel, its widths, its estimate and its launch. The routines differ only in who fills
+//! the stages and who stores the box, which the microkernel carries, and in the problems those
+//! engines refuse, which each routine checks between [`CubeStagedPlacement::new`] and
+//! [`CubeStagedPlacement::prepare`].
+
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::{
-    CUBE_STRIPS, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
+    CubeStagedMatmulRoutine, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
     MATMUL_PACKED_WALK_PAST_K, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
-    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView, cube_order_name,
+    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
-use core::num::NonZeroUsize;
-use cubecl::ir::{ElemType, FloatKind};
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::ir::ElemType;
 use cubecl::tile::launch::{
     DestinationLaunch, Refusal, TmaStored, VectorRequirement, Vectorization,
 };
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{BlockScaledOperands, Space, StageStorage, TileTensorLaunch};
-use cubek_microkernel::matmul::MatmulRowsKind;
+use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::{
-    CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
-    CubeStagedStore, MatmulPlaneLayout,
+    CubeStagedAsyncCopyRefusal, CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel,
+    CubeStagedMicrokernelSettings, CubeStagedResolved, CubeStagedStore, CubeStagedTmaRefusal,
+    CubeStagedTmaStoreRefusal, MatmulCubeSpace, MatmulCubeWrite,
 };
-use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulStep,
-    MatmulWorkItem,
+    MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulWorkItem,
 };
+use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::{Operand, Packing};
-use cubek_std::matmul_axes::{K, KB, KI, M, MI, N, NI};
-use cubek_std::microkernel::{
-    CubeStaging, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
-};
-use cubek_std::routine::{CubeResources, Grid, Routine};
-use cubek_std::{Hardware, UNIT_REGISTERS, block_scaled_for, block_scaled_mma};
+use cubek_std::matmul_axes::{K, KB, KI, MI, N, NI};
+use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
+use cubek_std::routine::{CubeResources, Grid};
 
-/// `out = lhs · rhs` with every cube owning a box of the output: it stages the box for its planes,
-/// which each own a tile of it, or split its contraction between them
-/// ([`CubeStagedMicrokernel`]).
-///
-/// The cubes cover the output, one batch each.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CubeStagedMatmulRoutine;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeStagedMatmulRoutineSettings {
-    pub microkernel: CubeStagedMicrokernelSettings,
-    pub cube_order: CubeOrder,
-}
-
-impl CubeStagedMatmulRoutineSettings {
-    pub const DEFAULT: Self = Self {
-        microkernel: CubeStagedMicrokernelSettings::DEFAULT,
-        cube_order: CubeOrder::RowMajor,
-    };
-
-    /// One tile a cube, four planes splitting its `K`
-    /// ([`CubeStagedMicrokernelSettings::SPLIT_ALONG_K`]), its cubes in the grid's order.
-    pub const SPLIT_ALONG_K: Self = Self {
-        microkernel: CubeStagedMicrokernelSettings::SPLIT_ALONG_K,
-        cube_order: CubeOrder::RowMajor,
-    };
-}
-
-/// The shape of a setting the routine races, counted in steps of the product
-/// ([`block_scaled_step`](CubeStagedMatmulRoutine::block_scaled_step)): a plane's steps of `M`, `N`
-/// and `K` (a stage's depth), the layout of its planes, the planes sharing each step of `K`, the
-/// stages in flight and who stores the box.
-#[derive(Debug, Clone, Copy)]
-struct StagedShape {
-    steps: (usize, usize, usize),
-    planes: MatmulPlaneLayout,
-    planes_along_k: usize,
-    ring: StageRing,
-    store: CubeStagedStore,
-}
-
-impl CubeStagedMatmulRoutine {
-    /// The settings a block-scaled product read as stored is raced at on `hw`, counted in steps of
-    /// the product ([`block_scaled_step`](Self::block_scaled_step)): a plane's steps of `M`, `N`
-    /// and `K`, the layout of its planes, the planes sharing each step of `K`, the stages in flight
-    /// and who stores the box, and who fills the stages.
-    ///
-    /// For a prompt's rows, filled by the TMA engine through the tile DSL's transport: four by
-    /// eight steps on four by two planes, the box a long rhs fills the device with; two by
-    /// eight, the one a narrower rhs at a prompt's chunk of rows leaves fewer cores idle with;
-    /// two by four on two by two planes, the small box the narrowest projections take; each two
-    /// stages in flight, its planes storing their fragments. Then four by four on two by four
-    /// planes, and two by four on four by two or two by four planes, three stages in flight and the
-    /// box stored by the TMA engine in one bulk copy, which a contraction of a few thousand
-    /// finishes sooner with. A stage one step deep is one tile of an input in [tile
-    /// order](cubek_std::layout::tile_order), which a box lands as it lands rows. Filled by
-    /// the cube's units asynchronously: four by four on two by four planes, three stages in flight,
-    /// and two by four on four by two planes, two.
-    ///
-    /// For a decode's rows, one step of rows (the instruction's sixteen, every row a decode
-    /// holds) by one or two steps of columns, so an rhs of a few thousand columns is hundreds
-    /// of boxes and every core reads its share of it. Filled by the TMA engine, a stage one step
-    /// deep, the most one box lands, with three or four stages in flight to keep enough of the
-    /// rhs in the air. Filled by the units asynchronously, deeper stages: four steps on four
-    /// planes side by side, or planes sharing each step of `K`, which a projection with few
-    /// columns and a long `K` keeps busy with, one step deep on four planes where `K` divides no
-    /// deeper stage.
-    ///
-    /// Each is kept where it prepares on a product of its own box, its stages within the
-    /// device's shared memory and a unit's share of its planes within [`UNIT_REGISTERS`], the
-    /// compiler's addressing beside it. Then the default, which every device serves; a device
-    /// with no block-scaled instruction has no step, and races the default alone.
-    ///
-    /// Every box is the one measured best for some Qwen3-4B projection on an RTX PRO 6000, the
-    /// rhs read back to back from memory as a model step reads it: the prompt's at 512 and
-    /// 2048 rows, the decode's at one and eight, in rows and in tile order. A setting asking for
-    /// the TMA engine whose stage one box cannot land is filled by the units instead, so each
-    /// list holds only what its fill lands.
-    ///
-    /// Apart from the float list ([`settings`](Routine::settings)): a block-scaled step contracts
-    /// four times the float one's `K` from the same bytes, so the boxes that keep it fed are not
-    /// the float product's, and the float table races none of them.
-    ///
-    /// The lists of every block-scaled instruction the device offers, each over inputs in its
-    /// form ([`block_scaled_inputs`](Self::block_scaled_inputs)), one after another, a setting two
-    /// instructions share listed once: a setting is counted in steps, and prepares only on a
-    /// product whose instruction's step it was counted in.
-    pub fn block_scaled_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
-        let mut settings: Vec<CubeStagedMatmulRoutineSettings> = Vec::new();
-        for inputs in block_scaled_mma(hw)
-            .filter_map(|instruction| Self::block_scaled_inputs(&instruction.form))
-        {
-            let Some(step) = Self::block_scaled_step(hw, &inputs) else {
-                continue;
-            };
-            for setting in Self::block_scaled_settings_in(hw, &step, &inputs) {
-                if !settings.contains(&setting) {
-                    settings.push(setting);
-                }
-            }
-        }
-        settings.push(CubeStagedMatmulRoutineSettings::DEFAULT);
-        settings
-    }
-
-    /// [`block_scaled_settings`](Self::block_scaled_settings) over `inputs`, counted in `step`,
-    /// without the default.
-    fn block_scaled_settings_in(
-        hw: &Hardware,
-        step: &MatmulStep,
-        inputs: &MatmulOperands<Option<Packing>>,
-    ) -> Vec<CubeStagedMatmulRoutineSettings> {
-        let layout = MatmulPlaneLayout::new;
-        let (double, triple) = (StageRing::DOUBLE, StageRing::TRIPLE);
-        let (fragments, by_tma_store) = (CubeStagedStore::Fragments, CubeStagedStore::Tma);
-        let prompt = [
-            ((4, 8, 1), layout(4, 2), 1, double, fragments),
-            ((2, 8, 1), layout(4, 2), 1, double, fragments),
-            ((2, 4, 1), layout(2, 2), 1, double, fragments),
-            ((4, 4, 1), layout(2, 4), 1, triple, by_tma_store),
-            ((2, 4, 1), layout(4, 2), 1, triple, by_tma_store),
-            ((2, 4, 1), layout(2, 4), 1, triple, by_tma_store),
-        ];
-        let prompt_by_units = [
-            ((4, 4, 1), layout(2, 4), 1, triple, fragments),
-            ((2, 4, 1), layout(4, 2), 1, double, fragments),
-        ];
-        let quad = StageRing {
-            stages_in_flight: NonZeroUsize::new(4).expect("four stages"),
-            ..StageRing::DOUBLE
-        };
-        // Filled by the TMA engine, a stage one step deep: a box lands a stage row of at most a
-        // swizzle's 128 bytes, two steps of `K` sharing it at most.
-        let decode_by_tma = [
-            ((1, 1, 1), layout(1, 4), 1, quad, fragments),
-            ((1, 1, 1), layout(1, 4), 1, triple, fragments),
-            ((1, 2, 1), layout(1, 4), 1, triple, fragments),
-            ((1, 2, 1), layout(1, 2), 2, triple, fragments),
-            ((1, 1, 1), layout(1, 2), 2, quad, fragments),
-        ];
-        // Filled by the units, as deep as `K` divides.
-        let decode_by_units = [
-            ((1, 1, 4), layout(1, 4), 1, double, fragments),
-            ((1, 2, 4), layout(1, 4), 1, double, fragments),
-            ((1, 1, 4), layout(1, 2), 4, double, fragments),
-            ((1, 1, 1), layout(1, 1), 4, double, fragments),
-            ((1, 2, 4), layout(1, 2), 2, double, fragments),
-        ];
-        let by_tma = prompt
-            .into_iter()
-            .chain(decode_by_tma)
-            .map(|shape| (shape, CubeStagedDelivery::Tma));
-        let by_units = prompt_by_units
-            .into_iter()
-            .chain(decode_by_units)
-            .map(|shape| (shape, CubeStagedDelivery::AsyncCopy));
-        let settings: Vec<_> = by_tma
-            .chain(by_units)
-            .map(|((steps, planes, planes_along_k, ring, store), delivery)| {
-                let shape = StagedShape {
-                    steps,
-                    planes,
-                    planes_along_k,
-                    ring,
-                    store,
-                };
-                Self::in_steps(step, shape, delivery)
-            })
-            .filter(|settings| Self::fits(hw, step, inputs, settings))
-            .collect();
-        settings
-    }
-
-    /// The step of a product of `inputs` on `hw` read as stored ([`MatmulStep`]): the least box
-    /// every load of both inputs fills whole — a row of the TMA engine's box, a word of scales —
-    /// under the device's largest block-scaled instruction over them. `None` on a device that
-    /// offers none. An input in rows and one in [tile order](cubek_std::layout::tile_order) step
-    /// alike, and a load on such a device stores in this step.
-    pub fn block_scaled_step(
-        hw: &Hardware,
-        inputs: &MatmulOperands<Option<Packing>>,
-    ) -> Option<MatmulStep> {
-        let (lhs, rhs) = (inputs.lhs?, inputs.rhs?);
-        let instruction = block_scaled_for(
-            hw,
-            (&lhs.scheme, lhs.operand.scale(K)?),
-            (&rhs.scheme, rhs.operand.scale(K)?),
-        )
-        .next()?;
-        let operands = inputs.map(|_, packing| packing.map_or(Operand::plain(), |p| p.operand));
-        let elements = MatmulOperands {
-            lhs: instruction.shape.a_type,
-            rhs: instruction.shape.b_type,
-            out: instruction.shape.a_type,
-        };
-        let shape = Space::new(&[
-            (M, instruction.shape.m as usize),
-            (N, instruction.shape.n as usize),
-            (K, instruction.shape.k as usize),
-        ]);
-        Some(
-            MatmulStep::new(hw, operands, elements)
-                .filled_by_tma(&operands.rhs, elements.rhs)
-                .under(shape),
-        )
-    }
-
-    /// Both inputs packed in `form`, their words along `K`, as a block-scaled product of that form
-    /// reads them: the `[m, k]` one as a row-major quantizer writes it, the `[k, n]` one as a
-    /// checkpoint packs it and as tile order stores it, each under a per-tensor `f32` above its
-    /// block scales where the scales are a ratio (`ue4m3`'s) rather than a magnitude. `None` for a
-    /// form no packed input stores: codes no scheme packs, or a scale type no scheme names.
-    pub fn block_scaled_inputs(
-        form: &BlockScaledOperands,
-    ) -> Option<MatmulOperands<Option<Packing>>> {
-        let scales = match form.scales {
-            FloatKind::E4M3 => ScaleDtype::UE4M3,
-            FloatKind::UE8M0 => ScaleDtype::UE8M0,
-            _ => return None,
-        };
-        let code = |kind: FloatKind| match kind {
-            FloatKind::E2M1x2 => Some(QuantValue::E2M1),
-            FloatKind::E4M3 => Some(QuantValue::E4M3),
-            FloatKind::E5M2 => Some(QuantValue::E5M2),
-            _ => None,
-        };
-        let block = u8::try_from(form.block).ok()?;
-        let scheme = |value: QuantValue, dims: &[u8], store: QuantStore| {
-            let scheme = QuantScheme::default()
-                .with_value(value)
-                .per_block(dims, scales)
-                .with_store(store);
-            match scales {
-                ScaleDtype::UE4M3 => scheme.per_tensor(ScaleDtype::F32),
-                _ => scheme,
-            }
-        };
-        let packing = |input: MatmulOperand, scheme: QuantScheme| {
-            Some(Packing {
-                operand: Operand::of_scheme(&scheme, K, input.axes())?,
-                scheme,
-            })
-        };
-        Some(MatmulOperands {
-            lhs: packing(
-                MatmulOperand::Lhs,
-                scheme(code(form.lhs)?, &[block], QuantStore::PackedU32(0)),
-            ),
-            rhs: packing(
-                MatmulOperand::Rhs,
-                scheme(code(form.rhs)?, &[block, 1], QuantStore::PackedU32(1)),
-            ),
-            out: None,
-        })
-    }
-
-    /// `m` rows by `n` columns `k` deep of `inputs`, into an `f16` output: what
-    /// [`block_scaled_settings`](Self::block_scaled_settings) prepares its boxes on.
-    fn block_scaled_problem(
-        inputs: &MatmulOperands<Option<Packing>>,
-        m: usize,
-        n: usize,
-        k: usize,
-    ) -> MatmulRoutineProblem {
-        MatmulRoutineProblem::packed(m, n, k, ElemType::Float(FloatKind::F16), *inputs)
-    }
-
-    /// Registers the compiler adds around a plane's lower bound
-    /// ([`registers_per_unit`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel::registers_per_unit)):
-    /// addressing, loop state and the scale registers. A margin rather than a derivation, since the
-    /// compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
-    /// `sm_120`.
-    const ADDRESSING_REGISTERS: u32 = 64;
-
-    /// A setting of `shape`, its stages filled by `delivery` and its planes reaching them through
-    /// the tile DSL's transport, which reads the rows a box lands swizzled.
-    fn in_steps(
-        step: &MatmulStep,
-        shape: StagedShape,
-        delivery: CubeStagedDelivery,
-    ) -> CubeStagedMatmulRoutineSettings {
-        let calls = |count: usize, axis| {
-            NonZeroUsize::new(count * step.calls(axis)).expect("a step is at least one call")
-        };
-        let (rows, columns, depth) = shape.steps;
-        CubeStagedMatmulRoutineSettings {
-            microkernel: CubeStagedMicrokernelSettings {
-                plane: PlaneFragmentMicrokernelSettings {
-                    along_m: calls(rows, M),
-                    along_n: calls(columns, N),
-                    depth: calls(depth, K),
-                    transport: PlaneFragmentTransport::Mma,
-                    ..PlaneFragmentMicrokernelSettings::DEFAULT
-                },
-                planes: shape.planes,
-                planes_along_k: NonZeroUsize::new(shape.planes_along_k)
-                    .expect("at least one plane"),
-                ring: shape.ring,
-                store: shape.store,
-                fill: CubeStagedFill {
-                    delivery,
-                    filling_planes: 0,
-                },
-                ..CubeStagedMicrokernelSettings::DEFAULT
-            },
-            cube_order: CubeOrder::RowMajor,
-        }
-    }
-
-    /// Whether `settings` prepare a product of their own box on `hw`, two stages deep, and a
-    /// unit's share of their planes fits its registers.
-    fn fits(
-        hw: &Hardware,
-        step: &MatmulStep,
-        inputs: &MatmulOperands<Option<Packing>>,
-        settings: &CubeStagedMatmulRoutineSettings,
-    ) -> bool {
-        let (plane, planes) = (&settings.microkernel.plane, &settings.microkernel.planes);
-        let extent = |axis, fragments: NonZeroUsize, count: NonZeroUsize| {
-            fragments.get() / step.calls(axis) * step.along(axis) * count.get()
-        };
-        let problem = Self::block_scaled_problem(
-            inputs,
-            extent(M, plane.along_m, planes.along_m),
-            extent(N, plane.along_n, planes.along_n),
-            2 * plane.depth.get() / step.calls(K) * step.along(K),
-        );
-        let Ok((blueprint, grid)) = CubeStagedMatmulRoutine.prepare(hw, &problem, settings) else {
-            return false;
-        };
-        let item = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
-            .expect(MatmulView::PREPARED)
-            .work_item()
-            .as_stored()
-            .expect("a block-scaled product is read as stored");
-        let registers = blueprint
-            .microkernel
-            .plane
-            .registers_per_unit(&item, grid.planes().width);
-        registers + Self::ADDRESSING_REGISTERS <= UNIT_REGISTERS
-    }
-
-    /// The settings a product against a packed input races on `hw`
-    /// ([`CubeStagedMicrokernel::packed_settings`]), its cubes in the grid's order.
-    pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
-        CubeStagedMicrokernel::packed_settings(hw)
-            .into_iter()
-            .map(Self::on_grid)
-            .collect()
-    }
-
-    /// The settings a product of a handful of rows against a packed input races
-    /// ([`CubeStagedMicrokernel::packed_one_step_settings`]), its cubes in the grid's order.
-    pub fn packed_one_step_settings(&self) -> Vec<CubeStagedMatmulRoutineSettings> {
-        CubeStagedMicrokernel::packed_one_step_settings()
-            .into_iter()
-            .map(Self::on_grid)
-            .collect()
-    }
-
-    /// `microkernel`'s settings, its cubes in the grid's order.
-    fn on_grid(microkernel: CubeStagedMicrokernelSettings) -> CubeStagedMatmulRoutineSettings {
-        CubeStagedMatmulRoutineSettings {
-            microkernel,
-            cube_order: CubeOrder::RowMajor,
-        }
-    }
-
-    /// [`Routine::estimate`] over a block-split space: each cube reads its box's rows of the lhs
-    /// and its columns of the rhs over the whole of `K`, a packed input its words and a float one
-    /// its values, a stage's depth of `K` at a time, and writes its box of the output once. Then
-    /// its planes, for the work, on the item they contract: the packed inputs decoded where its
-    /// stages decode them, read as stored where it stages them as they lie.
-    fn estimate_in_blocks(
-        &self,
-        problem: &MatmulRoutineProblem,
-        blueprint: &CubeStagedMatmulRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        let item = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
-            .expect(MatmulView::PREPARED)
-            .work_item();
-        let contracted = blueprint.microkernel.contracted(&item);
-        let cube = blueprint.partitioning.cube_space().space;
-        let (rows, columns, block) = (cube.extent(MI), cube.extent(NI), cube.extent(KI));
-        let stage = blueprint.partitioning.stage();
-        let stage_depth: usize = [KB, KI]
-            .into_iter()
-            .filter(|&axis| stage.space().contains(axis))
-            .map(|axis| stage.extent(axis))
-            .product();
-        let k = problem.k;
-        let size = |operand: MatmulOperand| item.elements.get(operand).size();
-        let input = |operand: MatmulOperand, extent: usize| match problem.packings.get(operand) {
-            Some(packing) => GlobalStream {
-                bytes: packing.values_bytes(extent * k) as u64,
-                run_bytes: packing.values_bytes(block),
-            },
-            None => GlobalStream {
-                bytes: (extent * k * size(operand)) as u64,
-                run_bytes: block * size(operand),
-            },
-        };
-        estimate.staging = Some(CubeStaging {
-            operations: 2.0 * (rows * columns * k) as f64,
-            reads: vec![
-                input(MatmulOperand::Lhs, rows),
-                input(MatmulOperand::Rhs, columns),
-            ],
-            writes: vec![GlobalStream {
-                bytes: (rows * columns * size(MatmulOperand::Out)) as u64,
-                run_bytes: columns * size(MatmulOperand::Out),
-            }],
-            stages: k.div_ceil(stage_depth * blueprint.microkernel.planes_along_k.get()) as u64,
-            stages_in_flight: blueprint.microkernel.ring.stages_in_flight.get() as u32,
-            drain_atomics: 0,
-        });
-        blueprint
-            .microkernel
-            .plane
-            .estimate(&contracted, &(), grid.planes(), estimate);
-    }
-
-    /// The blueprint of a float product: each operand at the widest width its accesses, its
-    /// buffer and the device admit, the fill narrowed to the widths it lands.
-    fn float_blueprint(
-        &self,
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        item: &MatmulWorkItem,
-        microkernel: CubeStagedMicrokernel,
-        partitioning: MatmulPartitioning,
-        storage: StageStorage,
-    ) -> CubeStagedMatmulRoutineBlueprint {
-        let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
-        let mut blueprint = MatmulBlueprint::new(
-            hw,
-            problem,
-            microkernel,
-            partitioning,
-            vectorization,
-            storage,
-        );
-        blueprint.microkernel.fill = blueprint
-            .microkernel
-            .fill
-            .at_widths(&blueprint.widths, item);
-        blueprint
-    }
-
-    /// The blueprint of a product over a block-split space, its operands at the widths
-    /// [`widths_in_blocks`](Self::widths_in_blocks) settles. The fill is narrowed to the widths
-    /// the inputs it does not decode land, which are the ones the copy engine may move.
-    fn blueprint_in_blocks(
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        item: &MatmulWorkItem,
-        mut microkernel: CubeStagedMicrokernel,
-        partitioning: MatmulPartitioning,
-        storage: StageStorage,
-    ) -> CubeStagedMatmulRoutineBlueprint {
-        let widths =
-            Self::widths_in_blocks(hw, problem, item, &microkernel, &partitioning, &storage);
-        let contracted = &microkernel.contracted(item);
-        let undecoded: Vec<MatmulOperand> = MatmulOperand::INPUTS
-            .into_iter()
-            .filter(|&operand| microkernel.reads.get(operand).staged().is_none())
-            .collect();
-        microkernel.fill = microkernel
-            .fill
-            .at_widths_of(&undecoded, &widths, contracted);
-        MatmulBlueprint {
-            widths,
-            microkernel,
-            partitioning,
-            shared_memory: storage,
-        }
-    }
-
-    /// The widths a cube staged `microkernel` binds the operands of `problem`, stated as `item`, at
-    /// over its block-split space, each placed as `partitioning` places it and staged as `storage`
-    /// lays it:
-    /// what [`blueprint_in_blocks`](Self::blueprint_in_blocks) holds, and every routine whose cubes
-    /// run that microkernel over such a space. A packed input its fill decodes binds at
-    /// [`decoded_width`](Self::decoded_width); every other input at a device's load of the element
-    /// its planes contract it at, at most a block, a float one narrowed as its axes require
-    /// ([`float_width_in_blocks`](Self::float_width_in_blocks)); the output one value wide.
-    pub(crate) fn widths_in_blocks(
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        item: &MatmulWorkItem,
-        microkernel: &CubeStagedMicrokernel,
-        partitioning: &MatmulPartitioning,
-        storage: &StageStorage,
-    ) -> MatmulOperands<usize> {
-        let block = partitioning.cube_space().extent(KI);
-        let blocks = item
-            .blocks
-            .expect("a product over a block-split space has blocks");
-        let contracted = microkernel.contracted(item);
-        let width = |operand: MatmulOperand| match microkernel.reads.get(operand).staged() {
-            Some(_) => Self::decoded_width(
-                microkernel.plane.leaf_extent(MatmulDim::K),
-                storage,
-                contracted.elements.get(operand),
-            ),
-            None => {
-                let widest = hw.load_values(contracted.elements.get(operand)).min(block);
-                match problem.packings.get(operand) {
-                    Some(_) => widest,
-                    None => {
-                        Self::float_width_in_blocks(problem, &blocks, partitioning, operand, widest)
-                    }
-                }
-            }
-        };
-        MatmulOperands {
-            lhs: width(MatmulOperand::Lhs),
-            rhs: width(MatmulOperand::Rhs),
-            out: 1,
-        }
-    }
-
-    /// The width float `operand` of `problem` binds at over its block-split space `blocks`, at most
-    /// `widest`. Restated there it lies as its own dense rows
-    /// ([`PlainTensor::restated`](crate::kernels::tensor::PlainTensor::restated)), along the inside
-    /// of its columns' axis: the lhs's `KI`, which a box holds whole blocks of, and the rhs's
-    /// `NI`, its buffer's rows, which a box may reach past. So it owes that axis what any operand
-    /// owes its innermost one ([`MatmulBlueprint::new`]): its buffer's alignment and its start's,
-    /// and, where the tiles overhang it, a width dividing its extent, the widest line the tile
-    /// engine masks at an edge.
-    fn float_width_in_blocks(
-        problem: &MatmulRoutineProblem,
-        blocks: &MatmulBlocks,
-        partitioning: &MatmulPartitioning,
-        operand: MatmulOperand,
-        widest: usize,
-    ) -> usize {
-        let columns = match operand {
-            MatmulOperand::Lhs => K,
-            _ => N,
-        };
-        let [_, (inside, _)] = blocks.axes(columns);
-        let mut vectorization = Vectorization::new();
-        vectorization.require(VectorRequirement::Aligned {
-            operand,
-            alignment: problem.alignment(operand, BindingOrder::Stated),
-        });
-        vectorization.require(VectorRequirement::Aligned {
-            operand,
-            alignment: ElemAlignment::at_start(
-                problem.start_bytes.get(operand),
-                problem.elements.get(operand).size(),
-            ),
-        });
-        if partitioning.overhangs(inside) {
-            vectorization.require(VectorRequirement::masked(
-                operand,
-                partitioning.space(),
-                inside,
-            ));
-        }
-        vectorization.width(operand, |_| widest)
-    }
-
-    /// The width a packed input the fill decodes binds at: `step`, one instruction step of `K`, a
-    /// line of the stage it decodes into, so every unit of the cube decodes one; at most a chunk
-    /// of the stage's rows where `storage` swizzles them. A swizzled stage is read a chunk a unit,
-    /// and a line of `decoded` values wider than one would be read back value by value.
-    fn decoded_width(step: usize, storage: &StageStorage, decoded: ElemType) -> usize {
-        match storage {
-            StageStorage::Tiled {
-                chunks: RowChunks::Swizzled,
-                ..
-            } => step.min(RowChunks::CHUNK_BYTES / decoded.size()),
-            StageStorage::Tiled { .. } | StageStorage::Strided | StageStorage::Lines { .. } => step,
-        }
-    }
-}
-
-impl core::fmt::Display for CubeStagedMatmulRoutineSettings {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "cube-staged-matmul {}{}",
-            self.microkernel,
-            cube_order_name(self.cube_order)
-        )
-    }
-}
-
-/// The cube routine's blueprint: how a stage its microkernel walks holds its cells is the one
+/// The cube routines' blueprint: how a stage its microkernel walks holds its cells is the one
 /// layout of shared memory that depends on the problem; the rest is the microkernel's.
 pub type CubeStagedMatmulRoutineBlueprint = MatmulBlueprint<CubeStagedMicrokernel, StageStorage>;
 
-impl Routine for CubeStagedMatmulRoutine {
-    type Problem = MatmulRoutineProblem;
-    type Microkernel = CubeStagedMicrokernel;
-    type Settings = CubeStagedMatmulRoutineSettings;
-    type Blueprint = CubeStagedMatmulRoutineBlueprint;
-    type Partitioning = MatmulPartitioning;
+/// A cube staged microkernel picked for a problem, placed one cube a box over it and resolved:
+/// what each cube staged routine's `prepare` computes alike, before it checks its own engines.
+pub(crate) struct CubeStagedPlacement<'a> {
+    problem: &'a MatmulRoutineProblem,
+    view: MatmulView<'a>,
+    item: MatmulWorkItem,
+    cube_order: CubeOrder,
+    /// The item its planes contract ([`CubeStagedMicrokernel::contracted`]).
+    pub(crate) contracted: MatmulWorkItem,
+    /// Its microkernel, resolved against the box it was placed in.
+    pub(crate) resolved: CubeStagedResolved,
+    /// The box one cube covers.
+    pub(crate) cube_space: MatmulCubeSpace,
+}
 
-    /// Its microkernel's settings ([`CubeStagedMicrokernel::settings`]), its cubes in the grid's
-    /// order, except the tile DSL's multi-row box
-    /// ([`MULTI_ROW`](CubeStagedMicrokernelSettings::MULTI_ROW)), whose cubes walk in strips along
-    /// `m`. Then its own knob around the boxes it suits: the default, the default's grid on two by
-    /// two planes with its stage's rows in order, and the planes splitting `K`, in strips.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        let [along_m, _] = CUBE_STRIPS;
-        let on_grid = CubeStagedMicrokernel::settings(hw)
-            .into_iter()
-            .map(|microkernel| Self::Settings {
-                microkernel,
-                cube_order: match microkernel.same_box(&CubeStagedMicrokernelSettings::MULTI_ROW) {
-                    true => along_m,
-                    false => CubeOrder::RowMajor,
-                },
-            });
-        let rows_in_order_on_2x2 = CubeStagedMicrokernelSettings {
-            stage_layout: Some(StageLayout::Blocks),
-            ..CubeStagedMicrokernelSettings::boxed(
-                PlaneFragmentMicrokernelSettings::DEFAULT,
-                MatmulPlaneLayout::new(2, 2),
-            )
-        };
-        let in_strips = [
-            Self::Settings {
-                cube_order: along_m,
-                ..Self::Settings::DEFAULT
-            },
-            Self::Settings {
-                microkernel: rows_in_order_on_2x2,
-                cube_order: along_m,
-            },
-        ]
-        .into_iter()
-        .chain(CUBE_STRIPS.map(|cube_order| Self::Settings {
-            cube_order,
-            ..Self::Settings::SPLIT_ALONG_K
-        }));
-        on_grid.chain(in_strips).collect()
-    }
-
-    /// Nothing of its own: it only walks the cubes, and its microkernel makes every access.
-    fn vectorize(
-        &self,
-        microkernel: &CubeStagedMicrokernel,
-        partitioning: &MatmulPartitioning,
-        vectorization: &mut Vectorization<MatmulOperand>,
-    ) {
-        assert_eq!(
-            partitioning.as_tile().fillers() as usize,
-            microkernel.fill.filling_planes,
-            "a cube is launched over its launch tiling, beside the planes its fill sets aside"
-        );
-        microkernel.vectorize(&partitioning.cube_space(), vectorization);
-    }
-
-    /// Nothing of its own: it only distributes the cubes, and its microkernel walks the whole of
-    /// every cube's box. Over a block-split space, its own staging and its planes' work
-    /// (`estimate_in_blocks`).
-    fn estimate(
-        &self,
-        problem: &MatmulRoutineProblem,
-        blueprint: &CubeStagedMatmulRoutineBlueprint,
-        grid: &Grid,
-        estimate: &mut KernelEstimate,
-    ) {
-        let item = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
-            .expect(MatmulView::PREPARED)
-            .work_item();
-        match item.blocks {
-            None => blueprint.microkernel.estimate(
-                &item,
-                &blueprint.partitioning.cube_space(),
-                grid.planes(),
-                estimate,
-            ),
-            Some(_) => self.estimate_in_blocks(problem, blueprint, grid, estimate),
-        }
-    }
-
-    /// A plane is as many units as its instruction runs on: the width a matrix instruction issues
-    /// at, or the software instruction's own count. One cube a box of the output, over the
-    /// problem's space or, against packed inputs, its block-split space; its microkernel resolved
-    /// against the item its planes contract ([`CubeStagedMicrokernel::contracted`]) and the box it
-    /// is placed in ([`CubeStagedMicrokernel::resolve`]), then launched beside the planes its fill
-    /// sets aside. A microkernel decoding a packed input reads it in whole steps
-    /// ([`MatmulView::check_steps`]). Its blueprint's widths are a float product's
-    /// (`float_blueprint`) or a block-split space's
-    /// (`blueprint_in_blocks`).
-    fn prepare(
-        &self,
+impl<'a> CubeStagedPlacement<'a> {
+    /// The first of `settings`' microkernels on `hw` for `problem`, its stages filled by `fill`
+    /// and its box stored by `store`, placed one cube a box in `cube_order` and resolved. A
+    /// microkernel decoding a packed input reads it in whole steps ([`MatmulView::check_steps`]).
+    /// A box the TMA engine stores is checked before resolving, which sizes the shared memory it
+    /// is drained into ([`CubeStagedTmaStoreRefusal`]).
+    /// A stage an engine fills lands as it lies, so there a float product's planes read their
+    /// stages undecoded, never rounded by the units on the way in.
+    pub(crate) fn new(
         hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        problem: &'a MatmulRoutineProblem,
+        settings: &CubeStagedMicrokernelSettings,
+        cube_order: CubeOrder,
+        fill: CubeStagedFill,
+        store: CubeStagedStore,
+    ) -> Result<Self, Refusal> {
         let view = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
-        let microkernel = CubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
+        CubeStagedMicrokernel::admits(&item)?;
+        let by_units = fill.delivery == CubeStagedDelivery::Copy;
+        let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
+            .find(|candidate| {
+                by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
+            })
+            .ok_or(Refusal::Declined {
+                why: CubeStagedMicrokernel::decline(settings),
+            })?;
+        let microkernel = CubeStagedMicrokernel {
+            fill,
+            store,
+            ..microkernel
+        };
         if microkernel.walk().decoded().is_some() {
             view.check_steps(hw)?;
         }
         let contracted = microkernel.contracted(&item);
-        let place = |tiling| {
-            view.partitioning(
-                tiling,
+        let cube_space = view
+            .partitioning(
+                microkernel.tiling(),
                 &[item.axes.m, item.axes.n],
-                settings.cube_order,
+                cube_order,
                 MatmulView::ONE_CUBE_A_BOX,
             )
-        };
-        let resolved = microkernel.resolve(
+            .cube_space();
+        if store == CubeStagedStore::Tma {
+            check_tma_store(hw, problem, &contracted, &cube_space, &microkernel)?;
+        }
+        let resolved = microkernel.resolve(hw, &contracted, &cube_space)?;
+        Ok(Self {
+            problem,
+            view,
+            item,
+            cube_order,
+            contracted,
+            resolved,
+            cube_space,
+        })
+    }
+
+    fn microkernel(&self) -> &CubeStagedMicrokernel {
+        &self.resolved.microkernel
+    }
+
+    /// Whether the TMA engine can fill its stages: a box lands each stage as its instruction
+    /// reads it ([`CubeStagedTmaRefusal`]), the operands are read through no index, and no
+    /// input's rows are one element wide.
+    pub(crate) fn check_tma_fill(&self, hw: &Hardware) -> Result<(), Refusal> {
+        let microkernel = self.microkernel();
+        let orders = microkernel.plane.orders;
+        if let Some(refusal) = CubeStagedTmaRefusal::new(
             hw,
-            &contracted,
-            &problem.buffers(microkernel.plane.orders),
-            <Self as MatmulRoutine<CubeStagedMicrokernel, StageStorage>>::WRITE,
-            &place(microkernel.tiling()).cube_space(),
-        )?;
-        let (microkernel, storage) = (resolved.microkernel, resolved.storage);
-        if problem.index.is_some() && microkernel.fill.delivery == CubeStagedDelivery::Tma {
+            &self.contracted,
+            &self.problem.buffers(orders),
+            &self.cube_space,
+            microkernel,
+        ) {
+            return Err(refusal.into());
+        }
+        if self.problem.index.is_some() {
             return Err(MATMUL_INDEX_UNREAD_BY_TMA);
         }
-        let orders = microkernel.plane.orders;
-        let one_element_rows =
-            |operand: MatmulOperand| problem.rows_one_element_wide(operand, orders.get(operand));
-        let filled_by_tma = microkernel.fill.delivery == CubeStagedDelivery::Tma
-            && MatmulOperand::INPUTS.into_iter().any(one_element_rows);
-        let stored_by_tma =
-            microkernel.store == CubeStagedStore::Tma && one_element_rows(MatmulOperand::Out);
-        if filled_by_tma || stored_by_tma {
-            return Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA);
+        let one_element_rows = MatmulOperand::INPUTS.into_iter().any(|operand| {
+            self.problem
+                .rows_one_element_wide(operand, orders.get(operand))
+        });
+        match one_element_rows {
+            true => Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA),
+            false => Ok(()),
         }
+    }
+
+    /// Whether the copy engine can fill its stages through its ring
+    /// ([`CubeStagedAsyncCopyRefusal::new`]); the lines it copies are checked once the blueprint
+    /// binds their widths ([`check_copy_engine_lines`]).
+    pub(crate) fn check_copy_engine(&self, hw: &Hardware) -> Result<(), Refusal> {
+        match CubeStagedAsyncCopyRefusal::new(hw, &self.microkernel().ring) {
+            Some(refusal) => Err(refusal.into()),
+            None => Ok(()),
+        }
+    }
+
+    /// Its launch: launched beside the planes its fill sets aside, on a grid of the box's cubes,
+    /// its blueprint's widths a float product's or a block-split space's.
+    pub(crate) fn prepare(
+        self,
+        hw: &Hardware,
+    ) -> Result<(CubeStagedMatmulRoutineBlueprint, Grid), Refusal> {
+        let Self {
+            problem,
+            view,
+            item,
+            cube_order,
+            resolved,
+            ..
+        } = self;
+        let microkernel = resolved.microkernel;
         problem.check_block_scales(microkernel.block_scales())?;
-        let partitioning = place(microkernel.launch_tiling());
+        let partitioning = view.partitioning(
+            microkernel.launch_tiling(),
+            &[item.axes.m, item.axes.n],
+            cube_order,
+            MatmulView::ONE_CUBE_A_BOX,
+        );
         // Only a block-split space has `KB` and `KI` to ask about: a float product's has `K`, and
         // masks its reads past it.
         let past_k = || {
@@ -785,92 +189,363 @@ impl Routine for CubeStagedMatmulRoutine {
             shared_memory: resolved.shared_memory,
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
+        let storage = resolved.storage;
         let blueprint = match item.blocks {
-            None => self.float_blueprint(hw, problem, &item, microkernel, partitioning, storage),
-            Some(_) => {
-                Self::blueprint_in_blocks(hw, problem, &item, microkernel, partitioning, storage)
-            }
+            None => float_blueprint(hw, problem, microkernel, partitioning, storage),
+            Some(_) => blueprint_in_blocks(hw, problem, &item, microkernel, partitioning, storage),
         };
         Ok((blueprint, grid))
     }
 }
 
-impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedMatmulRoutine {
-    /// A cube owns a box of the rows.
-    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
-
-    fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
-        &self,
-        tensors: &MatmulTensors<Out>,
-        binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
-        blueprint: CubeStagedMatmulRoutineBlueprint,
-        grid: Grid,
+/// Whether the TMA engine can store `microkernel`'s box of `problem`, stated as `contracted`, in the
+/// box `cube_space`, each cube writing its own box once ([`CubeStagedTmaStoreRefusal`]), the
+/// output's rows more than one element wide.
+fn check_tma_store(
+    hw: &Hardware,
+    problem: &MatmulRoutineProblem,
+    contracted: &MatmulWorkItem,
+    cube_space: &MatmulCubeSpace,
+    microkernel: &CubeStagedMicrokernel,
+) -> Result<(), Refusal> {
+    let orders = microkernel.plane.orders;
+    if let Some(refusal) = CubeStagedTmaStoreRefusal::new(
+        hw,
+        contracted,
+        &problem.buffers(orders),
+        cube_space,
+        MatmulCubeWrite::Replace,
+        microkernel.planes_along_k,
     ) {
-        // The elements of the item its planes contract: packed inputs it decodes at the element
-        // they decode into, ones it reads as stored at the element their values name.
-        let elements = blueprint
-            .microkernel
-            .contracted(&tensors.work_item())
-            .kernel_elements();
-        let client = tensors.client();
-        let stage = blueprint.partitioning.stage();
-        let out_width = blueprint.widths.out;
-        // The fill's delivery is who moves the operands into the stages: the cube's units from the
-        // bound operands, or the TMA engine from descriptors over the same tensors.
-        let (lhs, rhs) = match blueprint.microkernel.fill.delivery {
-            CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => (binding.lhs, binding.rhs),
-            // A packed product's inputs through descriptors over its block-split space.
-            CubeStagedDelivery::Tma if tensors.work_item().blocks.is_some() => tensors
-                .tma_packed_operands(
-                    &binding.launcher,
-                    &stage,
-                    &blueprint.shared_memory,
-                    blueprint.microkernel.plane.orders,
-                    blueprint.widths,
-                ),
-            CubeStagedDelivery::Tma => tensors.tma_operands(
+        return Err(refusal.into());
+    }
+    match problem.rows_one_element_wide(MatmulOperand::Out, orders.out) {
+        true => Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA),
+        false => Ok(()),
+    }
+}
+
+/// Whether the copy engine copies whole every line `blueprint` binds of the inputs it hands it,
+/// those its fill does not decode, of `contracted`: 4, 8 or 16 bytes
+/// ([`CubeStagedAsyncCopyRefusal::LineSize`]).
+pub(crate) fn check_copy_engine_lines(
+    blueprint: &CubeStagedMatmulRoutineBlueprint,
+    contracted: &MatmulWorkItem,
+) -> Result<(), Refusal> {
+    let copied: Vec<MatmulOperand> = MatmulOperand::INPUTS
+        .into_iter()
+        .filter(|&operand| blueprint.microkernel.reads.get(operand).staged().is_none())
+        .collect();
+    match CubeStagedAsyncCopyRefusal::of_widths(&copied, &blueprint.widths, contracted) {
+        Some(refusal) => Err(refusal.into()),
+        None => Ok(()),
+    }
+}
+
+/// What every cube staged routine's cubes access: nothing of the routine's own, which only walks
+/// the cubes; its microkernel makes every access.
+pub(crate) fn vectorize(
+    microkernel: &CubeStagedMicrokernel,
+    partitioning: &MatmulPartitioning,
+    vectorization: &mut Vectorization<MatmulOperand>,
+) {
+    assert_eq!(
+        partitioning.as_tile().fillers() as usize,
+        microkernel.fill.filling_planes,
+        "a cube is launched over its launch tiling, beside the planes its fill sets aside"
+    );
+    microkernel.vectorize(&partitioning.cube_space(), vectorization);
+}
+
+/// What every cube staged routine's estimate is: nothing of its own, since it only distributes the
+/// cubes and its microkernel walks the whole of every cube's box. Over a block-split space, its
+/// own staging and its planes' work (`estimate_in_blocks`).
+pub(crate) fn estimate(
+    problem: &MatmulRoutineProblem,
+    blueprint: &CubeStagedMatmulRoutineBlueprint,
+    grid: &Grid,
+    estimate: &mut KernelEstimate,
+) {
+    let item = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
+        .expect(MatmulView::PREPARED)
+        .work_item();
+    match item.blocks {
+        None => blueprint.microkernel.estimate(
+            &item,
+            &blueprint.partitioning.cube_space(),
+            grid.planes(),
+            estimate,
+        ),
+        Some(_) => estimate_in_blocks(problem, blueprint, grid, estimate),
+    }
+}
+
+/// Every cube staged routine's launch: the operands the units fill the stages from, or the tensor
+/// maps the TMA engine fills them from; the output its fragments store, or the box the TMA engine
+/// stores.
+pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
+    tensors: &MatmulTensors<Out>,
+    binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+    blueprint: CubeStagedMatmulRoutineBlueprint,
+    grid: Grid,
+) {
+    // The elements of the item its planes contract: packed inputs it decodes at the element
+    // they decode into, ones it reads as stored at the element their values name.
+    let elements = blueprint
+        .microkernel
+        .contracted(&tensors.work_item())
+        .kernel_elements();
+    let client = tensors.client();
+    let stage = blueprint.partitioning.stage();
+    let out_width = blueprint.widths.out;
+    // The fill's delivery is who moves the operands into the stages: the cube's units from the
+    // bound operands, or the TMA engine from descriptors over the same tensors.
+    let (lhs, rhs) = match blueprint.microkernel.fill.delivery {
+        CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => (binding.lhs, binding.rhs),
+        // A packed product's inputs through descriptors over its block-split space.
+        CubeStagedDelivery::Tma if tensors.work_item().blocks.is_some() => tensors
+            .tma_packed_operands(
+                &binding.launcher,
                 &stage,
                 &blueprint.shared_memory,
                 blueprint.microkernel.plane.orders,
+                blueprint.widths,
             ),
-        };
-        // SAFETY: every operand is bound through the launcher, which masks the reads and writes
-        // of a tile the problem's edge cuts short, or by a descriptor, whose copies fill what lies
-        // past the operand with zeros and whose stores leave what lies past it unwritten; the
-        // kernel indexes no buffer but through its tiles. Its shared memory is sized by the planes
-        // of the grid it launches on: the stage fill counts `grid.launch.cube_dim`'s units, the
-        // scratch windows `grid.planes()`.
-        match blueprint.microkernel.store {
-            CubeStagedStore::Fragments => unsafe {
-                cube_staged_matmul_kernel::launch_unchecked::<O>(
-                    client,
-                    grid.launch.cube_count.clone(),
-                    grid.launch.cube_dim,
-                    out_width,
-                    lhs,
-                    rhs,
-                    O::arg(binding.out),
-                    binding.launcher.partitioning_arg(),
-                    blueprint.microkernel.walk(),
-                    blueprint.shared_memory,
-                    elements,
-                );
-            },
-            CubeStagedStore::Tma => unsafe {
-                cube_staged_matmul_kernel::launch_unchecked::<TmaStored>(
-                    client,
-                    grid.launch.cube_count.clone(),
-                    grid.launch.cube_dim,
-                    out_width,
-                    lhs,
-                    rhs,
-                    tensors.tma_output(&stage),
-                    binding.launcher.partitioning_arg(),
-                    blueprint.microkernel.walk(),
-                    blueprint.shared_memory,
-                    elements,
-                );
-            },
+        CubeStagedDelivery::Tma => tensors.tma_operands(
+            &stage,
+            &blueprint.shared_memory,
+            blueprint.microkernel.plane.orders,
+        ),
+    };
+    // SAFETY: every operand is bound through the launcher, which masks the reads and writes
+    // of a tile the problem's edge cuts short, or by a descriptor, whose copies fill what lies
+    // past the operand with zeros and whose stores leave what lies past it unwritten; the
+    // kernel indexes no buffer but through its tiles. Its shared memory is sized by the planes
+    // of the grid it launches on: the stage fill counts `grid.launch.cube_dim`'s units, the
+    // scratch windows `grid.planes()`.
+    match blueprint.microkernel.store {
+        CubeStagedStore::Fragments => unsafe {
+            cube_staged_matmul_kernel::launch_unchecked::<O>(
+                client,
+                grid.launch.cube_count.clone(),
+                grid.launch.cube_dim,
+                out_width,
+                lhs,
+                rhs,
+                O::arg(binding.out),
+                binding.launcher.partitioning_arg(),
+                blueprint.microkernel.walk(),
+                blueprint.shared_memory,
+                elements,
+            );
+        },
+        CubeStagedStore::Tma => unsafe {
+            cube_staged_matmul_kernel::launch_unchecked::<TmaStored>(
+                client,
+                grid.launch.cube_count.clone(),
+                grid.launch.cube_dim,
+                out_width,
+                lhs,
+                rhs,
+                tensors.tma_output(&stage),
+                binding.launcher.partitioning_arg(),
+                blueprint.microkernel.walk(),
+                blueprint.shared_memory,
+                elements,
+            );
+        },
+    }
+}
+
+/// A cube staged routine's estimate over a block-split space: each cube reads its box's rows of the lhs
+/// and its columns of the rhs over the whole of `K`, a packed input its words and a float one
+/// its values, a stage's depth of `K` at a time, and writes its box of the output once. Then
+/// its planes, for the work, on the item they contract: the packed inputs decoded where its
+/// stages decode them, read as stored where it stages them as they lie.
+fn estimate_in_blocks(
+    problem: &MatmulRoutineProblem,
+    blueprint: &CubeStagedMatmulRoutineBlueprint,
+    grid: &Grid,
+    estimate: &mut KernelEstimate,
+) {
+    let item = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
+        .expect(MatmulView::PREPARED)
+        .work_item();
+    let contracted = blueprint.microkernel.contracted(&item);
+    let cube = blueprint.partitioning.cube_space().space;
+    let (rows, columns, block) = (cube.extent(MI), cube.extent(NI), cube.extent(KI));
+    let stage = blueprint.partitioning.stage();
+    let stage_depth: usize = [KB, KI]
+        .into_iter()
+        .filter(|&axis| stage.space().contains(axis))
+        .map(|axis| stage.extent(axis))
+        .product();
+    let k = problem.k;
+    let size = |operand: MatmulOperand| item.elements.get(operand).size();
+    let input = |operand: MatmulOperand, extent: usize| match problem.packings.get(operand) {
+        Some(packing) => GlobalStream {
+            bytes: packing.values_bytes(extent * k) as u64,
+            run_bytes: packing.values_bytes(block),
+        },
+        None => GlobalStream {
+            bytes: (extent * k * size(operand)) as u64,
+            run_bytes: block * size(operand),
+        },
+    };
+    estimate.staging = Some(CubeStaging {
+        operations: 2.0 * (rows * columns * k) as f64,
+        reads: vec![
+            input(MatmulOperand::Lhs, rows),
+            input(MatmulOperand::Rhs, columns),
+        ],
+        writes: vec![GlobalStream {
+            bytes: (rows * columns * size(MatmulOperand::Out)) as u64,
+            run_bytes: columns * size(MatmulOperand::Out),
+        }],
+        stages: k.div_ceil(stage_depth * blueprint.microkernel.planes_along_k.get()) as u64,
+        stages_in_flight: blueprint.microkernel.ring.stages_in_flight.get() as u32,
+        drain_atomics: 0,
+    });
+    blueprint
+        .microkernel
+        .plane
+        .estimate(&contracted, &(), grid.planes(), estimate);
+}
+
+/// The blueprint of a float product: each operand at the widest width its accesses, its
+/// buffer and the device admit.
+fn float_blueprint(
+    hw: &Hardware,
+    problem: &MatmulRoutineProblem,
+    microkernel: CubeStagedMicrokernel,
+    partitioning: MatmulPartitioning,
+    storage: StageStorage,
+) -> CubeStagedMatmulRoutineBlueprint {
+    let mut vectorization = Vectorization::new();
+    vectorize(&microkernel, &partitioning, &mut vectorization);
+    MatmulBlueprint::new(
+        hw,
+        problem,
+        microkernel,
+        partitioning,
+        vectorization,
+        storage,
+    )
+}
+
+/// The blueprint of a product over a block-split space, its operands at the widths
+/// [`widths_in_blocks`] settles.
+fn blueprint_in_blocks(
+    hw: &Hardware,
+    problem: &MatmulRoutineProblem,
+    item: &MatmulWorkItem,
+    microkernel: CubeStagedMicrokernel,
+    partitioning: MatmulPartitioning,
+    storage: StageStorage,
+) -> CubeStagedMatmulRoutineBlueprint {
+    let widths = widths_in_blocks(hw, problem, item, &microkernel, &partitioning, &storage);
+    MatmulBlueprint {
+        widths,
+        microkernel,
+        partitioning,
+        shared_memory: storage,
+    }
+}
+
+/// The widths a cube staged `microkernel` binds the operands of `problem`, stated as `item`, at
+/// over its block-split space, each placed as `partitioning` places it and staged as `storage`
+/// lays it:
+/// what [`blueprint_in_blocks`] holds, and every routine whose cubes
+/// run that microkernel over such a space. A packed input its fill decodes binds at
+/// [`decoded_width`]; every other input at a device's load of the element
+/// its planes contract it at, at most a block, a float one narrowed as its axes require
+/// ([`float_width_in_blocks`]); the output one value wide.
+pub(crate) fn widths_in_blocks(
+    hw: &Hardware,
+    problem: &MatmulRoutineProblem,
+    item: &MatmulWorkItem,
+    microkernel: &CubeStagedMicrokernel,
+    partitioning: &MatmulPartitioning,
+    storage: &StageStorage,
+) -> MatmulOperands<usize> {
+    let block = partitioning.cube_space().extent(KI);
+    let blocks = item
+        .blocks
+        .expect("a product over a block-split space has blocks");
+    let contracted = microkernel.contracted(item);
+    let width = |operand: MatmulOperand| match microkernel.reads.get(operand).staged() {
+        Some(_) => decoded_width(
+            microkernel.plane.leaf_extent(MatmulDim::K),
+            storage,
+            contracted.elements.get(operand),
+        ),
+        None => {
+            let widest = hw.load_values(contracted.elements.get(operand)).min(block);
+            match problem.packings.get(operand) {
+                Some(_) => widest,
+                None => float_width_in_blocks(problem, &blocks, partitioning, operand, widest),
+            }
         }
+    };
+    MatmulOperands {
+        lhs: width(MatmulOperand::Lhs),
+        rhs: width(MatmulOperand::Rhs),
+        out: 1,
+    }
+}
+
+/// The width float `operand` of `problem` binds at over its block-split space `blocks`, at most
+/// `widest`. Restated there it lies as its own dense rows
+/// ([`PlainTensor::restated`](crate::kernels::tensor::PlainTensor::restated)), along the inside
+/// of its columns' axis: the lhs's `KI`, which a box holds whole blocks of, and the rhs's
+/// `NI`, its buffer's rows, which a box may reach past. So it owes that axis what any operand
+/// owes its innermost one ([`MatmulBlueprint::new`]): its buffer's alignment and its start's,
+/// and, where the tiles overhang it, a width dividing its extent, the widest line the tile
+/// engine masks at an edge.
+fn float_width_in_blocks(
+    problem: &MatmulRoutineProblem,
+    blocks: &MatmulBlocks,
+    partitioning: &MatmulPartitioning,
+    operand: MatmulOperand,
+    widest: usize,
+) -> usize {
+    let columns = match operand {
+        MatmulOperand::Lhs => K,
+        _ => N,
+    };
+    let [_, (inside, _)] = blocks.axes(columns);
+    let mut vectorization = Vectorization::new();
+    vectorization.require(VectorRequirement::Aligned {
+        operand,
+        alignment: problem.alignment(operand, BindingOrder::Stated),
+    });
+    vectorization.require(VectorRequirement::Aligned {
+        operand,
+        alignment: ElemAlignment::at_start(
+            problem.start_bytes.get(operand),
+            problem.elements.get(operand).size(),
+        ),
+    });
+    if partitioning.overhangs(inside) {
+        vectorization.require(VectorRequirement::masked(
+            operand,
+            partitioning.space(),
+            inside,
+        ));
+    }
+    vectorization.width(operand, |_| widest)
+}
+
+/// The width a packed input the fill decodes binds at: `step`, one instruction step of `K`, a
+/// line of the stage it decodes into, so every unit of the cube decodes one; at most a chunk
+/// of the stage's rows where `storage` swizzles them. A swizzled stage is read a chunk a unit,
+/// and a line of `decoded` values wider than one would be read back value by value.
+fn decoded_width(step: usize, storage: &StageStorage, decoded: ElemType) -> usize {
+    match storage {
+        StageStorage::Tiled {
+            chunks: RowChunks::Swizzled,
+            ..
+        } => step.min(RowChunks::CHUNK_BYTES / decoded.size()),
+        StageStorage::Tiled { .. } | StageStorage::Strided | StageStorage::Lines { .. } => step,
     }
 }

@@ -144,6 +144,45 @@ fn specialized_cyclic_mma() {
     );
 }
 
+/// The specialized routine loads on its load-only planes whatever load flows a forced blueprint
+/// carries. Regression for a blueprint left at the default flows: the cube was sized for
+/// load-only planes while the stages and readers expected the compute planes to load, so part of
+/// every stage was never loaded. Two compute planes per stage leave a stage the load-only plane
+/// covers only if the flows agree.
+#[test]
+fn specialized_cyclic_cmma_runs_a_forced_blueprint_with_default_load_flows() {
+    use cubek_matmul::{
+        multi_level::{
+            PartitionSize, StageSize,
+            components::{stage::PartitionBuffering, tile::TileMatmulKind},
+            definition::{BatchMatmulBlueprint, TilingScheme},
+        },
+        routine::BlueprintStrategy,
+    };
+
+    let client = client();
+    let problem = square(256, f16_elems());
+    let tiling_scheme = TilingScheme::builder()
+        .with_tile_size((16, 16, 16).into())
+        .with_partition_size(PartitionSize { m: 1, n: 1, k: 1 })
+        .with_stage_size(StageSize { m: 2, n: 1, k: 1 })
+        .build()
+        .unwrap();
+    let blueprint = BatchMatmulBlueprint::builder(
+        TileMatmulKind::Cmma,
+        tiling_scheme,
+        client.properties().hardware.plane_size_max,
+        &problem,
+    )
+    .partition_buffering(PartitionBuffering::Single)
+    .build();
+    test_matmul_strategy(
+        client,
+        problem,
+        MultiLevel::SpecializedCyclicCmma(BlueprintStrategy::Forced(blueprint)).into(),
+    );
+}
+
 #[test]
 fn ordered_double_cmma() {
     test_matmul_strategy(
