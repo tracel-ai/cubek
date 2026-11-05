@@ -1,11 +1,11 @@
-use crate::matmul::cube::MatmulCubeSpace;
+use crate::matmul::cube::{CubeStagedMicrokernel, MatmulCubeSpace};
 use crate::matmul::plane::{PlaneFragmentKStatement, PlaneFragmentMicrokernel};
 use crate::matmul::{
     MatmulBlocks, MatmulBuffers, MatmulLayout, MatmulOperand, MatmulOperands, MatmulStage,
     MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{Delivery, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::stage::Prefetch;
 use cubecl::tile::{Axis, Scratch, StageStorage};
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
@@ -13,9 +13,9 @@ use cubek_std::microkernel::StageRing;
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 
 /// Who fills the cube microkernel's stages: the cube's units, the copy engine their lines are
-/// handed to, or the TMA engine, and how many of the cube's planes do nothing but fill them. A
-/// request the microkernel resolves against the device and the problem
-/// ([`resolve`](Self::resolve)), so every setting runs on every problem.
+/// handed to, or the TMA engine, and how many of the cube's planes do nothing but fill them. The
+/// routine's structure, never a setting: each routine fills one way and refuses a problem it
+/// cannot fill so.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeStagedFill {
     pub delivery: CubeStagedDelivery,
@@ -50,7 +50,7 @@ impl CubeStagedDelivery {
     }
 }
 
-/// Why a stage asked of the TMA engine is copied by the cube's units instead.
+/// Why the TMA engine cannot fill a cube microkernel's stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CubeStagedTmaRefusal {
     /// The device offers no bulk tensor copy, or no barrier for one to land on
@@ -88,7 +88,7 @@ pub enum CubeStagedTmaRefusal {
     PackedLhs,
 }
 
-/// Why a stage asked of the copy engine is copied by the cube's units instead.
+/// Why the copy engine cannot fill a cube microkernel's stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CubeStagedAsyncCopyRefusal {
     /// The device offers no copy engine, or no barrier for its copies to land on
@@ -98,7 +98,7 @@ pub enum CubeStagedAsyncCopyRefusal {
     /// through.
     PrefetchInRegisters,
     /// An operand's lines are not 4, 8 or 16 bytes, the only copies the engine makes. Known once
-    /// the widths are ([`CubeStagedFill::at_widths`]).
+    /// the widths are ([`of_widths`](Self::of_widths)).
     LineSize(MatmulOperand),
 }
 
@@ -117,7 +117,7 @@ impl CubeStagedAsyncCopyRefusal {
 
     /// Why lines `widths` wide, of `item`'s elements, of the `copied` operands are not ones the
     /// engine copies whole.
-    fn of_widths(
+    pub fn of_widths(
         copied: &[MatmulOperand],
         widths: &MatmulOperands<usize>,
         item: &MatmulWorkItem,
@@ -134,7 +134,7 @@ impl CubeStagedAsyncCopyRefusal {
     }
 }
 
-/// Why planes asked to only fill a stage are not set aside, and every plane fills and contracts.
+/// Why a cube microkernel cannot set planes aside to only fill its stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CubeStagedFillingRefusal {
     /// The units copy the stages, or hand them to the copy engine, distributing a stage's lines
@@ -151,21 +151,22 @@ pub enum CubeStagedFillingRefusal {
 }
 
 impl CubeStagedTmaRefusal {
-    /// Why `hw` cannot deliver the `stage` of `item`'s product a cube walks through the space
-    /// `cube_space`, over buffers as `buffers` states them, held as `storage` (the instruction's
-    /// [`landed_stage_storage`](crate::matmul::plane::PlaneFragmentInstruction::landed_stage_storage)),
-    /// by the TMA engine, to `microkernel`'s fragments through `ring`; `None` where it can.
-    #[allow(clippy::too_many_arguments)]
+    /// Why `hw` cannot deliver the stages `microkernel` walks through the space `cube_space` of
+    /// `item`'s product, over buffers as `buffers` states them, by the TMA engine, its stages held
+    /// as its instruction reads a landed one
+    /// (`PlaneFragmentMicrokernel::landed_stage_storage`);
+    /// `None` where it can.
     pub fn new(
         hw: &Hardware,
         item: &MatmulWorkItem,
         buffers: &MatmulBuffers,
         cube_space: &MatmulCubeSpace,
-        stage: &MatmulStage,
-        storage: &StageStorage,
-        ring: &StageRing,
-        microkernel: &PlaneFragmentMicrokernel,
+        microkernel: &CubeStagedMicrokernel,
     ) -> Option<Self> {
+        let stage = &microkernel.stage(cube_space);
+        let storage = &microkernel.plane.landed_stage_storage(stage);
+        let ring = &microkernel.ring;
+        let microkernel = &microkernel.plane;
         // Bits rather than bytes: an `e2m1` value is half of one.
         let bits = |operand: MatmulOperand| item.elements.get(operand).size_bits().max(1);
         // A stage of whole stored tiles along its rows, bound rows first, `K` along them, at most
@@ -350,88 +351,6 @@ impl CubeStagedFill {
         filling_planes: 0,
     };
 
-    /// This fill as `hw` runs it for `item` over `buffers`, a cube covering `cube_space` staging
-    /// `stage` through `ring` into `microkernel`'s fragments, which drain through `scratch`, its
-    /// planes split `planes_along_k` ways along `K`: the TMA engine where nothing refuses it a
-    /// stage held as `landed` ([`CubeStagedTmaRefusal`]), the units elsewhere; the planes set aside
-    /// where nothing refuses them ([`CubeStagedFillingRefusal`]), none elsewhere.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve(
-        self,
-        hw: &Hardware,
-        item: &MatmulWorkItem,
-        buffers: &MatmulBuffers,
-        cube_space: &MatmulCubeSpace,
-        stage: &MatmulStage,
-        landed: &StageStorage,
-        ring: &StageRing,
-        microkernel: &PlaneFragmentMicrokernel,
-        scratch: Scratch,
-        planes_along_k: NonZeroUsize,
-    ) -> Self {
-        let delivery = match self.delivery {
-            CubeStagedDelivery::Tma => {
-                match CubeStagedTmaRefusal::new(
-                    hw,
-                    item,
-                    buffers,
-                    cube_space,
-                    stage,
-                    landed,
-                    ring,
-                    microkernel,
-                ) {
-                    None => CubeStagedDelivery::Tma,
-                    Some(_) => CubeStagedDelivery::Copy,
-                }
-            }
-            CubeStagedDelivery::AsyncCopy => match CubeStagedAsyncCopyRefusal::new(hw, ring) {
-                None => CubeStagedDelivery::AsyncCopy,
-                Some(_) => CubeStagedDelivery::Copy,
-            },
-            CubeStagedDelivery::Copy => CubeStagedDelivery::Copy,
-        };
-        let filling_planes =
-            match CubeStagedFillingRefusal::new(delivery, ring, scratch, planes_along_k) {
-                None => self.filling_planes,
-                Some(_) => 0,
-            };
-        Self {
-            delivery,
-            filling_planes,
-        }
-    }
-
-    /// This fill once `item`'s operands bind `widths` wide: a stage asked of the copy engine
-    /// whose lines it does not copy whole ([`CubeStagedAsyncCopyRefusal::LineSize`]) is copied by
-    /// the units, whose loads bind the same widths, so the widths stand.
-    pub fn at_widths(self, widths: &MatmulOperands<usize>, item: &MatmulWorkItem) -> Self {
-        self.at_widths_of(&MatmulOperand::INPUTS, widths, item)
-    }
-
-    /// [`at_widths`](Self::at_widths) where the engine copies only the `copied` operands' stages,
-    /// the units loading the others: a product whose fill decodes a packed input loads its words
-    /// itself
-    /// ([`MatmulMicrokernel::words_delivery`](crate::matmul::MatmulMicrokernel::words_delivery)).
-    pub fn at_widths_of(
-        self,
-        copied: &[MatmulOperand],
-        widths: &MatmulOperands<usize>,
-        item: &MatmulWorkItem,
-    ) -> Self {
-        match self.delivery {
-            CubeStagedDelivery::AsyncCopy
-                if CubeStagedAsyncCopyRefusal::of_widths(copied, widths, item).is_some() =>
-            {
-                Self {
-                    delivery: CubeStagedDelivery::Copy,
-                    ..self
-                }
-            }
-            _ => self,
-        }
-    }
-
     /// What its delivery asks of the operands' widths: a descriptor moves whole elements, so a
     /// TMA-filled stage reads both operands one element wide.
     pub fn vectorize(&self, vectorization: &mut Vectorization<MatmulOperand>) {
@@ -443,17 +362,80 @@ impl CubeStagedFill {
     }
 }
 
-/// Nothing for a fill by every unit, so the settings that hold one keep their names.
-impl core::fmt::Display for CubeStagedFill {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.delivery {
-            CubeStagedDelivery::Copy => {}
-            CubeStagedDelivery::AsyncCopy => write!(f, " delivery=async")?,
-            CubeStagedDelivery::Tma => write!(f, " delivery=tma")?,
-        }
-        match self.filling_planes {
-            0 => Ok(()),
-            planes => write!(f, " filling_planes={planes}"),
-        }
+impl From<CubeStagedTmaRefusal> for Refusal {
+    fn from(refusal: CubeStagedTmaRefusal) -> Self {
+        let why = match refusal {
+            CubeStagedTmaRefusal::NoBulkTensorCopy => {
+                "this device offers no bulk tensor copy for the TMA engine to fill the stages with"
+            }
+            CubeStagedTmaRefusal::PrefetchInRegisters => {
+                "the ring holds its next stage in registers, which a bulk copy never passes through"
+            }
+            CubeStagedTmaRefusal::Batched => {
+                "a descriptor addresses one matrix, and the problem holds several"
+            }
+            CubeStagedTmaRefusal::StridedWeight => {
+                "the rhs is contiguous along neither axis, and a descriptor's innermost stride is one element"
+            }
+            CubeStagedTmaRefusal::StoredInTiles(_) => {
+                "an operand is stored in tiles a descriptor cannot land a stage of row by row"
+            }
+            CubeStagedTmaRefusal::Misaligned(_) => {
+                "an operand's rows are not whole 16-byte lines contiguous along their own axis"
+            }
+            CubeStagedTmaRefusal::UnalignedStart(_) => {
+                "an operand's view starts at an address a descriptor cannot encode"
+            }
+            CubeStagedTmaRefusal::Unlanded(_) => {
+                "one box cannot land an operand's stage as its instruction reads it"
+            }
+            CubeStagedTmaRefusal::BoxPastDescriptor => {
+                "a stage's edge is past what one descriptor's box holds"
+            }
+            CubeStagedTmaRefusal::Decoded => {
+                "the stage holds a packed operand decoded, and the TMA engine lands words as stored"
+            }
+            CubeStagedTmaRefusal::PackedLhs => {
+                "the lhs is packed, and the descriptors land a float lhs beside a packed rhs"
+            }
+        };
+        Refusal::Declined { why }
+    }
+}
+
+impl From<CubeStagedAsyncCopyRefusal> for Refusal {
+    fn from(refusal: CubeStagedAsyncCopyRefusal) -> Self {
+        let why = match refusal {
+            CubeStagedAsyncCopyRefusal::NoCopyEngine => {
+                "this device offers no copy engine to fill the stages with"
+            }
+            CubeStagedAsyncCopyRefusal::PrefetchInRegisters => {
+                "the ring holds its next stage in registers, which the copy engine never passes through"
+            }
+            CubeStagedAsyncCopyRefusal::LineSize(_) => {
+                "an operand's lines are not 4, 8 or 16 bytes, the only copies the copy engine makes"
+            }
+        };
+        Refusal::Declined { why }
+    }
+}
+
+impl From<CubeStagedFillingRefusal> for Refusal {
+    fn from(refusal: CubeStagedFillingRefusal) -> Self {
+        let why = match refusal {
+            CubeStagedFillingRefusal::CopiedByUnits => {
+                "planes set aside to fill need the TMA engine: the units' fill spreads a stage over every unit"
+            }
+            CubeStagedFillingRefusal::OneStage => {
+                "planes set aside to fill need two stages in flight to run ahead of the reads"
+            }
+            CubeStagedFillingRefusal::Bounces => {
+                "the fragments bounce through a scratch, whose cube barriers the filling planes never reach"
+            }
+            CubeStagedFillingRefusal::SplitAlongK => {
+                "the planes split K and merge behind a cube barrier, which the filling planes never reach"
+            }
+        };
+        Refusal::Declined { why }
     }
 }

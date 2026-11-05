@@ -1,14 +1,14 @@
 use crate::matmul::cube::{
-    CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernelSettings, CubeStagedStore,
-    CubeStagedWalk, CubeStagedWgmmaRefusal, MatmulCubeSpace, MatmulCubeWrite, MatmulPlaneLayout,
+    CubeStagedDelivery, CubeStagedFill, CubeStagedFillingRefusal, CubeStagedMicrokernelSettings,
+    CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaRefusal, MatmulCubeSpace, MatmulPlaneLayout,
 };
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
-    PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong, PlaneFragmentTransport,
+    PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
 };
 use crate::matmul::{
-    MatmulAxes, MatmulBuffers, MatmulDestination, MatmulDim, MatmulMicrokernel, MatmulOperand,
-    MatmulOperands, MatmulRead, MatmulStage, MatmulStagingCount, MatmulStep, MatmulWorkItem,
+    MatmulAxes, MatmulDestination, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands,
+    MatmulRead, MatmulStage, MatmulStagingCount, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
@@ -31,9 +31,10 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayou
 /// shared memory, atomically: the cube's planes splitting `K` ([`CubeStagedDrain`]).
 ///
 /// Its settings, with the plane's settings replaced by the plane microkernel the hardware
-/// settled. The scratch, the ring and the fill are the settings' requests until it is resolved
-/// against the box a routine places it in ([`resolve`](Self::resolve)), and the write is how the
-/// routine's cubes reach the output.
+/// settled. The scratch and the ring are the settings' requests until it is resolved against the
+/// box a routine places it in ([`resolve`](Self::resolve)). Who fills its stages and who stores
+/// its box are the routine's structure: [`candidates`](Microkernel::candidates) fill by the units
+/// and store by the fragments, and a routine of another engine sets its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeStagedMicrokernel {
     /// What each of its planes runs.
@@ -46,12 +47,12 @@ pub struct CubeStagedMicrokernel {
     pub scratch: Scratch,
     /// How it holds the stages its planes contract.
     pub ring: StageRing,
-    /// Who fills them.
+    /// Who fills them: the routine's.
     pub fill: CubeStagedFill,
     /// How a stage lays out the rows its fragments load: the layout its units copy it in, or
     /// none where a box lands it.
     pub stage_layout: Option<StageLayout>,
-    /// Who stores its box of the output.
+    /// Who stores its box of the output: the routine's.
     pub store: CubeStagedStore,
     /// What one stage spans along the contraction.
     pub depth: CubeStagedDepth,
@@ -86,35 +87,6 @@ impl CubeStagedMicrokernel {
         why: "the packed staged matmul stages K a scale block at a time, and this packed input's scales do not group K",
     };
 
-    /// Boxes against a packed input several steps of `M` a plane, `(steps, planes)` as
-    /// [`in_steps`](CubeStagedMicrokernelSettings::in_steps) takes them: the float staged
-    /// routine's. A cube decodes every block of the rhs it stages once, for all its rows, so the
-    /// boxes more planes high give that decode more rows to serve, and the box four steps wide
-    /// along `N` serves each row of the lhs it stages to more columns.
-    const PACKED_BOXES: [((usize, usize), (usize, usize)); 9] = [
-        ((4, 2), (2, 4)),
-        ((4, 4), (2, 2)),
-        ((8, 1), (1, 2)),
-        ((4, 2), (1, 2)),
-        ((4, 2), (2, 2)),
-        ((4, 2), (4, 1)),
-        ((8, 2), (4, 1)),
-        ((8, 1), (2, 2)),
-        ((8, 1), (4, 2)),
-    ];
-
-    /// Boxes against a packed input one step of `M` and `N` a plane, which holds every row of a
-    /// product of a handful of rows, on planes side by side along `N`. A box no taller than the
-    /// rows leaves no instruction idle, and a narrow one puts many cubes on the rhs, which so
-    /// few rows stream once.
-    const PACKED_ONE_STEP_BOXES: [((usize, usize), (usize, usize)); 3] =
-        [((1, 1), (1, 1)), ((1, 1), (1, 2)), ((1, 1), (1, 4))];
-
-    /// Planes sharing a one-step box along `K`. One plane walking all of `K` stalls on each
-    /// stage's fill, and a projection with few columns has too few cubes to hide it; past eight,
-    /// a stage of `K` that many planes deep outgrows shared memory.
-    const PACKED_ONE_STEP_PLANES_ALONG_K: [usize; 2] = [4, 8];
-
     /// The microkernel `settings` ask for, its planes running `plane`, a stage spanning `depth`
     /// along the contraction, each operand read as `reads` says.
     fn new(
@@ -129,117 +101,12 @@ impl CubeStagedMicrokernel {
             planes_along_k: settings.planes_along_k,
             scratch: settings.scratch,
             ring: settings.ring,
-            fill: settings.fill,
+            fill: CubeStagedFill::BY_UNITS,
             stage_layout: settings.stage_layout,
-            store: settings.store,
+            store: CubeStagedStore::Fragments,
             depth,
             reads,
         }
-    }
-
-    /// The settings a product against a packed input staged as it is stored races, in fragments
-    /// of the decoding instruction a plane (along `m`, `n` and `k`) and planes a cube (along `m`
-    /// and `n`), its stages filled by the TMA engine or the copy engine. Each box is four steps of
-    /// `K` deep: its stages keep the packed input's scales beside the codes, read four to a word
-    /// along `KB`, and a stage shallower than a word of them would cut one.
-    ///
-    /// The TMA engine's beside a plane set aside to fill: it issues the descriptors and hands the
-    /// scales to the copy engine, and the planes that contract only decode and multiply. Their
-    /// instruction lays its rows along `n`: the weight decodes straight into the `A` it fills,
-    /// and the activation's lane runs load into `B` as they lie, where an `A` interleaves two of
-    /// its rows a register at a time.
-    ///
-    /// Measured on Qwen3-4B's projections at 512 rows and Qwen3-8B's at 2048 on an RTX PRO 6000
-    /// (sm_120): by each engine, the fewest boxes, rings and fills that come within 3% of its
-    /// fastest on every projection. A fill by the units never was the fastest, nor, once a plane
-    /// could be set aside, a TMA fill without one, nor its instruction's rows along `m`.
-    const STORED: [CubeStagedMicrokernelSettings; 6] = [
-        CubeStagedMicrokernelSettings::stored((4, 2, 4), (2, 2), StageRing::TRIPLE)
-            .filled(CubeStagedDelivery::Tma, 1)
-            .rows_along(PlaneFragmentRowsAlong::N),
-        CubeStagedMicrokernelSettings::stored((8, 2, 4), (2, 4), StageRing::TRIPLE)
-            .filled(CubeStagedDelivery::Tma, 1)
-            .rows_along(PlaneFragmentRowsAlong::N),
-        // Eight planes along `n`: no two planes decode the same rhs fragment.
-        CubeStagedMicrokernelSettings::stored((8, 1, 4), (1, 8), StageRing::TRIPLE)
-            .filled(CubeStagedDelivery::Tma, 1)
-            .rows_along(PlaneFragmentRowsAlong::N),
-        CubeStagedMicrokernelSettings::stored((4, 4, 4), (1, 4), StageRing::TRIPLE)
-            .filled(CubeStagedDelivery::AsyncCopy, 0),
-        CubeStagedMicrokernelSettings::stored((2, 4, 4), (2, 2), StageRing::TRIPLE)
-            .filled(CubeStagedDelivery::AsyncCopy, 0),
-        CubeStagedMicrokernelSettings::stored((4, 2, 4), (1, 8), StageRing::DOUBLE)
-            .filled(CubeStagedDelivery::AsyncCopy, 0),
-    ];
-
-    /// The stored settings (`STORED`) `hw` races: those filled by the TMA engine only where
-    /// it has one, since elsewhere they would race the units' fill of a box the copy engine's
-    /// settings already cover.
-    pub(crate) fn stored_settings(hw: &Hardware) -> Vec<CubeStagedMicrokernelSettings> {
-        Self::STORED
-            .into_iter()
-            .filter(|settings| {
-                settings.fill.delivery != CubeStagedDelivery::Tma || hw.bulk_tensor_copy()
-            })
-            .collect()
-    }
-
-    /// The settings a product of a handful of rows against a packed input races: one step of `M`
-    /// and `N` a plane, on one, two or four planes along `N`, split four or eight ways along `K`,
-    /// one stage at a time or three in flight. Measured on Qwen3-4B's projections at one to sixteen
-    /// rows on an RTX PRO 6000: these were the fastest of every box, split and ring tried. The
-    /// first, one plane split four ways one stage at a time, is the lead a caller that measures
-    /// nothing takes.
-    pub fn packed_one_step_settings() -> Vec<CubeStagedMicrokernelSettings> {
-        let mut settings = Vec::new();
-        for ring in [StageRing::SINGLE, StageRing::TRIPLE] {
-            for (steps, planes) in Self::PACKED_ONE_STEP_BOXES {
-                for along_k in Self::PACKED_ONE_STEP_PLANES_ALONG_K {
-                    settings.push(
-                        CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
-                            .split_along_k(along_k),
-                    );
-                }
-            }
-        }
-        settings
-    }
-
-    /// The settings a product against a packed input races on `hw`: the lead, the boxes several
-    /// steps tall the float staged routine races, one stage at a time and with a second in flight,
-    /// on a device with a copy engine one of them with its float input handed to the engine
-    /// ([`PACKED_FLOAT_ON_ENGINE`](CubeStagedMicrokernelSettings::PACKED_FLOAT_ON_ENGINE)), then
-    /// the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)).
-    /// Planes splitting `K` only on a device whose shared memory takes the atomic `f32` add they
-    /// merge through: elsewhere they would only be tried and declined.
-    ///
-    /// None through the `mma` transport: on an L4 its boxes lead `cmma`'s on Qwen3-4B's down
-    /// projection by a few percent, and lose a third once the projection's residual add is fused
-    /// into its store, which its fragments drain into cell by cell; the race sees only the
-    /// product.
-    pub fn packed_settings(hw: &Hardware) -> Vec<CubeStagedMicrokernelSettings> {
-        let boxed = [StageRing::SINGLE, StageRing::DOUBLE]
-            .into_iter()
-            .flat_map(|ring| {
-                Self::PACKED_BOXES.map(|(steps, planes)| {
-                    CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
-                })
-            });
-        let float_on_engine = hw
-            .unit_async_copy()
-            .then_some(CubeStagedMicrokernelSettings::PACKED_FLOAT_ON_ENGINE);
-        let mut settings = vec![CubeStagedMicrokernelSettings::PACKED];
-        for candidate in boxed
-            .chain(float_on_engine)
-            .chain(Self::packed_one_step_settings())
-            .chain(Self::stored_settings(hw))
-        {
-            let merges = candidate.planes_along_k.get() > 1;
-            if (!merges || hw.shared_f32_atomic_add()) && !settings.contains(&candidate) {
-                settings.push(candidate);
-            }
-        }
-        settings
     }
 
     /// The packed inputs' scale block along `K`: a stage holds whole ones of each. `None` where a
@@ -277,11 +144,10 @@ impl CubeStagedMicrokernel {
     }
 
     /// The planes of an item it stages as it lies, a float one or one read as stored: where its
-    /// inputs may be rounded ([`MatmulWorkItem::rounded`]) and its units copy the stages, first
-    /// every plane on a matrix instruction over the rounded inputs, which the fill decodes into
-    /// its stages as it loads them; then every plane microkernel this device offers for `item`,
-    /// at the settings' layout and requests. A stage the copy engine or the TMA engine fills
-    /// lands as it lies, so nothing decodes it.
+    /// inputs may be rounded ([`MatmulWorkItem::rounded`]), first every plane on a matrix
+    /// instruction over the rounded inputs, which the units' fill decodes into its stages as it
+    /// loads them; then every plane microkernel this device offers for `item`, at the settings'
+    /// layout and requests.
     ///
     /// Rounded first, as the multi-level routines promote an `f32` product to tf32 where they
     /// may: on a device whose matrix instructions take no `f32`, the exact planes run the
@@ -292,8 +158,7 @@ impl CubeStagedMicrokernel {
         settings: &CubeStagedMicrokernelSettings,
     ) -> Vec<Self> {
         let mut candidates = Vec::new();
-        let decodes = settings.fill.delivery == CubeStagedDelivery::Copy;
-        if let Some(read) = item.rounded().filter(|_| decodes) {
+        if let Some(read) = item.rounded() {
             let reads = MatmulOperands {
                 lhs: MatmulRead::Dequantized(read),
                 rhs: MatmulRead::Dequantized(read),
@@ -459,11 +324,11 @@ impl CubeStagedMicrokernel {
         self.tiling().filled_by(self.fill.filling_planes)
     }
 
-    /// This microkernel as `hw` runs it for `item` over `buffers`, handed the box `cube_space` (of
-    /// its [`tiling`](Self::tiling) placed over the problem), its cubes reaching the output as
-    /// `write`: its ring, scratch and fill decided, how its stages hold their cells, the width of
-    /// its planes and the shared memory a cube holds. The routine launches it over its
-    /// [`launch_tiling`](Self::launch_tiling).
+    /// This microkernel as `hw` runs it for `item`, handed the box `cube_space` (of its
+    /// [`tiling`](Self::tiling) placed over the problem): its ring and scratch decided, how its
+    /// stages hold their cells, the width of its planes and the shared memory a cube holds. The
+    /// routine launches it over its [`launch_tiling`](Self::launch_tiling). Whether its fill and
+    /// store engines serve the problem's buffers is the routine's to check.
     ///
     /// Its fragments bounce through a scratch wherever they cannot land their cells on their own:
     /// into an output they add into, where the planes merge along `K`, and into one they cannot address whole, a tile the output's edge cuts short or a
@@ -473,18 +338,18 @@ impl CubeStagedMicrokernel {
     /// anchors: the problem a candidate is ranked on and the one it launches on can differ on it
     /// alone, and what the tuner ranked has to be what launches. So what resolving decides beyond
     /// the bounce itself reads the window wherever its fragments *can* bounce: the shared memory
-    /// it holds charges that window, and planes are set aside to fill a stage only where no
+    /// it holds charges that window, and planes set aside to fill a stage are refused wherever a
     /// fragment can bounce.
     ///
     /// # Errors
     ///
-    /// A matrix instruction on a device that commits to no plane width.
+    /// A matrix instruction on a device that commits to no plane width; planes set aside to fill
+    /// where they cannot be ([`CubeStagedFillingRefusal`]); a warpgroup MMA its fill and drain do
+    /// not serve (`CubeStagedWgmmaRefusal`).
     pub fn resolve(
         self,
         hw: &Hardware,
         item: &MatmulWorkItem,
-        buffers: &MatmulBuffers,
-        write: MatmulCubeWrite,
         cube_space: &MatmulCubeSpace,
     ) -> Result<CubeStagedResolved, Refusal> {
         let stage = &self.stage(cube_space);
@@ -496,12 +361,9 @@ impl CubeStagedMicrokernel {
         let instruction = self.plane.instruction;
         let landed = self.plane.landed_stage_storage(stage);
         let merges = self.drain() == CubeStagedDrain::Merged;
-        let store = self
-            .store
-            .resolve(hw, item, buffers, cube_space, write, self.planes_along_k);
         // A box the TMA engine stores is drained whole into shared memory first, and the
         // descriptor clips it at the output's edge: no fragment's window is cut short there.
-        let cut_short = cube_space.overhangs_output && store == CubeStagedStore::Fragments;
+        let cut_short = cube_space.overhangs_output && self.store == CubeStagedStore::Fragments;
         let window = match self.plane.instruction.drain() {
             PlaneFragmentDrain::Bounce => self.scratch.at_least_bouncing(true),
             PlaneFragmentDrain::CellByCell | PlaneFragmentDrain::InLines => Scratch::None,
@@ -511,18 +373,13 @@ impl CubeStagedMicrokernel {
             true => window,
             false => Scratch::None,
         };
-        let fill = self.fill.resolve(
-            hw,
-            item,
-            buffers,
-            cube_space,
-            stage,
-            &landed,
-            &ring,
-            &self.plane,
-            window,
-            self.planes_along_k,
-        );
+        let fill = self.fill;
+        if fill.filling_planes > 0
+            && let Some(refusal) =
+                CubeStagedFillingRefusal::new(fill.delivery, &ring, window, self.planes_along_k)
+        {
+            return Err(refusal.into());
+        }
         if let PlaneFragmentInstruction::Wgmma { .. } = instruction
             && let Some(refusal) = CubeStagedWgmmaRefusal::new(&fill, self.planes_along_k, merges)
         {
@@ -543,9 +400,7 @@ impl CubeStagedMicrokernel {
         let microkernel = Self {
             scratch,
             ring,
-            fill,
             stage_layout,
-            store,
             ..self
         };
         let shared_memory = microkernel.shared_memory(hw, item, stage, &storage, window);
@@ -662,25 +517,15 @@ impl Microkernel for CubeStagedMicrokernel {
     /// them, the whole partition resident in the scratch, a second stage in flight, filled in its
     /// slot and through registers, the latter on two planes too.
     ///
-    /// Then, on a device with a copy engine, the lead, the named boxes and the rings that fill in
-    /// their slots again, their stages handed to the engine ([`CubeStagedDelivery::AsyncCopy`]):
-    /// whether it beats the units' loads moves with the box, by a few percent either way on an
-    /// L4. A ring that prefetches through registers is not listed with it, which it refuses.
-    ///
-    /// Then, on a device with a bulk tensor copy, boxes whose stages the TMA engine fills
-    /// ([`CubeStagedDelivery::Tma`]) through the tile DSL's transport, two and three stages in
-    /// their slots, some beside a plane set aside to fill them, one whose box the TMA engine stores
-    /// too ([`CubeStagedStore::Tma`]). On a device with a warpgroup MMA too, two plane groups along
-    /// `m`, each one `64 × 128` instruction four steps of `K` a stage (a 128-byte swizzle span of
-    /// `f16`), beside the plane that fills the stages, which a warpgroup MMA needs to release a
-    /// stage only once its MMAs are done with it.
+    /// Every one fills its stages by the cube's units; the routines of the other engines race
+    /// their own lists.
     ///
     /// Never the narrow step, which changes what the product computes, a thing a race on time
     /// alone cannot weigh
     /// ([`PlaneFragmentStepSum::Narrow`](crate::matmul::plane::PlaneFragmentStepSum::Narrow)).
-    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         use PlaneFragmentMicrokernelSettings as Plane;
-        use PlaneFragmentTransport::{Mma, Wgmma};
+        use PlaneFragmentTransport::Mma;
         let lead = Self::Settings::DEFAULT;
         let count = |n: usize| NonZeroUsize::new(n).unwrap();
         let layout = MatmulPlaneLayout::new;
@@ -776,76 +621,6 @@ impl Microkernel for CubeStagedMicrokernel {
             split(2).ringed(prefetching),
         ];
 
-        let engine = hw.unit_async_copy().then(|| {
-            [
-                lead,
-                deep,
-                deep_on_2x2,
-                deep_on_4x2,
-                small_on_2x1,
-                small_on_2x2,
-                multi_row,
-                deep.through(Mma),
-                small_on_2x2.through(Mma),
-                lead.ringed(double),
-                multi_row.ringed(double),
-            ]
-            .map(|settings| {
-                let fill = settings.fill;
-                settings.filled(CubeStagedDelivery::AsyncCopy, fill.filling_planes)
-            })
-        });
-
-        // Through the tile DSL's transport, whose `ldmatrix` reads the rows a box lands swizzled,
-        // in their slots, which is the only ring a bulk copy fills. A ring deeper than two keeps
-        // the engine more than one stage ahead, which a two-stage ring cannot: its next fill waits
-        // on every plane having read the stage before. The boxes are the ones that won on the Qwen3
-        // projections at 512 and 2048 rows on a 188-core Blackwell, crossed with the ring, the
-        // filling plane and the store each won with: the `128 × 128` deep box, and the same on two
-        // by two planes of `64 × 64`, whose fragments reuse each operand load twice as much; the
-        // `64 × 128` boxes beside a filling plane, which put twice the cubes on a narrow projection
-        // a prompt's chunk of rows would leave cores idle under, the deeper one stored by the TMA
-        // engine, whose box costs no cube a core where the stages already hold one alone; the `256
-        // × 128` and `128 × 256` boxes, on eight planes, for the long products; and the `64 × 64`
-        // box beside a filling plane, stored by the TMA engine, which a projection with few columns
-        // needs to fill the device at all: a 512-row chunk of Qwen3-0.6B's output projection is 128
-        // of the `64 × 128` boxes for 188 cores, and on the `64 × 64` it takes 16.4 µs against
-        // 22.5, what cuBLAS takes; and the `128 × 128` box on two by four planes, each four by four
-        // fragments four steps deep, beside a filling plane, which the long projections of Qwen3-8B
-        // want: its output projection takes 73.7 µs against the deep box's 86.0, its down
-        // projection 184.3 against 227.3. Every one of them fits two stages in 64 KB and its own
-        // ring and box in 99 KB.
-        let filled_by_tma = |grid, planes, ring, filling_planes| {
-            boxed(grid, planes)
-                .ringed(ring)
-                .through(Mma)
-                .filled(CubeStagedDelivery::Tma, filling_planes)
-        };
-        let stored_by_tma = |settings: Self::Settings| Self::Settings {
-            store: CubeStagedStore::Tma,
-            ..settings
-        };
-        let tma = hw.bulk_tensor_copy().then(|| {
-            [
-                filled_by_tma((2, 16, 2), (4, 1), double, 0),
-                filled_by_tma((4, 8, 2), (2, 2), StageRing::TRIPLE, 0),
-                stored_by_tma(filled_by_tma((2, 8, 4), (2, 2), StageRing::TRIPLE, 1)),
-                filled_by_tma((2, 8, 2), (2, 2), double, 1),
-                filled_by_tma((2, 16, 2), (8, 1), double, 0),
-                filled_by_tma((2, 16, 2), (4, 2), StageRing::TRIPLE, 0),
-                stored_by_tma(filled_by_tma((2, 4, 4), (2, 2), StageRing::TRIPLE, 1)),
-                filled_by_tma((4, 4, 4), (2, 4), StageRing::TRIPLE, 1),
-            ]
-        });
-        let wgmma = (hw.bulk_tensor_copy()
-            && hw.properties.features.matmul.wgmma.iter().next().is_some())
-        .then(|| {
-            boxed((1, 16, 4), (2, 1))
-                .ringed(double)
-                .filled(CubeStagedDelivery::Tma, 1)
-                .through(Wgmma)
-        });
-
         [lead]
             .into_iter()
             .chain(grids)
@@ -857,9 +632,6 @@ impl Microkernel for CubeStagedMicrokernel {
             .chain(rows_in_order)
             .chain([split_lead])
             .chain(splits)
-            .chain(engine.into_iter().flatten())
-            .chain(tma.into_iter().flatten())
-            .chain(wgmma)
             .collect()
     }
 
@@ -1000,7 +772,7 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
     /// the cube's, whatever its fill turns out to set aside.
     ///
     /// A stage of scale blocks walks `KB`, its planes' steps inside each block
-    /// ([`PlaneFragmentMicrokernel::tiling_over`]), and its planes split `KB`.
+    /// (`PlaneFragmentMicrokernel::tiling_over`), and its planes split `KB`.
     ///
     /// An instruction several planes issue together, a warpgroup MMA's, distributes the box over
     /// groups of them instead: the layout counts groups.
@@ -1102,25 +874,5 @@ mod tests {
         let exact =
             CubeStagedMicrokernel::best(&hw, &item(MatmulReading::AsStored), &settings).unwrap();
         assert_eq!(exact.decoded_stage(), None);
-    }
-
-    /// Planes splitting `K` against a packed input merge through an atomic `f32` add in shared
-    /// memory, so a device without one lists none of them: a listed setting it cannot run would be
-    /// tried and declined, and the merge without the atomic loses partial sums.
-    #[test]
-    fn packed_planes_split_along_k_only_where_shared_memory_adds_atomically() {
-        for hw in [
-            devices::strix_halo(),
-            devices::wgpu_no_subgroups(),
-            devices::rdna_range(),
-            devices::cdna_wave64(),
-            devices::m2_pro(),
-            devices::cpu_12(),
-        ] {
-            let splits = CubeStagedMicrokernel::packed_settings(&hw)
-                .into_iter()
-                .any(|settings| settings.planes_along_k.get() > 1);
-            assert_eq!(splits, hw.shared_f32_atomic_add(), "{hw:?}");
-        }
     }
 }

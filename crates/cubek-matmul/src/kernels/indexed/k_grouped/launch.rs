@@ -8,9 +8,7 @@ use crate::kernels::{CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
-use cubek_microkernel::matmul::cube::{
-    CubeStagedFill, CubeStagedMicrokernelSettings, MatmulPlaneLayout,
-};
+use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_std::Hardware;
 use cubek_std::microkernel::StageRing;
@@ -24,7 +22,6 @@ pub const K_GROUPED_SETTINGS: CubeStagedMatmulRoutineSettings = CubeStagedMatmul
         plane: PlaneFragmentMicrokernelSettings::DEFAULT,
         planes: MatmulPlaneLayout::new(2, 4),
         ring: StageRing::SINGLE,
-        fill: CubeStagedFill::BY_UNITS,
         ..CubeStagedMicrokernelSettings::DEFAULT
     },
     cube_order: CubeOrder::RowMajor,
