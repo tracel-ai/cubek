@@ -11,7 +11,7 @@ use crate::kernels::walk::tune::key::GatedDeltaWalkKey;
 use crate::kernels::walk::{
     CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GATED_DELTA_WALK_ELEMENT,
     GatedDeltaWalkInputs, GatedDeltaWalkOutputs, GatedDeltaWalkProblem, GatedDeltaWalkStateInputs,
-    GatedDeltaWalkStateLayout,
+    GatedDeltaWalkStateKind,
 };
 use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
@@ -86,7 +86,7 @@ pub fn launch_tuned(
 pub fn serves(
     hw: &Hardware,
     heads: GatedDeltaHeads,
-    state: GatedDeltaWalkStateLayout,
+    state: GatedDeltaWalkStateKind,
     output_element: ElemType,
 ) -> Result<(), Refusal> {
     GatedDeltaWalkProblem::admit_output(output_element)?;
@@ -96,18 +96,19 @@ pub fn serves(
             return Err(ELEMENT_NOT_ON_DEVICE);
         }
     }
+    let state = state.layout();
     GatedDeltaWalkProblem::dense(1, state.kept().get(), heads, output_element, state).admit(hw)
 }
 
 /// What a round runs on: the call's inputs, but for a walk in a store's slots, whose store is
-/// zeros laid out as the call's, with a slot for each row, each row at its own and past its first
+/// zeros at the call's strides, with a slot for each row, each row at its own and past its first
 /// position.
 fn measured(_key: &GatedDeltaWalkKey, inputs: &GatedDeltaWalkInputs) -> GatedDeltaWalkInputs {
     let GatedDeltaWalkStateInputs::Slots { store, .. } = &inputs.state else {
         return inputs.clone();
     };
     let client = &inputs.client;
-    let [_, heads, one, cells] = store.shape().dims::<4>();
+    let [_, heads, key_features, value_features] = store.shape().dims::<4>();
     let rows = inputs.decay.shape().dims::<3>()[0];
     let table = |entry: &dyn Fn(usize) -> u32| {
         let entries: Vec<u32> = (0..rows).map(entry).collect();
@@ -117,12 +118,12 @@ fn measured(_key: &GatedDeltaWalkKey, inputs: &GatedDeltaWalkInputs) -> GatedDel
         state: GatedDeltaWalkStateInputs::Slots {
             store: PlainTensor::zeros(
                 client,
-                &[rows, heads, one, cells],
+                &[rows, heads, key_features, value_features],
                 store.binding.strides.clone(),
                 store.elem,
             ),
             slots: table(&|row| row as u32),
-            positions: table(&|_| 1),
+            lengths: table(&|_| 1),
         },
         ..inputs.clone()
     }
@@ -153,15 +154,9 @@ mod tests {
         hw
     }
 
-    fn owned() -> GatedDeltaWalkStateLayout {
-        GatedDeltaWalkStateLayout::Owned {
+    fn owned() -> GatedDeltaWalkStateKind {
+        GatedDeltaWalkStateKind::Owned {
             kept: NonZeroUsize::MIN,
-        }
-    }
-
-    fn slots(slots: usize) -> GatedDeltaWalkStateLayout {
-        GatedDeltaWalkStateLayout::Slots {
-            slots: NonZeroUsize::new(slots).unwrap(),
         }
     }
 
@@ -179,7 +174,7 @@ mod tests {
     #[test]
     fn the_table_serves_what_admission_admits() {
         let h100 = running(devices::h100(), &[F32, F16]);
-        for state in [owned(), slots(32)] {
+        for state in [owned(), GatedDeltaWalkStateKind::Slots] {
             assert_eq!(serves(&h100, heads(), state, F32), Ok(()));
             assert_eq!(serves(&h100, heads(), state, F16), Ok(()));
             for hw in [

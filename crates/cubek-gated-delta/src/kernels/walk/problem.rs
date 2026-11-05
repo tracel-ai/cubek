@@ -99,6 +99,35 @@ impl GatedDeltaWalkStateLayout {
     }
 }
 
+/// Where a walk's states live, as far as its kernel cares: a [`GatedDeltaWalkStateLayout`] without
+/// the store's size, which the kernel leaves to the launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GatedDeltaWalkStateKind {
+    Owned { kept: NonZeroUsize },
+    Slots,
+}
+
+impl GatedDeltaWalkStateKind {
+    /// The layout a problem of this kind prepares on: a store of one slot, as no level cuts them.
+    pub fn layout(self) -> GatedDeltaWalkStateLayout {
+        match self {
+            Self::Owned { kept } => GatedDeltaWalkStateLayout::Owned { kept },
+            Self::Slots => GatedDeltaWalkStateLayout::Slots {
+                slots: NonZeroUsize::MIN,
+            },
+        }
+    }
+}
+
+impl From<GatedDeltaWalkStateLayout> for GatedDeltaWalkStateKind {
+    fn from(layout: GatedDeltaWalkStateLayout) -> Self {
+        match layout {
+            GatedDeltaWalkStateLayout::Owned { kept } => Self::Owned { kept },
+            GatedDeltaWalkStateLayout::Slots { .. } => Self::Slots,
+        }
+    }
+}
+
 /// The gated delta rule over `batch` sequences of `positions` positions, as the host describes it:
 /// `key_heads · group` value heads, each reading the queries and keys of the key head it is
 /// grouped under.

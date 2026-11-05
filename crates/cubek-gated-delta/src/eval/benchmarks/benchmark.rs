@@ -122,13 +122,13 @@ impl Benchmark for GatedDeltaWalkBench {
             },
             GatedDeltaWalkStateLayout::Slots { slots } => GatedDeltaWalkStateInputs::Slots {
                 store: self.uniform(
-                    vec![slots.get(), h, 1, heads.key_features * heads.value_features],
+                    vec![slots.get(), h, heads.key_features, heads.value_features],
                     5,
                     -0.2,
                     0.2,
                 ),
                 slots: self.rotation.tables[0].clone(),
-                positions: PlainTensor::of_u32s(&self.client, &[b], &vec![1; b]),
+                lengths: PlainTensor::of_u32s(&self.client, &[b], &vec![1; b]),
             },
         };
         GatedDeltaWalkInputs {
@@ -158,7 +158,7 @@ impl Benchmark for GatedDeltaWalkBench {
                 serves(
                     &hw,
                     self.spec.heads,
-                    self.spec.state,
+                    self.spec.state.into(),
                     f32::elem_type_native(),
                 )
                 .map_err(|why| format!("the table does not serve this problem: {why:?}"))?;

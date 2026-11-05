@@ -7,7 +7,7 @@ use cubecl::tile::launch::Refusal;
 pub const GATED_DELTA_WALK_BINDING_BUFFERS: u32 = 8 + 1;
 
 /// The buffers a walk in a store's slots needs a device to bind: the seven operands it shares with
-/// the owned walk, the slot table and the position table, and the metadata buffer.
+/// the owned walk, the slot table and the lengths table, and the metadata buffer.
 pub const GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS: u32 = 9 + 1;
 
 /// What admission declines a problem with when it describes no head: a walk needs a key row and a

@@ -9,8 +9,7 @@ use cubecl::bytes::Bytes;
 use cubecl::tile::{Partitioning, Region, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_gated_delta::kernels::walk::{
-    CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkStateBinding,
-    GatedDeltaWalkTensors,
+    CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkTensors,
 };
 use cubek_microkernel::gated_delta::walk::cube::{
     CubeGatedDeltaWalkMicrokernel, HeldState, UnitPartials,
@@ -290,9 +289,7 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
             let len = runs * microkernel.units * stride;
             let dump = client.create(Bytes::from_elems(vec![f32::NAN; len]));
             let binding = tensors.bind(&blueprint, &grid);
-            let GatedDeltaWalkStateBinding::Owned { state, kept } = binding.state else {
-                unreachable!("the case owns its states")
-            };
+            let kept = binding.kept.expect("the case owns its states");
             // SAFETY: every operand is bound through the launcher as the real kernel's are, and
             // each unit writes its own `stride` floats of `dump`, within `len`.
             unsafe {
@@ -303,7 +300,7 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
                     blueprint.width,
                     binding.query,
                     binding.key,
-                    state,
+                    binding.state,
                     kept,
                     BufferArg::from_raw_parts(dump.clone(), len),
                     tensors.problem().first_kept(),

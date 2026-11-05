@@ -2,8 +2,8 @@
 //! from, and written back to, the slot its table names.
 //!
 //! The store holds NaN wherever the walk must not read it: the slot of a row that has walked no
-//! position, and the gaps between its slots and heads. The slots no row holds and the gaps must
-//! come back bit for bit.
+//! position, and the gaps between its slots, heads and rows. The slots no row holds and the gaps
+//! must come back bit for bit.
 
 use super::harness::{F32, elements, read, round_to};
 use super::walk::{
@@ -25,36 +25,54 @@ use cubek_microkernel::gated_delta::GatedDeltaHeads;
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 
-/// How a store lies in its buffer: the gap after each head's state, the gap after each slot's
-/// heads, and the elements its view starts past its buffer's start.
+/// How a store lies in its buffer: the gap after each state row, the gap after each head's state,
+/// the gap after each slot's heads, and the elements its view starts past its buffer's start.
 #[derive(Debug, Clone, Copy, Default)]
 struct Pitch {
+    row_gap: usize,
     head_gap: usize,
     slot_gap: usize,
     start: usize,
 }
 
-/// Stores with a gap after each slot, after each head, and a start off their buffer's.
-const STRIDED_PITCHES: [Pitch; 4] = [
+/// Stores with a gap after each slot, after each head, after each row, and a start off their
+/// buffer's.
+const STRIDED_PITCHES: [Pitch; 6] = [
     Pitch {
+        row_gap: 0,
         head_gap: 0,
         slot_gap: 3,
         start: 0,
     },
     Pitch {
+        row_gap: 0,
         head_gap: 1,
         slot_gap: 0,
         start: 2,
     },
     Pitch {
+        row_gap: 0,
         head_gap: 4,
         slot_gap: 8,
         start: 4,
     },
     Pitch {
+        row_gap: 0,
         head_gap: 0,
         slot_gap: 5,
         start: 1,
+    },
+    Pitch {
+        row_gap: 3,
+        head_gap: 1,
+        slot_gap: 2,
+        start: 0,
+    },
+    Pitch {
+        row_gap: 4,
+        head_gap: 0,
+        slot_gap: 0,
+        start: 0,
     },
 ];
 
@@ -150,10 +168,12 @@ struct Slotted {
     /// The buffer and the view over it.
     raw: Handle,
     store: PlainTensor,
-    /// Where each state's `cells` start in the buffer: `[slot][value_head]`.
+    /// Where each state's rows start in the buffer: `[slot][value_head]`.
     at: Vec<Vec<usize>>,
+    /// The elements from one state row's start to the next's.
+    row_pitch: usize,
     slots: PlainTensor,
-    positions: PlainTensor,
+    lengths: PlainTensor,
 }
 
 impl SlotCase {
@@ -162,7 +182,10 @@ impl SlotCase {
         let heads = self.case.value_heads();
         let cells = self.cells();
         let mut operands = self.case.operands();
-        let head_pitch = cells + pitch.head_gap;
+        let (key_features, value_features) =
+            (self.case.heads.key_features, self.case.heads.value_features);
+        let row_pitch = value_features + pitch.row_gap;
+        let head_pitch = key_features * row_pitch + pitch.head_gap;
         let slot_pitch = heads * head_pitch + pitch.slot_gap;
         let at: Vec<Vec<usize>> = (0..self.slots)
             .map(|slot| {
@@ -178,6 +201,12 @@ impl SlotCase {
         for slot in 0..self.slots {
             for head in 0..heads {
                 let cells_at = at[slot][head];
+                let mut rows_of = |values: &dyn Fn(usize) -> f32| {
+                    for cell in 0..cells {
+                        let (row, column) = (cell / value_features, cell % value_features);
+                        before[cells_at + row * row_pitch + column] = values(cell);
+                    }
+                };
                 let held = self
                     .rows
                     .iter()
@@ -185,17 +214,12 @@ impl SlotCase {
                 match held {
                     Some(row) => {
                         let from = (row * heads + head) * cells;
-                        before[cells_at..cells_at + cells]
-                            .copy_from_slice(&operands.state[from..from + cells]);
+                        rows_of(&|cell| operands.state[from + cell]);
                         gathered[from..from + cells]
                             .copy_from_slice(&operands.state[from..from + cells]);
                     }
                     None if !self.is_listed(slot) && slot % 2 == 0 => {
-                        for (cell, value) in
-                            before[cells_at..cells_at + cells].iter_mut().enumerate()
-                        {
-                            *value = 0.3 - 0.001 * (cell + head + slot) as f32;
-                        }
+                        rows_of(&|cell| 0.3 - 0.001 * (cell + head + slot) as f32);
                     }
                     None => {}
                 }
@@ -209,8 +233,8 @@ impl SlotCase {
         let store = PlainTensor::of_handle(TensorHandle::from_metadata(
             handle,
             Metadata::new(
-                [self.slots, heads, 1, cells],
-                [slot_pitch, head_pitch, head_pitch, 1],
+                [self.slots, heads, key_features, value_features],
+                [slot_pitch, head_pitch, row_pitch, 1],
             ),
             F32,
         ));
@@ -221,8 +245,9 @@ impl SlotCase {
             raw,
             store,
             at,
+            row_pitch,
             slots: table(self.rows.iter().map(|&(slot, _)| slot as u32).collect()),
-            positions: table(self.rows.iter().map(|&(_, walked)| walked as u32).collect()),
+            lengths: table(self.rows.iter().map(|&(_, walked)| walked as u32).collect()),
         }
     }
 
@@ -237,7 +262,7 @@ impl SlotCase {
             state: GatedDeltaWalkStateInputs::Slots {
                 store: slotted.store.clone(),
                 slots: slotted.slots.clone(),
-                positions: slotted.positions.clone(),
+                lengths: slotted.lengths.clone(),
             },
             ..self
                 .case
@@ -279,6 +304,10 @@ impl SlotCase {
         );
         let heads = self.case.value_heads();
         let cells = self.cells();
+        let value_features = self.case.heads.value_features;
+        let place = |at: usize, cell: usize| {
+            at + cell / value_features * slotted.row_pitch + cell % value_features
+        };
         let (out, kept) = self.case.reference(&slotted.operands);
         let got = read(client, walked.out.handle.clone(), element);
         let per_row = out.len() / self.rows.len();
@@ -304,7 +333,7 @@ impl SlotCase {
                 let from = (row * heads + head) * cells;
                 let to = slotted.at[slot][head];
                 assert_close(
-                    after[to..to + cells].to_vec(),
+                    (0..cells).map(|cell| after[place(to, cell)]).collect(),
                     &kept[from..from + cells],
                     &format!("{what}: row {row} head {head} of slot {slot}"),
                 );
@@ -313,7 +342,9 @@ impl SlotCase {
         for slot in 0..self.slots {
             for head in 0..heads {
                 let to = slotted.at[slot][head];
-                claimed[to..to + cells].fill(self.is_listed(slot));
+                for cell in 0..cells {
+                    claimed[place(to, cell)] = self.is_listed(slot);
+                }
             }
         }
         for (i, claimed) in claimed.iter().enumerate() {
@@ -348,7 +379,7 @@ fn the_slots_walk_matches_the_reference() {
     }
 }
 
-/// A store with a gap between its heads and between its slots, starting off its buffer's start:
+/// A store with a gap between its rows, its heads and its slots, starting off its buffer's start:
 /// the walk reads and writes the states where they lie, at every width the layout leaves it, and
 /// leaves the gaps alone.
 #[test]

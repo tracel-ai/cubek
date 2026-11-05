@@ -1,8 +1,7 @@
-use super::kernel::{cube_gated_delta_walk_owned_kernel, cube_gated_delta_walk_slots_kernel};
+use super::kernel::cube_gated_delta_walk_kernel;
 use crate::kernels::walk::{
     GATED_DELTA_WALK_ELEMENT, GatedDeltaWalkBinding, GatedDeltaWalkBlueprint,
-    GatedDeltaWalkProblem, GatedDeltaWalkRoutine, GatedDeltaWalkStateBinding,
-    GatedDeltaWalkTensors, settled_width,
+    GatedDeltaWalkProblem, GatedDeltaWalkRoutine, GatedDeltaWalkTensors, settled_width,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Levels;
@@ -223,50 +222,26 @@ impl GatedDeltaWalkRoutine<CubeGatedDeltaWalkMicrokernel> for CubeGatedDeltaWalk
         // through its tiles, which mask what the units overhang. Its shared memory is indexed by
         // its runs' and units' own positions, within the slots it declares.
         unsafe {
-            match binding.state {
-                GatedDeltaWalkStateBinding::Owned { state, kept } => {
-                    cube_gated_delta_walk_owned_kernel::launch_unchecked(
-                        tensors.client(),
-                        grid.launch.cube_count,
-                        grid.launch.cube_dim,
-                        blueprint.width,
-                        binding.query,
-                        binding.key,
-                        binding.value,
-                        binding.decay,
-                        binding.strength,
-                        state,
-                        binding.out,
-                        kept,
-                        tensors.problem().first_kept(),
-                        binding.launcher.partitioning_arg(),
-                        blueprint.microkernel,
-                        blueprint.runs,
-                        tensors.problem().output_element,
-                    );
-                }
-                GatedDeltaWalkStateBinding::Slots { store, positions } => {
-                    cube_gated_delta_walk_slots_kernel::launch_unchecked(
-                        tensors.client(),
-                        grid.launch.cube_count,
-                        grid.launch.cube_dim,
-                        blueprint.width,
-                        binding.query,
-                        binding.key,
-                        binding.value,
-                        binding.decay,
-                        binding.strength,
-                        store,
-                        binding.out,
-                        positions,
-                        tensors.problem().first_kept(),
-                        binding.launcher.partitioning_arg(),
-                        blueprint.microkernel,
-                        blueprint.runs,
-                        tensors.problem().output_element,
-                    );
-                }
-            }
+            cube_gated_delta_walk_kernel::launch_unchecked(
+                tensors.client(),
+                grid.launch.cube_count,
+                grid.launch.cube_dim,
+                blueprint.width,
+                binding.query,
+                binding.key,
+                binding.value,
+                binding.decay,
+                binding.strength,
+                binding.state,
+                binding.out,
+                binding.kept.into(),
+                binding.lengths.into(),
+                tensors.problem().first_kept(),
+                binding.launcher.partitioning_arg(),
+                blueprint.microkernel,
+                blueprint.runs,
+                tensors.problem().output_element,
+            );
         }
     }
 }

@@ -10,7 +10,7 @@ use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Indexing, Launcher, TileTensorLaunch};
+use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
@@ -54,16 +54,16 @@ pub enum GatedDeltaWalkStateInputs {
         state: PlainTensor,
         kept: NonZeroUsize,
     },
-    /// A store `[slots, value_heads, 1, key_features * value_features]`, its states row-major and
-    /// its slots at any stride, and for each sequence the slot it lies in (`slots`, `[batch]`,
-    /// `u32`) and the positions it has walked already (`positions`, `[batch]`, `u32`). A sequence
-    /// that has walked none starts from zeros and reads nothing of its slot. The walk writes the
-    /// state after its last position back to the sequence's slot. Two rows may share a slot only if
-    /// it is never read. A slot past the store's last reads and writes the last.
+    /// A store `[slots, value_heads, key_features, value_features]`, and for each sequence the slot
+    /// it lies in (`slots`, `[batch]`, `u32`) and the positions it has walked already (`lengths`,
+    /// `[batch]`, `u32`). A sequence that has walked none starts from zeros and reads nothing of
+    /// its slot. The walk writes the state after its last position back to the sequence's slot.
+    /// Two rows may share a slot only if it is never read. A slot past the store's last reads and
+    /// writes the last.
     Slots {
         store: PlainTensor,
         slots: PlainTensor,
-        positions: PlainTensor,
+        lengths: PlainTensor,
     },
 }
 
@@ -135,7 +135,7 @@ enum StateTensors {
     Slots {
         store: PlainTensor,
         slots: PlainTensor,
-        positions: PlainTensor,
+        lengths: PlainTensor,
     },
 }
 
@@ -165,20 +165,12 @@ pub struct GatedDeltaWalkBinding {
     pub decay: TileTensorLaunch,
     pub strength: TileTensorLaunch,
     pub out: TileTensorLaunch,
-    pub state: GatedDeltaWalkStateBinding,
-}
-
-/// The state operands of a launch: what differs between the walks.
-pub enum GatedDeltaWalkStateBinding {
-    Owned {
-        state: TileTensorLaunch,
-        kept: TileTensorLaunch,
-    },
-    /// The store, placed by the slot table, and the positions table.
-    Slots {
-        store: TileTensorLaunch,
-        positions: TileTensorLaunch,
-    },
+    /// The states a walk reads: the state tensor, or the store placed by the slot table.
+    pub state: TileTensorLaunch,
+    /// The tensor the kept states go to, over states the walk owns.
+    pub kept: Option<TileTensorLaunch>,
+    /// The positions each sequence has walked, in a store's slots.
+    pub lengths: Option<TileTensorLaunch>,
 }
 
 impl StateTensors {
@@ -198,19 +190,27 @@ impl StateTensors {
         }
     }
 
-    /// The state operands bound under `launcher`, `width` values a line.
-    fn bind(&self, launcher: &Launcher, width: usize) -> GatedDeltaWalkStateBinding {
+    /// The states, the kept states and the lengths bound under `launcher`, `width` values a line.
+    fn bind(
+        &self,
+        launcher: &Launcher,
+        width: usize,
+    ) -> (
+        TileTensorLaunch,
+        Option<TileTensorLaunch>,
+        Option<TileTensorLaunch>,
+    ) {
         let bind = |tensor, axes: &'static [Axis], width| {
             GatedDeltaWalkTensors::bound(launcher, tensor, axes, width)
         };
         match self {
-            Self::Owned { state, kept } => GatedDeltaWalkStateBinding::Owned {
-                state: bind(
+            Self::Owned { state, kept } => (
+                bind(
                     state,
                     &[BATCH, KEY_HEAD, GROUP, KEY_FEATURE, VALUE_FEATURE],
                     width,
                 ),
-                kept: bind(
+                Some(bind(
                     kept,
                     &[
                         KEPT_STATE,
@@ -221,22 +221,32 @@ impl StateTensors {
                         VALUE_FEATURE,
                     ],
                     width,
-                ),
-            },
+                )),
+                None,
+            ),
             Self::Slots {
                 store,
                 slots,
-                positions,
-            } => GatedDeltaWalkStateBinding::Slots {
-                store: bind(
-                    store,
-                    &[STORE_SLOT, KEY_HEAD, GROUP, KEY_FEATURE, VALUE_FEATURE],
-                    width,
+                lengths,
+            } => {
+                let entries = TileTensorLaunch::new(
+                    slots.binding.clone().into_tensor_arg(),
+                    slots.elem,
+                    1,
+                    TileSpec::direct(&[BATCH]),
+                );
+                (
+                    bind(
+                        store,
+                        &[STORE_SLOT, KEY_HEAD, GROUP, KEY_FEATURE, VALUE_FEATURE],
+                        width,
+                    )
+                    .indexed(entries, Indexing::Coordinate(STORE_SLOT))
+                    .expect(ADMITTED_PLAN_RUNS),
+                    None,
+                    Some(bind(lengths, &[BATCH], 1)),
                 )
-                .indexed(bind(slots, &[BATCH], 1), Indexing::Coordinate(STORE_SLOT))
-                .expect(ADMITTED_PLAN_RUNS),
-                positions: bind(positions, &[BATCH], 1),
-            },
+            }
         }
     }
 }
@@ -350,32 +360,23 @@ impl GatedDeltaWalkTensors {
             GatedDeltaWalkStateInputs::Slots {
                 store,
                 slots,
-                positions: walked,
+                lengths,
             } => {
                 assert!(positions > 0, "a walk in a store's slots walks a position");
-                let [slot_count, heads, one, cells] = store.shape().dims::<4>();
                 assert_eq!(
-                    [heads, one, cells],
-                    [value_heads, 1, key_features * value_features],
-                    "a store is [slots, value_heads, 1, key_features * value_features]"
+                    store.shape().dims::<4>()[1..],
+                    [value_heads, key_features, value_features],
+                    "a store is [slots, value_heads, key_features, value_features]"
                 );
-                for table in [slots, walked] {
+                for table in [slots, lengths] {
                     assert_eq!(table.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
                     assert_eq!(table.shape().dims::<1>(), [batch]);
                 }
-                // One `[key_features, value_features]` row-major block a slot and head, over the
-                // caller's strides along the slots and the heads.
-                let [slot, head] = [store.binding.strides[0], store.binding.strides[1]];
-                let store = store.viewed(Metadata::new(
-                    vec![slot_count, key_heads, group, key_features, value_features],
-                    vec![slot, head * group, head, value_features, 1],
-                ));
-                let (slots, positions) = (slots.clone(), walked.clone());
                 (
                     StateTensors::Slots {
-                        store,
-                        slots,
-                        positions,
+                        store: grouped(store, 1),
+                        slots: slots.clone(),
+                        lengths: lengths.clone(),
                     },
                     None,
                 )
@@ -469,6 +470,7 @@ impl GatedDeltaWalkTensors {
         let bind = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
             Self::bound(&launcher, tensor, axes, width)
         };
+        let (state, kept, lengths) = self.states.bind(&launcher, width);
         GatedDeltaWalkBinding {
             query: bind(
                 &self.query,
@@ -488,7 +490,9 @@ impl GatedDeltaWalkTensors {
                 &[BATCH, POSITION, KEY_HEAD, GROUP, VALUE_FEATURE],
                 width,
             ),
-            state: self.states.bind(&launcher, width),
+            state,
+            kept,
+            lengths,
             launcher,
         }
     }

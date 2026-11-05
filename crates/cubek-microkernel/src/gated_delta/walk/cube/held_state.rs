@@ -28,13 +28,16 @@ impl<N: Size> HeldState<N> {
         let reads = state.flat::<f32, N>();
         let zero = Vector::<f32, N>::cast_from(0.0f32);
         let mut lines = Array::<Vector<f32, N>>::new(comptime!(rows * parts));
-        #[unroll]
-        for line in 0..comptime!(rows * parts) {
-            let mut value = zero;
-            if !fresh {
-                value = reads.read(line);
+        if fresh {
+            #[unroll]
+            for line in 0..comptime!(rows * parts) {
+                lines[line] = zero;
             }
-            lines[line] = value;
+        } else {
+            #[unroll]
+            for line in 0..comptime!(rows * parts) {
+                lines[line] = reads.read(line);
+            }
         }
         HeldState::<N> { lines, microkernel }
     }
