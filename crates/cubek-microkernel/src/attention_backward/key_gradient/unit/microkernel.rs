@@ -50,8 +50,12 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
     value_sum.zero();
     for head in keys.walk() {
         let queries = head.walk();
-        let steps = queries.total();
-        for step in queries.range(first_step, steps) {
+        // The queries from `first_step` to the head's last: a range takes its count of steps, so
+        // the steps before the first are not walked past the end. A key past every query takes
+        // none.
+        let first = first_step.min(queries.total());
+        let steps = queries.total() - first;
+        for step in queries.range(first, steps) {
             let (query, key, value) = (query.at(&step), key.at(&step), value.at(&step));
             let (out_gradient, bias) = (out_gradient.at(&step), bias.at(&step));
             let (logsumexp, delta) = (logsumexp.at(&step), delta.at(&step));

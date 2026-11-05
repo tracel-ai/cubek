@@ -5,6 +5,7 @@ use crate::kernels::{
     MatmulPartitioning, MatmulRoutineProblem, MatmulView, PlaneShuffleMatmulRoutineSettings,
     PlaneShufflePackedPlacement,
 };
+use crate::kernels::{MatmulRoutine, PlaneShuffleMatmulRoutine};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
@@ -12,6 +13,7 @@ use cubecl::tile::kind::Write;
 use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::zspace::metadata::Metadata;
+use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
@@ -159,7 +161,7 @@ impl Routine for PlaneDequantizeMatmulRoutine {
     ) {
         let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
         let alone = Self::alone(problem);
-        let item = MatmulView::of::<PlaneShuffleMicrokernel>(&alone)
+        let item = MatmulView::new(&alone, PlaneShuffleMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let columns = blueprint.partitioning.columns();
@@ -201,12 +203,13 @@ impl Routine for PlaneDequantizeMatmulRoutine {
             planes,
         } = PlaneShufflePackedPlacement::new(hw, &alone, settings)?;
         let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
-        let partitioning = MatmulView::of::<PlaneShuffleMicrokernel>(&alone)?.partitioning(
-            microkernel.tiling().planes(&[(columns, planes)]),
-            &[columns],
-            CubeOrder::RowMajor,
-            MatmulView::ONE_CUBE_A_BOX,
-        );
+        let partitioning = MatmulView::new(&alone, PlaneShuffleMatmulRoutine::ROWS_KIND)?
+            .partitioning(
+                microkernel.tiling().planes(&[(columns, planes)]),
+                &[columns],
+                CubeOrder::RowMajor,
+                MatmulView::ONE_CUBE_A_BOX,
+            );
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
             shared_memory: 0,

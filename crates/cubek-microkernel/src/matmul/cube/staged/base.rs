@@ -8,12 +8,11 @@ use crate::matmul::plane::{
 };
 use crate::matmul::{
     MatmulAxes, MatmulBuffers, MatmulDestination, MatmulDim, MatmulMicrokernel, MatmulOperand,
-    MatmulOperands, MatmulRead, MatmulRowsKind, MatmulStage, MatmulStagingCount, MatmulStep,
-    MatmulWorkItem,
+    MatmulOperands, MatmulRead, MatmulStage, MatmulStagingCount, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Bound, Delivery, Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::Coverage;
 use cubecl::tile::{Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
@@ -176,7 +175,7 @@ impl CubeStagedMicrokernel {
     /// The stored settings (`STORED`) `hw` races: those filled by the TMA engine only where
     /// it has one, since elsewhere they would race the units' fill of a box the copy engine's
     /// settings already cover.
-    pub fn stored_settings(hw: &Hardware) -> Vec<CubeStagedMicrokernelSettings> {
+    pub(crate) fn stored_settings(hw: &Hardware) -> Vec<CubeStagedMicrokernelSettings> {
         Self::STORED
             .into_iter()
             .filter(|settings| {
@@ -245,7 +244,7 @@ impl CubeStagedMicrokernel {
 
     /// The packed inputs' scale block along `K`: a stage holds whole ones of each. `None` where a
     /// packed input's scales do not group `K`, or two packed inputs group it differently.
-    pub fn block(item: &MatmulWorkItem) -> Option<usize> {
+    pub(crate) fn block(item: &MatmulWorkItem) -> Option<usize> {
         let space = item.blocks?;
         let mut blocks = MatmulOperand::INPUTS
             .into_iter()
@@ -408,7 +407,7 @@ impl CubeStagedMicrokernel {
     }
 
     /// How its planes reach its output: each its own tile, or merged along `K`.
-    pub fn drain(&self) -> CubeStagedDrain {
+    pub(crate) fn drain(&self) -> CubeStagedDrain {
         match self.planes_along_k.get() {
             1 => CubeStagedDrain::EachPlane,
             _ => CubeStagedDrain::Merged,
@@ -434,38 +433,6 @@ impl CubeStagedMicrokernel {
     /// `K`, each a group of the planes its instruction spans.
     fn contracting_planes(&self) -> usize {
         self.planes.count() * self.planes_along_k.get() * self.plane.instruction.planes()
-    }
-
-    /// The levels inside one cube's box, which a routine places the cubes around: the plane's own,
-    /// distributed over the cube's planes along its rows and columns and, where they split it, the
-    /// contraction, walked through all of it a stage at a time. Every box and stage it gives is
-    /// the cube's, whatever its fill turns out to set aside.
-    ///
-    /// A stage of scale blocks walks `KB`, its planes' steps inside each block
-    /// ([`PlaneFragmentMicrokernel::tiling_over`]), and its planes split `KB`.
-    ///
-    /// An instruction several planes issue together, a warpgroup MMA's, distributes the box over
-    /// groups of them instead: the layout counts groups.
-    pub fn tiling(&self) -> Levels {
-        let MatmulAxes { m, n, .. } = self.plane.axes;
-        let (tiling, walked) = match self.depth {
-            CubeStagedDepth::Steps => (self.plane.tiling(), self.plane.walked()),
-            CubeStagedDepth::ScaleBlocks(blocks) => {
-                (self.plane.tiling_over((KB, blocks.get())), KB)
-            }
-        };
-        let mut planes = vec![
-            (m, self.planes.along_m.get()),
-            (n, self.planes.along_n.get()),
-        ];
-        if self.planes_along_k.get() > 1 {
-            planes.push((walked, self.planes_along_k.get()));
-        }
-        let tiling = match self.plane.instruction.planes() {
-            1 => tiling.planes(&planes),
-            group => tiling.plane_groups(group, &planes),
-        };
-        tiling.walk_every(&[walked])
     }
 
     /// The box one step of its walk through `K` stages, in the space `cube_space` its cube covers:
@@ -536,10 +503,7 @@ impl CubeStagedMicrokernel {
         // descriptor clips it at the output's edge: no fragment's window is cut short there.
         let cut_short = cube_space.overhangs_output && store == CubeStagedStore::Fragments;
         let window = match self.plane.instruction.drain() {
-            PlaneFragmentDrain::Bounce => {
-                let bouncing = true;
-                self.scratch.at_least_bouncing(bouncing)
-            }
+            PlaneFragmentDrain::Bounce => self.scratch.at_least_bouncing(true),
             PlaneFragmentDrain::CellByCell | PlaneFragmentDrain::InLines => Scratch::None,
         };
         let bounces = merges || cut_short || item.destination == MatmulDestination::Sink;
@@ -600,7 +564,7 @@ impl CubeStagedMicrokernel {
     /// `K`, the accumulator over the box, one sum a cell; and where the TMA engine stores the box,
     /// the box it is drained into. The accumulator and the box are opened before the walk, so
     /// they sit beside the stages.
-    pub(crate) fn shared_memory(
+    pub fn shared_memory(
         &self,
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -656,19 +620,6 @@ impl CubeStagedMicrokernel {
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => 0,
         };
         scales + landing
-    }
-
-    /// Panics where `out`'s writes are masked but its fragments hold no scratch to bounce
-    /// through. The engine masks the output's writes exactly where its tiles overhang, and a
-    /// masked write is one a fragment's store intrinsic cannot make.
-    pub fn assert_drains_into(&self, out: &Bound) {
-        assert!(
-            self.plane.instruction.drain() != PlaneFragmentDrain::Bounce
-                || self.scratch != Scratch::None
-                || !out.spec.is_checked(),
-            "the output's writes are masked, but its fragments were given no scratch to bounce \
-             through"
-        );
     }
 }
 
@@ -1043,8 +994,37 @@ impl core::fmt::Display for CubeStagedMicrokernel {
 }
 
 impl MatmulMicrokernel for CubeStagedMicrokernel {
-    /// A cube owns a box of the rows.
-    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
+    /// The levels inside one cube's box, which a routine places the cubes around: the plane's own,
+    /// distributed over the cube's planes along its rows and columns and, where they split it, the
+    /// contraction, walked through all of it a stage at a time. Every box and stage it gives is
+    /// the cube's, whatever its fill turns out to set aside.
+    ///
+    /// A stage of scale blocks walks `KB`, its planes' steps inside each block
+    /// ([`PlaneFragmentMicrokernel::tiling_over`]), and its planes split `KB`.
+    ///
+    /// An instruction several planes issue together, a warpgroup MMA's, distributes the box over
+    /// groups of them instead: the layout counts groups.
+    fn tiling(&self) -> Levels {
+        let MatmulAxes { m, n, .. } = self.plane.axes;
+        let (tiling, walked) = match self.depth {
+            CubeStagedDepth::Steps => (self.plane.tiling(), self.plane.walked()),
+            CubeStagedDepth::ScaleBlocks(blocks) => {
+                (self.plane.tiling_over((KB, blocks.get())), KB)
+            }
+        };
+        let mut planes = vec![
+            (m, self.planes.along_m.get()),
+            (n, self.planes.along_n.get()),
+        ];
+        if self.planes_along_k.get() > 1 {
+            planes.push((walked, self.planes_along_k.get()));
+        }
+        let tiling = match self.plane.instruction.planes() {
+            1 => tiling.planes(&planes),
+            group => tiling.plane_groups(group, &planes),
+        };
+        tiling.walk_every(&[walked])
+    }
 
     /// Its planes' order: they read the rhs's tiles out of its stages.
     fn orders(&self) -> MatmulOperands<BindingOrder> {

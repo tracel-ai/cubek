@@ -101,3 +101,116 @@ fn every_hypercube_setting_matches_the_reference() {
         );
     }
 }
+
+/// Every setting in `f16` on the same case: what the settings holding the score in their
+/// fragments run on, the manual `mma` taking 16-bit operands only, each step leaving the score's
+/// gradient in a window for the share.
+#[test]
+fn every_hypercube_setting_matches_the_reference_in_f16() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let case = Case {
+        heads: 4,
+        val_dim: 16,
+        ..CASE
+    };
+    for settings in HypercubeAttentionBackwardRoutine.settings(&hw) {
+        Reference::run(
+            HypercubeAttentionBackwardRoutine,
+            case,
+            half::f16::elem_type_native(),
+            3e-2,
+            Some(settings),
+        );
+    }
+}
+
+/// Every setting in `f16` on queries and keys that span several stages and several boxes, none
+/// cut evenly: each cube's share of the query's gradient covers a whole stage of queries, which a
+/// case shorter than one stage never shows.
+#[test]
+fn every_hypercube_setting_matches_the_reference_over_several_stages_in_f16() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let case = Case {
+        heads: 4,
+        seq_q: 70,
+        seq_kv: 75,
+        val_dim: 16,
+        ..CASE
+    };
+    for settings in HypercubeAttentionBackwardRoutine.settings(&hw) {
+        Reference::run(
+            HypercubeAttentionBackwardRoutine,
+            case,
+            half::f16::elem_type_native(),
+            3e-2,
+            Some(settings),
+        );
+    }
+}
+
+/// Every setting holding its score in fragments, under a causal mask, on queries and keys spanning
+/// several stages and several boxes: each key walk starts past its first stages, and a query's
+/// gradient sums only the key cubes that see it.
+#[test]
+fn every_held_hypercube_setting_masks_causally_over_several_stages_in_f16() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let case = Case {
+        heads: 4,
+        seq_q: 150,
+        seq_kv: 150,
+        val_dim: 16,
+        visibility: AttentionVisibility::Causal {
+            queries: QueryPlacement::Last,
+        },
+        ..CASE
+    };
+    let held = HypercubeAttentionBackwardRoutine
+        .settings(&hw)
+        .into_iter()
+        .filter(|settings| settings.key_gradient.holds_its_score());
+    for settings in held {
+        Reference::run(
+            HypercubeAttentionBackwardRoutine,
+            case,
+            half::f16::elem_type_native(),
+            3e-2,
+            Some(settings),
+        );
+    }
+}
+
+/// Every held setting on eight planes on a head of 128, under a causal mask over several stages:
+/// eight planes split their share of the query's gradient along the head dim as well as along the
+/// stage's rows, which a narrow head leaves no room for. The host's reference at this head is
+/// slow, so the settings that never split are left to the narrow head's tests.
+#[test]
+fn every_held_hypercube_setting_splits_a_wide_head_in_f16() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let case = Case {
+        heads: 4,
+        seq_q: 150,
+        seq_kv: 150,
+        head_dim: 128,
+        val_dim: 128,
+        visibility: AttentionVisibility::Causal {
+            queries: QueryPlacement::Last,
+        },
+        ..CASE
+    };
+    let held = HypercubeAttentionBackwardRoutine
+        .settings(&hw)
+        .into_iter()
+        .filter(|settings| {
+            settings.key_gradient.holds_its_score()
+                && settings.key_gradient.cube.planes_along_keys.get() == 8
+        });
+    for settings in held {
+        Reference::run(
+            HypercubeAttentionBackwardRoutine,
+            case,
+            half::f16::elem_type_native(),
+            3e-2,
+            Some(settings),
+        );
+    }
+}

@@ -2,6 +2,7 @@
 
 mod base {
     use super::super::*;
+    use crate::kernels::MatmulRoutine;
     use crate::kernels::{
         CUBE_STRIPS, MATMUL_PACKED_WALK_PAST_K, MatmulPartitioning, MatmulRoutineProblem,
         MatmulView,
@@ -14,6 +15,7 @@ mod base {
     use cubecl::tile::space::CubeOrder;
     use cubecl::tile::stage::RowChunks;
     use cubecl::tile::{Scratch, StageStorage};
+    use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::{
         CubeStagedDelivery, CubeStagedFill, CubeStagedFillingRefusal, CubeStagedMicrokernel,
         CubeStagedMicrokernelSettings, CubeStagedStore, CubeStagedTmaRefusal, MatmulPlaneLayout,
@@ -43,7 +45,7 @@ mod base {
     ) -> Option<CubeStagedTmaRefusal> {
         CubeStagedTmaRefusal::new(
             hw,
-            &MatmulView::of::<CubeStagedMicrokernel>(problem)
+            &MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
             &problem.buffers(plane.orders),
@@ -246,7 +248,7 @@ mod base {
     #[test]
     fn the_candidates_are_the_matrix_instructions_then_the_software_one() {
         let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
-        let item = MatmulView::of::<CubeStagedMicrokernel>(&problem())
+        let item = MatmulView::new(&problem(), CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let settings = PlaneFragmentMicrokernelSettings::DEFAULT;
@@ -270,7 +272,7 @@ mod base {
     #[test]
     fn a_transport_setting_orders_the_two_transports() {
         let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
-        let item = MatmulView::of::<CubeStagedMicrokernel>(&problem())
+        let item = MatmulView::new(&problem(), CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let settings = PlaneFragmentMicrokernelSettings {
@@ -627,7 +629,7 @@ mod base {
         let planes = grid.planes();
         let cube_units = planes.count * planes.width;
         let one_unit = 1;
-        let item = MatmulView::of::<CubeStagedMicrokernel>(&problem)
+        let item = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let operands = partitioning
@@ -1050,7 +1052,7 @@ mod base {
             .prepare(&devices::h100(), &problem, &settings)
             .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.fill.filling_planes, 1);
-        let placed = MatmulView::of::<CubeStagedMicrokernel>(&problem)
+        let placed = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .partitioning(
                 blueprint.microkernel.tiling(),

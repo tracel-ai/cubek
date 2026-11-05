@@ -61,7 +61,7 @@ impl CubeStagedWalk {
     /// `input` as the walk's stages hold it: as it lies, its scales kept beside its values, where
     /// the fill copies the inputs as stored and the planes decode them as they load; as it is
     /// where the fill decodes it. A float input carries no scales and stages as before.
-    pub fn as_staged(input: &Tile, #[comptime] walk: CubeStagedWalk) -> Tile {
+    pub(crate) fn as_staged(input: &Tile, #[comptime] walk: CubeStagedWalk) -> Tile {
         if walk.decoded().is_none() {
             input.scales_kept_beside()
         } else {

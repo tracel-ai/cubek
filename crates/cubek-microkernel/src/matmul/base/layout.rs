@@ -78,16 +78,6 @@ impl MatmulLayout {
         }
     }
 
-    /// The axis `operand` laid this way is contiguous along; `None` for a strided one.
-    pub fn contiguous_axis(self, operand: MatmulOperand) -> Option<Axis> {
-        let [first, second] = operand.axes();
-        match self {
-            Self::Col => Some(first),
-            Self::Row => Some(second),
-            Self::Strided => None,
-        }
-    }
-
     /// The strides of a dense matrix of `extents` laid this way; `None` for a strided one, which
     /// no dense buffer is.
     pub fn dense_strides(self, [first, second]: [usize; 2]) -> Option<[usize; 2]> {

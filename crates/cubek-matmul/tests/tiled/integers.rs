@@ -1,5 +1,5 @@
 //! An `i32` product sums in `i32`: every setting of a routine that serves it writes the exact
-//! product, and one that cannot serve it declines.
+//! product, against an rhs laid either way, and one that cannot serve it declines.
 
 use cubecl::ir::{ElemType, IntKind};
 use cubecl::zspace::shape;
@@ -10,7 +10,7 @@ use cubek_matmul::kernels::{
 };
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
-use cubek_test_utils::TestInput;
+use cubek_test_utils::{StridedLayout, TestInput};
 
 const I32: ElemType = ElemType::Int(IntKind::I32);
 
@@ -29,8 +29,10 @@ fn product(lhs: &[i32], rhs: &[i32], [m, k, n]: [usize; 3]) -> Vec<i32> {
         .collect()
 }
 
-/// Every setting `routine` lists, launched on an `m × k` by `k × n` product of `i32`: the ones
-/// that serve it write the exact product. How many served, so a caller can say a routine must.
+/// Every setting `routine` lists, launched on an `m × k` by `k × n` product of `i32`, its rhs
+/// row-major then col-major: the ones that serve it write the exact product into an output filled
+/// beforehand with a value no product here reaches, so a kernel that never ran shows. How many
+/// served, so a caller can say a routine must.
 fn every_setting_is_exact<R, M: MatmulMicrokernel, SM: PartialEq + Clone + 'static>(
     routine: R,
     [m, k, n]: [usize; 3],
@@ -42,44 +44,47 @@ where
     let hw = Hardware::from_client(&client);
     let (lhs_host, rhs_host) = (values(m * k, 3), values(k * n, 5));
     let expected = product(&lhs_host, &rhs_host, [m, k, n]);
-    let upload = |shape, data: &[i32]| {
+    let upload = |shape, data: &[i32], layout| {
         let data = data.iter().map(|&value| value as f32).collect();
         TestInput::builder(client.clone(), shape)
             .dtype(I32)
+            .layout(layout)
             .custom(data)
             .generate_without_host_data()
     };
-    let lhs = upload(shape![m, k], &lhs_host);
-    let rhs = upload(shape![k, n], &rhs_host);
+    let lhs = upload(shape![m, k], &lhs_host, StridedLayout::RowMajor);
     let mut served = 0;
-    for candidate in MatmulRoutineCandidate::list(routine, &hw) {
-        let (out, out_plain) = PlainTensor::empty_contiguous(&client, shape![m, n], I32);
-        let launched = routine.launch_into(
-            &hw,
-            &client,
-            StoredTensor::Plain(PlainTensor::of_handle(lhs.clone())),
-            StoredTensor::Plain(PlainTensor::of_handle(rhs.clone())),
-            out_plain,
-            candidate.settings(),
-        );
-        if launched.is_err() {
-            continue;
+    for layout in [StridedLayout::RowMajor, StridedLayout::ColMajor] {
+        let rhs = upload(shape![k, n], &rhs_host, layout.clone());
+        for candidate in MatmulRoutineCandidate::list(routine, &hw) {
+            let out = upload(shape![m, n], &vec![77_777; m * n], StridedLayout::RowMajor);
+            let launched = routine.launch_into(
+                &hw,
+                &client,
+                StoredTensor::Plain(PlainTensor::of_handle(lhs.clone())),
+                StoredTensor::Plain(PlainTensor::of_handle(rhs.clone())),
+                PlainTensor::of_handle(out.clone()),
+                candidate.settings(),
+            );
+            if launched.is_err() {
+                continue;
+            }
+            served += 1;
+            let written: Vec<i32> = client
+                .read_one_unchecked(out.handle)
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .take(m * n)
+                .map(|word| i32::from_le_bytes(*word))
+                .collect();
+            assert_eq!(
+                written,
+                expected,
+                "{} writes a wrong i32 product, rhs {layout:?}",
+                candidate.settings()
+            );
         }
-        served += 1;
-        let written: Vec<i32> = client
-            .read_one_unchecked(out.handle)
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .take(m * n)
-            .map(|word| i32::from_le_bytes(*word))
-            .collect();
-        assert_eq!(
-            written,
-            expected,
-            "{} writes a wrong i32 product",
-            candidate.settings()
-        );
     }
     served
 }
@@ -95,9 +100,12 @@ fn unit_whole_k_sums_i32_exactly() {
     every_setting_is_exact(UnitWholeKMatmulRoutine, [4, 40, 24]);
 }
 
+/// The second product's `K` no line wider than one divides, so a col rhs binds one element at a
+/// time.
 #[test]
 fn plane_shuffle_sums_i32_exactly() {
     every_setting_is_exact(PlaneShuffleMatmulRoutine, [4, 40, 24]);
+    every_setting_is_exact(PlaneShuffleMatmulRoutine, [4, 41, 24]);
 }
 
 #[test]

@@ -73,5 +73,33 @@ pub fn problems() -> Vec<CatalogEntry<AttentionBackwardSpec>> {
                 },
             ),
         ),
+        CatalogEntry::new(
+            "long_d128",
+            "Long causal (b=4 h=32 s=4096 d=128, causal)",
+            spec(
+                4,
+                32,
+                32,
+                4096,
+                128,
+                AttentionVisibility::Causal {
+                    queries: QueryPlacement::Last,
+                },
+            ),
+        ),
+        CatalogEntry::new(
+            "long_d64",
+            "Long causal (b=8 h=16 s=4096 d=64, causal)",
+            spec(
+                8,
+                16,
+                16,
+                4096,
+                64,
+                AttentionVisibility::Causal {
+                    queries: QueryPlacement::Last,
+                },
+            ),
+        ),
     ]
 }
