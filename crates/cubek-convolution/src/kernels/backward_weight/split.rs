@@ -475,9 +475,7 @@ struct SplitKLayout {
     lhs: bool,
     #[cube(comptime)]
     spatial_last: bool,
-    #[cube(comptime)]
     taps: u32,
-    #[cube(comptime)]
     channels: u32,
 }
 
