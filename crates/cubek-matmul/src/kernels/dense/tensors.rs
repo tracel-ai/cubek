@@ -138,9 +138,9 @@ impl<Out: core::fmt::Debug> core::fmt::Debug for MatmulTensors<Out> {
 }
 
 impl MatmulTensors {
-    /// The product of `lhs` and `rhs`, both on `client`'s device, as a launch on `M` reads it, its
-    /// output allocated in a float input's element: float inputs holding the rows as `M`'s
-    /// [`ROWS_KIND`](MatmulMicrokernel::ROWS_KIND) says, a packed one every row whole.
+    /// The product of `lhs` and `rhs`, both on `client`'s device, its output allocated in a float
+    /// input's element: float inputs holding the rows as `rows_kind` says (the routine's
+    /// [`ROWS_KIND`](crate::kernels::MatmulRoutine::ROWS_KIND)), a packed one every row whole.
     ///
     /// # Errors
     ///
@@ -153,14 +153,15 @@ impl MatmulTensors {
     /// # Panics
     ///
     /// Operands whose contraction or batch dims do not agree: no product at all.
-    pub fn new<M: MatmulMicrokernel>(
+    pub fn new(
         client: &Client,
         lhs: StoredTensor,
         rhs: StoredTensor,
+        rows_kind: MatmulRowsKind,
     ) -> Result<Self, Refusal> {
         match (lhs, rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
-                Self::float(client, lhs, rhs, M::ROWS_KIND)
+                Self::float(client, lhs, rhs, rows_kind)
             }
             (lhs, rhs) => {
                 let out = Self::packed_output(&lhs, &rhs);
@@ -184,11 +185,10 @@ impl MatmulTensors {
         Self::packed(client, lhs, rhs, out)
     }
 
-    /// The product of `lhs` and `rhs`, both on `client`'s device, as a launch on `M` reads it,
-    /// written into `out`, which the caller allocated at the product's shape, in any element the
-    /// routines write: the sum is cast to it as it drains. Float inputs hold the rows as `M`'s
-    /// [`ROWS_KIND`](MatmulMicrokernel::ROWS_KIND) says, a packed one every row whole, the output
-    /// then its dense rows.
+    /// The product of `lhs` and `rhs`, both on `client`'s device, written into `out`, which the
+    /// caller allocated at the product's shape, in any element the routines write: the sum is
+    /// cast to it as it drains. Float inputs hold the rows as `rows_kind` says, a packed one every
+    /// row whole, the output then its dense rows.
     ///
     /// # Errors
     ///
@@ -199,17 +199,18 @@ impl MatmulTensors {
     /// # Panics
     ///
     /// As [`new`](Self::new).
-    pub fn writing_into<M: MatmulMicrokernel>(
+    pub fn writing_into(
         client: &Client,
         lhs: StoredTensor,
         rhs: StoredTensor,
         out: PlainTensor,
+        rows_kind: MatmulRowsKind,
     ) -> Result<Self, Refusal> {
         let (lhs, rhs) = match (lhs, rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => (lhs, rhs),
             (lhs, rhs) => return Self::packed_into(client, lhs, rhs, out),
         };
-        let operands = Operands::read(client, lhs, rhs, M::ROWS_KIND)?;
+        let operands = Operands::read(client, lhs, rhs, rows_kind)?;
         if out.shape().as_slice() != operands.out_shape.as_slice()
             || !MatmulInputs::VERIFIED.contains(&out.elem)
             || out.is_tiled()
@@ -225,14 +226,14 @@ impl MatmulTensors {
                 tensor: None,
                 bound,
             },
-            rows_kind: M::ROWS_KIND,
+            rows_kind: rows_kind,
             table: None,
             stated: StatedProblem::default(),
         })
     }
 
-    /// The float `lhs` against `rhs`, every batch reading its entry of `table`, as a launch on `M`
-    /// reads them, written into `out`, `[batches.., rows, n]` in a float input's element, which
+    /// The float `lhs` against `rhs`, every batch reading its entry of `table`, as a launch
+    /// holding its rows as `rows_kind` says reads them, written into `out`, `[batches.., rows, n]` in a float input's element, which
     /// the caller allocated as its product lies: a grouped one's slabs side by side, say. The
     /// lhs's batch dims broadcast against the table's. Under [`MatmulIndex::Slab`] the rhs
     /// is the stack: a float one `[slabs, k, n]`, read where it lies; a packed one read as its
@@ -249,12 +250,13 @@ impl MatmulTensors {
     ///
     /// On entries other than `u32`, a stack of other than the table's slabs, or inputs whose
     /// contraction dims do not agree.
-    pub fn indexed<M: MatmulMicrokernel>(
+    pub fn indexed(
         client: &Client,
         lhs: PlainTensor,
         rhs: StoredTensor,
         table: MatmulIndexTable,
         out: PlainTensor,
+        rows_kind: MatmulRowsKind,
     ) -> Result<Self, Refusal> {
         assert_eq!(
             table.entries.elem,
@@ -263,7 +265,7 @@ impl MatmulTensors {
         );
         match rhs {
             StoredTensor::Plain(rhs) => {
-                Self::indexed_float(client, lhs, rhs, table, out, M::ROWS_KIND)
+                Self::indexed_float(client, lhs, rhs, table, out, rows_kind)
             }
             StoredTensor::Packed(rhs) => Self::indexed_packed(client, lhs, rhs, table, out),
         }
@@ -610,9 +612,9 @@ impl MatmulTensors {
 }
 
 impl MatmulTensors<Geometry> {
-    /// The product of `lhs` and `rhs` as a launch on `M` reads it, handed to a sink the caller
-    /// binds: nothing is allocated, and the output is laid out densely, row-major,
-    /// in a float input's element, as rows where the launch reads every row whole.
+    /// The product of `lhs` and `rhs` as a launch holding its rows as `rows_kind` says reads it,
+    /// handed to a sink the caller binds: nothing is allocated, and the output is laid out densely,
+    /// row-major, in a float input's element, as rows where the launch reads every row whole.
     ///
     /// # Errors
     ///
@@ -621,14 +623,15 @@ impl MatmulTensors<Geometry> {
     /// # Panics
     ///
     /// As [`MatmulTensors::new`].
-    pub fn sink<M: MatmulMicrokernel>(
+    pub fn sink(
         client: &Client,
         lhs: StoredTensor,
         rhs: StoredTensor,
+        rows_kind: MatmulRowsKind,
     ) -> Result<Self, Refusal> {
         match (lhs, rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
-                Self::float(client, lhs, rhs, M::ROWS_KIND)
+                Self::float(client, lhs, rhs, rows_kind)
             }
             (lhs, rhs) => Self::packed(client, lhs, rhs),
         }

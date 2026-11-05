@@ -1,9 +1,8 @@
 use crate::matmul::MatmulContraction;
-use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentStepSum};
+use crate::matmul::plane::PlaneFragmentStepSum;
 use crate::matmul::{MatmulOperands, MatmulRead};
-use cubecl::tile::{Axis, Instruction, Region, Space, StageStorage, Stages, Tile, Walk};
+use cubecl::tile::{Axis, Instruction, Region, Space, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_std::microkernel::StageRing;
 
 /// The partial a narrow step contracts into, opened over `out` beside the accumulator: one cell
 /// of the operands' element for every cell the accumulator holds. None for a wide step.
@@ -21,48 +20,6 @@ pub(crate) fn plane_fragment_partial<EL: Numeric>(
             ComptimeOption::new_Some(MatmulContraction::accumulator::<EL>(out, a, b, contraction))
         }
     }
-}
-
-/// One plane's tile walked through stages of its own: the plane stages its operands a step of its
-/// walk at a time, holding as many stages as `ring` says, and contracts every stage into `sum`
-/// with the plane microkernel. `sum`, `c`, `a` and `b` are windowed to the plane; a narrow step's
-/// partial is opened over `c`. A walk below the planes' level is the plane's own, so its stages
-/// are too: each plane fills a copy of its own, met on its own barriers.
-#[cube]
-#[allow(clippy::too_many_arguments)]
-pub fn plane_fragment_staged_microkernel<EL: Numeric>(
-    plane: &Region,
-    sum: &Tile,
-    c: &Tile,
-    a: &Tile,
-    b: &Tile,
-    #[comptime] microkernel: PlaneFragmentMicrokernel,
-    #[comptime] stage: StageStorage,
-    #[comptime] ring: StageRing,
-) {
-    let instruction = microkernel.tile_instruction();
-    let step_sum = microkernel.instruction.step_sum();
-    let partial = plane_fragment_partial::<EL>(c, a, b, step_sum, microkernel.contraction());
-
-    let walk = plane.walk();
-    let in_flight = ring.stages_in_flight.get();
-    let mut stages = Stages::smem(&walk, a, b, stage, in_flight, None);
-
-    stages.walk(walk, ring.prefetch, |slot, step| {
-        let sum_step = sum.at(step);
-        slot.consume(|a_step, b_step| {
-            plane_fragment_microkernel(
-                step,
-                &sum_step,
-                &partial,
-                a_step,
-                b_step,
-                instruction,
-                None,
-                MatmulOperands::AS_BOUND,
-            );
-        });
-    });
 }
 
 /// One stage of one plane's tile: `a · b` added into `sum`, the operands staged in shared memory,

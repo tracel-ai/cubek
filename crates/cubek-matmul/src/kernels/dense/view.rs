@@ -7,8 +7,8 @@ use cubecl::tile::{
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::{
-    MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulReading,
-    MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
+    MatmulAxes, MatmulBlocks, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
+    MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::config::MatmulConfig;
@@ -61,16 +61,6 @@ impl<'a> MatmulView<'a> {
     /// has none, so `estimate`, `time` and the launch read one that exists. Handing them a problem
     /// `prepare` declined panics with it.
     pub const PREPARED: &'static str = "a problem a routine prepared has its view";
-
-    /// `problem` as a launch on `M` reads it, holding the rows as its
-    /// [`ROWS_KIND`](MatmulMicrokernel::ROWS_KIND) says.
-    ///
-    /// # Errors
-    ///
-    /// As [`new`](Self::new).
-    pub fn of<M: MatmulMicrokernel>(problem: &'a MatmulRoutineProblem) -> Result<Self, Refusal> {
-        Self::new(problem, M::ROWS_KIND)
-    }
 
     /// `problem` as a launch holding its rows as `rows_kind` says reads it.
     ///

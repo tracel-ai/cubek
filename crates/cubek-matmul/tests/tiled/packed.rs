@@ -8,7 +8,7 @@ use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Axis;
 use cubecl::zspace::Shape;
-use cubecl_common::e4m3;
+use cubecl_common::{e4m3, ue8m0};
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -19,7 +19,8 @@ use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
 /// The per-tensor scale a two-level format is built under.
 const GLOBAL_SCALE: f32 = 2.;
 
-/// Block scales with one or two mantissa bits, which the quantizer and a `ue4m3` byte hold exactly.
+/// Block scales with one or two mantissa bits, which the quantizer and a `ue4m3` byte hold exactly;
+/// a `ue8m0` byte holds only the first.
 const MANTISSAS: [f32; 4] = [1., 1.5, 2., 3.];
 
 /// The block-scaled formats a packed test matrix is built in.
@@ -28,6 +29,7 @@ pub(super) enum PackedFormat {
     Q8,
     Q4,
     Nvfp4,
+    Mxfp4,
 }
 
 impl PackedFormat {
@@ -42,6 +44,10 @@ impl PackedFormat {
             Self::Q8 => blocks_of_32(QuantValue::Q8S),
             Self::Q4 => blocks_of_32(QuantValue::Q4S),
             Self::Nvfp4 => nvfp4_scheme(),
+            Self::Mxfp4 => QuantScheme::default()
+                .with_value(QuantValue::E2M1)
+                .per_block([32], ScaleDtype::UE8M0)
+                .with_store(QuantStore::PackedU32(0)),
         }
     }
 }
@@ -163,7 +169,11 @@ impl PackedSlabsSpec {
             .map(|i| {
                 let (block_at, within) = (i / block, i % block);
                 let h = hashed(block_at, self.seed);
-                let scale = MANTISSAS[h % 4] * 2f32.powi(-headroom - ((h / 4) % 3) as i32);
+                let mantissa = match scheme.scale_dtype() {
+                    ScaleDtype::UE8M0 => MANTISSAS[0],
+                    _ => MANTISSAS[h % 4],
+                };
+                let scale = mantissa * 2f32.powi(-headroom - ((h / 4) % 3) as i32);
                 let pick = hashed(i, self.seed) % (2 * codes.len());
                 let code = match within {
                     0 => peak,
@@ -228,14 +238,14 @@ fn stored_scales(
     if stored == ScaleDtype::F32 {
         return scales;
     }
-    assert_eq!(
-        stored,
-        ScaleDtype::UE4M3,
-        "only `f32` and `ue4m3` scales are built here"
-    );
     let host = HostData::from_tensor_handle(client, scales, HostDataType::F32);
+    let byte = |scale: f32| match stored {
+        ScaleDtype::UE4M3 => e4m3::from_f32(scale).to_bits(),
+        ScaleDtype::UE8M0 => ue8m0::from_f32(scale).to_bits(),
+        other => panic!("only `f32`, `ue4m3` and `ue8m0` scales are built here, not {other:?}"),
+    };
     let bytes: Vec<u8> = (0..rows * blocks)
-        .map(|i| e4m3::from_f32(host.get_f32(&[i / blocks, i % blocks])).to_bits())
+        .map(|i| byte(host.get_f32(&[i / blocks, i % blocks])))
         .collect();
     TensorHandle::new_contiguous(
         Shape::from(vec![rows, blocks]),

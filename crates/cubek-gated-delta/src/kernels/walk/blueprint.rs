@@ -17,7 +17,7 @@ pub fn settled_width(
     problem: &GatedDeltaWalkProblem,
     mut vectorization: Vectorization<GatedDeltaWalkOperand>,
 ) -> usize {
-    for operand in GatedDeltaWalkOperand::ALL {
+    for &operand in problem.state.operands() {
         let element = operand_element(operand, problem);
         vectorization.require(VectorRequirement::Aligned {
             operand,

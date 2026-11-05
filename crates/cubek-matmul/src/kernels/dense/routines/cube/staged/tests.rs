@@ -2,6 +2,7 @@
 
 mod base {
     use super::super::*;
+    use crate::kernels::MatmulRoutine;
     use crate::kernels::{
         CUBE_STRIPS, MATMUL_PACKED_WALK_PAST_K, MatmulPartitioning, MatmulRoutineProblem,
         MatmulView,
@@ -14,6 +15,7 @@ mod base {
     use cubecl::tile::space::CubeOrder;
     use cubecl::tile::stage::RowChunks;
     use cubecl::tile::{Scratch, StageStorage};
+    use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::{
         CubeStagedDelivery, CubeStagedFill, CubeStagedFillingRefusal, CubeStagedMicrokernel,
         CubeStagedMicrokernelSettings, CubeStagedStore, CubeStagedTmaRefusal, MatmulPlaneLayout,
@@ -23,7 +25,8 @@ mod base {
         PlaneFragmentStepSum, PlaneFragmentTransport,
     };
     use cubek_microkernel::matmul::{
-        MatmulDestination, MatmulLayout, MatmulOperand, MatmulOperands, MatmulStoredTile,
+        MatmulDestination, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead,
+        MatmulStoredTile,
     };
     use cubek_std::layout::stored::{Operand, Packing};
     use cubek_std::layout::{BindingOrder, tile_order};
@@ -43,7 +46,7 @@ mod base {
     ) -> Option<CubeStagedTmaRefusal> {
         CubeStagedTmaRefusal::new(
             hw,
-            &MatmulView::of::<CubeStagedMicrokernel>(problem)
+            &MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
             &problem.buffers(plane.orders),
@@ -246,7 +249,7 @@ mod base {
     #[test]
     fn the_candidates_are_the_matrix_instructions_then_the_software_one() {
         let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
-        let item = MatmulView::of::<CubeStagedMicrokernel>(&problem())
+        let item = MatmulView::new(&problem(), CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let settings = PlaneFragmentMicrokernelSettings::DEFAULT;
@@ -270,7 +273,7 @@ mod base {
     #[test]
     fn a_transport_setting_orders_the_two_transports() {
         let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
-        let item = MatmulView::of::<CubeStagedMicrokernel>(&problem())
+        let item = MatmulView::new(&problem(), CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let settings = PlaneFragmentMicrokernelSettings {
@@ -627,12 +630,14 @@ mod base {
         let planes = grid.planes();
         let cube_units = planes.count * planes.width;
         let one_unit = 1;
-        let item = MatmulView::of::<CubeStagedMicrokernel>(&problem)
+        let item = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
-        let operands = partitioning
-            .stage()
-            .operands(item.elements, blueprint.microkernel.plane.orders);
+        let operands = partitioning.stage().operands(
+            item.elements,
+            blueprint.microkernel.plane.orders,
+            MatmulOperands::all(MatmulRead::AsBound),
+        );
         assert_eq!(registers.resolve(&hw, &operands, cube_units), registers);
         assert_eq!(
             registers.resolve(&hw, &operands, one_unit),
@@ -691,6 +696,48 @@ mod base {
             }
         }
         assert!(kept > 0, "no listed setting kept its register prefetch");
+    }
+
+    /// A packed input is read from words, which the register prefetch does not carry: every float
+    /// setting prefetching into registers, prepared on a q4 weight, prefetches into its slots.
+    #[test]
+    fn a_packed_input_keeps_no_register_prefetch() {
+        use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+        use cubecl::tile::stage::Prefetch;
+        use cubek_std::layout::stored::{Operand, Packing};
+
+        let hw = offering(devices::strix_halo());
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::Q4S)
+            .per_block([32, 1], ScaleDtype::F16)
+            .with_store(QuantStore::PackedU32(1));
+        let packings = MatmulOperands {
+            lhs: None,
+            rhs: Some(Packing {
+                operand: Operand::of_scheme(&scheme, K, [K, N]).expect("q4 is one block along k"),
+                scheme,
+            }),
+            out: None,
+        };
+        let problem = MatmulRoutineProblem::packed(256, 512, 256, F16, packings);
+        let prefetching = CubeStagedMatmulRoutine
+            .settings(&hw)
+            .into_iter()
+            .filter(|settings| settings.microkernel.ring.prefetch == Prefetch::InRegisters);
+        let mut prepared = 0;
+        for settings in prefetching {
+            let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings)
+            else {
+                continue;
+            };
+            prepared += 1;
+            assert_eq!(
+                blueprint.microkernel.ring.prefetch,
+                Prefetch::InSlots,
+                "{settings}"
+            );
+        }
+        assert!(prepared > 0, "no register prefetching setting prepared");
     }
 
     /// A box asked of the TMA engine's store is stored by it wherever a descriptor addresses the
@@ -1050,7 +1097,7 @@ mod base {
             .prepare(&devices::h100(), &problem, &settings)
             .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.fill.filling_planes, 1);
-        let placed = MatmulView::of::<CubeStagedMicrokernel>(&problem)
+        let placed = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .partitioning(
                 blueprint.microkernel.tiling(),
