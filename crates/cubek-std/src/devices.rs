@@ -11,6 +11,7 @@ use cubecl::ir::{
     MemoryDeviceProperties, OpaqueType, Type,
 };
 use cubecl::profile::TimingMethod;
+use cubecl::tile::LaneMap;
 
 use crate::Hardware;
 
@@ -27,7 +28,10 @@ pub fn strix_halo() -> Hardware {
     device.features.device_memory_scope = true;
     f32_atomic_add(&mut device);
     shared_f32_atomic_add(&mut device);
-    hardware(device)
+    Hardware {
+        lane_runs: Some(LaneMap::RDNA3_16X16),
+        ..hardware(device)
+    }
 }
 
 /// A WebGPU adapter with no subgroup support, reporting the plane width the wgpu runtime
@@ -108,6 +112,7 @@ pub fn h100() -> Hardware {
     shared_f32_atomic_add(&mut device);
     Hardware {
         accumulator_as_a: true,
+        lane_runs: Some(LaneMap::NVIDIA_M16N8K16),
         ..hardware(device)
     }
 }
@@ -135,6 +140,7 @@ pub fn rtx_pro_6000() -> Hardware {
     shared_f32_atomic_add(&mut device);
     Hardware {
         accumulator_as_a: true,
+        lane_runs: Some(LaneMap::NVIDIA_M16N8K16),
         ..hardware(device)
     }
 }
@@ -302,6 +308,7 @@ fn hardware(device: DeviceProperties) -> Hardware {
     Hardware {
         properties: Arc::new(device),
         accumulator_as_a: false,
+        lane_runs: None,
     }
 }
 

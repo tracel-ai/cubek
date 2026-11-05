@@ -1,6 +1,7 @@
+use crate::matmul::MatmulContraction;
 use crate::matmul::plane::PlaneFragmentStepSum;
 use crate::matmul::{MatmulOperands, MatmulRead};
-use cubecl::tile::{Axis, Instruction, Region, Semiring, Space, Tile, Walk};
+use cubecl::tile::{Axis, Instruction, Region, Space, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The partial a narrow step contracts into, opened over `out` beside the accumulator: one cell
@@ -11,12 +12,12 @@ pub(crate) fn plane_fragment_partial<EL: Numeric>(
     a: &Tile,
     b: &Tile,
     #[comptime] step_sum: PlaneFragmentStepSum,
-    #[comptime] instruction: Instruction,
+    #[comptime] contraction: MatmulContraction,
 ) -> ComptimeOption<Tile> {
     match step_sum {
         PlaneFragmentStepSum::Wide => ComptimeOption::<Tile>::new_None(),
         PlaneFragmentStepSum::Narrow => {
-            ComptimeOption::new_Some(out.accumulator::<EL>(a, b, instruction, Semiring::SUM_PROD))
+            ComptimeOption::new_Some(MatmulContraction::accumulator::<EL>(out, a, b, contraction))
         }
     }
 }

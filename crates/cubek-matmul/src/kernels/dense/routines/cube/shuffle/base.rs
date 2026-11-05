@@ -336,7 +336,7 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
                 binding.rhs,
                 O::arg(binding.out),
                 binding.launcher.partitioning_arg(),
-                microkernel.plane.tile_instruction(),
+                microkernel.plane.contraction(),
                 microkernel.meet,
                 microkernel.split(),
                 microkernel.planes_along_k.get(),
@@ -352,9 +352,11 @@ mod tests {
     use super::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
-    use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
-    use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
-    use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
+    use cubek_microkernel::matmul::cube::{CubeShufflePlane, CubeShufflePlaneSettings};
+    use cubek_microkernel::matmul::plane::{
+        PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong,
+        PlaneShuffleMicrokernel,
+    };
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
     use cubek_std::layout::stored::Operand;
@@ -488,15 +490,26 @@ mod tests {
         devices::offering_mma(devices::h100(), [shape])
     }
 
-    /// `m` rows against an NVFP4 `k × n` rhs in tile order, read as `hw` loads it.
+    /// `m` rows against an NVFP4 `k × n` rhs in tile order, its words row by row, read as `hw`
+    /// loads it.
     fn nvfp4(hw: &Hardware, m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
+        nvfp4_laid(hw, m, n, k, tile_order::TileWords::RowByRow)
+    }
+
+    /// [`nvfp4`], its tiles' words laid as `laid`.
+    fn nvfp4_laid(
+        hw: &Hardware,
+        m: usize,
+        n: usize,
+        k: usize,
+        laid: tile_order::TileWords,
+    ) -> MatmulRoutineProblem {
         let scheme = tile_order::nvfp4_scheme();
         let words = hw.load_values(ElemType::UInt(UIntKind::U32));
         let operand = Operand::of_scheme(&scheme, K, [K, N])
             .expect("one axis a block")
             .in_tile_order(
-                tile_order::TileOrder::laid(&scheme, tile_order::TileWords::RowByRow, (128, 8))
-                    .expect("NVFP4 is tile order"),
+                tile_order::TileOrder::laid(&scheme, laid, (128, 8)).expect("NVFP4 is tile order"),
                 N,
                 words,
             )
@@ -551,22 +564,48 @@ mod tests {
     }
 
     /// Every tensor-core setting prepares on a device offering the 16-bit `16 × 8 × 16`
-    /// instruction, from one row to sixteen, on each of a decode's projections; and declines with
-    /// its plane's reason where the device offers no such instruction, the H100 fixture among
-    /// them.
+    /// instruction, on each of a decode's projections, from five rows to the rows its fragment
+    /// holds: sixteen with its rows along `m`, eight along `n`, past which it declines with its
+    /// plane's reason. Below five rows, where the software planes read the weight faster, it
+    /// declines too. Every one declines with that reason where the device offers no such
+    /// instruction, the H100 fixture among them.
     #[test]
     fn a_fragment_setting_runs_where_the_device_offers_the_instruction() {
         let shapes = [(6144, 2560), (2560, 4096), (9728, 2560), (2560, 9728)];
         let hw = tensor_cores();
         let fragment_settings = fragment_settings(&hw);
         assert!(!fragment_settings.is_empty());
-        for m in [1, 3, 8, 11, 16] {
+        for m in [5, 8, 11, 16] {
             for (n, k) in shapes {
                 for settings in &fragment_settings {
-                    CubeShuffleMatmulRoutine
-                        .prepare(&hw, &nvfp4(&hw, m, n, k), settings)
-                        .unwrap_or_else(|error| panic!("{m}x{n}x{k} at {settings}: {error:?}"));
+                    let held = match settings.microkernel.plane {
+                        CubeShufflePlaneSettings::Fragment(plane) => match plane.rows_along {
+                            PlaneFragmentRowsAlong::M => 16,
+                            PlaneFragmentRowsAlong::N => 8,
+                        },
+                        CubeShufflePlaneSettings::Shuffle(_) => unreachable!("fragments alone"),
+                    };
+                    let prepared =
+                        CubeShuffleMatmulRoutine.prepare(&hw, &nvfp4(&hw, m, n, k), settings);
+                    match (m <= held, prepared) {
+                        (true, Ok(_)) => {}
+                        (false, Err(Refusal::Declined { why })) => {
+                            assert_eq!(why, CubeShuffleMicrokernel::FRAGMENT_DECLINE)
+                        }
+                        (_, prepared) => panic!("{m}x{n}x{k} at {settings}: {prepared:?}"),
+                    }
                 }
+            }
+        }
+        for m in [1, 4] {
+            for settings in &fragment_settings {
+                assert_eq!(
+                    CubeShuffleMatmulRoutine
+                        .prepare(&hw, &nvfp4(&hw, m, 2560, 4096), settings)
+                        .err(),
+                    Some(PlaneFragmentMicrokernel::ROWS_OUT_OF_RANGE),
+                    "{m} rows at {settings}"
+                );
             }
         }
         for other in [devices::rdna_range(), devices::h100()] {
@@ -619,5 +658,98 @@ mod tests {
             .expect("a narrow rhs prepares");
         assert_eq!(blueprint.microkernel.plane.columns(), 8);
         assert_eq!(blueprint.microkernel.planes_along_k.get(), 4);
+    }
+
+    /// `planes_along_k` tensor-core planes of `along_n` fragments each, their rows along `n`.
+    fn fragments_rows_along_n(
+        along_n: usize,
+        planes_along_k: usize,
+    ) -> CubeShuffleMatmulRoutineSettings {
+        CubeShuffleMatmulRoutineSettings {
+            microkernel: CubeShuffleMicrokernelSettings::new(
+                CubeShufflePlaneSettings::Fragment(
+                    PlaneFragmentMicrokernelSettings::windowed(along_n, 8)
+                        .rows_along(PlaneFragmentRowsAlong::N),
+                ),
+                planes_along_k,
+            ),
+        }
+    }
+
+    /// With its rows along `n` a fragment takes the instruction's sixteen rows as the rhs's
+    /// columns and its eight columns as the lhs's rows, and the sum is opened for it.
+    #[test]
+    fn a_fragment_with_its_rows_along_n_is_sixteen_columns_wide() {
+        let hw = tensor_cores();
+        let (blueprint, _) = CubeShuffleMatmulRoutine
+            .prepare(
+                &hw,
+                &nvfp4(&hw, 8, 2560, 4096),
+                &fragments_rows_along_n(1, 8),
+            )
+            .expect("eight rows prepare with their rows along n");
+        let plane = &blueprint.microkernel.plane;
+        assert!(matches!(plane, CubeShufflePlane::Fragment(_)));
+        assert_eq!(plane.columns(), 16);
+        assert_eq!(plane.contraction().rows_along, PlaneFragmentRowsAlong::N);
+    }
+
+    /// An `n` of whole eights but not whole sixteens is served with the rows along `m` and
+    /// declined, with the plane's reason, with them along `n`.
+    #[test]
+    fn rows_along_n_decline_an_odd_number_of_eights() {
+        let hw = tensor_cores();
+        let problem = nvfp4(&hw, 8, 8 * 3, 512);
+        assert!(
+            CubeShuffleMatmulRoutine
+                .prepare(&hw, &problem, &fragments(1, 4))
+                .is_ok()
+        );
+        match CubeShuffleMatmulRoutine.prepare(&hw, &problem, &fragments_rows_along_n(1, 4)) {
+            Err(Refusal::Declined { why }) => {
+                assert_eq!(why, CubeShuffleMicrokernel::FRAGMENT_DECLINE)
+            }
+            prepared => panic!("an odd number of eights with rows along n: {prepared:?}"),
+        }
+    }
+
+    /// RDNA3's `16 × 16 × 16` decodes a weight whose tiles lie row by row; a weight laid block by
+    /// block, whose loads span rows and so read it along more than `K`, every tensor-core setting
+    /// refuses by that reason before anything compiles.
+    #[test]
+    fn rdna3_reads_a_weight_laid_row_by_row_alone() {
+        let hw = devices::offering_mma(
+            devices::strix_halo(),
+            [MmaConfig {
+                a_type: F16,
+                b_type: F16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 16,
+                n: 16,
+                k: 16,
+            }],
+        );
+        let settings = fragment_settings(&hw);
+        assert!(
+            !settings.is_empty(),
+            "Strix Halo lists the tensor-core planes"
+        );
+        let laid = |words| nvfp4_laid(&hw, 8, 2560, 4096, words);
+        for setting in &settings {
+            CubeShuffleMatmulRoutine
+                .prepare(&hw, &laid(tile_order::TileWords::RowByRow), setting)
+                .unwrap_or_else(|error| panic!("row by row at {setting}: {error:?}"));
+            // The plane's own reason, which it keeps private, rather than the cube's.
+            match CubeShuffleMatmulRoutine.prepare(
+                &hw,
+                &laid(tile_order::TileWords::BlockByBlock),
+                setting,
+            ) {
+                Err(Refusal::Declined { why }) => {
+                    assert_ne!(why, CubeShuffleMicrokernel::FRAGMENT_DECLINE, "{setting}")
+                }
+                prepared => panic!("block by block at {setting}: {prepared:?}"),
+            }
+        }
     }
 }

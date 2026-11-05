@@ -11,7 +11,7 @@ use cubecl::{
     features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig, Tma},
     ir::{DeviceProperties, ElemType, FloatKind, OpaqueType, TargetProperties, Type},
     quant::scheme::{QuantMode, QuantScheme, QuantValue},
-    tile::BlockScaledOperands,
+    tile::{BlockScaledOperands, LaneMap},
 };
 
 /// The device, as the routines see it.
@@ -32,6 +32,10 @@ pub struct Hardware {
     /// in each operand. False on RDNA, whose `A` runs along its rows against an accumulator down
     /// its columns, and whose RDNA3 `A` is held twice across the wave.
     pub accumulator_as_a: bool,
+    /// How the target lays a 16-bit manual mma's `k` out across a plane's units, as the tile DSL
+    /// loads a fragment deeper than its instruction in lane runs over it: what a packed operand
+    /// decodes into as it loads. `None` where the tile DSL reads no layout of the target's.
+    pub lane_runs: Option<LaneMap>,
 }
 
 /// Bytes one coalesced memory transaction moves on the GPUs cubek has met: 128 on CUDA, HIP,
@@ -51,6 +55,7 @@ impl Hardware {
             properties,
             accumulator_as_a: mma.register_layout_a == mma.register_layout_acc
                 && mma.register_duplication_a == mma.register_duplication_acc,
+            lane_runs: LaneMap::try_from(target).ok(),
         }
     }
 
@@ -595,6 +600,7 @@ mod tests {
                 identity,
             )),
             accumulator_as_a: false,
+            lane_runs: None,
         }
     }
 
