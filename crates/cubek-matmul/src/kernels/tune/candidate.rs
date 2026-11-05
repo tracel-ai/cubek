@@ -57,9 +57,8 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     }
 
     /// `call`'s product by this candidate's routine at its setting, or the reason it did not run:
-    /// through the call's routes where it states them, otherwise into its destination or into an
-    /// output the launch allocates, on the device the candidate was listed for, each problem
-    /// prepared once ([`PreparedLaunches`]).
+    /// into its destination or into an output the launch allocates, on the device the candidate was
+    /// listed for, each problem prepared once ([`PreparedLaunches`]).
     ///
     /// # Errors
     ///
@@ -77,37 +76,30 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
             .admits(call.product())
             .map_err(|refusal| format!("{refusal:?}"))?;
         let settings = &self.settings;
-        let launched = match (&call.routes, call.destination) {
-            (Some(routes), _) => routes.launch(&call.hw, &self.routine, settings),
-            (None, destination) => {
-                let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
-                let tensors = match &destination {
-                    Some(destination) => MatmulTensors::writing_into(
-                        &call.client,
-                        lhs,
-                        rhs,
-                        PlainTensor::of_handle(destination.clone()),
-                        R::ROWS_KIND,
-                    ),
-                    None => MatmulTensors::new(&call.client, lhs, rhs, R::ROWS_KIND),
-                };
-                tensors.and_then(|tensors| {
-                    let (blueprint, grid) = self.prepared.prepare(
-                        &self.routine,
-                        &self.hw,
-                        &tensors.problem(),
-                        settings,
-                    )?;
-                    self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
-                    Ok(match destination {
-                        Some(destination) => destination,
-                        None => tensors
-                            .into_out()
-                            .expect("a launch allocating its output hands it back"),
-                    })
-                })
-            }
+        let destination = call.destination;
+        let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
+        let tensors = match &destination {
+            Some(destination) => MatmulTensors::writing_into(
+                &call.client,
+                lhs,
+                rhs,
+                PlainTensor::of_handle(destination.clone()),
+                R::ROWS_KIND,
+            ),
+            None => MatmulTensors::new(&call.client, lhs, rhs, R::ROWS_KIND),
         };
+        let launched = tensors.and_then(|tensors| {
+            let (blueprint, grid) =
+                self.prepared
+                    .prepare(&self.routine, &self.hw, &tensors.problem(), settings)?;
+            self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
+            Ok(match destination {
+                Some(destination) => destination,
+                None => tensors
+                    .into_out()
+                    .expect("a launch allocating its output hands it back"),
+            })
+        });
         launched
             .map(|handle| MatmulProduct {
                 client: call.client,

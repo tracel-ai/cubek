@@ -117,6 +117,48 @@ fn a_routed_packed_stack_reads_each_route_s_slab(format: PackedFormat) {
     }
 }
 
+fn a_tuned_routed_packed_stack_reads_each_route_s_slab(format: PackedFormat) {
+    let client = client();
+    let lhs = HalfValues::new(ROUTED.tokens * ROUTED.k, 1);
+    let stack = PackedSlabs::new(
+        &client,
+        PackedSlabsSpec {
+            format,
+            operand: MatmulOperand::Rhs,
+            slabs: ROUTED.slabs,
+            rows: ROUTED.n,
+            k: ROUTED.k,
+            seed: 2,
+        },
+    );
+    let expected = ROUTED.expected_from(&lhs.floats, |slab, k, j| stack.cell(slab, k, j));
+    let tensors = RoutedMatmulTensors::new(
+        &client,
+        lhs.upload(&client, &[ROUTED.tokens, ROUTED.k]),
+        StoredTensor::Packed(stack.matrix()),
+        upload(&client, &[ROUTED.tokens, ROUTED.picks], &ROUTED.routes()),
+        ROUTED.slabs,
+        SlabAxis::Output,
+    )
+    .expect("a packed stack of whole slabs derives a routed launch");
+    let hw = Hardware::from_client(&client);
+    let no_matrix_instruction = hw.properties.features.matmul.cmma.iter().next().is_none();
+    let out = match launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT) {
+        Ok(out) => out,
+        Err(why) if matches!(why, Refusal::CubePastDevice { .. }) || no_matrix_instruction => {
+            TestOutcome::Validated(ValidationResult::Skipped(format!(
+                "no floor serves a packed stack on this runtime: {why:?}"
+            )))
+            .enforce();
+            return;
+        }
+        Err(why) => panic!("a packed routed stack is refused: {why:?}"),
+    };
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    let shape = [ROUTED.tokens, ROUTED.picks, ROUTED.n];
+    assert_close(&got, &shape, &expected, HALF_TOLERANCE, &"routed");
+}
+
 fn a_grouped_packed_stack_reads_each_group_s_slab<Mk, SM, R>(
     format: PackedFormat,
     routine: R,
@@ -205,6 +247,21 @@ fn a_grouped_cube_staged_packed_stack_reads_each_group_s_slab(format: PackedForm
 }
 
 #[test]
+fn a_tuned_routed_product_reads_each_route_s_packed_q8_slab() {
+    a_tuned_routed_packed_stack_reads_each_route_s_slab(PackedFormat::Q8);
+}
+
+#[test]
+fn a_tuned_routed_product_reads_each_route_s_packed_q4_slab() {
+    a_tuned_routed_packed_stack_reads_each_route_s_slab(PackedFormat::Q4);
+}
+
+#[test]
+fn a_tuned_routed_product_reads_each_route_s_packed_nvfp4_slab() {
+    a_tuned_routed_packed_stack_reads_each_route_s_slab(PackedFormat::Nvfp4);
+}
+
+#[test]
 fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_q8_slab() {
     a_grouped_packed_stack_reads_each_group_s_slab(
         PackedFormat::Q8,
@@ -244,6 +301,11 @@ fn a_grouped_product_on_the_cube_staged_reads_each_group_s_packed_q4_slab() {
 #[test]
 fn a_grouped_product_on_the_cube_staged_reads_each_group_s_packed_nvfp4_slab() {
     a_grouped_cube_staged_packed_stack_reads_each_group_s_slab(PackedFormat::Nvfp4);
+}
+
+#[test]
+fn a_tuned_routed_product_reads_each_route_s_packed_mxfp4_slab() {
+    a_tuned_routed_packed_stack_reads_each_route_s_slab(PackedFormat::Mxfp4);
 }
 
 #[test]

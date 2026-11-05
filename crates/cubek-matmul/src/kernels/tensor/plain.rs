@@ -54,6 +54,11 @@ impl PlainTensor {
         (handle, plain)
     }
 
+    /// The bytes of the buffer it binds.
+    pub fn bytes(&self) -> usize {
+        self.binding.handle.size as usize
+    }
+
     /// A zero-filled tensor shaped `shape` in `elem` at `strides`, uploaded rather than filled: an
     /// upload is not a launch, so a process mode that discards launches keeps it. An axis at stride
     /// zero holds one element.

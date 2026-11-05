@@ -93,9 +93,9 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     }
 
     /// `call`'s product by this candidate's routine at its setting, reading the packed inputs as
-    /// stored, or the reason it did not run: through the call's routes where it states them,
-    /// otherwise into its destination ([`MatmulRoutine::launch_into`]) or into an output the
-    /// launch allocates, written in the call's element.
+    /// stored, or the reason it did not run: into its destination
+    /// ([`MatmulRoutine::launch_into`]) or into an output the launch allocates, written in the
+    /// call's element.
     ///
     /// # Errors
     ///
@@ -114,9 +114,8 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
             .map_err(|refusal| format!("{refusal:?}"))?;
         let settings = &self.settings;
         let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
-        let launched = match (&call.routes, call.destination) {
-            (Some(routes), _) => routes.launch(&call.hw, &self.routine, settings),
-            (None, Some(destination)) => self
+        let launched = match call.destination {
+            Some(destination) => self
                 .routine
                 .launch_into(
                     &self.hw,
@@ -127,7 +126,7 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
                     settings,
                 )
                 .map(|()| destination),
-            (None, None) => {
+            None => {
                 MatmulTensors::written_in(&call.client, lhs, rhs, call.out).and_then(|tensors| {
                     let (blueprint, grid) =
                         self.routine
