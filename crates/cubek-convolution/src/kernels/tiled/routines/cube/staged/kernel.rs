@@ -1,4 +1,4 @@
-use cubecl::tile::{Partitioning, StageStorage, TileArg};
+use cubecl::tile::{Partitioning, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeStagedWalk, cube_staged_microkernel};
 
@@ -6,9 +6,9 @@ use cubek_microkernel::matmul::cube::{CubeStagedWalk, cube_staged_microkernel};
 /// an rhs held as `storage`.
 #[cube(launch_unchecked)]
 pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric>(
-    input: &TileArg<'_>,
-    rhs: &TileArg<'_>,
-    out: &TileArg<'_>,
+    input: &TileTensor<'_>,
+    rhs: &TileTensor<'_>,
+    out: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,

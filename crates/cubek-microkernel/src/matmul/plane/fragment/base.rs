@@ -630,7 +630,7 @@ impl PlaneFragmentMicrokernel {
     /// Bytes of the window one plane's fragments bounce through where `scratch` holds one: as many
     /// fragments as it holds of `item`'s sum. None for an instruction whose units write their own
     /// cells.
-    pub(crate) fn scratch_bytes(&self, item: &MatmulWorkItem, scratch: Scratch) -> usize {
+    pub fn scratch_bytes(&self, item: &MatmulWorkItem, scratch: Scratch) -> usize {
         match self.instruction.drain() {
             PlaneFragmentDrain::Bounce => {
                 let fragments = self.settings.along_m.get() * self.settings.along_n.get();

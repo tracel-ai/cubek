@@ -6,7 +6,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// The partial a narrow step contracts into, opened over `out` beside the accumulator: one cell
 /// of the operands' element for every cell the accumulator holds. None for a wide step.
 #[cube]
-pub(crate) fn plane_fragment_partial<EL: Numeric>(
+pub fn plane_fragment_partial<EL: Numeric>(
     out: &Tile,
     a: &Tile,
     b: &Tile,
