@@ -16,6 +16,9 @@ pub const KEPT_STATE: Axis = Axis(4);
 pub const KEY_FEATURE: Axis = Axis(5);
 /// A state column: a value feature, which the values and the output run along.
 pub const VALUE_FEATURE: Axis = Axis(6);
+/// A slot of a store that holds many sequences' states, which a table places each sequence at: no
+/// level cuts it.
+pub const STORE_SLOT: Axis = Axis(7);
 
 /// How the walk places its microkernel's runs over a problem: a cube for every box of value
 /// columns of one head of one sequence, and inside the cube's box the levels the routine and its
@@ -41,16 +44,18 @@ impl GatedDeltaWalkPartitioning {
         }
     }
 
-    /// The partitioning a kernel compiles against: the sequences and the positions left to the
-    /// launch, so a prompt of any length and a decode step of any width run one kernel; the head
-    /// dims and the kept states compiled in, since every owner sizes its registers by the first and
-    /// the cache's ring fixes the second.
+    /// The partitioning a kernel compiles against: the sequences, the positions and the store's
+    /// slots left to the launch, so a prompt of any length, a decode step of any width and a store
+    /// of any size run one kernel; the head dims and the kept states compiled in, since every owner
+    /// sizes its registers by the first and the cache's ring fixes the second.
     pub fn kernel(&self) -> Partitioning {
+        let space = self.partitioning.space();
+        let dynamic: Vec<Axis> = [BATCH, POSITION, STORE_SLOT]
+            .into_iter()
+            .filter(|axis| space.contains(*axis))
+            .collect();
         Partitioning::new(
-            self.partitioning
-                .space()
-                .clone()
-                .with_dynamic(&[BATCH, POSITION]),
+            space.clone().with_dynamic(&dynamic),
             self.partitioning.levels().to_vec(),
         )
     }
