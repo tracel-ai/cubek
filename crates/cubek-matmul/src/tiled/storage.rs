@@ -105,15 +105,18 @@ pub fn tile_words(hw: &Hardware) -> TileWords {
 }
 
 /// The tile order a writer lays a matrix packed under `scheme` in on `hw`, in `tile`: the order
-/// the device's readers take ([`tile_words`]), where the tile holds it ([`TileOrder::laid`]).
-/// Readers read it back off the matrix ([`TileOrder::of_matrix`]), never off a device. `None` for
-/// a scheme tile order does not store, or a tile not whole blocks of `k`.
+/// the device's readers take ([`tile_words`]), where the tile holds it ([`TileOrder::laid`]), its
+/// strips of tiles an odd number of the device's transactions apart
+/// ([`TileOrder::staggered`]). Readers read it back off the matrix ([`TileOrder::of_matrix`]),
+/// never off a device. `None` for a scheme tile order does not store, or a tile not whole blocks
+/// of `k`.
 pub fn tile_order_on(
     hw: &Hardware,
     scheme: &QuantScheme,
     tile: (usize, usize),
 ) -> Option<TileOrder> {
-    TileOrder::laid(scheme, tile_words(hw), tile)
+    let order = TileOrder::laid(scheme, tile_words(hw), tile)?;
+    Some(order.staggered(hw.transaction_bytes() * u8::BITS as usize))
 }
 
 /// The tile a load stores matmul input `input` in on `hw`, over the input's two axes: the step a
@@ -174,6 +177,20 @@ pub fn matrix_storage(
     .filter(|&(_, count)| count > 1)
     .collect();
     StorageLevels::new(&pieces).grid(&[columns, rows])
+}
+
+/// Elements from the first a stored buffer addresses to past its last: its extents' product
+/// where its pieces lie back to back, more where a stagger pads its coarsest one; zero for a
+/// buffer of no element.
+fn span(stored: &Geometry) -> usize {
+    if stored.dims().any(|(extent, _)| extent == 0) {
+        return 0;
+    }
+    stored
+        .dims()
+        .map(|(extent, stride)| (extent - 1) * stride)
+        .sum::<usize>()
+        + 1
 }
 
 /// How a tensor of one shape lies stored as a [`StoragePartitioning`] states: its metadata in
@@ -242,6 +259,11 @@ impl StoredLayout {
                     )));
                 }
                 let words = StorageLevels::new(&storage.tiles()[1..]).grid(storage.order());
+                // The words pad the buffer as the values do: the same bits, counted in words.
+                let words = match storage.stagger() {
+                    Some(stagger) => words.staggered(stagger.over(u32::BITS as usize)),
+                    None => words,
+                };
                 (per_word, words)
             }
         };
@@ -259,7 +281,7 @@ impl StoredLayout {
         let config = |e| refused(format!("{e:?}"));
         // Batch dims stay plain and coarsest, each a whole run of what is finer.
         let metadata = |stored: &Geometry| {
-            let mut run: usize = stored.shape().iter().product();
+            let mut run = span(stored);
             let mut strides = vec![0; batches];
             for (b, &extent) in batch_dims.iter().enumerate().rev() {
                 strides[b] = run;
@@ -288,8 +310,7 @@ impl StoredLayout {
                 (axis, tile)
             })
             .collect();
-        let word_count = word_extents.iter().map(|&(_, e)| e).product::<usize>()
-            * batch_dims.iter().product::<usize>();
+        let word_count = span(&in_words) * batch_dims.iter().product::<usize>();
         Ok(Self {
             values: metadata(&in_values)?,
             words: metadata(&in_words)?,
