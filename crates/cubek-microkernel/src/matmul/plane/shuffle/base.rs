@@ -94,10 +94,6 @@ pub struct PlaneShuffleBlocks {
 }
 
 impl PlaneShuffleMicrokernel {
-    /// Steps of `K` a unit holds at once, which a routine reports as `CubeStaging`'s stages: the
-    /// microkernel stages nothing in shared memory, and loads a step once the last is summed.
-    pub const STAGES_IN_FLIGHT: usize = 1;
-
     /// The most rows a plane holds: every row is summed against each step of the rhs in
     /// registers, so past this many the registers, not the rhs, bound the kernel.
     pub const MAX_ROWS: usize = 8;
@@ -108,7 +104,7 @@ impl PlaneShuffleMicrokernel {
     };
 
     /// What an rhs lined along neither of its axes is declined with.
-    pub const STRIDED_RHS: Refusal = Refusal::Declined {
+    pub(crate) const STRIDED_RHS: Refusal = Refusal::Declined {
         why: "the plane shuffle reads an rhs lined along `K` or `N`",
     };
 
@@ -138,7 +134,7 @@ impl PlaneShuffleMicrokernel {
 
     /// Elements of `K` one unit reads a step: its block's depth, each a vector where the rhs
     /// runs along `K`, or a packed rhs's step of it.
-    pub fn depth(&self) -> usize {
+    pub(crate) fn depth(&self) -> usize {
         if let Some(blocks) = &self.blocks {
             return blocks.depth;
         }
@@ -152,7 +148,7 @@ impl PlaneShuffleMicrokernel {
     /// The turns the plane's units take through a packed rhs's `K`, a word of scale blocks a
     /// unit a turn, which a cube's planes divide between them. `None` for a float rhs, and
     /// where the scales group no `K`.
-    pub fn turns(&self) -> Option<usize> {
+    pub(crate) fn turns(&self) -> Option<usize> {
         let space = &self.blocks?.space;
         space.operand(MatmulOperand::Rhs).grouping(K, space.k)?;
         let [(_, blocks), _] = space.operand(MatmulOperand::Rhs).axes(K, space.k);
@@ -169,7 +165,7 @@ impl PlaneShuffleMicrokernel {
     /// the plane's units over `K` in turns, over `M` and over `N` beside each other. A cube whose
     /// planes share a step states them around this. `None` where each unit walks a run of a packed
     /// rhs's `K` of its own, which planes cannot split without splitting the run.
-    pub fn step_levels(&self) -> Option<Levels> {
+    pub(crate) fn step_levels(&self) -> Option<Levels> {
         let Some(blocks) = &self.blocks else {
             return Some(self.float_step_levels());
         };

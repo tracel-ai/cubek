@@ -12,7 +12,6 @@ use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
 };
-use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N};
@@ -59,6 +58,10 @@ impl core::fmt::Display for CubeShuffleMatmulRoutineSettings {
 pub type CubeShuffleMatmulRoutineBlueprint = MatmulBlueprint<CubeShuffleMicrokernel>;
 
 impl CubeShuffleMatmulRoutine {
+    /// Steps of `K` a unit holds at once: its plane shuffles stage nothing in shared memory, and
+    /// load a step once the last is summed.
+    const STAGES_IN_FLIGHT: u32 = 1;
+
     /// The settings worth racing against a packed rhs
     /// ([`CubeShuffleMicrokernel::packed_settings`]): what the packed few-rows table races, and
     /// what a caller naming the routine and no setting runs against a packed rhs, in this
@@ -108,7 +111,7 @@ impl CubeShuffleMatmulRoutine {
             // output binds elementwise to match, so each write is one element.
             writes: vec![stream(MatmulOperand::Out, rows * columns, 1)],
             stages: k.div_ceil(k_per_stage),
-            stages_in_flight: PlaneShuffleMicrokernel::STAGES_IN_FLIGHT as u32,
+            stages_in_flight: Self::STAGES_IN_FLIGHT,
             drain_atomics: planes_along_k * rows * columns,
         });
         microkernel.estimate(&item, &(), grid.planes(), estimate);
@@ -351,6 +354,7 @@ mod tests {
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
     use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
     use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
+    use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
     use cubek_std::layout::stored::Operand;

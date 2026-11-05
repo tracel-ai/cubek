@@ -12,7 +12,7 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Bound, Delivery, Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::Coverage;
 use cubecl::tile::{Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
@@ -175,7 +175,7 @@ impl CubeStagedMicrokernel {
     /// The stored settings (`STORED`) `hw` races: those filled by the TMA engine only where
     /// it has one, since elsewhere they would race the units' fill of a box the copy engine's
     /// settings already cover.
-    pub fn stored_settings(hw: &Hardware) -> Vec<CubeStagedMicrokernelSettings> {
+    pub(crate) fn stored_settings(hw: &Hardware) -> Vec<CubeStagedMicrokernelSettings> {
         Self::STORED
             .into_iter()
             .filter(|settings| {
@@ -244,7 +244,7 @@ impl CubeStagedMicrokernel {
 
     /// The packed inputs' scale block along `K`: a stage holds whole ones of each. `None` where a
     /// packed input's scales do not group `K`, or two packed inputs group it differently.
-    pub fn block(item: &MatmulWorkItem) -> Option<usize> {
+    pub(crate) fn block(item: &MatmulWorkItem) -> Option<usize> {
         let space = item.blocks?;
         let mut blocks = MatmulOperand::INPUTS
             .into_iter()
@@ -407,7 +407,7 @@ impl CubeStagedMicrokernel {
     }
 
     /// How its planes reach its output: each its own tile, or merged along `K`.
-    pub fn drain(&self) -> CubeStagedDrain {
+    pub(crate) fn drain(&self) -> CubeStagedDrain {
         match self.planes_along_k.get() {
             1 => CubeStagedDrain::EachPlane,
             _ => CubeStagedDrain::Merged,
@@ -503,10 +503,7 @@ impl CubeStagedMicrokernel {
         // descriptor clips it at the output's edge: no fragment's window is cut short there.
         let cut_short = cube_space.overhangs_output && store == CubeStagedStore::Fragments;
         let window = match self.plane.instruction.drain() {
-            PlaneFragmentDrain::Bounce => {
-                let bouncing = true;
-                self.scratch.at_least_bouncing(bouncing)
-            }
+            PlaneFragmentDrain::Bounce => self.scratch.at_least_bouncing(true),
             PlaneFragmentDrain::CellByCell | PlaneFragmentDrain::InLines => Scratch::None,
         };
         let bounces = merges || cut_short || item.destination == MatmulDestination::Sink;
@@ -567,7 +564,7 @@ impl CubeStagedMicrokernel {
     /// `K`, the accumulator over the box, one sum a cell; and where the TMA engine stores the box,
     /// the box it is drained into. The accumulator and the box are opened before the walk, so
     /// they sit beside the stages.
-    pub(crate) fn shared_memory(
+    pub fn shared_memory(
         &self,
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -623,19 +620,6 @@ impl CubeStagedMicrokernel {
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => 0,
         };
         scales + landing
-    }
-
-    /// Panics where `out`'s writes are masked but its fragments hold no scratch to bounce
-    /// through. The engine masks the output's writes exactly where its tiles overhang, and a
-    /// masked write is one a fragment's store intrinsic cannot make.
-    pub fn assert_drains_into(&self, out: &Bound) {
-        assert!(
-            self.plane.instruction.drain() != PlaneFragmentDrain::Bounce
-                || self.scratch != Scratch::None
-                || !out.spec.is_checked(),
-            "the output's writes are masked, but its fragments were given no scratch to bounce \
-             through"
-        );
     }
 }
 

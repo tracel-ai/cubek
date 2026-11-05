@@ -280,7 +280,7 @@ impl CubeShuffleMicrokernel {
 
 impl CubeShufflePlane {
     /// The levels of one plane's steps through `K`.
-    pub fn step_levels(&self) -> Levels {
+    pub(crate) fn step_levels(&self) -> Levels {
         match self {
             CubeShufflePlane::Shuffle(plane) => plane.step_levels(),
             CubeShufflePlane::Fragment(plane) => plane.step_levels(),

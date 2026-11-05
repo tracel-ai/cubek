@@ -163,4 +163,13 @@ impl AttentionMicrokernel for HypercubeAttentionMicrokernel {
     fn delivery(&self, widths: &AttentionOperands<usize>, item: &AttentionWorkItem) -> Delivery {
         self.cube.delivery(widths, item)
     }
+
+    /// Its cube's.
+    fn query_delivery(
+        &self,
+        widths: &AttentionOperands<usize>,
+        item: &AttentionWorkItem,
+    ) -> Delivery {
+        self.cube.query_delivery(widths, item)
+    }
 }
