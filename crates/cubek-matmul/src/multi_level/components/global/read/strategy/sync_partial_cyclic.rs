@@ -23,7 +23,7 @@ use crate::{
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::InvalidConfigError;
 
-use super::{LoadingJob, LoadingValidation, ReaderMode};
+use super::{LoadingJob, LoadingValidation, ReaderMode, unevenly_split_stage};
 
 #[derive(CubeType, Clone, Copy)]
 /// Loads the content of all tiles in the stage using all planes.
@@ -55,9 +55,7 @@ impl<TO: TilingOrder> LoadingValidation for SyncPartialCyclicLoading<TO> {
             let num_stage_elements = config.smem_config.elements_per_stage();
 
             if max_position > num_stage_elements {
-                return Err(Box::new(
-                    "Too many data will be loaded, resulting in out-of-bounds",
-                ));
+                return Err(unevenly_split_stage(total_num_vectors, total_units));
             }
         }
 

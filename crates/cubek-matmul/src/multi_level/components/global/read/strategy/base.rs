@@ -83,6 +83,17 @@ pub fn validate_async_barrier(device_props: &DeviceProperties) -> Result<(), Inv
     Ok(())
 }
 
+/// The error of a [`ReaderMode::Strict`] reader whose loading units do not divide the vectors of
+/// its stage evenly.
+pub(crate) fn unevenly_split_stage(stage_vectors: u32, loading_units: u32) -> InvalidConfigError {
+    Box::new(format!(
+        "Too many data will be loaded, resulting in out of bounds: {loading_units} loading units \
+         do not divide the {stage_vectors} vectors of the stage evenly. Use `ReaderMode::Relaxed` \
+         to load an unevenly split stage, or set the vector size and number of planes so that the \
+         units divide the stage."
+    ))
+}
+
 /// Validates if async copy instructions is available on the current device.
 pub fn validate_async_copy(
     device_props: &DeviceProperties,
