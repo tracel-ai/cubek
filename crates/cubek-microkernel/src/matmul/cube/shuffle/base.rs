@@ -1,7 +1,7 @@
 use crate::matmul::cube::MatmulCubeSpace;
 use crate::matmul::plane::{
-    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong,
-    PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
+    PlaneFragmentFactors, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
+    PlaneFragmentRowsAlong, PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
 };
 use crate::matmul::{
     MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead, MatmulRowsKind,
@@ -153,7 +153,7 @@ impl CubeShuffleMicrokernel {
     };
 
     /// What a cube of tensor-core planes declines.
-    pub const FRAGMENT_DECLINE: &'static str = "the cube shuffle's plane fragment needs the device's 16-bit 16x8x16 manual mma on a 32-unit plane, a packed rhs, columns whole fragments of eight, and K whole windows each unit reads in whole loads";
+    pub const FRAGMENT_DECLINE: &'static str = "the cube shuffle's plane fragment needs the device's 16-bit 16x8x16 manual mma on a 32-unit plane, a packed rhs, columns whole fragments (eight wide, or sixteen with its rows along n), and K whole windows each unit reads in whole loads";
 
     /// The fewest planes a cube holds: a run one plane owns is the plane routine's.
     const FEWEST_PLANES: usize = 2;
@@ -313,12 +313,14 @@ impl CubeShufflePlane {
         .expect("candidates hold a plane whose steps walk K")
     }
 
-    /// The axis its instruction lays its rows along, which the cube's sum is opened for: `m` for
-    /// the software plane, whose units hold the lhs's rows.
-    pub fn rows_along(&self) -> PlaneFragmentRowsAlong {
+    /// Its instruction with the axis it lays its rows along, which the cube's sum is opened from:
+    /// rows along `m` for the software plane, whose units hold the lhs's rows.
+    pub fn factors(&self) -> PlaneFragmentFactors {
         match self {
-            CubeShufflePlane::Shuffle(_) => PlaneFragmentRowsAlong::M,
-            CubeShufflePlane::Fragment(plane) => plane.settings.rows_along,
+            CubeShufflePlane::Shuffle(plane) => {
+                PlaneFragmentFactors::rows_along_m(plane.tile_instruction())
+            }
+            CubeShufflePlane::Fragment(plane) => plane.factors(),
         }
     }
 

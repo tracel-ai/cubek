@@ -1,7 +1,8 @@
 //! The matmul microkernels on one work item: `out = lhs · rhs` over a problem one tile wide.
 
 use crate::matmul::plane::{
-    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, plane_fragment_staged_microkernel,
+    PlaneFragmentFactors, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
+    plane_fragment_staged_microkernel,
 };
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
@@ -12,8 +13,7 @@ use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{
-    Launcher, Partitioning, Scratch, Semiring, Space, StageStorage, TileSpec, TileTensor,
-    TileTensorLaunch,
+    Launcher, Partitioning, Scratch, Space, StageStorage, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_std::Hardware;
@@ -187,8 +187,7 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
 
     for plane in &partitioning {
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
-        let mut sum = c
-            .accumulator::<EA>(&a, &b, microkernel.tile_instruction(), Semiring::SUM_PROD)
+        let mut sum = PlaneFragmentFactors::accumulator::<EA>(&c, &a, &b, microkernel.factors())
             .with_scratch(Scratch::None);
         sum.zero();
         plane_fragment_staged_microkernel::<EL>(

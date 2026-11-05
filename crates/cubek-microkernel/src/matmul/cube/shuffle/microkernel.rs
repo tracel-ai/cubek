@@ -1,7 +1,7 @@
 use super::base::CubeMeet;
-use crate::matmul::plane::{PlaneFragmentRowsAlong, plane_shuffle_microkernel};
+use crate::matmul::plane::{PlaneFragmentFactors, plane_shuffle_microkernel};
 use crate::matmul::{MatmulOperands, MatmulRead};
-use cubecl::tile::{Axis, Instruction, Region, Semiring, Tile};
+use cubecl::tile::{Axis, Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's run of the output: `c = a · b` over `cube`, its planes each summing their slice of
@@ -13,7 +13,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// Two levels under the cube: its `planes` planes, each walking its run of the steps along
 /// `split`, then their units. Each plane's drain merges its units' partials across the plane,
 /// then adds into the accumulator. The units read each operand as `reads` says; the sum is opened
-/// on the factor the planes' instruction lays its rows along (`rows_along`), which fills its `A`.
+/// from the planes' `factors`, on the factor their instruction lays its rows along.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_microkernel<EA: Numeric>(
@@ -21,32 +21,21 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
     c: &Tile,
     a: &Tile,
     b: &Tile,
-    #[comptime] instruction: Instruction,
+    #[comptime] factors: PlaneFragmentFactors,
     #[comptime] meet: CubeMeet,
     #[comptime] split: Axis,
     #[comptime] planes: usize,
     #[comptime] reads: MatmulOperands<MatmulRead>,
-    #[comptime] rows_along: PlaneFragmentRowsAlong,
 ) {
     let mut c = c.clone();
-    let (a, a_factor) = a.factor(c.space(), instruction);
-    let (b, b_factor) = b.factor(c.space(), instruction);
+    let (a, a_factor) = a.factor(c.space(), factors.instruction);
+    let (b, b_factor) = b.factor(c.space(), factors.instruction);
 
     match meet {
         CubeMeet::Atomic => {
             let mut accumulator = c.smem_accumulation::<EA>();
-            let mut sum = match rows_along {
-                PlaneFragmentRowsAlong::M => {
-                    accumulator
-                        .sink
-                        .accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD)
-                }
-                PlaneFragmentRowsAlong::N => {
-                    accumulator
-                        .sink
-                        .accumulator::<EA>(&b, &a, instruction, Semiring::SUM_PROD)
-                }
-            };
+            let mut sum =
+                PlaneFragmentFactors::accumulator::<EA>(&accumulator.sink, &a, &b, factors);
             sum.zero();
 
             for step in cube {
@@ -62,14 +51,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
         }
         CubeMeet::InSlots => {
             let accumulator = c.smem_slots_accumulation::<EA>(planes);
-            let mut sum = match rows_along {
-                PlaneFragmentRowsAlong::M => {
-                    c.accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD)
-                }
-                PlaneFragmentRowsAlong::N => {
-                    c.accumulator::<EA>(&b, &a, instruction, Semiring::SUM_PROD)
-                }
-            };
+            let mut sum = PlaneFragmentFactors::accumulator::<EA>(&c, &a, &b, factors);
             sum.zero();
 
             let steps = cube.walk();

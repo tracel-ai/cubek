@@ -1,8 +1,8 @@
 use cubecl::tile::launch::Destination;
-use cubecl::tile::{Axis, Instruction, Partitioning, TileTensor};
+use cubecl::tile::{Axis, Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeMeet, cube_shuffle_microkernel};
-use cubek_microkernel::matmul::plane::PlaneFragmentRowsAlong;
+use cubek_microkernel::matmul::plane::PlaneFragmentFactors;
 use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 
 /// Every cube, running its run of the output, its units reading each operand as `reads` says, under
@@ -15,12 +15,11 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
     rhs: &TileTensor<'_>,
     out: &O::Arg<E>,
     partitioning: Partitioning,
-    #[comptime] instruction: Instruction,
+    #[comptime] factors: PlaneFragmentFactors,
     #[comptime] meet: CubeMeet,
     #[comptime] split: Axis,
     #[comptime] planes: usize,
     #[comptime] reads: MatmulOperands<MatmulRead>,
-    #[comptime] rows_along: PlaneFragmentRowsAlong,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let a = lhs.tile(&partitioning);
@@ -33,12 +32,11 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
             &c.at(&cube),
             &a.at(&cube),
             &b.at(&cube),
-            instruction,
+            factors,
             meet,
             split,
             planes,
             reads,
-            rows_along,
         );
     }
 }

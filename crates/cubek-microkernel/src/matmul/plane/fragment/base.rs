@@ -1,5 +1,5 @@
 use crate::matmul::plane::{
-    PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
+    PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentFactors, PlaneFragmentInstruction,
     PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong, PlaneFragmentStepSum,
     PlaneFragmentTransport,
 };
@@ -57,8 +57,9 @@ pub enum PlaneFragmentKStatement {
 }
 
 impl PlaneFragmentMicrokernel {
-    /// The most rows a plane holds against a packed rhs: one fragment's, the decoding
-    /// instruction's `m`, every row held whole.
+    /// The most rows a plane holds against a packed rhs, every row held whole: one fragment's
+    /// with its rows along `m`, the decoding instruction's `m`. With its rows along `n` a fragment
+    /// holds the instruction's eight, and the plane walks two of them for more.
     pub const MAX_PACKED_ROWS: usize = 16;
 
     /// The one instruction whose fragments decode a packed rhs as they load, as `(m, n, k)`: the
@@ -77,7 +78,7 @@ impl PlaneFragmentMicrokernel {
     /// What a packed item of no rows, or of more than [`MAX_PACKED_ROWS`](Self::MAX_PACKED_ROWS),
     /// is declined with.
     pub const ROWS_OUT_OF_RANGE: Refusal = Refusal::Declined {
-        why: "the plane fragment holds from one row to `PlaneFragmentMicrokernel::MAX_PACKED_ROWS` against a packed rhs, the rows of one fragment",
+        why: "the plane fragment holds from one row to `PlaneFragmentMicrokernel::MAX_PACKED_ROWS` against a packed rhs, the rows of one fragment laid along `m`",
     };
 
     /// What a packed item whose operands are not a 16-bit lhs against an rhs of
@@ -596,6 +597,15 @@ impl PlaneFragmentMicrokernel {
     pub fn tile_instruction(&self) -> Instruction {
         let cells = self.settings.along_m.get() * self.settings.along_n.get();
         self.instruction.tile_instruction(cells)
+    }
+
+    /// Its tile instruction with the axis it lays its rows along, which every sum over its
+    /// operands is opened from.
+    pub fn factors(&self) -> PlaneFragmentFactors {
+        PlaneFragmentFactors {
+            instruction: self.tile_instruction(),
+            rows_along: self.settings.rows_along,
+        }
     }
 
     /// 32-bit registers one unit of a `plane_width`-wide plane keeps this microkernel's work in:

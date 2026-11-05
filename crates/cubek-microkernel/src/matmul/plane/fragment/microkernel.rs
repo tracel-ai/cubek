@@ -1,8 +1,51 @@
-use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentStepSum};
+use crate::matmul::plane::{
+    PlaneFragmentMicrokernel, PlaneFragmentRowsAlong, PlaneFragmentStepSum,
+};
 use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::{Axis, Instruction, Region, Semiring, Space, StageStorage, Stages, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
+
+/// The instruction a plane contracts through, with the axis it lays its rows along: what every
+/// sum or partial over the product's operands is opened from, so the factor filling the
+/// instruction's `A` is decided in one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PlaneFragmentFactors {
+    pub instruction: Instruction,
+    pub rows_along: PlaneFragmentRowsAlong,
+}
+
+impl PlaneFragmentFactors {
+    /// `instruction` with its rows along `m`, the lhs filling its `A`: what a plane whose rows are
+    /// never laid otherwise, a software plane's, contracts through.
+    pub const fn rows_along_m(instruction: Instruction) -> Self {
+        Self {
+            instruction,
+            rows_along: PlaneFragmentRowsAlong::M,
+        }
+    }
+}
+
+#[cube]
+impl PlaneFragmentFactors {
+    /// An accumulator over `over`, in `E`, for the product of `a` by `b`: opened on the factor
+    /// `factors`' rows lie along first, which fills the instruction's `A`. Not zeroed.
+    pub fn accumulator<E: Numeric>(
+        over: &Tile,
+        a: &Tile,
+        b: &Tile,
+        #[comptime] factors: PlaneFragmentFactors,
+    ) -> Tile {
+        match factors.rows_along {
+            PlaneFragmentRowsAlong::M => {
+                over.accumulator::<E>(a, b, factors.instruction, Semiring::SUM_PROD)
+            }
+            PlaneFragmentRowsAlong::N => {
+                over.accumulator::<E>(b, a, factors.instruction, Semiring::SUM_PROD)
+            }
+        }
+    }
+}
 
 /// The partial a narrow step contracts into, opened over `out` beside the accumulator: one cell
 /// of the operands' element for every cell the accumulator holds. None for a wide step.
@@ -12,12 +55,12 @@ pub(crate) fn plane_fragment_partial<EL: Numeric>(
     a: &Tile,
     b: &Tile,
     #[comptime] step_sum: PlaneFragmentStepSum,
-    #[comptime] instruction: Instruction,
+    #[comptime] factors: PlaneFragmentFactors,
 ) -> ComptimeOption<Tile> {
     match step_sum {
         PlaneFragmentStepSum::Wide => ComptimeOption::<Tile>::new_None(),
         PlaneFragmentStepSum::Narrow => {
-            ComptimeOption::new_Some(out.accumulator::<EL>(a, b, instruction, Semiring::SUM_PROD))
+            ComptimeOption::new_Some(PlaneFragmentFactors::accumulator::<EL>(out, a, b, factors))
         }
     }
 }
@@ -41,7 +84,7 @@ pub fn plane_fragment_staged_microkernel<EL: Numeric>(
 ) {
     let instruction = microkernel.tile_instruction();
     let step_sum = microkernel.instruction.step_sum();
-    let partial = plane_fragment_partial::<EL>(c, a, b, step_sum, instruction);
+    let partial = plane_fragment_partial::<EL>(c, a, b, step_sum, microkernel.factors());
 
     let walk = plane.walk();
     let in_flight = ring.stages_in_flight.get();

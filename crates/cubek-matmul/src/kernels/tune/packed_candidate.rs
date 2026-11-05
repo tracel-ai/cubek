@@ -11,40 +11,44 @@ use crate::kernels::{
 };
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
+use cubek_microkernel::matmul::plane::PlaneFragmentRowsAlong;
 use cubek_std::Hardware;
 use cubek_std::autotune::{CandidateIdentity, CandidatePriority, TuneCandidate};
 use cubek_std::routine::Routine;
 
 /// What a packed setting contracts on, the one thing of it a packed key's priority reads.
 pub trait PackedContraction {
-    /// Whether it contracts on matrix instructions, whose fragments take several of the product's
-    /// rows at once, rather than in its units' registers a row at a time.
-    fn on_matrix_instructions(&self) -> bool;
+    /// Whether one row of the product pads out to several: a matrix instruction laying the rows
+    /// along its sixteen-row side, rather than units' registers taking a row at a time, or an
+    /// instruction laying them along its eight-column side.
+    fn pads_one_row(&self) -> bool;
 }
 
 impl PackedContraction for PlaneShuffleMatmulRoutineSettings {
-    fn on_matrix_instructions(&self) -> bool {
+    fn pads_one_row(&self) -> bool {
         false
     }
 }
 
 impl PackedContraction for CubeShuffleMatmulRoutineSettings {
-    fn on_matrix_instructions(&self) -> bool {
-        matches!(
-            self.microkernel.plane,
-            CubeShufflePlaneSettings::Fragment(_)
-        )
+    fn pads_one_row(&self) -> bool {
+        match self.microkernel.plane {
+            CubeShufflePlaneSettings::Shuffle(_) => false,
+            CubeShufflePlaneSettings::Fragment(plane) => {
+                plane.rows_along == PlaneFragmentRowsAlong::M
+            }
+        }
     }
 }
 
 impl PackedContraction for CubeStagedMatmulRoutineSettings {
-    fn on_matrix_instructions(&self) -> bool {
+    fn pads_one_row(&self) -> bool {
         true
     }
 }
 
 impl PackedContraction for HypercubeLastArrivalMatmulRoutineSettings {
-    fn on_matrix_instructions(&self) -> bool {
+    fn pads_one_row(&self) -> bool {
         true
     }
 }
@@ -55,9 +59,10 @@ impl PackedContraction for HypercubeLastArrivalMatmulRoutineSettings {
 /// Its priority says little of the problem: a packed routine's plan reads how a packed input is
 /// stored and how its device loads it, which a key does not carry, so a packed key tries the
 /// settings in the order the routine lists them, and a float key last, where the routine declines
-/// it before compiling anything. What a key does say is its rows: at one, a setting on matrix
-/// instructions fills a single row of its fragments, the arithmetic of several rows for the bytes a
-/// setting in registers reads once, so it is tried after those rather than beside them.
+/// it before compiling anything. What a key does say is its rows: at one, a setting padding the
+/// row out to a fragment's sixteen ([`PackedContraction::pads_one_row`]) does the arithmetic of
+/// several rows for the bytes a setting in registers reads once, so it is tried after those rather
+/// than beside them. A fragment laying the rows along its eight columns is tried beside them.
 #[derive(Debug, Clone)]
 pub struct MatmulPackedCandidate<R: Routine> {
     routine: R,
@@ -200,8 +205,8 @@ where
     }
 
     fn priority(&self, key: &MatmulTuneKey) -> CandidatePriority {
-        let one_row_on_fragments = key.m == 1 && self.settings.on_matrix_instructions();
-        match key.is_packed() && !one_row_on_fragments {
+        let one_row_padded = key.m == 1 && self.settings.pads_one_row();
+        match key.is_packed() && !one_row_padded {
             true => CandidatePriority::FIRST,
             false => CandidatePriority::LAST,
         }
@@ -220,11 +225,11 @@ mod tests {
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
-    /// At one row a packed key tries the settings in registers first and those on matrix
-    /// instructions after them; past one row it tries every packed setting first. A float key
-    /// tries them last.
+    /// At one row a packed key tries the settings in registers, and the fragments laying their
+    /// rows along `n`, first, and the fragments padding the row to sixteen after them; past one
+    /// row it tries every packed setting first. A float key tries them last.
     #[test]
-    fn one_row_tries_the_registers_before_the_matrix_instructions() {
+    fn one_row_tries_the_padded_fragments_last() {
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
         let scheme = QuantScheme::default()
             .with_value(QuantValue::E2M1)
@@ -259,13 +264,19 @@ mod tests {
         );
         let settings = CubeShuffleMatmulRoutine.packed_settings(&hw);
         assert!(
-            settings
-                .iter()
-                .any(PackedContraction::on_matrix_instructions),
-            "the device lists settings on matrix instructions"
+            settings.iter().any(PackedContraction::pads_one_row),
+            "the device lists fragments padding one row"
+        );
+        assert!(
+            settings.iter().any(|setting| matches!(
+                setting.microkernel.plane,
+                CubeShufflePlaneSettings::Fragment(plane)
+                    if plane.rows_along == PlaneFragmentRowsAlong::N
+            )),
+            "the device lists fragments laying their rows along n"
         );
         for candidate in MatmulPackedCandidate::of(CubeShuffleMatmulRoutine, settings, &hw) {
-            let one_row = match candidate.strategy().on_matrix_instructions() {
+            let one_row = match candidate.strategy().pads_one_row() {
                 true => CandidatePriority::LAST,
                 false => CandidatePriority::FIRST,
             };
