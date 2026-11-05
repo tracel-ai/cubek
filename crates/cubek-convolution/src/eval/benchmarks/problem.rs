@@ -1,6 +1,6 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::ConvolutionArgs;
+use crate::{ConvolutionArgs, components::ConvolutionOperation};
 
 #[derive(Clone)]
 pub struct Conv2dProblem {
@@ -8,6 +8,7 @@ pub struct Conv2dProblem {
     pub weight_shape: [usize; 4],
     pub bias_shape: usize,
     pub args: ConvolutionArgs<2>,
+    pub operation: ConvolutionOperation,
 }
 
 pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
@@ -25,6 +26,7 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
                     padding: [0, 0],
                     dilation: [1, 1],
                 },
+                operation: ConvolutionOperation::Forward,
             },
         ),
         CatalogEntry::new(
@@ -39,6 +41,97 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
                     padding: [0, 0],
                     dilation: [1, 1],
                 },
+                operation: ConvolutionOperation::Forward,
+            },
+        ),
+        CatalogEntry::new(
+            "conv3x3_c64",
+            "3x3 stride 1 (b=16 in=64x56x56 w=64x64x3x3 p=1)",
+            Conv2dProblem {
+                input_shape: [batch_size, 64, 56, 56],
+                weight_shape: [64, 64, 3, 3],
+                bias_shape: 64,
+                args: ConvolutionArgs {
+                    stride: [1, 1],
+                    padding: [1, 1],
+                    dilation: [1, 1],
+                },
+                operation: ConvolutionOperation::Forward,
+            },
+        ),
+        CatalogEntry::new(
+            "conv3x3_c64_stride2",
+            "3x3 stride 2 (b=16 in=64x56x56 w=64x64x3x3 p=1)",
+            Conv2dProblem {
+                input_shape: [batch_size, 64, 56, 56],
+                weight_shape: [64, 64, 3, 3],
+                bias_shape: 64,
+                args: ConvolutionArgs {
+                    stride: [2, 2],
+                    padding: [1, 1],
+                    dilation: [1, 1],
+                },
+                operation: ConvolutionOperation::Forward,
+            },
+        ),
+        CatalogEntry::new(
+            "narrow_width",
+            "Narrow width (b=64 in=64x7x7 w=64x64x3x3 p=1)",
+            Conv2dProblem {
+                input_shape: [4 * batch_size, 64, 7, 7],
+                weight_shape: [64, 64, 3, 3],
+                bias_shape: 64,
+                args: ConvolutionArgs {
+                    stride: [1, 1],
+                    padding: [1, 1],
+                    dilation: [1, 1],
+                },
+                operation: ConvolutionOperation::Forward,
+            },
+        ),
+        CatalogEntry::new(
+            "conv3x3_c64_bwd_data",
+            "3x3 stride 1 data backward (b=16 in=64x56x56 w=64x64x3x3 p=1)",
+            Conv2dProblem {
+                input_shape: [batch_size, 64, 56, 56],
+                weight_shape: [64, 64, 3, 3],
+                bias_shape: 64,
+                args: ConvolutionArgs {
+                    stride: [1, 1],
+                    padding: [1, 1],
+                    dilation: [1, 1],
+                },
+                operation: ConvolutionOperation::BackwardData,
+            },
+        ),
+        CatalogEntry::new(
+            "conv3x3_c64_bwd_weight",
+            "3x3 stride 1 weight backward (b=16 in=64x56x56 w=64x64x3x3 p=1)",
+            Conv2dProblem {
+                input_shape: [batch_size, 64, 56, 56],
+                weight_shape: [64, 64, 3, 3],
+                bias_shape: 64,
+                args: ConvolutionArgs {
+                    stride: [1, 1],
+                    padding: [1, 1],
+                    dilation: [1, 1],
+                },
+                operation: ConvolutionOperation::BackwardWeight,
+            },
+        ),
+        CatalogEntry::new(
+            "conv3x3_c64_stride2_bwd_weight",
+            "3x3 stride 2 weight backward (b=16 in=64x56x56 w=64x64x3x3 p=1)",
+            Conv2dProblem {
+                input_shape: [batch_size, 64, 56, 56],
+                weight_shape: [64, 64, 3, 3],
+                bias_shape: 64,
+                args: ConvolutionArgs {
+                    stride: [2, 2],
+                    padding: [1, 1],
+                    dilation: [1, 1],
+                },
+                operation: ConvolutionOperation::BackwardWeight,
             },
         ),
     ]

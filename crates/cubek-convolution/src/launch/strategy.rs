@@ -2,7 +2,11 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{definition::ConvBlueprint, launch::UnitStrategy};
+use crate::{
+    definition::ConvBlueprint,
+    kernels::tiled::{ConvRoutineKind, ConvSettings},
+    launch::UnitStrategy,
+};
 
 /// Top-level user-facing strategy for `launch_ref`.
 ///
@@ -29,6 +33,13 @@ pub enum Strategy {
     /// accelerated matmul. It takes its own strategy because it has no tile-matmul
     /// kind to pick, and its forced tilings span regimes autotune chooses from.
     Unit(UnitStrategy),
+    /// The forward or the weight backward of a 2D convolution with no groups and no bias, as one
+    /// tile contraction over a gathered input: the routine at `settings`, or at the first it
+    /// lists that serves the problem where none is named. The data backward is declined.
+    Tile {
+        routine: ConvRoutineKind,
+        settings: Option<ConvSettings>,
+    },
 }
 
 /// The convolution-side algorithm enum. A single value here picks one concrete
@@ -86,6 +97,14 @@ impl Display for Strategy {
                 blueprint: _,
             } => write!(f, "{algorithm}_forced"),
             Strategy::Unit(strategy) => write!(f, "{strategy}"),
+            Strategy::Tile {
+                routine,
+                settings: None,
+            } => write!(f, "{routine}"),
+            Strategy::Tile {
+                routine,
+                settings: Some(settings),
+            } => write!(f, "{routine} {settings}"),
         }
     }
 }

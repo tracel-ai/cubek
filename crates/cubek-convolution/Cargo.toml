@@ -29,6 +29,7 @@ benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 
 [dependencies]
 cubek-matmul = { workspace = true, features = ["multi-level"] }
+cubek-microkernel = { workspace = true, features = ["std", "matmul"] }
 cubek-std = { workspace = true }
 cubek-test-utils = { workspace = true, optional = true }
 

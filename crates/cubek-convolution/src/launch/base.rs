@@ -12,6 +12,7 @@ use cubek_matmul::{
     },
     routine::BlueprintStrategy,
 };
+use cubek_std::Hardware;
 
 use crate::{components::ConvolutionOperation, definition::ConvBlueprint};
 
@@ -25,7 +26,10 @@ fn blueprint_operation(blueprint: &ConvBlueprint) -> ConvolutionOperation {
 
 use crate::{
     components::ConvSetupError,
-    kernels::{backward_data, backward_weight, forward},
+    kernels::{
+        backward_data, backward_weight, forward,
+        tiled::{CONV_NOT_2D, ConvTensors},
+    },
     launch::{
         ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy, strategy::AcceleratedTileKind,
         unit,
@@ -82,6 +86,38 @@ pub fn launch_ref<const N_SPATIAL: usize>(
         }
         Strategy::Unit(strategy) => {
             return unit::launch(*strategy, client, inputs, args, dtypes);
+        }
+        Strategy::Tile { routine, settings } => {
+            let window = args.window().ok_or(CONV_NOT_2D)?;
+            let tensors = match inputs {
+                ConvolutionInputs::Forward {
+                    input,
+                    weight,
+                    bias,
+                    out,
+                } => ConvTensors::forward(client, input, weight, bias, out, window, dtypes)?,
+                ConvolutionInputs::BackwardWeight {
+                    input,
+                    out_grad,
+                    weight_grad,
+                } => ConvTensors::backward_weight(
+                    client,
+                    input,
+                    out_grad,
+                    weight_grad,
+                    window,
+                    dtypes,
+                )?,
+                ConvolutionInputs::BackwardData {
+                    out_grad,
+                    weights,
+                    in_grad,
+                } => {
+                    ConvTensors::backward_data(client, out_grad, weights, in_grad, window, dtypes)?
+                }
+            };
+            let hw = Hardware::from_client(client);
+            return Ok(routine.launch_on(&hw, tensors, settings.as_ref())?);
         }
     };
 
