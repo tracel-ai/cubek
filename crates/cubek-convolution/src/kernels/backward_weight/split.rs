@@ -67,6 +67,24 @@ struct SplitOptions<Build> {
     rows_per_split: usize,
 }
 
+/// Ordering of spatial taps and input channels within a partial matrix column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PartialColumnOrder {
+    /// Input channels vary fastest, inside the spatial axes.
+    ChannelsLast,
+    /// Spatial axes vary fastest, inside the input channel axis.
+    SpatialLast,
+}
+
+/// Tile implementation and partial column ordering for accelerated split weight gradients.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AcceleratedSplitStrategy {
+    /// Accelerated tile implementation used for each partial matrix.
+    pub tile_kind: crate::AcceleratedTileKind,
+    /// Ordering of spatial taps and input channels in partial matrices.
+    pub column_order: PartialColumnOrder,
+}
+
 /// Launches register-tiled split weight gradients for NHWC tensors of rank `N + 2`.
 pub(crate) fn launch_unit<const N: usize>(
     client: &Client,
@@ -81,12 +99,13 @@ pub(crate) fn launch_unit<const N: usize>(
     if dtypes.lhs_global != dtype || dtypes.rhs_global != dtype || dtypes.acc_global != dtype {
         return Err(ConvSetupError::Unknown);
     }
-    launch_split::<N, false, UnitConv, _>(
+    launch_split::<N, UnitConv, _>(
         client,
         input,
         out_grad,
         weight_grad,
         args,
+        PartialColumnOrder::ChannelsLast,
         SplitOptions {
             blueprint: |problem: &MatmulProblem, dtypes: &MatmulElems| {
                 strategy.blueprint(client, problem, dtypes)
@@ -99,27 +118,27 @@ pub(crate) fn launch_unit<const N: usize>(
 
 /// Launches accelerated split weight gradients for NHWC input and output gradients.
 /// The output has shape `[out_channels, ...kernel, in_channels]`, with rank `N + 2`.
-/// `SPATIAL_LAST` stores partial columns with spatial axes inside the channel axis.
 /// F16 and BF16 partial sums stay F32 until the final output write.
-pub fn launch_accelerated<const N: usize, const SPATIAL_LAST: bool>(
+pub fn launch_accelerated<const N: usize>(
     client: &Client,
     input: InputBinding,
     out_grad: InputBinding,
     weight_grad: TensorBinding,
     args: ConvolutionArgs<N>,
-    tile_kind: crate::AcceleratedTileKind,
+    strategy: AcceleratedSplitStrategy,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError> {
-    launch_split::<N, SPATIAL_LAST, SimpleSyncStridedConv, _>(
+    launch_split::<N, SimpleSyncStridedConv, _>(
         client,
         input,
         out_grad,
         weight_grad,
         args,
+        strategy.column_order,
         SplitOptions {
             blueprint: |_: &MatmulProblem, _: &MatmulElems| {
                 cubek_matmul::routine::BlueprintStrategy::Inferred(SimpleArgs {
-                    tile_matmul: match tile_kind {
+                    tile_matmul: match strategy.tile_kind {
                         crate::AcceleratedTileKind::Cmma => TileMatmulKind::Cmma,
                         crate::AcceleratedTileKind::Mma => TileMatmulKind::Mma,
                     },
@@ -184,12 +203,13 @@ fn coordinates_fit<const N: usize>(
 /// Each split writes its own small matrix, followed by a deterministic sum.
 /// The final split may be short; its missing rows are masked in `SplitKLayout`.
 #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-fn launch_split<const N: usize, const SPATIAL_LAST: bool, Rt, Build>(
+fn launch_split<const N: usize, Rt, Build>(
     client: &Client,
     input: InputBinding,
     out_grad: InputBinding,
     weight_grad: TensorBinding,
     args: ConvolutionArgs<N>,
+    column_order: PartialColumnOrder,
     options: SplitOptions<Build>,
     mut dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
@@ -225,7 +245,8 @@ where
     dtypes.acc_stage = dtype;
     dtypes.acc_register = dtype;
     let op = ConvolutionOperation::BackwardWeight;
-    let input = if const { SPATIAL_LAST } {
+    let spatial_last = column_order == PartialColumnOrder::SpatialLast;
+    let input = if spatial_last {
         input.into_data()
     } else {
         Rt::correct_layout(client, input.into_data(), dtypes.rhs_global, op)?
@@ -303,7 +324,7 @@ where
         4,
     ))
     .filter_lhs_with_tensor(&out_grad.strides, &out_grad.shape, MatrixLayout::RowMajor);
-    let vector_sizes = if const { SPATIAL_LAST } {
+    let vector_sizes = if spatial_last {
         vector_sizes.filter_rhs(|size| {
             *size == 1
                 || (input.strides[N] == 1
@@ -409,7 +430,7 @@ where
             rows as u32,
             per as u32,
             false,
-            SPATIAL_LAST,
+            spatial_last,
             taps as u32,
             padded_channels as u32,
         ),
@@ -457,7 +478,7 @@ where
         padded_channels,
         elements,
         N,
-        SPATIAL_LAST,
+        spatial_last,
         output_dtype,
     );
     Ok(())

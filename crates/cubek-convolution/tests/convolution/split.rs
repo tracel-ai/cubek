@@ -1,7 +1,8 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubek_convolution::{
-    AcceleratedTileKind, ConvolutionArgs, backward_weight::split::launch_accelerated,
+    AcceleratedTileKind, ConvolutionArgs,
+    backward_weight::split::{AcceleratedSplitStrategy, PartialColumnOrder, launch_accelerated},
     components::ConvSetupError,
 };
 use cubek_matmul::definition::MatmulElems;
@@ -46,7 +47,10 @@ fn check_reduced_precision<E: CubeElement + Numeric + PartialEq>() {
         dtype,
     );
 
-    for spatial_last in [false, true] {
+    for column_order in [
+        PartialColumnOrder::ChannelsLast,
+        PartialColumnOrder::SpatialLast,
+    ] {
         let output = TensorHandle::empty(&client, [8, 1, 4], dtype);
         let outcome = launch_and_capture_outcome(&client, &[&output.handle], |client| {
             let args = ConvolutionArgs {
@@ -56,27 +60,18 @@ fn check_reduced_precision<E: CubeElement + Numeric + PartialEq>() {
             };
             let input = InputBinding::new(input.clone().binding(), dtype);
             let grad = InputBinding::new(grad.clone().binding(), dtype);
-            let result = if spatial_last {
-                launch_accelerated::<1, true>(
-                    client,
-                    input,
-                    grad,
-                    output.clone().binding(),
-                    args,
-                    AcceleratedTileKind::Mma,
-                    MatmulElems::from_single_dtype(dtype),
-                )
-            } else {
-                launch_accelerated::<1, false>(
-                    client,
-                    input,
-                    grad,
-                    output.clone().binding(),
-                    args,
-                    AcceleratedTileKind::Mma,
-                    MatmulElems::from_single_dtype(dtype),
-                )
-            };
+            let result = launch_accelerated::<1>(
+                client,
+                input,
+                grad,
+                output.clone().binding(),
+                args,
+                AcceleratedSplitStrategy {
+                    tile_kind: AcceleratedTileKind::Mma,
+                    column_order,
+                },
+                MatmulElems::from_single_dtype(dtype),
+            );
             match result {
                 Ok(()) => ExecutionOutcome::Executed,
                 Err(error) => ExecutionOutcome::CompileError(format!("{error:?}")),
@@ -159,7 +154,7 @@ fn accelerated_split_weight_gradient_rejects_wide_source_coordinates() {
     let input = upload(&client, &[1, 1, 1, 4], &[1.0; 4], false);
     let grad = upload(&client, &[1, 1, 1, 8], &[1.0; 8], false);
     let output = upload(&client, &[8, 3, 3, 4], &[0.0; 288], false);
-    let result = launch_accelerated::<2, false>(
+    let result = launch_accelerated::<2>(
         &client,
         binding(&input),
         binding(&grad),
@@ -169,7 +164,10 @@ fn accelerated_split_weight_gradient_rejects_wide_source_coordinates() {
             padding: [0; 2],
             dilation: [1usize << 31; 2],
         },
-        AcceleratedTileKind::Mma,
+        AcceleratedSplitStrategy {
+            tile_kind: AcceleratedTileKind::Mma,
+            column_order: PartialColumnOrder::ChannelsLast,
+        },
         MatmulElems::from_single_dtype(f32::elem_type_native()),
     );
     assert!(matches!(result, Err(ConvSetupError::InvalidConfig(_))));
@@ -235,7 +233,10 @@ fn check_weight_gradient<const N: usize>(
     for channel_first in [false, true] {
         let input = upload_input(&client, shape, &input, channel_first);
         let grad = upload(&client, &grad_shape, &grad, channel_first);
-        for spatial_last in [false, true] {
+        for column_order in [
+            PartialColumnOrder::ChannelsLast,
+            PartialColumnOrder::SpatialLast,
+        ] {
             let output = upload(
                 &client,
                 &weight_shape,
@@ -243,27 +244,18 @@ fn check_weight_gradient<const N: usize>(
                 channel_first,
             );
             let outcome = launch_and_capture_outcome(&client, &[&output.handle], |client| {
-                let result = if spatial_last {
-                    launch_accelerated::<N, true>(
-                        client,
-                        binding(&input),
-                        binding(&grad),
-                        output.clone().binding(),
-                        args.clone(),
-                        AcceleratedTileKind::Mma,
-                        MatmulElems::from_single_dtype(f32::elem_type_native()),
-                    )
-                } else {
-                    launch_accelerated::<N, false>(
-                        client,
-                        binding(&input),
-                        binding(&grad),
-                        output.clone().binding(),
-                        args.clone(),
-                        AcceleratedTileKind::Mma,
-                        MatmulElems::from_single_dtype(f32::elem_type_native()),
-                    )
-                };
+                let result = launch_accelerated::<N>(
+                    client,
+                    binding(&input),
+                    binding(&grad),
+                    output.clone().binding(),
+                    args.clone(),
+                    AcceleratedSplitStrategy {
+                        tile_kind: AcceleratedTileKind::Mma,
+                        column_order,
+                    },
+                    MatmulElems::from_single_dtype(f32::elem_type_native()),
+                );
                 match result {
                     Ok(()) => ExecutionOutcome::Executed,
                     Err(error) => ExecutionOutcome::CompileError(format!("{error:?}")),
