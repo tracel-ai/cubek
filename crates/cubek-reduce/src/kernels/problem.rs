@@ -185,17 +185,13 @@ impl ReduceRoutineProblem {
             .collect()
     }
 
-    /// `partitioning` as a kernel compiles it: the rows, and a hypercube's partials, left to the
-    /// launch, so one kernel serves every count of rows of a rank, layout, row length, elements
-    /// and widths. The reduced dim stays compiled in, as RMS norm compiles its dim: left to the
-    /// launch, it cost up to twice the time on Metal (every read of the row checked against a
-    /// runtime edge).
+    /// `partitioning` as a kernel compiles it: every axis but the cells a row writes left to the
+    /// launch, the row length too, as today's reduce kernels read it, so one kernel serves every
+    /// shape of a rank, layout, elements and widths. An owner's window is one row high, which its
+    /// flat view reads with no division by the runtime length.
     pub fn kernel(&self, partitioning: &Partitioning) -> Partitioning {
         let space = partitioning.space();
-        let dynamic: Vec<Axis> = space
-            .axes()
-            .filter(|axis| *axis != self.slots() && *axis != self.reduced())
-            .collect();
+        let dynamic: Vec<Axis> = space.axes().filter(|axis| *axis != self.slots()).collect();
         Partitioning::new(
             space.clone().with_dynamic(&dynamic),
             partitioning.levels().to_vec(),
