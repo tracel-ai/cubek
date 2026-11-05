@@ -543,9 +543,10 @@ mod tests {
     }
 
     /// Every tensor-core setting prepares on a device offering the 16-bit `16 × 8 × 16`
-    /// instruction, from one row to sixteen, on each of a decode's projections; and declines with
-    /// its plane's reason where the device offers no such instruction, the H100 fixture among
-    /// them.
+    /// instruction, on each of a decode's projections, from one row to the rows its fragment
+    /// holds: sixteen with its rows along `m`, eight along `n`, past which it declines with its
+    /// plane's reason. Every one declines with that reason where the device offers no such
+    /// instruction, the H100 fixture among them.
     #[test]
     fn a_fragment_setting_runs_where_the_device_offers_the_instruction() {
         let shapes = [(6144, 2560), (2560, 4096), (9728, 2560), (2560, 9728)];
@@ -555,9 +556,22 @@ mod tests {
         for m in [1, 3, 8, 11, 16] {
             for (n, k) in shapes {
                 for settings in &fragment_settings {
-                    CubeShuffleMatmulRoutine
-                        .prepare(&hw, &nvfp4(&hw, m, n, k), settings)
-                        .unwrap_or_else(|error| panic!("{m}x{n}x{k} at {settings}: {error:?}"));
+                    let held = match settings.microkernel.plane {
+                        CubeShufflePlaneSettings::Fragment(plane) => match plane.rows_along {
+                            PlaneFragmentRowsAlong::M => 16,
+                            PlaneFragmentRowsAlong::N => 8,
+                        },
+                        CubeShufflePlaneSettings::Shuffle(_) => unreachable!("fragments alone"),
+                    };
+                    let prepared =
+                        CubeShuffleMatmulRoutine.prepare(&hw, &nvfp4(&hw, m, n, k), settings);
+                    match (m <= held, prepared) {
+                        (true, Ok(_)) => {}
+                        (false, Err(Refusal::Declined { why })) => {
+                            assert_eq!(why, CubeShuffleMicrokernel::FRAGMENT_DECLINE)
+                        }
+                        (_, prepared) => panic!("{m}x{n}x{k} at {settings}: {prepared:?}"),
+                    }
                 }
             }
         }

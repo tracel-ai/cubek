@@ -59,7 +59,7 @@ pub enum PlaneFragmentKStatement {
 impl PlaneFragmentMicrokernel {
     /// The most rows a plane holds against a packed rhs, every row held whole: one fragment's
     /// with its rows along `m`, the decoding instruction's `m`. With its rows along `n` a fragment
-    /// holds the instruction's eight, and the plane walks two of them for more.
+    /// holds the instruction's eight, and the plane is offered no more.
     pub const MAX_PACKED_ROWS: usize = 16;
 
     /// The one instruction whose fragments decode a packed rhs as they load, as `(m, n, k)`: the
@@ -162,10 +162,18 @@ impl PlaneFragmentMicrokernel {
         let blocks_whole = rhs
             .grouping(K, space.k)
             .is_some_and(|block| window.is_multiple_of(block));
-        // A plane holding every row whole holds one fragment of them; one whose rows are tiled, a
-        // stage's, holds the settings' fragments along `M`, each against the rhs fragment
-        // decoded once a step.
-        let rows_fit = settings.along_m == NonZeroUsize::MIN || item.rows == MatmulRows::Tiled;
+        let instruction = PlaneFragmentInstruction::mma(shape);
+        let [(_, fragment_rows), (_, columns), _] = instruction.shape_along(settings.rows_along);
+        // A plane holding every row whole holds one fragment of them, so no more rows than the
+        // side of the instruction its rows lie along: sixteen along `m`, eight along `n`. One
+        // whose rows are tiled, a stage's, holds the settings' fragments along `M`, each against
+        // the rhs fragment decoded once a step.
+        let rows_fit = match item.rows {
+            MatmulRows::Whole(rows) => {
+                settings.along_m == NonZeroUsize::MIN && rows <= fragment_rows
+            }
+            MatmulRows::Tiled => true,
+        };
         let windowed = rows_fit
             && settings.transport == PlaneFragmentTransport::Mma
             && settings.fragment_depth == PlaneFragmentDepth::Stage;
@@ -174,8 +182,6 @@ impl PlaneFragmentMicrokernel {
             && blocks_whole
             && space.k.is_multiple_of(window)
             && Self::decodes(hw, item.elements.lhs, item.sum);
-        let instruction = PlaneFragmentInstruction::mma(shape);
-        let [_, (_, columns), _] = instruction.shape_along(settings.rows_along);
         (1..=settings.along_n.get())
             .rev()
             .filter(move |&along_n| offered && space.n.is_multiple_of(along_n * columns))
@@ -975,5 +981,38 @@ mod tests {
             mma.shape_along(PlaneFragmentRowsAlong::N),
             [(MatmulDim::M, 8), (MatmulDim::N, 16), (MatmulDim::K, 16)]
         );
+    }
+
+    /// A plane holding its rows whole holds one fragment of them: sixteen rows along `m`, but
+    /// eight along `n`, where the lhs's rows fill the instruction's `B`. More rows than that are
+    /// not offered there, rather than a plane whose kernel drops the rows past its fragment.
+    #[test]
+    fn rows_along_n_hold_eight_whole_rows() {
+        let f16 = ElemType::Float(FloatKind::F16);
+        let hw = cubek_std::devices::offering_mma(
+            cubek_std::devices::h100(),
+            [cubecl::ir::features::MmaConfig {
+                a_type: f16,
+                b_type: f16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 16,
+                n: 8,
+                k: 16,
+            }],
+        );
+        let (item, space) = against_blocks_of(16);
+        let offered = |rows_along, rows| {
+            let item = MatmulWorkItem {
+                rows: MatmulRows::Whole(rows),
+                ..item
+            };
+            let settings = PlaneFragmentMicrokernelSettings::windowed(1, 8).rows_along(rows_along);
+            PlaneFragmentMicrokernel::packed_candidates(&hw, &item, settings, space)
+                .next()
+                .is_some()
+        };
+        assert!(offered(PlaneFragmentRowsAlong::M, 16));
+        assert!(offered(PlaneFragmentRowsAlong::N, 8));
+        assert!(!offered(PlaneFragmentRowsAlong::N, 9));
     }
 }
