@@ -1,7 +1,7 @@
 use super::base::HypercubeReduceMicrokernel;
 use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
 use cubecl::tile::space::UnitShare;
-use cubecl::tile::{Indexed, Tile, TopK};
+use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's part of a row its `parts` cubes split: the cube reduces `input`, its window of the
@@ -86,6 +86,23 @@ pub fn hypercube_reduce_microkernel<
                 microkernel,
             )
         }
+        ReduceCarrier::TopValues { k } => {
+            let size!(K) = k;
+            hypercube_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+                input,
+                out,
+                indices,
+                partials,
+                partial_indices,
+                arrivals,
+                counter,
+                part,
+                parts,
+                first_line,
+                values,
+                microkernel,
+            )
+        }
     }
 }
 
@@ -132,7 +149,7 @@ fn hypercube_reduce<
                 Vector::<Acc, N>::cast_from(lines.read(line)),
                 comptime!(operation.read_map()),
             );
-            acc = C::accumulate(acc, read, first_line + line, layout, monoid);
+            C::accumulate(&mut acc, read, first_line + line, layout, monoid);
         }
     }
     let plane = C::across(acc, UnitShare::Plane, monoid);

@@ -1,5 +1,5 @@
 use crate::reduce::{ReadMap, ReduceLayout, ReduceOperation, ReduceWrites};
-use cubecl::tile::{Carrier, Indexed, Monoid, TOP_K_UNROLL_BUDGET, Tile, TopK};
+use cubecl::tile::{Carrier, Indexed, Monoid, TOP_K_UNROLL_BUDGET, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// What a reduction accumulates a unit's lines into, `N` lanes of `Acc`: how a line read at a position
@@ -9,15 +9,16 @@ use cubecl::{self as cubecl, cube, prelude::*};
 pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
     Carrier + CubeType<ExpandType: Assign + Copy>
 {
-    /// `acc` with `line` accumulated, the line read `line_index` lines into the row, under
-    /// `monoid`.
+    /// `line` accumulated into `acc`, the line read `line_index` lines into the row, under
+    /// `monoid`. In place, since it runs once a line read: a carrier returned anew is copied back
+    /// slot by slot, which for a top-k's `K` slots costs more than the accumulation.
     fn accumulate(
-        acc: Self,
+        acc: &mut Self,
         line: Vector<Acc, N>,
         line_index: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] monoid: Monoid,
-    ) -> Self;
+    );
 
     /// The partials of a cube's `planes` planes, each already met across its own lanes, met in
     /// shared memory: every plane's first lane writes its partial to a slot of its plane, the
@@ -92,13 +93,13 @@ fn lane_indices<N: Size>(line_index: usize, #[comptime] layout: ReduceLayout) ->
 #[cube]
 impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
     fn accumulate(
-        acc: Self,
+        acc: &mut Self,
         line: Vector<Acc, N>,
         _line_index: usize,
         #[comptime] _layout: ReduceLayout,
         #[comptime] monoid: Monoid,
-    ) -> Self {
-        monoid.combine::<Vector<Acc, N>>(acc, line)
+    ) {
+        *acc = monoid.combine::<Vector<Acc, N>>(*acc, line);
     }
 
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self {
@@ -166,17 +167,17 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
 #[cube]
 impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
     fn accumulate(
-        acc: Self,
+        acc: &mut Self,
         line: Vector<Acc, N>,
         line_index: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] monoid: Monoid,
-    ) -> Self {
+    ) {
         let read = Indexed::<Acc, N> {
             value: line,
             index: lane_indices::<N>(line_index, layout),
         };
-        Indexed::<Acc, N>::combine(acc, read, monoid)
+        *acc = Indexed::<Acc, N>::combine(*acc, read, monoid);
     }
 
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self {
@@ -274,17 +275,18 @@ fn write_line<Out: Numeric, Idx: Numeric, Acc: Numeric, W: Size>(
 #[cube]
 impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, K> {
     fn accumulate(
-        acc: Self,
+        acc: &mut Self,
         line: Vector<Acc, N>,
         line_index: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] monoid: Monoid,
-    ) -> Self {
-        acc.insert(line, lane_indices::<N>(line_index, layout), monoid)
+    ) {
+        acc.insert(line, lane_indices::<N>(line_index, layout), monoid);
     }
 
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self {
         let k = K::value();
+        let unrolled = comptime!(k * k <= TOP_K_UNROLL_BUDGET);
         let mut values = Shared::<[Vector<Acc, N>]>::new_slice(comptime!(planes * k));
         let mut indices = Shared::<[Vector<u32, N>]>::new_slice(comptime!(planes * k));
         if UNIT_POS_PLANE == 0 {
@@ -298,9 +300,9 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         let mut total = TopK::<Acc, N, K>::identity(monoid);
         #[unroll]
         for plane in 0..planes {
-            #[unroll(k * k <= TOP_K_UNROLL_BUDGET)]
+            #[unroll(unrolled)]
             for slot in 0..k {
-                total = total.insert(values[plane * k + slot], indices[plane * k + slot], monoid);
+                total.insert(values[plane * k + slot], indices[plane * k + slot], monoid);
             }
         }
         sync_cube();
@@ -309,9 +311,10 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
 
     fn store(acc: Self, values: &mut Tile, indices: &mut Tile, part: usize) {
         let k = K::value();
+        let unrolled = comptime!(k <= TOP_K_UNROLL_BUDGET);
         let mut value_lines = values.flat_mut::<Acc, N>();
         let mut index_lines = indices.flat_mut::<u32, N>();
-        #[unroll(k <= TOP_K_UNROLL_BUDGET)]
+        #[unroll(unrolled)]
         for slot in 0..k {
             value_lines.write(part * k + slot, acc.values[slot]);
             index_lines.write(part * k + slot, acc.indices[slot]);
@@ -320,11 +323,12 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
 
     fn load(values: &Tile, indices: &Tile, part: usize) -> Self {
         let k = K::value();
+        let unrolled = comptime!(k <= TOP_K_UNROLL_BUDGET);
         let value_lines = values.flat::<Acc, N>();
         let index_lines = indices.flat::<u32, N>();
         let mut kept_values = Array::new(k);
         let mut kept_indices = Array::new(k);
-        #[unroll(k <= TOP_K_UNROLL_BUDGET)]
+        #[unroll(unrolled)]
         for slot in 0..k {
             kept_values[slot] = value_lines.read(part * k + slot);
             kept_indices[slot] = index_lines.read(part * k + slot);
@@ -343,15 +347,16 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
     ) {
         let monoid = comptime!(operation.monoid());
         let k = K::value();
+        let unrolled = comptime!(k * k <= TOP_K_UNROLL_BUDGET);
         match comptime!(layout) {
             ReduceLayout::Along => {
                 // The lanes hold one row: every lane's list inserted into one one-lane list.
                 let mut best = TopK::<Acc, Const<1>, K>::identity(monoid);
                 #[unroll]
                 for lane in 0..N::value() {
-                    #[unroll(k * k <= TOP_K_UNROLL_BUDGET)]
+                    #[unroll(unrolled)]
                     for slot in 0..k {
-                        best = best.insert(
+                        best.insert(
                             Vector::new(acc.values[slot].extract(lane)),
                             Vector::new(acc.indices[slot].extract(lane)),
                             monoid,
@@ -382,6 +387,104 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
                         acc.indices[slot],
                         writes,
                     );
+                }
+            }
+        }
+    }
+}
+
+/// The `K` best values without their indices: a top-k that writes only its values.
+#[cube]
+impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc, N, K> {
+    fn accumulate(
+        acc: &mut Self,
+        line: Vector<Acc, N>,
+        _line_index: usize,
+        #[comptime] _layout: ReduceLayout,
+        #[comptime] monoid: Monoid,
+    ) {
+        acc.insert(line, monoid);
+    }
+
+    fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self {
+        let k = K::value();
+        let unrolled = comptime!(k * k <= TOP_K_UNROLL_BUDGET);
+        let mut values = Shared::<[Vector<Acc, N>]>::new_slice(comptime!(planes * k));
+        if UNIT_POS_PLANE == 0 {
+            #[unroll]
+            for slot in 0..k {
+                values[PLANE_POS as usize * k + slot] = acc.values[slot];
+            }
+        }
+        sync_cube();
+        let mut total = TopValues::<Acc, N, K>::identity(monoid);
+        #[unroll]
+        for plane in 0..planes {
+            #[unroll(unrolled)]
+            for slot in 0..k {
+                total.insert(values[plane * k + slot], monoid);
+            }
+        }
+        sync_cube();
+        total
+    }
+
+    fn store(acc: Self, values: &mut Tile, _indices: &mut Tile, part: usize) {
+        let k = K::value();
+        let unrolled = comptime!(k <= TOP_K_UNROLL_BUDGET);
+        let mut value_lines = values.flat_mut::<Acc, N>();
+        #[unroll(unrolled)]
+        for slot in 0..k {
+            value_lines.write(part * k + slot, acc.values[slot]);
+        }
+    }
+
+    fn load(values: &Tile, _indices: &Tile, part: usize) -> Self {
+        let k = K::value();
+        let unrolled = comptime!(k <= TOP_K_UNROLL_BUDGET);
+        let value_lines = values.flat::<Acc, N>();
+        let mut kept_values = Array::new(k);
+        #[unroll(unrolled)]
+        for slot in 0..k {
+            kept_values[slot] = value_lines.read(part * k + slot);
+        }
+        TopValues::<Acc, N, K>::new(kept_values)
+    }
+
+    fn write<Out: Numeric, Idx: Numeric>(
+        acc: Self,
+        out: &mut Tile,
+        _indices: &mut Tile,
+        _count: usize,
+        #[comptime] layout: ReduceLayout,
+        #[comptime] operation: ReduceOperation,
+        #[comptime] _writes: ReduceWrites,
+    ) {
+        let monoid = comptime!(operation.monoid());
+        let k = K::value();
+        let unrolled = comptime!(k * k <= TOP_K_UNROLL_BUDGET);
+        match comptime!(layout) {
+            ReduceLayout::Along => {
+                // The lanes hold one row: every lane's list inserted into one one-lane list.
+                let mut best = TopValues::<Acc, Const<1>, K>::identity(monoid);
+                #[unroll]
+                for lane in 0..N::value() {
+                    #[unroll(unrolled)]
+                    for slot in 0..k {
+                        best.insert(Vector::new(acc.values[slot].extract(lane)), monoid);
+                    }
+                }
+                let mut lines = out.flat_mut::<Out, Const<1>>();
+                #[unroll]
+                for slot in 0..k {
+                    lines.write(slot, Vector::cast_from(best.values[slot]));
+                }
+            }
+            ReduceLayout::Across => {
+                let mut lines = out.flat_mut::<Out, N>();
+                #[unroll]
+                for slot in 0..k {
+                    lines.write(slot, Vector::cast_from(acc.values[slot]));
                 }
             }
         }

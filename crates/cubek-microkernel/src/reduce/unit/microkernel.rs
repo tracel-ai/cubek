@@ -1,6 +1,6 @@
 use super::base::UnitReduceMicrokernel;
 use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
-use cubecl::tile::{Indexed, Tile, TopK};
+use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One unit's row: every line of `input`, the unit's window of the rows it reduces, read in
@@ -25,6 +25,15 @@ pub fn unit_reduce_microkernel<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Num
         ReduceCarrier::TopK { k } => {
             let size!(K) = k;
             unit_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+        }
+        ReduceCarrier::TopValues { k } => {
+            let size!(K) = k;
+            unit_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+                input,
+                out,
+                indices,
+                microkernel,
+            )
         }
     }
 }
@@ -54,7 +63,7 @@ fn unit_reduce<
             Vector::<Acc, N>::cast_from(lines.read(line)),
             comptime!(operation.read_map()),
         );
-        acc = C::accumulate(acc, read, line, layout, monoid);
+        C::accumulate(&mut acc, read, line, layout, monoid);
     }
     let values = match comptime!(layout) {
         ReduceLayout::Along => count * N::value(),

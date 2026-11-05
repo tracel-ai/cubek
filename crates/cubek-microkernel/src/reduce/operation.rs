@@ -16,7 +16,8 @@ pub const TOP_K_LANE_SLOTS: usize = 32;
 /// | `Any` | `x != 0` | `Max` | the values | – |
 /// | `All` | `x != 0` | `Min` | the values | – |
 /// | `ArgMax`, `ArgMin` | – | `Max`, `Min` | [`Indexed`](cubecl::tile::Indexed) | its index |
-/// | `TopK`, `ArgTopK` | – | `Max` | [`TopK`](cubecl::tile::TopK) | its values, its indices |
+/// | `TopK` | – | `Max` | [`TopValues`](cubecl::tile::TopValues) | its values |
+/// | `ArgTopK` | – | `Max` | [`TopK`](cubecl::tile::TopK) | its indices |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReduceOperation {
     Sum,
@@ -57,12 +58,14 @@ pub enum ReduceCarrier {
     Indexed,
     /// The `k` best values with their indices.
     TopK { k: usize },
+    /// The `k` best values, without their indices.
+    TopValues { k: usize },
 }
 
 impl ReduceCarrier {
     /// Whether it keeps the index each value was read at.
     pub const fn carries_indices(self) -> bool {
-        !matches!(self, Self::Values)
+        !matches!(self, Self::Values | Self::TopValues { .. })
     }
 
     /// Bytes one carrier of `width` lanes holds, its values `value_bytes` each and, where it
@@ -73,7 +76,7 @@ impl ReduceCarrier {
             false => value_bytes,
         };
         let slots = match self {
-            Self::TopK { k } => k,
+            Self::TopK { k } | Self::TopValues { k } => k,
             Self::Values | Self::Indexed => 1,
         };
         slots * width * lane
@@ -114,7 +117,8 @@ impl ReduceOperation {
     pub const fn carrier(self) -> ReduceCarrier {
         match self {
             Self::ArgMax | Self::ArgMin => ReduceCarrier::Indexed,
-            Self::TopK { k } | Self::ArgTopK { k } => ReduceCarrier::TopK { k },
+            Self::TopK { k } => ReduceCarrier::TopValues { k },
+            Self::ArgTopK { k } => ReduceCarrier::TopK { k },
             _ => ReduceCarrier::Values,
         }
     }
@@ -209,7 +213,7 @@ mod tests {
                 Op::TopK { k: 5 },
                 Monoid::Max,
                 ReadMap::AsRead,
-                ReduceCarrier::TopK { k: 5 },
+                ReduceCarrier::TopValues { k: 5 },
             ),
             (
                 Op::ArgTopK { k: 5 },
