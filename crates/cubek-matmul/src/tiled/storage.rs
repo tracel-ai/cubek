@@ -27,7 +27,7 @@ use cubek_std::layout::{
     stored::Operand,
     tile_order::{TileOrder, TileWords},
 };
-use cubek_std::{Hardware, matmul_axes::K, value_element};
+use cubek_std::{Hardware, LaneRunLayout, matmul_axes::K, value_element};
 
 use crate::definition::MatmulSetupError;
 
@@ -94,11 +94,18 @@ pub enum StoredValues {
 
 /// The order a packed matrix's tiles lie in on `hw` ([`TileWords`]), which its writer stores and
 /// every reader binds: row by row where a reader takes a row's run whole, the TMA engine filling
-/// a stage or a tensor-core plane decoding one ([`PlaneFragmentMicrokernel::decodes_on`]); block
-/// by block everywhere else, where software reads the tile a load at a time and a load is then a
-/// block of several rows.
+/// a stage or a tensor-core plane decoding one on NVIDIA's `16 × 8 × 16`
+/// ([`PlaneFragmentMicrokernel::decodes_on`]); block by block everywhere else, where software
+/// reads the tile a load at a time and a load is then a block of several rows.
+///
+/// RDNA3's tensor-core planes decode only a weight laid row by row too, but there the software
+/// planes win the fewest rows, and nothing has measured them reading tiles row by row: its tiles
+/// stay block by block, the tensor-core planes serving its weights stored in rows alone, until
+/// that is measured.
 pub fn tile_words(hw: &Hardware) -> TileWords {
-    match hw.bulk_tensor_copy() || PlaneFragmentMicrokernel::decodes_on(hw) {
+    let fragments_decode =
+        PlaneFragmentMicrokernel::decodes_on(hw) && hw.lane_runs == Some(LaneRunLayout::M16N8K16);
+    match hw.bulk_tensor_copy() || fragments_decode {
         true => TileWords::RowByRow,
         false => TileWords::BlockByBlock,
     }
@@ -500,31 +507,41 @@ mod tests {
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
     use cubek_std::layout::tile_order::TileWords;
+    use cubek_std::{Hardware, LaneRunLayout};
 
-    /// RDNA3's `16 × 16 × 16` mma, which the tensor-core plane decodes through on Strix Halo.
-    fn rdna3_mma() -> MmaConfig {
+    /// The 16-bit `m × n × 16` mma summed in `f32`.
+    fn mma(m: u32, n: u32) -> MmaConfig {
         let f16 = ElemType::Float(FloatKind::F16);
         MmaConfig {
             a_type: f16,
             b_type: f16,
             cd_type: ElemType::Float(FloatKind::F32),
-            m: 16,
-            n: 16,
+            m,
+            n,
             k: 16,
         }
     }
 
-    /// A device whose TMA engine fills stages, or whose tensor-core plane decodes, reads a row's
-    /// run whole, so its tiles lie row by row; every other device reads them a load at a time,
-    /// block by block.
+    /// A device whose TMA engine fills stages, or whose tensor-core plane decodes on NVIDIA's
+    /// `16 × 8 × 16`, reads a row's run whole, so its tiles lie row by row; every other device,
+    /// RDNA3 offering its `16 × 16 × 16` among them, reads them a load at a time, block by block.
     #[test]
     fn a_line_reader_keeps_its_tiles_line_by_line() {
         assert_eq!(tile_words(&devices::h100()), TileWords::RowByRow);
         assert_eq!(tile_words(&devices::rtx_pro_6000()), TileWords::RowByRow);
+        let without_tma = Hardware {
+            lane_runs: Some(LaneRunLayout::M16N8K16),
+            ..devices::offering_mma(devices::m2_pro(), [mma(16, 8)])
+        };
         assert_eq!(
-            tile_words(&devices::offering_mma(devices::strix_halo(), [rdna3_mma()])),
+            tile_words(&without_tma),
             TileWords::RowByRow,
             "a tensor-core plane without TMA"
+        );
+        assert_eq!(
+            tile_words(&devices::offering_mma(devices::strix_halo(), [mma(16, 16)])),
+            TileWords::BlockByBlock,
+            "RDNA3's tensor-core plane, until its software planes are measured on rows"
         );
         for software in [
             devices::strix_halo(),

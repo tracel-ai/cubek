@@ -63,6 +63,12 @@ impl PlaneFragmentMicrokernel {
     /// `16 × 16 × 16`, and the plane is offered no more.
     pub const MAX_PACKED_ROWS: usize = 16;
 
+    /// The fewest rows a plane takes against a packed rhs. Below them a fragment pads most of its
+    /// rows, and the software planes read the weight at the device's bandwidth for a few rows'
+    /// arithmetic: on gfx1151 against the Qwen3-8B projections the software planes beat every
+    /// tensor-core plane by 1.2 to 1.6x at one row, and the tensor cores win by four to eight.
+    pub const MIN_PACKED_ROWS: usize = 5;
+
     /// Units of a plane the decoding instruction's lane runs are laid over: the only width a
     /// plane against a packed rhs runs at.
     pub const DECODING_PLANE_UNITS: usize = 32;
@@ -72,10 +78,10 @@ impl PlaneFragmentMicrokernel {
     /// values or MXFP4's thirty-two.
     const DECODED_BLOCK: usize = 16;
 
-    /// What a packed item of no rows, or of more than [`MAX_PACKED_ROWS`](Self::MAX_PACKED_ROWS),
-    /// is declined with.
+    /// What a packed item of fewer than [`MIN_PACKED_ROWS`](Self::MIN_PACKED_ROWS) rows, or of
+    /// more than [`MAX_PACKED_ROWS`](Self::MAX_PACKED_ROWS), is declined with.
     pub const ROWS_OUT_OF_RANGE: Refusal = Refusal::Declined {
-        why: "the plane fragment holds from one row to `PlaneFragmentMicrokernel::MAX_PACKED_ROWS` against a packed rhs, the rows of one fragment laid along `m`",
+        why: "the plane fragment holds from `PlaneFragmentMicrokernel::MIN_PACKED_ROWS` rows, below which the software planes read a packed rhs faster, to `MAX_PACKED_ROWS`, the rows of one fragment laid along `m`",
     };
 
     /// What a packed item whose operands are not a 16-bit lhs against an rhs of
@@ -735,15 +741,17 @@ impl Microkernel for PlaneFragmentMicrokernel {
         ]
     }
 
-    /// Any float item. A packed one ([`MatmulWorkItem::blocks`]) of from one row to
-    /// [`MAX_PACKED_ROWS`](Self::MAX_PACKED_ROWS), every one held whole, against operands it
-    /// contracts ([`OPERANDS_UNSERVED`](Self::OPERANDS_UNSERVED)).
+    /// Any float item. A packed one ([`MatmulWorkItem::blocks`]) of from
+    /// [`MIN_PACKED_ROWS`](Self::MIN_PACKED_ROWS) to [`MAX_PACKED_ROWS`](Self::MAX_PACKED_ROWS)
+    /// rows, every one held whole, against operands it contracts
+    /// ([`OPERANDS_UNSERVED`](Self::OPERANDS_UNSERVED)).
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         let Some(space) = &item.blocks else {
             return Ok(());
         };
         match item.rows {
-            MatmulRows::Whole(rows) if (1..=Self::MAX_PACKED_ROWS).contains(&rows) => {}
+            MatmulRows::Whole(rows)
+                if (Self::MIN_PACKED_ROWS..=Self::MAX_PACKED_ROWS).contains(&rows) => {}
             MatmulRows::Whole(_) | MatmulRows::Tiled => return Err(Self::ROWS_OUT_OF_RANGE),
         }
         match Self::serves(item, space) {

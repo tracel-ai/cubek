@@ -153,7 +153,7 @@ impl CubeShuffleMicrokernel {
     };
 
     /// What a cube of tensor-core planes declines.
-    pub const FRAGMENT_DECLINE: &'static str = "the cube shuffle's plane fragment needs the device's 16-bit manual mma its lane runs decode into (NVIDIA's 16x8x16 or RDNA3's 16x16x16) on a 32-unit plane, a packed rhs, columns whole fragments (the instruction's n wide with its rows along m, its m with them along n), and K whole windows each unit reads in whole loads";
+    pub const FRAGMENT_DECLINE: &'static str = "the cube shuffle's plane fragment needs the device's 16-bit manual mma its lane runs decode into (NVIDIA's 16x8x16 or RDNA3's 16x16x16) on a 32-unit plane, a packed rhs of from five rows (`PlaneFragmentMicrokernel::MIN_PACKED_ROWS`, below which the software planes read it faster) to sixteen, columns whole fragments (the instruction's n wide with its rows along m, its m with them along n), and K whole windows each unit reads in whole loads";
 
     /// The fewest planes a cube holds: a run one plane owns is the plane routine's.
     const FEWEST_PLANES: usize = 2;
@@ -171,16 +171,16 @@ impl CubeShuffleMicrokernel {
     /// grow. Sixteen planes along `K` split the narrow projections of a 4B model at one row best
     /// on an M2 Pro.
     ///
-    /// Then the tensor-core planes, on four, eight and sixteen planes, which split the Qwen3-4B
-    /// projections best from one to sixteen rows on the RTX PRO 6000: one fragment a plane nearly
-    /// everywhere, two at eight planes beside it. Beside them the same planes laid with their rows
-    /// along `n`, the rhs filling the instruction's sixteen-row `A` and the lhs's few rows its
-    /// eight-column `B`, so a decode pads eight columns rather than fifteen rows (on RDNA3's
-    /// `16 × 16 × 16` either way pads sixteen): one fragment on
-    /// two, four and eight planes and two on eight, which read the Qwen3-8B projections at one row
-    /// within five percent of the device's read probe on an RTX 3070 Laptop. None on a device that
-    /// does not offer the plane's decoding instruction: there they would only be tried and
-    /// declined.
+    /// Then the tensor-core planes, from five rows to sixteen
+    /// ([`PlaneFragmentMicrokernel::MIN_PACKED_ROWS`]: below, the software planes read the weight
+    /// faster), on four, eight and sixteen planes, which split the Qwen3-4B projections best on the
+    /// RTX PRO 6000: one fragment a plane nearly everywhere, two at eight planes beside it. Beside
+    /// them the same planes laid with their rows along `n`, the rhs filling the instruction's `A`
+    /// and the lhs's rows its `B`: one fragment on two, four and eight planes and two on eight.
+    /// On NVIDIA's `16 × 8 × 16` a decode then pads eight columns rather than up to fifteen rows;
+    /// on RDNA3's `16 × 16 × 16` both pad to sixteen, and on gfx1151 the rows along `n` read the
+    /// Qwen3-8B projections 3 to 29% faster from nine rows to sixteen. None on a device that does
+    /// not offer the plane's decoding instruction: there they would only be tried and declined.
     pub fn packed_settings(hw: &Hardware) -> Vec<CubeShuffleMicrokernelSettings> {
         use CubeShufflePlaneSettings::{Fragment, Shuffle};
         use PlaneShuffleMicrokernelSettings as Plane;

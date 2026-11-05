@@ -480,15 +480,26 @@ mod tests {
         devices::offering_mma(devices::h100(), [shape])
     }
 
-    /// `m` rows against an NVFP4 `k × n` rhs in tile order, read as `hw` loads it.
+    /// `m` rows against an NVFP4 `k × n` rhs in tile order, its words row by row, read as `hw`
+    /// loads it.
     fn nvfp4(hw: &Hardware, m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
+        nvfp4_laid(hw, m, n, k, tile_order::TileWords::RowByRow)
+    }
+
+    /// [`nvfp4`], its tiles' words laid as `laid`.
+    fn nvfp4_laid(
+        hw: &Hardware,
+        m: usize,
+        n: usize,
+        k: usize,
+        laid: tile_order::TileWords,
+    ) -> MatmulRoutineProblem {
         let scheme = tile_order::nvfp4_scheme();
         let words = hw.load_values(ElemType::UInt(UIntKind::U32));
         let operand = Operand::of_scheme(&scheme, K, [K, N])
             .expect("one axis a block")
             .in_tile_order(
-                tile_order::TileOrder::laid(&scheme, tile_order::TileWords::RowByRow, (128, 8))
-                    .expect("NVFP4 is tile order"),
+                tile_order::TileOrder::laid(&scheme, laid, (128, 8)).expect("NVFP4 is tile order"),
                 N,
                 words,
             )
@@ -543,9 +554,10 @@ mod tests {
     }
 
     /// Every tensor-core setting prepares on a device offering the 16-bit `16 × 8 × 16`
-    /// instruction, on each of a decode's projections, from one row to the rows its fragment
+    /// instruction, on each of a decode's projections, from five rows to the rows its fragment
     /// holds: sixteen with its rows along `m`, eight along `n`, past which it declines with its
-    /// plane's reason. Every one declines with that reason where the device offers no such
+    /// plane's reason. Below five rows, where the software planes read the weight faster, it
+    /// declines too. Every one declines with that reason where the device offers no such
     /// instruction, the H100 fixture among them.
     #[test]
     fn a_fragment_setting_runs_where_the_device_offers_the_instruction() {
@@ -553,7 +565,7 @@ mod tests {
         let hw = tensor_cores();
         let fragment_settings = fragment_settings(&hw);
         assert!(!fragment_settings.is_empty());
-        for m in [1, 3, 8, 11, 16] {
+        for m in [5, 8, 11, 16] {
             for (n, k) in shapes {
                 for settings in &fragment_settings {
                     let held = match settings.microkernel.plane {
@@ -572,6 +584,16 @@ mod tests {
                         }
                         (_, prepared) => panic!("{m}x{n}x{k} at {settings}: {prepared:?}"),
                     }
+                }
+            }
+        }
+        for m in [1, 4] {
+            for settings in &fragment_settings {
+                match CubeShuffleMatmulRoutine.prepare(&hw, &nvfp4(&hw, m, 2560, 4096), settings) {
+                    Err(Refusal::Declined { why }) => {
+                        assert_eq!(why, CubeShuffleMicrokernel::FRAGMENT_DECLINE, "{m} rows")
+                    }
+                    prepared => panic!("{m} rows at {settings}: {prepared:?}"),
                 }
             }
         }
@@ -651,10 +673,10 @@ mod tests {
         let (blueprint, _) = CubeShuffleMatmulRoutine
             .prepare(
                 &hw,
-                &nvfp4(&hw, 1, 2560, 4096),
+                &nvfp4(&hw, 8, 2560, 4096),
                 &fragments_rows_along_n(1, 8),
             )
-            .expect("one row prepares with its rows along n");
+            .expect("eight rows prepare with their rows along n");
         let plane = &blueprint.microkernel.plane;
         assert_eq!(plane.columns(), 16);
         let CubeShufflePlane::Fragment(fragment) = plane else {
@@ -670,7 +692,7 @@ mod tests {
     #[test]
     fn rows_along_n_decline_an_odd_number_of_eights() {
         let hw = tensor_cores();
-        let problem = nvfp4(&hw, 1, 8 * 3, 512);
+        let problem = nvfp4(&hw, 8, 8 * 3, 512);
         assert!(
             CubeShuffleMatmulRoutine
                 .prepare(&hw, &problem, &fragments(1, 4))
@@ -681,6 +703,44 @@ mod tests {
                 assert_eq!(why, CubeShuffleMicrokernel::FRAGMENT_DECLINE)
             }
             prepared => panic!("an odd number of eights with rows along n: {prepared:?}"),
+        }
+    }
+
+    /// RDNA3's `16 × 16 × 16` decodes a weight whose tiles lie row by row; a weight laid block by
+    /// block, whose loads span rows, every tensor-core setting declines before anything compiles.
+    #[test]
+    fn rdna3_reads_a_weight_laid_row_by_row_alone() {
+        let hw = devices::offering_mma(
+            devices::strix_halo(),
+            [MmaConfig {
+                a_type: F16,
+                b_type: F16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 16,
+                n: 16,
+                k: 16,
+            }],
+        );
+        let settings = fragment_settings(&hw);
+        assert!(
+            !settings.is_empty(),
+            "Strix Halo lists the tensor-core planes"
+        );
+        let laid = |words| nvfp4_laid(&hw, 8, 2560, 4096, words);
+        for setting in &settings {
+            CubeShuffleMatmulRoutine
+                .prepare(&hw, &laid(tile_order::TileWords::RowByRow), setting)
+                .unwrap_or_else(|error| panic!("row by row at {setting}: {error:?}"));
+            match CubeShuffleMatmulRoutine.prepare(
+                &hw,
+                &laid(tile_order::TileWords::BlockByBlock),
+                setting,
+            ) {
+                Err(Refusal::Declined { why }) => {
+                    assert_eq!(why, CubeShuffleMicrokernel::FRAGMENT_DECLINE, "{setting}")
+                }
+                prepared => panic!("block by block at {setting}: {prepared:?}"),
+            }
         }
     }
 }

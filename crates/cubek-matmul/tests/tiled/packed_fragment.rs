@@ -1,6 +1,6 @@
 //! An NVFP4 weight through the cube shuffle's tensor-core planes, as a decode runs a projection:
 //! every fragment setting that prepares on this device, its rows along `m` or along `n`, answers
-//! the dequantized product from one row to sixteen.
+//! the dequantized product from five rows to sixteen.
 
 use super::indexed::upload;
 use super::packed::{PackedFormat, PackedSlabs, PackedSlabsSpec};
@@ -49,7 +49,7 @@ fn every_fragment_setting_answers_an_nvfp4_weight() {
         .collect();
     let mut ran = 0;
     let mut wrong = Vec::new();
-    for m in [1, 5, 8, 13, 16] {
+    for m in [5, 8, 13, 16] {
         let activation: Vec<f16> = (0..m * k)
             .map(|i| f16::from_f32(((i * 7919 % 2003) as f32 / 1001.5) - 1.))
             .collect();
