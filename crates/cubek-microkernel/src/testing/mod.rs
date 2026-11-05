@@ -9,3 +9,5 @@
 pub mod attention;
 #[cfg(feature = "matmul")]
 pub mod matmul;
+#[cfg(feature = "reduce")]
+pub mod reduce;

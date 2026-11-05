@@ -606,7 +606,14 @@ impl AttentionTensors {
             Some(kind) => arg(tensor, axes, width, ElemType::UInt(UIntKind::U32)).packed(kind),
             None => arg(tensor, axes, width, read),
         };
+        let query_delivery = match words {
+            Some(_) => Delivery::SyncPerUnit,
+            None => blueprint
+                .microkernel
+                .query_delivery(&widths, &problem.work_item()),
+        };
         let query = read_operand(&self.query, &[B, KV, G, Q, D], widths.query)
+            .delivery(query_delivery)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
         // The keys and values move into their stages as the microkernel says, unless they are

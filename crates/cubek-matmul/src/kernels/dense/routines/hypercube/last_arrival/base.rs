@@ -12,7 +12,7 @@ use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedMicrokernel,
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
-use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
+use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand, MatmulRowsKind};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
@@ -181,7 +181,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         let partitioning = &blueprint.partitioning;
         let cubes = grid.cubes().expect("a static grid");
         blueprint.microkernel.estimate(
-            &MatmulView::of::<HypercubeStagedMicrokernel>(problem)
+            &MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
             &Self::one_run(partitioning, cubes as usize).cube_space(),
@@ -201,7 +201,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_unindexed()?;
-        let view = MatmulView::of::<HypercubeStagedMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         if item
             .blocks
@@ -282,6 +282,9 @@ impl HypercubeLastArrivalMatmulRoutine {
 }
 
 impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastArrivalMatmulRoutine {
+    /// Its cubes own a box of the rows together.
+    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
+
     const WRITE: MatmulCubeWrite = MatmulCubeWrite::LastArrival;
 
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(

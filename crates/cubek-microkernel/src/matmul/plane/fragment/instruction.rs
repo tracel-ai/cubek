@@ -61,7 +61,7 @@ impl PlaneFragmentInstruction {
     pub const SOFTWARE_DEPTH: usize = 16;
 
     /// Planes one warpgroup is made of, which issue its MMA together.
-    pub const WARPGROUP_PLANES: usize = 4;
+    pub(crate) const WARPGROUP_PLANES: usize = 4;
 
     /// Units in each plane of a warpgroup: the only plane width its MMA runs at.
     pub const WARPGROUP_PLANE_UNITS: usize = WARPGROUP_UNITS / Self::WARPGROUP_PLANES;

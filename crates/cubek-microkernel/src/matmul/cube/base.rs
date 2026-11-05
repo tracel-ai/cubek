@@ -29,7 +29,7 @@ impl MatmulCubeSpace {
 
     /// What a cube microkernel declines an item on other axes with: it places and stages in
     /// matmul's own `M`, `N` and `K`.
-    pub const OTHER_AXES: Refusal = Refusal::Declined {
+    pub(crate) const OTHER_AXES: Refusal = Refusal::Declined {
         why: "a cube microkernel works in matmul's own M, N and K",
     };
 
