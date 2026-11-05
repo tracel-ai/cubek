@@ -20,7 +20,7 @@ use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine}
 
 /// `out = lhs · rhs` with every cube owning every row of a run of the output's columns, and its
 /// planes splitting the contraction between them: in software sums
-/// ([`PlaneShuffleMicrokernel`]), or, against a packed rhs, on the tensor cores, where an NVFP4
+/// ([`PlaneShuffleMicrokernel`](cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel)), or, against a packed rhs, on the tensor cores, where an NVFP4
 /// rhs against a 16-bit lhs holds up to a fragment's sixteen rows at the cost of
 /// reading the rhs
 /// ([`PlaneFragmentMicrokernel`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel)).
