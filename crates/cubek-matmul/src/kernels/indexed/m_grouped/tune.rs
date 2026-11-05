@@ -17,8 +17,8 @@ use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
 use crate::kernels::tune::{ListedFor, Listing, Product, first_served};
 use crate::kernels::{
-    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulRoutine,
-    PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
+    CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings,
+    MatmulRoutine, PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
 };
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
@@ -129,6 +129,18 @@ pub fn launch_tuned_padded(
                 autotune.candidate(
                     &microkernel,
                     candidate(CubeStagedMatmulRoutine, listing.settings, listing.kind),
+                )
+            });
+        let autotune = MGroupedSettings::cube_staged_async_copy(&hw)
+            .into_iter()
+            .fold(autotune, |autotune, settings| {
+                autotune.candidate(
+                    &microkernel,
+                    candidate(
+                        CubeStagedAsyncCopyMatmulRoutine,
+                        settings,
+                        ListedFor::Either,
+                    ),
                 )
             });
         let autotune = floors

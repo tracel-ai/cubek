@@ -146,7 +146,7 @@ impl Microkernel for UnitRegistersMicrokernel {
     }
 
     /// A work item holding every row whole holds from one to
-    /// [`MAX_WHOLE_ROWS`](Self::MAX_WHOLE_ROWS) of them; one that tiles them, any.
+    /// `MAX_WHOLE_ROWS` of them; one that tiles them, any.
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         match item.rows {
             MatmulRows::Whole(rows) if !(1..=Self::MAX_WHOLE_ROWS).contains(&rows) => {

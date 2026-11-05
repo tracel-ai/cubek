@@ -1,5 +1,6 @@
 use crate::kernels::tune::{ListedFor, Listing};
 use crate::kernels::{
+    CubeStagedAsyncCopyMatmulRoutine, CubeStagedAsyncCopyMatmulRoutineSettings,
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     PlaneShuffleMatmulRoutineSettings,
 };
@@ -153,6 +154,21 @@ impl MGroupedSettings<CubeStagedMatmulRoutineSettings> {
 
     fn over_cube_tiles(settings: Vec<CubeStagedMatmulRoutineSettings>) -> Vec<Self> {
         settings
+            .into_iter()
+            .map(|routine| Self {
+                routine,
+                chunk: MGroupedChunk::CubeTile,
+            })
+            .collect()
+    }
+}
+
+impl MGroupedSettings<CubeStagedAsyncCopyMatmulRoutineSettings> {
+    /// The copy engine's cube staged routine's settings worth racing on `hw`, each over chunks of
+    /// the tile its cubes hold.
+    pub fn cube_staged_async_copy(hw: &Hardware) -> Vec<Self> {
+        CubeStagedAsyncCopyMatmulRoutine
+            .settings(hw)
             .into_iter()
             .map(|routine| Self {
                 routine,

@@ -5,7 +5,8 @@ use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::MatmulTuneKey;
 use crate::kernels::tune::{ListedFor, MatmulProduct, RoutineIdentity};
 use crate::kernels::{
-    CubeShuffleMatmulRoutineSettings, CubeStagedMatmulRoutineSettings,
+    CubeShuffleMatmulRoutineSettings, CubeStagedAsyncCopyMatmulRoutineSettings,
+    CubeStagedMatmulRoutineSettings, CubeStagedTmaFillerMatmulRoutineSettings,
     HypercubeLastArrivalMatmulRoutineSettings, MatmulRoutine, MatmulTensors,
     PlaneShuffleMatmulRoutineSettings,
 };
@@ -38,6 +39,18 @@ impl PackedContraction for CubeShuffleMatmulRoutineSettings {
 }
 
 impl PackedContraction for CubeStagedMatmulRoutineSettings {
+    fn on_matrix_instructions(&self) -> bool {
+        true
+    }
+}
+
+impl PackedContraction for CubeStagedAsyncCopyMatmulRoutineSettings {
+    fn on_matrix_instructions(&self) -> bool {
+        true
+    }
+}
+
+impl PackedContraction for CubeStagedTmaFillerMatmulRoutineSettings {
     fn on_matrix_instructions(&self) -> bool {
         true
     }
