@@ -1,7 +1,8 @@
+use crate::matmul::MatmulContraction;
 use crate::matmul::cube::MatmulCubeSpace;
 use crate::matmul::plane::{
-    PlaneFragmentFactors, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-    PlaneFragmentRowsAlong, PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
+    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong,
+    PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
 };
 use crate::matmul::{
     MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead, MatmulRowsKind,
@@ -153,7 +154,7 @@ impl CubeShuffleMicrokernel {
     };
 
     /// What a cube of tensor-core planes declines.
-    pub const FRAGMENT_DECLINE: &'static str = "the cube shuffle's plane fragment needs the device's 16-bit manual mma its lane runs decode into (NVIDIA's 16x8x16 or RDNA3's 16x16x16) on a 32-unit plane, a packed rhs of from five rows (`PlaneFragmentMicrokernel::MIN_PACKED_ROWS`, below which the software planes read it faster) to sixteen, columns whole fragments (the instruction's n wide with its rows along m, its m with them along n), and K whole windows each unit reads in whole loads";
+    pub const FRAGMENT_DECLINE: &'static str = "the cube shuffle's plane fragment needs the device's 16-bit manual mma its lane runs decode into (NVIDIA's 16x8x16 or RDNA3's 16x16x16) on a 32-unit plane, a packed rhs of no more rows than one fragment holds along the axis its rows lie along (`PlaneFragmentMicrokernel::packed_rows`), columns whole fragments (the instruction's n wide with its rows along m, its m with them along n), and K whole windows each unit reads in whole loads";
 
     /// The fewest planes a cube holds: a run one plane owns is the plane routine's.
     const FEWEST_PLANES: usize = 2;
@@ -316,12 +317,12 @@ impl CubeShufflePlane {
 
     /// Its instruction with the axis it lays its rows along, which the cube's sum is opened from:
     /// rows along `m` for the software plane, whose units hold the lhs's rows.
-    pub fn factors(&self) -> PlaneFragmentFactors {
+    pub fn contraction(&self) -> MatmulContraction {
         match self {
             CubeShufflePlane::Shuffle(plane) => {
-                PlaneFragmentFactors::rows_along_m(plane.tile_instruction())
+                MatmulContraction::rows_along_m(plane.tile_instruction())
             }
-            CubeShufflePlane::Fragment(plane) => plane.factors(),
+            CubeShufflePlane::Fragment(plane) => plane.contraction(),
         }
     }
 
@@ -454,6 +455,28 @@ impl Microkernel for CubeShuffleMicrokernel {
             MatmulLayout::Row => Err(Self::ROW_RHS_UNSUPPORTED),
             MatmulLayout::Col | MatmulLayout::Strided => Ok(()),
         }
+    }
+
+    /// [`admits`](Self::admits), then, at a tensor-core setting against a packed rhs, the plane
+    /// fragment's own refusal of the item ([`PlaneFragmentMicrokernel::admits`]), then the first
+    /// candidate or its plane's reason ([`decline`](Self::decline)). The cube admits a packed
+    /// item either of its planes admits, so the rows the tensor-core plane refuses, too few for
+    /// a fragment, are refused here by name rather than as an empty list: the one place the
+    /// default `best`, which knows no setting while it admits, is replaced.
+    fn best(
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        settings: &Self::Settings,
+    ) -> Result<Self, Refusal> {
+        Self::admits(item)?;
+        if let (CubeShufflePlaneSettings::Fragment(_), Some(_)) = (settings.plane, item.blocks) {
+            PlaneFragmentMicrokernel::admits(item)?;
+        }
+        Self::candidates(hw, item, settings)
+            .next()
+            .ok_or(Refusal::Declined {
+                why: Self::decline(settings),
+            })
     }
 
     /// Why a setting's cubes come back empty: its plane's reason.

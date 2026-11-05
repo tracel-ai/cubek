@@ -11,8 +11,9 @@ use cubecl::ir::{
     MemoryDeviceProperties, OpaqueType, Type,
 };
 use cubecl::profile::TimingMethod;
+use cubecl::tile::LaneMap;
 
-use crate::{Hardware, LaneRunLayout};
+use crate::Hardware;
 
 /// The dev machine's AMD Radeon 8060S (Strix Halo, gfx1151): wave32 planes, 1024 units per
 /// cube, 64 KiB shared memory.
@@ -28,7 +29,7 @@ pub fn strix_halo() -> Hardware {
     f32_atomic_add(&mut device);
     shared_f32_atomic_add(&mut device);
     Hardware {
-        lane_runs: Some(LaneRunLayout::Rdna3M16N16K16),
+        lane_runs: Some(LaneMap::RDNA3_16X16),
         ..hardware(device)
     }
 }
@@ -111,7 +112,7 @@ pub fn h100() -> Hardware {
     shared_f32_atomic_add(&mut device);
     Hardware {
         accumulator_as_a: true,
-        lane_runs: Some(LaneRunLayout::M16N8K16),
+        lane_runs: Some(LaneMap::NVIDIA_M16N8K16),
         ..hardware(device)
     }
 }
@@ -139,7 +140,7 @@ pub fn rtx_pro_6000() -> Hardware {
     shared_f32_atomic_add(&mut device);
     Hardware {
         accumulator_as_a: true,
-        lane_runs: Some(LaneRunLayout::M16N8K16),
+        lane_runs: Some(LaneMap::NVIDIA_M16N8K16),
         ..hardware(device)
     }
 }

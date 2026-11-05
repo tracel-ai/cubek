@@ -422,7 +422,7 @@ impl CubeStagedMicrokernel {
             filling_planes: self.fill.filling_planes,
             ring: self.ring,
             scratch: self.scratch,
-            factors: self.plane.factors(),
+            contraction: self.plane.contraction(),
             step_sum: self.plane.instruction.step_sum(),
             store: self.store,
             reads: self.reads,

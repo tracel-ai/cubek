@@ -1,5 +1,6 @@
 use super::base::CubeMeet;
-use crate::matmul::plane::{PlaneFragmentFactors, plane_shuffle_microkernel};
+use crate::matmul::MatmulContraction;
+use crate::matmul::plane::plane_shuffle_microkernel;
 use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::{Axis, Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -13,7 +14,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// Two levels under the cube: its `planes` planes, each walking its run of the steps along
 /// `split`, then their units. Each plane's drain merges its units' partials across the plane,
 /// then adds into the accumulator. The units read each operand as `reads` says; the sum is opened
-/// from the planes' `factors`, on the factor their instruction lays its rows along.
+/// from the planes' `contraction`, on the factor their instruction lays its rows along.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_microkernel<EA: Numeric>(
@@ -21,21 +22,21 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
     c: &Tile,
     a: &Tile,
     b: &Tile,
-    #[comptime] factors: PlaneFragmentFactors,
+    #[comptime] contraction: MatmulContraction,
     #[comptime] meet: CubeMeet,
     #[comptime] split: Axis,
     #[comptime] planes: usize,
     #[comptime] reads: MatmulOperands<MatmulRead>,
 ) {
     let mut c = c.clone();
-    let (a, a_factor) = a.factor(c.space(), factors.instruction);
-    let (b, b_factor) = b.factor(c.space(), factors.instruction);
+    let (a, a_factor) = a.factor(c.space(), contraction.instruction);
+    let (b, b_factor) = b.factor(c.space(), contraction.instruction);
 
     match meet {
         CubeMeet::Atomic => {
             let mut accumulator = c.smem_accumulation::<EA>();
             let mut sum =
-                PlaneFragmentFactors::accumulator::<EA>(&accumulator.sink, &a, &b, factors);
+                MatmulContraction::accumulator::<EA>(&accumulator.sink, &a, &b, contraction);
             sum.zero();
 
             for step in cube {
@@ -51,7 +52,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
         }
         CubeMeet::InSlots => {
             let accumulator = c.smem_slots_accumulation::<EA>(planes);
-            let mut sum = PlaneFragmentFactors::accumulator::<EA>(&c, &a, &b, factors);
+            let mut sum = MatmulContraction::accumulator::<EA>(&c, &a, &b, contraction);
             sum.zero();
 
             let steps = cube.walk();

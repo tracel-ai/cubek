@@ -9,8 +9,8 @@
 //! through its layout, however many levels lie inside that tile.
 
 use cubecl::tile::{
-    Geometry, Launcher, Level, Levels, Partitioning, Space, TileTensor, kind::Field, launch::Grid,
-    launch::Refusal,
+    Geometry, LaneMap, Launcher, Level, Levels, Partitioning, Space, TileTensor, kind::Field,
+    launch::Grid, launch::Refusal,
 };
 use cubecl::{
     client::Client,
@@ -27,7 +27,7 @@ use cubek_std::layout::{
     stored::Operand,
     tile_order::{TileOrder, TileWords},
 };
-use cubek_std::{Hardware, LaneRunLayout, matmul_axes::K, value_element};
+use cubek_std::{Hardware, matmul_axes::K, value_element};
 
 use crate::definition::MatmulSetupError;
 
@@ -92,35 +92,83 @@ pub enum StoredValues {
     Packed(QuantScheme),
 }
 
-/// The order a packed matrix's tiles lie in on `hw` ([`TileWords`]), which its writer stores and
-/// every reader binds: row by row where a reader takes a row's run whole, the TMA engine filling
-/// a stage or a tensor-core plane decoding one on NVIDIA's `16 × 8 × 16`
-/// ([`PlaneFragmentMicrokernel::decodes_on`]); block by block everywhere else, where software
-/// reads the tile a load at a time and a load is then a block of several rows.
-///
-/// RDNA3's tensor-core planes decode only a weight laid row by row too, but there the software
-/// planes win the fewest rows, and nothing has measured them reading tiles row by row: its tiles
-/// stay block by block, the tensor-core planes serving its weights stored in rows alone, until
-/// that is measured.
-pub fn tile_words(hw: &Hardware) -> TileWords {
-    let fragments_decode =
-        PlaneFragmentMicrokernel::decodes_on(hw) && hw.lane_runs == Some(LaneRunLayout::M16N8K16);
-    match hw.bulk_tensor_copy() || fragments_decode {
-        true => TileWords::RowByRow,
-        false => TileWords::BlockByBlock,
+/// What reads a packed matrix's tiles on a device, which the order a writer lays them in is
+/// chosen for ([`TileWordsPolicy`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TileReader {
+    /// The TMA engine filling a stage, which copies a row's run whole.
+    BulkCopy,
+    /// A tensor-core plane decoding the tile as its fragments load, each unit a row's run, in the
+    /// target's lane map ([`PlaneFragmentMicrokernel::decodes_on`]).
+    Fragments(LaneMap),
+    /// Software, reading the tile a load at a time.
+    Software,
+}
+
+impl TileReader {
+    /// The reader that takes `hw`'s tiles: its TMA engine where it has one, else its tensor-core
+    /// planes where they decode, else software.
+    pub fn new(hw: &Hardware) -> Self {
+        match (hw.bulk_tensor_copy(), hw.lane_runs) {
+            (true, _) => Self::BulkCopy,
+            (false, Some(map)) if PlaneFragmentMicrokernel::decodes_on(hw) => Self::Fragments(map),
+            (false, _) => Self::Software,
+        }
     }
 }
 
-/// The tile order a writer lays a matrix packed under `scheme` in on `hw`, in `tile`: the order
-/// the device's readers take ([`tile_words`]), where the tile holds it ([`TileOrder::laid`]).
-/// Readers read it back off the matrix ([`TileOrder::of_matrix`]), never off a device. `None` for
-/// a scheme tile order does not store, or a tile not whole blocks of `k`.
+/// How a writer picks the order a packed matrix's tiles lie in ([`TileWords`]), which every
+/// reader then binds: the order the device's reader takes, or one a caller pins, such as a
+/// model's chosen weight layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TileWordsPolicy {
+    /// The order the device's [`TileReader`] takes: row by row for one that takes a row's run
+    /// whole, block by block for software, where a load is then a block of several rows.
+    #[default]
+    Device,
+    /// Every tile laid this way, whatever reads it.
+    Pinned(TileWords),
+}
+
+impl TileWordsPolicy {
+    /// The order tiles lie in for `reader`.
+    ///
+    /// RDNA3's tensor-core planes decode only tiles laid row by row too, but there the software
+    /// planes win the fewest rows, and nothing has measured them reading tiles row by row: under
+    /// [`Device`](Self::Device) its tiles stay block by block, its tensor-core planes serving
+    /// weights stored in rows alone, until that is measured.
+    pub fn tile_words(&self, reader: TileReader) -> TileWords {
+        match (self, reader) {
+            (Self::Pinned(words), _) => *words,
+            (Self::Device, TileReader::BulkCopy) => TileWords::RowByRow,
+            (Self::Device, TileReader::Fragments(LaneMap::NVIDIA_M16N8K16)) => TileWords::RowByRow,
+            (Self::Device, TileReader::Fragments(_)) => TileWords::BlockByBlock,
+            (Self::Device, TileReader::Software) => TileWords::BlockByBlock,
+        }
+    }
+
+    /// The tile order a writer lays a matrix packed under `scheme` in on `hw`, in `tile`: the
+    /// order this policy gives `hw`'s reader, where the tile holds it ([`TileOrder::laid`]).
+    /// Readers read it back off the matrix ([`TileOrder::of_matrix`]), never off a device. `None`
+    /// for a scheme tile order does not store, or a tile not whole blocks of `k`.
+    pub fn tile_order(
+        &self,
+        hw: &Hardware,
+        scheme: &QuantScheme,
+        tile: (usize, usize),
+    ) -> Option<TileOrder> {
+        TileOrder::laid(scheme, self.tile_words(TileReader::new(hw)), tile)
+    }
+}
+
+/// [`TileWordsPolicy::tile_order`] under the [`Device`](TileWordsPolicy::Device) policy: the
+/// order `hw`'s reader takes.
 pub fn tile_order_on(
     hw: &Hardware,
     scheme: &QuantScheme,
     tile: (usize, usize),
 ) -> Option<TileOrder> {
-    TileOrder::laid(scheme, tile_words(hw), tile)
+    TileWordsPolicy::Device.tile_order(hw, scheme, tile)
 }
 
 /// The tile a load stores matmul input `input` in on `hw`, over the input's two axes: the step a
@@ -502,12 +550,13 @@ impl Relayout {
 
 #[cfg(test)]
 mod tests {
-    use super::tile_words;
+    use super::{TileReader, TileWordsPolicy};
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::tile::LaneMap;
+    use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::layout::tile_order::TileWords;
-    use cubek_std::{Hardware, LaneRunLayout};
 
     /// The 16-bit `m × n × 16` mma summed in `f32`.
     fn mma(m: u32, n: u32) -> MmaConfig {
@@ -522,33 +571,63 @@ mod tests {
         }
     }
 
-    /// A device whose TMA engine fills stages, or whose tensor-core plane decodes on NVIDIA's
-    /// `16 × 8 × 16`, reads a row's run whole, so its tiles lie row by row; every other device,
-    /// RDNA3 offering its `16 × 16 × 16` among them, reads them a load at a time, block by block.
+    /// Each device's tiles are read by what it has: TMA first, then tensor-core planes that
+    /// decode, then software.
     #[test]
-    fn a_line_reader_keeps_its_tiles_line_by_line() {
-        assert_eq!(tile_words(&devices::h100()), TileWords::RowByRow);
-        assert_eq!(tile_words(&devices::rtx_pro_6000()), TileWords::RowByRow);
-        let without_tma = Hardware {
-            lane_runs: Some(LaneRunLayout::M16N8K16),
+    fn a_device_reads_its_tiles_with_the_first_reader_it_has() {
+        let nvidia_without_tma = Hardware {
+            lane_runs: Some(LaneMap::NVIDIA_M16N8K16),
             ..devices::offering_mma(devices::m2_pro(), [mma(16, 8)])
         };
+        let rdna3 = devices::offering_mma(devices::strix_halo(), [mma(16, 16)]);
+        assert_eq!(TileReader::new(&devices::h100()), TileReader::BulkCopy);
         assert_eq!(
-            tile_words(&without_tma),
-            TileWords::RowByRow,
-            "a tensor-core plane without TMA"
+            TileReader::new(&nvidia_without_tma),
+            TileReader::Fragments(LaneMap::NVIDIA_M16N8K16)
         );
         assert_eq!(
-            tile_words(&devices::offering_mma(devices::strix_halo(), [mma(16, 16)])),
-            TileWords::BlockByBlock,
-            "RDNA3's tensor-core plane, until its software planes are measured on rows"
+            TileReader::new(&rdna3),
+            TileReader::Fragments(LaneMap::RDNA3_16X16)
         );
         for software in [
             devices::strix_halo(),
             devices::rdna_range(),
             devices::m2_pro(),
         ] {
-            assert_eq!(tile_words(&software), TileWords::BlockByBlock);
+            assert_eq!(TileReader::new(&software), TileReader::Software);
+        }
+    }
+
+    /// Under the device policy a reader taking a row's run whole gets its tiles row by row, and
+    /// software, and RDNA3's tensor-core planes until its software planes are measured on rows,
+    /// block by block. A pinned order holds for every reader.
+    #[test]
+    fn the_device_policy_lays_tiles_for_their_reader_and_a_pin_overrides_it() {
+        let readers = [
+            (TileReader::BulkCopy, TileWords::RowByRow),
+            (
+                TileReader::Fragments(LaneMap::NVIDIA_M16N8K16),
+                TileWords::RowByRow,
+            ),
+            (
+                TileReader::Fragments(LaneMap::RDNA3_16X16),
+                TileWords::BlockByBlock,
+            ),
+            (TileReader::Software, TileWords::BlockByBlock),
+        ];
+        for (reader, laid) in readers {
+            assert_eq!(
+                TileWordsPolicy::Device.tile_words(reader),
+                laid,
+                "{reader:?}"
+            );
+            for pinned in [TileWords::RowByRow, TileWords::BlockByBlock] {
+                assert_eq!(
+                    TileWordsPolicy::Pinned(pinned).tile_words(reader),
+                    pinned,
+                    "{reader:?}"
+                );
+            }
         }
     }
 }

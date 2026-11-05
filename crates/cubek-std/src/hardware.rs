@@ -8,11 +8,10 @@ use cubecl::tile::launch::Refusal;
 use cubecl::{
     CubeDim,
     client::Client,
-    cmma::MatrixLayout,
     features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig, Tma},
     ir::{DeviceProperties, ElemType, FloatKind, OpaqueType, TargetProperties, Type},
     quant::scheme::{QuantMode, QuantScheme, QuantValue},
-    tile::BlockScaledOperands,
+    tile::{BlockScaledOperands, LaneMap},
 };
 
 /// The device, as the routines see it.
@@ -33,59 +32,10 @@ pub struct Hardware {
     /// in each operand. False on RDNA, whose `A` runs along its rows against an accumulator down
     /// its columns, and whose RDNA3 `A` is held twice across the wave.
     pub accumulator_as_a: bool,
-    /// How the target lays a 16-bit manual mma's `k` out across a plane's units, where the tile
-    /// DSL loads a fragment deeper than its instruction in lane runs over it: what a packed
-    /// operand decodes into as it loads. `None` where it lays out neither layout the tile DSL
-    /// reads.
-    pub lane_runs: Option<LaneRunLayout>,
-}
-
-/// A target's 16-bit manual-mma layout, as the tile DSL's lane runs read it: the instruction, and
-/// how many of a plane's units share one row of `A` or column of `B`, each holding its own part
-/// of the instruction's `k`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum LaneRunLayout {
-    /// NVIDIA's `m16n8k16`: four units a row, each holding a quad of `k`.
-    M16N8K16,
-    /// RDNA3's `16 × 16 × 16`: one unit a row holding all sixteen values of `k`, the plane's two
-    /// halves holding the same rows.
-    Rdna3M16N16K16,
-}
-
-impl LaneRunLayout {
-    /// The layout `target` lays its 16-bit instruction out in, as the tile DSL reads it: a
-    /// 32-unit plane of 32-bit registers, `A` along its rows and `B` along its columns, each cell
-    /// held once (`m16n8k16`) or by both halves of the plane (RDNA3).
-    pub fn of(target: &TargetProperties) -> Option<Self> {
-        let mma = &target.mma;
-        let laid_out = mma.const_plane_size == 32
-            && mma.register_size_bits == 32
-            && mma.register_layout_a == MatrixLayout::RowMajor
-            && mma.register_layout_b == MatrixLayout::ColMajor;
-        match (mma.register_duplication_a, mma.register_duplication_b) {
-            _ if !laid_out => None,
-            (1, 1) => Some(Self::M16N8K16),
-            (2, 2) => Some(Self::Rdna3M16N16K16),
-            _ => None,
-        }
-    }
-
-    /// The instruction's `(m, n, k)`.
-    pub const fn shape(self) -> (u32, u32, u32) {
-        match self {
-            Self::M16N8K16 => (16, 8, 16),
-            Self::Rdna3M16N16K16 => (16, 16, 16),
-        }
-    }
-
-    /// Units of a plane sharing one row of `A` or column of `B`, each holding its own part of
-    /// the instruction's `k`: a unit's run of a fragment `window` deep is `window` over these.
-    pub const fn units_per_row(self) -> usize {
-        match self {
-            Self::M16N8K16 => 4,
-            Self::Rdna3M16N16K16 => 1,
-        }
-    }
+    /// How the target lays a 16-bit manual mma's `k` out across a plane's units, as the tile DSL
+    /// loads a fragment deeper than its instruction in lane runs over it: what a packed operand
+    /// decodes into as it loads. `None` where the tile DSL reads no layout of the target's.
+    pub lane_runs: Option<LaneMap>,
 }
 
 /// Bytes one coalesced memory transaction moves on the GPUs cubek has met: 128 on CUDA, HIP,
@@ -105,7 +55,7 @@ impl Hardware {
             properties,
             accumulator_as_a: mma.register_layout_a == mma.register_layout_acc
                 && mma.register_duplication_a == mma.register_duplication_acc,
-            lane_runs: LaneRunLayout::of(target),
+            lane_runs: LaneMap::try_from(target).ok(),
         }
     }
 

@@ -327,7 +327,7 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
                 binding.rhs,
                 O::arg(binding.out),
                 binding.launcher.partitioning_arg(),
-                microkernel.plane.factors(),
+                microkernel.plane.contraction(),
                 microkernel.meet,
                 microkernel.split(),
                 microkernel.planes_along_k.get(),
@@ -345,7 +345,7 @@ mod tests {
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
     use cubek_microkernel::matmul::cube::{CubeShufflePlane, CubeShufflePlaneSettings};
     use cubek_microkernel::matmul::plane::{
-        PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong,
+        PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong,
     };
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
@@ -589,12 +589,13 @@ mod tests {
         }
         for m in [1, 4] {
             for settings in &fragment_settings {
-                match CubeShuffleMatmulRoutine.prepare(&hw, &nvfp4(&hw, m, 2560, 4096), settings) {
-                    Err(Refusal::Declined { why }) => {
-                        assert_eq!(why, CubeShuffleMicrokernel::FRAGMENT_DECLINE, "{m} rows")
-                    }
-                    prepared => panic!("{m} rows at {settings}: {prepared:?}"),
-                }
+                assert_eq!(
+                    CubeShuffleMatmulRoutine
+                        .prepare(&hw, &nvfp4(&hw, m, 2560, 4096), settings)
+                        .err(),
+                    Some(PlaneFragmentMicrokernel::ROWS_OUT_OF_RANGE),
+                    "{m} rows at {settings}"
+                );
             }
         }
         for other in [devices::rdna_range(), devices::h100()] {
@@ -684,7 +685,7 @@ mod tests {
         };
         let [(_, rows), (_, columns), _] = fragment.shape();
         assert_eq!((rows, columns), (8, 16));
-        assert_eq!(plane.factors().rows_along, PlaneFragmentRowsAlong::N);
+        assert_eq!(plane.contraction().rows_along, PlaneFragmentRowsAlong::N);
     }
 
     /// An `n` of whole eights but not whole sixteens is served with the rows along `m` and
@@ -707,7 +708,8 @@ mod tests {
     }
 
     /// RDNA3's `16 × 16 × 16` decodes a weight whose tiles lie row by row; a weight laid block by
-    /// block, whose loads span rows, every tensor-core setting declines before anything compiles.
+    /// block, whose loads span rows and so read it along more than `K`, every tensor-core setting
+    /// refuses by that reason before anything compiles.
     #[test]
     fn rdna3_reads_a_weight_laid_row_by_row_alone() {
         let hw = devices::offering_mma(
@@ -731,16 +733,13 @@ mod tests {
             CubeShuffleMatmulRoutine
                 .prepare(&hw, &laid(tile_order::TileWords::RowByRow), setting)
                 .unwrap_or_else(|error| panic!("row by row at {setting}: {error:?}"));
-            match CubeShuffleMatmulRoutine.prepare(
-                &hw,
-                &laid(tile_order::TileWords::BlockByBlock),
-                setting,
-            ) {
-                Err(Refusal::Declined { why }) => {
-                    assert_eq!(why, CubeShuffleMicrokernel::FRAGMENT_DECLINE, "{setting}")
-                }
-                prepared => panic!("block by block at {setting}: {prepared:?}"),
-            }
+            assert_eq!(
+                CubeShuffleMatmulRoutine
+                    .prepare(&hw, &laid(tile_order::TileWords::BlockByBlock), setting)
+                    .err(),
+                Some(PlaneFragmentMicrokernel::OPERANDS_UNSERVED),
+                "block by block at {setting}"
+            );
         }
     }
 }

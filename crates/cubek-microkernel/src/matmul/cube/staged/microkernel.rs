@@ -1,7 +1,8 @@
 use super::base::CubeStagedDrain;
+use crate::matmul::MatmulContraction;
 use crate::matmul::cube::CubeStagedStore;
 use crate::matmul::plane::{
-    PlaneFragmentFactors, PlaneFragmentStepSum, plane_fragment_microkernel, plane_fragment_partial,
+    PlaneFragmentStepSum, plane_fragment_microkernel, plane_fragment_partial,
 };
 use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::stage::{AsyncStage, AsyncStageExpand, Role};
@@ -18,7 +19,7 @@ pub struct CubeStagedWalk {
     pub ring: StageRing,
     pub scratch: Scratch,
     /// Its planes' instruction and the axis it lays its rows along, which the sum is opened for.
-    pub factors: PlaneFragmentFactors,
+    pub contraction: MatmulContraction,
     pub step_sum: PlaneFragmentStepSum,
     pub store: CubeStagedStore,
     /// How the planes read each operand: as bound, or dequantized at the element they contract,
@@ -44,7 +45,7 @@ impl CubeStagedWalk {
         b: &Tile,
         #[comptime] walk: CubeStagedWalk,
     ) -> Tile {
-        let mut sum = PlaneFragmentFactors::accumulator::<EA>(over, a, b, walk.factors);
+        let mut sum = MatmulContraction::accumulator::<EA>(over, a, b, walk.contraction);
         sum.zero();
         sum
     }
@@ -99,8 +100,8 @@ impl CubeStagedWalk {
         #[comptime] storage: StageStorage,
     ) {
         let mut c = c.clone();
-        let (a, a_factor) = a.factor(c.space(), walk.factors.instruction);
-        let (b, b_factor) = b.factor(c.space(), walk.factors.instruction);
+        let (a, a_factor) = a.factor(c.space(), walk.contraction.instruction);
+        let (b, b_factor) = b.factor(c.space(), walk.contraction.instruction);
         let (a, b) = (Self::as_staged(&a, walk), Self::as_staged(&b, walk));
 
         let sum = Self::open_sum::<EA>(&c, &a, &b, walk);
@@ -125,8 +126,8 @@ impl CubeStagedWalk {
         #[comptime] storage: StageStorage,
     ) {
         let mut c = c.clone();
-        let (a, a_factor) = a.factor(c.space(), walk.factors.instruction);
-        let (b, b_factor) = b.factor(c.space(), walk.factors.instruction);
+        let (a, a_factor) = a.factor(c.space(), walk.contraction.instruction);
+        let (b, b_factor) = b.factor(c.space(), walk.contraction.instruction);
         let (a, b) = (Self::as_staged(&a, walk), Self::as_staged(&b, walk));
 
         let depth = walk.ring.stages_in_flight.get();
@@ -151,9 +152,10 @@ impl CubeStagedWalk {
             }
             Role::Compute => {
                 let sum = Self::open_sum::<EA>(&c, &a, &b, walk);
-                let partial = plane_fragment_partial::<EL>(&c, &a, &b, walk.step_sum, walk.factors);
+                let partial =
+                    plane_fragment_partial::<EL>(&c, &a, &b, walk.step_sum, walk.contraction);
 
-                if walk.factors.instruction == Instruction::Wgmma {
+                if walk.contraction.instruction == Instruction::Wgmma {
                     let issue = WarpgroupStages {
                         sum: sum.clone(),
                         partial: partial.clone(),
@@ -202,7 +204,7 @@ impl CubeStagedWalk {
                 partial,
                 &a_stage.at(&plane),
                 &b_stage.at(&plane),
-                walk.factors.instruction,
+                walk.contraction.instruction,
                 None,
                 walk.reads,
             );
@@ -264,7 +266,7 @@ pub fn cube_staged_sum_microkernel<EL: Numeric>(
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,
 ) {
-    let partial = plane_fragment_partial::<EL>(over, a, b, walk.step_sum, walk.factors);
+    let partial = plane_fragment_partial::<EL>(over, a, b, walk.step_sum, walk.contraction);
 
     let in_flight = walk.ring.stages_in_flight.get();
     let mut stages = Stages::smem(&run, a, b, storage, in_flight, walk.decoded());

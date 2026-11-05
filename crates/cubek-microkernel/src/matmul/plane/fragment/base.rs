@@ -1,5 +1,6 @@
+use crate::matmul::MatmulContraction;
 use crate::matmul::plane::{
-    PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentFactors, PlaneFragmentInstruction,
+    PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
     PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong, PlaneFragmentStepSum,
     PlaneFragmentTransport,
 };
@@ -8,16 +9,18 @@ use crate::matmul::{
     MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStage, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
+use core::ops::RangeInclusive;
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::QuantValue;
+use cubecl::tile::LaneMap;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, Scratch, Space, StageStorage};
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork};
-use cubek_std::{Hardware, Instructions, LaneRunLayout, block_scaled_for, manual_mma};
+use cubek_std::{Hardware, Instructions, block_scaled_for, manual_mma};
 
 /// A tile of the output one plane owns: a grid of instructions its units hold between them,
 /// contracted a stage of `K` at a time out of shared memory, as its settings size it. The
@@ -57,10 +60,9 @@ pub enum PlaneFragmentKStatement {
 }
 
 impl PlaneFragmentMicrokernel {
-    /// The most rows a plane holds against a packed rhs, every row held whole: one fragment's
-    /// with its rows along `m`, the decoding instruction's `m`. With its rows along `n` a fragment
-    /// holds the instruction's `n`, eight on NVIDIA's `16 × 8 × 16` and sixteen on RDNA3's
-    /// `16 × 16 × 16`, and the plane is offered no more.
+    /// The most rows any plane holds against a packed rhs, every row held whole: one fragment's
+    /// with its rows along `m`, every decoding instruction's `m`. A plane of given settings holds
+    /// its own share of it ([`packed_rows`](Self::packed_rows)).
     pub const MAX_PACKED_ROWS: usize = 16;
 
     /// The fewest rows a plane takes against a packed rhs. Below them a fragment pads most of its
@@ -90,45 +92,25 @@ impl PlaneFragmentMicrokernel {
         why: "the plane fragment contracts a packed rhs against a 16-bit lhs, the rhs read along K alone, in blocks of sixteen",
     };
 
-    /// The instruction whose fragments decode a packed rhs as they load on `hw`, over an lhs of
-    /// element `lhs` summed in `sum`, and how its units split `k`: the 16-bit instruction of the
-    /// target's lane-run layout ([`Hardware::lane_runs`]), NVIDIA's `16 × 8 × 16` or RDNA3's
-    /// `16 × 16 × 16`. `None` on a target laying out neither.
-    fn decoding_instruction(
-        hw: &Hardware,
-        lhs: ElemType,
-        sum: ElemType,
-    ) -> Option<(MmaConfig, LaneRunLayout)> {
-        let layout = hw.lane_runs?;
-        let (m, n, k) = layout.shape();
-        let config = MmaConfig {
-            a_type: lhs,
-            b_type: lhs,
-            cd_type: sum,
-            m,
-            n,
-            k,
-        };
-        Some((config, layout))
-    }
-
-    /// Whether `hw` runs a plane against a packed rhs for an lhs of element `lhs`, summed in
-    /// `sum`: it offers its decoding instruction over `lhs` on a plane of thirty-two, which no
-    /// element but a 16-bit float has.
-    fn decodes(hw: &Hardware, lhs: ElemType, sum: ElemType) -> bool {
-        Self::decoding_instruction(hw, lhs, sum).is_some_and(|(decoding, _)| {
-            manual_mma(hw).any(|shape| shape == decoding)
-                && hw.plane_size().ok() == Some(Self::DECODING_PLANE_UNITS as u32)
-        })
-    }
-
     /// Whether `hw` runs a plane against a packed rhs for any lhs: for one of the
     /// 16-bit floats, summed in `f32`.
     pub fn decodes_on(hw: &Hardware) -> bool {
         let f32 = ElemType::Float(FloatKind::F32);
         [FloatKind::F16, FloatKind::BF16]
             .into_iter()
-            .any(|kind| Self::decodes(hw, ElemType::Float(kind), f32))
+            .any(|kind| PackedDecoding::new(hw, ElemType::Float(kind), f32).is_some())
+    }
+
+    /// The rows a plane whose instruction is `instruction`, its rows along `rows_along`, holds
+    /// whole against a packed rhs: from [`MIN_PACKED_ROWS`](Self::MIN_PACKED_ROWS) to the side of
+    /// the instruction its rows lie along, one fragment of them. Sixteen along `m`; along `n` the
+    /// instruction's `n`, eight on NVIDIA's `16 × 8 × 16` and sixteen on RDNA3's `16 × 16 × 16`.
+    pub fn packed_rows(
+        instruction: PlaneFragmentInstruction,
+        rows_along: PlaneFragmentRowsAlong,
+    ) -> RangeInclusive<usize> {
+        let [(_, fragment_rows), _, _] = instruction.shape_along(rows_along);
+        Self::MIN_PACKED_ROWS..=fragment_rows
     }
 
     /// Whether a packed `item`'s operands are what the fragments contract: a 16-bit lhs,
@@ -168,51 +150,57 @@ impl PlaneFragmentMicrokernel {
         settings: PlaneFragmentMicrokernelSettings,
         space: MatmulBlocks,
     ) -> impl Iterator<Item = Self> {
-        let decoding = Self::decoding_instruction(hw, item.elements.lhs, item.sum)
-            .filter(|_| Self::decodes(hw, item.elements.lhs, item.sum));
-        decoding.into_iter().flat_map(move |(shape, layout)| {
-            let window = settings.depth.get() * shape.k as usize;
-            let rhs = space.operand(MatmulOperand::Rhs);
-            let runs_whole = (window / layout.units_per_row()).is_multiple_of(rhs.read(K));
-            // A window states `K` as whole scale blocks and the position inside one.
-            let blocks_whole = rhs
-                .grouping(K, space.k)
-                .is_some_and(|block| window.is_multiple_of(block));
-            let instruction = PlaneFragmentInstruction::mma(shape);
-            let [(_, fragment_rows), (_, columns), _] =
-                instruction.shape_along(settings.rows_along);
-            // A plane holding every row whole holds one fragment of them, so no more rows than
-            // the side of the instruction its rows lie along: sixteen along `m`, along `n` eight
-            // on `16 × 8 × 16` and sixteen on RDNA3. One whose rows are tiled, a stage's, holds
-            // the settings' fragments along `M`, each against the rhs fragment decoded once a
-            // step.
-            let rows_fit = match item.rows {
-                MatmulRows::Whole(rows) => {
-                    settings.along_m == NonZeroUsize::MIN && rows <= fragment_rows
-                }
-                MatmulRows::Tiled => true,
-            };
-            let windowed = rows_fit
-                && settings.transport == PlaneFragmentTransport::Mma
-                && settings.fragment_depth == PlaneFragmentDepth::Stage;
-            let offered = windowed && runs_whole && blocks_whole && space.k.is_multiple_of(window);
-            (1..=settings.along_n.get())
-                .rev()
-                .filter(move |&along_n| offered && space.n.is_multiple_of(along_n * columns))
-                .filter_map(move |along_n| {
-                    Some(Self {
-                        instruction,
-                        orders: instruction.orders(item.layouts),
-                        settings: PlaneFragmentMicrokernelSettings {
-                            along_n: NonZeroUsize::new(along_n)?,
-                            ..settings
-                        },
-                        axes: item.axes,
-                        blocks: Some(space),
-                        k_stated: PlaneFragmentKStatement::Caller,
-                    })
+        PackedDecoding::new(hw, item.elements.lhs, item.sum)
+            .into_iter()
+            .flat_map(move |decoding| Self::decoding_planes(decoding, item, settings, space))
+    }
+
+    /// [`packed_candidates`](Self::packed_candidates) on a device decoding through `decoding`.
+    fn decoding_planes(
+        decoding: PackedDecoding,
+        item: &MatmulWorkItem,
+        settings: PlaneFragmentMicrokernelSettings,
+        space: MatmulBlocks,
+    ) -> impl Iterator<Item = Self> {
+        let window = settings.depth.get() * decoding.config.k as usize;
+        let rhs = space.operand(MatmulOperand::Rhs);
+        let runs_whole = decoding.unit_run(window).is_multiple_of(rhs.read(K));
+        // A window states `K` as whole scale blocks and the position inside one.
+        let blocks_whole = rhs
+            .grouping(K, space.k)
+            .is_some_and(|block| window.is_multiple_of(block));
+        let instruction = PlaneFragmentInstruction::mma(decoding.config);
+        let [_, (_, columns), _] = instruction.shape_along(settings.rows_along);
+        // A plane holding every row whole holds one fragment of them; one whose rows are tiled, a
+        // stage's, holds the settings' fragments along `M`, each against the rhs fragment decoded
+        // once a step.
+        let rows_fit = match item.rows {
+            MatmulRows::Whole(rows) => {
+                settings.along_m == NonZeroUsize::MIN
+                    && Self::packed_rows(instruction, settings.rows_along).contains(&rows)
+            }
+            MatmulRows::Tiled => true,
+        };
+        let windowed = rows_fit
+            && settings.transport == PlaneFragmentTransport::Mma
+            && settings.fragment_depth == PlaneFragmentDepth::Stage;
+        let offered = windowed && runs_whole && blocks_whole && space.k.is_multiple_of(window);
+        (1..=settings.along_n.get())
+            .rev()
+            .filter(move |&along_n| offered && space.n.is_multiple_of(along_n * columns))
+            .filter_map(move |along_n| {
+                Some(Self {
+                    instruction,
+                    orders: instruction.orders(item.layouts),
+                    settings: PlaneFragmentMicrokernelSettings {
+                        along_n: NonZeroUsize::new(along_n)?,
+                        ..settings
+                    },
+                    axes: item.axes,
+                    blocks: Some(space),
+                    k_stated: PlaneFragmentKStatement::Caller,
                 })
-        })
+            })
     }
 
     /// The planes against a float rhs: every matrix instruction this device offers for the
@@ -622,8 +610,8 @@ impl PlaneFragmentMicrokernel {
 
     /// Its tile instruction with the axis it lays its rows along, which every sum over its
     /// operands is opened from.
-    pub fn factors(&self) -> PlaneFragmentFactors {
-        PlaneFragmentFactors {
+    pub fn contraction(&self) -> MatmulContraction {
+        MatmulContraction {
             instruction: self.tile_instruction(),
             rows_along: self.settings.rows_along,
         }
@@ -849,6 +837,42 @@ impl MatmulMicrokernel for PlaneFragmentMicrokernel {
     }
 }
 
+/// The instruction a plane decodes a packed rhs into as its fragments load, and the lane map they
+/// load in: the target's 16-bit manual mma ([`Hardware::lane_runs`]), NVIDIA's `16 × 8 × 16` or
+/// RDNA3's `16 × 16 × 16`, at its shallowest depth.
+#[derive(Clone, Copy)]
+struct PackedDecoding {
+    config: MmaConfig,
+    map: LaneMap,
+}
+
+impl PackedDecoding {
+    /// The decoding `hw` offers over an lhs of element `lhs` summed in `sum`: its lane map's
+    /// instruction over `lhs`, on a plane of thirty-two. `None` where it offers none, which no
+    /// element but a 16-bit float has.
+    fn new(hw: &Hardware, lhs: ElemType, sum: ElemType) -> Option<Self> {
+        let map = hw.lane_runs?;
+        let ((m, n), k) = (map.edges(), map.depths()[0]);
+        let config = MmaConfig {
+            a_type: lhs,
+            b_type: lhs,
+            cd_type: sum,
+            m: m as u32,
+            n: n as u32,
+            k: k as u32,
+        };
+        let offered = manual_mma(hw).any(|shape| shape == config)
+            && hw.plane_size().ok() == Some(PlaneFragmentMicrokernel::DECODING_PLANE_UNITS as u32);
+        offered.then_some(Self { config, map })
+    }
+
+    /// The values of a `window`-deep fragment's `k` one unit's lane run holds: the window over the
+    /// units sharing a row.
+    fn unit_run(&self, window: usize) -> usize {
+        window / self.map.units_per_row()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1000,36 +1024,47 @@ mod tests {
         );
     }
 
-    /// A plane holding its rows whole holds one fragment of them: sixteen rows along `m`, but
-    /// eight along `n`, where the lhs's rows fill the instruction's `B`. More rows than that are
-    /// not offered there, rather than a plane whose kernel drops the rows past its fragment.
+    /// A plane holding its rows whole holds one fragment of them, from five rows: sixteen along
+    /// `m`, and along `n` the instruction's `n`, where the lhs's rows fill its `B`: eight on
+    /// NVIDIA's `16 × 8 × 16`, sixteen on RDNA3's `16 × 16 × 16`. More rows than that are not
+    /// offered, rather than a plane whose kernel drops the rows past its fragment.
     #[test]
-    fn rows_along_n_hold_eight_whole_rows() {
+    fn a_plane_holds_the_whole_rows_of_one_fragment() {
         let f16 = ElemType::Float(FloatKind::F16);
-        let hw = cubek_std::devices::offering_mma(
-            cubek_std::devices::h100(),
-            [cubecl::ir::features::MmaConfig {
-                a_type: f16,
-                b_type: f16,
-                cd_type: ElemType::Float(FloatKind::F32),
-                m: 16,
-                n: 8,
-                k: 16,
-            }],
-        );
+        let mma = |device, n| {
+            cubek_std::devices::offering_mma(
+                device,
+                [cubecl::ir::features::MmaConfig {
+                    a_type: f16,
+                    b_type: f16,
+                    cd_type: ElemType::Float(FloatKind::F32),
+                    m: 16,
+                    n,
+                    k: 16,
+                }],
+            )
+        };
+        let nvidia = mma(cubek_std::devices::h100(), 8);
+        let rdna3 = mma(cubek_std::devices::strix_halo(), 16);
         let (item, space) = against_blocks_of(16);
-        let offered = |rows_along, rows| {
+        let offered = |hw: &Hardware, rows_along, rows| {
             let item = MatmulWorkItem {
                 rows: MatmulRows::Whole(rows),
                 ..item
             };
             let settings = PlaneFragmentMicrokernelSettings::windowed(1, 8).rows_along(rows_along);
-            PlaneFragmentMicrokernel::packed_candidates(&hw, &item, settings, space)
+            PlaneFragmentMicrokernel::packed_candidates(hw, &item, settings, space)
                 .next()
                 .is_some()
         };
-        assert!(offered(PlaneFragmentRowsAlong::M, 16));
-        assert!(offered(PlaneFragmentRowsAlong::N, 8));
-        assert!(!offered(PlaneFragmentRowsAlong::N, 9));
+        let (m, n) = (PlaneFragmentRowsAlong::M, PlaneFragmentRowsAlong::N);
+        for hw in [&nvidia, &rdna3] {
+            assert!(offered(hw, m, 16));
+            assert!(!offered(hw, m, 4));
+            assert!(!offered(hw, n, 4));
+        }
+        assert!(offered(&nvidia, n, 8));
+        assert!(!offered(&nvidia, n, 9));
+        assert!(offered(&rdna3, n, 16));
     }
 }

@@ -1,8 +1,8 @@
 //! The matmul microkernels on one work item: `out = lhs · rhs` over a problem one tile wide.
 
+use crate::matmul::MatmulContraction;
 use crate::matmul::plane::{
-    PlaneFragmentFactors, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-    plane_fragment_staged_microkernel,
+    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, plane_fragment_staged_microkernel,
 };
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
@@ -187,7 +187,7 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
 
     for plane in &partitioning {
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
-        let mut sum = PlaneFragmentFactors::accumulator::<EA>(&c, &a, &b, microkernel.factors())
+        let mut sum = MatmulContraction::accumulator::<EA>(&c, &a, &b, microkernel.contraction())
             .with_scratch(Scratch::None);
         sum.zero();
         plane_fragment_staged_microkernel::<EL>(

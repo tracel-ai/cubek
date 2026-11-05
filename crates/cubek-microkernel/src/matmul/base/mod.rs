@@ -1,6 +1,7 @@
 mod axes;
 mod axes_kind;
 mod buffers;
+mod contraction;
 mod layout;
 mod microkernel;
 mod operand;
@@ -12,6 +13,7 @@ mod work_item;
 pub use axes::*;
 pub use axes_kind::*;
 pub use buffers::*;
+pub use contraction::*;
 pub use layout::*;
 pub use microkernel::*;
 pub use operand::*;
