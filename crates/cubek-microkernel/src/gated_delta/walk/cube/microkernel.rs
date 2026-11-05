@@ -1,5 +1,6 @@
 use super::base::CubeGatedDeltaWalkMicrokernel;
 use super::held_state::HeldState;
+use super::state_access::StateAccess;
 use super::unit_partials::UnitPartials;
 use crate::gated_delta::{KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
@@ -8,8 +9,8 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// One cube's runs of value columns, `microkernel.units` units each, walked through every position:
 /// each position decays the state, adds the delta between the value and what the state recalls of
 /// the key along the key, and reads the written state with the query, the read rounded to `E`
-/// where it is written. The state after each position from `first_kept` on is written to the next
-/// of the kept states.
+/// where it is written. The state after each position from `state.first_kept` on is written to the
+/// next of the states `state` keeps.
 ///
 /// Every operand is windowed to the cube's box: its sequence, its head, its runs of columns and
 /// every key row; the queries and keys to the key head the head is grouped under. Each unit then
@@ -24,10 +25,8 @@ pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
     value: &Tile,
     decay: &Tile,
     strength: &Tile,
-    state: &Tile,
+    state: &StateAccess,
     out: &Tile,
-    kept: &Tile,
-    first_kept: usize,
     #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,
     #[comptime] runs: usize,
 ) {
@@ -39,7 +38,7 @@ pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
             let slot = unit.coord(KEY_FEATURE);
             let mut partials =
                 UnitPartials::<N>::new(run.coord(VALUE_FEATURE), slot, runs, microkernel);
-            let mut held = HeldState::<N>::load(&state.at(&unit), microkernel);
+            let mut held = HeldState::<N>::load(&state.read.at(&unit), state.fresh, microkernel);
             for step in unit.walk() {
                 let (keys, queries) = (key.at(&step), query.at(&step));
                 let value_window = value.at(&step);
@@ -64,8 +63,8 @@ pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
                     }
                 }
                 let at = step.coord(POSITION);
-                if at >= first_kept {
-                    held.store(&mut kept.at(&unit), at - first_kept);
+                if at >= state.first_kept {
+                    held.store(&mut state.write.at(&unit), at - state.first_kept);
                 }
             }
         }

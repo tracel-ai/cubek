@@ -26,7 +26,8 @@ mod base {
         PlaneFragmentStepSum, PlaneFragmentTransport,
     };
     use cubek_microkernel::matmul::{
-        MatmulDestination, MatmulLayout, MatmulOperand, MatmulOperands, MatmulStoredTile,
+        MatmulDestination, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead,
+        MatmulStoredTile,
     };
     use cubek_std::layout::stored::{Operand, Packing};
     use cubek_std::layout::{BindingOrder, tile_order};
@@ -745,9 +746,11 @@ mod base {
         let item = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
-        let operands = partitioning
-            .stage()
-            .operands(item.elements, blueprint.microkernel.plane.orders);
+        let operands = partitioning.stage().operands(
+            item.elements,
+            blueprint.microkernel.plane.orders,
+            MatmulOperands::all(MatmulRead::AsBound),
+        );
         assert_eq!(registers.resolve(&hw, &operands, cube_units), registers);
         assert_eq!(
             registers.resolve(&hw, &operands, one_unit),
@@ -806,6 +809,48 @@ mod base {
             }
         }
         assert!(kept > 0, "no listed setting kept its register prefetch");
+    }
+
+    /// A packed input is read from words, which the register prefetch does not carry: every float
+    /// setting prefetching into registers, prepared on a q4 weight, prefetches into its slots.
+    #[test]
+    fn a_packed_input_keeps_no_register_prefetch() {
+        use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+        use cubecl::tile::stage::Prefetch;
+        use cubek_std::layout::stored::{Operand, Packing};
+
+        let hw = offering(devices::strix_halo());
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::Q4S)
+            .per_block([32, 1], ScaleDtype::F16)
+            .with_store(QuantStore::PackedU32(1));
+        let packings = MatmulOperands {
+            lhs: None,
+            rhs: Some(Packing {
+                operand: Operand::of_scheme(&scheme, K, [K, N]).expect("q4 is one block along k"),
+                scheme,
+            }),
+            out: None,
+        };
+        let problem = MatmulRoutineProblem::packed(256, 512, 256, F16, packings);
+        let prefetching = CubeStagedMatmulRoutine
+            .settings(&hw)
+            .into_iter()
+            .filter(|settings| settings.microkernel.ring.prefetch == Prefetch::InRegisters);
+        let mut prepared = 0;
+        for settings in prefetching {
+            let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings)
+            else {
+                continue;
+            };
+            prepared += 1;
+            assert_eq!(
+                blueprint.microkernel.ring.prefetch,
+                Prefetch::InSlots,
+                "{settings}"
+            );
+        }
+        assert!(prepared > 0, "no register prefetching setting prepared");
     }
 
     /// The TMA engine stores a box wherever a descriptor addresses the output, each cube writing
