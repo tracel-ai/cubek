@@ -1,7 +1,7 @@
 use crate::matmul::cube::MatmulCubeSpace;
 use crate::matmul::plane::{
-    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
-    PlaneShuffleMicrokernelSettings,
+    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong,
+    PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
 };
 use crate::matmul::{
     MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead, MatmulRowsKind,
@@ -173,8 +173,13 @@ impl CubeShuffleMicrokernel {
     ///
     /// Then the tensor-core planes, on four, eight and sixteen planes, which split the Qwen3-4B
     /// projections best from one to sixteen rows on the RTX PRO 6000: one fragment a plane nearly
-    /// everywhere, two at eight planes beside it. None on a device that does not offer the plane's
-    /// decoding instruction: there they would only be tried and declined.
+    /// everywhere, two at eight planes beside it. Beside them the same planes laid with their rows
+    /// along `n`, the rhs filling the instruction's sixteen-row `A` and the lhs's few rows its
+    /// eight-column `B`, so a decode pads eight columns rather than fifteen rows: one fragment on
+    /// two, four and eight planes and two on eight, which read the Qwen3-8B projections at one row
+    /// within five percent of the device's read probe on an RTX 3070 Laptop. None on a device that
+    /// does not offer the plane's decoding instruction: there they would only be tried and
+    /// declined.
     pub fn packed_settings(hw: &Hardware) -> Vec<CubeShuffleMicrokernelSettings> {
         use CubeShufflePlaneSettings::{Fragment, Shuffle};
         use PlaneShuffleMicrokernelSettings as Plane;
@@ -184,6 +189,12 @@ impl CubeShuffleMicrokernel {
                 along_n,
                 Self::WINDOW_STEPS,
             ))
+        };
+        let along_n = |along_n| {
+            Fragment(
+                PlaneFragmentMicrokernelSettings::windowed(along_n, Self::WINDOW_STEPS)
+                    .rows_along(PlaneFragmentRowsAlong::N),
+            )
         };
         let mut settings = vec![
             CubeShuffleMicrokernelSettings::PACKED,
@@ -202,6 +213,10 @@ impl CubeShuffleMicrokernel {
                 cube(fragments(1), 4),
                 cube(fragments(2), 4),
                 cube(fragments(1), 16),
+                cube(along_n(1), 2),
+                cube(along_n(1), 4),
+                cube(along_n(1), 8),
+                cube(along_n(2), 8),
             ]);
         }
         settings
@@ -296,6 +311,15 @@ impl CubeShufflePlane {
             CubeShufflePlane::Fragment(plane) => plane.step_levels(),
         }
         .expect("candidates hold a plane whose steps walk K")
+    }
+
+    /// The axis its instruction lays its rows along, which the cube's sum is opened for: `m` for
+    /// the software plane, whose units hold the lhs's rows.
+    pub fn rows_along(&self) -> PlaneFragmentRowsAlong {
+        match self {
+            CubeShufflePlane::Shuffle(_) => PlaneFragmentRowsAlong::M,
+            CubeShufflePlane::Fragment(plane) => plane.settings.rows_along,
+        }
     }
 
     /// The one of the axes `N` is split into that the plane's columns land on.
