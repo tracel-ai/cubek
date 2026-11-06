@@ -1,5 +1,6 @@
 //! The reduce microkernels launched on their own on the test device, each operation against a CPU
-//! reference: rows along the reduced axis, at one and four values a line, the unit and the plane.
+//! reference: rows along the reduced axis and across it, at one and four values a line, in every
+//! scope.
 
 use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::zspace::shape;
@@ -63,12 +64,14 @@ fn reference(row: &[f32], operation: ReduceOperation) -> Vec<f32> {
 }
 
 /// Rows of `len` values: small whole numbers, so every sum is exact; one row with ties at both
-/// ends, one with a NaN, one all `-inf`, one with zeros; for a product, values `±1` and a few `2`.
+/// ends, one with a NaN, one all `-inf`, one with zeros; for a product, values `±1`, and `2` and
+/// `0.5` in turn, so no partial product of a long row overflows, whatever order it multiplies in.
 fn rows(len: usize, product: bool) -> Vec<Vec<f32>> {
     let base: Vec<f32> = match product {
         true => (0..len)
             .map(|i| match i % 9 {
                 0 => 2.0,
+                4 => 0.5,
                 3 | 5 => -1.0,
                 _ => 1.0,
             })
@@ -113,30 +116,37 @@ fn check_laid(
         operation,
         input: F32,
         accumulator: F32,
-        reduced: len,
         layout,
+        with_indices: false,
     };
     let out_elem = match operation.writes() {
-        ReduceWrites::Values => F32,
+        ReduceWrites::Values | ReduceWrites::Both => F32,
         ReduceWrites::Indices => I32,
     };
     let rows = rows(len, operation == ReduceOperation::Prod);
     let cells = operation.written_per_row();
-    let launch = ReduceLaunch::new(hw, item, scope, rows.len(), width, out_elem)
-        .unwrap_or_else(|why| panic!("{operation:?} {scope:?}: {why:?}"));
     // Across, every row a column: as many rows as a whole number of lines.
     let rows: Vec<Vec<f32>> = match layout {
         ReduceLayout::Along => rows,
         ReduceLayout::Across => rows.iter().cycle().take(2 * width).cloned().collect(),
     };
+    let launch = ReduceLaunch::new(hw, item, scope, rows.len(), len, width, out_elem)
+        .unwrap_or_else(|why| panic!("{operation:?} {scope:?}: {why:?}"));
+    // A hypercube's input is the same values with the reduced axis split into its parts.
     let (input_shape, input_values, out_shape) = match layout {
         ReduceLayout::Along => (
-            shape![rows.len(), len],
+            match scope {
+                ReduceScope::Hypercube { parts, .. } => shape![rows.len(), parts, len / parts],
+                _ => shape![rows.len(), len],
+            },
             rows.concat(),
             shape![rows.len(), cells],
         ),
         ReduceLayout::Across => (
-            shape![len, rows.len()],
+            match scope {
+                ReduceScope::Hypercube { parts, .. } => shape![parts, len / parts, rows.len()],
+                _ => shape![len, rows.len()],
+            },
             (0..len)
                 .flat_map(|r| rows.iter().map(move |row| row[r]))
                 .collect(),
@@ -252,5 +262,28 @@ fn every_scope_reduces_rows_side_by_side_like_the_cpu() {
                 check_laid(&hw, operation, scope, len, width, ReduceLayout::Across);
             }
         }
+    }
+}
+
+/// A row split across cubes, four planes each, reduces every operation to the CPU's answer: along
+/// the reduced axis, over two parts and over eight, a part shorter than the cube's units and one
+/// several times longer; and across it, each lane its own row.
+#[test]
+fn a_hypercube_reduces_every_operation_like_the_cpu() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    // The cubes meet through device memory, which the device must keep coherent within a launch.
+    if hw.plane_dim().is_err() || !hw.properties.features.device_memory_scope {
+        return;
+    }
+    for operation in OPERATIONS {
+        for (len, width, parts) in [(64, 1, 2), (8192, 4, 8)] {
+            let scope = ReduceScope::Hypercube { planes: 4, parts };
+            check(&hw, operation, scope, len, width);
+        }
+        let scope = ReduceScope::Hypercube {
+            planes: 4,
+            parts: 3,
+        };
+        check_laid(&hw, operation, scope, 300, 4, ReduceLayout::Across);
     }
 }
