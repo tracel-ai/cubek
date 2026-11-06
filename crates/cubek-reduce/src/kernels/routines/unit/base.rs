@@ -74,11 +74,15 @@ impl Routine for UnitReduceRoutine {
         microkernel.vectorize(&(), &mut vectorization);
         let widths = reduce_widths(hw, problem, vectorization);
         let plane_width = hw.dispatch_plane_size() as usize;
+        // Innermost row axis first, so neighbouring units take neighbouring rows: a plane's
+        // reads land a row apart instead of a whole outer dim apart.
+        let mut owners = problem.owner_axes();
+        owners.reverse();
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
                 .launch_units(
-                    &problem.owner_axes(),
+                    &owners,
                     UnitCube {
                         plane_width,
                         planes: settings.planes,
