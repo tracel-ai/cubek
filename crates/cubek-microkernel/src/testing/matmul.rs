@@ -5,8 +5,8 @@ use crate::matmul::plane::{
     plane_fragment_partial,
 };
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulReading,
-    MatmulRows, MatmulStage, MatmulWorkItem,
+    MatmulAxes, MatmulDestination, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead,
+    MatmulReading, MatmulRows, MatmulStage, MatmulWorkItem,
 };
 use cubecl::prelude::*;
 use cubecl::tile::kind::Boundary;
@@ -83,7 +83,11 @@ impl PlaneFragmentLaunch {
         let plane_width = microkernel.instruction.units(hw)?;
         let ring = StageRing::SINGLE.resolve(
             hw,
-            &stage.operands(item.elements, microkernel.orders),
+            &stage.operands(
+                item.elements,
+                microkernel.orders,
+                MatmulOperands::all(MatmulRead::AsBound),
+            ),
             plane_width as usize,
         );
         let storage = microkernel.instruction.stage_layout(None)?.storage(
