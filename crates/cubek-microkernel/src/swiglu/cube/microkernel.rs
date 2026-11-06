@@ -20,23 +20,27 @@ pub fn cube_swiglu_microkernel<E: Float, N: Size>(
 ) {
     let mut store = CubeStore::new::<E, N>(out.clone(), stage);
     let (units, run_lines) = comptime!((microkernel.units, microkernel.run_lines));
-    let unrolled = comptime!(microkernel.unrolled());
+    let unrolled = microkernel.unrolled();
+
     for group in cube {
         // A group's units lie along `x` and the cube's groups along `y`, as its resources state
         // them.
         let (slot, unit) = (UNIT_POS_Y as usize, UNIT_POS_X as usize);
+
         let run_in = input.at(&group);
         let halves = run_in.flat::<E, N>();
         let mut run_out = store.owner(&group, slot * run_lines);
+
         #[unroll(unrolled)]
-        for i in 0..comptime!(microkernel.lines_per_unit()) {
+        for i in 0..microkernel.lines_per_unit() {
             let line = unit + i * units;
-            if comptime!(run_lines.is_multiple_of(units)) || line < run_lines {
+            if run_lines.is_multiple_of(units) || line < run_lines {
                 let (gate, up) = (halves.read(line), halves.read(line + run_lines));
                 run_out.write::<E, N>(line, gated::<E, N>(gate, up));
             }
         }
     }
+
     store.finish();
 }
 

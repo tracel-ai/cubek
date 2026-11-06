@@ -151,7 +151,7 @@ fn irfft_interleaved_kernel<F: Float>(
     let mut signal_view = signal.view_mut(BatchSignalLayout::new(&*signal, window, dim));
     let mut shared_re = Shared::new_slice(n_fft);
     let mut shared_im = Shared::new_slice(n_fft);
-    let n_freq = comptime![n_fft / 2 + 1];
+    let n_freq = n_fft / 2 + 1;
     let mut k = UNIT_POS as usize;
     while k < n_fft {
         let dst = bit_reverse(k, log2_n);

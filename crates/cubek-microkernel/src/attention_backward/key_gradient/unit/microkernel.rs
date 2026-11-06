@@ -50,15 +50,18 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
     value_sum.zero();
     for head in keys.walk() {
         let queries = head.walk();
+
         // The queries from `first_step` to the head's last: a range takes its count of steps, so
         // the steps before the first are not walked past the end. A key past every query takes
         // none.
         let first = first_step.min(queries.total());
         let steps = queries.total() - first;
+
         for step in queries.range(first, steps) {
             let (query, key, value) = (query.at(&step), key.at(&step), value.at(&step));
             let (out_gradient, bias) = (out_gradient.at(&step), bias.at(&step));
             let (logsumexp, delta) = (logsumexp.at(&step), delta.at(&step));
+
             let mut score = bias.accumulator::<EA>(
                 &key,
                 &query,
@@ -72,6 +75,7 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
             }
 
             score.along(Q).probabilities::<EA>(scale, &bias, &logsumexp);
+
             let step_value_sum = value_sum.at(&step);
             for depth in step.walk() {
                 unit_registers_microkernel(&depth, &step_value_sum, &score, &out_gradient);
@@ -92,6 +96,7 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
             gradient
                 .along(Q)
                 .softmax_gradient::<EA>(&score.along(Q), &delta);
+
             let step_key_sum = key_sum.at(&step);
             for depth in step.walk() {
                 unit_registers_microkernel(&depth, &step_key_sum, &gradient, &query);

@@ -54,6 +54,7 @@ impl CubeStagedWalk {
                 over.accumulator::<EA>(b, a, walk.instruction, Semiring::SUM_PROD)
             }
         };
+
         sum.zero();
         sum
     }
@@ -242,6 +243,7 @@ pub fn cube_staged_microkernel<EA: Numeric, EL: Numeric>(
     #[comptime] storage: StageStorage,
 ) {
     let mut c = c.clone();
+
     match (walk.drain, walk.store) {
         (CubeStagedDrain::EachPlane, CubeStagedStore::Fragments) => {
             CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &c, walk, storage);
@@ -254,6 +256,7 @@ pub fn cube_staged_microkernel<EA: Numeric, EL: Numeric>(
         (CubeStagedDrain::Merged, _) => {
             let accumulator = c.smem_accumulation::<EA>();
             CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &accumulator.sink, walk, storage);
+
             sync_cube();
 
             c.copy_from(&accumulator.source);

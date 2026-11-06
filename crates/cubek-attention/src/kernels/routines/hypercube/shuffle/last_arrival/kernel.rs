@@ -49,6 +49,7 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
     let run = partitioning.walk();
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
+
     let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
     let steps = visible.steps(
         &first_step,
@@ -56,6 +57,7 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
         microkernel.cube.region_keys(),
         merge.cubes,
     );
+
     let slot_box = cube_unstaged_attention_partial_microkernel::<
         EA,
         E,
@@ -122,6 +124,7 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
     let run = partitioning.walk();
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
+
     let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
     let steps = visible.steps(
         &first_step,
@@ -129,6 +132,7 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
         microkernel.cube.region_keys(),
         merge.cubes,
     );
+
     let slot_box =
         cube_unstaged_attention_partial_microkernel::<EA, E, N, PackedStepReads, PackedStepReads>(
             run,
@@ -146,6 +150,7 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
             merge.slots.splits,
             merge.slots.val_dim,
         );
+
     // A packed cache is read for inference: no backward pass reads its logsumexp.
     hypercube_split_keys_merge_microkernel::<EA, E, N>(
         &slot_box,

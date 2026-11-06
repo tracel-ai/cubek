@@ -77,12 +77,12 @@ pub(crate) fn matmul_entry<
         )
     );
 
-    if comptime!(config.is_err()) {
+    if config.is_err() {
         push_validation_error(config.err().unwrap().to_string());
         comptime!(return);
     }
 
-    let config = comptime!(config.unwrap());
+    let config = config.unwrap();
 
     #[allow(clippy::collapsible_if)]
     if cube_mapping.can_yield_extra_cubes {

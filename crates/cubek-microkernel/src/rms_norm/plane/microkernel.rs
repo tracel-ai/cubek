@@ -16,7 +16,7 @@ pub fn plane_rms_norm_microkernel<E: Float, N: Size>(
     #[comptime] microkernel: PlaneRmsNormMicrokernel,
 ) {
     let lane = UNIT_POS_PLANE as usize;
-    let mut row = HeldRow::<E, N>::new(comptime!(microkernel.held_row()));
+    let mut row = HeldRow::<E, N>::new(microkernel.held_row());
     let sum = UnitShare::Plane.reduce::<f32>(row.load(input, lane), Monoid::Sum);
     row.write(weight, out, lane, scale.of(sum));
 }

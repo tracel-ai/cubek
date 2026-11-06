@@ -54,7 +54,7 @@ impl<E: Float, N: Size> HeldRow<E, N> {
     /// Registers for one unit's share of a row laid out as `shape` says, holding nothing yet.
     pub fn new(#[comptime] shape: HeldRowShape) -> Self {
         HeldRow::<E, N> {
-            lines: Array::new(comptime!(shape.per_unit())),
+            lines: Array::new(shape.per_unit()),
             shape,
         }
     }
@@ -70,17 +70,19 @@ impl<E: Float, N: Size> HeldRow<E, N> {
         let shape = comptime!(self.shape);
         let width = input.vector_size();
         let read = input.flat::<E, N>();
+
         let mut partial = 0.0f32;
         #[unroll]
-        for i in 0..comptime!(shape.per_unit()) {
-            let line = unit + i * comptime!(shape.units);
-            let held = read.read(min(line, comptime!(shape.lines - 1)));
+        for i in 0..shape.per_unit() {
+            let line = unit + i * shape.units;
+            let held = read.read(min(line, shape.lines - 1));
             self.lines[i] = held;
-            if comptime!(shape.lines.is_multiple_of(shape.units)) || line < comptime!(shape.lines) {
+            if shape.lines.is_multiple_of(shape.units) || line < shape.lines {
                 let wide = Vector::<f32, N>::cast_from(held);
                 partial += Monoid::reduce::<f32, N>(wide * wide, width, Monoid::Sum);
             }
         }
+
         partial
     }
 
@@ -91,10 +93,11 @@ impl<E: Float, N: Size> HeldRow<E, N> {
         let shape = comptime!(self.shape);
         let weights = weight.flat::<E, N>();
         let factor = Vector::<f32, N>::cast_from(factor);
+
         #[unroll]
-        for i in 0..comptime!(shape.per_unit()) {
-            let line = unit + i * comptime!(shape.units);
-            if comptime!(shape.lines.is_multiple_of(shape.units)) || line < comptime!(shape.lines) {
+        for i in 0..shape.per_unit() {
+            let line = unit + i * shape.units;
+            if shape.lines.is_multiple_of(shape.units) || line < shape.lines {
                 let normalized =
                     Vector::<E, N>::cast_from(Vector::<f32, N>::cast_from(self.lines[i]) * factor);
                 out.write::<E, N>(line, normalized * weights.read(line));

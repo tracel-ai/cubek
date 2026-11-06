@@ -17,7 +17,7 @@ pub fn cube_reduce_microkernel<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Num
     indices: &mut Tile,
     #[comptime] microkernel: CubeReduceMicrokernel,
 ) {
-    match comptime!(microkernel.item.operation.carrier()) {
+    match microkernel.item.operation.carrier() {
         ReduceCarrier::Values => {
             cube_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(input, out, indices, microkernel)
         }
@@ -54,28 +54,33 @@ fn cube_reduce<
     indices: &mut Tile,
     #[comptime] microkernel: CubeReduceMicrokernel,
 ) {
-    let operation = comptime!(microkernel.item.operation);
-    let monoid = comptime!(operation.monoid());
-    let layout = comptime!(microkernel.item.layout);
-    let units = comptime!(microkernel.lanes * microkernel.planes);
-    let unit = PLANE_POS as usize * comptime!(microkernel.lanes) + UNIT_POS_PLANE as usize;
+    let operation = microkernel.item.operation;
+    let monoid = operation.monoid();
+    let layout = microkernel.item.layout;
+    let units = microkernel.lanes * microkernel.planes;
+
+    let unit = PLANE_POS as usize * microkernel.lanes + UNIT_POS_PLANE as usize;
+
     let lines = input.flat::<In, N>();
     let count = lines.shape();
+
     let mut acc = C::identity(monoid);
     for step in 0..count.div_ceil(units) {
         let line = unit + step * units;
         if line < count {
             let read = read_mapped::<Acc, N>(
                 Vector::<Acc, N>::cast_from(lines.read(line)),
-                comptime!(operation.read_map()),
+                operation.read_map(),
             );
             C::accumulate(&mut acc, read, line, layout, monoid);
         }
     }
+
     let plane = C::across(acc, UnitShare::Plane, monoid);
-    let total = C::across_planes(plane, comptime!(microkernel.planes), monoid);
+    let total = C::across_planes(plane, microkernel.planes, monoid);
+
     if unit == 0 {
-        let values = match comptime!(layout) {
+        let values = match layout {
             ReduceLayout::Along => count * N::value(),
             ReduceLayout::Across => count,
         };
@@ -86,7 +91,7 @@ fn cube_reduce<
             values,
             layout,
             operation,
-            comptime!(microkernel.item.writes()),
+            microkernel.item.writes(),
         );
     }
 }

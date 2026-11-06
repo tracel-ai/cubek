@@ -207,7 +207,7 @@ fn rfft_kernel<F: Float>(
         FftMode::Forward,
     );
 
-    let n_freq = comptime![n_fft / 2 + 1];
+    let n_freq = n_fft / 2 + 1;
     let mut k = UNIT_POS as usize;
     while k < n_freq {
         spectrum_re_view.write_checked(k, shared_re[k]);

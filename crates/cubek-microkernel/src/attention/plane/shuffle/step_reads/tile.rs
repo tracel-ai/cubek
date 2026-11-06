@@ -26,6 +26,7 @@ impl<E: Float, N: Size> StepReads<N> for TileStepReads<E> {
     ) -> Array<Vector<E, N>> {
         let window = self.tile.at(step);
         let read = window.flat::<E, N>();
+
         let first_key = step.origin(S);
         let (teams, keys_in_flight) = comptime!((walk.teams, walk.keys_in_flight));
         let units_per_key = comptime!(walk.units_per_key);

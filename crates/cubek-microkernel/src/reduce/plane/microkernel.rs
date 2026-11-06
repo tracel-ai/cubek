@@ -17,7 +17,7 @@ pub fn plane_reduce_microkernel<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Nu
     indices: &mut Tile,
     #[comptime] microkernel: PlaneReduceMicrokernel,
 ) {
-    match comptime!(microkernel.item.operation.carrier()) {
+    match microkernel.item.operation.carrier() {
         ReduceCarrier::Values => {
             plane_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(input, out, indices, microkernel)
         }
@@ -54,27 +54,32 @@ fn plane_reduce<
     indices: &mut Tile,
     #[comptime] microkernel: PlaneReduceMicrokernel,
 ) {
-    let operation = comptime!(microkernel.item.operation);
-    let monoid = comptime!(operation.monoid());
-    let layout = comptime!(microkernel.item.layout);
-    let lanes = comptime!(microkernel.lanes);
+    let operation = microkernel.item.operation;
+    let monoid = operation.monoid();
+    let layout = microkernel.item.layout;
+    let lanes = microkernel.lanes;
+
     let lane = UNIT_POS_PLANE as usize;
+
     let lines = input.flat::<In, N>();
     let count = lines.shape();
+
     let mut acc = C::identity(monoid);
     for step in 0..count.div_ceil(lanes) {
         let line = lane + step * lanes;
         if line < count {
             let read = read_mapped::<Acc, N>(
                 Vector::<Acc, N>::cast_from(lines.read(line)),
-                comptime!(operation.read_map()),
+                operation.read_map(),
             );
             C::accumulate(&mut acc, read, line, layout, monoid);
         }
     }
+
     let total = C::across(acc, UnitShare::Plane, monoid);
+
     if lane == 0 {
-        let values = match comptime!(layout) {
+        let values = match layout {
             ReduceLayout::Along => count * N::value(),
             ReduceLayout::Across => count,
         };
@@ -85,7 +90,7 @@ fn plane_reduce<
             values,
             layout,
             operation,
-            comptime!(microkernel.item.writes()),
+            microkernel.item.writes(),
         );
     }
 }
