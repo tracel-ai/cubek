@@ -188,10 +188,12 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
 
     for plane in &partitioning {
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
+
         let mut sum = c
             .accumulator::<EA>(&a, &b, microkernel.tile_instruction(), Semiring::SUM_PROD)
             .with_scratch(Scratch::None);
         sum.zero();
+
         plane_fragment_staged_microkernel::<EL>(
             &plane,
             &sum,
@@ -202,6 +204,7 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
             stage.clone(),
             ring,
         );
+
         sum.drained_into(&c);
     }
 }

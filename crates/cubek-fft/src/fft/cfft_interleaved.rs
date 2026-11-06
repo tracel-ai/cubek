@@ -471,7 +471,7 @@ fn cfft_interleaved_four_step_radix1_kernel<F: Float>(
     );
 
     let sign = F::new(comptime!(f64::from(mode.sign())));
-    let n_total = comptime![n1 * n2];
+    let n_total = n1 * n2;
     let two_pi = F::new(2.0 * PI);
     let mut k1 = UNIT_POS as usize;
     while k1 < n1 {
@@ -508,7 +508,7 @@ fn cfft_interleaved_four_step_transpose_kernel<F: Float>(
         terminate!();
     }
 
-    let n_fft = comptime![n1 * n2];
+    let n_fft = n1 * n2;
     let inner = pos % n_fft;
     let window = pos / n_fft;
     let scratch_re_view = scratch_re.view(crate::layout::BatchSignalLayout::new(

@@ -46,6 +46,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
             accumulator
                 .sink
                 .dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
+
             sync_cube();
 
             c.copy_from(&accumulator.source);

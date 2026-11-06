@@ -23,7 +23,7 @@ pub fn cube_swiglu_kernel<E: Float, N: Size, O: Destination>(
             &x.at(&cube),
             &o.at(&cube),
             microkernel,
-            comptime!(stage.clone()),
+            stage.clone(),
         );
     }
 }

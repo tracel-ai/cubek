@@ -33,6 +33,7 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
     // A tile's clone is a handle to the same cells: the dot product lands in `delta`.
     let mut delta = delta.clone();
     delta.dot::<EA>(out_gradient, out);
+
     let mut sum = query_gradient.accumulator::<EA>(
         bias,
         key,
@@ -44,6 +45,7 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
     for step in queries.walk().range(0, steps) {
         let (query, key, value) = (query.at(&step), key.at(&step), value.at(&step));
         let (out_gradient, bias) = (out_gradient.at(&step), bias.at(&step));
+
         let mut score = bias.accumulator::<EA>(
             &query,
             &key,
@@ -57,6 +59,7 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
         }
 
         score.along(S).probabilities::<EA>(scale, &bias, logsumexp);
+
         let mut gradient = bias.accumulator::<EA>(
             &out_gradient,
             &value,
@@ -72,6 +75,7 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
         gradient
             .along(S)
             .softmax_gradient::<EA>(&score.along(S), &delta);
+
         let step_sum = sum.at(&step);
         for depth in step.walk() {
             unit_registers_microkernel(&depth, &step_sum, &gradient, &key);

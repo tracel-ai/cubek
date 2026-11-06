@@ -22,7 +22,7 @@ pub fn cube_rms_norm_kernel<E: Float, N: Size, O: Destination>(
     let x = input.tile(&partitioning);
     let w = weight.tile(&partitioning);
     let o = O::tile::<E, N>(out, &partitioning);
-    let scale = RmsNormScale::new(epsilon, comptime!(microkernel.plane.dim));
+    let scale = RmsNormScale::new(epsilon, microkernel.plane.dim);
     for cube in &partitioning {
         cube_rms_norm_microkernel::<E, N>(
             &cube,
@@ -31,7 +31,7 @@ pub fn cube_rms_norm_kernel<E: Float, N: Size, O: Destination>(
             &o.at(&cube),
             &scale,
             microkernel,
-            comptime!(stage.clone()),
+            stage.clone(),
         );
     }
 }
