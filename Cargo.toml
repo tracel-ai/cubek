@@ -47,10 +47,10 @@ cubek-test-utils = { path = "crates/cubek-test-utils", version = "0.4.0-pre.1", 
 # cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
 # cubecl-ir = { path = "../cubecl/crates/cubecl-ir", default-features = false }
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/onenewcode/cubecl", rev = "b33ec76403bbba9c4d7b0ec65d5abad55beb343f", default-features = false }
-cubecl-common = { git = "https://github.com/onenewcode/cubecl", rev = "b33ec76403bbba9c4d7b0ec65d5abad55beb343f", default-features = false }
-cubecl-environment = { git = "https://github.com/onenewcode/cubecl", rev = "b33ec76403bbba9c4d7b0ec65d5abad55beb343f", default-features = false }
-cubecl-ir = { git = "https://github.com/onenewcode/cubecl", rev = "b33ec76403bbba9c4d7b0ec65d5abad55beb343f", default-features = false }
+cubecl = { git = "https://github.com/onenewcode/cubecl", rev = "f1bea1d8c48a2d45e2c7277bbce94892792edc86", default-features = false }
+cubecl-common = { git = "https://github.com/onenewcode/cubecl", rev = "f1bea1d8c48a2d45e2c7277bbce94892792edc86", default-features = false }
+cubecl-environment = { git = "https://github.com/onenewcode/cubecl", rev = "f1bea1d8c48a2d45e2c7277bbce94892792edc86", default-features = false }
+cubecl-ir = { git = "https://github.com/onenewcode/cubecl", rev = "f1bea1d8c48a2d45e2c7277bbce94892792edc86", default-features = false }
 ### For releases ###
 # cubecl = { version = "0.12.0-pre.1", default-features = false }
 # cubecl-common = { version = "0.12.0-pre.1", default-features = false }
