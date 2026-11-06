@@ -1,5 +1,5 @@
 use crate::reduce::{ReadMap, ReduceLayout, ReduceOperation, ReduceWrites};
-use cubecl::tile::{Carrier, Indexed, Monoid, Tile, TopK};
+use cubecl::tile::{Carrier, Indexed, Monoid, TOP_K_UNROLL_BUDGET, Tile, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// What a reduction accumulates a unit's lines into, `N` lanes of `Acc`: how a line read at a position
@@ -25,16 +25,28 @@ pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
     /// written anew. Every unit of the cube is left with the total.
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self;
 
-    /// What `acc` holds written to `out` as `operation` asks, its lanes reduced to one first
-    /// where they hold one row ([`ReduceLayout::Along`]): `out`'s first cell along the row, or its
-    /// first line across rows (its first `k` of either, for a top-k). `count` is the number of
-    /// values reduced, which a mean divides by.
-    fn write<Out: Numeric>(
+    /// `acc` stored as partial `part` of a row its cubes split, for the cube that merges them
+    /// ([`load`](ReduceAccumulator::load)): its lines, one for the values and for an [`Indexed`], `k` for a
+    /// top-k, written that many lines times `part` into `values`, in `Acc`, and its indices at
+    /// the same lines of `indices`, in `u32`, where it carries any.
+    fn store(acc: Self, values: &mut Tile, indices: &mut Tile, part: usize);
+
+    /// Partial `part`, as [`store`](ReduceAccumulator::store) left it.
+    fn load(values: &Tile, indices: &Tile, part: usize) -> Self;
+
+    /// What `acc` holds written as `writes` says, its lanes reduced to one first where they
+    /// hold one row ([`ReduceLayout::Along`]): to `out`'s first cell along the row, or its first
+    /// line across rows (its first `k` of either, for a top-k). With [`ReduceWrites::Both`] the
+    /// indices go to `indices` at the same places, in `Idx`; `indices` is written only then.
+    /// `count` is the number of values reduced, which a mean divides by.
+    fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
+        indices: &mut Tile,
         count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
+        #[comptime] writes: ReduceWrites,
     );
 }
 
@@ -104,13 +116,28 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
         total
     }
 
-    fn write<Out: Numeric>(
+    fn store(acc: Self, values: &mut Tile, _indices: &mut Tile, part: usize) {
+        let mut lines = values.flat_mut::<Acc, N>();
+        lines.write(part, acc);
+    }
+
+    fn load(values: &Tile, _indices: &Tile, part: usize) -> Self {
+        values.flat::<Acc, N>().read(part)
+    }
+
+    fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
+        _indices: &mut Tile,
         count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
+        #[comptime] writes: ReduceWrites,
     ) {
+        comptime!(assert!(
+            writes == ReduceWrites::Values,
+            "ReduceAccumulator: {operation:?} accumulates the values themselves, which carry no index to write"
+        ));
         let monoid = comptime!(operation.monoid());
         match comptime!(layout) {
             ReduceLayout::Along => {
@@ -173,12 +200,28 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
         total
     }
 
-    fn write<Out: Numeric>(
+    fn store(acc: Self, values: &mut Tile, indices: &mut Tile, part: usize) {
+        let mut value_lines = values.flat_mut::<Acc, N>();
+        value_lines.write(part, acc.value);
+        let mut index_lines = indices.flat_mut::<u32, N>();
+        index_lines.write(part, acc.index);
+    }
+
+    fn load(values: &Tile, indices: &Tile, part: usize) -> Self {
+        Indexed::<Acc, N> {
+            value: values.flat::<Acc, N>().read(part),
+            index: indices.flat::<u32, N>().read(part),
+        }
+    }
+
+    fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
+        indices: &mut Tile,
         _count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
+        #[comptime] writes: ReduceWrites,
     ) {
         let monoid = comptime!(operation.monoid());
         match comptime!(layout) {
@@ -193,19 +236,36 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
                     };
                     best = OneIndexed::<Acc>::combine(best, one, monoid);
                 }
-                let mut cells = out.flat_mut::<Out, Const<1>>();
-                match comptime!(operation.writes()) {
-                    ReduceWrites::Values => cells.write(0, Vector::cast_from(best.value)),
-                    ReduceWrites::Indices => cells.write(0, Vector::cast_from(best.index)),
-                }
+                write_line::<Out, Idx, Acc, Const<1>>(
+                    out, indices, 0, best.value, best.index, writes,
+                );
             }
             ReduceLayout::Across => {
-                let mut lines = out.flat_mut::<Out, N>();
-                match comptime!(operation.writes()) {
-                    ReduceWrites::Values => lines.write(0, Vector::cast_from(acc.value)),
-                    ReduceWrites::Indices => lines.write(0, Vector::cast_from(acc.index)),
-                }
+                write_line::<Out, Idx, Acc, N>(out, indices, 0, acc.value, acc.index, writes);
             }
+        }
+    }
+}
+
+/// Line `at` of what an owner writes, `value` and its `index`, written as `writes` says: one of
+/// them to `out`, or the value to `out` and the index to `indices`, which nothing else writes.
+#[cube]
+fn write_line<Out: Numeric, Idx: Numeric, Acc: Numeric, W: Size>(
+    out: &mut Tile,
+    indices: &mut Tile,
+    at: usize,
+    value: Vector<Acc, W>,
+    index: Vector<u32, W>,
+    #[comptime] writes: ReduceWrites,
+) {
+    let mut lines = out.flat_mut::<Out, W>();
+    match comptime!(writes) {
+        ReduceWrites::Values => lines.write(at, Vector::cast_from(value)),
+        ReduceWrites::Indices => lines.write(at, Vector::cast_from(index)),
+        ReduceWrites::Both => {
+            lines.write(at, Vector::cast_from(value));
+            let mut index_lines = indices.flat_mut::<Idx, W>();
+            index_lines.write(at, Vector::cast_from(index));
         }
     }
 }
@@ -238,7 +298,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         let mut total = TopK::<Acc, N, K>::identity(monoid);
         #[unroll]
         for plane in 0..planes {
-            #[unroll]
+            #[unroll(k * k <= TOP_K_UNROLL_BUDGET)]
             for slot in 0..k {
                 total = total.insert(values[plane * k + slot], indices[plane * k + slot], monoid);
             }
@@ -247,12 +307,39 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         total
     }
 
-    fn write<Out: Numeric>(
+    fn store(acc: Self, values: &mut Tile, indices: &mut Tile, part: usize) {
+        let k = K::value();
+        let mut value_lines = values.flat_mut::<Acc, N>();
+        let mut index_lines = indices.flat_mut::<u32, N>();
+        #[unroll(k <= TOP_K_UNROLL_BUDGET)]
+        for slot in 0..k {
+            value_lines.write(part * k + slot, acc.values[slot]);
+            index_lines.write(part * k + slot, acc.indices[slot]);
+        }
+    }
+
+    fn load(values: &Tile, indices: &Tile, part: usize) -> Self {
+        let k = K::value();
+        let value_lines = values.flat::<Acc, N>();
+        let index_lines = indices.flat::<u32, N>();
+        let mut kept_values = Array::new(k);
+        let mut kept_indices = Array::new(k);
+        #[unroll(k <= TOP_K_UNROLL_BUDGET)]
+        for slot in 0..k {
+            kept_values[slot] = value_lines.read(part * k + slot);
+            kept_indices[slot] = index_lines.read(part * k + slot);
+        }
+        TopK::<Acc, N, K>::new(kept_values, kept_indices)
+    }
+
+    fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
+        indices: &mut Tile,
         _count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
+        #[comptime] writes: ReduceWrites,
     ) {
         let monoid = comptime!(operation.monoid());
         let k = K::value();
@@ -262,7 +349,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
                 let mut best = TopK::<Acc, Const<1>, K>::identity(monoid);
                 #[unroll]
                 for lane in 0..N::value() {
-                    #[unroll]
+                    #[unroll(k * k <= TOP_K_UNROLL_BUDGET)]
                     for slot in 0..k {
                         best = best.insert(
                             Vector::new(acc.values[slot].extract(lane)),
@@ -271,31 +358,30 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
                         );
                     }
                 }
-                let mut cells = out.flat_mut::<Out, Const<1>>();
                 #[unroll]
                 for slot in 0..k {
-                    match comptime!(operation.writes()) {
-                        ReduceWrites::Values => {
-                            cells.write(slot, Vector::cast_from(best.values[slot]))
-                        }
-                        ReduceWrites::Indices => {
-                            cells.write(slot, Vector::cast_from(best.indices[slot]))
-                        }
-                    }
+                    write_line::<Out, Idx, Acc, Const<1>>(
+                        out,
+                        indices,
+                        slot,
+                        best.values[slot],
+                        best.indices[slot],
+                        writes,
+                    );
                 }
             }
-            ReduceLayout::Across => {
-                let mut lines = out.flat_mut::<Out, N>();
+            ReduceLayout::Across =>
+            {
                 #[unroll]
                 for slot in 0..k {
-                    match comptime!(operation.writes()) {
-                        ReduceWrites::Values => {
-                            lines.write(slot, Vector::cast_from(acc.values[slot]))
-                        }
-                        ReduceWrites::Indices => {
-                            lines.write(slot, Vector::cast_from(acc.indices[slot]))
-                        }
-                    }
+                    write_line::<Out, Idx, Acc, N>(
+                        out,
+                        indices,
+                        slot,
+                        acc.values[slot],
+                        acc.indices[slot],
+                        writes,
+                    );
                 }
             }
         }
