@@ -33,13 +33,13 @@ fn unit_partials_probe<N: Size>(
     positions: u32,
 ) {
     let width = N::value();
-    let columns = comptime!(microkernel.columns);
+    let columns = microkernel.columns;
     let parts = comptime!(columns / width);
-    let units = comptime!(microkernel.units);
+    let units = microkernel.units;
     let (unit, run) = (UNIT_POS_X as usize, UNIT_POS_Y as usize);
     let mut partials = UnitPartials::<N>::new(run, unit, runs, microkernel);
     for position in 0..positions as usize {
-        let base = ((position * runs + run) * units + unit) * comptime!(2 * columns);
+        let base = ((position * runs + run) * units + unit) * (2 * columns);
         #[unroll]
         for sum in 0..2usize {
             partials.clear();
@@ -159,9 +159,9 @@ fn held_state_part<N: Size>(
     #[comptime] runs: usize,
 ) {
     let width = N::value();
-    let columns = comptime!(microkernel.columns);
+    let columns = microkernel.columns;
     let parts = comptime!(columns / width);
-    let units = comptime!(microkernel.units);
+    let units = microkernel.units;
     let mut write = Array::<Vector<f32, N>>::new(parts);
     for run in cube {
         for unit in run.walk() {
@@ -173,7 +173,7 @@ fn held_state_part<N: Size>(
             for step in unit.walk() {
                 let position = step.coord(POSITION);
                 let (keys, queries) = (key.at(&step), query.at(&step));
-                let base = (origin / columns * units + slot) * comptime!(2 * columns);
+                let base = (origin / columns * units + slot) * (2 * columns);
                 held.decay_and_recall(&keys, PROBE_DECAY, &mut partials);
                 if position == 0 {
                     #[unroll]

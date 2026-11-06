@@ -74,9 +74,10 @@ jobs:
         run: cargo xtask check lint
       # --------------------------------------------------------------------------------
       # The test job only runs the light tier, so nothing else ever compiles the
-      # `extended` tests.
+      # `extended` tests. A `comptime!` the `#[cube]` macro doesn't need is a warning
+      # here too, so the wrappers don't come back.
       - name: Lint extended tests
-        run: cargo clippy --tests --features extended -- -D warnings
+        run: cargo clippy --tests --features extended,cubecl/warn-redundant-comptime -- -D warnings
       # --------------------------------------------------------------------------------
       # Every other job compiles both of cubek-matmul's architectures, so nothing else
       # would notice a `#[cfg]` that stopped being true. These two build each
