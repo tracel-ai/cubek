@@ -1,7 +1,6 @@
 use super::{ConvProblem, ConvRoles, ConvSettings};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{Axis, Levels, Partitioning, Space, StageStorage};
 use cubek_microkernel::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentMicrokernel};
@@ -135,9 +134,8 @@ impl ConvTiles {
     }
 }
 
-/// How a launch places its contraction over the problem: either a cube for every box of rows and
-/// columns, its planes each owning a tile of it, or a plane of the launch for every box. Either
-/// way the box walks every contracted cell.
+/// How a launch places its contraction over the problem: a cube for every box of rows and
+/// columns, its planes each owning a tile of it, the box walking every contracted cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConvPartitioning {
     partitioning: Partitioning,
@@ -145,7 +143,7 @@ pub struct ConvPartitioning {
     /// Rows and columns of the output one stage owner holds, and the contraction cells a stage
     /// holds, `(rows, columns, depth)`.
     stage: (usize, usize, usize),
-    /// Owners of a stage in one cube: the cube itself, or each of its planes.
+    /// Owners of a stage in one cube.
     owners: usize,
     /// Elements one write brings along the output's innermost axis.
     out_run: usize,
@@ -173,33 +171,6 @@ impl ConvPartitioning {
         let rows = m * tiles.fragments.0 * planes_m;
         let columns = n * tiles.fragments.1 * planes_n;
         Self::new(problem, tiles, levels, (rows, columns, steps), 1)
-    }
-
-    /// Each plane stages its own window.
-    pub fn plane(problem: &ConvProblem, tiles: &ConvTiles) -> Self {
-        let (planes_m, planes_n) = tiles.planes;
-        let (m, n, _) = tiles.instruction;
-        let roles = tiles.roles;
-        let axes = roles.axes();
-        let (stage, steps) = Self::stage(problem, tiles);
-        let order = PlaneOrder::new(
-            &[(axes.m, planes_m), (axes.n, planes_n)],
-            CubeOrder::RowMajor,
-        );
-        let levels = tiles
-            .leaf(stage)
-            .walk_every(&roles.contracted)
-            .launch_planes(&[axes.m, axes.n, roles.across(), roles.batch()], order)
-            .build();
-        let rows = m * tiles.fragments.0;
-        let columns = n * tiles.fragments.1;
-        Self::new(
-            problem,
-            tiles,
-            levels,
-            (rows, columns, steps),
-            planes_m * planes_n,
-        )
     }
 
     /// The axis a stage walks and the steps along it, and the contraction cells that holds.

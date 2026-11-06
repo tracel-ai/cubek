@@ -1,4 +1,4 @@
-use super::{CubeStagedConvRoutine, PlaneFragmentConvRoutine};
+use super::CubeStagedConvRoutine;
 use crate::kernels::tiled::{ConvProblem, ConvRoutine, ConvTensors};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::plane::{
@@ -133,15 +133,12 @@ impl core::fmt::Display for ConvSettings {
 pub enum ConvRoutineKind {
     /// [`CubeStagedConvRoutine`].
     CubeStaged,
-    /// [`PlaneFragmentConvRoutine`].
-    PlaneFragment,
 }
 
 impl core::fmt::Display for ConvRoutineKind {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::CubeStaged => write!(f, "cube_staged"),
-            Self::PlaneFragment => write!(f, "plane_fragment"),
         }
     }
 }
@@ -161,7 +158,6 @@ impl ConvRoutineKind {
     ) -> Result<(), Refusal> {
         match self {
             Self::CubeStaged => CubeStagedConvRoutine.launch_on(hw, tensors, settings),
-            Self::PlaneFragment => PlaneFragmentConvRoutine.launch_on(hw, tensors, settings),
         }
     }
 }

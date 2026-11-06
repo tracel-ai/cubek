@@ -2,11 +2,9 @@
 
 mod base;
 mod cube;
-mod plane;
 
 pub use base::*;
 pub use cube::*;
-pub use plane::*;
 
 #[cfg(test)]
 mod test_support;

@@ -2,9 +2,7 @@ use cubek_test_utils::CatalogEntry;
 
 use crate::{
     AcceleratedTileKind, ConvAlgorithm, Strategy,
-    kernels::tiled::{
-        ConvRoutineKind, ConvSettings, CubeStagedConvRoutine, PlaneFragmentConvRoutine,
-    },
+    kernels::tiled::{ConvRoutineKind, ConvSettings, CubeStagedConvRoutine},
 };
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
@@ -93,46 +91,6 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
                     stage_steps: 7,
                     ..CubeStagedConvRoutine::GRID_1X2.mma()
                 }),
-            },
-        ),
-        CatalogEntry::new(
-            "plane_fragment",
-            "Plane fragment, first setting that serves",
-            Strategy::Tile {
-                routine: ConvRoutineKind::PlaneFragment,
-                settings: None,
-            },
-        ),
-        CatalogEntry::new(
-            "plane_fragment_cmma_grid_2x2",
-            "Plane fragment / Cmma, 2x2 fragments",
-            Strategy::Tile {
-                routine: ConvRoutineKind::PlaneFragment,
-                settings: Some(PlaneFragmentConvRoutine::GRID_2X2),
-            },
-        ),
-        CatalogEntry::new(
-            "plane_fragment_cmma_grid_1x2",
-            "Plane fragment / Cmma, 1x2 fragments",
-            Strategy::Tile {
-                routine: ConvRoutineKind::PlaneFragment,
-                settings: Some(PlaneFragmentConvRoutine::GRID_1X2),
-            },
-        ),
-        CatalogEntry::new(
-            "plane_fragment_mma_grid_2x2",
-            "Plane fragment / Mma, 2x2 fragments",
-            Strategy::Tile {
-                routine: ConvRoutineKind::PlaneFragment,
-                settings: Some(PlaneFragmentConvRoutine::GRID_2X2.mma()),
-            },
-        ),
-        CatalogEntry::new(
-            "plane_fragment_mma_grid_1x2",
-            "Plane fragment / Mma, 1x2 fragments",
-            Strategy::Tile {
-                routine: ConvRoutineKind::PlaneFragment,
-                settings: Some(PlaneFragmentConvRoutine::GRID_1X2.mma()),
             },
         ),
     ]

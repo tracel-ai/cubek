@@ -81,12 +81,6 @@ tiled_tests! {
     cube_staged_cmma_grid_1x2_conv3x3_c64: "cube_staged_cmma_grid_1x2", "conv3x3_c64";
     cube_staged_cmma_grid_1x2_conv3x3_c64_stride2: "cube_staged_cmma_grid_1x2", "conv3x3_c64_stride2";
     cube_staged_cmma_grid_1x2_narrow_width: "cube_staged_cmma_grid_1x2", "narrow_width";
-    plane_fragment_cmma_grid_2x2_conv3x3_c64: "plane_fragment_cmma_grid_2x2", "conv3x3_c64";
-    plane_fragment_cmma_grid_2x2_conv3x3_c64_stride2: "plane_fragment_cmma_grid_2x2", "conv3x3_c64_stride2";
-    plane_fragment_cmma_grid_2x2_narrow_width: "plane_fragment_cmma_grid_2x2", "narrow_width";
-    plane_fragment_cmma_grid_1x2_conv3x3_c64: "plane_fragment_cmma_grid_1x2", "conv3x3_c64";
-    plane_fragment_cmma_grid_1x2_conv3x3_c64_stride2: "plane_fragment_cmma_grid_1x2", "conv3x3_c64_stride2";
-    plane_fragment_cmma_grid_1x2_narrow_width: "plane_fragment_cmma_grid_1x2", "narrow_width";
     cube_staged_mma_grid_2x2_width_1_alexnet_like: "cube_staged_mma_grid_2x2_width_1", "alexnet_like";
     cube_staged_mma_grid_2x2_width_1_large_kernel: "cube_staged_mma_grid_2x2_width_1", "large_kernel";
     cube_staged_mma_grid_2x2_width_1_conv3x3_c64: "cube_staged_mma_grid_2x2_width_1", "conv3x3_c64";
@@ -102,26 +96,11 @@ tiled_tests! {
     cube_staged_mma_grid_1x2_conv3x3_c64: "cube_staged_mma_grid_1x2", "conv3x3_c64";
     cube_staged_mma_grid_1x2_conv3x3_c64_stride2: "cube_staged_mma_grid_1x2", "conv3x3_c64_stride2";
     cube_staged_mma_grid_1x2_narrow_width: "cube_staged_mma_grid_1x2", "narrow_width";
-    plane_fragment_mma_grid_2x2_alexnet_like: "plane_fragment_mma_grid_2x2", "alexnet_like";
-    plane_fragment_mma_grid_2x2_large_kernel: "plane_fragment_mma_grid_2x2", "large_kernel";
-    plane_fragment_mma_grid_2x2_conv3x3_c64: "plane_fragment_mma_grid_2x2", "conv3x3_c64";
-    plane_fragment_mma_grid_2x2_conv3x3_c64_stride2: "plane_fragment_mma_grid_2x2", "conv3x3_c64_stride2";
-    plane_fragment_mma_grid_2x2_narrow_width: "plane_fragment_mma_grid_2x2", "narrow_width";
-    plane_fragment_mma_grid_1x2_alexnet_like: "plane_fragment_mma_grid_1x2", "alexnet_like";
-    plane_fragment_mma_grid_1x2_large_kernel: "plane_fragment_mma_grid_1x2", "large_kernel";
-    plane_fragment_mma_grid_1x2_conv3x3_c64: "plane_fragment_mma_grid_1x2", "conv3x3_c64";
-    plane_fragment_mma_grid_1x2_conv3x3_c64_stride2: "plane_fragment_mma_grid_1x2", "conv3x3_c64_stride2";
-    plane_fragment_mma_grid_1x2_narrow_width: "plane_fragment_mma_grid_1x2", "narrow_width";
     cube_staged_alexnet_like: "cube_staged", "alexnet_like";
     cube_staged_large_kernel: "cube_staged", "large_kernel";
     cube_staged_conv3x3_c64: "cube_staged", "conv3x3_c64";
     cube_staged_conv3x3_c64_stride2: "cube_staged", "conv3x3_c64_stride2";
     cube_staged_narrow_width: "cube_staged", "narrow_width";
-    plane_fragment_alexnet_like: "plane_fragment", "alexnet_like";
-    plane_fragment_large_kernel: "plane_fragment", "large_kernel";
-    plane_fragment_conv3x3_c64: "plane_fragment", "conv3x3_c64";
-    plane_fragment_conv3x3_c64_stride2: "plane_fragment", "conv3x3_c64_stride2";
-    plane_fragment_narrow_width: "plane_fragment", "narrow_width";
 }
 
 /// A forward problem of `channels` in and `channels_out` out, with the window as stated.
@@ -162,48 +141,35 @@ macro_rules! problem_tests {
 problem_tests! {
     co_3_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 3), [9, 9], [3, 3], SAME_3X3);
     co_3_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (64, 3), [9, 9], [3, 3], SAME_3X3);
-    co_3_plane_fragment_cmma: "plane_fragment_cmma_grid_2x2", conv(2, (64, 3), [9, 9], [3, 3], SAME_3X3);
-    co_3_plane_fragment_mma: "plane_fragment_mma_grid_2x2", conv(2, (64, 3), [9, 9], [3, 3], SAME_3X3);
     co_48_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 48), [9, 9], [3, 3], SAME_3X3);
     co_48_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (64, 48), [9, 9], [3, 3], SAME_3X3);
-    co_48_plane_fragment_cmma: "plane_fragment_cmma_grid_2x2", conv(2, (64, 48), [9, 9], [3, 3], SAME_3X3);
-    co_48_plane_fragment_mma: "plane_fragment_mma_grid_2x2", conv(2, (64, 48), [9, 9], [3, 3], SAME_3X3);
 }
 
 /// Enough pixels that a write past the output channels would land in a neighbour's.
 problem_tests! {
     co_10_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 10), [20, 20], [3, 3], SAME_3X3);
-    co_10_plane_fragment_mma: "plane_fragment_mma_grid_2x2", conv(2, (64, 10), [20, 20], [3, 3], SAME_3X3);
 }
 
 /// An output width that is a whole number of boxes, and one past 64 that is not.
 problem_tests! {
     ow_64_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(1, (64, 32), [3, 64], [3, 3], SAME_3X3);
-    ow_64_plane_fragment_cmma: "plane_fragment_cmma_grid_2x2", conv(1, (64, 32), [3, 64], [3, 3], SAME_3X3);
     ow_128_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(1, (64, 32), [3, 128], [3, 3], SAME_3X3);
     ow_32_cube_staged_cmma: "cube_staged_cmma_grid_1x2", conv(1, (64, 32), [3, 32], [3, 3], SAME_3X3);
     ow_64_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(1, (64, 32), [3, 64], [3, 3], SAME_3X3);
-    ow_64_plane_fragment_mma: "plane_fragment_mma_grid_2x2", conv(1, (64, 32), [3, 64], [3, 3], SAME_3X3);
     ow_130_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(1, (64, 32), [3, 130], [3, 3], SAME_3X3);
-    ow_130_plane_fragment_mma: "plane_fragment_mma_grid_2x2", conv(1, (64, 32), [3, 130], [3, 3], SAME_3X3);
 }
 
 /// Windows that are not the square, dense, symmetric one.
 problem_tests! {
     dilation_2_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [12, 12], [3, 3], ([1, 1], [2, 2], [2, 2]));
-    dilation_2_plane_fragment_mma: "plane_fragment_mma_grid_2x2", conv(2, (64, 32), [12, 12], [3, 3], ([1, 1], [2, 2], [2, 2]));
     unequal_strides_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [12, 15], [3, 3], ([1, 2], [1, 1], [1, 1]));
-    unequal_strides_plane_fragment_mma: "plane_fragment_mma_grid_2x2", conv(2, (64, 32), [12, 15], [3, 3], ([2, 1], [1, 1], [1, 1]));
     non_square_kernel_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [10, 12], [3, 5], ([1, 1], [1, 2], [1, 1]));
-    non_square_kernel_plane_fragment_mma: "plane_fragment_mma_grid_2x2", conv(2, (64, 32), [10, 12], [5, 3], ([1, 1], [2, 1], [1, 1]));
 }
 
 /// One and five channels, which make a step of taps, over a batch of one.
 problem_tests! {
     channels_1_cube_staged: "cube_staged", conv(1, (1, 16), [12, 12], [3, 3], SAME_3X3);
-    channels_1_plane_fragment: "plane_fragment", conv(1, (1, 16), [12, 12], [3, 3], SAME_3X3);
     channels_5_cube_staged: "cube_staged", conv(1, (5, 16), [12, 12], [3, 3], SAME_3X3);
-    channels_5_plane_fragment: "plane_fragment", conv(1, (5, 16), [12, 12], [3, 3], SAME_3X3);
 }
 
 /// Twelve input channels under a padded window: a width of four divides them, yet a tile of
@@ -211,8 +177,6 @@ problem_tests! {
 problem_tests! {
     ci_12_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
     ci_12_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
-    ci_12_plane_fragment_cmma: "plane_fragment_cmma_grid_2x2", conv(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
-    ci_12_plane_fragment_mma: "plane_fragment_mma_grid_2x2", conv(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
 }
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -376,12 +340,9 @@ macro_rules! bound_tests {
 /// stepping past channels that are not the view's, and a tensor stored channels first.
 bound_tests! {
     offset_input_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Offset, Dense;
-    offset_input_plane_fragment_mma: "plane_fragment_mma_grid_2x2", Offset, Dense;
     offset_weight_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Dense, Offset;
     sliced_input_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Sliced, Dense;
-    sliced_input_plane_fragment_mma: "plane_fragment_mma_grid_2x2", Sliced, Dense;
     permuted_input_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Permuted, Dense;
-    permuted_input_plane_fragment_mma: "plane_fragment_mma_grid_2x2", Permuted, Dense;
     permuted_weight_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Dense, Permuted;
 }
 
@@ -609,16 +570,6 @@ macro_rules! weight_grad_tests {
             fn cube_staged_mma() {
                 check("cube_staged_mma_grid_2x2");
             }
-
-            #[test]
-            fn plane_fragment_cmma() {
-                check("plane_fragment_cmma_grid_2x2");
-            }
-
-            #[test]
-            fn plane_fragment_mma() {
-                check("plane_fragment_mma_grid_2x2");
-            }
         })*
     };
 }
@@ -661,8 +612,6 @@ macro_rules! weight_grad_offset_tests {
 weight_grad_offset_tests! {
     weight_grad_offset_output_cube_staged_cmma: "cube_staged_cmma_grid_2x2";
     weight_grad_offset_output_cube_staged_mma: "cube_staged_mma_grid_2x2";
-    weight_grad_offset_output_plane_fragment_cmma: "plane_fragment_cmma_grid_2x2";
-    weight_grad_offset_output_plane_fragment_mma: "plane_fragment_mma_grid_2x2";
 }
 
 /// A map one to three positions wide makes a step of two axes, which cmma declines by name and
@@ -677,10 +626,6 @@ macro_rules! weight_grad_mma_tests {
                 check_weight_grad("cube_staged_mma_grid_2x2", &$problem, Binding::Dense, Binding::Dense);
             }
 
-            #[test]
-            fn plane_fragment_mma() {
-                check_weight_grad("plane_fragment_mma_grid_2x2", &$problem, Binding::Dense, Binding::Dense);
-            }
         })*
     };
 }
@@ -706,8 +651,6 @@ macro_rules! weight_grad_narrow_tests {
 weight_grad_narrow_tests! {
     weight_grad_whole_ci_16_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2";
     weight_grad_whole_ci_16_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2";
-    weight_grad_whole_ci_16_plane_fragment_cmma_grid_1x2: "plane_fragment_cmma_grid_1x2";
-    weight_grad_whole_ci_16_plane_fragment_mma_grid_1x2: "plane_fragment_mma_grid_1x2";
 }
 
 /// What the launch of these weight backward operands through `strategy_id` is refused with, as its
@@ -784,11 +727,11 @@ fn an_output_gradient_of_another_batch_is_refused_by_name() {
     assert!(message.contains("batch"), "{message}");
 }
 
-/// A step of output rows and columns is declined through cmma by name, on both routines.
+/// A step of output rows and columns is declined through cmma by name, .
 #[test]
 fn cmma_declines_a_step_across_output_positions() {
     let client = client();
-    for strategy in ["cube_staged_cmma_grid_2x2", "plane_fragment_cmma_grid_2x2"] {
+    for strategy in ["cube_staged_cmma_grid_2x2"] {
         let input = InputBinding::new(dense(&client, [2, 6, 3, 32]), F16);
         let out_grad = dense(&client, [2, 6, 3, 16]);
         let message = weight_grad_refusal(strategy, input, out_grad, [16, 3, 3, 32]);
@@ -942,16 +885,6 @@ macro_rules! data_grad_tests {
             fn cube_staged_mma() {
                 check("cube_staged_mma_grid_2x2");
             }
-
-            #[test]
-            fn plane_fragment_cmma() {
-                check("plane_fragment_cmma_grid_2x2");
-            }
-
-            #[test]
-            fn plane_fragment_mma() {
-                check("plane_fragment_mma_grid_2x2");
-            }
         })*
     };
 }
@@ -995,8 +928,6 @@ macro_rules! data_grad_offset_tests {
 data_grad_offset_tests! {
     data_grad_offset_output_cube_staged_cmma: "cube_staged_cmma_grid_2x2";
     data_grad_offset_output_cube_staged_mma: "cube_staged_mma_grid_2x2";
-    data_grad_offset_output_plane_fragment_cmma: "plane_fragment_cmma_grid_2x2";
-    data_grad_offset_output_plane_fragment_mma: "plane_fragment_mma_grid_2x2";
 }
 
 /// Three and eight output channels make a step of taps and channels, which cmma declines by name
@@ -1011,10 +942,6 @@ macro_rules! data_grad_mma_tests {
                 check_data_grad("cube_staged_mma_grid_2x2", &$problem, Binding::Dense, Binding::Dense);
             }
 
-            #[test]
-            fn plane_fragment_mma() {
-                check_data_grad("plane_fragment_mma_grid_2x2", &$problem, Binding::Dense, Binding::Dense);
-            }
         })*
     };
 }
@@ -1136,11 +1063,11 @@ fn a_data_gradient_of_another_batch_is_refused_by_name() {
     assert!(message.contains("batch"), "{message}");
 }
 
-/// A step of taps and output channels is declined through cmma by name, on both routines.
+/// A step of taps and output channels is declined through cmma by name, .
 #[test]
 fn cmma_declines_a_data_backward_step_across_taps() {
     let client = client();
-    for strategy in ["cube_staged_cmma_grid_2x2", "plane_fragment_cmma_grid_2x2"] {
+    for strategy in ["cube_staged_cmma_grid_2x2"] {
         let out_grad = InputBinding::new(dense(&client, [2, 6, 6, 3]), F16);
         let weights = dense(&client, [3, 3, 3, 32]);
         let message = data_grad_refusal(strategy, out_grad, weights, [2, 6, 6, 32], SAME_ARGS);

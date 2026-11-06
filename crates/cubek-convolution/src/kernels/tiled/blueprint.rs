@@ -1,5 +1,4 @@
 use super::{ConvPartitioning, ConvProblem};
-use cubecl::tile::Scratch;
 use cubecl::tile::launch::{MaskedExtent, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::matmul::plane::{PlaneFragmentDrain, PlaneFragmentMicrokernel};
@@ -78,7 +77,8 @@ impl<M> ConvBlueprint<M> {
         let bounces = plane.instruction.drain() == PlaneFragmentDrain::Bounce;
         let windows = match bounces {
             true => {
-                partitioning.planes() * plane.scratch_bytes(&problem.work_item(), Scratch::OneTile)
+                let [(_, m), (_, n), _] = plane.instruction.shape();
+                partitioning.planes() * m * n * problem.work_item().sum.size()
             }
             false => 0,
         };
