@@ -329,7 +329,6 @@ fn outer_product<L: Numeric, R: Numeric, A: Numeric>(
 }
 
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric>(
     shared: &SharedTile<E>,
     arr: &mut Array<N>,

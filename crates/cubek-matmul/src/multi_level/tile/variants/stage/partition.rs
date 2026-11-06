@@ -93,7 +93,6 @@ impl<CRE: Numeric, Sc: TileScope> PartitionTile<CRE, Sc> {
 }
 
 #[cube]
-#[allow(clippy::too_many_arguments)]
 fn execute_single<
     LhsS: Numeric,
     LhsSize: Size,
@@ -196,7 +195,6 @@ fn execute_single<
 }
 
 #[cube]
-#[allow(clippy::too_many_arguments)]
 fn execute_double<
     LhsS: Numeric,
     LhsSize: Size,

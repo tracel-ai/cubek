@@ -146,7 +146,6 @@ fn probe_delta(column: usize) -> f64 {
 /// One cube's runs load their state, leave each unit's recall and answer partials of the first
 /// position in `dump`, write a fixed delta, and keep the states.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 fn held_state_part<N: Size>(
     cube: &Region,
     query: &Tile,
@@ -216,7 +215,6 @@ fn held_state_part<N: Size>(
 }
 
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn held_state_probe<N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,

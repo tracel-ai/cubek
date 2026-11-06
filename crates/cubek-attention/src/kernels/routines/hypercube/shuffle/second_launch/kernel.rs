@@ -10,7 +10,6 @@ use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 /// Every cube walking its run of its box over the keys its queries see, its planes reading the
 /// keys and values from tiles, leaving its partial in its slot for a second launch to merge.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -78,7 +77,6 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
 /// [`hypercube_attention_partial_kernel`] over a packed cache, its planes decoding the keys and
 /// values as they read them ([`PackedStepReads`]).
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
