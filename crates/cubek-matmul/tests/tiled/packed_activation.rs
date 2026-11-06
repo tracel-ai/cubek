@@ -7,7 +7,11 @@ use super::packed::{PackedFormat, PackedSlabs, PackedSlabsSpec};
 use cubecl::prelude::*;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
-use cubek_matmul::kernels::{CubeStagedMatmulRoutine, MatmulRoutine};
+use cubek_matmul::kernels::{
+    CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings,
+    CubeStagedTmaFillerMatmulRoutine, CubeStagedTmaMatmulRoutine, CubeStagedTmaStoredMatmulRoutine,
+    MatmulRoutine,
+};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, TestOutcome, ValidationResult, client};
@@ -127,31 +131,21 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
                 .sum()
         })
         .collect();
-    let routine = CubeStagedMatmulRoutine;
     let mut ran = 0;
     let mut wrong = Vec::new();
-    for settings in routine
-        .packed_settings(&hw)
-        .into_iter()
-        .chain(routine.packed_one_step_settings())
-        .chain(routine.block_scaled_settings(&hw))
-    {
+    let mut race = |routine: &dyn Fn(StoredTensor, StoredTensor, PlainTensor) -> Option<String>| {
         let (out, bound) = PlainTensor::empty_contiguous(
             &client,
             Shape::from(vec![m, n]),
             bf16::elem_type_native(),
         );
-        let launched = routine.launch_into(
-            &hw,
-            &client,
+        let Some(settings) = routine(
             StoredTensor::Packed(activation.matrix()),
             StoredTensor::Packed(weight.matrix()),
             bound,
-            &settings,
-        );
-        if launched.is_err() {
-            continue;
-        }
+        ) else {
+            return;
+        };
         ran += 1;
         let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
         let off = expected
@@ -164,7 +158,52 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
         if off > 0 {
             wrong.push(format!("{settings}: {off} wrong"));
         }
+    };
+    // `routine` at `settings`, launched into the output: its name where it ran.
+    macro_rules! raced {
+        ($routine:expr, $settings:expr) => {
+            for settings in $settings {
+                race(&|lhs, rhs, out| {
+                    $routine
+                        .launch_into(&hw, &client, lhs, rhs, out, &settings)
+                        .ok()
+                        .map(|_| settings.to_string())
+                });
+            }
+        };
     }
+    raced!(
+        CubeStagedMatmulRoutine,
+        CubeStagedMatmulRoutine.packed_settings(&hw)
+    );
+    raced!(
+        CubeStagedMatmulRoutine,
+        CubeStagedMatmulRoutine.packed_one_step_settings()
+    );
+    raced!(
+        CubeStagedAsyncCopyMatmulRoutine,
+        CubeStagedAsyncCopyMatmulRoutine.packed_settings(&hw)
+    );
+    raced!(
+        CubeStagedTmaFillerMatmulRoutine,
+        CubeStagedTmaFillerMatmulRoutine.packed_settings(&hw)
+    );
+    raced!(
+        CubeStagedTmaMatmulRoutine,
+        CubeStagedTmaMatmulRoutine.block_scaled_settings(&hw)
+    );
+    raced!(
+        CubeStagedTmaStoredMatmulRoutine,
+        CubeStagedTmaStoredMatmulRoutine.block_scaled_settings(&hw)
+    );
+    raced!(
+        CubeStagedAsyncCopyMatmulRoutine,
+        CubeStagedAsyncCopyMatmulRoutine.block_scaled_settings(&hw)
+    );
+    raced!(
+        CubeStagedMatmulRoutine,
+        [CubeStagedMatmulRoutineSettings::DEFAULT]
+    );
     if ran == 0 {
         TestOutcome::Validated(ValidationResult::Skipped(
             "no staged setting prepares two packed inputs on this device".to_string(),

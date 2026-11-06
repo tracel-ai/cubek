@@ -3,8 +3,13 @@
 
 use crate::kernels::plan::MatmulCall;
 use crate::kernels::{
-    CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, CubeStagedMatmulRoutine,
-    CubeStagedMatmulRoutineSettings, HypercubeLastArrivalMatmulRoutine,
+    CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, CubeStagedAsyncCopyMatmulRoutine,
+    CubeStagedAsyncCopyMatmulRoutineSettings, CubeStagedMatmulRoutine,
+    CubeStagedMatmulRoutineSettings, CubeStagedTmaFillerMatmulRoutine,
+    CubeStagedTmaFillerMatmulRoutineSettings, CubeStagedTmaMatmulRoutine,
+    CubeStagedTmaMatmulRoutineSettings, CubeStagedTmaStoredMatmulRoutine,
+    CubeStagedTmaStoredMatmulRoutineSettings, CubeStagedWgmmaMatmulRoutine,
+    CubeStagedWgmmaMatmulRoutineSettings, HypercubeLastArrivalMatmulRoutine,
     HypercubeLastArrivalMatmulRoutineSettings, MatmulRoutine, PlaneShuffleMatmulRoutine,
     PlaneShuffleMatmulRoutineSettings, UnitRegistersMatmulRoutine,
     UnitRegistersMatmulRoutineSettings, UnitWholeKMatmulRoutine, UnitWholeKMatmulRoutineSettings,
@@ -20,6 +25,11 @@ pub enum MatmulRoutineSettings {
     UnitWholeK(UnitWholeKMatmulRoutineSettings),
     CubeShuffle(CubeShuffleMatmulRoutineSettings),
     CubeStaged(CubeStagedMatmulRoutineSettings),
+    CubeStagedAsyncCopy(CubeStagedAsyncCopyMatmulRoutineSettings),
+    CubeStagedTma(CubeStagedTmaMatmulRoutineSettings),
+    CubeStagedTmaFiller(CubeStagedTmaFillerMatmulRoutineSettings),
+    CubeStagedTmaStored(CubeStagedTmaStoredMatmulRoutineSettings),
+    CubeStagedWgmma(CubeStagedWgmmaMatmulRoutineSettings),
     HypercubeLastArrival(HypercubeLastArrivalMatmulRoutineSettings),
 }
 
@@ -43,6 +53,19 @@ impl MatmulRoutineSettings {
             Self::UnitWholeK(settings) => launch(UnitWholeKMatmulRoutine, call, &settings),
             Self::CubeShuffle(settings) => launch(CubeShuffleMatmulRoutine, call, &settings),
             Self::CubeStaged(settings) => launch(CubeStagedMatmulRoutine, call, &settings),
+            Self::CubeStagedAsyncCopy(settings) => {
+                launch(CubeStagedAsyncCopyMatmulRoutine, call, &settings)
+            }
+            Self::CubeStagedTma(settings) => launch(CubeStagedTmaMatmulRoutine, call, &settings),
+            Self::CubeStagedTmaFiller(settings) => {
+                launch(CubeStagedTmaFillerMatmulRoutine, call, &settings)
+            }
+            Self::CubeStagedTmaStored(settings) => {
+                launch(CubeStagedTmaStoredMatmulRoutine, call, &settings)
+            }
+            Self::CubeStagedWgmma(settings) => {
+                launch(CubeStagedWgmmaMatmulRoutine, call, &settings)
+            }
             Self::HypercubeLastArrival(settings) => {
                 launch(HypercubeLastArrivalMatmulRoutine, call, &settings)
             }
@@ -70,6 +93,21 @@ impl MatmulRoutineSettings {
             Self::CubeStaged(settings) => {
                 sink_launch(CubeStagedMatmulRoutine, call, &settings, visitor)
             }
+            Self::CubeStagedAsyncCopy(settings) => {
+                sink_launch(CubeStagedAsyncCopyMatmulRoutine, call, &settings, visitor)
+            }
+            Self::CubeStagedTma(settings) => {
+                sink_launch(CubeStagedTmaMatmulRoutine, call, &settings, visitor)
+            }
+            Self::CubeStagedTmaFiller(settings) => {
+                sink_launch(CubeStagedTmaFillerMatmulRoutine, call, &settings, visitor)
+            }
+            Self::CubeStagedTmaStored(settings) => {
+                sink_launch(CubeStagedTmaStoredMatmulRoutine, call, &settings, visitor)
+            }
+            Self::CubeStagedWgmma(settings) => {
+                sink_launch(CubeStagedWgmmaMatmulRoutine, call, &settings, visitor)
+            }
             Self::HypercubeLastArrival(settings) => {
                 sink_launch(HypercubeLastArrivalMatmulRoutine, call, &settings, visitor)
             }
@@ -85,6 +123,11 @@ impl core::fmt::Display for MatmulRoutineSettings {
             Self::UnitWholeK(settings) => settings.fmt(f),
             Self::CubeShuffle(settings) => settings.fmt(f),
             Self::CubeStaged(settings) => settings.fmt(f),
+            Self::CubeStagedAsyncCopy(settings) => settings.fmt(f),
+            Self::CubeStagedTma(settings) => settings.fmt(f),
+            Self::CubeStagedTmaFiller(settings) => settings.fmt(f),
+            Self::CubeStagedTmaStored(settings) => settings.fmt(f),
+            Self::CubeStagedWgmma(settings) => settings.fmt(f),
             Self::HypercubeLastArrival(settings) => settings.fmt(f),
         }
     }
@@ -164,4 +207,34 @@ where
         call.rhs.tensor.clone(),
         settings,
     ))
+}
+
+impl From<CubeStagedAsyncCopyMatmulRoutineSettings> for MatmulRoutineSettings {
+    fn from(settings: CubeStagedAsyncCopyMatmulRoutineSettings) -> Self {
+        Self::CubeStagedAsyncCopy(settings)
+    }
+}
+
+impl From<CubeStagedTmaMatmulRoutineSettings> for MatmulRoutineSettings {
+    fn from(settings: CubeStagedTmaMatmulRoutineSettings) -> Self {
+        Self::CubeStagedTma(settings)
+    }
+}
+
+impl From<CubeStagedTmaFillerMatmulRoutineSettings> for MatmulRoutineSettings {
+    fn from(settings: CubeStagedTmaFillerMatmulRoutineSettings) -> Self {
+        Self::CubeStagedTmaFiller(settings)
+    }
+}
+
+impl From<CubeStagedTmaStoredMatmulRoutineSettings> for MatmulRoutineSettings {
+    fn from(settings: CubeStagedTmaStoredMatmulRoutineSettings) -> Self {
+        Self::CubeStagedTmaStored(settings)
+    }
+}
+
+impl From<CubeStagedWgmmaMatmulRoutineSettings> for MatmulRoutineSettings {
+    fn from(settings: CubeStagedWgmmaMatmulRoutineSettings) -> Self {
+        Self::CubeStagedWgmma(settings)
+    }
 }

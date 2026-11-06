@@ -28,7 +28,7 @@ use cubek_std::{Hardware, Instructions, block_scaled_for, manual_mma};
 /// memory and holds every row: one fragment of rows, its settings' fragments along `n`, each a
 /// window of `K` its steps deep, so each unit reads its run of `K` in whole loads and the rhs
 /// decodes into the lhs's element as each fragment loads (the tile DSL's lane runs); the
-/// fragments share the lhs the plane loads ([`step_levels`](Self::step_levels)).
+/// fragments share the lhs the plane loads (`step_levels`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentMicrokernel {
     /// What its fragments contract through.
@@ -630,7 +630,7 @@ impl PlaneFragmentMicrokernel {
     /// Bytes of the window one plane's fragments bounce through where `scratch` holds one: as many
     /// fragments as it holds of `item`'s sum. None for an instruction whose units write their own
     /// cells.
-    pub fn scratch_bytes(&self, item: &MatmulWorkItem, scratch: Scratch) -> usize {
+    pub(crate) fn scratch_bytes(&self, item: &MatmulWorkItem, scratch: Scratch) -> usize {
         match self.instruction.drain() {
             PlaneFragmentDrain::Bounce => {
                 let fragments = self.settings.along_m.get() * self.settings.along_n.get();
@@ -704,7 +704,7 @@ impl Microkernel for PlaneFragmentMicrokernel {
 
     /// Any float item. A packed one ([`MatmulWorkItem::blocks`]) of from one row to
     /// [`MAX_PACKED_ROWS`](Self::MAX_PACKED_ROWS), every one held whole, against operands it
-    /// contracts ([`OPERANDS_UNSERVED`](Self::OPERANDS_UNSERVED)).
+    /// contracts (`OPERANDS_UNSERVED`).
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         let Some(space) = &item.blocks else {
             return Ok(());

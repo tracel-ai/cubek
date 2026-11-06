@@ -17,8 +17,9 @@ mod base {
     use cubecl::tile::{Scratch, StageStorage};
     use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::{
-        CubeStagedDelivery, CubeStagedFill, CubeStagedFillingRefusal, CubeStagedMicrokernel,
-        CubeStagedMicrokernelSettings, CubeStagedStore, CubeStagedTmaRefusal, MatmulPlaneLayout,
+        CubeStagedAsyncCopyRefusal, CubeStagedDelivery, CubeStagedFillingRefusal,
+        CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedStore,
+        CubeStagedTmaRefusal, CubeStagedTmaStoreRefusal, MatmulPlaneLayout,
     };
     use cubek_microkernel::matmul::plane::{
         PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
@@ -32,45 +33,158 @@ mod base {
     use cubek_std::layout::{BindingOrder, tile_order};
     use cubek_std::matmul_axes::{K, M, N};
     use cubek_std::microkernel::{Microkernel, StageLayout, StageRing};
-    use cubek_std::routine::Routine;
+    use cubek_std::routine::{Grid, Routine};
     use cubek_std::{Hardware, devices};
 
-    /// Why `hw` cannot deliver `problem`'s stages under `partitioning` by the TMA engine.
+    /// Why `hw` cannot deliver `problem`'s stages by the TMA engine to `microkernel`, its cubes
+    /// placed as `partitioning` places them.
     fn tma_refusal(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         partitioning: &MatmulPartitioning,
-        storage: &StageStorage,
-        ring: &StageRing,
-        plane: &PlaneFragmentMicrokernel,
+        microkernel: &CubeStagedMicrokernel,
     ) -> Option<CubeStagedTmaRefusal> {
         CubeStagedTmaRefusal::new(
             hw,
             &MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
-            &problem.buffers(plane.orders),
+            &problem.buffers(microkernel.plane.orders),
             &partitioning.cube_space(),
-            &partitioning.stage(),
-            storage,
-            ring,
-            plane,
+            microkernel,
         )
     }
 
-    /// The stage a box would land for `blueprint`'s instruction, whatever its fill resolved to.
-    fn landed(blueprint: &CubeStagedMatmulRoutineBlueprint) -> StageStorage {
-        blueprint
-            .microkernel
-            .plane
-            .instruction
-            .landed_stage_storage(
-                blueprint.partitioning.batch_axes(),
-                cubek_microkernel::matmul::MatmulAxes::MNK,
-                blueprint.partitioning.stage().extent(K),
-                blueprint.microkernel.plane.settings.rows_along,
-            )
+    /// Every setting the six cube staged routines list on `hw`, by its microkernel's settings,
+    /// each named by its routine.
+    fn every_listed(hw: &Hardware) -> Vec<(String, CubeStagedMicrokernelSettings)> {
+        let named = |name: String, microkernel| (name, microkernel);
+        let mut listed = Vec::new();
+        listed.extend(
+            CubeStagedMatmulRoutine
+                .settings(hw)
+                .into_iter()
+                .map(|s| named(s.to_string(), s.microkernel)),
+        );
+        listed.extend(
+            CubeStagedAsyncCopyMatmulRoutine
+                .settings(hw)
+                .into_iter()
+                .map(|s| named(s.to_string(), s.microkernel)),
+        );
+        listed.extend(
+            CubeStagedTmaMatmulRoutine
+                .settings(hw)
+                .into_iter()
+                .map(|s| named(s.to_string(), s.microkernel)),
+        );
+        listed.extend(
+            CubeStagedTmaFillerMatmulRoutine
+                .settings(hw)
+                .into_iter()
+                .map(|s| named(s.to_string(), s.microkernel)),
+        );
+        listed.extend(
+            CubeStagedTmaStoredMatmulRoutine
+                .settings(hw)
+                .into_iter()
+                .map(|s| named(s.to_string(), s.microkernel)),
+        );
+        listed.extend(
+            CubeStagedWgmmaMatmulRoutine
+                .settings(hw)
+                .into_iter()
+                .map(|s| named(s.to_string(), s.microkernel)),
+        );
+        listed
     }
+
+    /// A routine's preparation of a problem at one of its settings, named by the setting.
+    type Prepared = (
+        String,
+        Result<(CubeStagedMatmulRoutineBlueprint, Grid), Refusal>,
+    );
+
+    /// `routine` at each of `settings`, prepared on `problem`.
+    fn prepared_by<R>(
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        routine: R,
+        settings: Vec<R::Settings>,
+    ) -> Vec<Prepared>
+    where
+        R: Routine<Problem = MatmulRoutineProblem, Blueprint = CubeStagedMatmulRoutineBlueprint>,
+    {
+        settings
+            .iter()
+            .map(|settings| (settings.to_string(), routine.prepare(hw, problem, settings)))
+            .collect()
+    }
+
+    /// Every block-scaled setting the cube staged routines list on `hw`, each prepared on
+    /// `problem` by its routine, then the units' default, which the block-scaled autotune holds on
+    /// its floor.
+    fn block_scaled_prepared(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<Prepared> {
+        let mut prepared = Vec::new();
+        prepared.extend(prepared_by(
+            hw,
+            problem,
+            CubeStagedTmaMatmulRoutine,
+            CubeStagedTmaMatmulRoutine.block_scaled_settings(hw),
+        ));
+        prepared.extend(prepared_by(
+            hw,
+            problem,
+            CubeStagedTmaStoredMatmulRoutine,
+            CubeStagedTmaStoredMatmulRoutine.block_scaled_settings(hw),
+        ));
+        prepared.extend(prepared_by(
+            hw,
+            problem,
+            CubeStagedAsyncCopyMatmulRoutine,
+            CubeStagedAsyncCopyMatmulRoutine.block_scaled_settings(hw),
+        ));
+        prepared.extend(prepared_by(
+            hw,
+            problem,
+            CubeStagedMatmulRoutine,
+            vec![CubeStagedMatmulRoutineSettings::DEFAULT],
+        ));
+        prepared
+    }
+
+    /// Every setting against a packed input the cube staged routines list on `hw` (packed,
+    /// one-step and block-scaled), each prepared on `problem` by its routine.
+    fn packed_prepared(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<Prepared> {
+        let mut prepared = Vec::new();
+        prepared.extend(prepared_by(
+            hw,
+            problem,
+            CubeStagedMatmulRoutine,
+            CubeStagedMatmulRoutine.packed_settings(hw),
+        ));
+        prepared.extend(prepared_by(
+            hw,
+            problem,
+            CubeStagedMatmulRoutine,
+            CubeStagedMatmulRoutine.packed_one_step_settings(),
+        ));
+        prepared.extend(prepared_by(
+            hw,
+            problem,
+            CubeStagedAsyncCopyMatmulRoutine,
+            CubeStagedAsyncCopyMatmulRoutine.packed_settings(hw),
+        ));
+        prepared.extend(prepared_by(
+            hw,
+            problem,
+            CubeStagedTmaFillerMatmulRoutine,
+            CubeStagedTmaFillerMatmulRoutine.packed_settings(hw),
+        ));
+        prepared.extend(block_scaled_prepared(hw, problem));
+        prepared
+    }
+
     const F16: ElemType = ElemType::Float(FloatKind::F16);
     const F32: ElemType = ElemType::Float(FloatKind::F32);
 
@@ -325,35 +439,42 @@ mod base {
         devices::offering_wgmma(offering(devices::h100()), [WGMMA_F16])
     }
 
-    /// On a device with a warpgroup MMA, only the setting that asks for it runs it, on a col
-    /// rhs, and declines a row rhs it cannot read; every other setting prepares as it does
-    /// without one, on any other instruction.
+    /// On a device with a warpgroup MMA, only the warpgroup routine's setting runs it, on a col
+    /// rhs, and declines a row rhs it cannot read; every setting of the units' routine prepares as
+    /// it does without one, on any other instruction.
     #[test]
     fn only_the_setting_that_asks_for_it_runs_the_warpgroup_mma() {
         let hw = hopper();
-        let settings = CubeStagedMatmulRoutine.settings(&hw);
-        let asks = |settings: &CubeStagedMatmulRoutineSettings| {
-            settings.microkernel.plane.transport == PlaneFragmentTransport::Wgmma
-        };
-        assert_eq!(settings.iter().filter(|s| asks(s)).count(), 1);
+        let wgmma = CubeStagedWgmmaMatmulRoutine.settings(&hw);
+        assert_eq!(wgmma.len(), 1);
+        assert!(
+            CubeStagedMatmulRoutine
+                .settings(&hw)
+                .iter()
+                .all(|settings| settings.microkernel.plane.transport
+                    != PlaneFragmentTransport::Wgmma)
+        );
         for (problem, col) in [(problem(), false), (col_rhs(), true)] {
-            for (position, settings) in settings.iter().enumerate() {
-                let prepared = CubeStagedMatmulRoutine.prepare(&hw, &problem, settings);
-                match (asks(settings), col, prepared) {
-                    (true, true, Ok((blueprint, _))) => assert!(matches!(
-                        blueprint.microkernel.plane.instruction,
-                        PlaneFragmentInstruction::Wgmma { n: 128, .. }
-                    )),
-                    (true, false, Err(Refusal::Declined { .. })) => {}
-                    (false, _, Ok((blueprint, _))) => assert!(
+            let prepared = CubeStagedWgmmaMatmulRoutine.prepare(&hw, &problem, &wgmma[0]);
+            match (col, prepared) {
+                (true, Ok((blueprint, _))) => assert!(matches!(
+                    blueprint.microkernel.plane.instruction,
+                    PlaneFragmentInstruction::Wgmma { n: 128, .. }
+                )),
+                (false, Err(Refusal::Declined { .. })) => {}
+                (_, prepared) => panic!("on a col rhs {col}: {prepared:?}"),
+            }
+            for (position, settings) in CubeStagedMatmulRoutine.settings(&hw).iter().enumerate() {
+                match CubeStagedMatmulRoutine.prepare(&hw, &problem, settings) {
+                    Ok((blueprint, _)) => assert!(
                         !matches!(
                             blueprint.microkernel.plane.instruction,
                             PlaneFragmentInstruction::Wgmma { .. }
                         ),
                         "{settings}"
                     ),
-                    (false, _, Err(Refusal::SharedMemoryPastDevice { .. })) if position > 0 => {}
-                    (_, _, prepared) => panic!("{settings} on a col rhs {col}: {prepared:?}"),
+                    Err(Refusal::SharedMemoryPastDevice { .. }) if position > 0 => {}
+                    prepared => panic!("{settings} on a col rhs {col}: {prepared:?}"),
                 }
             }
         }
@@ -466,29 +587,21 @@ mod base {
             devices::wgpu_no_subgroups(),
             devices::h100(),
         ] {
-            for settings in CubeStagedMatmulRoutine.settings(&hw) {
+            for (name, microkernel) in every_listed(&hw) {
                 assert_eq!(
-                    settings.microkernel.plane.step_sum,
+                    microkernel.plane.step_sum,
                     PlaneFragmentStepSum::Wide,
-                    "{settings}"
+                    "{name}"
                 );
             }
         }
     }
 
-    /// The device prunes the list: the engine's twins are listed only where the copy engine runs,
-    /// since elsewhere each would resolve to the loaded setting already listed beside it.
+    /// The device prunes the lists: the copy engine's routine lists settings only where the copy
+    /// engine runs, which elsewhere it would refuse.
     #[test]
     fn the_engine_twins_are_listed_only_where_the_copy_engine_runs() {
-        let engine_twins = |hw: Hardware| {
-            CubeStagedMatmulRoutine
-                .settings(&hw)
-                .into_iter()
-                .filter(|settings| {
-                    settings.microkernel.fill.delivery == CubeStagedDelivery::AsyncCopy
-                })
-                .count()
-        };
+        let engine_twins = |hw: Hardware| CubeStagedAsyncCopyMatmulRoutine.settings(&hw).len();
         assert!(engine_twins(devices::h100()) > 0);
         for hw in [devices::strix_halo(), devices::wgpu_no_subgroups()] {
             assert_eq!(engine_twins(hw.clone()), 0, "{hw:?}");
@@ -740,40 +853,34 @@ mod base {
         assert!(prepared > 0, "no register prefetching setting prepared");
     }
 
-    /// A box asked of the TMA engine's store is stored by it wherever a descriptor addresses the
-    /// output, each cube writing its own box once, and by the fragments everywhere else, so the
-    /// setting runs on every problem. A box the engine stores is drained whole into shared memory
-    /// and clipped by the descriptor, so its fragments never bounce at the output's edge.
+    /// The TMA engine stores a box wherever a descriptor addresses the output, each cube writing
+    /// its own box once, and its routine refuses the problem everywhere else, under the refusal
+    /// that names why. A box the engine stores is drained whole into shared memory and clipped by
+    /// the descriptor, so its fragments never bounce at the output's edge.
     #[test]
     fn a_tma_store_is_taken_where_nothing_refuses_it() {
-        let stored = |settings: CubeStagedMatmulRoutineSettings| CubeStagedMatmulRoutineSettings {
-            microkernel: CubeStagedMicrokernelSettings {
-                store: CubeStagedStore::Tma,
-                ..settings.microkernel
-            },
-            ..settings
-        };
+        let stored =
+            |settings: CubeStagedMatmulRoutineSettings| CubeStagedTmaStoredMatmulRoutineSettings {
+                microkernel: settings.microkernel,
+                filling_planes: 0,
+                cube_order: settings.cube_order,
+            };
         let settings = stored(default_with(|microkernel| {
             microkernel.ring = StageRing::DOUBLE
         }));
-        let prepared = |hw: Hardware,
-                        problem: &MatmulRoutineProblem,
-                        settings: &CubeStagedMatmulRoutineSettings| {
-            CubeStagedMatmulRoutine
-                .prepare(&hw, problem, settings)
-                .expect("the routine runs here")
-                .0
-        };
-        let store = |hw: Hardware, problem: &MatmulRoutineProblem| {
-            prepared(hw, problem, &settings).microkernel.store
-        };
+        let prepared =
+            |hw: Hardware,
+             problem: &MatmulRoutineProblem,
+             settings: &CubeStagedTmaStoredMatmulRoutineSettings| {
+                CubeStagedTmaStoredMatmulRoutine.prepare(&hw, problem, settings)
+            };
         let aligned = MatmulRoutineProblem::dense(256, 512, 64, F16);
-        let blueprint = prepared(devices::h100(), &aligned, &settings);
+        let (blueprint, _) = prepared(devices::h100(), &aligned, &settings).unwrap();
         assert_eq!(blueprint.microkernel.store, CubeStagedStore::Tma);
         assert_eq!(blueprint.widths.out, 1);
 
         let overhanging = MatmulRoutineProblem::dense(33, 512, 64, F16);
-        let blueprint = prepared(devices::h100(), &overhanging, &settings);
+        let (blueprint, _) = prepared(devices::h100(), &overhanging, &settings).unwrap();
         assert_eq!(blueprint.microkernel.store, CubeStagedStore::Tma);
         assert_eq!(blueprint.microkernel.scratch, Scratch::None);
 
@@ -783,14 +890,26 @@ mod base {
             batches: vec![2],
             ..aligned.clone()
         };
-        for (hw, problem) in [
-            (devices::strix_halo(), &aligned),
-            (devices::h100(), &misaligned),
-            (devices::h100(), &batched),
+        for (hw, problem, refusal) in [
+            (
+                devices::strix_halo(),
+                &aligned,
+                CubeStagedTmaStoreRefusal::NoBulkTensorCopy,
+            ),
+            (
+                devices::h100(),
+                &misaligned,
+                CubeStagedTmaStoreRefusal::Misaligned,
+            ),
+            (
+                devices::h100(),
+                &batched,
+                CubeStagedTmaStoreRefusal::Batched,
+            ),
         ] {
             assert_eq!(
-                store(hw, problem),
-                CubeStagedStore::Fragments,
+                prepared(hw, problem, &settings).err(),
+                Some(refusal.into()),
                 "{problem:?}"
             );
         }
@@ -799,23 +918,29 @@ mod base {
             &aligned,
             &stored(CubeStagedMatmulRoutineSettings::SPLIT_ALONG_K),
         );
-        assert_eq!(split.microkernel.store, CubeStagedStore::Fragments);
+        assert_eq!(
+            split.err(),
+            Some(CubeStagedTmaStoreRefusal::SplitAlongK.into())
+        );
     }
 
     /// A dense `[k, 1]` rhs, a projection to one output, steps from each one-element row to the
     /// next by one element, and its `[m, 1]` output likewise. A tensor map's strides must be
-    /// whole 16-byte lines, so no setting fills or stores such an operand by TMA, whatever the
-    /// alignment that leaves its one-element dim out says.
+    /// whole 16-byte lines, so the TMA routines refuse to fill or store such an operand, whatever
+    /// the alignment that leaves its one-element dim out says.
     #[test]
     fn rows_one_element_wide_are_never_moved_by_tma() {
         let k = 2048;
-        let settings = default_with(|microkernel| {
-            microkernel.ring = StageRing::DOUBLE;
-            microkernel.fill = CubeStagedFill {
-                delivery: CubeStagedDelivery::Tma,
-                filling_planes: 0,
-            };
-        });
+        let settings = default_with(|microkernel| microkernel.ring = StageRing::DOUBLE);
+        let filled = CubeStagedTmaMatmulRoutineSettings {
+            microkernel: settings.microkernel,
+            cube_order: settings.cube_order,
+        };
+        let stored = CubeStagedTmaStoredMatmulRoutineSettings {
+            microkernel: settings.microkernel,
+            filling_planes: 0,
+            cube_order: settings.cube_order,
+        };
         // As stated, and as the key reads a dense `[k, 1]` rhs, both strides one: a col one.
         let laid = [MatmulLayout::Row, MatmulLayout::Col];
         for (m, rhs_layout) in [1, 256]
@@ -837,59 +962,54 @@ mod base {
                 buffer_alignments: alignments,
                 ..dense
             };
-            if let Ok((blueprint, _)) =
-                CubeStagedMatmulRoutine.prepare(&devices::h100(), &problem, &settings)
-            {
-                assert_ne!(
-                    blueprint.microkernel.fill.delivery,
-                    CubeStagedDelivery::Tma,
-                    "m = {m}, rhs {rhs_layout:?}"
-                );
-                assert_ne!(
-                    blueprint.microkernel.store,
-                    CubeStagedStore::Tma,
-                    "m = {m}, rhs {rhs_layout:?}"
-                );
-            }
+            let hw = devices::h100();
+            assert!(
+                CubeStagedTmaMatmulRoutine
+                    .prepare(&hw, &problem, &filled)
+                    .is_err(),
+                "m = {m}, rhs {rhs_layout:?}"
+            );
+            assert!(
+                CubeStagedTmaStoredMatmulRoutine
+                    .prepare(&hw, &problem, &stored)
+                    .is_err(),
+                "m = {m}, rhs {rhs_layout:?}"
+            );
         }
     }
 
     /// The TMA engine fills a stage where nothing refuses it, and both operands are read one
-    /// element wide there; the units fill it everywhere else, under the refusal that names why.
+    /// element wide there; its routine refuses the problem everywhere else, under the refusal that
+    /// names why, where the units' routine at the same numbers runs.
     #[test]
     fn a_tma_fill_is_delivered_where_nothing_refuses_it() {
-        let by_tma = CubeStagedFill {
-            delivery: CubeStagedDelivery::Tma,
-            filling_planes: 0,
-        };
         // The software instruction's stage holds its cells as the operand lies, which a
         // descriptor's box lands whole.
         let software = devices::h100();
-        let settings = default_with(|microkernel| {
-            microkernel.ring = StageRing::DOUBLE;
-            microkernel.fill = by_tma;
-        });
-        let prepared = |hw: &Hardware, problem: &MatmulRoutineProblem| {
-            CubeStagedMatmulRoutine
-                .prepare(hw, problem, &settings)
-                .expect("the routine runs here")
-                .0
-        };
-        let refusal = |hw: &Hardware, problem: &MatmulRoutineProblem| {
-            let blueprint = prepared(hw, problem);
-            tma_refusal(
-                hw,
-                problem,
-                &blueprint.partitioning,
-                &landed(&blueprint),
-                &blueprint.microkernel.ring,
-                &blueprint.microkernel.plane,
-            )
+        let by_units = default_with(|microkernel| microkernel.ring = StageRing::DOUBLE);
+        let settings = CubeStagedTmaMatmulRoutineSettings {
+            microkernel: by_units.microkernel,
+            cube_order: by_units.cube_order,
         };
         let aligned = MatmulRoutineProblem::dense(256, 512, 64, F16);
-        let blueprint = prepared(&software, &aligned);
+        let (blueprint, _) = CubeStagedTmaMatmulRoutine
+            .prepare(&software, &aligned, &settings)
+            .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.fill.delivery, CubeStagedDelivery::Tma);
         assert_eq!((blueprint.widths.lhs, blueprint.widths.rhs), (1, 1));
+        let through_registers = CubeStagedMicrokernel {
+            ring: StageRing::DOUBLE_THROUGH_REGISTERS,
+            ..blueprint.microkernel
+        };
+        assert_eq!(
+            tma_refusal(
+                &software,
+                &aligned,
+                &blueprint.partitioning,
+                &through_registers
+            ),
+            Some(CubeStagedTmaRefusal::PrefetchInRegisters)
+        );
         let batched = MatmulRoutineProblem {
             batches: vec![2],
             ..aligned.clone()
@@ -916,35 +1036,6 @@ mod base {
             },
             ..aligned.clone()
         };
-        assert_eq!(
-            tma_refusal(
-                &software,
-                &aligned,
-                &blueprint.partitioning,
-                &blueprint.shared_memory,
-                &StageRing::DOUBLE_THROUGH_REGISTERS,
-                &blueprint.microkernel.plane
-            ),
-            Some(CubeStagedTmaRefusal::PrefetchInRegisters)
-        );
-        // A box lands its rows dense: never padded.
-        let padded = StageStorage::Tiled {
-            block: [M, N, K]
-                .map(|axis| (axis, blueprint.partitioning.stage().extent(axis)))
-                .to_vec(),
-            chunks: RowChunks::Padded,
-        };
-        assert_eq!(
-            tma_refusal(
-                &software,
-                &aligned,
-                &blueprint.partitioning,
-                &padded,
-                &StageRing::DOUBLE,
-                &blueprint.microkernel.plane
-            ),
-            Some(CubeStagedTmaRefusal::Unlanded(MatmulOperand::Lhs))
-        );
         for (hw, problem, why) in [
             (
                 devices::strix_halo(),
@@ -975,10 +1066,18 @@ mod base {
                 CubeStagedTmaRefusal::Unlanded(MatmulOperand::Rhs),
             ),
         ] {
-            assert_eq!(refusal(&hw, problem), Some(why), "{problem:?}");
             assert_eq!(
-                prepared(&hw, problem).microkernel.fill.delivery,
-                CubeStagedDelivery::Copy
+                CubeStagedTmaMatmulRoutine
+                    .prepare(&hw, problem, &settings)
+                    .err(),
+                Some(why.into()),
+                "{problem:?}"
+            );
+            assert!(
+                CubeStagedMatmulRoutine
+                    .prepare(&hw, problem, &by_units)
+                    .is_ok(),
+                "{problem:?}"
             );
         }
     }
@@ -988,19 +1087,17 @@ mod base {
     /// a pointer and a stride, swizzled as the descriptor swizzles them for the tile DSL's `mma`.
     #[test]
     fn a_col_rhs_stages_land_by_tma_under_a_matrix_instruction() {
-        let settings = default_with(|microkernel| {
-            microkernel.ring = StageRing::DOUBLE;
-            microkernel.fill = CubeStagedFill {
-                delivery: CubeStagedDelivery::Tma,
-                filling_planes: 0,
-            };
-        });
+        let by_units = default_with(|microkernel| microkernel.ring = StageRing::DOUBLE);
+        let settings = CubeStagedTmaMatmulRoutineSettings {
+            microkernel: by_units.microkernel,
+            cube_order: by_units.cube_order,
+        };
         let through_mma = devices::offering_mma(devices::h100(), [SHAPE]);
         for (hw, chunks) in [
             (offering(devices::h100()), RowChunks::InOrder),
             (through_mma, RowChunks::Swizzled),
         ] {
-            let (blueprint, _) = CubeStagedMatmulRoutine
+            let (blueprint, _) = CubeStagedTmaMatmulRoutine
                 .prepare(&hw, &col_rhs(), &settings)
                 .expect("the routine runs here");
             assert_eq!(blueprint.microkernel.fill.delivery, CubeStagedDelivery::Tma);
@@ -1024,7 +1121,7 @@ mod base {
     /// An NVFP4 rhs stored in tiles, beside a float lhs, lands by TMA where its stage holds it as
     /// it is stored: the lhs through a descriptor over the matrix its blocks split, the rhs's
     /// words through one over its tiles. Where the problem states no tile it is stored in, the
-    /// units copy it.
+    /// TMA engine's routine refuses it, and the units' routine copies it.
     #[test]
     fn a_packed_rhs_in_tiles_lands_by_tma_where_its_stage_holds_it_as_stored() {
         // The `16 × 8 × 16` instruction a plane decodes the rhs's fragments into.
@@ -1054,30 +1151,34 @@ mod base {
             },
             ..in_rows.clone()
         };
-        let by_tma: Vec<_> = CubeStagedMatmulRoutine
-            .packed_settings(&hw)
-            .into_iter()
-            .filter(|settings| settings.microkernel.fill.delivery == CubeStagedDelivery::Tma)
-            .collect();
+        let by_tma = CubeStagedTmaFillerMatmulRoutine.packed_settings(&hw);
         assert!(
             !by_tma.is_empty(),
-            "no packed setting asks for the TMA engine"
+            "the TMA engine's routine lists no packed setting"
         );
         let delivered = |problem: &MatmulRoutineProblem| {
             by_tma
                 .iter()
-                .filter_map(|settings| CubeStagedMatmulRoutine.prepare(&hw, problem, settings).ok())
-                .map(|(blueprint, _)| blueprint.microkernel.fill.delivery)
-                .collect::<Vec<_>>()
+                .filter(|settings| {
+                    CubeStagedTmaFillerMatmulRoutine
+                        .prepare(&hw, problem, settings)
+                        .is_ok()
+                })
+                .count()
         };
-        let (tiled, rows) = (delivered(&in_tiles), delivered(&in_rows));
         assert!(
-            tiled.contains(&CubeStagedDelivery::Tma),
-            "no stored setting lands a tiled rhs by TMA: {tiled:?}"
+            delivered(&in_tiles) > 0,
+            "no stored setting lands a tiled rhs by TMA"
         );
+        assert_eq!(delivered(&in_rows), 0, "an rhs in rows landed by TMA");
         assert!(
-            !rows.is_empty() && !rows.contains(&CubeStagedDelivery::Tma),
-            "an rhs in rows landed by TMA: {rows:?}"
+            by_tma.iter().all(|settings| {
+                let by_units = CubeStagedMatmulRoutineSettings::on_grid(settings.microkernel);
+                CubeStagedMatmulRoutine
+                    .prepare(&hw, &in_rows, &by_units)
+                    .is_ok()
+            }),
+            "the units copy an rhs in rows"
         );
     }
 
@@ -1085,15 +1186,14 @@ mod base {
     /// overhang are its tiling's placement's, and only the planes it holds grow.
     #[test]
     fn filling_planes_widen_the_cube_and_nothing_else() {
-        let settings = default_with(|microkernel| {
-            microkernel.ring = StageRing::DOUBLE;
-            microkernel.fill = CubeStagedFill {
-                delivery: CubeStagedDelivery::Tma,
-                filling_planes: 1,
-            };
-        });
+        let by_units = default_with(|microkernel| microkernel.ring = StageRing::DOUBLE);
+        let settings = CubeStagedTmaFillerMatmulRoutineSettings {
+            microkernel: by_units.microkernel,
+            filling_planes: NonZeroUsize::MIN,
+            cube_order: by_units.cube_order,
+        };
         let problem = MatmulRoutineProblem::dense(256, 512, 64, F16);
-        let (blueprint, _) = CubeStagedMatmulRoutine
+        let (blueprint, _) = CubeStagedTmaFillerMatmulRoutine
             .prepare(&devices::h100(), &problem, &settings)
             .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.fill.filling_planes, 1);
@@ -1117,25 +1217,24 @@ mod base {
     }
 
     /// Filling planes are set aside where the TMA engine fills two stages in flight and no
-    /// fragment bounces: the cube is one plane wider. None everywhere else.
+    /// fragment bounces: the cube is one plane wider. The routine refuses everywhere else.
     #[test]
     fn filling_planes_are_set_aside_only_beside_a_tma_fill() {
-        let filled = CubeStagedFill {
-            delivery: CubeStagedDelivery::Tma,
-            filling_planes: 1,
-        };
         let set_aside = |ring: StageRing, hw: Hardware, problem: &MatmulRoutineProblem| {
-            let settings = default_with(|microkernel| {
-                microkernel.ring = ring;
-                microkernel.fill = filled;
-            });
-            let (blueprint, grid) = CubeStagedMatmulRoutine
+            let by_units = default_with(|microkernel| microkernel.ring = ring);
+            let settings = CubeStagedTmaFillerMatmulRoutineSettings {
+                microkernel: by_units.microkernel,
+                filling_planes: NonZeroUsize::MIN,
+                cube_order: by_units.cube_order,
+            };
+            CubeStagedTmaFillerMatmulRoutine
                 .prepare(&hw, problem, &settings)
-                .expect("the routine runs here");
-            (
-                blueprint.microkernel.fill.filling_planes,
-                grid.planes().count,
-            )
+                .map(|(blueprint, grid)| {
+                    (
+                        blueprint.microkernel.fill.filling_planes,
+                        grid.planes().count,
+                    )
+                })
         };
         let covered = MatmulRoutineProblem::dense(256, 512, 64, F16);
         let computing = CubeStagedMatmulRoutineSettings::DEFAULT
@@ -1144,14 +1243,13 @@ mod base {
             .count();
         assert_eq!(
             set_aside(StageRing::DOUBLE, devices::h100(), &covered),
-            (1, computing + 1)
+            Ok((1, computing + 1))
         );
-        for (ring, hw) in [
-            (StageRing::DOUBLE, devices::strix_halo()),
-            (StageRing::SINGLE, devices::h100()),
-        ] {
-            assert_eq!(set_aside(ring, hw, &covered), (0, computing), "{ring:?}");
-        }
+        assert_eq!(
+            set_aside(StageRing::SINGLE, devices::h100(), &covered),
+            Err(CubeStagedFillingRefusal::OneStage.into())
+        );
+        assert!(set_aside(StageRing::DOUBLE, devices::strix_halo(), &covered).is_err());
         assert_eq!(
             CubeStagedFillingRefusal::new(
                 CubeStagedDelivery::Tma,
@@ -1164,51 +1262,53 @@ mod base {
     }
 
     /// The units hand a stage to the copy engine where the device has one, the ring fills its
-    /// slots and the lines are ones the engine copies whole; they load it everywhere else. A
-    /// setting that asks for the engine therefore runs on every device, as its loaded twin where
-    /// it cannot have it.
+    /// slots and the lines are ones the engine copies whole; its routine refuses the problem
+    /// everywhere else, under the refusal that names why.
     #[test]
     fn a_stage_is_handed_to_the_copy_engine_only_where_it_can_be() {
-        let engine = CubeStagedFill {
-            delivery: CubeStagedDelivery::AsyncCopy,
-            filling_planes: 0,
-        };
-        let delivery = |ring: StageRing, hw: Hardware, problem: &MatmulRoutineProblem| {
-            let settings = default_with(|microkernel| {
-                microkernel.ring = ring;
-                microkernel.fill = engine;
-            });
-            CubeStagedMatmulRoutine
+        let prepared = |ring: StageRing, hw: Hardware, problem: &MatmulRoutineProblem| {
+            let by_units = default_with(|microkernel| microkernel.ring = ring);
+            let settings = CubeStagedAsyncCopyMatmulRoutineSettings {
+                microkernel: by_units.microkernel,
+                cube_order: by_units.cube_order,
+            };
+            CubeStagedAsyncCopyMatmulRoutine
                 .prepare(&offering(hw), problem, &settings)
-                .expect("the routine runs here")
-                .0
-                .microkernel
-                .fill
-                .delivery
+                .map(|(blueprint, _)| blueprint.microkernel.fill.delivery)
         };
         let covered = MatmulRoutineProblem::dense(256, 512, 64, F16);
         for ring in [StageRing::DOUBLE, StageRing::SINGLE] {
             assert_eq!(
-                delivery(ring, devices::h100(), &covered),
-                CubeStagedDelivery::AsyncCopy,
+                prepared(ring, devices::h100(), &covered),
+                Ok(CubeStagedDelivery::AsyncCopy),
                 "{ring:?}"
             );
         }
-        for (ring, hw, problem) in [
+        for (ring, hw, problem, why) in [
             // The next stage waits in the units' registers, which the engine never fills.
             (
                 StageRing::DOUBLE_THROUGH_REGISTERS,
                 devices::h100(),
                 &covered,
+                CubeStagedAsyncCopyRefusal::PrefetchInRegisters,
             ),
-            // No copy engine.
-            (StageRing::DOUBLE, devices::strix_halo(), &covered),
+            (
+                StageRing::DOUBLE,
+                devices::strix_halo(),
+                &covered,
+                CubeStagedAsyncCopyRefusal::NoCopyEngine,
+            ),
             // `k = 19` binds the lhs one `f16` wide: two bytes, which the engine does not copy.
-            (StageRing::DOUBLE, devices::h100(), &problem()),
+            (
+                StageRing::DOUBLE,
+                devices::h100(),
+                &problem(),
+                CubeStagedAsyncCopyRefusal::LineSize(MatmulOperand::Lhs),
+            ),
         ] {
             assert_eq!(
-                delivery(ring, hw, problem),
-                CubeStagedDelivery::Copy,
+                prepared(ring, hw, problem),
+                Err(why.into()),
                 "{ring:?} on {problem:?}"
             );
         }
@@ -1571,7 +1671,6 @@ mod base {
             (ue8m0(FloatKind::E2M1x2, 64), None),
             (ue8m0(FloatKind::E4M3, 32), None),
         ];
-        let settings = CubeStagedMatmulRoutine.block_scaled_settings(&hw);
         for ((form, k), scales) in formats {
             let inputs = CubeStagedMatmulRoutine::block_scaled_inputs(&form)
                 .expect("every format here is a packed input");
@@ -1582,9 +1681,9 @@ mod base {
                 ElemType::Float(FloatKind::F16),
                 inputs,
             );
-            let prepared: Vec<_> = settings
-                .iter()
-                .filter_map(|setting| CubeStagedMatmulRoutine.prepare(&hw, &problem, setting).ok())
+            let prepared: Vec<_> = block_scaled_prepared(&hw, &problem)
+                .into_iter()
+                .filter_map(|(_, prepared)| prepared.ok())
                 .collect();
             let Some(scales) = scales else {
                 assert!(prepared.is_empty(), "{form:?}");
@@ -1633,10 +1732,9 @@ mod base {
             Err(MATMUL_SCALE_WORDS_IN_TILES)
         );
         assert_eq!(problem.check_block_scales(BlockScales::Fields), Ok(()));
-        let refusals: Vec<_> = CubeStagedMatmulRoutine
-            .block_scaled_settings(&hw)
-            .iter()
-            .map(|setting| CubeStagedMatmulRoutine.prepare(&hw, &problem, setting))
+        let refusals: Vec<_> = block_scaled_prepared(&hw, &problem)
+            .into_iter()
+            .map(|(_, prepared)| prepared)
             .collect();
         assert!(refusals.iter().all(Result::is_err));
         assert!(
@@ -1716,7 +1814,6 @@ mod base {
     #[test]
     fn a_packed_products_float_input_rides_the_copy_engine() {
         use cubek_microkernel::matmul::MatmulMicrokernel;
-        use cubek_microkernel::matmul::cube::CubeStagedMicrokernelSettings;
         use cubek_std::layout::stored::{Operand, Packing};
         use cubek_std::layout::tile_order;
 
@@ -1746,16 +1843,14 @@ mod base {
             },
         );
         let on_engine = |hw: &Hardware| {
-            CubeStagedMatmulRoutine
+            CubeStagedAsyncCopyMatmulRoutine
                 .packed_settings(hw)
                 .into_iter()
-                .find(|settings| {
-                    settings.microkernel == CubeStagedMicrokernelSettings::PACKED_FLOAT_ON_ENGINE
-                })
+                .next()
         };
         let hw = devices::offering_mma(devices::h100(), [mma]);
         let settings = on_engine(&hw).expect("a device with a copy engine lists the setting");
-        let (blueprint, _) = CubeStagedMatmulRoutine
+        let (blueprint, _) = CubeStagedAsyncCopyMatmulRoutine
             .prepare(&hw, &problem, &settings)
             .expect("the setting prepares against an NVFP4 weight");
         let microkernel = &blueprint.microkernel;
@@ -1864,15 +1959,9 @@ mod base {
                 out: None,
             },
         );
-        let routine = CubeStagedMatmulRoutine;
-        let raced = routine
-            .packed_settings(&hw)
-            .into_iter()
-            .chain(routine.packed_one_step_settings())
-            .chain(routine.block_scaled_settings(&hw));
         let mut block_scaled = 0;
-        for settings in raced {
-            let Ok((blueprint, _)) = routine.prepare(&hw, &problem, &settings) else {
+        for (settings, prepared) in packed_prepared(&hw, &problem) {
+            let Ok((blueprint, _)) = prepared else {
                 continue;
             };
             let plane = &blueprint.microkernel.plane;
