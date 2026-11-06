@@ -151,8 +151,10 @@ impl Routine for HypercubeReduceRoutine {
         }
         // The last cube merges a row's top-k lists one after another, `k` inserts a part, so the
         // shorter parts cost more in the merge than their extra cubes save.
-        if matches!(problem.operation.carrier(), ReduceCarrier::TopK { .. })
-            && settings.unit_lines < HypercubeReduceRoutineSettings::UNIT_LINES[0]
+        if matches!(
+            problem.operation.carrier(),
+            ReduceCarrier::TopK { .. } | ReduceCarrier::TopValues { .. }
+        ) && settings.unit_lines < HypercubeReduceRoutineSettings::UNIT_LINES[0]
         {
             return Err(Refusal::Declined {
                 why: "the hypercube splits a top-k's rows into its longest parts only",

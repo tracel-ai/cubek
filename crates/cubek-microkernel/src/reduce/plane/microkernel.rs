@@ -1,7 +1,7 @@
 use super::base::PlaneReduceMicrokernel;
 use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
 use cubecl::tile::space::UnitShare;
-use cubecl::tile::{Indexed, Tile, TopK};
+use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One plane's row: each lane accumulates every `lanes`-th line of `input`, the plane's window of the
@@ -27,6 +27,15 @@ pub fn plane_reduce_microkernel<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Nu
         ReduceCarrier::TopK { k } => {
             let size!(K) = k;
             plane_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+        }
+        ReduceCarrier::TopValues { k } => {
+            let size!(K) = k;
+            plane_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+                input,
+                out,
+                indices,
+                microkernel,
+            )
         }
     }
 }
@@ -60,7 +69,7 @@ fn plane_reduce<
                 Vector::<Acc, N>::cast_from(lines.read(line)),
                 comptime!(operation.read_map()),
             );
-            acc = C::accumulate(acc, read, line, layout, monoid);
+            C::accumulate(&mut acc, read, line, layout, monoid);
         }
     }
     let total = C::across(acc, UnitShare::Plane, monoid);
