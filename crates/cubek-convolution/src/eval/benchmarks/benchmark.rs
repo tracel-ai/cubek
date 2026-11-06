@@ -15,7 +15,10 @@ use cubek_matmul::{
 use cubek_std::InputBinding;
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::{ConvolutionInputs, Strategy, eval::benchmarks::problem::Conv2dProblem, launch_ref};
+use crate::{
+    ConvolutionInputs, Strategy, components::ConvolutionOperation,
+    eval::benchmarks::problem::Conv2dProblem, launch_ref,
+};
 
 type LhsG<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Global;
 type LhsS<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Stage;
@@ -65,36 +68,74 @@ fn make_uniform_4d(client: &Client, shape: [usize; 4], dtype: ElemType, seed: u6
 }
 
 impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
-    type Input = (TensorHandle, TensorHandle, TensorHandle);
+    type Input = (TensorHandle, TensorHandle);
     type Output = ();
 
+    /// NHWC input/out_grad and `[co, kh, kw, ci]` weight, the layout `launch_ref` reads.
     fn prepare(&self) -> Self::Input {
         let client = self.device.client();
+        let [n, c_in, h_in, w_in] = self.problem.input_shape;
+        let [c_out, _, k_h, k_w] = self.problem.weight_shape;
+        let [s_h, s_w] = self.problem.args.stride;
+        let [p_h, p_w] = self.problem.args.padding;
+        let [d_h, d_w] = self.problem.args.dilation;
 
-        let input = make_uniform_4d(
-            &client,
-            self.problem.input_shape,
-            LhsG::<MP>::elem_type_native(),
-            0,
-        );
-        let weight = make_uniform_4d(
-            &client,
-            self.problem.weight_shape,
-            RhsG::<MP>::elem_type_native(),
-            1,
-        );
-        let bias = TestInput::builder(client.clone(), Shape::from(vec![self.problem.bias_shape]))
-            .dtype(AccG::<MP>::elem_type_native())
-            .layout(cubek_test_utils::StridedLayout::Explicit(vec![1]))
-            .uniform(2, 0.0, 1.0)
-            .generate_without_host_data();
+        let h_out = (h_in + 2 * p_h - d_h * (k_h - 1) - 1) / s_h + 1;
+        let w_out = (w_in + 2 * p_w - d_w * (k_w - 1) - 1) / s_w + 1;
 
-        (input, weight, bias)
+        match self.problem.operation {
+            ConvolutionOperation::Forward => {
+                let input = make_uniform_4d(
+                    &client,
+                    [n, h_in, w_in, c_in],
+                    LhsG::<MP>::elem_type_native(),
+                    0,
+                );
+                let weight = make_uniform_4d(
+                    &client,
+                    [c_out, k_h, k_w, c_in],
+                    RhsG::<MP>::elem_type_native(),
+                    1,
+                );
+                (input, weight)
+            }
+            ConvolutionOperation::BackwardData => {
+                let out_grad = make_uniform_4d(
+                    &client,
+                    [n, h_out, w_out, c_out],
+                    LhsG::<MP>::elem_type_native(),
+                    0,
+                );
+                let weight = make_uniform_4d(
+                    &client,
+                    [c_out, k_h, k_w, c_in],
+                    RhsG::<MP>::elem_type_native(),
+                    1,
+                );
+                (out_grad, weight)
+            }
+            ConvolutionOperation::BackwardWeight => {
+                let input = make_uniform_4d(
+                    &client,
+                    [n, h_in, w_in, c_in],
+                    LhsG::<MP>::elem_type_native(),
+                    0,
+                );
+                let out_grad = make_uniform_4d(
+                    &client,
+                    [n, h_out, w_out, c_out],
+                    RhsG::<MP>::elem_type_native(),
+                    1,
+                );
+                (input, out_grad)
+            }
+            _ => unimplemented!("unsupported convolution operation"),
+        }
     }
 
-    fn execute(&self, (input, weight, bias): Self::Input) -> Result<(), String> {
+    fn execute(&self, (lhs, rhs): Self::Input) -> Result<(), String> {
         let client = self.device.client();
-        let [n, _, h_in, w_in] = self.problem.input_shape;
+        let [n, c_in, h_in, w_in] = self.problem.input_shape;
         let [c_out, _, k_h, k_w] = self.problem.weight_shape;
         let [s_h, s_w] = self.problem.args.stride;
         let [p_h, p_w] = self.problem.args.padding;
@@ -105,18 +146,42 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
 
         let elems = MatmulElems::new_deprecated::<MP>();
 
-        let out: TensorHandle =
-            TensorHandle::empty(&client, vec![n, c_out, h_out, w_out], elems.acc_global);
+        let inputs = match self.problem.operation {
+            ConvolutionOperation::Forward => {
+                let out: TensorHandle =
+                    TensorHandle::empty(&client, vec![n, h_out, w_out, c_out], elems.acc_global);
+                ConvolutionInputs::Forward {
+                    input: InputBinding::Normal(lhs.binding(), elems.lhs_global),
+                    weight: InputBinding::Normal(rhs.binding(), elems.rhs_global),
+                    bias: None,
+                    out: out.binding(),
+                }
+            }
+            ConvolutionOperation::BackwardData => {
+                let in_grad: TensorHandle =
+                    TensorHandle::empty(&client, vec![n, h_in, w_in, c_in], elems.acc_global);
+                ConvolutionInputs::BackwardData {
+                    out_grad: InputBinding::Normal(lhs.binding(), elems.lhs_global),
+                    weights: InputBinding::Normal(rhs.binding(), elems.rhs_global),
+                    in_grad: in_grad.binding(),
+                }
+            }
+            ConvolutionOperation::BackwardWeight => {
+                let weight_grad: TensorHandle =
+                    TensorHandle::empty(&client, vec![c_out, k_h, k_w, c_in], elems.acc_global);
+                ConvolutionInputs::BackwardWeight {
+                    input: InputBinding::Normal(lhs.binding(), elems.lhs_global),
+                    out_grad: InputBinding::Normal(rhs.binding(), elems.rhs_global),
+                    weight_grad: weight_grad.binding(),
+                }
+            }
+            _ => unimplemented!("unsupported convolution operation"),
+        };
 
         launch_ref::<2>(
             &self.strategy,
             &self.client,
-            ConvolutionInputs::Forward {
-                input: InputBinding::Normal(input.binding(), elems.lhs_global),
-                weight: InputBinding::Normal(weight.binding(), elems.rhs_global),
-                bias: Some(InputBinding::Normal(bias.binding(), elems.acc_global)),
-                out: out.binding(),
-            },
+            inputs,
             self.problem.args.clone(),
             elems,
         )
@@ -130,9 +195,16 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
 
     fn name(&self) -> String {
         let client = self.device.client();
+        let op = match self.problem.operation {
+            ConvolutionOperation::Forward => "conv2d",
+            ConvolutionOperation::BackwardData => "conv2d-bwd-data",
+            ConvolutionOperation::BackwardWeight => "conv2d-bwd-weight",
+            _ => "conv2d",
+        };
         format!(
-            "{}-conv2d-{}-{}-{}-{}",
+            "{}-{}-{}-{}-{}-{}",
             client.name(),
+            op,
             LhsG::<MP>::elem_type_native(),
             LhsS::<MP>::elem_type_native(),
             AccR::<MP>::elem_type_native(),

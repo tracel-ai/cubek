@@ -7,6 +7,7 @@ use cubek_test_utils::{HostData, Progress};
 
 use crate::{
     Strategy,
+    components::ConvolutionOperation,
     eval::{
         benchmarks::problem::Conv2dProblem,
         cpu_reference::{ConvSpec, cpu_reference_result, strategy_result},
@@ -29,6 +30,7 @@ impl cubek_test_utils::Correctness for Conv2dCorrectness {
         problem: &Conv2dProblem,
         seeds: &[u64],
     ) -> Result<HostData, String> {
+        forward_only(problem)?;
         let device = cubecl::test_device();
         let client = device.client();
         let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(problem);
@@ -41,10 +43,22 @@ impl cubek_test_utils::Correctness for Conv2dCorrectness {
         seeds: &[u64],
         progress: Option<&Progress>,
     ) -> Result<HostData, String> {
+        forward_only(problem)?;
         let device = cubecl::test_device();
         let client = device.client();
         let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(problem);
         cpu_reference_result(client, spec, dtypes, seeds[0], seeds[1], progress)
+    }
+}
+
+/// Both sides of the check run a forward convolution, so a backward row would be checked against
+/// itself.
+fn forward_only(problem: &Conv2dProblem) -> Result<(), String> {
+    match problem.operation {
+        ConvolutionOperation::Forward => Ok(()),
+        operation => Err(format!(
+            "the correctness check runs the forward convolution, not {operation:?}"
+        )),
     }
 }
 

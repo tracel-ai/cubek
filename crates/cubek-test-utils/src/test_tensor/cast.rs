@@ -39,12 +39,17 @@ pub fn copy_casted(client: &Client, original: TensorHandle, target_type: ElemTyp
 
     let num_elems: usize = original.shape().num_elements();
 
-    let vector_size = tensor_vector_size_parallel(
+    let mut vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(target_type.size()),
         &shape![num_elems],
         &strides![1],
         0,
     );
+    // A view starting partway into its buffer is read in lines that start on its own offset.
+    let start = original.handle.offset_start.unwrap_or(0) as usize;
+    while !start.is_multiple_of(vector_size * original.dtype.size()) {
+        vector_size /= 2;
+    }
 
     let working_units: u32 = num_elems as u32 / vector_size as u32;
     let cube_dim = CubeDim::new(client, working_units as usize);

@@ -1,14 +1,139 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::{AcceleratedTileKind, ConvAlgorithm, Strategy};
+use crate::{
+    AcceleratedTileKind, ConvAlgorithm, Strategy,
+    kernels::tiled::{
+        ConvRoutineKind, ConvSettings, CubeStagedConvRoutine, PlaneFragmentConvRoutine,
+    },
+};
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
-    vec![CatalogEntry::new(
-        "simple_sync_cyclic_cmma",
-        "SimpleSyncCyclic / Cmma (inferred)",
-        Strategy::Inferred {
-            algorithm: ConvAlgorithm::SimpleSyncCyclic,
-            tile_kind: AcceleratedTileKind::Cmma,
-        },
-    )]
+    vec![
+        CatalogEntry::new(
+            "simple_sync_cyclic_cmma",
+            "SimpleSyncCyclic / Cmma (inferred)",
+            Strategy::Inferred {
+                algorithm: ConvAlgorithm::SimpleSyncCyclic,
+                tile_kind: AcceleratedTileKind::Cmma,
+            },
+        ),
+        CatalogEntry::new(
+            "simple_sync_cyclic_mma",
+            "SimpleSyncCyclic / Mma (inferred)",
+            Strategy::Inferred {
+                algorithm: ConvAlgorithm::SimpleSyncCyclic,
+                tile_kind: AcceleratedTileKind::Mma,
+            },
+        ),
+        CatalogEntry::new(
+            "cube_staged",
+            "Cube staged, first setting that serves",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: None,
+            },
+        ),
+        CatalogEntry::new(
+            "cube_staged_cmma_grid_2x2",
+            "Cube staged / Cmma, lines, 2x2 grid",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(CubeStagedConvRoutine::GRID_2X2),
+            },
+        ),
+        CatalogEntry::new(
+            "cube_staged_cmma_grid_1x2",
+            "Cube staged / Cmma, lines, 1x2 grid",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(CubeStagedConvRoutine::GRID_1X2),
+            },
+        ),
+        CatalogEntry::new(
+            "cube_staged_mma_grid_2x2_width_1",
+            "Cube staged / Mma, width 1, 2x2 grid",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(CubeStagedConvRoutine::GRID_2X2.mma().width_one()),
+            },
+        ),
+        CatalogEntry::new(
+            "cube_staged_mma_grid_2x2",
+            "Cube staged / Mma, lines, 2x2 grid",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(CubeStagedConvRoutine::GRID_2X2.mma()),
+            },
+        ),
+        CatalogEntry::new(
+            "cube_staged_mma_grid_1x2",
+            "Cube staged / Mma, lines, 1x2 grid",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(CubeStagedConvRoutine::GRID_1X2.mma()),
+            },
+        ),
+        CatalogEntry::new(
+            "cube_staged_mma_grid_2x2_whole_walk",
+            "Cube staged / Mma, lines, 2x2 grid, 7 steps a stage",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(ConvSettings {
+                    stage_steps: 7,
+                    ..CubeStagedConvRoutine::GRID_2X2.mma()
+                }),
+            },
+        ),
+        CatalogEntry::new(
+            "cube_staged_mma_grid_1x2_whole_walk",
+            "Cube staged / Mma, lines, 1x2 grid, 7 steps a stage",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(ConvSettings {
+                    stage_steps: 7,
+                    ..CubeStagedConvRoutine::GRID_1X2.mma()
+                }),
+            },
+        ),
+        CatalogEntry::new(
+            "plane_fragment",
+            "Plane fragment, first setting that serves",
+            Strategy::Tile {
+                routine: ConvRoutineKind::PlaneFragment,
+                settings: None,
+            },
+        ),
+        CatalogEntry::new(
+            "plane_fragment_cmma_grid_2x2",
+            "Plane fragment / Cmma, 2x2 fragments",
+            Strategy::Tile {
+                routine: ConvRoutineKind::PlaneFragment,
+                settings: Some(PlaneFragmentConvRoutine::GRID_2X2),
+            },
+        ),
+        CatalogEntry::new(
+            "plane_fragment_cmma_grid_1x2",
+            "Plane fragment / Cmma, 1x2 fragments",
+            Strategy::Tile {
+                routine: ConvRoutineKind::PlaneFragment,
+                settings: Some(PlaneFragmentConvRoutine::GRID_1X2),
+            },
+        ),
+        CatalogEntry::new(
+            "plane_fragment_mma_grid_2x2",
+            "Plane fragment / Mma, 2x2 fragments",
+            Strategy::Tile {
+                routine: ConvRoutineKind::PlaneFragment,
+                settings: Some(PlaneFragmentConvRoutine::GRID_2X2.mma()),
+            },
+        ),
+        CatalogEntry::new(
+            "plane_fragment_mma_grid_1x2",
+            "Plane fragment / Mma, 1x2 fragments",
+            Strategy::Tile {
+                routine: ConvRoutineKind::PlaneFragment,
+                settings: Some(PlaneFragmentConvRoutine::GRID_1X2.mma()),
+            },
+        ),
+    ]
 }

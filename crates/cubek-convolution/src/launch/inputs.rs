@@ -2,6 +2,7 @@ use cubecl::prelude::TensorBinding;
 use cubek_std::InputBinding;
 
 use crate::components::ConvolutionOperation;
+use crate::kernels::tiled::ConvWindow;
 
 /// Spatial convolution arguments (stride / beginning padding / dilation per spatial dim).
 ///
@@ -12,6 +13,19 @@ pub struct ConvolutionArgs<const N_SPATIAL: usize> {
     /// Padding at the beginning of each spatial dimension.
     pub padding: [usize; N_SPATIAL],
     pub dilation: [usize; N_SPATIAL],
+}
+
+impl<const N_SPATIAL: usize> ConvolutionArgs<N_SPATIAL> {
+    /// These arguments as the window the tiled kernels read through, `None` where the convolution
+    /// is not over two spatial dimensions.
+    pub fn window(&self) -> Option<ConvWindow> {
+        let dims = |args: &[usize]| <[usize; 2]>::try_from(args).ok();
+        Some(ConvWindow {
+            stride: dims(&self.stride)?,
+            dilation: dims(&self.dilation)?,
+            padding: dims(&self.padding)?,
+        })
+    }
 }
 
 #[allow(clippy::large_enum_variant)]

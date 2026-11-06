@@ -1,0 +1,56 @@
+//! What the routines' pure tests prepare against: devices stated as constants and the problems
+//! the benchmark catalog names.
+
+use crate::kernels::tiled::ConvProblem;
+use cubecl::features::MmaConfig;
+use cubecl::ir::{ElemType, FloatKind};
+use cubek_std::{Hardware, devices};
+
+pub const F16: ElemType = ElemType::Float(FloatKind::F16);
+pub const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+fn shape(element: ElemType, (m, n, k): (u32, u32, u32)) -> MmaConfig {
+    MmaConfig {
+        a_type: element,
+        b_type: element,
+        cd_type: F32,
+        m,
+        n,
+        k,
+    }
+}
+
+/// An NVIDIA GPU of the 2060's instructions: cmma `16x16x16` and manual mma `16x8x8`, both over
+/// `f16`.
+pub fn nvidia() -> Hardware {
+    let hw = devices::offering_cmma(devices::h100(), [shape(F16, (16, 16, 16))]);
+    devices::offering_mma(hw, [shape(F16, (16, 8, 8))])
+}
+
+/// A device offering the cmma instruction alone.
+pub fn cmma_only() -> Hardware {
+    devices::offering_cmma(devices::h100(), [shape(F16, (16, 16, 16))])
+}
+
+/// The catalog's problem shapes, each as `(name, problem)`: few channels under a deep filter, 64
+/// channels, a stride of two, and a map seven wide.
+pub fn problems() -> [(&'static str, ConvProblem); 4] {
+    [
+        (
+            "alexnet_like",
+            ConvProblem::dense(8, [227, 227], (3, 64), [11, 11], 4, F16),
+        ),
+        (
+            "conv3x3_c64",
+            ConvProblem::dense(8, [58, 58], (64, 64), [3, 3], 1, F16),
+        ),
+        (
+            "conv3x3_c64_stride2",
+            ConvProblem::dense(8, [57, 57], (64, 128), [3, 3], 2, F16),
+        ),
+        (
+            "narrow_width",
+            ConvProblem::dense(8, [9, 9], (64, 64), [3, 3], 1, F16),
+        ),
+    ]
+}
