@@ -27,6 +27,9 @@ pub const TAP: Axis = Axis(9);
 pub const RING_COLUMN: Axis = Axis(10);
 /// A channel of one key head, head local: no operand binds it, only the units level cuts it.
 pub const HEAD_CHANNEL: Axis = Axis(11);
+/// A position of a stream the conv reads by tap: its context columns first, so a stream is
+/// `taps - 1` positions longer than the positions it convolves, and no level cuts it.
+pub const STREAM_POSITION: Axis = Axis(12);
 
 /// How the walk places its microkernel's runs over a problem: a cube for every box of value
 /// columns of one head of one sequence, and inside the cube's box the levels the routine and its
@@ -74,31 +77,37 @@ impl GatedDeltaWalkPartitioning {
     }
 }
 
-/// How the conv places its microkernel's work: a cube for every key head of every row.
+/// How the conv places its microkernel's work: a cube for every key head of every row, and of every
+/// position when the space has positions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatedDeltaConvPartitioning {
     partitioning: Partitioning,
 }
 
 impl GatedDeltaConvPartitioning {
-    /// `space` partitioned with `inside` a cube's box: key heads ride the grid's `x`, rows come one
-    /// a cube.
+    /// `space` partitioned with `inside` a cube's box: key heads ride the grid's `x`, or its `y`
+    /// behind the positions, and rows come one a cube.
     pub fn new(space: Space, inside: Levels) -> Self {
+        let cubes: &[Axis] = if space.contains(POSITION) {
+            &[POSITION, KEY_HEAD]
+        } else {
+            &[KEY_HEAD]
+        };
         Self {
-            partitioning: Partitioning::new(
-                space,
-                inside.cubes(&[KEY_HEAD]).batches(&[BATCH]).build(),
-            ),
+            partitioning: Partitioning::new(space, inside.cubes(cubes).batches(&[BATCH]).build()),
         }
     }
 
-    /// The partitioning a kernel compiles against: rows, slots and ring left to the launch.
+    /// The partitioning a kernel compiles against: rows, positions, slots, ring and stream left to
+    /// the launch.
     pub fn kernel(&self) -> Partitioning {
+        let space = self.partitioning.space();
+        let dynamic: Vec<Axis> = [BATCH, POSITION, STORE_SLOT, RING_COLUMN, STREAM_POSITION]
+            .into_iter()
+            .filter(|axis| space.contains(*axis))
+            .collect();
         Partitioning::new(
-            self.partitioning
-                .space()
-                .clone()
-                .with_dynamic(&[BATCH, STORE_SLOT, RING_COLUMN]),
+            space.clone().with_dynamic(&dynamic),
             self.partitioning.levels().to_vec(),
         )
     }

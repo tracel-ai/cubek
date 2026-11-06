@@ -10,6 +10,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
+use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
@@ -17,15 +18,16 @@ use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::gated_delta::conv::GatedDeltaConvOperandMap;
 use cubek_microkernel::gated_delta::{
-    BATCH, CHANNEL, GROUP, GatedDeltaHeads, KEY_FEATURE, KEY_HEAD, RING_COLUMN, STORE_SLOT, TAP,
-    VALUE_FEATURE,
+    BATCH, CHANNEL, GROUP, GatedDeltaHeads, KEY_FEATURE, KEY_HEAD, POSITION, RING_COLUMN,
+    STORE_SLOT, STREAM_POSITION, TAP, VALUE_FEATURE,
 };
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
-/// The inputs of a conv: the newest values of the `q|k|v` stream `[rows, conv_dim]`, the filters
-/// `[conv_dim, taps]` (a unit dim between allowed) and the past, all in one element. They are read
-/// where they lie, the innermost axis contiguous; a padded row or an off-line start narrows the
-/// conv's lines.
+/// The inputs of a conv: the `q|k|v` stream, the filters `[conv_dim, taps]` (a unit dim between
+/// allowed) and the past, all in one element. Over a window the stream holds the newest values
+/// `[rows, conv_dim]`; over a stream, every sequence's `[batch, positions + taps - 1, conv_dim]`,
+/// context columns first. They are read where they lie, the innermost axis contiguous; a padded row
+/// or an off-line start narrows the conv's lines.
 #[derive(Clone)]
 pub struct GatedDeltaConvInputs {
     /// The client every operand lives on.
@@ -40,6 +42,8 @@ pub struct GatedDeltaConvInputs {
 }
 
 /// The past a conv's taps run over.
+// Built once a call and consumed by it, so the larger variant costs one copy of a few handles.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum GatedDeltaConvPastInputs {
     /// A window store `[slots, columns, conv_dim]`, its slots and columns at any stride. Each row
@@ -52,6 +56,8 @@ pub enum GatedDeltaConvPastInputs {
         slots: PlainTensor,
         lengths: PlainTensor,
     },
+    /// The stream's own context columns.
+    Stream,
 }
 
 impl core::fmt::Debug for GatedDeltaConvInputs {
@@ -67,7 +73,8 @@ impl core::fmt::Debug for GatedDeltaConvInputs {
 }
 
 /// What a conv leaves in `f32`, in the walk's shapes: the queries and keys `[rows, 1, key_heads,
-/// key_features]` and the values `[rows, 1, value_heads, value_features]`.
+/// key_features]` and the values `[rows, 1, value_heads, value_features]` of a window conv, or
+/// `[batch, positions, ..]` of a stream conv.
 #[derive(Clone)]
 pub struct GatedDeltaConvOutputs {
     pub query: TensorHandle,
@@ -76,8 +83,8 @@ pub struct GatedDeltaConvOutputs {
 }
 
 impl GatedDeltaConvOutputs {
-    /// The outputs over `rows` rows, and the same buffers as the kernel binds them, without the
-    /// unit position dim.
+    /// The outputs over `batch` rows or sequences, and the same buffers as the kernel binds them,
+    /// without the unit position dim of a window conv.
     ///
     /// # Errors
     ///
@@ -85,15 +92,22 @@ impl GatedDeltaConvOutputs {
     fn allocate(
         client: &Client,
         heads: &GatedDeltaHeads,
-        rows: usize,
+        batch: usize,
+        past: &GatedDeltaConvPast,
     ) -> Result<(Self, [PlainTensor; 3]), Refusal> {
+        let (lead, bound) = match *past {
+            GatedDeltaConvPast::Window { .. } => (vec![batch, 1], vec![batch]),
+            GatedDeltaConvPast::Stream { positions } => {
+                (vec![batch, positions], vec![batch, positions])
+            }
+        };
         let make = |tail: &[usize], bound_tail: &[usize]| {
             let (handle, plain) = PlainTensor::empty_contiguous(
                 client,
-                Shape::from([&[rows, 1], tail].concat()),
+                Shape::from([lead.as_slice(), tail].concat()),
                 GATED_DELTA_CONV_OUTPUT_ELEMENT,
             );
-            let shape = [&[rows], bound_tail].concat();
+            let shape = [bound.as_slice(), bound_tail].concat();
             let strides = row_major_contiguous_strides(&shape).to_vec();
             (handle, plain.viewed(Metadata::new(shape, strides)))
         };
@@ -135,11 +149,64 @@ pub(crate) struct GatedDeltaConvBinding {
     pub launcher: Launcher,
     pub qkv: TileTensorLaunch,
     pub filters: TileTensorLaunch,
-    pub window: TileTensorLaunch,
-    pub lengths: TileTensorLaunch,
     pub query: TileTensorLaunch,
     pub key: TileTensorLaunch,
     pub value: TileTensorLaunch,
+    /// Over a window, the row's store placed by the slot table.
+    pub window: Option<TileTensorLaunch>,
+    /// Over a window, the positions each row has convolved.
+    pub lengths: Option<TileTensorLaunch>,
+}
+
+impl GatedDeltaConvPastInputs {
+    /// The store, which only a window has.
+    fn window(&self) -> Option<&PlainTensor> {
+        match self {
+            Self::Window { window, .. } => Some(window),
+            Self::Stream => None,
+        }
+    }
+
+    /// The positions each row has convolved, which only a window has.
+    fn lengths(&self) -> Option<&PlainTensor> {
+        match self {
+            Self::Window { lengths, .. } => Some(lengths),
+            Self::Stream => None,
+        }
+    }
+
+    /// The window and the lengths bound under `launcher`, `width` values a line.
+    fn bind(
+        &self,
+        launcher: &Launcher,
+        width: usize,
+    ) -> (Option<TileTensorLaunch>, Option<TileTensorLaunch>) {
+        match self {
+            Self::Window {
+                window,
+                slots,
+                lengths,
+            } => {
+                let entries = TileTensorLaunch::new(
+                    slots.binding.clone().into_tensor_arg(),
+                    slots.elem,
+                    1,
+                    TileSpec::direct(&[BATCH]),
+                );
+                let window = GatedDeltaConvTensors::bound(
+                    launcher,
+                    window,
+                    &[STORE_SLOT, RING_COLUMN, CHANNEL],
+                    width,
+                )
+                .indexed(entries, Indexing::Coordinate(STORE_SLOT))
+                .expect(ADMITTED_PLAN_RUNS);
+                let lengths = GatedDeltaConvTensors::bound(launcher, lengths, &[BATCH], 1);
+                (Some(window), Some(lengths))
+            }
+            Self::Stream => (None, None),
+        }
+    }
 }
 
 impl GatedDeltaConvTensors {
@@ -148,7 +215,7 @@ impl GatedDeltaConvTensors {
     /// # Errors
     ///
     /// [`GatedDeltaConvProblem::admit_element`]'s refusal, [`GATED_DELTA_CONV_NOTHING_TO_CONVOLVE`]
-    /// for no row, and [`ELEMENT_NOT_ON_DEVICE`].
+    /// for no row or position, and [`ELEMENT_NOT_ON_DEVICE`].
     ///
     /// # Panics
     ///
@@ -163,14 +230,12 @@ impl GatedDeltaConvTensors {
             heads,
             epsilon,
         } = inputs;
-        let GatedDeltaConvPastInputs::Window {
-            window,
-            slots,
-            lengths,
-        } = past;
         let element = qkv.elem;
         GatedDeltaConvProblem::admit_element(element)?;
-        for tensor in [&qkv, &filters, &window] {
+        for tensor in [Some(&qkv), Some(&filters), past.window()]
+            .into_iter()
+            .flatten()
+        {
             assert_eq!(tensor.elem, element, "the conv's operands share an element");
             assert!(
                 tensor.binding.strides.last() == Some(&1),
@@ -181,6 +246,80 @@ impl GatedDeltaConvTensors {
             return Err(ELEMENT_NOT_ON_DEVICE);
         }
         let conv_dim = heads.conv_dim();
+        let filter_shape = filters.shape().to_vec();
+        assert!(
+            filter_shape[0] == conv_dim
+                && filter_shape[1..filter_shape.len() - 1]
+                    .iter()
+                    .all(|&e| e == 1),
+            "the filters are [conv_dim, taps]"
+        );
+        let taps = *filter_shape.last().expect("filters have a tap axis");
+        let filters = filters.viewed(Metadata::new(
+            vec![conv_dim, taps],
+            vec![filters.binding.strides[0], 1],
+        ));
+        let (qkv, viewed, past) = match past {
+            GatedDeltaConvPastInputs::Window {
+                window,
+                slots,
+                lengths,
+            } => Self::shape_window(qkv, conv_dim, window, slots, lengths)?,
+            GatedDeltaConvPastInputs::Stream => Self::shape_stream(qkv, conv_dim, taps)?,
+        };
+        let batch = qkv.shape()[0];
+        let (outputs, [query, key, value]) =
+            GatedDeltaConvOutputs::allocate(&client, &heads, batch, &past)?;
+        let alignments = GatedDeltaConvOperandMap {
+            qkv: qkv.elem_alignment(),
+            filters: filters.elem_alignment(),
+            window: (viewed.window()).map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
+            lengths: (viewed.lengths()).map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
+            query: query.elem_alignment(),
+            key: key.elem_alignment(),
+            value: value.elem_alignment(),
+        };
+        let start_bytes = GatedDeltaConvOperandMap {
+            qkv: qkv.start_bytes(),
+            filters: filters.start_bytes(),
+            window: viewed.window().map_or(0, PlainTensor::start_bytes),
+            lengths: viewed.lengths().map_or(0, PlainTensor::start_bytes),
+            query: query.start_bytes(),
+            key: key.start_bytes(),
+            value: value.start_bytes(),
+        };
+        let problem = GatedDeltaConvProblem {
+            batch,
+            heads,
+            taps,
+            element,
+            past,
+            alignments,
+            start_bytes,
+        };
+        Ok(Self {
+            client,
+            qkv,
+            filters,
+            query,
+            key,
+            value,
+            past: viewed,
+            outputs,
+            epsilon,
+            problem,
+        })
+    }
+
+    /// The inputs over a window: the stream `[rows, conv_dim]`, the store and its tables, viewed,
+    /// and the past they state.
+    fn shape_window(
+        qkv: PlainTensor,
+        conv_dim: usize,
+        window: PlainTensor,
+        slots: PlainTensor,
+        lengths: PlainTensor,
+    ) -> Result<(PlainTensor, GatedDeltaConvPastInputs, GatedDeltaConvPast), Refusal> {
         let qkv_shape = qkv.shape().to_vec();
         let rows = qkv_shape[0];
         if rows == 0 {
@@ -195,19 +334,6 @@ impl GatedDeltaConvTensors {
             vec![rows, conv_dim],
             vec![qkv.binding.strides[0], 1],
         ));
-        let filter_shape = filters.shape().to_vec();
-        assert!(
-            filter_shape[0] == conv_dim
-                && filter_shape[1..filter_shape.len() - 1]
-                    .iter()
-                    .all(|&e| e == 1),
-            "the filters are [conv_dim, taps]"
-        );
-        let taps = *filter_shape.last().expect("filters have a tap axis");
-        let filters = filters.viewed(Metadata::new(
-            vec![conv_dim, taps],
-            vec![filters.binding.strides[0], 1],
-        ));
         let [slots_in_store, columns, window_channels] = window.shape().dims::<3>();
         assert_eq!(
             window_channels, conv_dim,
@@ -221,52 +347,46 @@ impl GatedDeltaConvTensors {
             assert_eq!(table.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
             assert_eq!(table.shape().dims::<1>(), [rows]);
         }
-        let (outputs, [query, key, value]) =
-            GatedDeltaConvOutputs::allocate(&client, &heads, rows)?;
-        let problem = GatedDeltaConvProblem {
-            batch: rows,
-            heads,
-            taps,
-            element,
-            past: GatedDeltaConvPast::Window {
-                slots: NonZeroUsize::new(slots_in_store).expect("a store holds a slot"),
-                columns,
-            },
-            alignments: GatedDeltaConvOperandMap {
-                qkv: qkv.elem_alignment(),
-                filters: filters.elem_alignment(),
-                window: window.elem_alignment(),
-                lengths: lengths.elem_alignment(),
-                query: query.elem_alignment(),
-                key: key.elem_alignment(),
-                value: value.elem_alignment(),
-            },
-            start_bytes: GatedDeltaConvOperandMap {
-                qkv: qkv.start_bytes(),
-                filters: filters.start_bytes(),
-                window: window.start_bytes(),
-                lengths: lengths.start_bytes(),
-                query: query.start_bytes(),
-                key: key.start_bytes(),
-                value: value.start_bytes(),
-            },
+        let past = GatedDeltaConvPast::Window {
+            slots: NonZeroUsize::new(slots_in_store).expect("a store holds a slot"),
+            columns,
         };
-        Ok(Self {
-            client,
+        Ok((
             qkv,
-            filters,
-            query,
-            key,
-            value,
-            past: GatedDeltaConvPastInputs::Window {
+            GatedDeltaConvPastInputs::Window {
                 window,
                 slots,
                 lengths,
             },
-            outputs,
-            epsilon,
-            problem,
-        })
+            past,
+        ))
+    }
+
+    /// The inputs over a stream `[batch, positions + taps - 1, conv_dim]`, viewed, and the past
+    /// they state.
+    fn shape_stream(
+        qkv: PlainTensor,
+        conv_dim: usize,
+        taps: usize,
+    ) -> Result<(PlainTensor, GatedDeltaConvPastInputs, GatedDeltaConvPast), Refusal> {
+        let [batch, stream_positions, channels] = qkv.shape().dims::<3>();
+        assert_eq!(
+            channels, conv_dim,
+            "the stream holds every channel a position"
+        );
+        let positions = stream_positions.saturating_sub(taps.saturating_sub(1));
+        if batch == 0 || positions == 0 {
+            return Err(GATED_DELTA_CONV_NOTHING_TO_CONVOLVE);
+        }
+        let qkv = qkv.viewed(Metadata::new(
+            vec![batch, stream_positions, conv_dim],
+            vec![qkv.binding.strides[0], qkv.binding.strides[1], 1],
+        ));
+        Ok((
+            qkv,
+            GatedDeltaConvPastInputs::Stream,
+            GatedDeltaConvPast::Stream { positions },
+        ))
     }
 
     /// The client the operands live on, which a launch submits to.
@@ -289,7 +409,7 @@ impl GatedDeltaConvTensors {
         self.outputs
     }
 
-    /// Every operand bound as `blueprint` states it, on `grid`, the window placed at the slot its
+    /// Every operand bound as `blueprint` states it, on `grid`, a window placed at the slot its
     /// table names.
     pub(crate) fn bind(
         &self,
@@ -301,28 +421,27 @@ impl GatedDeltaConvTensors {
         let bind = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
             Self::bound(&launcher, tensor, axes, width)
         };
-        let GatedDeltaConvPastInputs::Window {
-            window,
-            slots,
-            lengths,
-        } = &self.past;
-        let entries = TileTensorLaunch::new(
-            slots.binding.clone().into_tensor_arg(),
-            slots.elem,
-            1,
-            TileSpec::direct(&[BATCH]),
-        );
-        let window = bind(window, &[STORE_SLOT, RING_COLUMN, CHANNEL], width)
-            .indexed(entries, Indexing::Coordinate(STORE_SLOT))
-            .expect(ADMITTED_PLAN_RUNS);
+        let (qkv, keyed, valued): (&[Axis], &[Axis], &[Axis]) = match self.past {
+            GatedDeltaConvPastInputs::Window { .. } => (
+                &[BATCH, CHANNEL],
+                &[BATCH, KEY_HEAD, KEY_FEATURE],
+                &[BATCH, KEY_HEAD, GROUP, VALUE_FEATURE],
+            ),
+            GatedDeltaConvPastInputs::Stream => (
+                &[BATCH, STREAM_POSITION, CHANNEL],
+                &[BATCH, POSITION, KEY_HEAD, KEY_FEATURE],
+                &[BATCH, POSITION, KEY_HEAD, GROUP, VALUE_FEATURE],
+            ),
+        };
+        let (window, lengths) = self.past.bind(&launcher, width);
         GatedDeltaConvBinding {
-            qkv: bind(&self.qkv, &[BATCH, CHANNEL], width),
+            qkv: bind(&self.qkv, qkv, width),
             filters: bind(&self.filters, &[CHANNEL, TAP], 1),
+            query: bind(&self.query, keyed, width),
+            key: bind(&self.key, keyed, width),
+            value: bind(&self.value, valued, width),
             window,
-            lengths: bind(lengths, &[BATCH], 1),
-            query: bind(&self.query, &[BATCH, KEY_HEAD, KEY_FEATURE], width),
-            key: bind(&self.key, &[BATCH, KEY_HEAD, KEY_FEATURE], width),
-            value: bind(&self.value, &[BATCH, KEY_HEAD, GROUP, VALUE_FEATURE], width),
+            lengths,
             launcher,
         }
     }

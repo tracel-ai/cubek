@@ -4,7 +4,8 @@ use crate::kernels::conv::CubeGatedDeltaConvRoutine;
 use crate::kernels::refusals::{
     GATED_DELTA_CONV_BINDINGS_PAST_DEVICE, GATED_DELTA_CONV_ELEMENT_UNSUPPORTED,
     GATED_DELTA_CONV_HEADS_EMPTY, GATED_DELTA_CONV_NOTHING_TO_CONVOLVE,
-    GATED_DELTA_CONV_TAPS_PAST_WINDOW, GATED_DELTA_CONV_WINDOW_BINDING_BUFFERS,
+    GATED_DELTA_CONV_STREAM_BINDING_BUFFERS, GATED_DELTA_CONV_TAPS_PAST_WINDOW,
+    GATED_DELTA_CONV_WINDOW_BINDING_BUFFERS,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
@@ -16,8 +17,8 @@ use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_microkernel::gated_delta::conv::cube::GatedDeltaConvWorkItem;
 use cubek_microkernel::gated_delta::conv::{GatedDeltaConvOperand, GatedDeltaConvOperandMap};
 use cubek_microkernel::gated_delta::{
-    BATCH, CHANNEL, GROUP, GatedDeltaHeads, HEAD_CHANNEL, KEY_FEATURE, KEY_HEAD, RING_COLUMN,
-    STORE_SLOT, TAP, VALUE_FEATURE,
+    BATCH, CHANNEL, GROUP, GatedDeltaHeads, HEAD_CHANNEL, KEY_FEATURE, KEY_HEAD, POSITION,
+    RING_COLUMN, STORE_SLOT, STREAM_POSITION, TAP, VALUE_FEATURE,
 };
 use cubek_std::Hardware;
 use cubek_std::routine::{EstimatedProblem, Routine};
@@ -37,6 +38,11 @@ pub enum GatedDeltaConvPast {
     /// A store of `slots` windows of `columns` ring columns. A row reads the columns its
     /// convolved positions fill and writes its newest values as the ring's next column.
     Window { slots: NonZeroUsize, columns: usize },
+    /// The stream of `positions` positions of each sequence, `taps - 1` context columns before
+    /// them: tap `j` of position `t` is the stream's value `t + j`, and nothing is written back.
+    /// A caller that goes on with a window seeds it from the stream's tail: a row that has
+    /// convolved `P` positions reads tap `j` at ring column `(P + j - (taps - 1)) % columns`.
+    Stream { positions: usize },
 }
 
 impl GatedDeltaConvPast {
@@ -44,26 +50,38 @@ impl GatedDeltaConvPast {
     pub fn binding_buffers(&self) -> u32 {
         match self {
             Self::Window { .. } => GATED_DELTA_CONV_WINDOW_BINDING_BUFFERS,
+            Self::Stream { .. } => GATED_DELTA_CONV_STREAM_BINDING_BUFFERS,
         }
     }
 
-    /// The ring length the kernel is told: its window's columns.
+    /// The ring length the kernel is told; over a stream it is zero and unread.
     pub fn columns(&self) -> usize {
         match self {
             Self::Window { columns, .. } => *columns,
+            Self::Stream { .. } => 0,
         }
     }
 
     /// The operands of the conv this past binds, which a line of channels runs along.
     pub fn channels(&self) -> &'static [GatedDeltaConvOperand] {
         match self {
-            Self::Window { .. } => &GatedDeltaConvOperand::CHANNELS,
+            Self::Window { .. } => &GatedDeltaConvOperand::WINDOW_CHANNELS,
+            Self::Stream { .. } => &GatedDeltaConvOperand::STREAM_CHANNELS,
+        }
+    }
+
+    /// The columns of a stream of `taps` taps: its context columns and its positions. Zero over a
+    /// window, which has no stream.
+    pub fn stream_len(&self, taps: usize) -> usize {
+        match self {
+            Self::Window { .. } => 0,
+            Self::Stream { positions } => (positions + taps).saturating_sub(1),
         }
     }
 }
 
-/// The conv over `batch` rows of one position each: the `q|k|v` stream of `heads` and a filter of
-/// `taps`, in activations of `element`.
+/// The conv over `batch` rows of one position each, or sequences of positions: the `q|k|v` stream
+/// of `heads` and a filter of `taps`, in activations of `element`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatedDeltaConvProblem {
     pub batch: usize,
@@ -98,8 +116,8 @@ impl GatedDeltaConvProblem {
     ///
     /// # Errors
     ///
-    /// What admission declines: no head, no row, an unsupported element, a filter or window the
-    /// taps cannot be read back from, more buffers than the device binds.
+    /// What admission declines: no head, no row or position, an unsupported element, a filter or
+    /// window the taps cannot be read back from, more buffers than the device binds.
     pub fn admit(&self, hw: &Hardware) -> Result<(), Refusal> {
         CubeGatedDeltaConvRoutine
             .prepare_first_served(hw, self)
@@ -111,12 +129,15 @@ impl GatedDeltaConvProblem {
         if self.work_item().is_empty() {
             return Err(GATED_DELTA_CONV_HEADS_EMPTY);
         }
-        if self.batch == 0 {
+        if self.batch == 0 || self.past == (GatedDeltaConvPast::Stream { positions: 0 }) {
             return Err(GATED_DELTA_CONV_NOTHING_TO_CONVOLVE);
         }
         Self::admit_element(self.element)?;
-        let GatedDeltaConvPast::Window { columns, .. } = self.past;
-        if self.taps < 2 || columns < self.taps - 1 {
+        let window_short = match self.past {
+            GatedDeltaConvPast::Window { columns, .. } => columns + 1 < self.taps,
+            GatedDeltaConvPast::Stream { .. } => false,
+        };
+        if self.taps < 2 || window_short {
             return Err(GATED_DELTA_CONV_TAPS_PAST_WINDOW);
         }
         if self.past.binding_buffers() > hw.properties.hardware.max_bindings {
@@ -129,6 +150,7 @@ impl GatedDeltaConvProblem {
         GatedDeltaConvWorkItem {
             heads: self.heads,
             taps: self.taps,
+            channels: self.past.channels(),
         }
     }
 
@@ -149,6 +171,10 @@ impl GatedDeltaConvProblem {
             GatedDeltaConvPast::Window { slots, columns } => {
                 axes.extend([(STORE_SLOT, slots.get()), (RING_COLUMN, columns)]);
             }
+            GatedDeltaConvPast::Stream { positions } => axes.extend([
+                (POSITION, positions),
+                (STREAM_POSITION, self.past.stream_len(self.taps)),
+            ]),
         }
         Space::new(&axes)
     }
@@ -157,7 +183,7 @@ impl GatedDeltaConvProblem {
     /// channels.
     pub(crate) fn leaf(&self, width: usize) -> Vec<(Axis, usize)> {
         let heads = &self.heads;
-        vec![
+        let mut axes = vec![
             (KEY_HEAD, 1),
             (GROUP, heads.group),
             (KEY_FEATURE, heads.key_features),
@@ -165,7 +191,11 @@ impl GatedDeltaConvProblem {
             (CHANNEL, heads.conv_dim()),
             (HEAD_CHANNEL, width),
             (TAP, self.taps),
-        ]
+        ];
+        if let GatedDeltaConvPast::Stream { .. } = self.past {
+            axes.insert(0, (POSITION, 1));
+        }
+        axes
     }
 
     /// A problem of dense operands, each starting where its buffer does.
@@ -184,23 +214,39 @@ impl GatedDeltaConvProblem {
             key_features,
             value_features,
         } = heads;
-        let keyed = rows(&[batch, key_heads, key_features]);
-        let GatedDeltaConvPast::Window { slots, columns } = past;
+        let conv_dim = heads.conv_dim();
+        let alignments = match past {
+            GatedDeltaConvPast::Window { slots, columns } => {
+                let keyed = rows(&[batch, key_heads, key_features]);
+                GatedDeltaConvOperandMap {
+                    qkv: rows(&[batch, conv_dim]),
+                    filters: rows(&[conv_dim, taps]),
+                    window: rows(&[slots.get(), columns, conv_dim]),
+                    lengths: rows(&[batch]),
+                    query: keyed,
+                    key: keyed,
+                    value: rows(&[batch, key_heads, group, value_features]),
+                }
+            }
+            GatedDeltaConvPast::Stream { positions } => {
+                let keyed = rows(&[batch, positions, key_heads, key_features]);
+                GatedDeltaConvOperandMap {
+                    qkv: rows(&[batch, past.stream_len(taps), conv_dim]),
+                    filters: rows(&[conv_dim, taps]),
+                    query: keyed,
+                    key: keyed,
+                    value: rows(&[batch, positions, key_heads, group, value_features]),
+                    ..GatedDeltaConvOperandMap::splat(ElemAlignment::ONE)
+                }
+            }
+        };
         Self {
             batch,
             heads,
             taps,
             element,
             past,
-            alignments: GatedDeltaConvOperandMap {
-                qkv: rows(&[batch, heads.conv_dim()]),
-                filters: rows(&[heads.conv_dim(), taps]),
-                window: rows(&[slots.get(), columns, heads.conv_dim()]),
-                lengths: rows(&[batch]),
-                query: keyed,
-                key: keyed,
-                value: rows(&[batch, key_heads, group, value_features]),
-            },
+            alignments,
             start_bytes: GatedDeltaConvOperandMap::splat(0),
         }
     }
@@ -209,13 +255,23 @@ impl GatedDeltaConvProblem {
 impl EstimatedProblem for GatedDeltaConvProblem {
     /// Every operand once, and a handful of operations a channel a tap.
     fn demand(&self) -> Work {
-        let channels = self.batch * self.heads.conv_dim();
+        let conv_dim = self.heads.conv_dim();
         let size = self.element.size();
-        let read = (channels * self.taps + self.heads.conv_dim() * self.taps) * size;
-        let written = channels * size + channels * GATED_DELTA_CONV_OUTPUT_ELEMENT.size();
+        let filters = conv_dim * self.taps * size;
+        let (positions, read, written) = match self.past {
+            GatedDeltaConvPast::Window { .. } => {
+                let channels = self.batch * conv_dim;
+                (1, channels * self.taps * size, channels * size)
+            }
+            GatedDeltaConvPast::Stream { positions } => {
+                let stream = self.batch * self.past.stream_len(self.taps) * conv_dim * size;
+                (positions, stream, 0)
+            }
+        };
+        let channels = self.batch * positions * conv_dim;
         Work {
             compute_ops: self.work_item().operations(channels),
-            bytes: read + written,
+            bytes: read + filters + written + channels * GATED_DELTA_CONV_OUTPUT_ELEMENT.size(),
         }
     }
 }
@@ -271,8 +327,8 @@ mod tests {
         GatedDeltaConvProblem::dense(8, heads, taps, window(9, columns), F16)
     }
 
-    /// The launch needs seven operands, the slot table and the metadata buffer: a device binding
-    /// eight declines it by name, nine admits.
+    /// A window launch needs seven operands, the slot table and the metadata buffer: a device
+    /// binding eight declines it by name, nine admits.
     #[test]
     fn a_device_binding_fewer_buffers_than_the_launch_is_declined() {
         let problem = conv(heads(), 4, 3);
@@ -312,5 +368,20 @@ mod tests {
             Err(GATED_DELTA_CONV_TAPS_PAST_WINDOW)
         );
         assert_eq!(conv(heads(), 4, 3).admit(&hw), Ok(()));
+    }
+
+    /// A stream with no position is declined by name; one with positions binds fewer buffers than
+    /// a window, so the devices that decline a window admit it.
+    #[test]
+    fn a_stream_is_declined_without_positions_and_binds_less_than_a_window() {
+        let stream = |positions| {
+            let past = GatedDeltaConvPast::Stream { positions };
+            GatedDeltaConvProblem::dense(1, heads(), 4, past, F16)
+        };
+        assert_eq!(
+            stream(0).admit(&devices::h100()),
+            Err(GATED_DELTA_CONV_NOTHING_TO_CONVOLVE)
+        );
+        assert_eq!(stream(8).admit(&devices::wgpu_no_subgroups()), Ok(()));
     }
 }

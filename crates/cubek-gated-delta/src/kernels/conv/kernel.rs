@@ -5,14 +5,16 @@ use cubek_microkernel::gated_delta::conv::cube::{
     CubeGatedDeltaConvMicrokernel, GatedDeltaConvTiles, cube_gated_delta_conv_microkernel,
 };
 
-/// Every cube convolves one key head of one row and normalizes its queries and keys.
+/// Every cube convolves one key head of one row, or of one position of a sequence, and normalizes
+/// its queries and keys. `window` and `lengths` are bound over a window alone, and `columns` is the
+/// ring's length there.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_gated_delta_conv_kernel<E: Float, N: Size>(
     qkv: &TileTensor<'_>,
     filters: &TileTensor<'_>,
-    window: &TileTensor<'_>,
-    lengths: &TileTensor<'_>,
+    window: ComptimeOption<&TileTensor<'static>>,
+    lengths: ComptimeOption<&TileTensor<'static>>,
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
@@ -25,8 +27,8 @@ pub fn cube_gated_delta_conv_kernel<E: Float, N: Size>(
     let tiles = GatedDeltaConvTiles {
         qkv: qkv.tile(&partitioning),
         filters: filters.tile(&partitioning),
-        window: window.tile(&partitioning),
-        lengths: lengths.tile(&partitioning),
+        window: window.map(|window| window.tile(&partitioning)),
+        lengths: lengths.map(|lengths| lengths.tile(&partitioning)),
         query: query.tile(&partitioning),
         key: key.tile(&partitioning),
         value: value.tile(&partitioning),

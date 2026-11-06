@@ -9,11 +9,13 @@ use cubek_std::microkernel::{
 /// The units a cube deals a key head's channels between, at most.
 const MOST_UNITS: usize = 64;
 
-/// What a conv is: the heads whose channels it mixes and the filter's taps.
+/// What a conv is: the heads whose channels it mixes, the filter's taps and the operands its case
+/// reads along their channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GatedDeltaConvWorkItem {
     pub heads: GatedDeltaHeads,
     pub taps: usize,
+    pub channels: &'static [GatedDeltaConvOperand],
 }
 
 impl GatedDeltaConvWorkItem {
@@ -52,6 +54,7 @@ pub struct CubeGatedDeltaConvMicrokernel {
     pub units: usize,
     pub taps: usize,
     pub heads: GatedDeltaHeads,
+    pub channels: &'static [GatedDeltaConvOperand],
 }
 
 impl CubeGatedDeltaConvMicrokernel {
@@ -89,12 +92,14 @@ impl Microkernel for CubeGatedDeltaConvMicrokernel {
                 units,
                 taps: item.taps,
                 heads: item.heads,
+                channels: item.channels,
             })
             .into_iter()
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<GatedDeltaConvOperand>) {
         GatedDeltaConvOperand::require(
+            self.channels,
             self.heads.key_features,
             self.heads.value_features,
             vectorization,
