@@ -614,8 +614,7 @@ weight_grad_offset_tests! {
     weight_grad_offset_output_cube_staged_mma: "cube_staged_mma_grid_2x2";
 }
 
-/// A map one to three positions wide makes a step of two axes, which cmma declines by name and
-/// Mma serves.
+/// A map one to three positions wide makes a step of two axes.
 macro_rules! weight_grad_mma_tests {
     ($($stem:ident: $problem:expr;)*) => {
         $(mod $stem {
@@ -635,6 +634,27 @@ weight_grad_mma_tests! {
     weight_grad_ow_1: conv(2, (32, 16), [6, 1], [3, 1], ([1, 1], [1, 0], [1, 1]));
     weight_grad_ow_3_stride_2: conv(2, (32, 16), [6, 5], [3, 3], ([2, 2], [1, 1], [1, 1]));
     weight_grad_ow_3_dilation_2: conv(2, (32, 16), [6, 5], [3, 3], ([1, 1], [1, 1], [2, 2]));
+}
+
+/// The same steps of two axes through cmma, in modules named `two_axes` to be run apart.
+macro_rules! weight_grad_cmma_tests {
+    ($($stem:ident: $problem:expr;)*) => {
+        $(mod $stem {
+            use super::*;
+
+            #[test]
+            fn cube_staged_cmma() {
+                check_weight_grad("cube_staged_cmma_grid_2x2", &$problem, Binding::Dense, Binding::Dense);
+            }
+        })*
+    };
+}
+
+weight_grad_cmma_tests! {
+    two_axes_weight_grad_ow_3: conv(2, (32, 16), [6, 3], [3, 3], SAME_3X3);
+    two_axes_weight_grad_ow_1: conv(2, (32, 16), [6, 1], [3, 1], ([1, 1], [1, 0], [1, 1]));
+    two_axes_weight_grad_ow_3_stride_2: conv(2, (32, 16), [6, 5], [3, 3], ([2, 2], [1, 1], [1, 1]));
+    two_axes_weight_grad_ow_3_dilation_2: conv(2, (32, 16), [6, 5], [3, 3], ([1, 1], [1, 1], [2, 2]));
 }
 
 /// The grids of one tile of rows, whose boxes are a quarter of the others'.
@@ -725,18 +745,6 @@ fn an_output_gradient_of_another_batch_is_refused_by_name() {
     let out_grad = dense(&client, [1, 6, 6, 32]);
     let message = weight_grad_refusal("cube_staged", input, out_grad, [32, 3, 3, 64]);
     assert!(message.contains("batch"), "{message}");
-}
-
-/// A step of output rows and columns is declined through cmma by name, .
-#[test]
-fn cmma_declines_a_step_across_output_positions() {
-    let client = client();
-    for strategy in ["cube_staged_cmma_grid_2x2"] {
-        let input = InputBinding::new(dense(&client, [2, 6, 3, 32]), F16);
-        let out_grad = dense(&client, [2, 6, 3, 16]);
-        let message = weight_grad_refusal(strategy, input, out_grad, [16, 3, 3, 32]);
-        assert!(message.contains("output rows"), "{strategy}: {message}");
-    }
 }
 
 /// `in_grad[b, y, x, ci] = sum over co, ky, kx of out_grad[b, gy, gx, co] * weights[co, ky, kx, ci]`

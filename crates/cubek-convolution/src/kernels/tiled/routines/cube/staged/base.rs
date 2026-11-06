@@ -35,8 +35,8 @@ impl Routine for CubeStagedConvRoutine {
     type Blueprint = ConvBlueprint<CubeStagedMicrokernel>;
     type Partitioning = ConvPartitioning;
 
-    /// Cmma where the steps are whole channels, over lines at 64 rows and at one tile of rows;
-    /// then Mma, which serves the steps cmma declines: one element at a time at 64 rows, which a
+    /// Cmma over lines at 64 rows and at one tile of rows; then Mma, which serves the steps of
+    /// taps and channels cmma declines: one element at a time at 64 rows, which a
     /// deep filter wants, then lines at both.
     fn settings(&self, _hw: &Hardware) -> Vec<ConvSettings> {
         vec![

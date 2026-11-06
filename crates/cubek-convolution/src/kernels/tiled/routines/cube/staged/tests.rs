@@ -4,8 +4,7 @@
 use super::*;
 use crate::kernels::tiled::routines::test_support::{F32, cmma_only, nvidia, problems};
 use crate::kernels::tiled::{
-    CI, CMMA_STEP_ACROSS_POSITIONS, CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED,
-    ConvOperation, ConvProblem, OW, RW,
+    CI, CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED, ConvOperation, ConvProblem, OW, RW,
 };
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_microkernel::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentTransport};
@@ -149,24 +148,17 @@ fn a_weight_backward_contracts_the_output_positions() {
     assert!(!blueprint.partitioning.overhangs(CI));
 }
 
-/// A map seven wide makes a weight backward step of two axes, which cmma declines by name and Mma
-/// serves.
+/// A map seven wide makes a weight backward step of two axes, which cmma serves as Mma does.
 #[test]
-fn a_weight_backward_over_a_narrow_map_declines_cmma_by_name() {
+fn a_weight_backward_over_a_narrow_map_is_served_by_cmma() {
     let problem = ConvProblem {
         operation: ConvOperation::BackwardWeight,
         ..problem("narrow_width")
     };
     let settings = CubeStagedConvRoutine::GRID_2X2;
-    assert_eq!(
-        ROUTINE.prepare(&nvidia(), &problem, &settings).err(),
-        Some(CMMA_STEP_ACROSS_POSITIONS)
-    );
-    assert!(
-        ROUTINE
-            .prepare(&nvidia(), &problem, &settings.mma())
-            .is_ok()
-    );
+    for settings in [settings, settings.mma()] {
+        assert!(ROUTINE.prepare(&nvidia(), &problem, &settings).is_ok());
+    }
 }
 
 /// A cube's estimate holds the staging its partitioning places, and the cubes perform at least

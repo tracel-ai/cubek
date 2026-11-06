@@ -83,7 +83,7 @@ impl ConvTiles {
     ///
     /// # Errors
     ///
-    /// [`CMMA_STEP_ACROSS_TAPS`], for a step of two axes under cmma.
+    /// [`CMMA_STEP_ACROSS_TAPS`], for a step of taps and channels under cmma.
     pub fn new(
         problem: &ConvProblem,
         plane: &PlaneFragmentMicrokernel,
@@ -92,8 +92,11 @@ impl ConvTiles {
         let [(_, m), (_, n), (_, k)] = plane.instruction.shape();
         let step = ConvStep::new(problem, k);
         let cmma = matches!(plane.instruction, PlaneFragmentInstruction::Cmma { .. });
-        if cmma && step.beside() > 1 {
-            return Err(problem.operation.cmma_step_declined());
+        if cmma
+            && step.beside() > 1
+            && let Some(refusal) = problem.operation.cmma_step_declined()
+        {
+            return Err(refusal);
         }
         let mut tiles = Self {
             roles: problem.operation.roles(),

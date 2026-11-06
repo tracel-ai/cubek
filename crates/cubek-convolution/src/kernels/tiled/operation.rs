@@ -10,11 +10,6 @@ pub const CMMA_STEP_ACROSS_TAPS: Refusal = Refusal::Declined {
     why: "a cmma fragment load over a step made of taps and channels faults with a misaligned address (CUDA 716), unresolved",
 };
 
-/// What a cmma fragment load over a step of output rows and columns is declined with.
-pub const CMMA_STEP_ACROSS_POSITIONS: Refusal = Refusal::Declined {
-    why: "a cmma fragment load over a step made of output rows and output columns is declined, as one over taps and channels is: it faults with a misaligned address (CUDA 716), unresolved",
-};
-
 /// What a launch computes. Every operation contracts the same seven-axis space through the same
 /// gathered input; only the roles of the axes move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -172,11 +167,12 @@ impl ConvOperation {
         }
     }
 
-    /// What a cmma step made of two contracted axes is declined with.
-    pub fn cmma_step_declined(self) -> Refusal {
+    /// What a cmma step made of two contracted axes is declined with, where it is: a weight
+    /// backward walks output positions through cmma.
+    pub fn cmma_step_declined(self) -> Option<Refusal> {
         match self {
-            Self::Forward | Self::BackwardData => CMMA_STEP_ACROSS_TAPS,
-            Self::BackwardWeight => CMMA_STEP_ACROSS_POSITIONS,
+            Self::Forward | Self::BackwardData => Some(CMMA_STEP_ACROSS_TAPS),
+            Self::BackwardWeight => None,
         }
     }
 }
