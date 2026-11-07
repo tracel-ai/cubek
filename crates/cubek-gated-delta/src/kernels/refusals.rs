@@ -57,15 +57,19 @@ pub const GATED_DELTA_WALK_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
 /// slot table among them, and one for the metadata buffer some runtimes bind beside them.
 pub const GATED_DELTA_CONV_WINDOW_BINDING_BUFFERS: u32 = 8 + 1;
 
+/// The buffers a conv over a stream needs a device to bind: one for each of its 5 operands, and one
+/// for the metadata buffer some runtimes bind beside them.
+pub const GATED_DELTA_CONV_STREAM_BINDING_BUFFERS: u32 = 5 + 1;
+
 /// What admission declines a problem with when it describes no head: a conv needs a key head, a
 /// value head, a key feature and a value feature.
 pub const GATED_DELTA_CONV_HEADS_EMPTY: Refusal = Refusal::Declined {
     why: "the gated delta conv needs a key head, a value head, a key feature and a value feature",
 };
 
-/// What admission declines a problem with that holds no row to convolve.
+/// What admission declines a problem with that holds no row, or no position to convolve.
 pub const GATED_DELTA_CONV_NOTHING_TO_CONVOLVE: Refusal = Refusal::Declined {
-    why: "the gated delta conv needs a row to convolve",
+    why: "the gated delta conv needs a row and a position to convolve",
 };
 
 /// What admission declines a filter or a window with that cannot be read back: fewer than two

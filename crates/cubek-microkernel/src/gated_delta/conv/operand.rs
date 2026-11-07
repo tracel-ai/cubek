@@ -3,7 +3,8 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 /// One of the operands of the conv.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GatedDeltaConvOperand {
-    /// `[batch, channel]`: the newest value of every channel of the `q|k|v` stream.
+    /// `[batch, channel]`: the newest value of every channel of the `q|k|v` stream over a window,
+    /// or `[batch, stream_position, channel]` over a stream read by tap.
     Qkv,
     /// `[channel, tap]`: the filter of every channel, its newest tap last.
     Filters,
@@ -20,18 +21,23 @@ pub enum GatedDeltaConvOperand {
 }
 
 impl GatedDeltaConvOperand {
-    /// The operands a line of channels runs along.
-    pub const CHANNELS: [Self; 5] = [Self::Qkv, Self::Window, Self::Query, Self::Key, Self::Value];
+    /// The operands a line of channels runs along over a window.
+    pub const WINDOW_CHANNELS: [Self; 5] =
+        [Self::Qkv, Self::Window, Self::Query, Self::Key, Self::Value];
 
-    /// What every microkernel of the conv requires: the channels share one width that divides
-    /// both `key_features` and `value_features`, and the filters and lengths are read an element
-    /// at a time.
+    /// The operands a line of channels runs along over a stream, which has no window.
+    pub const STREAM_CHANNELS: [Self; 4] = [Self::Qkv, Self::Query, Self::Key, Self::Value];
+
+    /// What every microkernel of the conv requires: the `channels` of its case share one width
+    /// that divides both `key_features` and `value_features`, and the filters and lengths are read
+    /// an element at a time.
     pub fn require(
+        channels: &[Self],
         key_features: usize,
         value_features: usize,
         vectorization: &mut Vectorization<Self>,
     ) {
-        for operand in Self::CHANNELS {
+        for &operand in channels {
             for elements in [key_features, value_features] {
                 vectorization.require(VectorRequirement::Access { operand, elements });
             }

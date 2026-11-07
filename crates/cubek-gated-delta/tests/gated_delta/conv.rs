@@ -306,6 +306,14 @@ pub fn table(client: &Client, entries: Vec<u32>) -> PlainTensor {
     PlainTensor::of_u32s(client, &[entries.len()], &entries)
 }
 
+/// The slot and lengths tables of `inputs`, which a case over a window holds.
+pub fn tables_of(inputs: &mut GatedDeltaConvInputs) -> (&mut PlainTensor, &mut PlainTensor) {
+    let GatedDeltaConvPastInputs::Window { slots, lengths, .. } = &mut inputs.past else {
+        panic!("the inputs are over a window");
+    };
+    (slots, lengths)
+}
+
 /// `entries` as a column of a `[rows, 2]` table, the other column holding `other`.
 pub fn strided_table(client: &Client, entries: Vec<u32>, other: u32) -> PlainTensor {
     let rows = entries.len();
@@ -515,7 +523,7 @@ fn tables_at_a_stride_are_read_by_it() {
     let case = case((2, 3, 37, 53), 4, 5, 6, &[(4, 9), (1, 0), (2, 1), (5, 2)]);
     let operands = case.operands(F32);
     let (mut inputs, stored) = case.inputs(&client, &operands, ConvLayout::default(), F32);
-    let GatedDeltaConvPastInputs::Window { slots, lengths, .. } = &mut inputs.past;
+    let (slots, lengths) = tables_of(&mut inputs);
     *slots = strided_table(
         &client,
         case.rows.iter().map(|&(s, _)| s as u32).collect(),
@@ -540,8 +548,7 @@ fn a_slot_past_the_store_is_the_last_slot() {
     let case = case((2, 3, 37, 53), 4, 5, 4, &[(3, 7)]);
     let operands = case.operands(F32);
     let (mut inputs, stored) = case.inputs(&client, &operands, ConvLayout::default(), F32);
-    let GatedDeltaConvPastInputs::Window { slots, .. } = &mut inputs.past;
-    *slots = table(&client, vec![case.slots as u32 + 5]);
+    *tables_of(&mut inputs).0 = table(&client, vec![case.slots as u32 + 5]);
     if let Some(outputs) = conv_or_skip(&hw, inputs, "a slot past the store") {
         case.check(&client, &operands, &stored, outputs, F32, "clamped slot");
     }
