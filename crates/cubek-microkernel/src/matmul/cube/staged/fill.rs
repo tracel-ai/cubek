@@ -83,9 +83,10 @@ pub enum CubeStagedTmaRefusal {
     /// A block-split product's stage holds a packed operand decoded, which the fill writes value
     /// by value: the engine lands the words only as they are stored.
     Decoded,
-    /// A block-split product's lhs is packed: its descriptors land a float lhs beside a packed
-    /// rhs's words.
-    PackedLhs,
+    /// A block-split product's lhs is packed and a stage is deeper than one of the rhs's stored
+    /// tiles: from the third stage of the walk on, a unit reads past the cube's shared memory
+    /// (seen on `sm_120`, not yet explained), so the copy engine fills these.
+    PackedLhsPastOneTile,
 }
 
 /// Why the copy engine cannot fill a cube microkernel's stages.
@@ -275,17 +276,32 @@ impl CubeStagedTmaRefusal {
                 && (tile.columns.is_multiple_of(depth) || depth.is_multiple_of(tile.columns))
                 && words_bytes.is_multiple_of(TMA_ALIGNMENT_BYTES)
         });
+        // A packed lhs lands in the words it is packed in, as the rhs does.
+        let lhs_cell = match blocks.packings.lhs.is_some() {
+            true => u32::BITS as usize / bits(MatmulOperand::Lhs),
+            false => 1,
+        };
+        // A packed lhs is dense rows of words, which its buffer facts leave out: its rows are
+        // whole lines where `k` packs into them. A float one is aligned as its buffer states.
+        let lhs_rows_aligned = match blocks.packings.lhs.is_some() {
+            true => (blocks.k * bits(MatmulOperand::Lhs) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES),
+            false => buffers
+                .alignments
+                .lhs
+                .admits(TMA_ALIGNMENT_BYTES * 8 / bits(MatmulOperand::Lhs)),
+        };
         if microkernel.k_stated != PlaneFragmentKStatement::Blocks {
             Some(Self::Decoded)
-        } else if blocks.packings.lhs.is_some() {
-            Some(Self::PackedLhs)
         } else if blocks.packings.rhs.is_none() || !rhs_tiles {
             Some(Self::StoredInTiles(MatmulOperand::Rhs))
-        } else if !buffers
-            .alignments
-            .lhs
-            .admits(TMA_ALIGNMENT_BYTES * 8 / bits(MatmulOperand::Lhs))
+        } else if blocks.packings.lhs.is_some()
+            && buffers
+                .stored_tiles
+                .rhs
+                .is_some_and(|tile| depth > tile.columns)
         {
+            Some(Self::PackedLhsPastOneTile)
+        } else if !lhs_rows_aligned {
             Some(Self::Misaligned(MatmulOperand::Lhs))
         } else if let Some(operand) = MatmulOperand::INPUTS.into_iter().find(|&operand| {
             !buffers
@@ -295,7 +311,7 @@ impl CubeStagedTmaRefusal {
         }) {
             Some(Self::UnalignedStart(operand))
         } else if storage
-            .tma_swizzle(&lhs, 1, bits(MatmulOperand::Lhs))
+            .tma_swizzle(&lhs, lhs_cell, bits(MatmulOperand::Lhs))
             .is_err()
         {
             Some(Self::Unlanded(MatmulOperand::Lhs))
@@ -395,8 +411,8 @@ impl From<CubeStagedTmaRefusal> for Refusal {
             CubeStagedTmaRefusal::Decoded => {
                 "the stage holds a packed operand decoded, and the TMA engine lands words as stored"
             }
-            CubeStagedTmaRefusal::PackedLhs => {
-                "the lhs is packed, and the descriptors land a float lhs beside a packed rhs"
+            CubeStagedTmaRefusal::PackedLhsPastOneTile => {
+                "the lhs is packed and a stage is deeper than one rhs tile, which a TMA fill reads past shared memory on"
             }
         };
         Refusal::Declined { why }

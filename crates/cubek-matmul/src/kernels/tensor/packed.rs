@@ -6,7 +6,8 @@
 use super::PlainTensor;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, IntKind, UIntKind};
-use cubecl::prelude::{TensorBinding, TensorMapSwizzle};
+use core::marker::PhantomData;
+use cubecl::prelude::{TensorBinding, TensorMapArg, TensorMapSwizzle};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal, TmaCoordinates, TmaLanding, TmaTerm};
 use cubecl::tile::{
@@ -15,10 +16,11 @@ use cubecl::tile::{
     layout::{DimsBuilder, PhysicalAxisMap, split},
 };
 use cubecl::zspace::metadata::Metadata;
+use cubecl::zspace::{Shape, Strides};
 use cubek_microkernel::matmul::MatmulStoredTile;
 use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
-use cubek_std::launch::tma::tma_operand_tiled_typed;
+use cubek_std::launch::tma::{tma_meta_tiled, tma_operand_tiled_typed};
 use cubek_std::layout::stored::{BlockScales, Operand, Packing};
 use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 use cubek_std::matmul_axes::{EXPERT, K, blocked};
@@ -521,66 +523,21 @@ impl PackedTensor {
         stage_k: usize,
         swizzle: TensorMapSwizzle,
     ) -> TileTensorLaunch {
+        let across = self.other_axis(K);
+        let values_axes = tile_order::values_axes(across);
+        let words = match self.operand.tile_order() {
+            None => self.words_by_tma_in_rows(stage_rows, stage_k, swizzle, &values_axes),
+            Some(order) if order.words() == TileWords::RowByRow => {
+                self.words_by_tma_in_tiles(order, stage_rows, stage_k, swizzle, &values_axes)
+            }
+            Some(_) => panic!("bind_by_tma: words in rows, or in tiles laid row by row"),
+        }
+        .served_wide(width / self.scheme.num_quants())
+        .packed(Field::from(self.scheme.value).read_on(launcher.client()));
         let operand = &self.operand;
-        let Some(order) = operand
-            .tile_order()
-            .filter(|order| order.words() == TileWords::RowByRow)
-        else {
-            panic!("bind_by_tma: words stored in tiles laid row by row only");
-        };
-        let tile = order.tile();
-        let (tile_k, tile_rows) = tile;
         let lined = operand.lined();
         let rows_along = self.other_axis(lined);
         let rows = self.extent(rows_along);
-        let across = self.other_axis(K);
-        let (k, rows_across) = (self.extent(K), self.extent(across));
-        assert!(
-            (stage_k.is_multiple_of(tile_k) || tile_k.is_multiple_of(stage_k))
-                && stage_rows.is_multiple_of(tile_rows),
-            "bind_by_tma: a stage of {stage_rows} x {stage_k} is not whole {tile:?} tiles along \
-             its rows, nor whole tiles or a part dividing one along k"
-        );
-        let words = self.words.bound_as(order.words_in_tiles(k, rows_across));
-        let map = tma_operand_tiled_typed(
-            words,
-            (stage_rows, stage_k / order.values_per_word()),
-            TmaLanding::Rows,
-            WORD,
-            swizzle,
-        );
-        let values_axes = tile_order::values_axes(across);
-        // The descriptor after a row landing: the strips of rows, a row in the strip, the
-        // tiles along `k`, a word in the tile; a box starts on whole tiles both ways.
-        let coordinates = TmaCoordinates {
-            dims: vec![
-                vec![TmaTerm::axis(0).over(tile_rows as u32)],
-                vec![],
-                vec![
-                    TmaTerm::axis(1)
-                        .times(order.block() as u32)
-                        .over(tile_k as u32),
-                ],
-                vec![
-                    TmaTerm::axis(1)
-                        .times(order.block() as u32)
-                        .modulo(tile_k as u32)
-                        .over(order.values_per_word() as u32),
-                ],
-            ],
-        };
-        let words = TileTensorLaunch::tensor_map_folded(
-            map,
-            &values_axes,
-            &[
-                rows_across as u32,
-                (k / order.block()) as u32,
-                order.block() as u32,
-            ],
-            coordinates,
-        )
-        .served_wide(width / self.scheme.num_quants())
-        .packed(Field::from(self.scheme.value).read_on(launcher.client()));
         let words_axes = values_axes.to_vec();
         let tiled_along = operand
             .scaled_along()
@@ -616,6 +573,142 @@ impl PackedTensor {
             tile = tile.scales(scale.packed(field).build().expect(ADMITTED_PLAN_RUNS).arg());
         }
         tile
+    }
+
+    /// The words stored in `order`'s tiles laid row by row, through a descriptor over the tiles
+    /// ([`TileOrder::words_in_tiles`]): a box of `stage_rows` rows by `stage_k` values of `k`,
+    /// landing row by row, swizzled as `swizzle` says, over `values_axes`.
+    fn words_by_tma_in_tiles(
+        &self,
+        order: TileOrder,
+        stage_rows: usize,
+        stage_k: usize,
+        swizzle: TensorMapSwizzle,
+        values_axes: &[Axis; 3],
+    ) -> TileTensorLaunch {
+        let tile = order.tile();
+        let (tile_k, tile_rows) = tile;
+        let across = self.other_axis(K);
+        let (k, rows_across) = (self.extent(K), self.extent(across));
+        assert!(
+            (stage_k.is_multiple_of(tile_k) || tile_k.is_multiple_of(stage_k))
+                && stage_rows.is_multiple_of(tile_rows),
+            "bind_by_tma: a stage of {stage_rows} x {stage_k} is not whole {tile:?} tiles along \
+             its rows, nor whole tiles or a part dividing one along k"
+        );
+        let words = self.words.bound_as(order.words_in_tiles(k, rows_across));
+        let map = tma_operand_tiled_typed(
+            words,
+            (stage_rows, stage_k / order.values_per_word()),
+            TmaLanding::Rows,
+            WORD,
+            swizzle,
+        );
+        // The descriptor after a row landing: the strips of rows, a row in the strip, the
+        // tiles along `k`, a word in the tile; a box starts on whole tiles both ways.
+        let coordinates = TmaCoordinates {
+            dims: vec![
+                vec![TmaTerm::axis(0).over(tile_rows as u32)],
+                vec![],
+                vec![
+                    TmaTerm::axis(1)
+                        .times(order.block() as u32)
+                        .over(tile_k as u32),
+                ],
+                vec![
+                    TmaTerm::axis(1)
+                        .times(order.block() as u32)
+                        .modulo(tile_k as u32)
+                        .over(order.values_per_word() as u32),
+                ],
+            ],
+        };
+        TileTensorLaunch::tensor_map_folded(
+            map,
+            values_axes,
+            &[
+                rows_across as u32,
+                (k / order.block()) as u32,
+                order.block() as u32,
+            ],
+            coordinates,
+        )
+    }
+
+    /// The words stored in rows, through a descriptor over the rows: `k`'s words cut into rows of
+    /// the swizzle's span, so a box of `stage_rows` rows by `stage_k` values of `k` lands a
+    /// stage's blocks of `K` side by side, as a float operand's descriptor lands them, over
+    /// `values_axes`.
+    ///
+    /// # Panics
+    ///
+    /// On a stack, or on rows whose words are not one dense run each: a descriptor over the rows
+    /// steps them by the run.
+    fn words_by_tma_in_rows(
+        &self,
+        stage_rows: usize,
+        stage_k: usize,
+        swizzle: TensorMapSwizzle,
+        values_axes: &[Axis; 3],
+    ) -> TileTensorLaunch {
+        assert!(
+            self.stack.is_none(),
+            "bind_by_tma: a stack is read slab by slab"
+        );
+        let across = self.other_axis(K);
+        let (k, rows) = (self.extent(K), self.extent(across));
+        let per_word = self.scheme.num_quants();
+        let block = self
+            .operand
+            .scale(K)
+            .expect("a block-scaled matrix groups k");
+        let words_k = k / per_word;
+        assert_eq!(
+            self.words.row_step().unwrap_or(words_k),
+            words_k,
+            "bind_by_tma: rows of words a descriptor over the rows steps by their run"
+        );
+        let stage_words = stage_k / per_word;
+        // A box row is the swizzle's span, or the stage's depth where it swizzles nothing.
+        let row = match swizzle {
+            TensorMapSwizzle::B32 => 32 / size_of::<u32>(),
+            TensorMapSwizzle::B64 => 64 / size_of::<u32>(),
+            TensorMapSwizzle::B128 => 128 / size_of::<u32>(),
+            _ => stage_words,
+        }
+        .min(stage_words);
+        let metadata = Metadata::new(
+            Shape::new([rows, words_k / row, row]),
+            Strides::new(&[words_k, row, 1]),
+        );
+        let map = TensorMapArg {
+            tensor: self.words.rows(rows, words_k).into_tensor_arg(),
+            metadata: tma_meta_tiled(
+                metadata,
+                Shape::new([stage_rows, stage_words / row, row]),
+                WORD,
+                swizzle,
+            ),
+            _kind: PhantomData,
+        };
+        // A box starts on a stage's first block of `K`, a whole number of rows in.
+        let coordinates = TmaCoordinates {
+            dims: vec![
+                vec![TmaTerm::axis(0)],
+                vec![
+                    TmaTerm::axis(1)
+                        .times((block / per_word) as u32)
+                        .over(row as u32),
+                ],
+                vec![],
+            ],
+        };
+        TileTensorLaunch::tensor_map_folded(
+            map,
+            values_axes,
+            &[rows as u32, (k / block) as u32, block as u32],
+            coordinates,
+        )
     }
 
     /// `words` under `block_scales`, words of block scales read whole, each word the scheme's
