@@ -58,7 +58,7 @@ std = [
 attention = ["cubek-attention"]
 # Attention's backward pass, for training: its own crate, off unless a caller asks for it.
 attention-backward = ["cubek-attention-backward"]
-# The gated delta rule's walk.
+# The gated delta rule's walk and conv.
 gated-delta = ["cubek-gated-delta"]
 interpolate = ["cubek-interpolate"]
 pool = ["cubek-pool"]

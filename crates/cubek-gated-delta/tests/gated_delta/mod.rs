@@ -1,3 +1,4 @@
+mod conv;
 mod harness;
 mod store_index;
 mod walk;
