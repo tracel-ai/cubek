@@ -1116,7 +1116,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// holds its stage of `stage` and served `widths` wide: each packed input's words through a
     /// descriptor over the tiles they are stored in ([`PackedTensor::bind_by_tma`]), its scales
     /// bound as `scales` says, under `launcher`, for the copy engine to keep beside them; a float lhs through a
-    /// descriptor over the matrix its blocks split ([`tma_blocks_lhs`](Self::tma_blocks_lhs)).
+    /// descriptor over the matrix its blocks split (`tma_blocks_lhs`).
     /// What a fill
     /// [`CubeStagedTmaRefusal`](cubek_microkernel::matmul::cube::CubeStagedTmaRefusal) admits.
     ///
