@@ -103,7 +103,22 @@ fn a_packed_activation_against_a_float_weight_answers_at_every_setting() {
 /// lost. Skipped on a device where none prepares.
 #[test]
 fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
-    let (m, n, k) = (512, 128, 5120);
+    answers_at_every_setting(512, 128, 5120);
+}
+
+/// The same at rows and columns no box divides, a prompt's ragged last chunk: every box past the
+/// matrix's edge reads zeros and writes nothing, the lhs landed by descriptor as by the units.
+#[test]
+fn a_packed_activation_against_a_packed_weight_answers_at_ragged_rows() {
+    for m in [33, 300] {
+        answers_at_every_setting(m, 96, 5120);
+    }
+}
+
+/// `m` NVFP4 rows against an NVFP4 weight of `n` columns, `k` deep, at every setting that
+/// prepares on this device, against the dequantized product; and, where the device has the TMA
+/// engine and the block-scaled instruction, at some setting landing both inputs by descriptor.
+fn answers_at_every_setting(m: usize, n: usize, k: usize) {
     let client = client();
     let hw = Hardware::from_client(&client);
     let slabs = |operand, rows, seed| {
@@ -214,7 +229,7 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
         ))
         .enforce();
     }
-    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(wrong.is_empty(), "{m}x{n}x{k}: {wrong:#?}");
     // Both inputs packed in rows, words down `k`, land by descriptor wherever the device has the
     // engine and a block-scaled instruction to read them on.
     if hw.bulk_tensor_copy()
@@ -224,7 +239,7 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
     {
         assert!(
             landed_by_tma > 0,
-            "no block-scaled setting landed two packed inputs by TMA"
+            "no block-scaled setting landed two packed inputs by TMA at {m}x{n}x{k}"
         );
     }
 }
