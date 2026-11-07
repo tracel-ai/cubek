@@ -5,6 +5,7 @@ use crate::matmul::{
     MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
+use cubecl::prelude::TensorMapSwizzle;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::stage::Prefetch;
 use cubecl::tile::{Axis, Scratch, StageStorage};
@@ -83,10 +84,10 @@ pub enum CubeStagedTmaRefusal {
     /// A block-split product's stage holds a packed operand decoded, which the fill writes value
     /// by value: the engine lands the words only as they are stored.
     Decoded,
-    /// A block-split product's lhs is packed and a stage is deeper than one of the rhs's stored
-    /// tiles: from the third stage of the walk on, a unit reads past the cube's shared memory
-    /// (seen on `sm_120`, not yet explained), so the copy engine fills these.
-    PackedLhsPastOneTile,
+    /// A block-split product's stage is deeper than one of the rhs's stored tiles, whose rows are
+    /// shorter than the swizzle the stage's rows take: the engine pads each tile's row to the
+    /// swizzle's span, so the box lands twice its bytes, past the stage.
+    TileRowsUnderSwizzle,
 }
 
 /// Why the copy engine cannot fill a cube microkernel's stages.
@@ -294,13 +295,6 @@ impl CubeStagedTmaRefusal {
             Some(Self::Decoded)
         } else if blocks.packings.rhs.is_none() || !rhs_tiles {
             Some(Self::StoredInTiles(MatmulOperand::Rhs))
-        } else if blocks.packings.lhs.is_some()
-            && buffers
-                .stored_tiles
-                .rhs
-                .is_some_and(|tile| depth > tile.columns)
-        {
-            Some(Self::PackedLhsPastOneTile)
         } else if !lhs_rows_aligned {
             Some(Self::Misaligned(MatmulOperand::Lhs))
         } else if let Some(operand) = MatmulOperand::INPUTS.into_iter().find(|&operand| {
@@ -315,6 +309,14 @@ impl CubeStagedTmaRefusal {
             .is_err()
         {
             Some(Self::Unlanded(MatmulOperand::Lhs))
+        } else if let Ok(swizzle) = storage.tma_swizzle(
+            &rhs,
+            u32::BITS as usize / bits(MatmulOperand::Rhs),
+            bits(MatmulOperand::Rhs),
+        ) && buffers.stored_tiles.rhs.is_some_and(|tile| {
+            depth > tile.columns && tile.columns * bits(MatmulOperand::Rhs) / 8 < swizzle_span(swizzle)
+        }) {
+            Some(Self::TileRowsUnderSwizzle)
         } else if storage
             .tma_swizzle(
                 &rhs,
@@ -332,6 +334,17 @@ impl CubeStagedTmaRefusal {
         } else {
             None
         }
+    }
+}
+
+/// Bytes one row of a box a descriptor swizzles as `swizzle` spans in shared memory: a shorter row
+/// is padded to it.
+fn swizzle_span(swizzle: TensorMapSwizzle) -> usize {
+    match swizzle {
+        TensorMapSwizzle::B32 => 32,
+        TensorMapSwizzle::B64 => 64,
+        TensorMapSwizzle::B128 => 128,
+        _ => 0,
     }
 }
 
@@ -411,8 +424,8 @@ impl From<CubeStagedTmaRefusal> for Refusal {
             CubeStagedTmaRefusal::Decoded => {
                 "the stage holds a packed operand decoded, and the TMA engine lands words as stored"
             }
-            CubeStagedTmaRefusal::PackedLhsPastOneTile => {
-                "the lhs is packed and a stage is deeper than one rhs tile, which a TMA fill reads past shared memory on"
+            CubeStagedTmaRefusal::TileRowsUnderSwizzle => {
+                "a stage is deeper than one rhs tile whose rows are shorter than the stage's swizzle, which the engine pads"
             }
         };
         Refusal::Declined { why }
