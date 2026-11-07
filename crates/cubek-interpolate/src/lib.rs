@@ -41,7 +41,11 @@ pub fn interpolate(
     let hw = Hardware::from_client(client);
     let tensors = InterpolateTensors::new(client, input, output, options, dtype);
     let mut refused = None;
-    for kernel in select(strategy, &hw.properties.hardware, &tensors.problem().forward) {
+    for kernel in select(
+        strategy,
+        &hw.properties.hardware,
+        &tensors.problem().forward,
+    ) {
         match kernel.launch(&hw, &tensors) {
             Ok(()) => return Ok(()),
             Err(why) => refused = Some(why),

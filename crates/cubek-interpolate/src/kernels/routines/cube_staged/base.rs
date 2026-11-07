@@ -95,10 +95,9 @@ impl Routine for CubeStagedInterpolateRoutine {
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let width = problem.width(hw, &partitioning, vectorization);
         let run = geometry.channel_block;
-        let padded = (run != width
-            && run.is_power_of_two()
-            && run <= hw.vector_ceiling(problem.element))
-        .then_some(run);
+        let padded =
+            (run != width && run.is_power_of_two() && run <= hw.vector_ceiling(problem.element))
+                .then_some(run);
         let shared_memory = space::stage_window_bytes(
             problem.row(),
             problem.col(),

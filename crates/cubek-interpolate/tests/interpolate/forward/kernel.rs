@@ -49,11 +49,7 @@ fn kernel_output_with(options: InterpolateOptions, kernel: InterpolateKernel) {
     kernel_output_shaped(options, kernel, 4);
 }
 
-fn kernel_output_shaped(
-    options: InterpolateOptions,
-    kernel: InterpolateKernel,
-    channels: usize,
-) {
+fn kernel_output_shaped(options: InterpolateOptions, kernel: InterpolateKernel, channels: usize) {
     kernel_output_on(options, kernel, [2, 8, 9, channels], [13, 15]);
 }
 
@@ -246,11 +242,7 @@ fn test_interpolate_kernel_padded_channel_stage_every_mode() {
 #[test]
 fn test_interpolate_kernel_padded_channel_stage_multi_block() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
-    kernel_output_shaped(
-        options,
-        with_channel_block(staged(4, 2, 1), 4),
-        6,
-    );
+    kernel_output_shaped(options, with_channel_block(staged(4, 2, 1), 4), 6);
 }
 
 /// Every filter under both coordinate transforms.

@@ -1,6 +1,6 @@
 use super::base::CubeInterpolateMicrokernel;
-use cubecl::tile::{Region, Semiring, Tile};
 use cubecl::prelude::*;
+use cubecl::tile::{Region, Semiring, Tile};
 use cubecl::{self as cubecl, cube};
 
 /// One block of the cube's walk: this plane's rows, then this unit's columns and channel lines,

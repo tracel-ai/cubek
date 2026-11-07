@@ -116,8 +116,11 @@ impl InterpolateRoutineProblem {
 
 impl EstimatedProblem for InterpolateRoutineProblem {
     fn demand(&self) -> Work {
-        InterpolateCost::new(InterpolateProblem::Forward(self.forward.clone()), self.element)
-            .work()
+        InterpolateCost::new(
+            InterpolateProblem::Forward(self.forward.clone()),
+            self.element,
+        )
+        .work()
     }
 }
 

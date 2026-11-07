@@ -223,7 +223,11 @@ mod tests {
 
         assert_eq!(
             settings_of(first(InterpolateStrategy::Cube, &hardware, &upsample())),
-            settings_of(first(InterpolateStrategy::CubeStaged, &hardware, &upsample()))
+            settings_of(first(
+                InterpolateStrategy::CubeStaged,
+                &hardware,
+                &upsample()
+            ))
         );
     }
 

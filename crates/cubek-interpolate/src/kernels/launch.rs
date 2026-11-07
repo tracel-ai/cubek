@@ -11,7 +11,7 @@ use crate::kernels::space::{self, BATCH, CHANNEL, OUTPUT_H, OUTPUT_W};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
-use cubecl::tile::launch::{BoundaryPolicy, Bound, Refusal};
+use cubecl::tile::launch::{Bound, BoundaryPolicy, Refusal};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Launcher, Partitioning};
 use cubek_std::Hardware;

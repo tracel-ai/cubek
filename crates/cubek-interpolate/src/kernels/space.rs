@@ -1,9 +1,9 @@
 use super::{coordinate::Rational, geometry::TileGeometry};
-use cubek_microkernel::interpolate::InterpolateWorkItem;
 use cubecl::tile::{
     Axis, Level, Levels, Partitioning, Projection, Space,
     layout::{Compaction, PhysicalAxisMap},
 };
+use cubek_microkernel::interpolate::InterpolateWorkItem;
 
 pub const BATCH: Axis = Axis(0);
 pub const OUTPUT_H: Axis = Axis(1);
@@ -95,7 +95,6 @@ impl InterpolateSpace {
     pub fn partitioning(&self) -> Partitioning {
         Partitioning::new(self.space(), self.levels())
     }
-
 }
 
 /// What one unit of `partitioning` is handed: its leaf's output positions, each its channel run.
@@ -108,11 +107,7 @@ pub fn work_item(partitioning: &Partitioning) -> InterpolateWorkItem {
     }
 }
 
-pub fn input_projection(
-    row: Rational,
-    col: Rational,
-    radius: usize,
-) -> Projection {
+pub fn input_projection(row: Rational, col: Rational, radius: usize) -> Projection {
     Projection::new(
         &[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W, CHANNEL],
         &[

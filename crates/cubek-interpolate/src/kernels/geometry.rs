@@ -44,7 +44,6 @@ impl TileGeometry {
         }
     }
 
-
     pub fn rows_per_cube(&self) -> usize {
         self.planes_per_cube * self.rows_per_plane
     }
