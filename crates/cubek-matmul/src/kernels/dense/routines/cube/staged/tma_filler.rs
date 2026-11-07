@@ -1,4 +1,5 @@
 use super::base::{self, CubeStagedMatmulRoutineBlueprint, CubeStagedPlacement};
+use super::block_scaled::{self, QUAD, StagedShape};
 use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,
@@ -80,6 +81,52 @@ impl CubeStagedTmaFillerMatmulRoutine {
                 cube_order: CubeOrder::RowMajor,
             })
             .collect()
+    }
+}
+
+impl CubeStagedTmaFillerMatmulRoutine {
+    /// The settings a block-scaled product read as stored races on `hw`, one plane set aside to
+    /// issue the descriptors and hand the scales to the copy engine: the TMA routine's prompt
+    /// boxes. None without a bulk tensor copy.
+    pub fn block_scaled_settings(
+        &self,
+        hw: &Hardware,
+    ) -> Vec<CubeStagedTmaFillerMatmulRoutineSettings> {
+        if !hw.bulk_tensor_copy() {
+            return Vec::new();
+        }
+        let shape = |steps, planes, ring| StagedShape {
+            steps,
+            planes,
+            planes_along_k: 1,
+            ring,
+        };
+        let (double, triple) = (StageRing::DOUBLE, StageRing::TRIPLE);
+        let shapes = [
+            shape((4, 4, 1), (2, 4), triple),
+            shape((4, 4, 1), (2, 4), double),
+            shape((4, 4, 1), (2, 4), QUAD),
+            shape((4, 8, 1), (2, 4), double),
+            shape((4, 8, 1), (2, 4), triple),
+            shape((4, 8, 1), (4, 2), double),
+            shape((4, 4, 1), (2, 2), triple),
+            shape((1, 1, 1), (1, 4), QUAD),
+            shape((1, 2, 1), (1, 4), triple),
+        ];
+        let mut listed = Vec::new();
+        for cube_order in [CubeOrder::RowMajor, CubeOrder::SwizzleRow(8)] {
+            listed.extend(block_scaled::block_scaled_settings(
+                hw,
+                *self,
+                &shapes,
+                |microkernel| CubeStagedTmaFillerMatmulRoutineSettings {
+                    microkernel,
+                    filling_planes: NonZeroUsize::MIN,
+                    cube_order,
+                },
+            ));
+        }
+        listed
     }
 }
 

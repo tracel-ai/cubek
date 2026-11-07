@@ -72,15 +72,33 @@ impl CubeStagedTmaMatmulRoutine {
             shape((1, 1, 1), (1, 2), 2, QUAD),
             shape((4, 4, 1), (2, 4), 1, triple),
             shape((4, 4, 1), (2, 4), 1, double),
-            shape((2, 4, 1), (4, 2), 1, double),
-            shape((4, 4, 1), (2, 4), 1, QUAD),
+            shape((4, 8, 1), (2, 4), 1, double),
+            shape((4, 8, 1), (2, 4), 1, triple),
+            shape((4, 4, 1), (4, 2), 1, triple),
+            shape((2, 8, 1), (4, 2), 1, triple),
+            shape((4, 4, 1), (2, 2), 1, triple),
+            shape((8, 4, 1), (2, 4), 1, double),
+            shape((4, 8, 1), (4, 2), 1, triple),
+            shape((2, 8, 1), (4, 4), 1, triple),
+            shape((2, 8, 1), (4, 4), 1, double),
+            shape((4, 4, 1), (4, 4), 1, triple),
+            shape((4, 4, 1), (4, 4), 1, double),
+            shape((2, 4, 1), (4, 4), 1, triple),
+            shape((4, 4, 1), (2, 8), 1, triple),
+            shape((4, 4, 1), (2, 8), 1, double),
+            shape((2, 8, 1), (8, 2), 1, double),
+            shape((4, 2, 1), (4, 4), 1, triple),
         ];
-        block_scaled::block_scaled_settings(hw, *self, &shapes, |microkernel| {
-            CubeStagedTmaMatmulRoutineSettings {
-                microkernel,
-                cube_order: CubeOrder::RowMajor,
-            }
-        })
+        let mut listed = Vec::new();
+        for cube_order in [CubeOrder::RowMajor, CubeOrder::SwizzleRow(4)] {
+            listed.extend(block_scaled::block_scaled_settings(hw, *self, &shapes, |microkernel| {
+                CubeStagedTmaMatmulRoutineSettings {
+                    microkernel,
+                    cube_order,
+                }
+            }));
+        }
+        listed
     }
 }
 
