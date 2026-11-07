@@ -1542,6 +1542,7 @@ dependencies = [
  "cubecl",
  "cubecl-common",
  "cubecl-environment",
+ "cubek-microkernel",
  "cubek-std",
  "cubek-test-utils",
  "half",

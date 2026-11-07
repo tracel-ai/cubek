@@ -4,8 +4,8 @@
 //! library behind them, so each one scalarizes into a libm call per component and costs more
 //! than every other step of a draw together.
 
+use core::f32::consts::{LN_2, SQRT_2};
 use cubecl::prelude::*;
-use std::f32::consts::{LN_2, SQRT_2};
 
 const fn factorial(n: u32) -> f64 {
     let mut result = 1.0;
