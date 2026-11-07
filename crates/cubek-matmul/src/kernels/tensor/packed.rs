@@ -18,12 +18,12 @@ use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::{Shape, Strides};
 use cubek_microkernel::matmul::MatmulStoredTile;
 use cubek_quant::quantized_arg;
-use cubek_std::Hardware;
 use cubek_std::launch::tma::tma_operand_tiled_typed;
 use cubek_std::layout::stored::{BlockScales, Operand, Packing};
 use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 use cubek_std::matmul_axes::{EXPERT, K, blocked};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
+use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 
 /// The element a packed matrix's words and scales are bound in: whole `u32` words.
 const WORD: ElemType = ElemType::UInt(UIntKind::U32);
@@ -303,11 +303,21 @@ impl PackedTensor {
     /// The tile order a descriptor lands its words in: the one its operand is stored in, or for
     /// one matrix in rows, its words down `K`, the order its rows already are
     /// ([`TileOrder::in_rows`]). None for a stack of matrices in rows, which no one descriptor's
-    /// tiles address, and an operand tile order does not store.
+    /// tiles address, for rows whose step is not whole 16-byte lines, which a descriptor's
+    /// strides must be, and for an operand tile order does not store.
     pub fn landed_order(&self) -> Option<TileOrder> {
         match self.operand.tile_order() {
             Some(order) => Some(order),
-            None if self.stack.is_none() => TileOrder::in_rows(&self.operand, self.extent(K)),
+            None if self.stack.is_none() => {
+                let order = TileOrder::in_rows(&self.operand, self.extent(K))?;
+                let rows = self.extent(self.other_axis(K));
+                let words_a_row = self.extent(K) / order.values_per_word();
+                // The step its buffer really has, which a pitched allocator pads.
+                let step = self.words.as_rows(rows, words_a_row).binding.strides[0];
+                (step * self.words.elem.size())
+                    .is_multiple_of(TMA_ALIGNMENT_BYTES)
+                    .then_some(order)
+            }
             None => None,
         }
     }
@@ -525,8 +535,10 @@ impl PackedTensor {
     ///
     /// # Panics
     ///
-    /// On words in rows or in tiles laid block by block, whose tile rows are no row's run, or a
-    /// stage not whole tiles along its rows, nor whole tiles or a part dividing one along `k`.
+    /// On words no descriptor lands ([`landed_order`](Self::landed_order)): in tiles laid block
+    /// by block, whose tile rows are no row's run, a stack in rows, or rows whose step is not
+    /// whole 16-byte lines. On a stage not whole tiles along its rows, nor whole tiles or a part
+    /// dividing one along `k`.
     pub fn bind_by_tma(
         &self,
         launcher: &Launcher,
@@ -541,7 +553,7 @@ impl PackedTensor {
             .landed_order()
             .filter(|order| order.words() == TileWords::RowByRow)
         else {
-            panic!("bind_by_tma: words stored in tiles laid row by row, or in rows, only");
+            panic!("bind_by_tma: words no descriptor lands (see `landed_order`)");
         };
         let tile = order.tile();
         let (tile_k, tile_rows) = tile;

@@ -1182,6 +1182,64 @@ mod base {
         );
     }
 
+    /// Two NVFP4 inputs as the block-scaled instruction reads them: the lhs in rows, stating them as
+    /// one tile a row wide spanning `k`, the rhs in the tiles of the instruction's step. Some TMA
+    /// setting lands both; none lands an lhs that states no tile; and none whose planes split `K`
+    /// over a stage deeper than the rhs's tile prepares, since the descriptor lands such a stage
+    /// tile after tile.
+    #[test]
+    fn two_packed_inputs_land_by_tma_where_each_states_a_tile() {
+        let hw = devices::offering_nvfp4(devices::h100());
+        let inputs = CubeStagedMatmulRoutine::block_scaled_inputs(&cubek_std::NVFP4_FORM)
+            .expect("NVFP4 is a packed input");
+        let step = CubeStagedMatmulRoutine::block_scaled_step(&hw, &inputs)
+            .expect("the device offers the block-scaled instruction");
+        let (tile_k, tile_n) = (step.along(K), step.along(N));
+        let k = 4096;
+        let in_rows = MatmulRoutineProblem::packed(2048, 4096, k, F16, inputs);
+        let stating = |lhs: Option<MatmulStoredTile>| MatmulRoutineProblem {
+            stored_tiles: MatmulOperands {
+                lhs,
+                rhs: Some(MatmulStoredTile {
+                    rows: tile_n,
+                    columns: tile_k,
+                }),
+                out: None,
+            },
+            ..in_rows.clone()
+        };
+        let both = stating(Some(MatmulStoredTile {
+            rows: 1,
+            columns: k,
+        }));
+        let no_lhs_tile = stating(None);
+        let settings = CubeStagedTmaMatmulRoutine.block_scaled_settings(&hw);
+        let prepares = |problem: &MatmulRoutineProblem, settings| {
+            CubeStagedTmaMatmulRoutine
+                .prepare(&hw, problem, settings)
+                .is_ok()
+        };
+        assert!(
+            settings.iter().any(|settings| prepares(&both, settings)),
+            "no block-scaled setting lands two packed inputs by TMA"
+        );
+        assert!(
+            settings
+                .iter()
+                .all(|settings| !prepares(&no_lhs_tile, settings)),
+            "an lhs stating no tile landed by TMA"
+        );
+        let split = settings
+            .iter()
+            .filter(|settings| settings.microkernel.planes_along_k.get() > 1);
+        for settings in split {
+            assert!(
+                !prepares(&both, settings),
+                "{settings} splits K over a stage the descriptor lands tile after tile"
+            );
+        }
+    }
+
     /// A cube's filling planes take no tile: launched beside them, its box, stage, leaf and
     /// overhang are its tiling's placement's, and only the planes it holds grow.
     #[test]

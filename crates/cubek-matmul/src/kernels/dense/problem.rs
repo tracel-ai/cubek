@@ -47,8 +47,9 @@ pub struct MatmulRoutineProblem {
     /// Each operand's alignment over the order its buffer steps, which a col operand bound in
     /// that order is read at; the stated one for any other.
     pub buffer_alignments: MatmulOperands<ElemAlignment>,
-    /// The tile each operand is stored in, where it is one a descriptor lands whole rows of; none
-    /// for an operand in rows, or stored in tiles no descriptor here reads.
+    /// The tile each packed operand is stored in, where it is one a descriptor lands whole rows
+    /// of, a matrix in rows one row by the whole of `K` (`PackedTensor::stored_tile`); none for a
+    /// float operand, or a packed one stored as no descriptor here reads.
     pub stored_tiles: MatmulOperands<Option<MatmulStoredTile>>,
     /// Where the output goes.
     pub destination: MatmulDestination,

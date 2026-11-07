@@ -83,10 +83,10 @@ pub enum CubeStagedTmaRefusal {
     /// A block-split product's stage holds a packed operand decoded, which the fill writes value
     /// by value: the engine lands the words only as they are stored.
     Decoded,
-    /// A block-split product's packed input lies in rows: the engine lands packed words only from
-    /// the tiles they are stored in ([`MatmulBuffers::stored_tiles`]), whose rows are a stage
-    /// row's run.
-    PackedInRows(MatmulOperand),
+    /// A block-split product's packed input states no tile a descriptor lands
+    /// ([`MatmulBuffers::stored_tiles`]): a stack of matrices in rows, rows whose step is not
+    /// whole 16-byte lines, or tiles laid block by block, whose tile rows are no row's run.
+    NoStoredTile(MatmulOperand),
     /// Planes share each step of `K` over a packed input's stage deeper than one of its stored
     /// tiles, which a descriptor lands tile after tile: each plane's slice of `K` would read rows
     /// of the whole stage where the tiles hold them apart.
@@ -313,7 +313,7 @@ impl CubeStagedTmaRefusal {
         };
         let packed_refusal = |operand: MatmulOperand, space: &Space, rows: Axis| {
             if buffers.stored_tiles.get(operand).is_none() {
-                Some(Self::PackedInRows(operand))
+                Some(Self::NoStoredTile(operand))
             } else if !lands_tiles(operand, space, rows) {
                 Some(Self::StoredInTiles(operand))
             } else if planes_along_k.get() > 1 && tiles_deep(operand, space) {
@@ -447,8 +447,8 @@ impl From<CubeStagedTmaRefusal> for Refusal {
             CubeStagedTmaRefusal::SplitAcrossTiles(_) => {
                 "planes split K over a stage deeper than a stored tile, which lands tile after tile"
             }
-            CubeStagedTmaRefusal::PackedInRows(_) => {
-                "a packed operand lies in rows, and the engine lands packed words only from tiles"
+            CubeStagedTmaRefusal::NoStoredTile(_) => {
+                "a packed operand states no tile a descriptor lands its words from"
             }
         };
         Refusal::Declined { why }
