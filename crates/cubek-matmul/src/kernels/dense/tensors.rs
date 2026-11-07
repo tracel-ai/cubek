@@ -26,6 +26,7 @@ use cubek_microkernel::matmul::{
 use cubek_std::MatrixLayout;
 use cubek_std::launch::tma::{swizzle_span_bytes, tma_meta_tiled, tma_operand, tma_store_operand};
 use cubek_std::layout::BindingOrder;
+use cubek_std::layout::stored::BlockScales;
 use cubek_std::layout::{contiguous, tile_order};
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
@@ -1115,8 +1116,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// holds its stage of `stage` and served `widths` wide: a float lhs through a descriptor over
     /// the matrix its blocks split; each packed input's
     /// words through one over the rows or the tiles they are stored in
-    /// ([`PackedTensor::bind_by_tma`]), its scales bound under `launcher` for the copy engine to
-    /// keep beside them. What a fill
+    /// ([`PackedTensor::bind_by_tma`]), its scales bound under `launcher` as `scales` says, for
+    /// the copy engine to keep beside them. What a fill
     /// [`CubeStagedTmaRefusal`](cubek_microkernel::matmul::cube::CubeStagedTmaRefusal) admits.
     ///
     /// # Panics
@@ -1129,6 +1130,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         storage: &StageStorage,
         orders: MatmulOperands<BindingOrder>,
         widths: MatmulOperands<usize>,
+        scales: BlockScales,
     ) -> (TileTensorLaunch, TileTensorLaunch) {
         let StoredTensor::Packed(rhs) = &self.rhs else {
             panic!("tma_packed_operands: a packed rhs");
@@ -1151,6 +1153,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 landed.extent(values_axes[0]),
                 landed.extent(KB) * landed.extent(KI),
                 swizzle,
+                scales,
             )
         };
         let lhs = match &self.lhs {

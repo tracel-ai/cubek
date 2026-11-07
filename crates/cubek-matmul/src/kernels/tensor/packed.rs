@@ -502,14 +502,15 @@ impl PackedTensor {
         .expect(ADMITTED_PLAN_RUNS)
     }
 
-    /// The matrix as one tile under `launcher` as [`bind`](Self::bind) binds it under
-    /// `BlockScales::Fields`,
+    /// The matrix as one tile under `launcher` as [`bind`](Self::bind) binds it under `scales`,
     /// served `width` values wide, its words moved by the TMA engine through a descriptor over
     /// the rows or the tiles ([`TileOrder::words_in_tiles`]) they are stored in: a box of
     /// `stage_rows` rows by `stage_k` values of `k`, swizzled as `swizzle` says. Its block scales,
     /// kept beside the words, are handed to the copy engine: a stage's row of them is a few bytes,
     /// short of the 16 a descriptor's row lands, so the units that fill issue them beside the
-    /// descriptors rather than loading and storing them.
+    /// descriptors rather than loading and storing them. Under [`BlockScales::Words`] a word of a
+    /// step's scales is one load straight into the instruction's register; under
+    /// [`BlockScales::Fields`] each scale is read and narrowed on its own.
     ///
     /// # Panics
     ///
@@ -523,6 +524,7 @@ impl PackedTensor {
         stage_rows: usize,
         stage_k: usize,
         swizzle: TensorMapSwizzle,
+        scales: BlockScales,
     ) -> TileTensorLaunch {
         let across = self.other_axis(K);
         let values_axes = tile_order::values_axes(across);
@@ -550,30 +552,55 @@ impl PackedTensor {
                 .arg(scale.rows(1, 1), WORD)
                 .gathered(Self::over_whole_matrix(&words_axes, tiled_along))
         });
-        let words = words.packed(Field::from(self.scheme.value).read_on(launcher.client()));
-        let block_scales = launcher
-            .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
-            .gathered(
-                self.stack_dim()
-                    .dim(scale_rows)
-                    .dim(self.dim(lined))
-                    .build()
-                    .scales_per(blocks_axis),
-            )
-            .vectorize(operand.scale_read_values())
-            .delivery(Delivery::AsyncPerUnit);
-        let fields = self
-            .scheme
-            .block_scale()
-            .map(|block| block.dtype)
-            .into_iter()
-            .chain(self.scheme.tensor_scale())
-            .map(Field::of_scale);
-        let mut tile = words;
-        for (scale, field) in [block_scales].into_iter().chain(global).zip(fields) {
-            tile = tile.scales(scale.packed(field).build().expect(ADMITTED_PLAN_RUNS).arg());
+        match scales {
+            BlockScales::Fields => {
+                let words = words.packed(Field::from(self.scheme.value).read_on(launcher.client()));
+                let block_scales = launcher
+                    .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
+                    .gathered(
+                        self.stack_dim()
+                            .dim(scale_rows)
+                            .dim(self.dim(lined))
+                            .build()
+                            .scales_per(blocks_axis),
+                    )
+                    .vectorize(operand.scale_read_values())
+                    .delivery(Delivery::AsyncPerUnit);
+                let fields = self
+                    .scheme
+                    .block_scale()
+                    .map(|block| block.dtype)
+                    .into_iter()
+                    .chain(self.scheme.tensor_scale())
+                    .map(Field::of_scale);
+                let mut tile = words;
+                for (scale, field) in [block_scales].into_iter().chain(global).zip(fields) {
+                    tile =
+                        tile.scales(scale.packed(field).build().expect(ADMITTED_PLAN_RUNS).arg());
+                }
+                tile
+            }
+            // Words of a step's scales, each one load straight into the instruction's register,
+            // handed to the copy engine as the words they are stored in.
+            BlockScales::Words => {
+                let per_word = operand.scales_per_word();
+                let block_scales = launcher
+                    .arg(
+                        self.per_slab(self.block_scale_words(rows, blocks / per_word)),
+                        WORD,
+                    )
+                    .gathered(
+                        self.stack_dim()
+                            .dim(scale_rows)
+                            .dim(PhysicalAxisMap::of(blocks_axis).over(per_word))
+                            .build(),
+                    )
+                    .delivery(Delivery::AsyncPerUnit);
+                let words = words.packed(Field::from(self.scheme.value).read_on(launcher.client()));
+                self.scaled_by_words(words, block_scales, global)
+                    .expect(ADMITTED_PLAN_RUNS)
+            }
         }
-        tile
     }
 
     /// The words stored in `order`'s tiles laid row by row, through a descriptor over the tiles
@@ -719,11 +746,24 @@ impl PackedTensor {
         block_scales: Arg<'_, Labelled>,
         global: Option<Arg<'_, Labelled>>,
     ) -> Result<TileTensorLaunch, Refusal> {
+        let words = words.packed(self.scheme.value).build()?.arg();
+        self.scaled_by_words(words, block_scales, global)
+    }
+
+    /// `words`, bound packed, under `block_scales` read as words of the scheme's block-scale field
+    /// and `global` packed as its per-tensor one: [`under_scale_words`](Self::under_scale_words)
+    /// past the words, which a descriptor binds as well as the launcher.
+    fn scaled_by_words(
+        &self,
+        words: TileTensorLaunch,
+        block_scales: Arg<'_, Labelled>,
+        global: Option<Arg<'_, Labelled>>,
+    ) -> Result<TileTensorLaunch, Refusal> {
         let block = self
             .scheme
             .block_scale()
             .expect("block scales bound as words are a block-scaled scheme's");
-        let mut tile = words.packed(self.scheme.value).build()?.arg().scales(
+        let mut tile = words.scales(
             block_scales
                 .words(Field::of_scale(block.dtype))
                 .build()?
