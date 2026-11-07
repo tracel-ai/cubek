@@ -2,6 +2,7 @@ use super::{MatmulAutotuneGroups, MatmulProduct, MatmulTunables, RoutineIdentity
 use crate::kernels::MatmulRoutine;
 use crate::kernels::plan::MatmulCall;
 use crate::kernels::tensor::PlainTensor;
+use crate::kernels::tune::MatmulRoutineSettings;
 use crate::kernels::tune::key::MatmulTuneKey;
 use crate::kernels::{
     CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine, CubeStagedMatmulRoutineBlueprint,
@@ -12,7 +13,7 @@ use cubecl::tile::StageStorage;
 use cubecl::tune::Tunable;
 use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
 use cubek_std::Hardware;
-use cubek_std::autotune::{GroupPriority, Identity};
+use cubek_std::autotune::{CandidateIdentity, GroupPriority};
 use cubek_std::routine::Routine;
 
 /// The block-scaled autotune's candidates on `hw`: the staged routines reading both inputs as
@@ -58,7 +59,9 @@ pub(super) fn candidates(hw: Hardware, _groups: MatmulAutotuneGroups) -> MatmulT
 }
 
 /// `routine` at `settings` as a candidate of the block-scaled autotune: both inputs contracted as
-/// they are stored.
+/// they are stored. Identified by its routine and setting, so a caller storing the product through
+/// a sink of its own launches the winner again
+/// ([`fastest_routine`](super::MatmulAutotune::fastest_routine)).
 fn candidate<R>(
     hw: Hardware,
     routine: R,
@@ -74,10 +77,10 @@ where
         + Send
         + Sync
         + 'static,
-    R::Settings: Copy + Send + Sync + 'static,
+    R::Settings: Copy + Send + Sync + Into<MatmulRoutineSettings> + 'static,
 {
-    RoutineIdentity::named(
-        &format!("block-scaled {settings}"),
+    Tunable::identified(
+        CandidateIdentity::Routine(settings.into()),
         move |call: MatmulCall| {
             let declined = |why| format!("{settings} does not serve this product: {why:?}");
             let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
