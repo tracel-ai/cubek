@@ -420,10 +420,7 @@ fn tiling_moves_packed_scales_whole() {
 
 /// 128-byte transactions over elements of `element_bits`.
 fn transactions_of(element_bits: usize) -> Stagger {
-    Stagger {
-        transaction_bits: 1024,
-        element_bits,
-    }
+    Stagger::new(1024, element_bits).expect("the element divides a 1024-bit transaction")
 }
 
 /// Staggered, a tensor's strips of tiles start an odd number of transactions apart, its batches
