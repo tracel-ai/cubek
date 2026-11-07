@@ -522,6 +522,7 @@ impl PackedTensor {
         stage_rows: usize,
         stage_k: usize,
         swizzle: TensorMapSwizzle,
+        scales: BlockScales,
     ) -> TileTensorLaunch {
         let across = self.other_axis(K);
         let values_axes = tile_order::values_axes(across);
@@ -532,8 +533,7 @@ impl PackedTensor {
             }
             Some(_) => panic!("bind_by_tma: words in rows, or in tiles laid row by row"),
         }
-        .served_wide(width / self.scheme.num_quants())
-        .packed(Field::from(self.scheme.value).read_on(launcher.client()));
+        .served_wide(width / self.scheme.num_quants());
         let operand = &self.operand;
         let lined = operand.lined();
         let rows_along = self.other_axis(lined);
@@ -545,34 +545,80 @@ impl PackedTensor {
         let (blocks_axis, inside) = blocked(tiled_along);
         let blocks = self.extent(tiled_along) / launcher.space().extent(inside);
         let scale_rows = PhysicalAxisMap::of(blocked(rows_along).1);
-        let block_scales = launcher
-            .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
-            .gathered(
-                self.stack_dim()
-                    .dim(scale_rows)
-                    .dim(self.dim(lined))
-                    .build()
-                    .scales_per(blocks_axis),
-            )
-            .vectorize(operand.scale_read_values())
-            .delivery(Delivery::AsyncPerUnit);
-        let fields = self
-            .scheme
-            .block_scale()
-            .map(|block| block.dtype)
-            .into_iter()
-            .chain(self.scheme.tensor_scale())
-            .map(Field::of_scale);
         let global = self.global_scale.as_ref().map(|scale| {
             launcher
                 .arg(scale.rows(1, 1), WORD)
                 .gathered(Self::over_whole_matrix(&words_axes, tiled_along))
         });
-        let mut tile = words;
-        for (scale, field) in [block_scales].into_iter().chain(global).zip(fields) {
-            tile = tile.scales(scale.packed(field).build().expect(ADMITTED_PLAN_RUNS).arg());
+        match scales {
+            BlockScales::Fields => {
+                let words = words.packed(Field::from(self.scheme.value).read_on(launcher.client()));
+                let block_scales = launcher
+                    .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
+                    .gathered(
+                        self.stack_dim()
+                            .dim(scale_rows)
+                            .dim(self.dim(lined))
+                            .build()
+                            .scales_per(blocks_axis),
+                    )
+                    .vectorize(operand.scale_read_values())
+                    .delivery(Delivery::AsyncPerUnit);
+                let fields = self
+                    .scheme
+                    .block_scale()
+                    .map(|block| block.dtype)
+                    .into_iter()
+                    .chain(self.scheme.tensor_scale())
+                    .map(Field::of_scale);
+                let mut tile = words;
+                for (scale, field) in [block_scales].into_iter().chain(global).zip(fields) {
+                    tile =
+                        tile.scales(scale.packed(field).build().expect(ADMITTED_PLAN_RUNS).arg());
+                }
+                tile
+            }
+            // Words of a step's scales, each one load straight into the instruction's register,
+            // handed to the copy engine as the words they are stored in.
+            BlockScales::Words => {
+                let per_word = operand.scales_per_word();
+                let block_scales = launcher
+                    .arg(
+                        self.per_slab(self.block_scale_words(rows, blocks / per_word)),
+                        WORD,
+                    )
+                    .gathered(
+                        self.stack_dim()
+                            .dim(scale_rows)
+                            .dim(PhysicalAxisMap::of(blocks_axis).over(per_word))
+                            .build(),
+                    )
+                    .delivery(Delivery::AsyncPerUnit);
+                let block = self
+                    .scheme
+                    .block_scale()
+                    .expect("block scales bound as words are a block-scaled scheme's");
+                let mut tile = words
+                    .packed(Field::from(self.scheme.value).read_on(launcher.client()))
+                    .scales(
+                        block_scales
+                            .words(Field::of_scale(block.dtype))
+                            .build()
+                            .expect(ADMITTED_PLAN_RUNS)
+                            .arg(),
+                    );
+                if let (Some(global), Some(field)) = (global, self.scheme.tensor_scale()) {
+                    tile = tile.scales(
+                        global
+                            .packed(Field::of_scale(field))
+                            .build()
+                            .expect(ADMITTED_PLAN_RUNS)
+                            .arg(),
+                    );
+                }
+                tile
+            }
         }
-        tile
     }
 
     /// The words stored in `order`'s tiles laid row by row, through a descriptor over the tiles

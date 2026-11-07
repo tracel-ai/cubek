@@ -26,6 +26,7 @@ use cubek_microkernel::matmul::{
 use cubek_std::MatrixLayout;
 use cubek_std::launch::tma::{tma_meta_tiled, tma_operand, tma_store_operand};
 use cubek_std::layout::BindingOrder;
+use cubek_std::layout::stored::BlockScales;
 use cubek_std::layout::{contiguous, tile_order};
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
@@ -1125,6 +1126,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         storage: &StageStorage,
         orders: MatmulOperands<BindingOrder>,
         widths: MatmulOperands<usize>,
+        scales: BlockScales,
     ) -> (TileTensorLaunch, TileTensorLaunch) {
         let StoredTensor::Packed(rhs) = &self.rhs else {
             panic!("tma_packed_operands: a packed rhs");
@@ -1139,6 +1141,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 storage,
                 orders,
                 widths.lhs,
+                scales,
             ),
         };
         let rhs = Self::tma_packed(
@@ -1149,6 +1152,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             storage,
             orders,
             widths.rhs,
+            scales,
         );
         (lhs, rhs)
     }
@@ -1223,6 +1227,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         storage: &StageStorage,
         orders: MatmulOperands<BindingOrder>,
         width: usize,
+        scales: BlockScales,
     ) -> TileTensorLaunch {
         let across = match operand {
             MatmulOperand::Lhs => M,
@@ -1240,6 +1245,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             landed.extent(values_axes[0]),
             landed.extent(KB) * landed.extent(KI),
             swizzle,
+            scales,
         )
     }
 

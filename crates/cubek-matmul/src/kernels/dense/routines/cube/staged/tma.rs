@@ -70,9 +70,10 @@ impl CubeStagedTmaMatmulRoutine {
             shape((1, 2, 1), (1, 4), 1, triple),
             shape((1, 2, 1), (1, 2), 2, triple),
             shape((1, 1, 1), (1, 2), 2, QUAD),
-            shape((1, 1, 2), (1, 4), 1, triple),
-            shape((1, 1, 2), (1, 4), 1, double),
-            shape((1, 1, 2), (1, 1), 1, triple),
+            shape((4, 4, 1), (2, 4), 1, triple),
+            shape((4, 4, 1), (2, 4), 1, double),
+            shape((2, 4, 1), (4, 2), 1, double),
+            shape((4, 4, 1), (2, 4), 1, QUAD),
         ];
         block_scaled::block_scaled_settings(hw, *self, &shapes, |microkernel| {
             CubeStagedTmaMatmulRoutineSettings {
