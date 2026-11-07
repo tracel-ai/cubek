@@ -22,6 +22,7 @@ pub fn hypercube_attention_merge_kernel<EA: Float, E: Float, N: Size>(
         CUBE_POS_Y as usize,
         CUBE_POS_X as usize,
     );
+
     let slot_box = SlotBox::new::<EA>(
         slot_max,
         batch,

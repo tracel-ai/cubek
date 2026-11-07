@@ -64,7 +64,7 @@ pub(crate) fn execute_dot<
         acc += Vector::cast_from(lhs_val) * Vector::cast_from(rhs_val);
     }
 
-    if comptime!(plane_dim > 1) {
+    if plane_dim > 1 {
         let sum = O::cast_from(plane_sum(Vector::vector_sum(acc)));
         if unit_id == 0 {
             write(out, (m_pos, n_pos), sum, check_bounds);

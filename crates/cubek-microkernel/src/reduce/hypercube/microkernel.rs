@@ -40,7 +40,7 @@ pub fn hypercube_reduce_microkernel<
     values: usize,
     #[comptime] microkernel: HypercubeReduceMicrokernel,
 ) {
-    match comptime!(microkernel.item.operation.carrier()) {
+    match microkernel.item.operation.carrier() {
         ReduceCarrier::Values => hypercube_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
             input,
             out,
@@ -129,31 +129,36 @@ fn hypercube_reduce<
     values: usize,
     #[comptime] microkernel: HypercubeReduceMicrokernel,
 ) {
-    let operation = comptime!(microkernel.item.operation);
-    let monoid = comptime!(operation.monoid());
-    let layout = comptime!(microkernel.item.layout);
-    let units = comptime!(microkernel.lanes * microkernel.planes);
-    let unit = PLANE_POS as usize * comptime!(microkernel.lanes) + UNIT_POS_PLANE as usize;
+    let operation = microkernel.item.operation;
+    let monoid = operation.monoid();
+    let layout = microkernel.item.layout;
+    let units = microkernel.lanes * microkernel.planes;
+
+    let unit = PLANE_POS as usize * microkernel.lanes + UNIT_POS_PLANE as usize;
+
     let lines = input.flat::<In, N>();
     // The tile reads zero past the row's end, which no carrier holds as its identity.
-    let row_lines = match comptime!(layout) {
+    let row_lines = match layout {
         ReduceLayout::Along => values / N::value(),
         ReduceLayout::Across => values,
     };
     let count = lines.shape().min(row_lines - first_line);
+
     let mut acc = C::identity(monoid);
     for step in 0..count.div_ceil(units) {
         let line = unit + step * units;
         if line < count {
             let read = read_mapped::<Acc, N>(
                 Vector::<Acc, N>::cast_from(lines.read(line)),
-                comptime!(operation.read_map()),
+                operation.read_map(),
             );
             C::accumulate(&mut acc, read, first_line + line, layout, monoid);
         }
     }
+
     let plane = C::across(acc, UnitShare::Plane, monoid);
-    let total = C::across_planes(plane, comptime!(microkernel.planes), monoid);
+    let total = C::across_planes(plane, microkernel.planes, monoid);
+
     if unit == 0 {
         C::store(total, partials, partial_indices, part);
     }
@@ -186,7 +191,7 @@ fn hypercube_reduce<
                 values,
                 layout,
                 operation,
-                comptime!(microkernel.item.writes()),
+                microkernel.item.writes(),
             );
             arrivals[counter].store(0u32);
         }

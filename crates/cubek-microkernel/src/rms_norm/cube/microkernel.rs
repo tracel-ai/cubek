@@ -22,26 +22,33 @@ pub fn cube_rms_norm_microkernel<E: Float, N: Size>(
     #[comptime] stage: CubeStage,
 ) {
     let mut store = CubeStore::new::<E, N>(out.clone(), stage);
-    let planes = comptime!(microkernel.planes);
+    let planes = microkernel.planes;
+
     for plane in cube {
         // The cube's planes lie along `y`, as its resources state them.
         let (slot, lane) = (UNIT_POS_Y as usize, UNIT_POS_PLANE as usize);
-        let mut row = HeldRow::<E, N>::new(comptime!(microkernel.plane.held_row()));
+        let mut row = HeldRow::<E, N>::new(microkernel.plane.held_row());
         let run = UnitShare::Plane.reduce::<f32>(row.load(&input.at(&plane), lane), Monoid::Sum);
+
         let mut slots = Shared::<[f32]>::new_slice(planes);
         if lane == 0 {
             slots[slot] = run;
         }
+
         sync_cube();
+
         let mut sum = 0.0f32;
         #[unroll]
         for p in 0..planes {
             sum += slots[p];
         }
+
         sync_cube();
-        let run_lines = comptime!(microkernel.plane.held_row().lines);
+
+        let run_lines = microkernel.plane.held_row().lines;
         let mut run_out = store.owner(&plane, slot * run_lines);
         row.write(&weight.at(&plane), &mut run_out, lane, scale.of(sum));
     }
+
     store.finish();
 }
