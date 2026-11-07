@@ -3,8 +3,9 @@
 //! For a prompt's rows, filled by the TMA engine through the tile DSL's transport: four by eight
 //! steps on four by two planes, the box a long rhs fills the device with; two by eight, the one a
 //! narrower rhs at a prompt's chunk of rows leaves fewer cores idle with; two by four on two by
-//! two planes, the small box the narrowest projections take; each two stages in flight, its planes
-//! storing their fragments ([`CubeStagedTmaMatmulRoutine`](crate::kernels::CubeStagedTmaMatmulRoutine)).
+//! two planes, the small box the narrowest projections take; each two stages in flight, and the two
+//! by eight and the two by four (on two by four planes) again three in flight, its planes storing
+//! their fragments ([`CubeStagedTmaMatmulRoutine`](crate::kernels::CubeStagedTmaMatmulRoutine)).
 //! Then four by four on two by four planes, and two by four on four by two or two by four planes,
 //! three stages in flight and the box stored by the TMA engine in one bulk copy, which a
 //! contraction of a few thousand finishes sooner with
