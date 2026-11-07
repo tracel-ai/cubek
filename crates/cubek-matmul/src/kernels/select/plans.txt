@@ -62,7 +62,7 @@ Specific(PlaneShuffle): plane-shuffle(packed as stored)
 Specific(BlockScaledTensorCores): fastest(block-scaled)
 
 # two NVFP4 inputs, 512 rows, 4-bit GPU
-Autotune: fastest(many-rows)
+Autotune: fastest(block-scaled)
 Heuristic(Tile): decoded(in-order[plane-shuffle, cube-staged@default, unit-registers@default])
 Specific(UnitRegisters): decoded(unit-registers@default)
 Specific(PlaneShuffle): plane-shuffle(packed as stored)
