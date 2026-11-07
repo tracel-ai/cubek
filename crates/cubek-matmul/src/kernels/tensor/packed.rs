@@ -15,6 +15,7 @@ use cubecl::tile::{
     layout::{DimsBuilder, PhysicalAxisMap, split},
 };
 use cubecl::zspace::metadata::Metadata;
+use cubecl::zspace::{Shape, Strides};
 use cubek_microkernel::matmul::MatmulStoredTile;
 use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
@@ -289,13 +290,26 @@ impl PackedTensor {
     }
 
     /// The tile its words are stored in, which a descriptor lands a stage of whole tiles of row
-    /// by row: its rows by its values of `K`, each a row's run, laid row by row. None in rows,
-    /// and none for tiles laid block by block, whose tile rows are no row's run: a routine that
-    /// lands tiles declines them rather than read them as rows.
+    /// by row: its rows by its values of `K`, each a row's run, laid row by row
+    /// ([`landed_order`](Self::landed_order)), a matrix in rows one row by the whole of `K`. None
+    /// for tiles laid block by block, whose tile rows are no row's run: a routine that lands tiles
+    /// declines them rather than read them as rows.
     pub fn stored_tile(&self) -> Option<MatmulStoredTile> {
-        let order = self.operand.tile_order()?;
+        let order = self.landed_order()?;
         let (columns, rows) = order.tile();
         (order.words() == TileWords::RowByRow).then_some(MatmulStoredTile { rows, columns })
+    }
+
+    /// The tile order a descriptor lands its words in: the one its operand is stored in, or for
+    /// one matrix in rows, its words down `K`, the order its rows already are
+    /// ([`TileOrder::in_rows`]). None for a stack of matrices in rows, which no one descriptor's
+    /// tiles address, and an operand tile order does not store.
+    pub fn landed_order(&self) -> Option<TileOrder> {
+        match self.operand.tile_order() {
+            Some(order) => Some(order),
+            None if self.stack.is_none() => TileOrder::in_rows(&self.operand, self.extent(K)),
+            None => None,
+        }
     }
 
     /// What `axis` of the matrix measures.
@@ -522,11 +536,11 @@ impl PackedTensor {
         swizzle: TensorMapSwizzle,
     ) -> TileTensorLaunch {
         let operand = &self.operand;
-        let Some(order) = operand
-            .tile_order()
+        let Some(order) = self
+            .landed_order()
             .filter(|order| order.words() == TileWords::RowByRow)
         else {
-            panic!("bind_by_tma: words stored in tiles laid row by row only");
+            panic!("bind_by_tma: words stored in tiles laid row by row, or in rows, only");
         };
         let tile = order.tile();
         let (tile_k, tile_rows) = tile;
@@ -541,7 +555,19 @@ impl PackedTensor {
             "bind_by_tma: a stage of {stage_rows} x {stage_k} is not whole {tile:?} tiles along \
              its rows, nor whole tiles or a part dividing one along k"
         );
-        let words = self.words.bound_as(order.words_in_tiles(k, rows_across));
+        let words = match operand.tile_order() {
+            Some(_) => self.words.bound_as(order.words_in_tiles(k, rows_across)),
+            // Rows step by the stride their buffer really has, which a pitched allocator pads.
+            None => {
+                let words_per_row = k / order.values_per_word();
+                let rows = self.words.as_rows(rows_across, words_per_row);
+                let step = rows.binding.strides[0];
+                rows.bound_as(Metadata::new(
+                    Shape::from(vec![rows_across, 1, 1, words_per_row]),
+                    Strides::from(vec![step, step, words_per_row, 1]),
+                ))
+            }
+        };
         let map = tma_operand_tiled_typed(
             words,
             (stage_rows, stage_k / order.values_per_word()),

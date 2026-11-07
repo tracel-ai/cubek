@@ -120,6 +120,21 @@ impl TileOrder {
         Self::read_off(block, values_per_word, matrix)
     }
 
+    /// A matrix `k` deep read in rows as `operand`, stated as the tile order its bytes already
+    /// are: one tile a row wide spanning the whole of `k`, its words row by row. The words of a row
+    /// are one run down `k` and the rows follow one another, which is what
+    /// [`words_in_tiles`](Self::words_in_tiles) states for that tile, and its block scales stay in
+    /// the rows they are packed in, as [`TileWords::RowByRow`] keeps them. So a descriptor lands a
+    /// matrix in rows as it lands one in tiles, with nothing laid out again. `None` for an operand
+    /// tile order does not store, or a `k` not whole blocks.
+    pub fn in_rows(operand: &Operand, k: usize) -> Option<Self> {
+        if operand.lined() != K || operand.scales_per_word() != Self::SCALES_PER_WORD {
+            return None;
+        }
+        let (block, values_per_word) = Self::in_whole_words(operand.scale(K)?, operand.read(K))?;
+        Self::in_tile(block, values_per_word, (k, 1), TileWords::RowByRow)
+    }
+
     /// Whether tile order stores a matrix packed under `scheme`: a symmetric scheme whose words run
     /// down `k` (`PackedU32(1)` of a `[k, rows]` matrix), under block scales of one byte along `k`
     /// alone, four to a word as a block-scaled instruction reads them, each block a whole number

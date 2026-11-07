@@ -7,7 +7,7 @@ use crate::matmul::{
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::stage::Prefetch;
-use cubecl::tile::{Axis, Scratch, StageStorage};
+use cubecl::tile::{Axis, Scratch, Space, StageStorage};
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::StageRing;
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
@@ -83,9 +83,14 @@ pub enum CubeStagedTmaRefusal {
     /// A block-split product's stage holds a packed operand decoded, which the fill writes value
     /// by value: the engine lands the words only as they are stored.
     Decoded,
-    /// A block-split product's lhs is packed: its descriptors land a float lhs beside a packed
-    /// rhs's words.
-    PackedLhs,
+    /// A block-split product's packed input lies in rows: the engine lands packed words only from
+    /// the tiles they are stored in ([`MatmulBuffers::stored_tiles`]), whose rows are a stage
+    /// row's run.
+    PackedInRows(MatmulOperand),
+    /// Planes share each step of `K` over a packed input's stage deeper than one of its stored
+    /// tiles, which a descriptor lands tile after tile: each plane's slice of `K` would read rows
+    /// of the whole stage where the tiles hold them apart.
+    SplitAcrossTiles(MatmulOperand),
 }
 
 /// Why the copy engine cannot fill a cube microkernel's stages.
@@ -166,6 +171,7 @@ impl CubeStagedTmaRefusal {
         let stage = &microkernel.stage(cube_space);
         let storage = &microkernel.plane.landed_stage_storage(stage);
         let ring = &microkernel.ring;
+        let planes_along_k = microkernel.planes_along_k;
         let microkernel = &microkernel.plane;
         // Bits rather than bytes: an `e2m1` value is half of one.
         let bits = |operand: MatmulOperand| item.elements.get(operand).size_bits().max(1);
@@ -212,7 +218,15 @@ impl CubeStagedTmaRefusal {
         } else if cube_space.batched {
             Some(Self::Batched)
         } else if let Some(blocks) = &item.blocks {
-            Self::of_blocks(item, blocks, buffers, stage, storage, microkernel)
+            Self::of_blocks(
+                item,
+                blocks,
+                buffers,
+                stage,
+                storage,
+                microkernel,
+                planes_along_k,
+            )
         } else if item.layouts.rhs == MatmulLayout::Strided {
             Some(Self::StridedWeight)
         } else if let Some(operand) = staged.into_iter().find(|&operand| {
@@ -246,10 +260,13 @@ impl CubeStagedTmaRefusal {
 impl CubeStagedTmaRefusal {
     /// Why a stage of a product in the block-split space `blocks`, over buffers as `buffers`
     /// states them, held as `storage`, is not one the engine lands for `microkernel`; `None`
-    /// where it is. A float lhs lands through a descriptor over the matrix its blocks split, a
-    /// stage's rows its blocks of `K` side by side; the packed rhs's words through one over the
-    /// tiles they are stored in, a stage of whole tiles along its lines, at most one tile deep or
-    /// whole tiles deep; the rhs's scales are copied beside them by the units.
+    /// where it is. A packed input's words land through a descriptor over the tiles they are
+    /// stored in, a stage of whole tiles along its lines, at most one tile deep or whole tiles
+    /// deep, its scales copied beside them by the units: the rhs's always, the lhs's where it is
+    /// packed too, as a block-scaled product reads it. A float lhs lands through a descriptor over
+    /// the matrix its blocks split, a stage's rows its blocks of `K` side by side. Planes sharing
+    /// each step of `K` (`planes_along_k` past one) read a packed input's stage only where it
+    /// lies within one of its tiles along `K`.
     fn of_blocks(
         item: &MatmulWorkItem,
         blocks: &MatmulBlocks,
@@ -257,6 +274,7 @@ impl CubeStagedTmaRefusal {
         stage: &MatmulStage,
         storage: &StageStorage,
         microkernel: &PlaneFragmentMicrokernel,
+        planes_along_k: NonZeroUsize,
     ) -> Option<Self> {
         let axes = stage.axes();
         let landed = |operand: MatmulOperand, rows: Axis| {
@@ -267,24 +285,59 @@ impl CubeStagedTmaRefusal {
             landed(MatmulOperand::Rhs, axes.n),
         );
         let bits = |operand: MatmulOperand| item.elements.get(operand).size_bits();
-        let depth = rhs.extent(KB) * rhs.extent(KI);
-        // A stage's depth in packed words is whole 16-byte lines.
-        let words_bytes = depth * bits(MatmulOperand::Rhs) / 8;
-        let rhs_tiles = buffers.stored_tiles.rhs.is_some_and(|tile| {
-            rhs.extent(axes.n).is_multiple_of(tile.rows)
-                && (tile.columns.is_multiple_of(depth) || depth.is_multiple_of(tile.columns))
-                && words_bytes.is_multiple_of(TMA_ALIGNMENT_BYTES)
-        });
+        let packed = |operand: MatmulOperand| blocks.packings.get(operand).is_some();
+        // Whole tiles of a packed input's words along the stage's rows, and a stage depth of whole
+        // tiles or a part dividing one, in whole 16-byte lines.
+        let lands_tiles = |operand: MatmulOperand, space: &Space, rows: Axis| {
+            let depth = space.extent(KB) * space.extent(KI);
+            let words_bytes = depth * bits(operand) / 8;
+            buffers.stored_tiles.get(operand).is_some_and(|tile| {
+                space.extent(rows).is_multiple_of(tile.rows)
+                    && (tile.columns.is_multiple_of(depth) || depth.is_multiple_of(tile.columns))
+                    && words_bytes.is_multiple_of(TMA_ALIGNMENT_BYTES)
+            })
+        };
+        // A packed input's descriptor moves a word of its values a cell, a float one a value.
+        let cell = |operand: MatmulOperand| match packed(operand) {
+            true => u32::BITS as usize / bits(operand),
+            false => 1,
+        };
+        // A stage deeper than a tile lands tile after tile, each tile's rows one after another,
+        // which planes splitting `K` read as rows of the whole stage.
+        let tiles_deep = |operand: MatmulOperand, space: &Space| {
+            let depth = space.extent(KB) * space.extent(KI);
+            buffers
+                .stored_tiles
+                .get(operand)
+                .is_some_and(|tile| depth > tile.columns)
+        };
+        let packed_refusal = |operand: MatmulOperand, space: &Space, rows: Axis| {
+            if buffers.stored_tiles.get(operand).is_none() {
+                Some(Self::PackedInRows(operand))
+            } else if !lands_tiles(operand, space, rows) {
+                Some(Self::StoredInTiles(operand))
+            } else if planes_along_k.get() > 1 && tiles_deep(operand, space) {
+                Some(Self::SplitAcrossTiles(operand))
+            } else {
+                None
+            }
+        };
         if microkernel.k_stated != PlaneFragmentKStatement::Blocks {
             Some(Self::Decoded)
-        } else if blocks.packings.lhs.is_some() {
-            Some(Self::PackedLhs)
-        } else if blocks.packings.rhs.is_none() || !rhs_tiles {
+        } else if !packed(MatmulOperand::Rhs) {
             Some(Self::StoredInTiles(MatmulOperand::Rhs))
-        } else if !buffers
-            .alignments
-            .lhs
-            .admits(TMA_ALIGNMENT_BYTES * 8 / bits(MatmulOperand::Lhs))
+        } else if let Some(refusal) = packed_refusal(MatmulOperand::Rhs, &rhs, axes.n) {
+            Some(refusal)
+        } else if let Some(refusal) = packed(MatmulOperand::Lhs)
+            .then(|| packed_refusal(MatmulOperand::Lhs, &lhs, axes.m))
+            .flatten()
+        {
+            Some(refusal)
+        } else if !packed(MatmulOperand::Lhs)
+            && !buffers
+                .alignments
+                .lhs
+                .admits(TMA_ALIGNMENT_BYTES * 8 / bits(MatmulOperand::Lhs))
         {
             Some(Self::Misaligned(MatmulOperand::Lhs))
         } else if let Some(operand) = MatmulOperand::INPUTS.into_iter().find(|&operand| {
@@ -294,20 +347,16 @@ impl CubeStagedTmaRefusal {
                 .is_multiple_of(TMA_ALIGNMENT_BYTES as u64)
         }) {
             Some(Self::UnalignedStart(operand))
-        } else if storage
-            .tma_swizzle(&lhs, 1, bits(MatmulOperand::Lhs))
-            .is_err()
+        } else if let Some(operand) = [(MatmulOperand::Lhs, &lhs), (MatmulOperand::Rhs, &rhs)]
+            .into_iter()
+            .find(|&(operand, space)| {
+                storage
+                    .tma_swizzle(space, cell(operand), bits(operand))
+                    .is_err()
+            })
+            .map(|(operand, _)| operand)
         {
-            Some(Self::Unlanded(MatmulOperand::Lhs))
-        } else if storage
-            .tma_swizzle(
-                &rhs,
-                u32::BITS as usize / bits(MatmulOperand::Rhs),
-                bits(MatmulOperand::Rhs),
-            )
-            .is_err()
-        {
-            Some(Self::Unlanded(MatmulOperand::Rhs))
+            Some(Self::Unlanded(operand))
         } else if [&lhs, &rhs]
             .into_iter()
             .any(|space| Delivery::Tma.moves(space).is_err())
@@ -395,8 +444,11 @@ impl From<CubeStagedTmaRefusal> for Refusal {
             CubeStagedTmaRefusal::Decoded => {
                 "the stage holds a packed operand decoded, and the TMA engine lands words as stored"
             }
-            CubeStagedTmaRefusal::PackedLhs => {
-                "the lhs is packed, and the descriptors land a float lhs beside a packed rhs"
+            CubeStagedTmaRefusal::SplitAcrossTiles(_) => {
+                "planes split K over a stage deeper than a stored tile, which lands tile after tile"
+            }
+            CubeStagedTmaRefusal::PackedInRows(_) => {
+                "a packed operand lies in rows, and the engine lands packed words only from tiles"
             }
         };
         Refusal::Declined { why }
