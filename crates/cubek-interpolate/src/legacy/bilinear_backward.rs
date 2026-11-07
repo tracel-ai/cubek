@@ -9,7 +9,7 @@ use cubecl::{
     tensor_vector_size_parallel,
 };
 
-use super::backward::{linear_layout, shape_divmod};
+use super::nearest_backward::{linear_layout, shape_divmod};
 
 pub(crate) fn interpolate_bilinear_backward_launch(
     client: &Client,

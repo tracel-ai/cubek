@@ -1477,6 +1477,7 @@ dependencies = [
  "cubecl",
  "cubecl-common",
  "cubek-interpolate",
+ "cubek-microkernel",
  "cubek-std",
  "cubek-test-utils",
  "half",
