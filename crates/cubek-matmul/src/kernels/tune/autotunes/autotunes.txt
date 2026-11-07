@@ -11,7 +11,7 @@ block-scaled: 2 candidates, checksum 94171101a0df302a9c75eaff3e1a3c28
 # h100 with nvfp4
 few-rows: 71 candidates, checksum 23f2e4abbbc346717949d30ad18281df
 many-rows: 218 candidates, checksum 1d224b54d326a4c47d01014a4545e70
-block-scaled: 18 candidates, checksum 450a58cfdba0542e3efd313a81e06df1
+block-scaled: 20 candidates, checksum 10a32dad41f37c0335ba870cf563ee07
 
 # wgpu without subgroups
 few-rows: 78 candidates, checksum 307b44bb8f113b3e8897ecd46cf053e9

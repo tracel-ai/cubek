@@ -514,8 +514,8 @@ impl PackedTensor {
         .expect(ADMITTED_PLAN_RUNS)
     }
 
-    /// The matrix as one tile under `launcher` as [`bind`](Self::bind) binds it under
-    /// `BlockScales::Fields`, served `width` values wide, its words moved by the TMA engine
+    /// The matrix as one tile under `launcher` as [`bind`](Self::bind) binds it under `scales`,
+    /// served `width` values wide, its words moved by the TMA engine
     /// through a descriptor over the tiles they are stored in
     /// ([`TileOrder::words_in_tiles`]): a box of `stage_rows` rows by `stage_k` values of `k`,
     /// landing row by row, swizzled as `swizzle` says. Its block scales, kept beside the words, are
@@ -534,6 +534,7 @@ impl PackedTensor {
         stage_rows: usize,
         stage_k: usize,
         swizzle: TensorMapSwizzle,
+        scales: BlockScales,
     ) -> TileTensorLaunch {
         let operand = &self.operand;
         let Some(order) = self
@@ -614,32 +615,56 @@ impl PackedTensor {
         let (blocks_axis, inside) = blocked(tiled_along);
         let blocks = self.extent(tiled_along) / launcher.space().extent(inside);
         let scale_rows = PhysicalAxisMap::of(blocked(rows_along).1);
-        let block_scales = launcher
-            .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
-            .gathered(
-                self.stack_dim()
-                    .dim(scale_rows)
-                    .dim(self.dim(lined))
-                    .build()
-                    .scales_per(blocks_axis),
-            )
-            .vectorize(operand.scale_read_values())
-            .delivery(Delivery::AsyncPerUnit);
-        let fields = self
+        let block = self
             .scheme
             .block_scale()
-            .map(|block| block.dtype)
-            .into_iter()
-            .chain(self.scheme.tensor_scale())
-            .map(Field::of_scale);
+            .expect("a block-scaled matrix has block scales");
+        let block_field = Field::of_scale(block.dtype);
+        // The units hand them to the copy engine beside the descriptors: each a number the leaf
+        // decodes, or the words they are stored in, which the block-scaled instruction takes as
+        // its scale registers.
+        let block_scales = match scales {
+            BlockScales::Fields => launcher
+                .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
+                .gathered(
+                    self.stack_dim()
+                        .dim(scale_rows)
+                        .dim(self.dim(lined))
+                        .build()
+                        .scales_per(blocks_axis),
+                )
+                .vectorize(operand.scale_read_values())
+                .delivery(Delivery::AsyncPerUnit)
+                .packed(block_field)
+                .build(),
+            BlockScales::Words => {
+                let per_word = operand.scales_per_word();
+                launcher
+                    .arg(
+                        self.per_slab(self.block_scale_words(rows, blocks / per_word)),
+                        WORD,
+                    )
+                    .gathered(
+                        self.stack_dim()
+                            .dim(scale_rows)
+                            .dim(PhysicalAxisMap::of(blocks_axis).over(per_word))
+                            .build(),
+                    )
+                    .delivery(Delivery::AsyncPerUnit)
+                    .words(block_field)
+                    .build()
+            }
+        }
+        .expect(ADMITTED_PLAN_RUNS);
+        let mut tile = words.scales(block_scales.arg());
         let global = self.global_scale.as_ref().map(|scale| {
             launcher
                 .arg(scale.rows(1, 1), WORD)
                 .gathered(Self::over_whole_matrix(&words_axes, tiled_along))
         });
-        let mut tile = words;
-        for (scale, field) in [block_scales].into_iter().chain(global).zip(fields) {
-            tile = tile.scales(scale.packed(field).build().expect(ADMITTED_PLAN_RUNS).arg());
+        if let (Some(global), Some(field)) = (global, self.scheme.tensor_scale()) {
+            let global = global.packed(Field::of_scale(field)).build();
+            tile = tile.scales(global.expect(ADMITTED_PLAN_RUNS).arg());
         }
         tile
     }
