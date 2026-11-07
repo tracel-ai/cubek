@@ -19,6 +19,8 @@ pub mod attention;
 pub mod attention_backward;
 #[cfg(feature = "gated-delta")]
 pub mod gated_delta;
+#[cfg(feature = "interpolate")]
+pub mod interpolate;
 #[cfg(feature = "matmul")]
 pub mod matmul;
 #[cfg(feature = "reduce")]
