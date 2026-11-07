@@ -21,7 +21,6 @@ use crate::multi_level::components::batch::{
 /// coord is the block base (incremented at write time), the scalar-axis
 /// coord is the per-plane fixed position.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn execute_outer_product<
     L: Scalar,
     R: Scalar,

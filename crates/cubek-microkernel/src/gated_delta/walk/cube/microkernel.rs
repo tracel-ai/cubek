@@ -17,7 +17,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// windows them to its own key rows, and a position at a time. The cube's runs walk the positions
 /// together, since their units meet in its shared memory.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
     cube: &Region,
     query: &Tile,
