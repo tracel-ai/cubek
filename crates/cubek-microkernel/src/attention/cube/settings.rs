@@ -107,7 +107,8 @@ impl CubeAttentionMicrokernelSettings {
     /// their queries; then the lead's box with its score the whole head dim deep; then the
     /// one-by-four box on two slots the copy engine fills, over two and four heads; then eight
     /// planes a cube, four heads by two planes along their queries, on the boxes and rings a long
-    /// causal prompt runs fastest on. The wide steps hold one head because a step's stages and the
+    /// causal prompt runs fastest on; then the one-by-two box of the four-plane split on two and
+    /// three slots the copy engine fills. The wide steps hold one head because a step's stages and the
     /// heads' windows share one budget; one that still does not fit the device's shared memory
     /// declines there.
     fn fragments_listed(lead: Self, plane: PlaneFragmentAttentionMicrokernelSettings) -> Vec<Self> {
@@ -295,6 +296,28 @@ impl CubeAttentionMicrokernelSettings {
             delivery: CubeStagedDelivery::AsyncCopy,
             ..fragments(1, 4)
         });
+        // The one-by-two box of the four-plane split, its stages landed by the copy engine while
+        // the planes contract the one before. Sixteen keys a step is the one stage a plane keeps its
+        // score in fragments over on a 16-bit manual `mma` (its value instruction is as deep as the
+        // step), and a stage of sixteen keys is small enough that two or three slots fit a device
+        // of 99 KiB a cube, where the wider boxes on the engine's slots read their score through
+        // windows and outgrow it. On an RTX PRO 6000 (Qwen3-8B's 32/8 heads, head dim 128, 512
+        // queries last first), against the same box on one slot its units copy: 45.1 to 34.8 µs
+        // over 512 keys, 137.2 to 94.2 over 2048, 499.7 to 325.7 over 8192 and 1968 to 1255 over
+        // 32768, three slots ahead of two from 2048 keys up; four heads a cube were 5% behind two,
+        // and four planes along the queries 4% behind two.
+        let pipelined = [
+            (2, StageRing::TRIPLE, false),
+            (2, StageRing::DOUBLE, true),
+            (4, StageRing::TRIPLE, false),
+        ]
+        .map(|(heads, ring, query_as_keys)| Self {
+            heads: count(heads),
+            ring,
+            delivery: CubeStagedDelivery::AsyncCopy,
+            query_as_keys,
+            ..four_planes_split
+        });
         [lead, fragments(2, 2), fragments(2, 4)]
             .into_iter()
             .chain(wide)
@@ -308,6 +331,7 @@ impl CubeAttentionMicrokernelSettings {
             .chain([swizzled_split, four_planes_split, whole_head])
             .chain(copied)
             .chain(eight_warps)
+            .chain(pipelined)
             .collect()
     }
 
