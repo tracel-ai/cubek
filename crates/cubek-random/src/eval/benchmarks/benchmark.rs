@@ -8,10 +8,9 @@ use cubecl::{
 use cubek_test_utils::RunSamples;
 
 use crate::eval::benchmarks::problem::{Distribution, RandomProblem};
-use crate::eval::benchmarks::strategy::RandomStrategy;
+use crate::kernels::RandomStrategy;
 use crate::{
-    PrngStrategy, random_bernoulli_with_strategy, random_normal_with_strategy,
-    random_uniform_with_strategy,
+    random_bernoulli_with_strategy, random_normal_with_strategy, random_uniform_with_strategy,
 };
 
 pub fn bench(
@@ -25,7 +24,7 @@ pub fn bench(
     let bench = RandomBench {
         shape: problem.shape.clone(),
         distribution: problem.distribution,
-        strategy: strategy.prng,
+        strategy: *strategy,
         client: client.clone(),
         samples: num_samples,
     };
@@ -41,7 +40,7 @@ pub fn bench(
 struct RandomBench {
     shape: Vec<usize>,
     distribution: Distribution,
-    strategy: PrngStrategy,
+    strategy: RandomStrategy,
     client: Client,
     samples: usize,
 }

@@ -1,7 +1,7 @@
 use cubecl::{
     CubeDim,    prelude::{BufferArg, *},
 };
-use cubek_random::*;
+use cubek_microkernel::random::{to_unit_interval_closed_open, to_unit_interval_open};
 
 #[test]
 fn values_open_interval() {

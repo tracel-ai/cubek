@@ -1,33 +1,23 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::{PrngBlueprint, PrngStrategy};
+use crate::kernels::{PlaneRandomRoutine, RandomKernel, RandomStrategy, UnitRandomRoutine};
+use cubek_std::Hardware;
+use cubek_std::routine::Routine;
 
-pub struct RandomStrategy {
-    pub(crate) prng: PrngStrategy,
-}
-
+/// The selected kernel, then each routine at its default on the test device.
 pub fn strategies() -> Vec<CatalogEntry<RandomStrategy>> {
+    let hw = &Hardware::from_client(&cubecl::test_device().client());
     vec![
+        CatalogEntry::new("auto", "Auto", RandomStrategy::Selected),
         CatalogEntry::new(
-            "auto",
-            "Auto",
-            RandomStrategy {
-                prng: PrngStrategy::Inferred,
-            },
+            "plane",
+            "Plane",
+            RandomStrategy::Specific(RandomKernel::Plane(PlaneRandomRoutine.settings(hw)[0])),
         ),
         CatalogEntry::new(
-            "interleaved",
-            "Interleaved",
-            RandomStrategy {
-                prng: PrngStrategy::Forced(PrngBlueprint::Interleaved),
-            },
-        ),
-        CatalogEntry::new(
-            "blocked",
-            "Blocked",
-            RandomStrategy {
-                prng: PrngStrategy::Forced(PrngBlueprint::Blocked),
-            },
+            "unit",
+            "Unit",
+            RandomStrategy::Specific(RandomKernel::Unit(UnitRandomRoutine.settings(hw)[0])),
         ),
     ]
 }
