@@ -43,7 +43,7 @@ struct Conv2dArgs {
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 #[allow(clippy::redundant_closure)]
-fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
+fn direct_conv2d_kernel<E: Numeric, A: Numeric, NIn: Size, NOut: Size>(
     input: &Tensor<Vector<E, NIn>>,
     weight: &Tensor<Vector<E, NIn>>,
     bias: ComptimeOption<&[Vector<E, NOut>]>,
@@ -54,7 +54,7 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
     #[comptime] has_padding: bool,
     #[comptime] accumulate_components: bool,
     #[comptime] channel_block: usize,
-    #[define(E)] _dtype: ElemType,
+    #[define(E, A)] _dtypes: [ElemType; 2],
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
         terminate!();
@@ -73,8 +73,8 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
     let g = out_c / args.channels_per_group;
     let ic_start = in_c_per_group * g;
 
-    let bias: ComptimeOption<Vector<E, NOut>> =
-        bias.map(|bias| bias[out_c as usize / vector_size_out]);
+    let bias: ComptimeOption<Vector<A, NOut>> =
+        bias.map(|bias| Vector::cast_from(bias[out_c as usize / vector_size_out]));
     let mut sum = bias.unwrap_or_else(|| Vector::zero());
 
     let in_offs = b as usize * input.stride(0) + ic_start as usize;
@@ -118,7 +118,7 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
         #[unroll]
         for bi in 0..comptime![vector_size_out / channel_block] {
             let base_v = bi * channel_block;
-            let mut partials = Array::<Vector<E, NIn>>::new(channel_block);
+            let mut partials = Array::<Vector<A, NIn>>::new(channel_block);
 
             kernel_loop(
                 input,
@@ -149,7 +149,7 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
         }
     } else {
         // Unread: `accumulate_per_step` sums into `sum`, and the loop still takes an accumulator.
-        let mut partials = Array::<Vector<E, NIn>>::new(1usize);
+        let mut partials = Array::<Vector<A, NIn>>::new(1usize);
 
         kernel_loop(
             input,
@@ -167,7 +167,7 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
         );
     }
 
-    output.write(ABSOLUTE_POS, sum);
+    output.write(ABSOLUTE_POS, Vector::cast_from(sum));
 }
 
 #[derive(CubeType, Clone)]
@@ -184,11 +184,11 @@ struct LoopParams {
 }
 
 #[cube]
-fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
+fn kernel_loop<E: Numeric, A: Numeric, NIn: Size, NOut: Size>(
     input: &Tensor<Vector<E, NIn>>,
     weight: &Tensor<Vector<E, NIn>>,
-    sum: &mut Vector<E, NOut>,
-    partials: &mut Array<Vector<E, NIn>>,
+    sum: &mut Vector<A, NOut>,
+    partials: &mut Array<Vector<A, NIn>>,
     in_offs: usize,
     in_bounds: bool,
     weight_offs: usize,
@@ -248,11 +248,11 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
 }
 
 #[cube]
-fn kernel_loop_inner<E: Numeric, NIn: Size, NOut: Size>(
+fn kernel_loop_inner<E: Numeric, A: Numeric, NIn: Size, NOut: Size>(
     input: &Tensor<Vector<E, NIn>>,
     weight: &Tensor<Vector<E, NIn>>,
-    sum: &mut Vector<E, NOut>,
-    partials: &mut Array<Vector<E, NIn>>,
+    sum: &mut Vector<A, NOut>,
+    partials: &mut Array<Vector<A, NIn>>,
     in_offs: usize,
     in_bounds: bool,
     weight_offs: usize,
@@ -290,10 +290,10 @@ fn kernel_loop_inner<E: Numeric, NIn: Size, NOut: Size>(
 /// One input read serves a whole block of output channels, and the block's accumulator outlives
 /// the kernel window, so a channel step costs one input load per block and never a fold.
 #[cube]
-fn accumulate_in_components<E: Numeric, NIn: Size>(
+fn accumulate_in_components<E: Numeric, A: Numeric, NIn: Size>(
     input: &Tensor<Vector<E, NIn>>,
     weight: &Tensor<Vector<E, NIn>>,
-    partials: &mut Array<Vector<E, NIn>>,
+    partials: &mut Array<Vector<A, NIn>>,
     in_offs: usize,
     weight_offs: usize,
     in_c_per_group: u32,
@@ -304,23 +304,23 @@ fn accumulate_in_components<E: Numeric, NIn: Size>(
     let block = partials.len();
 
     for in_c in range_stepped(0, in_c_per_group, vector_size_in as u32) {
-        let val = input[(in_offs + in_c as usize) / vector_size_in];
+        let val = Vector::<A, NIn>::cast_from(input[(in_offs + in_c as usize) / vector_size_in]);
 
         #[unroll]
         for j in 0..block {
             let weight_offs = weight_offs + (base_v + j) * stride_oc + in_c as usize;
 
-            partials[j] += val * weight[weight_offs / vector_size_in];
+            partials[j] += val * Vector::cast_from(weight[weight_offs / vector_size_in]);
         }
     }
 }
 
 /// One input read serves every output channel, which is all a one-step channel loop can win.
 #[cube]
-fn accumulate_per_step<E: Numeric, NIn: Size, NOut: Size>(
+fn accumulate_per_step<E: Numeric, A: Numeric, NIn: Size, NOut: Size>(
     input: &Tensor<Vector<E, NIn>>,
     weight: &Tensor<Vector<E, NIn>>,
-    sum: &mut Vector<E, NOut>,
+    sum: &mut Vector<A, NOut>,
     in_offs: usize,
     weight_offs: usize,
     in_c_per_group: u32,
@@ -333,11 +333,11 @@ fn accumulate_per_step<E: Numeric, NIn: Size, NOut: Size>(
         let in_pos = in_offs + in_c as usize;
         let mut weight_pos = weight_offs + in_c as usize;
 
-        let val = input[in_pos / vector_size_in];
+        let val = Vector::<A, NIn>::cast_from(input[in_pos / vector_size_in]);
 
         #[unroll]
         for v in 0..vector_size_out {
-            let weight = weight[weight_pos / vector_size_in];
+            let weight = Vector::<A, NIn>::cast_from(weight[weight_pos / vector_size_in]);
             let val = val * weight;
 
             #[unroll]
@@ -450,7 +450,7 @@ pub fn launch_direct<const N: usize>(
             check_spatial_bounds,
             accumulate_components,
             channel_block,
-            dtype,
+            [dtype, accumulator(dtype)],
         )
     };
 
@@ -468,6 +468,15 @@ fn channel_block(
     let block = registers.vectors_fitting(vector_size_in, operands).max(1);
 
     (1 << block.ilog2()).min(vector_size_out)
+}
+
+/// The type a convolution of `dtype` sums in: f32 for half floats, whose sum over many taps and
+/// channels drifts by a rounding per term.
+fn accumulator(dtype: ElemType) -> ElemType {
+    match dtype {
+        ElemType::Float(FloatKind::F16 | FloatKind::BF16) => f32::elem_type_native(),
+        dtype => dtype,
+    }
 }
 
 /// Half floats are sized as f32 on every host: the device does not state whether it promotes them.
