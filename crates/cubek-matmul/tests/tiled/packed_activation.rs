@@ -133,6 +133,7 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
         .collect();
     let mut ran = 0;
     let mut wrong = Vec::new();
+    // Whether `routine` ran, its output checked against the reference where it did.
     let mut race = |routine: &dyn Fn(StoredTensor, StoredTensor, PlainTensor) -> Option<String>| {
         let (out, bound) = PlainTensor::empty_contiguous(
             &client,
@@ -144,9 +145,8 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
             StoredTensor::Packed(weight.matrix()),
             bound,
         ) else {
-            return;
+            return false;
         };
-        ran += 1;
         let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
         let off = expected
             .iter()
@@ -158,19 +158,23 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
         if off > 0 {
             wrong.push(format!("{settings}: {off} wrong"));
         }
+        true
     };
-    // `routine` at `settings`, launched into the output: its name where it ran.
+    // `routine` at each of `settings`, launched into the output: how many of them ran.
     macro_rules! raced {
-        ($routine:expr, $settings:expr) => {
+        ($routine:expr, $settings:expr) => {{
+            let mut count = 0;
             for settings in $settings {
-                race(&|lhs, rhs, out| {
+                count += usize::from(race(&|lhs, rhs, out| {
                     $routine
                         .launch_into(&hw, &client, lhs, rhs, out, &settings)
                         .ok()
                         .map(|_| settings.to_string())
-                });
+                }));
             }
-        };
+            ran += count;
+            count
+        }};
     }
     raced!(
         CubeStagedMatmulRoutine,
@@ -188,7 +192,7 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
         CubeStagedTmaFillerMatmulRoutine,
         CubeStagedTmaFillerMatmulRoutine.packed_settings(&hw)
     );
-    raced!(
+    let landed_by_tma = raced!(
         CubeStagedTmaMatmulRoutine,
         CubeStagedTmaMatmulRoutine.block_scaled_settings(&hw)
     );
@@ -211,4 +215,16 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
         .enforce();
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
+    // Both inputs packed in rows, words down `k`, land by descriptor wherever the device has the
+    // engine and a block-scaled instruction to read them on.
+    if hw.bulk_tensor_copy()
+        && !CubeStagedTmaMatmulRoutine
+            .block_scaled_settings(&hw)
+            .is_empty()
+    {
+        assert!(
+            landed_by_tma > 0,
+            "no block-scaled setting landed two packed inputs by TMA"
+        );
+    }
 }

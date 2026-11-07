@@ -1112,12 +1112,16 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     }
 
     /// A packed product's inputs for stages the TMA engine fills, each landing as `storage`
-    /// holds its stage of `stage` and served `widths` wide: the float lhs through a descriptor
-    /// over the matrix its blocks split, `k` cut into rows of the swizzle's span so a box lands a
-    /// stage's blocks of `K` side by side; the packed rhs's words through one over the tiles they
-    /// are stored in ([`PackedTensor::bind_by_tma`]), its scales bound under `launcher` for the
-    /// copy engine to keep beside them. What a fill
+    /// holds its stage of `stage` and served `widths` wide: each packed input's words through a
+    /// descriptor over the tiles they are stored in ([`PackedTensor::bind_by_tma`]), its scales
+    /// bound under `launcher` for the copy engine to keep beside them; a float lhs through a
+    /// descriptor over the matrix its blocks split ([`tma_blocks_lhs`](Self::tma_blocks_lhs)).
+    /// What a fill
     /// [`CubeStagedTmaRefusal`](cubek_microkernel::matmul::cube::CubeStagedTmaRefusal) admits.
+    ///
+    /// # Panics
+    ///
+    /// On a float rhs.
     pub fn tma_packed_operands(
         &self,
         launcher: &Launcher,
@@ -1126,11 +1130,53 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         orders: MatmulOperands<BindingOrder>,
         widths: MatmulOperands<usize>,
     ) -> (TileTensorLaunch, TileTensorLaunch) {
+        let packed = |packed: &PackedTensor, operand: MatmulOperand, across: Axis| {
+            let values_axes = tile_order::values_axes(across);
+            let landed = stage.landed_space(operand, orders, &values_axes);
+            let values_per_word = packed
+                .landed_order()
+                .expect("a tensor map reads a packed input in tile order, or in rows")
+                .values_per_word();
+            let swizzle = storage
+                .tma_swizzle(
+                    &landed,
+                    values_per_word,
+                    u32::BITS as usize / values_per_word,
+                )
+                .expect("the fill delivers by TMA only a stage a box lands");
+            packed.bind_by_tma(
+                launcher,
+                widths.get(operand),
+                landed.extent(values_axes[0]),
+                landed.extent(KB) * landed.extent(KI),
+                swizzle,
+            )
+        };
+        let StoredTensor::Packed(rhs) = &self.rhs else {
+            panic!("tma_packed_operands: a float rhs");
+        };
+        let lhs = match &self.lhs {
+            StoredTensor::Packed(lhs) => packed(lhs, MatmulOperand::Lhs, M),
+            StoredTensor::Plain(lhs) => {
+                self.tma_blocks_lhs(lhs, stage, storage, orders, widths.lhs)
+            }
+        };
+        (lhs, packed(rhs, MatmulOperand::Rhs, N))
+    }
+
+    /// A float lhs beside a packed rhs, for stages the TMA engine fills: a descriptor over the
+    /// matrix its blocks split, `k` cut into rows of the swizzle's span so a box lands a stage's
+    /// blocks of `K` side by side, served `width` wide.
+    fn tma_blocks_lhs(
+        &self,
+        lhs: &PlainTensor,
+        stage: &MatmulStage,
+        storage: &StageStorage,
+        orders: MatmulOperands<BindingOrder>,
+        width: usize,
+    ) -> TileTensorLaunch {
         let blocks = self.blocks();
         let batches = self.table_batches();
-        let (StoredTensor::Plain(lhs), StoredTensor::Packed(rhs)) = (&self.lhs, &self.rhs) else {
-            panic!("tma_packed_operands: a float lhs beside a packed rhs");
-        };
         let (lhs, axes) = lhs.restated(&blocks, M, K, &batches);
         let lhs_stage = stage.landed_space(MatmulOperand::Lhs, orders, &axes);
         let swizzle = storage
@@ -1173,30 +1219,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             ],
         };
         let extents: Vec<u32> = lhs.binding.shape.iter().map(|&e| e as u32).collect();
-        let lhs = TileTensorLaunch::tensor_map_folded(map, &axes, &extents, coordinates)
-            .served_wide(widths.lhs);
-        let values_axes = tile_order::values_axes(N);
-        let rhs_stage = stage.landed_space(MatmulOperand::Rhs, orders, &values_axes);
-        let values_per_word = rhs
-            .operand()
-            .tile_order()
-            .expect("a tensor map reads an rhs in tile order")
-            .values_per_word();
-        let rhs_swizzle = storage
-            .tma_swizzle(
-                &rhs_stage,
-                values_per_word,
-                u32::BITS as usize / values_per_word,
-            )
-            .expect("the fill delivers by TMA only a stage a box lands");
-        let rhs = rhs.bind_by_tma(
-            launcher,
-            widths.rhs,
-            rhs_stage.extent(values_axes[0]),
-            rhs_stage.extent(KB) * rhs_stage.extent(KI),
-            rhs_swizzle,
-        );
-        (lhs, rhs)
+        TileTensorLaunch::tensor_map_folded(map, &axes, &extents, coordinates).served_wide(width)
     }
 
     /// The slots the cubes sharing a box park their parts in, over the output's axes in the sum's
