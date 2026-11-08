@@ -218,12 +218,11 @@ impl CubeAttentionMicrokernelSettings {
         // Eight planes a cube, four heads by two planes along their queries: the shapes that run a
         // long causal prompt fastest. On an RTX PRO 6000, a 6016 by 8192 causal `f16` prompt
         // (32/8 heads, head dim 128) with the boxes last first, against 1560 µs for FlashInfer:
-        // the one-by-eight box on two slots the copy engine fills, 1523 µs; on one slot with the
-        // next stage waiting in registers, 1549 µs swizzled and 1563 µs in padded tiles; the
-        // one-by-four on two such slots in padded tiles, 1584 µs; the two-by-four on two slots the
-        // copy engine fills, 1615 µs. On the copy engine's slots the query moves as the keys do
-        // (`query_as_keys`): the one-by-eight box 1523 to 1506 µs, the two-by-four 1615 to 1596. It
-        // cost the one-by-four 1 to 4%.
+        // the one-by-eight box on two slots the copy engine fills, the query moving as the keys do
+        // (`query_as_keys`), 1455 µs; the one-by-four on two such slots in padded tiles, 1558 µs;
+        // the one-by-eight on one slot with the next stage waiting in registers, 1618 µs in padded
+        // tiles and 1700 µs swizzled; the two-by-four on two slots the copy engine fills, 1650 µs.
+        // The fastest one-by-two box, on three slots, takes 1798 µs there.
         let eight_warps = [
             (
                 1,
@@ -282,8 +281,8 @@ impl CubeAttentionMicrokernelSettings {
         let whole_head = lead.whole_head();
         // The copy engine lands a stage while the planes contract the one before, so it wants a
         // second slot. On Qwen3-8B's last 8k prompt chunk on an RTX PRO 6000 (32/8 heads, 512
-        // queries over 8192 keys), the one-by-four box on two slots takes 470 µs with the units
-        // copying and 406 to 411 with the engine; on one slot the engine cost 2%.
+        // queries over 8192 keys), the one-by-four box on two such slots takes 301 µs on two heads
+        // and four planes along their queries, 305 µs on four heads and two.
         let copied = [
             (2, 4, StageLayout::SwizzledBlocks),
             (4, 2, StageLayout::PaddedBlocks),
@@ -297,15 +296,14 @@ impl CubeAttentionMicrokernelSettings {
             ..fragments(1, 4)
         });
         // The one-by-two box of the four-plane split, its stages landed by the copy engine while
-        // the planes contract the one before. Sixteen keys a step is the one stage a plane keeps its
-        // score in fragments over on a 16-bit manual `mma` (its value instruction is as deep as the
-        // step), and a stage of sixteen keys is small enough that two or three slots fit a device
-        // of 99 KiB a cube, where the wider boxes on the engine's slots read their score through
-        // windows and outgrow it. On an RTX PRO 6000 (Qwen3-8B's 32/8 heads, head dim 128, 512
+        // the planes contract the one before: sixteen keys a step, small enough that three slots
+        // fit with room to spare. On an RTX PRO 6000 (Qwen3-8B's 32/8 heads, head dim 128, 512
         // queries last first), against the same box on one slot its units copy: 45.1 to 34.8 µs
         // over 512 keys, 137.2 to 94.2 over 2048, 499.7 to 325.7 over 8192 and 1968 to 1255 over
         // 32768, three slots ahead of two from 2048 keys up; four heads a cube were 5% behind two,
-        // and four planes along the queries 4% behind two.
+        // and four planes along the queries 4% behind two. The one-by-eight box on two such slots
+        // is 1.15 to 1.22 times as fast again: 96.3 to 84.0 µs over 2048 keys, 342.0 to 284.7 over
+        // 8192 and 1324 to 1085 over 32768, timed in one run.
         let pipelined = [
             (2, StageRing::TRIPLE, false),
             (2, StageRing::DOUBLE, true),
