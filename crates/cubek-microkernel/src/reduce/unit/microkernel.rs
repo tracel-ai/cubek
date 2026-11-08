@@ -15,7 +15,7 @@ pub fn unit_reduce_microkernel<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Num
     indices: &mut Tile,
     #[comptime] microkernel: UnitReduceMicrokernel,
 ) {
-    match comptime!(microkernel.item.operation.carrier()) {
+    match microkernel.item.operation.carrier() {
         ReduceCarrier::Values => {
             unit_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(input, out, indices, microkernel)
         }
@@ -52,23 +52,27 @@ fn unit_reduce<
     indices: &mut Tile,
     #[comptime] microkernel: UnitReduceMicrokernel,
 ) {
-    let operation = comptime!(microkernel.item.operation);
-    let monoid = comptime!(operation.monoid());
-    let layout = comptime!(microkernel.item.layout);
+    let operation = microkernel.item.operation;
+    let monoid = operation.monoid();
+    let layout = microkernel.item.layout;
+
     let lines = input.flat::<In, N>();
     let count = lines.shape();
+
     let mut acc = C::identity(monoid);
     for line in 0..count {
         let read = read_mapped::<Acc, N>(
             Vector::<Acc, N>::cast_from(lines.read(line)),
-            comptime!(operation.read_map()),
+            operation.read_map(),
         );
         C::accumulate(&mut acc, read, line, layout, monoid);
     }
-    let values = match comptime!(layout) {
+
+    let values = match layout {
         ReduceLayout::Along => count * N::value(),
         ReduceLayout::Across => count,
     };
+
     C::write::<Out, Idx>(
         acc,
         out,
@@ -76,6 +80,6 @@ fn unit_reduce<
         values,
         layout,
         operation,
-        comptime!(microkernel.item.writes()),
+        microkernel.item.writes(),
     );
 }

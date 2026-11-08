@@ -42,6 +42,7 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     let run = partitioning.walk();
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
+
     let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
     let steps = visible.steps(
         &first_step,
@@ -49,6 +50,7 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
         microkernel.cube.region_keys(),
         merge.cubes,
     );
+
     let _ = cube_unstaged_attention_partial_microkernel::<
         EA,
         E,
@@ -109,6 +111,7 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     let run = partitioning.walk();
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
+
     let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
     let steps = visible.steps(
         &first_step,
@@ -116,6 +119,7 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
         microkernel.cube.region_keys(),
         merge.cubes,
     );
+
     let _ = cube_unstaged_attention_partial_microkernel::<EA, E, N, PackedStepReads, PackedStepReads>(
         run,
         // The query spans no key: its box is the first step's.

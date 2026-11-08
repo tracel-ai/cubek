@@ -144,7 +144,7 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
         }
 
         let num_args = comptime!(accumulator.args.len());
-        let args = if comptime!(num_args != 0) {
+        let args = if num_args != 0 {
             let mut args = Array::new(accumulator.k);
             #[unroll]
             for i in 0..accumulator.k {
@@ -171,7 +171,7 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
         }
 
         let num_args = comptime!(accumulator.args.len());
-        if comptime!(num_args != 0) {
+        if num_args != 0 {
             let args = item.args.multiple();
             #[unroll]
             for i in 0..accumulator.k {

@@ -210,8 +210,8 @@ pub fn register_allocate_lhs<L: Numeric, Sc: TileScope>(
     #[comptime] tile_size: TileSize,
     #[comptime] product_type: ProductType,
 ) -> Tile<L, Sc> {
-    let m = comptime!(tile_size.m());
-    let k = comptime!(tile_size.k());
+    let m = tile_size.m();
+    let k = tile_size.k();
     let inner_layout = comptime!(UnitTileLayout::new(m, k, false));
     Tile::from_kind(TileKind::new_Register(RegisterTile::<L> {
         tile: UnitTile::<L>::new(inner_layout),
@@ -227,8 +227,8 @@ pub fn register_allocate_rhs<R: Numeric, Sc: TileScope>(
     #[comptime] tile_size: TileSize,
     #[comptime] product_type: ProductType,
 ) -> Tile<R, Sc> {
-    let n = comptime!(tile_size.n());
-    let k = comptime!(tile_size.k());
+    let n = tile_size.n();
+    let k = tile_size.k();
     let inner_layout = comptime!(UnitTileLayout::new(n, k, false));
     Tile::from_kind(TileKind::new_Register(RegisterTile::<R> {
         tile: UnitTile::<R>::new(inner_layout),
@@ -244,8 +244,8 @@ pub fn register_allocate_acc<A: Numeric, Sc: TileScope>(
     #[comptime] tile_size: TileSize,
     #[comptime] product_type: ProductType,
 ) -> Tile<A, Sc> {
-    let m = comptime!(tile_size.m());
-    let n = comptime!(tile_size.n());
+    let m = tile_size.m();
+    let n = tile_size.n();
     let inner_layout = comptime!(UnitTileLayout::new(m, n, false));
     Tile::from_kind(TileKind::new_Register(RegisterTile::<A> {
         tile: UnitTile::<A>::new(inner_layout),

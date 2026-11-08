@@ -322,7 +322,7 @@ fn rfft_post_kernel<F: Float>(
     if pos >= total as usize {
         terminate!();
     }
-    let n_freq = comptime![m + 1];
+    let n_freq = m + 1;
     let k = pos % n_freq;
     let window = pos / n_freq;
     let packed_re_view = packed_re.view(BatchSignalLayout::new(packed_re, window, dim));

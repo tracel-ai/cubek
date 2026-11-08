@@ -41,7 +41,7 @@ fn split_place<N: Size>(
     #[comptime] split: ReduceSplit,
     #[comptime] layout: ReduceLayout,
 ) -> SplitPlace {
-    let counter = match comptime!(split.rows.len()) {
+    let counter = match split.rows.len() {
         0 => 0usize,
         1 => cube.coord(comptime!(split.rows[0])),
         _ => {

@@ -334,12 +334,14 @@ fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 ) {
     let x = input.tile(&partitioning);
     let o = out.tile(&partitioning);
+
     for plane in &partitioning {
         if UNIT_POS_PLANE == 0 {
             let mut row_out = o.at(&plane);
             // One output: the indices are never written, so they get the output's own window.
             let mut unwritten = o.at(&plane);
             let row = x.at(&plane);
+
             unit_reduce_microkernel::<In, Acc, Out, Out, N>(
                 &row,
                 &mut row_out,
@@ -361,11 +363,13 @@ fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 ) {
     let x = input.tile(&partitioning);
     let o = out.tile(&partitioning);
+
     for plane in &partitioning {
         let mut row_out = o.at(&plane);
         // One output: the indices are never written, so they get the output's own window.
         let mut unwritten = o.at(&plane);
         let row = x.at(&plane);
+
         plane_reduce_microkernel::<In, Acc, Out, Out, N>(
             &row,
             &mut row_out,
@@ -386,11 +390,13 @@ fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 ) {
     let x = input.tile(&partitioning);
     let o = out.tile(&partitioning);
+
     for cube in &partitioning {
         let mut row_out = o.at(&cube);
         // One output: the indices are never written, so they get the output's own window.
         let mut unwritten = o.at(&cube);
         let row = x.at(&cube);
+
         cube_reduce_microkernel::<In, Acc, Out, Out, N>(
             &row,
             &mut row_out,
@@ -420,6 +426,7 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     let o = out.tile(&partitioning);
     let p = partials.tile(&partitioning);
     let pi = partial_indices.tile(&partitioning);
+
     for cube in &partitioning {
         let mut row_out = o.at(&cube);
         // One output: the indices are never written, so they get the output's own window.
@@ -427,9 +434,11 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         let row = x.at(&cube);
         let mut slots = p.at(&cube);
         let mut slot_indices = pi.at(&cube);
+
         let counter = cube.origin(O);
         let part = cube.origin(P);
         let first_line = part * part_lines;
+
         hypercube_reduce_microkernel::<In, Acc, Out, Out, N>(
             &row,
             &mut row_out,

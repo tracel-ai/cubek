@@ -10,7 +10,7 @@ pub fn reduction_output_base<T: Numeric, N: Size>(
     reduce_axis: usize,
     #[comptime] accumulator_length: usize,
 ) -> usize {
-    if comptime![accumulator_length > 1] {
+    if accumulator_length > 1 {
         let slot_stride = output.stride(reduce_axis) / output.vector_size();
         let group_stride = slot_stride * accumulator_length;
         (reduction_index / slot_stride) * group_stride + (reduction_index % slot_stride)

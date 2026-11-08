@@ -40,6 +40,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
 
         let lane = UNIT_POS_PLANE as usize % units_per_key;
         let read = query.flat::<E, N>();
+
         #[unroll]
         for r in 0..microkernel.seq_q() {
             #[unroll]
@@ -76,6 +77,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                     .reduce::<Vector<EA, W1>>(Vector::cast_from(own), Monoid::Max)
                     .extract(0usize);
                 let weight = (own - merged).exp();
+
                 self.total[r] = teams
                     .reduce::<Vector<EA, W1>>(
                         Vector::cast_from(self.total[r] * weight),
@@ -83,6 +85,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                     )
                     .extract(0usize);
                 self.max[r] = merged;
+
                 #[unroll]
                 for p in 0..per_value {
                     self.sum[r * per_value + p] = teams.reduce::<Vector<EA, N>>(
@@ -114,6 +117,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         let per_value = value_lines.div_ceil(units_per_key);
 
         let unit = UNIT_POS_PLANE as usize;
+
         #[unroll]
         for r in 0..microkernel.seq_q() {
             if r < rows {
@@ -147,6 +151,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
 
         let unit = UNIT_POS_PLANE as usize;
         let mut lines = out.flat_mut::<E, N>();
+
         if unit < units_per_key {
             #[unroll]
             for r in 0..microkernel.seq_q() {
@@ -248,6 +253,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         let (team, lane) = (unit / units_per_key, unit % units_per_key);
         let (first_query, first_key) = (plane.origin(Q), plane.origin(S));
         let head = plane.origin(G) as u32;
+
         let walk = StepWalk {
             team,
             lane,
@@ -256,6 +262,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             keys_in_flight: in_flight,
             units_per_key,
         };
+
         let key_reads = keys.load(plane, &walk, head_lines);
         let value_reads = values.load(plane, &walk, value_lines);
 
@@ -266,6 +273,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         });
         let width = comptime!(self.width);
         let size!(W1) = 1usize;
+
         let mut weights = Array::<EA>::new(rows * in_flight);
         let mut corrections = Array::<EA>::new(rows);
         #[unroll]

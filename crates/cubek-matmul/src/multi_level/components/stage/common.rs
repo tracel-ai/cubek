@@ -176,8 +176,8 @@ pub fn init_accumulator<MT: MatmulTypes, Sc: TileScope>(
 
     let partition = AccPartitionTile::<MT, Sc> {
         tiles,
-        rows: comptime!(shared_config.partition_size.m()),
-        cols: comptime!(shared_config.partition_size.n()),
+        rows: shared_config.partition_size.m(),
+        cols: shared_config.partition_size.n(),
         _phantom: PhantomData,
     };
     Tile::<AccRE<MT>, Sc>::new_Partition(partition)
