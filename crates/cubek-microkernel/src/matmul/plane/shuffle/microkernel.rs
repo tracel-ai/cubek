@@ -34,7 +34,11 @@ pub fn k_step_start(owner: usize, total: usize, #[comptime] order: KStepOrder) -
         KStepOrder::Rotated(stride) => {
             // A walk of no steps starts nowhere, and divides nothing.
             let steps = select(total == 0usize, 1usize, total);
-            (owner * comptime!(stride.get())) % steps
+            let start = (owner * comptime!(stride.get())) % steps;
+            // Held inside the walk, so `total - start` never wraps: a walk of one constant step
+            // was compiled with `% 1` dropped on ROCm, its start the owner itself, and its first
+            // loop ran until the GPU hung.
+            select(start < total, start, 0usize)
         }
     }
 }
