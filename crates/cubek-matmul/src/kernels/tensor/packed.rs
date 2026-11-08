@@ -124,8 +124,11 @@ impl PackedTensor {
     /// A quantized matrix over `axes`, in the order its shape states them, as a framework stores
     /// one: `values`, its buffer bound under its logical shape and strides, its values packed as
     /// `scheme` stores them, and its block scales and its per-tensor scale, where `scheme` has one,
-    /// each bound where it lies. The scales are laid in rows and bound on whole words, as
-    /// [`new`](Self::new) takes them.
+    /// each bound where it lies. The words and the block scales are read as their buffers lie
+    /// ([`PlainTensor::in_buffer_order`]): a transposed view of a packed matrix, a tied embedding
+    /// read as a head, is the matrix it views, its rows along the axis its words do not run
+    /// along. The scales are laid in rows and bound on whole words, as [`new`](Self::new) takes
+    /// them.
     ///
     /// # Errors
     ///
@@ -150,7 +153,7 @@ impl PackedTensor {
         if shape.rank() != 2 || values.tiling.is_tiled() {
             return Err(PACKED_NOT_ONE_MATRIX_IN_ROWS);
         }
-        let words = Self::stored_words(values, &scheme);
+        let words = Self::stored_words(values, &scheme).in_buffer_order();
         if !words.is_contiguous() {
             return Err(PACKED_NOT_ONE_MATRIX_IN_ROWS);
         }
@@ -158,7 +161,7 @@ impl PackedTensor {
             |scale: PlainTensor| Self::bound_to_whole_words(scale.into_contiguous(client));
         Ok(Self::new(
             words,
-            in_rows_of_words(block_scales),
+            in_rows_of_words(block_scales.in_buffer_order()),
             global_scale.map(in_rows_of_words),
             scheme,
             operand,
