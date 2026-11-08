@@ -82,7 +82,7 @@ pub fn interpolate_tile_kernel<E: Float, F: SeparableFilterFamily>(
     // as `stage`; the walk is the same either way.
     for cube in space {
         let blocks = cube.walk();
-        match comptime!(stage) {
+        match stage {
             InputStage::Smem => {
                 let mut stages = Stages::smem_single_at(
                     &blocks,

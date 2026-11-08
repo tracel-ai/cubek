@@ -56,7 +56,7 @@ pub(super) fn execute_outer_product<
 
         // Gather `vs` scalars from the K-axis side into an AccR-typed array.
         let mut scalars = Array::new(vector_size as usize);
-        if comptime!(vec_axis_is_n) {
+        if vec_axis_is_n {
             // Row-Row: lhs is K-contig. One K-vec load per tile.
             let k_vec = read(&lhs, (m_pos, k_base), check_bounds);
             #[unroll]
@@ -76,7 +76,7 @@ pub(super) fn execute_outer_product<
         #[unroll]
         for i in 0..vector_size {
             let scalar_bcast = Vector::<AccR, N>::new(scalars[i as usize]);
-            if comptime!(vec_axis_is_n) {
+            if vec_axis_is_n {
                 let vec_vec = read(&rhs, (k_base + i, n_pos), check_bounds);
                 acc += Vector::cast_from(vec_vec) * scalar_bcast;
             } else {
@@ -92,7 +92,7 @@ pub(super) fn execute_outer_product<
     #[unroll]
     for j in 0..vector_size {
         let out_val = O::cast_from(acc.extract(j as usize));
-        if comptime!(vec_axis_is_n) {
+        if vec_axis_is_n {
             write(out, (m_pos, n_pos + j), out_val, check_bounds);
         } else {
             write(out, (m_pos + j, n_pos), out_val, check_bounds);
