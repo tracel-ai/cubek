@@ -1,7 +1,7 @@
 use crate::matmul::cube::MatmulCubeSpace;
 use crate::matmul::plane::{
-    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
-    PlaneShuffleMicrokernelSettings,
+    KStepOrder, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
+    PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
 };
 use crate::matmul::{
     MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead, MatmulWorkItem,
@@ -115,6 +115,16 @@ impl CubeShuffleMicrokernelSettings {
         4,
     );
 
+    /// The packed lead, each cube's planes walking `K` one step past where the cube before it
+    /// starts ([`KStepOrder::Rotated`]): cubes reading a weight whose runs lie a power of two
+    /// bytes apart read different channels at once.
+    pub const PACKED_ROTATED: Self = Self::new(
+        CubeShufflePlaneSettings::Shuffle(
+            PlaneShuffleMicrokernelSettings::stepping(1, None).rotated(1),
+        ),
+        4,
+    );
+
     /// `plane` on each of `planes_along_k` planes sharing a run.
     ///
     /// # Panics
@@ -163,12 +173,13 @@ impl CubeShuffleMicrokernel {
     const WINDOW_STEPS: usize = 8;
 
     /// The settings worth racing against a packed rhs, the lead first. The software planes:
-    /// the lead, then the counts of planes along `K` measured best, or within five percent of it,
-    /// on the Qwen3-4B projections at one, four and eight rows on an RTX PRO 6000, the rhs in
-    /// rows and in tile order. A cube's planes split `K` for the few long columns a plane alone
-    /// would leave the device idle on, and its units take more columns and fewer rows as the rows
-    /// grow. Sixteen planes along `K` split the narrow projections of a 4B model at one row best
-    /// on an M2 Pro.
+    /// the lead, the lead walking `K` rotated
+    /// ([`PACKED_ROTATED`](CubeShuffleMicrokernelSettings::PACKED_ROTATED)), then the counts of
+    /// planes along `K` measured best, or within five percent of it, on the Qwen3-4B projections
+    /// at one, four and eight rows on an RTX PRO 6000, the rhs in rows and in tile order. A
+    /// cube's planes split `K` for the few long columns a plane alone would leave the device idle
+    /// on, and its units take more columns and fewer rows as the rows grow. Sixteen planes along
+    /// `K` split the narrow projections of a 4B model at one row best on an M2 Pro.
     ///
     /// Then the tensor-core planes, on four, eight and sixteen planes, which split the Qwen3-4B
     /// projections best from one to sixteen rows on the RTX PRO 6000: one fragment a plane nearly
@@ -186,6 +197,7 @@ impl CubeShuffleMicrokernel {
         };
         let mut settings = vec![
             CubeShuffleMicrokernelSettings::PACKED,
+            CubeShuffleMicrokernelSettings::PACKED_ROTATED,
             cube(Shuffle(Plane::stepping(1, None)), 8),
             cube(Shuffle(Plane::stepping(2, Some(2))), 2),
             cube(Shuffle(Plane::stepping(2, Some(2))), 4),
@@ -337,6 +349,15 @@ impl CubeShufflePlane {
         match self {
             CubeShufflePlane::Shuffle(plane) => plane.tile_instruction(),
             CubeShufflePlane::Fragment(plane) => plane.tile_instruction(),
+        }
+    }
+
+    /// The order the plane walks its steps of `K` in: its settings' for a software plane, in
+    /// order for a tensor-core one.
+    pub fn k_order(&self) -> KStepOrder {
+        match self {
+            CubeShufflePlane::Shuffle(plane) => plane.settings.k_order,
+            CubeShufflePlane::Fragment(_) => KStepOrder::InOrder,
         }
     }
 

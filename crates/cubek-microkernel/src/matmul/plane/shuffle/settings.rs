@@ -22,6 +22,8 @@ pub struct PlaneShuffleMicrokernelSettings {
     /// where `None`. Fewer rows a unit hold fewer sums in its registers, and leave fewer of the
     /// plane's units to share `K`.
     pub rows_per_unit: Option<NonZeroUsize>,
+    /// The order each owner of a run of columns walks its steps of `K` in.
+    pub k_order: KStepOrder,
 }
 
 impl PlaneShuffleMicrokernelSettings {
@@ -32,6 +34,7 @@ impl PlaneShuffleMicrokernelSettings {
         depth: NonZeroUsize::new(4).unwrap(),
         k_split: PlaneShuffleKSplit::WholePlane,
         rows_per_unit: None,
+        k_order: KStepOrder::InOrder,
     };
 
     /// One read deep.
@@ -112,6 +115,20 @@ impl PlaneShuffleMicrokernelSettings {
                 Some(rows) => Some(NonZeroUsize::new(rows).unwrap()),
                 None => None,
             },
+            k_order: KStepOrder::InOrder,
+        }
+    }
+
+    /// These settings, each owner of a run of columns walking `K` from `stride` steps past where
+    /// the owner before it starts ([`KStepOrder::Rotated`]).
+    ///
+    /// # Panics
+    ///
+    /// On a stride of zero.
+    pub const fn rotated(self, stride: usize) -> Self {
+        Self {
+            k_order: KStepOrder::Rotated(NonZeroUsize::new(stride).unwrap()),
+            ..self
         }
     }
 
@@ -135,11 +152,31 @@ impl core::fmt::Display for PlaneShuffleMicrokernelSettings {
             "block={}x{} k_split={}",
             self.columns, self.depth, self.k_split
         )?;
-        match self.rows_per_unit {
-            Some(rows) => write!(f, " rows_per_unit={rows}"),
-            None => Ok(()),
+        if let Some(rows) = self.rows_per_unit {
+            write!(f, " rows_per_unit={rows}")?;
+        }
+        match self.k_order {
+            KStepOrder::InOrder => Ok(()),
+            KStepOrder::Rotated(stride) => write!(f, " k_rotation={stride}"),
         }
     }
+}
+
+/// The order each owner of a run of columns, a plane or a cube, walks its steps of `K` in.
+///
+/// A run of a weight stored in tiles, or in columns, lies a power of two bytes after the run
+/// before it wherever `K` is a power of two. Owners walking `K` in order then read at the same
+/// offset of their runs at once, and a memory system picking its channel from low address bits
+/// sends every one of those reads to one channel. Rotated, neighbouring owners read at different
+/// places down `K`, spread over the channels, with no padding in the weight: the read order is
+/// the kernel's, so the weight's layout stays what every other reader takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KStepOrder {
+    /// From the first step to the last, every owner alike.
+    InOrder,
+    /// Owner `i` starts at step `i × stride`, wrapping around its steps, and walks them all from
+    /// there, back to the first after the last.
+    Rotated(NonZeroUsize),
 }
 
 /// How many of a plane's units share one run of columns, each taking its turn of `K`, named by

@@ -341,6 +341,7 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
                 microkernel.split(),
                 microkernel.planes_along_k.get(),
                 microkernel.plane.reads(&item),
+                microkernel.plane.k_order(),
                 [sum, out],
             );
         }

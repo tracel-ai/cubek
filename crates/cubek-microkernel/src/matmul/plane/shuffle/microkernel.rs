@@ -1,3 +1,4 @@
+use super::KStepOrder;
 use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -20,5 +21,20 @@ pub fn plane_shuffle_microkernel(
         let b_unit = MatmulRead::leaf(&unit_sum, &b.at(&unit), reads.rhs);
         let a_unit = MatmulRead::leaf(&unit_sum, &a.at(&unit), reads.lhs);
         unit_sum.mma(&a_unit, &b_unit);
+    }
+}
+
+/// The step `owner`, the owner of one run of columns, starts its walk of `total` steps of `K` at
+/// under `order`: the first in order; rotated, `owner × stride` steps on, wrapped round the walk.
+/// The walk then takes the steps from there to the last, then from the first up to it.
+#[cube]
+pub fn k_step_start(owner: usize, total: usize, #[comptime] order: KStepOrder) -> usize {
+    match comptime!(order) {
+        KStepOrder::InOrder => 0usize,
+        KStepOrder::Rotated(stride) => {
+            // A walk of no steps starts nowhere, and divides nothing.
+            let steps = select(total == 0usize, 1usize, total);
+            (owner * comptime!(stride.get())) % steps
+        }
     }
 }

@@ -4,6 +4,7 @@ mod cmma;
 mod elements;
 mod indexed;
 mod integers;
+mod k_rotation;
 mod packed;
 mod packed_activation;
 mod storage;

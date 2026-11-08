@@ -50,6 +50,15 @@ impl PlaneShuffleMatmulRoutineSettings {
         microkernel: PlaneShuffleMicrokernelSettings::stepping(1, None),
         planes: NonZeroUsize::new(4).unwrap(),
     };
+
+    /// The packed lead, each plane walking `K` one step past where the plane before it starts
+    /// ([`KStepOrder::Rotated`](cubek_microkernel::matmul::plane::KStepOrder::Rotated)): the
+    /// planes reading a weight whose runs lie a power of two bytes apart read different channels
+    /// at once.
+    pub const PACKED_ROTATED: Self = Self {
+        microkernel: Self::PACKED.microkernel.rotated(1),
+        ..Self::PACKED
+    };
 }
 
 impl core::fmt::Display for PlaneShuffleMatmulRoutineSettings {
@@ -70,12 +79,13 @@ impl PlaneShuffleMatmulRoutine {
     const STAGES_IN_FLIGHT: u32 = 1;
 
     /// The settings worth racing against a packed rhs: the lead
-    /// ([`PACKED`](PlaneShuffleMatmulRoutineSettings::PACKED)), then the settings measured best, or
-    /// within five percent of it, on the Qwen3-4B projections at one, four and eight rows on an
-    /// RTX PRO 6000, the rhs in rows and in tile order: each a count of steps and of rows a unit
-    /// ([`PlaneShuffleMicrokernelSettings::stepping`]) on a count of planes a cube. What the
-    /// packed few-rows table races, and what a caller naming the routine and no setting runs
-    /// against a packed rhs, in this order.
+    /// ([`PACKED`](PlaneShuffleMatmulRoutineSettings::PACKED)), the lead walking `K` rotated
+    /// ([`PACKED_ROTATED`](PlaneShuffleMatmulRoutineSettings::PACKED_ROTATED)), then the
+    /// settings measured best, or within five percent of it, on the Qwen3-4B projections at one,
+    /// four and eight rows on an RTX PRO 6000, the rhs in rows and in tile order: each a count of
+    /// steps and of rows a unit ([`PlaneShuffleMicrokernelSettings::stepping`]) on a count of
+    /// planes a cube. What the packed few-rows table races, and what a caller naming the routine
+    /// and no setting runs against a packed rhs, in this order.
     pub fn packed_settings(&self) -> Vec<PlaneShuffleMatmulRoutineSettings> {
         use PlaneShuffleMicrokernelSettings as Block;
         let on = |microkernel, planes| PlaneShuffleMatmulRoutineSettings {
@@ -84,6 +94,7 @@ impl PlaneShuffleMatmulRoutine {
         };
         vec![
             PlaneShuffleMatmulRoutineSettings::PACKED,
+            PlaneShuffleMatmulRoutineSettings::PACKED_ROTATED,
             on(Block::stepping(1, None), 1),
             on(Block::stepping(2, None), 4),
             on(Block::stepping(2, Some(2)), 1),
@@ -445,6 +456,7 @@ impl MatmulRoutine<PlaneShuffleMicrokernel> for PlaneShuffleMatmulRoutine {
                 O::arg(binding.out),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel.tile_instruction(),
+                blueprint.microkernel.settings.k_order,
                 [sum, out],
             );
         }
