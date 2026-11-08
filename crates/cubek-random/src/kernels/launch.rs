@@ -7,6 +7,7 @@ use cubecl::prelude::{LaunchArg, TensorBinding};
 use cubecl::tile::launch::{Bound, Refusal};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Launcher, Partitioning};
+use cubecl::zspace::{Shape, Strides, Tiling};
 use cubek_microkernel::random::{Distribution, SeedsLaunch};
 use cubek_std::Hardware;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid, Routine};
@@ -60,6 +61,7 @@ impl RandomTensor {
         element: ElemType,
         lines_per_draw: usize,
     ) -> Self {
+        let output = flattened(output);
         let problem = RandomRoutineProblem {
             values: output.shape.iter().product(),
             element,
@@ -97,6 +99,36 @@ impl RandomTensor {
             .build()
             .expect(ADMITTED_PLAN_RUNS);
         RandomBinding { launcher, output }
+    }
+}
+
+/// `output` as one dim when its values fill a run of the buffer with no gap, in any order of its
+/// dims: a draw does not care where a value lies, and one dim is addressed as it is counted, with
+/// no division per write to recover the coordinates of every dim. Any other output keeps its dims.
+fn flattened(output: TensorBinding) -> TensorBinding {
+    let mut dims: Vec<(usize, usize)> = output
+        .shape
+        .iter()
+        .zip(output.strides.iter())
+        .map(|(&size, &stride)| (stride, size))
+        .filter(|&(_, size)| size != 1)
+        .collect();
+    dims.sort_unstable();
+    let mut run = 1;
+    for &(stride, size) in &dims {
+        if stride != run {
+            return output;
+        }
+        run *= size;
+    }
+    if output.tiling != Tiling::UNTILED || output.shape.len() == 1 {
+        return output;
+    }
+    let values = output.shape.iter().product();
+    TensorBinding {
+        shape: Shape::new([values]),
+        strides: Strides::new(&[1]),
+        ..output
     }
 }
 
