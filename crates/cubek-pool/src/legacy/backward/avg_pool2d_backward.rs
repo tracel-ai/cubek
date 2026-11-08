@@ -2,8 +2,8 @@ use core::result::Result::Ok;
 
 use super::super::{decompose_linear, shape_divmod};
 use crate::definition::{AvgPoolOptions, PoolError};
-use crate::kernel::accumulator_dtype;
-use crate::kernel::forward::{Position, view4d};
+use crate::legacy::accumulator_dtype;
+use crate::legacy::forward::{Position, view4d};
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
     num_traits::Zero,

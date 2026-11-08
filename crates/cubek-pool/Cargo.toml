@@ -29,6 +29,8 @@ cubek-test-utils = { workspace = true, optional = true }
 
 cubecl = { workspace = true }
 cubecl-common = { workspace = true }
+cubek-microkernel = { workspace = true, features = ["pool"] }
+cubek-std = { workspace = true }
 
 thiserror = { workspace = true }
 

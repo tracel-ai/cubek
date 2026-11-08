@@ -1,23 +1,28 @@
 use core::result::Result;
 
+use cubek_std::Hardware;
+use cubek_std::routine::Routine;
+
 use cubecl::{client::Client, prelude::TensorBinding, prelude::*};
 
 #[cfg(feature = "benchmarks")]
 pub mod eval;
 
 pub mod definition;
-mod kernel;
+pub mod kernels;
+mod legacy;
 
 use crate::definition::{PoolError, PoolMode};
-use crate::kernel::{
+use crate::kernels::{CubePoolRoutine, PoolOperation, PoolTensors, launch_pool_routine};
+use crate::legacy::{
     backward::{
         adaptive_avg_pool2d_backward_launch, adaptive_avg_pool3d_backward_launch,
         avg_pool2d_backward_launch, max_pool2d_with_indices_backward_launch,
     },
     forward::{
-        adaptive_avg_pool2d_launch, adaptive_avg_pool3d_launch, avg_pool2d_launch,
-        max_pool2d_launch, max_pool2d_with_indices_launch,
+        adaptive_avg_pool2d_launch, adaptive_avg_pool3d_launch, max_pool2d_with_indices_launch,
     },
+    validate_dilation,
 };
 
 /// Pool2d public wrapper
@@ -37,13 +42,27 @@ pub fn pool2d(
     validate_rank(input.shape.len(), output.shape.len(), 4)?;
     validate_batch_channel_consistency(&input.shape, &output.shape)?;
 
-    match mode {
-        PoolMode::Max(max_options) => max_pool2d_launch(client, input, output, max_options, dtype),
-        PoolMode::Avg(avg_options) => avg_pool2d_launch(client, input, output, avg_options, dtype),
-        PoolMode::AdaptiveAvg(adaptive_avg_options) => {
-            adaptive_avg_pool2d_launch(client, input, output, adaptive_avg_options, dtype)
+    let operation = match mode {
+        PoolMode::Max(max_options) => {
+            validate_dilation(&max_options.dilation)?;
+            PoolOperation::Max(max_options)
         }
+        PoolMode::Avg(avg_options) => {
+            validate_dilation(&avg_options.dilation)?;
+            PoolOperation::Average(avg_options)
+        }
+        PoolMode::AdaptiveAvg(adaptive_avg_options) => {
+            return adaptive_avg_pool2d_launch(client, input, output, adaptive_avg_options, dtype);
+        }
+    };
+    if output.shape.iter().product::<usize>() == 0 {
+        return Ok(());
     }
+    let hw = Hardware::from_client(client);
+    let tensors = PoolTensors::new(client, input, output, operation, dtype);
+    let routine = CubePoolRoutine;
+    let settings = routine.settings(&hw)[0];
+    Ok(launch_pool_routine(&routine, &hw, &tensors, &settings)?)
 }
 
 /// Pool3d public wrapper.

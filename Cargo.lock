@@ -1519,7 +1519,9 @@ version = "0.4.0-pre.1"
 dependencies = [
  "cubecl",
  "cubecl-common",
+ "cubek-microkernel",
  "cubek-pool",
+ "cubek-std",
  "cubek-test-utils",
  "thiserror 2.0.21",
 ]
