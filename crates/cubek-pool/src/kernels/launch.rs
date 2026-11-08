@@ -78,7 +78,7 @@ impl PoolTensors {
                 )
             }
         };
-        let problem = PoolRoutineProblem {
+        let mut problem = PoolRoutineProblem {
             batch: input.shape[0],
             input: [input.shape[1], input.shape[2]],
             output: [output.shape[1], output.shape[2]],
@@ -90,6 +90,9 @@ impl PoolTensors {
             elem_alignments: [&input, &output]
                 .map(|binding| ElemAlignment::new(&binding.shape, &binding.strides)),
         };
+        if problem.count.is_some() && problem.taps_in_bounds() {
+            problem.count = Some(AverageCount::Window);
+        }
         Self {
             client: client.clone(),
             input,

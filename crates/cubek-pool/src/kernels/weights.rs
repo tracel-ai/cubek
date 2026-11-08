@@ -37,7 +37,8 @@ impl<E: Float> Reads for InsidePaddingExpand<E> {
     }
 }
 
-/// The weights of an average over `partitioning`'s space: one over the taps it counts.
+/// The weights of an average over `partitioning`'s space: one over the taps it counts. Where no
+/// tap leaves the input, that is a constant, and nothing is normalized per window.
 #[cube]
 pub fn average_weights<E: Float>(
     partitioning: &Partitioning,
@@ -52,6 +53,17 @@ pub fn average_weights<E: Float>(
     );
     let guard = comptime!(DivGuard::default());
     match comptime!(count) {
+        AverageCount::Window => {
+            let mut factors = Sequence::new();
+            factors.push(Constant::<E> {
+                value: E::new(1.0 / windows[0].taps as f64),
+            });
+            factors.push(Constant::<E> {
+                value: E::new(1.0 / windows[1].taps as f64),
+            });
+            Procedural::separable::<E, Factors<Constant<E>>>(space, Factors::new(factors))
+                .tile::<E>()
+        }
         AverageCount::InBounds => {
             let mut factors = Sequence::new();
             factors.push(Constant::<E> { value: E::new(1.0) });

@@ -14,6 +14,9 @@ use cubek_std::routine::EstimatedProblem;
 /// What an average divides each window's sum by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AverageCount {
+    /// Every tap of the window: no tap of any window leaves the input, so the divisor is the
+    /// window's size everywhere.
+    Window,
     /// The taps inside the input.
     InBounds,
     /// The taps inside the padded input: what lies past the padding (a ceil mode's last window)
