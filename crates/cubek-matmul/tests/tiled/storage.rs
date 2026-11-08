@@ -433,6 +433,21 @@ fn tiling_round_trips_a_staggered_tensor() {
     round_trip_as(&[2], 32, 64, (8, 16), storage);
 }
 
+/// Staggered, a batch starts after the last batch's padded strips, not after its last value: four
+/// strips of eight 64-value rows, each sixteen 128-byte transactions padded to seventeen.
+#[test]
+fn a_staggered_tensor_pads_every_batch_whole() {
+    let storage = StorageLevels::new(&[(COLS, 16), (ROWS, 8)])
+        .grid(&[COLS, ROWS])
+        .staggered(transactions_of(32));
+    let client = client();
+    let dtype: ElemType = f32::elem_type_native();
+    let tiled = empty(&client, &[2, 32, 64], &[ROWS, COLS], dtype, None, storage).unwrap();
+    let pitch = 17 * 32;
+    assert_eq!(tiled.metadata.strides()[0], 4 * pitch);
+    assert_eq!(tiled.metadata.strides()[1], pitch);
+}
+
 /// Staggered, NVFP4 values and their byte scales each lay their strips of tiles an odd number of
 /// 128-byte transactions apart, two transactions dense, and still land where the statement puts
 /// them.

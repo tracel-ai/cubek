@@ -276,9 +276,10 @@ impl StoredLayout {
         let in_words = words_storage.physical(&word_extents).map_err(misfit)?;
         let batch_dims: Vec<usize> = shape[..batches].to_vec();
         let config = |e| refused(format!("{e:?}"));
-        // Batch dims stay plain and coarsest, each a whole run of what is finer.
+        // Batch dims stay plain and coarsest, each a whole run of what is finer, its padding
+        // included: a staggered buffer's batches start a whole padded buffer apart.
         let metadata = |stored: &Geometry| {
-            let mut run = stored.span();
+            let mut run = padded_len(stored);
             let mut strides = vec![0; batches];
             for (b, &extent) in batch_dims.iter().enumerate().rev() {
                 strides[b] = run;
@@ -307,7 +308,7 @@ impl StoredLayout {
                 (axis, tile)
             })
             .collect();
-        let word_count = in_words.span() * batch_dims.iter().product::<usize>();
+        let word_count = padded_len(&in_words) * batch_dims.iter().product::<usize>();
         Ok(Self {
             values: metadata(&in_values)?,
             words: metadata(&in_words)?,
@@ -320,6 +321,23 @@ impl StoredLayout {
             per_word,
         })
     }
+}
+
+/// Elements one buffer stored as `stored` takes, its padding included: its coarsest dim's
+/// extent times its stride, so a staggered buffer's last piece is padded as every other is and
+/// what follows it starts a whole number of transactions on. The extents' product where its dims
+/// lie back to back; zero for a buffer of no element.
+fn padded_len(stored: &Geometry) -> usize {
+    if stored.shape().contains(&0) {
+        return 0;
+    }
+    stored
+        .shape()
+        .iter()
+        .zip(stored.strides())
+        .map(|(&extent, &stride)| extent * stride)
+        .max()
+        .unwrap_or(1)
 }
 
 /// A fresh storage-tiled tensor of `shape`, its trailing dims named by `axes`, stored as `storage`
