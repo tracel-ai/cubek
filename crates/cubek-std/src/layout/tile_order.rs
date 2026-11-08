@@ -34,7 +34,7 @@ use crate::matmul_axes::{K, KB, KI, blocked};
 use cubecl::ir::ElemType;
 use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::Axis;
-use cubecl::tile::layout::{StorageLevels, StoragePartitioning};
+use cubecl::tile::layout::{Stagger, StorageLevels, StoragePartitioning};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::{Shape, Strides};
 
@@ -65,17 +65,21 @@ pub enum TileWords {
 }
 
 /// How a matrix packed under one scheme lies in tile order: the values of `k` one block scale
-/// covers, the values one `u32` word holds, the tile it is stored in, `(k, rows)` values, and the
-/// order that tile's words lie in. Fixed when it is built, by the writer laying a matrix out
-/// ([`laid`](Self::laid)) or by a reader taking it off one ([`of_matrix`](Self::of_matrix),
-/// [`of_operand`](Self::of_operand)), and the same either way: no tile holds an order it cannot
-/// lay out, so every statement of it reads back as the order that made it.
+/// covers, the values one `u32` word holds, the tile it is stored in, `(k, rows)` values, the
+/// order that tile's words lie in, and how far apart its strips of tiles start. Fixed when it is
+/// built, by the writer laying a matrix out ([`laid`](Self::laid)) or by a reader taking it off
+/// one ([`of_matrix`](Self::of_matrix), [`of_operand`](Self::of_operand)), and the same either
+/// way: no tile holds an order it cannot lay out, so every statement of it reads back as the
+/// order that made it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileOrder {
     block: usize,
     values_per_word: usize,
     tile: (usize, usize),
     words: TileWords,
+    /// The transactions its strips of tiles, values and scales each, start an odd number of
+    /// apart, stated over its values ([`Stagger`]); back to back where `None`.
+    stagger: Option<Stagger>,
 }
 
 impl TileOrder {
@@ -149,6 +153,68 @@ impl TileOrder {
         self.words
     }
 
+    /// The transactions its strips of tiles start an odd number of apart, stated over its values:
+    /// `None` where they lie back to back.
+    pub fn stagger(self) -> Option<Stagger> {
+        self.stagger
+    }
+
+    /// This order with its strips of tiles, of values and of scales alike, starting an odd number
+    /// of `stagger`'s transactions apart: what a writer lays a matrix in on a device whose memory
+    /// picks its channel from low address bits, where strips a power of two bytes apart, as they
+    /// lie whenever `k` is a power of two, would all wait on one channel.
+    ///
+    /// # Panics
+    ///
+    /// When a value does not divide a transaction, which no memory moves.
+    pub fn staggered(self, stagger: Stagger) -> Self {
+        let over_values = stagger
+            .over(self.value_bits())
+            .expect("a value of four or eight bits divides a transaction");
+        Self {
+            stagger: Some(over_values),
+            ..self
+        }
+    }
+
+    /// This order as a matrix of `k` values by `rows` is laid in: its stagger kept only where it
+    /// pads the values' strips. The values decide for every statement of the matrix — the words
+    /// and the scales lie as they do — so a reader, which reads the stagger off the values, reads
+    /// the matrix back as this order ([`of_matrix`](Self::of_matrix)). One strip, or a strip
+    /// already an odd number of transactions, pads nothing: such a matrix is laid back to back.
+    pub fn for_matrix(self, k: usize, rows: usize) -> Self {
+        let (_, tile_rows) = self.tile;
+        let run = k * tile_rows;
+        let pads = self
+            .stagger
+            .is_some_and(|stagger| rows / tile_rows > 1 && stagger.pitch(run) != run);
+        match pads {
+            true => self,
+            false => Self {
+                stagger: None,
+                ..self
+            },
+        }
+    }
+
+    /// Bits one value holds, stored `values_per_word` to a `u32`.
+    fn value_bits(self) -> usize {
+        u32::BITS as usize / self.values_per_word
+    }
+
+    /// `storage` with its strips laid as [`stagger`](Self::stagger) says, its elements
+    /// `element_bits` wide.
+    fn strips(self, storage: StoragePartitioning, element_bits: usize) -> StoragePartitioning {
+        match self.stagger {
+            Some(stagger) => storage.staggered(
+                stagger
+                    .over(element_bits)
+                    .expect("a value, a byte scale and a word each divide a transaction"),
+            ),
+            None => storage,
+        }
+    }
+
     /// The block and word `scheme` packs a matrix tile order stores in ([`stores`](Self::stores)).
     fn form(scheme: &QuantScheme) -> Option<(usize, usize)> {
         let QuantStore::PackedU32(1) = scheme.store else {
@@ -192,6 +258,7 @@ impl TileOrder {
             values_per_word,
             tile: (tile_k, tile_rows),
             words,
+            stagger: None,
         })
     }
 
@@ -200,7 +267,7 @@ impl TileOrder {
     /// block by block where a block's words of one row are followed by the next row's, row by row
     /// where by that row's next block. A tile one block deep or one row wide lies the same either
     /// way, and a tile too shallow for whole words of block scales is never laid block by block:
-    /// both read as row by row.
+    /// both read as row by row. Its stagger is read off its coarsest stride ([`strips_of`]).
     fn read_off(block: usize, values_per_word: usize, matrix: &Metadata) -> Option<Self> {
         let [k, rows] = matrix_fragments(matrix)?;
         let (blocks, _) = k.split_at(block_split(block, &k)?);
@@ -216,7 +283,12 @@ impl TileOrder {
             (Some(row), Some(block)) if row < block => TileWords::BlockByBlock,
             _ => TileWords::RowByRow,
         };
-        Self::in_tile(block, values_per_word, (inside(&k), inside(&rows)), stated)
+        let order = Self::in_tile(block, values_per_word, (inside(&k), inside(&rows)), stated)?;
+        match StripLayout::of(&[k, rows], order.value_bits()) {
+            StripLayout::Dense => Some(order),
+            StripLayout::Staggered(stagger) => Some(order.staggered(stagger)),
+            StripLayout::Foreign => None,
+        }
     }
 
     /// How the values of a matrix `across` an axis are stored in its tile, over [`values_axes`],
@@ -229,12 +301,13 @@ impl TileOrder {
     /// stated as one level, the same bytes are read a word a load.
     pub fn values_storage(self, across: Axis, words_per_load: usize) -> StoragePartitioning {
         let rows = blocked(across).1;
-        stored_in_levels(
+        let storage = stored_in_levels(
             (KI, self.values_per_word),
             &self.values_pieces(across),
             words_per_load,
             &[KI, KB, rows],
-        )
+        );
+        self.strips(storage, self.value_bits())
     }
 
     /// A tile's pieces of values above the word, finest first, each a count of the piece below
@@ -282,12 +355,13 @@ impl TileOrder {
             (rows, tile_rows),
             (KB, tile_k / (self.block * Self::SCALES_PER_WORD)),
         ];
-        Some(stored_in_levels(
+        let storage = stored_in_levels(
             (KB, Self::SCALES_PER_WORD),
             &pieces,
             rows_a_read,
             &[KB, rows],
-        ))
+        );
+        Some(self.strips(storage, u8::BITS as usize))
     }
 
     /// The kernel's statement of the block scales of a matrix `k` deep and `across` an axis of some
@@ -336,9 +410,16 @@ impl TileOrder {
         let words_per_row = tile_k / self.values_per_word;
         let tile_words = words_per_row * tile_rows;
         let k_tiles = k / tile_k;
+        let strip = match self.stagger {
+            Some(stagger) => stagger
+                .over(u32::BITS as usize)
+                .expect("a word divides a transaction")
+                .pitch(k_tiles * tile_words),
+            None => k_tiles * tile_words,
+        };
         Metadata::new(
             Shape::from(vec![rows / tile_rows, k_tiles, tile_rows, words_per_row]),
-            Strides::from(vec![k_tiles * tile_words, tile_words, words_per_row, 1]),
+            Strides::from(vec![strip, tile_words, words_per_row, 1]),
         )
     }
 
@@ -407,6 +488,48 @@ fn stored_in_levels(
             storage.tile(level)
         })
         .grid(grid)
+}
+
+/// How a matrix's strips of tiles lie, as its values' fragments, `[k, rows]` each finest first,
+/// state it: the cases [`TileOrder::of_matrix`] reads an order's stagger back by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StripLayout {
+    /// Back to back: the coarsest stride is the run of what is finer.
+    Dense,
+    /// An odd number of transactions apart, as the [`Stagger`] lays them.
+    Staggered(Stagger),
+    /// Apart by a step no stagger lays: no order tile order writes.
+    Foreign,
+}
+
+impl StripLayout {
+    /// The layout of the strips `fragments` state, of `value_bits`-bit values. A pitch is an odd
+    /// number of transactions of a power of two bits, so its lowest set bit is the transaction: the
+    /// stagger is read off exactly, held to whole words, and checked by laying the run out again.
+    fn of(fragments: &[Fragments], value_bits: usize) -> Self {
+        let pieces: Vec<(usize, usize)> = fragments
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|&(extent, _)| extent > 1)
+            .collect();
+        let Some(&(strips, stride)) = pieces.iter().max_by_key(|&&(_, stride)| stride) else {
+            return Self::Dense;
+        };
+        let run = pieces.iter().map(|&(extent, _)| extent).product::<usize>() / strips;
+        if stride == run {
+            return Self::Dense;
+        }
+        let bits = stride * value_bits;
+        let transaction_bits = bits & bits.wrapping_neg();
+        let stagger = Stagger::new(transaction_bits, value_bits)
+            .filter(|_| transaction_bits.is_multiple_of(u32::BITS as usize))
+            .filter(|stagger| stagger.pitch(run) == stride);
+        match stagger {
+            Some(stagger) => Self::Staggered(stagger),
+            None => Self::Foreign,
+        }
+    }
 }
 
 /// The kernel's statement of a matrix of `extents` stored as `storage` states.
@@ -717,7 +840,14 @@ mod tests {
     #[test]
     fn a_descriptor_reads_the_words_where_the_tiles_hold_them() {
         let (k, n) = (384, 24);
-        let order = nvfp4(TileWords::RowByRow, (128, 8));
+        let laid = nvfp4(TileWords::RowByRow, (128, 8));
+        for order in [laid, laid.staggered(transaction())] {
+            descriptor_reads_the_kernel_words(order, k, n);
+        }
+    }
+
+    /// Every word a descriptor over `order`'s tiles reads lies where its kernel statement puts it.
+    fn descriptor_reads_the_kernel_words(order: TileOrder, k: usize, n: usize) {
         let tiles = order.words_in_tiles(k, n);
         let kernel = order.kernel_values_read(k, (N, n), 4);
         let (tile_k, tile_n) = order.tile();
@@ -733,6 +863,72 @@ mod tests {
                 let ki = w * VALUES_PER_WORD;
                 let value = offset(&kernel, &[ni, ki / BLOCK, ki % BLOCK]);
                 assert_eq!(at * VALUES_PER_WORD, value, "row {ni}, word {w}");
+            }
+        }
+    }
+
+    /// A 128-byte memory transaction, over bytes.
+    fn transaction() -> Stagger {
+        Stagger::new(1024, 8).expect("a byte divides a transaction")
+    }
+
+    /// A matrix whose values' strips need no padding is laid with no stagger, its scales
+    /// included, so it reads back as the order that laid it: a strip already an odd number of
+    /// transactions (`k` 384 at two rows a tile is three), and a single strip. Laid apart from the
+    /// values, its scales' shorter strips would pad where the values' do not, and a reader taking
+    /// the stagger off the values would read every scale strip past the first at the wrong place.
+    #[test]
+    fn a_matrix_whose_values_need_no_padding_reads_back_as_laid() {
+        for words in [TileWords::BlockByBlock, TileWords::RowByRow] {
+            for (k, n, tile) in [(384, 8, (64, 2)), (4096, 8, (64, 8))] {
+                let order = nvfp4(words, tile).staggered(transaction()).for_matrix(k, n);
+                assert_eq!(order.stagger(), None, "{words:?} at k {k}, n {n}");
+                let kernel = order.kernel_values_read(k, (N, n), 1);
+                assert_eq!(
+                    TileOrder::of_matrix(&nvfp4_scheme(), &matrix_values(&kernel)),
+                    Some(order),
+                    "{words:?} at k {k}, n {n}"
+                );
+            }
+        }
+    }
+
+    /// Whether `bytes` are an odd number of 128-byte transactions.
+    fn odd_transactions(bytes: usize) -> bool {
+        bytes.is_multiple_of(128) && (bytes / 128) % 2 == 1
+    }
+
+    /// A staggered order lays its strips of tiles an odd number of transactions apart, its
+    /// values' and its scales' alike, though `k` makes each dense strip a power of two bytes; and
+    /// a matrix laid in it reads back as that order, its stagger included.
+    #[test]
+    fn a_staggered_order_lays_its_strips_apart_and_reads_back() {
+        let (k, n) = (4096, 48);
+        for words in [TileWords::BlockByBlock, TileWords::RowByRow] {
+            let order = nvfp4(words, (64, 8))
+                .staggered(transaction())
+                .for_matrix(k, n);
+            let (_, tile_rows) = order.tile();
+            let kernel = order.kernel_values_read(k, (N, n), 4);
+            let strip = offset(&kernel, &[tile_rows, 0, 0]) - offset(&kernel, &[0, 0, 0]);
+            let bytes = strip * 4 / 8;
+            assert!(bytes > tile_rows * k / 2, "{words:?}: the strip is padded");
+            assert!(
+                odd_transactions(bytes),
+                "{words:?}: a strip of {bytes} bytes"
+            );
+            let matrix = matrix_values(&kernel);
+            assert_eq!(
+                TileOrder::of_matrix(&nvfp4_scheme(), &matrix),
+                Some(order),
+                "{words:?}"
+            );
+            if let Some(scales) = order.kernel_scales_read(k, (N, n), 1) {
+                let strip = offset(&scales, &[tile_rows, 0]) - offset(&scales, &[0, 0]);
+                assert!(
+                    odd_transactions(strip),
+                    "{words:?}: a strip of {strip} scales"
+                );
             }
         }
     }
