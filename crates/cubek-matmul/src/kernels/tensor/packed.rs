@@ -535,7 +535,8 @@ impl PackedTensor {
             }
             Some(_) => panic!("bind_by_tma: words in rows, or in tiles laid row by row"),
         }
-        .served_wide(width / self.scheme.num_quants());
+        .served_wide(width / self.scheme.num_quants())
+        .packed(Field::from(self.scheme.value).read_on(launcher.client()));
         let operand = &self.operand;
         let lined = operand.lined();
         let rows_along = self.other_axis(lined);
@@ -554,7 +555,6 @@ impl PackedTensor {
         });
         match scales {
             BlockScales::Fields => {
-                let words = words.packed(Field::from(self.scheme.value).read_on(launcher.client()));
                 let block_scales = launcher
                     .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
                     .gathered(
@@ -596,7 +596,6 @@ impl PackedTensor {
                             .build(),
                     )
                     .delivery(Delivery::AsyncPerUnit);
-                let words = words.packed(Field::from(self.scheme.value).read_on(launcher.client()));
                 self.scaled_by_words(words, block_scales, global)
                     .expect(ADMITTED_PLAN_RUNS)
             }

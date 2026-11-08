@@ -278,19 +278,22 @@ impl CubeStagedTmaRefusal {
                 && (tile.columns.is_multiple_of(depth) || depth.is_multiple_of(tile.columns))
                 && words_bytes.is_multiple_of(TMA_ALIGNMENT_BYTES)
         });
-        // A packed lhs lands in the words it is packed in, as the rhs does.
-        let lhs_cell = match blocks.packings.lhs.is_some() {
-            true => u32::BITS as usize / bits(MatmulOperand::Lhs),
-            false => 1,
-        };
-        // A packed lhs is dense rows of words, which its buffer facts leave out: its rows are
-        // whole lines where `k` packs into them. A float one is aligned as its buffer states.
-        let lhs_rows_aligned = match blocks.packings.lhs.is_some() {
-            true => (blocks.k * bits(MatmulOperand::Lhs) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES),
-            false => buffers
-                .alignments
-                .lhs
-                .admits(TMA_ALIGNMENT_BYTES * 8 / bits(MatmulOperand::Lhs)),
+        // A packed lhs lands in the words it is packed in, as the rhs does, and is dense rows of
+        // words, which its buffer facts leave out: its rows are whole lines where `k` packs into
+        // them. A float one lands a value a cell, aligned as its buffer states.
+        let (lhs_cell, lhs_rows_aligned) = if blocks.packings.lhs.is_some() {
+            (
+                u32::BITS as usize / bits(MatmulOperand::Lhs),
+                (blocks.k * bits(MatmulOperand::Lhs) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES),
+            )
+        } else {
+            (
+                1,
+                buffers
+                    .alignments
+                    .lhs
+                    .admits(TMA_ALIGNMENT_BYTES * 8 / bits(MatmulOperand::Lhs)),
+            )
         };
         let rhs_swizzle = storage.tma_swizzle(
             &rhs,
