@@ -14,6 +14,12 @@ pub const CONV_INSTRUCTION_UNOFFERED: Refusal = Refusal::Declined {
     why: "the device offers no instruction of this kind for the problem's elements",
 };
 
+/// What a setting is declined with where it asks for a warpgroup MMA, whose stages only the TMA
+/// engine lands and which this convolution's fill never does.
+pub const CONV_WGMMA_UNSERVED: Refusal = Refusal::Declined {
+    why: "a warpgroup MMA reads its stages as the TMA engine lands them",
+};
+
 /// The width the input and the rhs are read at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConvLines {
@@ -79,13 +85,16 @@ impl ConvSettings {
     ///
     /// # Errors
     ///
-    /// [`CONV_INSTRUCTION_UNOFFERED`].
+    /// [`CONV_INSTRUCTION_UNOFFERED`], [`CONV_WGMMA_UNSERVED`].
     pub fn plane(
         &self,
         hw: &Hardware,
         problem: &ConvProblem,
     ) -> Result<PlaneFragmentMicrokernel, Refusal> {
         let transport = self.instruction;
+        if transport == PlaneFragmentTransport::Wgmma {
+            return Err(CONV_WGMMA_UNSERVED);
+        }
         let grid = PlaneFragmentMicrokernelSettings::grid(self.fragments.0, self.fragments.1, 1)
             .through(transport);
         PlaneFragmentMicrokernel::candidates(hw, &problem.work_item(), &grid)
