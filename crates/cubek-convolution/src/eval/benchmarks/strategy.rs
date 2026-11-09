@@ -6,9 +6,12 @@ use crate::{
 };
 
 /// The settings pinned for each instruction, as a bench instrument beside the tuned row: the
-/// lead, one tile of rows, the narrow instruction, and a grid held whole over a map of its width.
-const CMMA: [ConvSettings; 5] = [
+/// lead, two tiles of rows over two planes, one tile of rows, the narrow instruction, and a grid
+/// held whole over a map of its width. The `T8` rows refuse where the device lacks the 8x32
+/// instruction.
+const CMMA: [ConvSettings; 6] = [
     CubeStagedConvRoutine::F2X2_P2X2,
+    CubeStagedConvRoutine::F2X2_P1X2,
     CubeStagedConvRoutine::F1X2_P1X2,
     CubeStagedConvRoutine::F1X1_P1X2_T8,
     CubeStagedConvRoutine::F7X1_P1X2_T8,
