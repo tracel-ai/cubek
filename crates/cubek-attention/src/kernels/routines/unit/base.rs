@@ -2,6 +2,7 @@ use super::kernel::unit_attention_kernel;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
     AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
+    PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, Vectorization};
@@ -136,6 +137,9 @@ impl Routine for UnitAttentionRoutine {
         if let AttentionCacheLayout::Packed(_) = problem.cache {
             return Err(ATTENTION_PACKED_UNREAD);
         }
+        if problem.packed_queries {
+            return Err(PACKED_QUERIES_UNREAD);
+        }
         let microkernel =
             UnitAttentionMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let planes = settings.planes.get();
@@ -182,10 +186,10 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
                 tensors.client(),
                 grid.launch.cube_count,
                 grid.launch.cube_dim,
-                binding.query.arg(),
+                binding.query,
                 key,
                 value,
-                binding.out.arg(),
+                binding.out,
                 binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
                 binding.mask.map(|mask| mask.arg()).into(),
                 binding.lengths,

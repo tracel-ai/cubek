@@ -35,7 +35,14 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
     // once for where the slots lie.
     let run = partitioning.walk();
     let first_step = run.region(0);
-    let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
+    let visible = VisibleKeys::new(
+        len,
+        &ComptimeOption::new_None(),
+        &first_step,
+        queries,
+        &mask,
+        visibility,
+    );
 
     let q = query.tile(&partitioning);
     let k = key

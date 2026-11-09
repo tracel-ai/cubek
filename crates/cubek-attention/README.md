@@ -40,6 +40,11 @@ axis of the attention's space.
 |---|---|---|---|---|
 | `Dense` | float | either | none | read |
 | `Dense` | packed | none | none | read |
-| `Packed` | any | any | any | declined: `PACKED_QUERIES_UNREAD` |
+| `Packed` | float | either | none | read by the cube routines; the unit and hypercube routines decline (`PACKED_QUERIES_UNREAD`) |
 | any | any | any | a list | declined: `INDEXED_KEYS_UNREAD` |
 | any | packed | pages | any | declined: `PAGED_PACKED_UNREAD` |
+
+Packed queries are one launch for every user. Each user's run of the queries and of the output is
+placed by its entry of `ends` (the tile DSL's `Indexing::Run` along the queries, keyed by the batch)
+at the user's own cube level, and the cube level below cuts that run in boxes. The grid covers
+`users × longest`: a cube past a user's run attends no key.

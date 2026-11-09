@@ -41,6 +41,9 @@ pub struct AttentionRoutineProblem {
     pub start_bytes: AttentionOperands<u64>,
     /// How the keys and values lie.
     pub cache: AttentionCacheLayout,
+    /// Whether every sequence's queries lie end to end, each sequence's run placed by its
+    /// cumulative count: `seq_q` is then the longest run.
+    pub packed_queries: bool,
 }
 
 /// How an attention's keys and values lie.
@@ -167,6 +170,7 @@ impl AttentionRoutineProblem {
                 out: 0,
             },
             cache: AttentionCacheLayout::Sequences,
+            packed_queries: false,
         }
     }
 

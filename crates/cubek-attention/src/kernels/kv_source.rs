@@ -46,7 +46,10 @@ pub struct KvSource {
 )]
 pub enum AttentionCache {
     /// Float keys `[·, kv, s, d]` and values `[·, kv, s, dv]`.
-    Float { key: PlainTensor, value: PlainTensor },
+    Float {
+        key: PlainTensor,
+        value: PlainTensor,
+    },
     /// A packed cache, decoded as it is read.
     Packed(PackedAttentionCache),
 }
@@ -128,8 +131,8 @@ mod tests {
     use cubek_matmul::kernels::tensor::PlainTensor;
     use cubek_test_utils::TestInput;
 
-    /// Packed queries, an index list and a packed cache in pages are each declined by the one
-    /// entry, before anything is launched; the same queries and keys stated densely are admitted.
+    /// An index list and a packed cache in pages are each declined by the one entry, before
+    /// anything is launched; the same queries and keys read contiguously are admitted.
     #[test]
     fn the_entry_declines_what_no_routine_reads() {
         let client: Client = cubecl::test_device().client();
@@ -161,16 +164,6 @@ mod tests {
         };
 
         assert_eq!(attention(dense(), float()), None);
-        let packed_queries = AttentionQueries::Packed {
-            query: tensor(&[3, 4, 8], f32),
-            ends: tensor(&[1], u32),
-            longest: 3,
-            lengths: lengths(),
-        };
-        assert_eq!(
-            attention(packed_queries, float()),
-            Some(PACKED_QUERIES_UNREAD)
-        );
         assert_eq!(
             attention(dense(), float().indexed(tensor(&[1, 4], u32))),
             Some(INDEXED_KEYS_UNREAD)
@@ -182,7 +175,8 @@ mod tests {
         };
         let bits = KvBitWidths { key: 4, value: 4 };
         let packed = PackedAttentionCache::new(operand(), operand(), bits, None);
-        let paged_packed = KvSource::new(AttentionCache::Packed(packed)).paged(tensor(&[1, 2], u32));
+        let paged_packed =
+            KvSource::new(AttentionCache::Packed(packed)).paged(tensor(&[1, 2], u32));
         assert_eq!(attention(dense(), paged_packed), Some(PAGED_PACKED_UNREAD));
     }
 }
