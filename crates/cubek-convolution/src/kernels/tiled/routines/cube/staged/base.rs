@@ -33,6 +33,16 @@ impl CubeStagedConvRoutine {
     /// 1x2 fragments on 2x2 planes: 32 rows over four planes.
     pub const GRID_1X2_ON_2X2: ConvSettings = ConvSettings::new((1, 2), (2, 2), ConvLines::Widest);
 
+    /// Seven 8x32 instructions down two planes: 56 rows hold a map 56 wide whole.
+    pub const GRID_56_ROWS: ConvSettings =
+        ConvSettings::new((7, 1), (1, 2), ConvLines::Widest).eight_rows();
+
+    /// One 8x32 plane for each of seven output rows, which share each staged weight block.
+    pub const GRID_8X32_ACROSS_7: ConvSettings =
+        ConvSettings::new((1, 1), (1, 1), ConvLines::Widest)
+            .eight_rows()
+            .across(7);
+
     /// An 8x32 instruction on two planes across the channels: 8 rows hold a map seven wide at 88%.
     pub const GRID_8X32: ConvSettings =
         ConvSettings::new((1, 1), (1, 2), ConvLines::Widest).eight_rows();

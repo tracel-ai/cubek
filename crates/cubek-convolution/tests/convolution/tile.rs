@@ -182,6 +182,14 @@ problem_tests! {
     ow_40_cube_staged_mma_grid_1x2_on_2x2: "cube_staged_mma_grid_1x2_on_2x2", conv(1, (64, 48), [3, 40], [3, 3], SAME_3X3);
 }
 
+/// Seven instructions of eight rows over a map 56 wide, and seven rows of one plane each.
+problem_tests! {
+    rows_56_cube_staged_cmma: "cube_staged_cmma_56_rows", conv(1, (64, 32), [3, 56], [3, 3], SAME_3X3);
+    rows_56_overhang_cube_staged_cmma: "cube_staged_cmma_56_rows", conv(1, (64, 32), [3, 60], [3, 3], SAME_3X3);
+    across_7_one_plane_cube_staged_cmma: "cube_staged_cmma_8x32_across_7_one_plane", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    across_7_one_plane_overhang_cube_staged_cmma: "cube_staged_cmma_8x32_across_7_one_plane", conv(2, (64, 32), [9, 7], [3, 3], SAME_3X3);
+}
+
 /// One and five channels, which make a step of taps, over a batch of one.
 problem_tests! {
     channels_1_cube_staged: "cube_staged", conv(1, (1, 16), [12, 12], [3, 3], SAME_3X3);
@@ -993,6 +1001,22 @@ macro_rules! data_grad_tests {
             }
         })*
     };
+}
+
+/// The setting of 56 rows over a map 56 wide and one it overhangs.
+#[test]
+fn data_grad_cube_staged_cmma_56_rows() {
+    for problem in [
+        conv(1, (64, 32), [3, 56], [3, 3], SAME_3X3),
+        conv(1, (64, 32), [3, 60], [3, 3], SAME_3X3),
+    ] {
+        check_data_grad(
+            "cube_staged_cmma_56_rows",
+            &problem,
+            Binding::Dense,
+            Binding::Dense,
+        );
+    }
 }
 
 /// Windows, channels and extents the boxes overhang or fill exactly: input channels (the gradient's

@@ -145,6 +145,22 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
                 settings: Some(CubeStagedConvRoutine::GRID_1X2_ON_2X2.mma().double_ring()),
             },
         ),
+        CatalogEntry::new(
+            "cube_staged_cmma_56_rows",
+            "Cube staged / Cmma, lines, 56 rows of 8x32",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(CubeStagedConvRoutine::GRID_56_ROWS),
+            },
+        ),
+        CatalogEntry::new(
+            "cube_staged_cmma_8x32_across_7_one_plane",
+            "Cube staged / Cmma, lines, 8x32, 7 rows on one plane each",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(CubeStagedConvRoutine::GRID_8X32_ACROSS_7),
+            },
+        ),
     ];
     strategies.extend(across);
     strategies
