@@ -95,6 +95,28 @@ fn a_pair_the_device_lacks_declines() {
     );
 }
 
+/// The eight row setting takes the 8x32 instruction, where a plain one takes the largest, and a
+/// device without it declines by name.
+#[test]
+fn the_eight_row_setting_takes_the_8x32_instruction() {
+    let narrow = problem("narrow_width");
+    let rows = |settings| {
+        let (blueprint, _) = ROUTINE
+            .prepare(&nvidia(), &narrow, &settings)
+            .expect("the setting prepares");
+        let [(_, m), (_, n), _] = blueprint.microkernel.plane.instruction.shape();
+        (m, n)
+    };
+    assert_eq!(rows(CubeStagedConvRoutine::GRID_8X32), (8, 32));
+    assert_eq!(rows(CubeStagedConvRoutine::GRID_2X2), (16, 16));
+    assert_eq!(
+        ROUTINE
+            .prepare(&cmma_only(), &narrow, &CubeStagedConvRoutine::GRID_8X32)
+            .err(),
+        Some(CONV_INSTRUCTION_UNOFFERED)
+    );
+}
+
 /// The space is the problem's whatever the tiles, and a box wider than a narrow map overhangs it.
 #[test]
 fn the_space_is_the_problems_and_a_wide_box_overhangs_it() {

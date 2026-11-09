@@ -38,6 +38,24 @@ impl ConvLines {
     }
 }
 
+/// Which of the device's matrix instructions of the asked kind a setting takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConvTile {
+    /// The largest the device offers.
+    Largest,
+    /// The one of eight rows, which wastes least on a map seven wide.
+    EightRows,
+}
+
+impl ConvTile {
+    fn admits(self, rows: usize) -> bool {
+        match self {
+            Self::Largest => true,
+            Self::EightRows => rows == 8,
+        }
+    }
+}
+
 /// How the output is cut over the planes of a cube and the instructions of a plane, and how the
 /// contraction is walked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -51,6 +69,7 @@ pub struct ConvSettings {
     /// Instruction steps of the contraction one stage holds, capped by what the problem has.
     pub stage_steps: usize,
     pub lines: ConvLines,
+    pub tile: ConvTile,
 }
 
 impl ConvSettings {
@@ -61,6 +80,15 @@ impl ConvSettings {
             planes,
             stage_steps: 4,
             lines,
+            tile: ConvTile::Largest,
+        }
+    }
+
+    /// These settings through the instruction of eight rows.
+    pub const fn eight_rows(self) -> Self {
+        Self {
+            tile: ConvTile::EightRows,
+            ..self
         }
     }
 
@@ -98,6 +126,10 @@ impl ConvSettings {
         let grid = PlaneFragmentMicrokernelSettings::grid(self.fragments.0, self.fragments.1, 1)
             .through(transport);
         PlaneFragmentMicrokernel::candidates(hw, &problem.work_item(), &grid)
+            .filter(|plane| {
+                let [(_, rows), ..] = plane.instruction.shape();
+                self.tile.admits(rows)
+            })
             .find(|plane| match transport {
                 PlaneFragmentTransport::Cmma => {
                     matches!(plane.instruction, PlaneFragmentInstruction::Cmma { .. })
@@ -133,6 +165,10 @@ impl core::fmt::Display for ConvSettings {
         match self.lines {
             ConvLines::One => write!(f, " width=1"),
             ConvLines::Widest => Ok(()),
+        }?;
+        match self.tile {
+            ConvTile::Largest => Ok(()),
+            ConvTile::EightRows => write!(f, " rows=8"),
         }
     }
 }

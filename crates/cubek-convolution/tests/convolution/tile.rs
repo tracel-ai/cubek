@@ -81,6 +81,8 @@ tiled_tests! {
     cube_staged_cmma_grid_1x2_conv3x3_c64: "cube_staged_cmma_grid_1x2", "conv3x3_c64";
     cube_staged_cmma_grid_1x2_conv3x3_c64_stride2: "cube_staged_cmma_grid_1x2", "conv3x3_c64_stride2";
     cube_staged_cmma_grid_1x2_narrow_width: "cube_staged_cmma_grid_1x2", "narrow_width";
+    cube_staged_cmma_8x32_conv3x3_c64: "cube_staged_cmma_8x32", "conv3x3_c64";
+    cube_staged_cmma_8x32_narrow_width: "cube_staged_cmma_8x32", "narrow_width";
     cube_staged_mma_grid_2x2_width_1_alexnet_like: "cube_staged_mma_grid_2x2_width_1", "alexnet_like";
     cube_staged_mma_grid_2x2_width_1_large_kernel: "cube_staged_mma_grid_2x2_width_1", "large_kernel";
     cube_staged_mma_grid_2x2_width_1_conv3x3_c64: "cube_staged_mma_grid_2x2_width_1", "conv3x3_c64";

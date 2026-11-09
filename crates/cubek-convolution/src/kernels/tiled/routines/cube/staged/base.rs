@@ -26,6 +26,10 @@ impl CubeStagedConvRoutine {
 
     /// One tile of rows, which wastes less where the map is narrow.
     pub const GRID_1X2: ConvSettings = ConvSettings::new((1, 2), (1, 2), ConvLines::Widest);
+
+    /// An 8x32 instruction on two planes across the channels: 8 rows hold a map seven wide at 88%.
+    pub const GRID_8X32: ConvSettings =
+        ConvSettings::new((1, 1), (1, 2), ConvLines::Widest).eight_rows();
 }
 
 impl Routine for CubeStagedConvRoutine {

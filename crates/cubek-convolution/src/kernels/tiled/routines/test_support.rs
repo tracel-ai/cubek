@@ -20,10 +20,13 @@ fn shape(element: ElemType, (m, n, k): (u32, u32, u32)) -> MmaConfig {
     }
 }
 
-/// An NVIDIA GPU of the 2060's instructions: cmma `16x16x16` and manual mma `16x8x8`, both over
-/// `f16`.
+/// An NVIDIA GPU of the 2060's instructions: cmma `16x16x16` and `8x32x16`, and manual mma
+/// `16x8x8`, all over `f16`.
 pub fn nvidia() -> Hardware {
-    let hw = devices::offering_cmma(devices::h100(), [shape(F16, (16, 16, 16))]);
+    let hw = devices::offering_cmma(
+        devices::h100(),
+        [shape(F16, (16, 16, 16)), shape(F16, (8, 32, 16))],
+    );
     devices::offering_mma(hw, [shape(F16, (16, 8, 8))])
 }
 

@@ -48,6 +48,14 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             },
         ),
         CatalogEntry::new(
+            "cube_staged_cmma_8x32",
+            "Cube staged / Cmma, lines, 8x32",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(CubeStagedConvRoutine::GRID_8X32),
+            },
+        ),
+        CatalogEntry::new(
             "cube_staged_mma_grid_2x2_width_1",
             "Cube staged / Mma, width 1, 2x2 grid",
             Strategy::Tile {
