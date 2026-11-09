@@ -3,10 +3,14 @@
 
 mod delta;
 mod held_state;
+mod settings;
+mod shape;
 mod state_access;
 mod unit_partials;
 
 pub use delta::*;
 pub use held_state::*;
+pub use settings::*;
+pub use shape::*;
 pub use state_access::*;
 pub use unit_partials::*;

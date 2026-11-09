@@ -64,10 +64,10 @@ impl CubeDeltaWalkRoutineSettings {
         microkernel: &CubeDeltaWalkMicrokernel,
         problem: &RecurrenceWalkProblem,
     ) -> usize {
-        let in_head = problem.heads.value_features / microkernel.columns;
-        let in_memory = hw.shared_memory_budget() / microkernel.shared_memory(1);
+        let in_head = problem.heads.value_features / microkernel.shape.columns();
+        let in_memory = hw.shared_memory_budget() / microkernel.shape.shared_memory(1);
         let most = hw
-            .strip_budget(microkernel.units)
+            .strip_budget(microkernel.shape.units())
             .min(in_memory)
             .min(self.runs.get());
         (1..=most.min(in_head))
@@ -127,7 +127,7 @@ impl Routine for CubeDeltaWalkRoutine {
         estimate: &mut KernelEstimate,
     ) {
         let input_bytes = RECURRENCE_WALK_ELEMENT.size();
-        let columns = blueprint.runs * blueprint.microkernel.columns;
+        let columns = blueprint.runs * blueprint.microkernel.shape.columns();
         let positions = problem.positions;
         let key_features = problem.heads.key_features;
         let stream_at = |element_bytes: usize, elements: usize, run: usize| GlobalStream {
@@ -184,21 +184,21 @@ impl Routine for CubeDeltaWalkRoutine {
             (POSITION, 1),
             (KEY_HEAD, 1),
             (HEAD_IN_GROUP, 1),
-            (KEY_FEATURE, microkernel.rows),
-            (VALUE_FEATURE, microkernel.columns),
+            (KEY_FEATURE, microkernel.shape.rows()),
+            (VALUE_FEATURE, microkernel.shape.columns()),
         ];
         unit_axes.extend(problem.state.kept_axis());
         let unit = Levels::leaf(&unit_axes);
         let partitioning = RecurrenceWalkPartitioning::new(
             problem.space(),
             unit.walk_every(&[POSITION])
-                .units(&[(KEY_FEATURE, microkernel.units)])
+                .units(&[(KEY_FEATURE, microkernel.shape.units())])
                 .planes(&[(VALUE_FEATURE, runs)]),
         );
         let blueprint = RecurrenceWalkBlueprint::new(microkernel, partitioning, width, runs);
         let cube = CubeResources {
-            plane_width: microkernel.units as u32,
-            shared_memory: microkernel.shared_memory(runs),
+            plane_width: microkernel.shape.units() as u32,
+            shared_memory: microkernel.shape.shared_memory(runs),
         };
         let grid = Grid::new(hw, blueprint.partitioning.as_cubek(), cube)?;
         Ok((blueprint, grid))
@@ -360,7 +360,7 @@ mod tests {
                         let (blueprint, _) = CubeDeltaWalkRoutine
                             .prepare(&hw, &problem, &settings)
                             .unwrap_or_else(|why| panic!("{settings} {problem:?}: {why:?}"));
-                        let held = blueprint.microkernel.held_lines(blueprint.width);
+                        let held = blueprint.microkernel.shape.held_lines(blueprint.width);
                         assert!(held <= MAX_HELD_LINES_PER_UNIT, "{settings}: {held}");
                     }
                 }
@@ -382,7 +382,11 @@ mod tests {
                 .prepare(&hw, &walk(1, 7, heads, 1), &settings)
                 .expect("the floor prepares");
             let microkernel = blueprint.microkernel;
-            (microkernel.units, microkernel.rows, microkernel.columns)
+            (
+                microkernel.shape.units(),
+                microkernel.shape.rows(),
+                microkernel.shape.columns(),
+            )
         };
         assert_eq!(shape((2, 3, 128, 128), 64), (8, 16, 4));
         assert_eq!(shape((2, 3, 128, 128), 32), (16, 8, 4));
@@ -410,16 +414,21 @@ mod tests {
                 .expect("prepares");
             let microkernel = blueprint.microkernel;
             let partitioning = blueprint.partitioning.as_cubek();
-            assert_eq!(partitioning.leaf().extent(KEY_FEATURE), microkernel.rows);
-            assert_eq!(partitioning.units() as usize, microkernel.units);
-            assert!(microkernel.units.is_power_of_two());
-            assert!(microkernel.units * microkernel.rows >= problem.heads.key_features);
+            assert_eq!(
+                partitioning.leaf().extent(KEY_FEATURE),
+                microkernel.shape.rows()
+            );
+            assert_eq!(partitioning.units() as usize, microkernel.shape.units());
+            assert!(microkernel.shape.units().is_power_of_two());
+            assert!(
+                microkernel.shape.units() * microkernel.shape.rows() >= problem.heads.key_features
+            );
             assert_eq!(
                 partitioning.overhangs(KEY_FEATURE),
                 overhangs,
                 "{microkernel} {heads:?}"
             );
-            assert_eq!(grid.launch.cube_dim.x as usize, microkernel.units);
+            assert_eq!(grid.launch.cube_dim.x as usize, microkernel.shape.units());
         }
     }
 
@@ -466,8 +475,8 @@ mod tests {
             .prepare(&hw, &problem, &settings)
             .expect("an offset view is served at the same setting");
         assert!(offset.width < aligned.width);
-        assert!(offset.microkernel.rows < aligned.microkernel.rows);
-        assert!(offset.microkernel.units > aligned.microkernel.units);
+        assert!(offset.microkernel.shape.rows() < aligned.microkernel.shape.rows());
+        assert!(offset.microkernel.shape.units() > aligned.microkernel.shape.units());
     }
 
     /// The shared memory a cube asks is what its microkernel counts at the width the blueprint
@@ -481,7 +490,7 @@ mod tests {
                 .expect("prepares");
             assert_eq!(
                 grid.shared_memory,
-                blueprint.microkernel.shared_memory(blueprint.runs)
+                blueprint.microkernel.shape.shared_memory(blueprint.runs)
             );
         }
     }

@@ -1,4 +1,4 @@
-use super::delta::CubeDeltaWalkMicrokernel;
+use super::shape::HeldStateShape;
 use super::unit_partials::UnitPartials;
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
@@ -10,20 +10,16 @@ use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 pub struct HeldState<N: Size> {
     lines: Array<Vector<f32, N>>,
     #[cube(comptime)]
-    microkernel: CubeDeltaWalkMicrokernel,
+    shape: HeldStateShape,
 }
 
 #[cube]
 impl<N: Size> HeldState<N> {
     /// The unit's rows of `state`, windowed to the unit: the state read once, or zeros where the
     /// row is `fresh`, which reads nothing.
-    pub fn load(
-        state: &Tile,
-        fresh: bool,
-        #[comptime] microkernel: CubeDeltaWalkMicrokernel,
-    ) -> Self {
+    pub fn load(state: &Tile, fresh: bool, #[comptime] shape: HeldStateShape) -> Self {
         let width = N::value();
-        let (rows, columns) = comptime!((microkernel.rows, microkernel.columns));
+        let (rows, columns) = comptime!((shape.rows(), shape.columns()));
         let parts = comptime!(columns / width);
 
         let reads = state.flat::<f32, N>();
@@ -42,7 +38,7 @@ impl<N: Size> HeldState<N> {
             }
         }
 
-        HeldState::<N> { lines, microkernel }
+        HeldState::<N> { lines, shape }
     }
 
     /// The rows scaled by `factor`, and this unit's part of what they recall of the position's key
@@ -50,7 +46,7 @@ impl<N: Size> HeldState<N> {
     /// position.
     pub fn decay_and_recall(&mut self, keys: &Tile, factor: f32, partials: &mut UnitPartials<N>) {
         let width = N::value();
-        let (rows, columns) = comptime!((self.microkernel.rows, self.microkernel.columns));
+        let (rows, columns) = comptime!((self.shape.rows(), self.shape.columns()));
         let parts = comptime!(columns / width);
 
         let key_lines = keys.flat::<f32, N>();
@@ -85,7 +81,7 @@ impl<N: Size> HeldState<N> {
         partials: &mut UnitPartials<N>,
     ) {
         let width = N::value();
-        let (rows, columns) = comptime!((self.microkernel.rows, self.microkernel.columns));
+        let (rows, columns) = comptime!((self.shape.rows(), self.shape.columns()));
         let parts = comptime!(columns / width);
 
         let key_lines = keys.flat::<f32, N>();
@@ -115,7 +111,7 @@ impl<N: Size> HeldState<N> {
     /// after another, all the unit's rows of each.
     pub fn store(&self, kept: &mut Tile, index: usize) {
         let width = N::value();
-        let (rows, columns) = comptime!((self.microkernel.rows, self.microkernel.columns));
+        let (rows, columns) = comptime!((self.shape.rows(), self.shape.columns()));
         let parts = comptime!(columns / width);
 
         let mut writes = kept.flat_mut::<f32, N>();

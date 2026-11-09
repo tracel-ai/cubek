@@ -4,7 +4,7 @@ use crate::linear_recurrence::{KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// One cube's runs of value columns, `microkernel.units` units each, walked through every position:
+/// One cube's runs of value columns, `microkernel.shape.units()` units each, walked through every position:
 /// each position decays the state, adds the delta between the value and what the state recalls of
 /// the key along the key, and reads the written state with the query, the read rounded to `E`
 /// where it is written. The state after each position from `state.first_kept` on is written to the
@@ -29,15 +29,16 @@ pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
     #[comptime] runs: usize,
 ) {
     let width = N::value();
-    let parts = comptime!(microkernel.columns / width);
+    let parts = comptime!(microkernel.shape.columns() / width);
     let mut write = Array::<Vector<f32, N>>::new(parts);
 
     for run in cube {
         for unit in run.walk() {
             let slot = unit.coord(KEY_FEATURE);
             let mut partials =
-                UnitPartials::<N>::new(run.coord(VALUE_FEATURE), slot, runs, microkernel);
-            let mut held = HeldState::<N>::load(&state.read.at(&unit), state.fresh, microkernel);
+                UnitPartials::<N>::new(run.coord(VALUE_FEATURE), slot, runs, microkernel.shape);
+            let mut held =
+                HeldState::<N>::load(&state.read.at(&unit), state.fresh, microkernel.shape);
 
             for step in unit.walk() {
                 let (keys, queries) = (key.at(&step), query.at(&step));
@@ -47,7 +48,7 @@ pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
                 let strength_all = Vector::<f32, N>::cast_from(scalar(&strength.at(&step)));
 
                 held.decay_and_recall(&keys, factor, &mut partials);
-                partials.sum(0usize);
+                partials.sum();
 
                 #[unroll]
                 for part in 0..parts {
@@ -55,7 +56,7 @@ pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
                 }
 
                 held.write_and_answer(&keys, &queries, &write, &mut partials);
-                partials.sum(1usize);
+                partials.sum();
 
                 if slot == 0 {
                     let mut out_window = out.at(&step);

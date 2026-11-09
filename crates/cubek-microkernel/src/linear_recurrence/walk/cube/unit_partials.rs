@@ -1,20 +1,22 @@
-use super::delta::CubeDeltaWalkMicrokernel;
+use super::shape::HeldStateShape;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
 /// What a unit's rows contribute to a sum over its run's units, as lines of the run's columns, and
 /// the cube's shared memory the units meet them through.
 ///
-/// A sum writes every unit's lines to a slice of the shared memory, meets at one barrier, and has
-/// each unit add every unit's lines in unit order. The two sums of a position use the two slices
-/// in turn, so a unit still reading one sum is never overwritten by the next.
+/// A sum writes every unit's lines to one of two slices of the shared memory, meets at one barrier,
+/// and has each unit add every unit's lines in unit order. Consecutive sums use the two slices in
+/// turn, which `UnitPartials` alone picks, so a unit still reading one sum is never overwritten by
+/// the next.
 #[derive(CubeType)]
 pub struct UnitPartials<N: Size> {
     shared: Shared<[Vector<f32, N>]>,
     own: Array<Vector<f32, N>>,
     run: usize,
     unit: usize,
+    next: usize,
     #[cube(comptime)]
-    microkernel: CubeDeltaWalkMicrokernel,
+    shape: HeldStateShape,
     #[cube(comptime)]
     runs: usize,
 }
@@ -27,16 +29,17 @@ impl<N: Size> UnitPartials<N> {
         run: usize,
         unit: usize,
         #[comptime] runs: usize,
-        #[comptime] microkernel: CubeDeltaWalkMicrokernel,
+        #[comptime] shape: HeldStateShape,
     ) -> Self {
         let width = N::value();
-        let parts = comptime!(microkernel.columns / width);
+        let parts = comptime!(shape.columns() / width);
         UnitPartials::<N> {
-            shared: Shared::<[Vector<f32, N>]>::new_slice(2 * runs * microkernel.units * parts),
+            shared: Shared::<[Vector<f32, N>]>::new_slice(2 * runs * shape.units() * parts),
             own: Array::<Vector<f32, N>>::new(parts),
             run,
             unit,
-            microkernel,
+            next: 0usize,
+            shape,
             runs,
         }
     }
@@ -44,7 +47,7 @@ impl<N: Size> UnitPartials<N> {
     /// This unit's partials, zeroed.
     pub fn clear(&mut self) {
         let width = N::value();
-        let parts = comptime!(self.microkernel.columns / width);
+        let parts = comptime!(self.shape.columns() / width);
         let zero = Vector::<f32, N>::cast_from(0.0f32);
         #[unroll]
         for part in 0..parts {
@@ -63,13 +66,15 @@ impl<N: Size> UnitPartials<N> {
         self.own[part]
     }
 
-    /// Every partial summed over the run's units, in unit order, through `slice` of the shared
-    /// memory.
-    pub fn sum(&mut self, #[comptime] slice: usize) {
-        let units = comptime!(self.microkernel.units);
+    /// Every partial summed over the run's units, in unit order, through the slice of the shared
+    /// memory the last sum did not use.
+    pub fn sum(&mut self) {
+        let units = comptime!(self.shape.units());
         if units > 1 {
+            let slice = self.next;
+            self.next = 1usize - slice;
             let width = N::value();
-            let parts = comptime!(self.microkernel.columns / width);
+            let parts = comptime!(self.shape.columns() / width);
 
             let mine = self.slot(slice, self.unit);
             #[unroll]
@@ -96,10 +101,10 @@ impl<N: Size> UnitPartials<N> {
     }
 
     /// Where `unit`'s lines of `slice` start in the shared memory.
-    fn slot(&self, #[comptime] slice: usize, unit: usize) -> usize {
+    fn slot(&self, slice: usize, unit: usize) -> usize {
         let width = N::value();
-        let units = comptime!(self.microkernel.units);
-        let parts = comptime!(self.microkernel.columns / width);
+        let units = comptime!(self.shape.units());
+        let parts = comptime!(self.shape.columns() / width);
         ((slice * self.runs + self.run) * units + unit) * parts
     }
 }
