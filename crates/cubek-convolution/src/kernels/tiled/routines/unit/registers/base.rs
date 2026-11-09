@@ -1,6 +1,6 @@
 use super::kernel::unit_registers_conv_kernel;
 use crate::kernels::tiled::{
-    ConvBinding, ConvBlueprint, ConvPartitioning, ConvProblem, ConvRoutine,
+    ConvBinding, ConvBlueprint, ConvOperation, ConvPartitioning, ConvProblem, ConvRoutine,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
@@ -19,13 +19,18 @@ pub const CONV_UNIT_LINES_UNDIVIDED: Refusal = Refusal::Declined {
     why: "a unit block walks the contraction in whole lines of the input, which must divide the contracted axis",
 };
 
+/// What a launch is declined with for the weight backward: its output runs along the rows, which
+/// the memory leaf a unit block contracts through read back wrong on a CPU runtime, every cell.
+pub const CONV_UNIT_WEIGHT_BACKWARD: Refusal = Refusal::Declined {
+    why: "the unit registers routine's memory leaf computes a weight backward wrongly, so it is not served",
+};
+
 /// Units each owning a block of the output in registers, reading the gathered input and the rhs
 /// straight from global memory through every contracted cell. It asks nothing of the hardware: no
 /// shared stage, no plane instruction, so it serves a device with neither.
 ///
 /// An operand whose buffer does not run along the axis a register block reads it in is read one
-/// element at a time; the weight backward is such a case, its input and its output running along
-/// the rows.
+/// element at a time. The weight backward is declined ([`CONV_UNIT_WEIGHT_BACKWARD`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UnitRegistersConvRoutine;
 
@@ -154,6 +159,9 @@ impl Routine for UnitRegistersConvRoutine {
         problem: &ConvProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        if problem.operation == ConvOperation::BackwardWeight {
+            return Err(CONV_UNIT_WEIGHT_BACKWARD);
+        }
         let microkernel = UnitRegistersMicrokernel::best(
             hw,
             &problem.registers_work_item(),

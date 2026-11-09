@@ -1292,17 +1292,6 @@ cases! {
 }
 
 cases! {
-    check_weight_grad;
-    unit_registers_weight_grad_same_3x3: unit_registers(), &conv_f32(2, (64, 32), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
-    unit_registers_weight_grad_stride_2: unit_registers(), &conv_f32(2, (32, 32), [7, 21], [3, 3], ([2, 2], [1, 1], [1, 1])), Binding::Dense, Binding::Dense;
-    unit_registers_weight_grad_dilation_2: unit_registers(), &conv_f32(2, (64, 32), [8, 17], [3, 3], ([1, 1], [2, 2], [2, 2])), Binding::Dense, Binding::Dense;
-    unit_registers_weight_grad_1x1: unit_registers(), &conv_f32(2, (64, 64), [5, 12], [1, 1], ([1, 1], [0, 0], [1, 1])), Binding::Dense, Binding::Dense;
-    unit_registers_weight_grad_narrow: unit_registers(), &conv_f32(2, (64, 64), [7, 7], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
-    unit_registers_weight_grad_overhanging_ci_co: unit_registers(), &conv_f32(2, (40, 12), [9, 11], [5, 3], ([1, 1], [2, 1], [1, 1])), Binding::Dense, Binding::Dense;
-    unit_registers_weight_grad_channels_3: unit_registers(), &conv_f32(2, (3, 10), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
-}
-
-cases! {
     check_data_grad;
     unit_registers_data_grad_same_3x3: unit_registers(), &conv_f32(2, (64, 32), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
     unit_registers_data_grad_no_padding: unit_registers(), &conv_f32(2, (32, 32), [7, 12], [3, 3], ([1, 1], [0, 0], [1, 1])), Binding::Dense, Binding::Dense;
@@ -1325,4 +1314,19 @@ fn a_cube_staged_setting_on_the_unit_routine_is_refused_by_name() {
         .kernel_result(&strategy, &problem, &SEEDS)
         .expect_err("the launch was accepted");
     assert!(message.contains("unit registers"), "{message}");
+}
+
+/// A weight backward is no case of the unit routine, and is refused by name.
+#[test]
+fn a_weight_backward_on_the_unit_routine_is_refused_by_name() {
+    let problem = conv_f32(1, (64, 32), [6, 12], [3, 3], SAME_3X3);
+    let message = match weight_grad_values(
+        &unit_registers(),
+        &problem,
+        (Binding::Dense, Binding::Dense, Binding::Dense),
+    ) {
+        Ok(_) => panic!("the launch was accepted"),
+        Err(message) => message,
+    };
+    assert!(message.contains("weight backward"), "{message}");
 }
