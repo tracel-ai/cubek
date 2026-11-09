@@ -4,6 +4,8 @@
 use super::*;
 use crate::kernels::tiled::routines::test_support::{F32, nvidia};
 use crate::kernels::tiled::{ConvOperation, ConvProblem, CubeStagedConvRoutine};
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::ops::matmul::LhsLine;
 use cubek_std::devices;
 use cubek_std::routine::Routine;
 
@@ -78,6 +80,24 @@ fn lines_past_the_contracted_axis_are_refused_by_name() {
     assert_eq!(
         UnitRegistersConvRoutine::check_lines(&problem, &widths(4)),
         Ok(())
+    );
+}
+
+/// A weight backward lines its input along the accumulator's rows, which a width that does not
+/// divide them cannot serve, so the leaf's refusal is returned instead of a launch that panics.
+#[test]
+fn an_input_line_not_dividing_the_rows_is_refused_by_name() {
+    let problem = ConvProblem {
+        operation: ConvOperation::BackwardWeight,
+        ..ConvProblem::dense(1, [9, 9], (10, 16), [3, 3], 1, F32)
+    };
+    assert!(matches!(
+        UnitRegistersConvRoutine::check_lhs_line(&problem, 4),
+        Err(Refusal::GatherLhsLine { .. })
+    ));
+    assert_eq!(
+        UnitRegistersConvRoutine::check_lhs_line(&problem, 2),
+        Ok(LhsLine::Rows)
     );
 }
 

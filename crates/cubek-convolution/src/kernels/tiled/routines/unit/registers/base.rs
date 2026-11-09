@@ -6,6 +6,7 @@ use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::RegisterBlock;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::ops::matmul::LhsLine;
 use cubecl::tile::space::PlaneOrder;
 use cubek_matmul::kernels::{UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings};
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
@@ -73,6 +74,22 @@ impl UnitRegistersConvRoutine {
             true => Ok(()),
             false => Err(CONV_UNIT_LINES_UNDIVIDED),
         }
+    }
+
+    /// Where the memory leaf reads the input, lined `width` wide, in a block of the output.
+    ///
+    /// # Errors
+    ///
+    /// The leaf's refusal, where it cannot serve the lines as they are.
+    pub fn check_lhs_line(problem: &ConvProblem, width: usize) -> Result<LhsLine, Refusal> {
+        let roles = problem.operation.roles();
+        let space = problem.space();
+        LhsLine::of(
+            &space.subspace(&roles.lhs),
+            &space.subspace(&roles.rhs),
+            &space.subspace(&roles.free),
+            width,
+        )
     }
 
     /// The block a unit accumulates in: its edge split from its interior, and where the input is
@@ -218,6 +235,7 @@ impl Routine for UnitRegistersConvRoutine {
             plane_width,
         )?;
         Self::check_lines(problem, &blueprint.widths)?;
+        Self::check_lhs_line(problem, blueprint.widths.lhs)?;
         Ok((blueprint, grid))
     }
 }
