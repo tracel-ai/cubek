@@ -19,4 +19,5 @@ pub fn plane_dequantize_kernel<ER: Numeric, VO: Size, O: Destination>(
         let mut c = c.at(&plane);
         c.dequantize_from(&packed.at(&plane));
     }
+    O::finish::<ER>(out);
 }
