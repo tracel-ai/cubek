@@ -351,6 +351,21 @@ mod tests {
         assert_eq!(steps(&problem, 1024), 1);
     }
 
+    /// A second stage in flight doubles the shared memory the stages hold.
+    #[test]
+    fn a_double_ring_holds_twice_the_bytes() {
+        let problem = ConvProblem::dense(8, [58, 58], (64, 64), [3, 3], 1, F16);
+        let bytes = |settings: ConvSettings| {
+            let plane = settings
+                .plane(&nvidia(), &problem)
+                .expect("the device offers mma");
+            let tiles = ConvTiles::new(&problem, &plane, &settings).expect("the tiles state");
+            ConvPartitioning::cube(&problem, &tiles, BUDGET).stage_bytes(&problem.elements)
+        };
+        let single = CubeStagedConvRoutine::GRID_2X2.mma();
+        assert_eq!(bytes(single.double_ring()), 2 * bytes(single));
+    }
+
     /// A walk with a divisor in reach keeps it: six steps of the AlexNet-like forward run three
     /// at a time.
     #[test]
