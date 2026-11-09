@@ -28,8 +28,8 @@ pub use cubek_attention as attention;
 #[cfg(feature = "attention-backward")]
 pub use cubek_attention_backward as attention_backward;
 
-#[cfg(feature = "gated-delta")]
-pub use cubek_gated_delta as gated_delta;
+#[cfg(feature = "linear-recurrence")]
+pub use cubek_linear_recurrence as linear_recurrence;
 
 #[cfg(feature = "interpolate")]
 pub use cubek_interpolate as interpolate;
