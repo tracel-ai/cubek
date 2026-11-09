@@ -1,7 +1,6 @@
 use cubecl::{
     CubeCount, CubeDim,
     client::Client,
-    features::Plane,
     ir::{AddressType, DeviceProperties},
     server::LaunchError,
 };
@@ -9,7 +8,7 @@ use cubek_std::{MatrixLayout, cube_count::HypercubeBlueprint};
 
 use crate::{
     definition::{
-        MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+        MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, require_plane_ops,
     },
     multi_level::{
         args::*,
@@ -177,11 +176,7 @@ impl BatchMatmulFamily<()> for GemmFamily {
         match blueprint.variant {
             Variant::Dot => {
                 // Past one unit per plane, the units of a plane sum their partials with plane_sum.
-                if plane_dim > 1 && !client.properties().features.plane.contains(Plane::Ops) {
-                    return Err(MatmulSetupError::Unavailable(
-                        MatmulAvailabilityError::PlaneOpsUnavailable,
-                    ));
-                }
+                require_plane_ops(client, plane_dim)?;
                 let tile_dim = plane_dim * vs;
                 if !problem.k.is_multiple_of(tile_dim) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
