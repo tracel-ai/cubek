@@ -386,7 +386,7 @@ fn ceiling(hw: &Hardware, key: &ConvTuneKey) -> Ceiling {
 mod tests {
     use super::*;
     use crate::kernels::tiled::ConvAlong;
-    use crate::kernels::tiled::routines::test_support::{F16, cmma_8x32_only, nvidia};
+    use crate::kernels::tiled::routines::test_support::{F16, cmma_8x32_only, nvidia, problems};
     use cubek_std::autotune::priority_of;
     use std::cmp::Reverse;
 
@@ -479,6 +479,24 @@ mod tests {
         );
         let many = key(8, [58, 58]);
         assert_ne!(launch(lead, &many), launch(lead.double_ring(), &many));
+    }
+
+    /// The settings that win the catalog's problems are each in the round for it, none a repeat of
+    /// an earlier candidate's launch.
+    #[test]
+    fn the_settings_that_win_are_in_the_round() {
+        let hw = nvidia();
+        let in_round = |settings: ConvSettings, problem: &ConvProblem| {
+            let key = ConvTuneKey::from(problem);
+            ranked(&hw, &key)
+                .iter()
+                .any(|candidate| *candidate.strategy() == settings)
+        };
+        let [alexnet, _, stride_2, narrow] = problems().map(|(_, problem)| problem);
+        let staged = CubeStagedConvRoutine::F1X2_P2X2;
+        assert!(in_round(staged.mma().double_ring(), &alexnet));
+        assert!(in_round(CubeStagedConvRoutine::F2X2_P1X2, &stride_2));
+        assert!(in_round(CubeStagedConvRoutine::F1X1_P1X1_T8_A7, &narrow));
     }
 
     /// A key states the problem it describes: the key of that problem is the key.
