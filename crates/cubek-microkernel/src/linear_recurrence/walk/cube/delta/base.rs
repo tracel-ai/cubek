@@ -1,8 +1,8 @@
 use crate::linear_recurrence::RecurrenceHeads;
-use crate::linear_recurrence::walk::RecurrenceWalkOperand;
 use crate::linear_recurrence::walk::cube::{
     CubeWalkMicrokernel, CubeWalkMicrokernelSettings, HeldStateShape,
 };
+use crate::linear_recurrence::walk::{RecurrenceWalkOperand, UpdateRule};
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
@@ -49,7 +49,12 @@ impl Microkernel for CubeDeltaWalkMicrokernel {
     /// Every operand as [`RecurrenceWalkOperand::require`] states it, a run `columns` wide and a
     /// unit's rows.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<RecurrenceWalkOperand>) {
-        RecurrenceWalkOperand::require(self.shape.columns(), self.shape.rows(), vectorization);
+        RecurrenceWalkOperand::require(
+            self.shape.columns(),
+            self.shape.rows(),
+            Self::RULE,
+            vectorization,
+        );
     }
 
     fn estimate(
@@ -64,6 +69,8 @@ impl Microkernel for CubeDeltaWalkMicrokernel {
 }
 
 impl CubeWalkMicrokernel for CubeDeltaWalkMicrokernel {
+    const RULE: UpdateRule = UpdateRule::Delta;
+
     fn shape(&self) -> HeldStateShape {
         self.shape
     }

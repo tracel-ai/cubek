@@ -6,15 +6,18 @@ use crate::kernels::walk::{
 };
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::linear_recurrence::RecurrenceWalkPartitioning;
-use cubek_microkernel::linear_recurrence::walk::RecurrenceWalkOperand;
-use cubek_microkernel::linear_recurrence::walk::cube::CubeDeltaWalkMicrokernel;
+use cubek_microkernel::linear_recurrence::walk::cube::{
+    CubeDeltaWalkMicrokernel, CubeWalkMicrokernel,
+};
+use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, UpdateRule};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{Grid, Routine};
 
 /// The delta walk with every run of a head's value columns held by a few units, a cube holding
 /// several runs of one head side by side. It reads no plane feature; it needs units, shared memory
-/// and 8 bindings, 9 in a store's slots: this kind's floor.
+/// and 8 bindings, 9 in a store's slots: this kind's floor. It declines a problem of the additive
+/// rule.
 ///
 /// A unit owns a tile of the run's key rows: the partitioning's leaf holds `rows` of them and its
 /// units level cuts `KEY_FEATURE` into one leaf for each of a run's `units` units, a power of two.
@@ -72,6 +75,7 @@ impl Routine for CubeDeltaWalkRoutine {
 
 impl RecurrenceWalkRoutine<CubeDeltaWalkMicrokernel> for CubeDeltaWalkRoutine {
     const NAME: &'static str = "cube-delta-walk";
+    const RULE: UpdateRule = CubeDeltaWalkMicrokernel::RULE;
 
     fn dispatch(
         &self,

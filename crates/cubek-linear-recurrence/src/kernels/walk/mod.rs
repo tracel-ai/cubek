@@ -1,5 +1,5 @@
-//! The gated delta walk: the recurrence a gated delta-rule layer carries per value head, walked
-//! through a sequence's positions. A decode step is a walk of one position.
+//! The walk of either update rule: the recurrence a layer of a linear recurrence family carries per
+//! value head, walked through a sequence's positions. A decode step is a walk of one position.
 //!
 //! It is one dispatch that reads the queries, keys, values and the state once and writes the
 //! output and the kept states once. Its states are tensors it owns, or the slots of a store that a
@@ -12,8 +12,8 @@
 //!
 //! **Traffic**, per sequence and value head over `t` positions: the queries and keys of its key
 //! head, `2 · t · key_features`, shared by the value heads grouped under it; `t · value_features`
-//! values and outputs; two rates a position; the state read once and each kept state written
-//! once, `key_features · value_features` each.
+//! values and outputs; two rates a position, and under the additive rule one skip a value head; the
+//! state read once and each kept state written once, `key_features · value_features` each.
 
 mod blueprint;
 mod launch;

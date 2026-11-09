@@ -1,7 +1,7 @@
 use super::{RecurrenceWalkSpec, RecurrenceWalkStrategy};
 use crate::kernels::walk::{
-    CubeDeltaWalkRoutine, RecurrenceWalkInputs, RecurrenceWalkRoutine, RecurrenceWalkStateInputs,
-    RecurrenceWalkStateLayout, launch_tuned, serves,
+    CubeAdditiveWalkRoutine, CubeDeltaWalkRoutine, RecurrenceWalkInputs, RecurrenceWalkRoutine,
+    RecurrenceWalkStateInputs, RecurrenceWalkStateLayout, UpdateRuleInputs, launch_tuned, serves,
 };
 use core::num::NonZeroUsize;
 use cubecl::benchmark::{Benchmark, ProfileDuration, TimingMethod};
@@ -13,6 +13,7 @@ use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::{Device, future};
 use cubek_matmul::kernels::tensor::PlainTensor;
+use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use cubek_std::Hardware;
 use cubek_std::autotune::GroupPriority;
 use cubek_test_utils::{RunSamples, TestInput};
@@ -140,6 +141,7 @@ impl Benchmark for RecurrenceWalkBench {
             batch,
             positions,
             heads,
+            rule,
             state,
         } = self.spec;
         let (b, t, kh, h) = (batch, positions, heads.key_heads, heads.value_heads());
@@ -171,25 +173,35 @@ impl Benchmark for RecurrenceWalkBench {
             value: self.uniform(vec![b, t, h, heads.value_features], 2, -1.0, 1.0),
             rates: self.rates([b, t, h]),
             state,
+            update: match rule {
+                UpdateRule::Delta => UpdateRuleInputs::Delta,
+                UpdateRule::Additive => UpdateRuleInputs::Additive {
+                    skip: self.uniform(vec![h], 6, 0.5, 1.5),
+                },
+            },
             output_element: f32::elem_type_native(),
         }
     }
 
     fn execute(&self, inputs: Self::Input) -> Result<(), String> {
         let inputs = self.rotation.turned(inputs);
+        let rule = self.spec.rule;
         match self.strategy {
             RecurrenceWalkStrategy::CubeLead => {
                 let hw = Hardware::from_client(&self.client);
-                CubeDeltaWalkRoutine
-                    .launch_lead_on(&hw, inputs)
-                    .map(|_| ())
-                    .map_err(|why| format!("the lead does not serve this problem: {why:?}"))
+                match rule {
+                    UpdateRule::Delta => CubeDeltaWalkRoutine.launch_lead_on(&hw, inputs),
+                    UpdateRule::Additive => CubeAdditiveWalkRoutine.launch_lead_on(&hw, inputs),
+                }
+                .map(|_| ())
+                .map_err(|why| format!("the lead does not serve this problem: {why:?}"))
             }
             RecurrenceWalkStrategy::Tuned => {
                 let hw = Hardware::from_client(&self.client);
                 serves(
                     &hw,
                     self.spec.heads,
+                    rule,
                     self.spec.state.into(),
                     f32::elem_type_native(),
                 )

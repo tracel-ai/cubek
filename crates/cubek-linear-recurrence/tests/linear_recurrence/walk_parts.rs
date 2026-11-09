@@ -11,6 +11,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_linear_recurrence::kernels::walk::{
     CubeDeltaWalkRoutine, CubeWalkRoutineSettings, RecurrenceWalkTensors,
 };
+use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use cubek_microkernel::linear_recurrence::walk::cube::{
     CubeWalkMicrokernelSettings, HeldState, HeldStateShape, UnitPartials,
 };
@@ -156,7 +157,8 @@ fn probe_delta(column: usize) -> f64 {
 }
 
 /// One cube's runs load their state, leave each unit's recall and answer partials of the first
-/// position in `dump`, write a fixed delta, and keep the states.
+/// position in `dump`, write a fixed delta, and keep the states; a second load of the state then
+/// decays and writes that delta in one pass, and leaves its answer.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn held_state_part<N: Size>(
@@ -184,7 +186,7 @@ fn held_state_part<N: Size>(
             for step in unit.walk() {
                 let position = step.coord(POSITION);
                 let (keys, queries) = (key.at(&step), query.at(&step));
-                let base = (origin / columns * units + slot) * comptime!(2 * columns);
+                let base = (origin / columns * units + slot) * comptime!(3 * columns);
                 held.decay_and_recall(&keys, PROBE_DECAY, &mut partials);
                 if position == 0 {
                     #[unroll]
@@ -214,6 +216,22 @@ fn held_state_part<N: Size>(
                         #[unroll]
                         for lane in 0..width {
                             dump[base + columns + part * width + lane] =
+                                partials.get(part).extract(lane);
+                        }
+                    }
+                    let mut fused = HeldState::<N>::load(&state.at(&unit), false, shape);
+                    fused.decay_write_and_answer(
+                        &keys,
+                        &queries,
+                        PROBE_DECAY,
+                        &write,
+                        &mut partials,
+                    );
+                    #[unroll]
+                    for part in 0..parts {
+                        #[unroll]
+                        for lane in 0..width {
+                            dump[base + 2 * columns + part * width + lane] =
                                 partials.get(part).extract(lane);
                         }
                     }
@@ -259,8 +277,8 @@ fn held_state_probe<N: Size>(
 }
 
 /// Heads whose key rows the last units overhang, a prime head, and a wide one: every unit's
-/// partials of the first position, before and after the write, and the states the walk keeps,
-/// against the host.
+/// partials of the first position, before and after the write and after the fused decay and
+/// write, and the states the walk keeps, against the host.
 #[test]
 fn held_state_recalls_answers_and_writes_like_the_host() {
     let client = cubecl::test_device().client();
@@ -276,6 +294,7 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
                 value_features,
             },
             kept: 3,
+            rule: UpdateRule::Delta,
             masked: vec![],
         };
         for settings in [
@@ -296,7 +315,7 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
             let shape = blueprint.microkernel.shape;
             let columns = shape.columns();
             let runs = value_features / columns;
-            let stride = 2 * columns;
+            let stride = 3 * columns;
             let len = runs * shape.units() * stride;
             let dump = client.create(Bytes::from_elems(vec![f32::NAN; len]));
             let binding = tensors.bind(&blueprint, &grid);
@@ -335,6 +354,7 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
                             expected[c] += decayed * k0[r] as f64;
                             let written = decayed + k0[r] as f64 * probe_delta(column);
                             expected[columns + c] += written * q0[r] as f64;
+                            expected[2 * columns + c] += written * q0[r] as f64;
                         }
                     }
                     let base = (run * shape.units() + unit) * stride;

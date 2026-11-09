@@ -1,3 +1,4 @@
+use super::UpdateRule;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 
 /// One of the operands of the walk.
@@ -23,27 +24,25 @@ pub enum RecurrenceWalkOperand {
     /// `[kept_state, batch, key_head, head_in_group, key_feature, value_feature]`: the states after the
     /// walk's last positions, oldest first.
     Kept,
+    /// `[key_head, head_in_group]`: the weight of the value added to what a position reads, one
+    /// scalar a value head: the additive rule's.
+    Skip,
 }
 
 impl RecurrenceWalkOperand {
-    /// Every operand.
-    pub const ALL: [Self; 7] = [
-        Self::Query,
-        Self::Key,
-        Self::Value,
-        Self::Rates,
-        Self::State,
-        Self::Out,
-        Self::Kept,
-    ];
-
     /// The operands a line of value columns runs along.
     pub const COLUMNS: [Self; 4] = [Self::Value, Self::State, Self::Out, Self::Kept];
 
     /// What every microkernel of the walk requires of the operands, an owner holding `columns` of a
     /// head's value columns over `rows` of its key rows a unit: the columns and the rows are read
-    /// in lines of one width, so the width divides both; the rates are read a scalar at a time.
-    pub fn require(columns: usize, rows: usize, vectorization: &mut Vectorization<Self>) {
+    /// in lines of one width, so the width divides both; the rates, and the skip of the additive
+    /// `rule`, are read a scalar at a time.
+    pub fn require(
+        columns: usize,
+        rows: usize,
+        rule: UpdateRule,
+        vectorization: &mut Vectorization<Self>,
+    ) {
         for operand in Self::COLUMNS {
             vectorization.require(VectorRequirement::Access {
                 operand,
@@ -64,9 +63,9 @@ impl RecurrenceWalkOperand {
                 with: operand,
             });
         }
-        vectorization.require(VectorRequirement::Elementwise {
-            operand: Self::Rates,
-        });
+        for &operand in [Self::Rates].iter().chain(rule.operands()) {
+            vectorization.require(VectorRequirement::Elementwise { operand });
+        }
     }
 }
 
@@ -85,6 +84,7 @@ pub struct RecurrenceWalkOperandMap<T> {
     pub state: T,
     pub out: T,
     pub kept: T,
+    pub skip: T,
 }
 
 impl<T: Copy> RecurrenceWalkOperandMap<T> {
@@ -98,6 +98,7 @@ impl<T: Copy> RecurrenceWalkOperandMap<T> {
             state: value,
             out: value,
             kept: value,
+            skip: value,
         }
     }
 
@@ -111,6 +112,7 @@ impl<T: Copy> RecurrenceWalkOperandMap<T> {
             RecurrenceWalkOperand::State => self.state,
             RecurrenceWalkOperand::Out => self.out,
             RecurrenceWalkOperand::Kept => self.kept,
+            RecurrenceWalkOperand::Skip => self.skip,
         }
     }
 }

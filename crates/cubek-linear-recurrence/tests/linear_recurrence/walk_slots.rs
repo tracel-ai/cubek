@@ -17,13 +17,12 @@ use cubecl::server::Handle;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::metadata::Metadata;
 use cubek_linear_recurrence::kernels::walk::{
-    CubeDeltaWalkRoutine, CubeWalkRoutineSettings, RecurrenceWalkInputs, RecurrenceWalkOutputs,
-    RecurrenceWalkStateInputs,
+    CubeWalkRoutineSettings, RecurrenceWalkInputs, RecurrenceWalkOutputs, RecurrenceWalkStateInputs,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
+use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use cubek_std::Hardware;
-use cubek_std::routine::Routine;
 
 /// How a store lies in its buffer: the gap after each state row, the gap after each head's state,
 /// the gap after each slot's heads, and the elements its view starts past its buffer's start.
@@ -106,6 +105,7 @@ impl SlotCase {
                     value_features,
                 },
                 kept: 1,
+                rule: UpdateRule::Delta,
                 masked: masked.to_vec(),
             },
             slots,
@@ -133,8 +133,24 @@ impl SlotCase {
 
 /// A decode step of a many-headed layer on shuffled slots with a fresh row, three positions on
 /// shuffled slots, a group of three over primes, heads that are their own key heads, an odd value
-/// width, masked positions, and more slots than any row holds.
+/// width, masked positions, and more slots than any row holds, each walked by both update rules.
 fn cases() -> Vec<SlotCase> {
+    let delta = delta_cases();
+    let additive = delta
+        .iter()
+        .cloned()
+        .map(|slotted| SlotCase {
+            case: Case {
+                rule: UpdateRule::Additive,
+                ..slotted.case.clone()
+            },
+            ..slotted
+        })
+        .collect::<Vec<_>>();
+    delta.into_iter().chain(additive).collect()
+}
+
+fn delta_cases() -> Vec<SlotCase> {
     vec![
         SlotCase::new(1, (16, 3, 128, 128), 6, &[(4, 9), (1, 3), (2, 1)], &[]),
         SlotCase::new(1, (4, 3, 128, 128), 5, &[(3, 2), (1, 0), (4, 7)], &[]),
@@ -365,8 +381,7 @@ impl SlotCase {
 fn the_slots_walk_matches_the_reference() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    let settings: Vec<_> = CubeDeltaWalkRoutine
-        .settings(&hw)
+    let settings: Vec<_> = CubeWalkRoutineSettings::listed()
         .into_iter()
         .chain([CubeWalkRoutineSettings::FLOOR])
         .collect();

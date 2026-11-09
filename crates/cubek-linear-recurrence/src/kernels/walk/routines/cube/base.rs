@@ -1,5 +1,5 @@
-//! What the cube routines share: how a cube is placed over a problem and how the launch is
-//! estimated. A routine is a microkernel and these.
+//! What the cube routines of every update rule share: how a cube is placed over a problem and how
+//! the launch is estimated. A routine of one rule is a microkernel's rule and these.
 
 use crate::kernels::walk::{
     RECURRENCE_WALK_ELEMENT, RecurrenceWalkBlueprint, RecurrenceWalkProblem, settled_width,
@@ -7,10 +7,10 @@ use crate::kernels::walk::{
 use core::num::NonZeroUsize;
 use cubecl::tile::Levels;
 use cubecl::tile::launch::{Refusal, Vectorization};
-use cubek_microkernel::linear_recurrence::walk::RecurrenceWalkOperand;
 use cubek_microkernel::linear_recurrence::walk::cube::{
     CubeWalkMicrokernel, CubeWalkMicrokernelSettings, HeldStateShape, MAX_HELD_LINES_PER_UNIT,
 };
+use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, UpdateRule};
 use cubek_microkernel::linear_recurrence::{
     HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RATE, RecurrenceWalkPartitioning, VALUE_FEATURE,
 };
@@ -89,6 +89,7 @@ impl core::fmt::Display for CubeWalkRoutineSettings {
 ///
 /// # Errors
 ///
+/// [`RecurrenceWalkProblem::admit_rule`] for the rule `M` does not walk,
 /// [`RecurrenceWalkProblem::admit_launch`], then what the microkernel and the grid decline.
 pub(super) fn prepare<M>(
     hw: &Hardware,
@@ -98,12 +99,18 @@ pub(super) fn prepare<M>(
 where
     M: CubeWalkMicrokernel,
 {
+    problem.admit_rule(M::RULE)?;
     problem.admit_launch(hw)?;
     let heads = &problem.heads;
     // The width the operands bind at does not depend on the rows a unit holds, so it is settled
     // first, and the cells a unit holds are capped to the lines its registers bound at it.
     let mut vectorization = Vectorization::new();
-    RecurrenceWalkOperand::require(heads.columns(), heads.columns(), &mut vectorization);
+    RecurrenceWalkOperand::require(
+        heads.columns(),
+        heads.columns(),
+        M::RULE,
+        &mut vectorization,
+    );
     let width = settled_width(hw, problem, vectorization);
     let microkernel = M::best(
         hw,
@@ -140,7 +147,8 @@ where
 }
 
 /// Each cube reads its head's queries and keys and its runs' values once a position, its runs'
-/// state once, and writes their outputs and kept states once. Then its microkernel, for the work.
+/// state once and its head's skip, if the rule has one, and writes their outputs and kept states
+/// once. Then its microkernel, for the work.
 pub(super) fn estimate<M>(
     problem: &RecurrenceWalkProblem,
     blueprint: &RecurrenceWalkBlueprint<M>,
@@ -159,14 +167,18 @@ pub(super) fn estimate<M>(
     };
     let stream = |elements: usize, run: usize| stream_at(input_bytes, elements, run);
     let state = key_features * columns;
+    let mut reads = vec![
+        stream(2 * positions * key_features, key_features),
+        stream(positions * columns, columns),
+        stream(2 * positions, 2),
+        stream(state, columns),
+    ];
+    if M::RULE == UpdateRule::Additive {
+        reads.push(stream(1, 1));
+    }
     estimate.staging = Some(CubeStaging {
-        operations: (7 * positions * state) as f64,
-        reads: vec![
-            stream(2 * positions * key_features, key_features),
-            stream(positions * columns, columns),
-            stream(2 * positions, 2),
-            stream(state, columns),
-        ],
+        operations: (problem.cell_ops() * positions * state) as f64,
+        reads,
         writes: vec![
             stream_at(problem.output_element.size(), positions * columns, columns),
             stream(problem.state.kept().get() * state, columns),
@@ -183,18 +195,24 @@ pub(super) fn estimate<M>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::refusals::RECURRENCE_WALK_RULE_NOT_SERVED;
     use crate::kernels::walk::problem::fixtures::binding_enough;
-    use crate::kernels::walk::{CubeDeltaWalkRoutine, RecurrenceWalkStateLayout};
+    use crate::kernels::walk::{
+        CubeAdditiveWalkRoutine, CubeDeltaWalkRoutine, RecurrenceWalkStateLayout,
+    };
     use cubek_microkernel::linear_recurrence::RecurrenceHeads;
-    use cubek_microkernel::linear_recurrence::walk::cube::CubeDeltaWalkMicrokernel;
+    use cubek_microkernel::linear_recurrence::walk::UpdateRule;
+    use cubek_microkernel::linear_recurrence::walk::cube::{
+        CubeAdditiveWalkMicrokernel, CubeDeltaWalkMicrokernel,
+    };
     use cubek_std::devices;
     use cubek_std::microkernel::Microkernel;
     use cubek_std::routine::{EstimatedProblem, Routine};
 
-    /// The routine tests of one routine: its microkernel's refusals, the shapes its settings
-    /// place, and its estimates.
+    /// The routine tests of one update rule's routine: its microkernel's refusals, the shapes its
+    /// settings place, and its estimates.
     macro_rules! routine_tests {
-        ($name:ident, $routine:ident, $microkernel:ident) => {
+        ($name:ident, $routine:ident, $microkernel:ident, $rule:expr) => {
             mod $name {
                 use super::*;
                 fn walk(
@@ -214,6 +232,7 @@ mod tests {
                         batch,
                         positions,
                         heads,
+                        $rule,
                         RECURRENCE_WALK_ELEMENT,
                         RecurrenceWalkStateLayout::Owned {
                             kept: NonZeroUsize::new(kept).expect("a state is kept"),
@@ -480,6 +499,29 @@ mod tests {
                     assert!(prepared > 0);
                 }
 
+                /// A routine declines a problem of the other rule by name, before it places
+                /// anything.
+                #[test]
+                fn a_routine_declines_the_other_rule() {
+                    let hw = binding_enough(devices::h100());
+                    let mut problem = walk(1, 7, (2, 3, 128, 128), 1);
+                    assert!(
+                        $routine
+                            .prepare(&hw, &problem, &CubeWalkRoutineSettings::FLOOR)
+                            .is_ok()
+                    );
+                    problem.rule = match $rule {
+                        UpdateRule::Delta => UpdateRule::Additive,
+                        UpdateRule::Additive => UpdateRule::Delta,
+                    };
+                    assert_eq!(
+                        $routine
+                            .prepare(&hw, &problem, &CubeWalkRoutineSettings::FLOOR)
+                            .err(),
+                        Some(RECURRENCE_WALK_RULE_NOT_SERVED)
+                    );
+                }
+
                 /// The register budget at the default settings: the units, the rows a unit holds,
                 /// the runs a cube holds, and the shared memory of the two slices the units meet
                 /// through.
@@ -512,5 +554,16 @@ mod tests {
         };
     }
 
-    routine_tests!(delta, CubeDeltaWalkRoutine, CubeDeltaWalkMicrokernel);
+    routine_tests!(
+        delta,
+        CubeDeltaWalkRoutine,
+        CubeDeltaWalkMicrokernel,
+        UpdateRule::Delta
+    );
+    routine_tests!(
+        additive,
+        CubeAdditiveWalkRoutine,
+        CubeAdditiveWalkMicrokernel,
+        UpdateRule::Additive
+    );
 }

@@ -17,7 +17,7 @@ pub fn settled_width(
     problem: &RecurrenceWalkProblem,
     mut vectorization: Vectorization<RecurrenceWalkOperand>,
 ) -> usize {
-    for &operand in problem.state.operands() {
+    for operand in problem.operands() {
         let element = operand_element(operand, problem);
         vectorization.require(VectorRequirement::Aligned {
             operand,

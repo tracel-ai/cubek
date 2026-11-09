@@ -2,8 +2,8 @@
 
 use crate::kernels::walk::tune::key::RecurrenceWalkKey;
 use crate::kernels::walk::{
-    RecurrenceWalkBlueprint, RecurrenceWalkInputs, RecurrenceWalkOutputs, RecurrenceWalkProblem,
-    RecurrenceWalkRoutine, RecurrenceWalkTensors,
+    RecurrenceWalkBlueprint, RecurrenceWalkInputs, RecurrenceWalkOutputs, RecurrenceWalkRoutine,
+    RecurrenceWalkTensors,
 };
 use cubecl::CubeDim;
 use cubecl::tile::launch::Refusal;
@@ -76,7 +76,7 @@ where
     /// round, and may never be launched.
     fn prepared(&self, key: &RecurrenceWalkKey) -> Option<(RecurrenceWalkBlueprint<M>, Grid)> {
         self.routine
-            .prepare(&self.hw, &RecurrenceWalkProblem::from(key), &self.settings)
+            .prepare(&self.hw, &key.problem(R::RULE), &self.settings)
             .ok()
     }
 

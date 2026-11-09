@@ -3,8 +3,11 @@
 use crate::kernels::refusals::{
     RECURRENCE_WALK_BINDINGS_PAST_DEVICE, RECURRENCE_WALK_ELEMENT_NOT_FLOAT,
     RECURRENCE_WALK_ELEMENT_UNVERIFIED, RECURRENCE_WALK_HEADS_EMPTY,
+    RECURRENCE_WALK_RULE_NOT_SERVED,
 };
-use crate::kernels::walk::{CubeDeltaWalkRoutine, CubeWalkRoutineSettings};
+use crate::kernels::walk::{
+    CubeAdditiveWalkRoutine, CubeDeltaWalkRoutine, CubeWalkRoutineSettings,
+};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
@@ -12,7 +15,9 @@ use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Space};
 use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
-use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, RecurrenceWalkOperandMap};
+use cubek_microkernel::linear_recurrence::walk::{
+    RecurrenceWalkOperand, RecurrenceWalkOperandMap, UpdateRule,
+};
 use cubek_microkernel::linear_recurrence::{
     BATCH, HEAD_IN_GROUP, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, RATE, RecurrenceHeads,
     STORE_SLOT, VALUE_FEATURE,
@@ -32,7 +37,18 @@ const OUTPUT_ELEMENTS: [ElemType; 3] = [
     RECURRENCE_WALK_ELEMENT,
 ];
 
-/// The operands a walk in a store's slots binds: every one but the kept states.
+/// The operands a walk over states it owns binds: every one but the rule's.
+const OWNED_OPERANDS: [RecurrenceWalkOperand; 7] = [
+    RecurrenceWalkOperand::Query,
+    RecurrenceWalkOperand::Key,
+    RecurrenceWalkOperand::Value,
+    RecurrenceWalkOperand::Rates,
+    RecurrenceWalkOperand::State,
+    RecurrenceWalkOperand::Out,
+    RecurrenceWalkOperand::Kept,
+];
+
+/// The operands a walk in a store's slots binds: every one but the kept states and the rule's.
 const SLOTS_OPERANDS: [RecurrenceWalkOperand; 6] = [
     RecurrenceWalkOperand::Query,
     RecurrenceWalkOperand::Key,
@@ -77,7 +93,7 @@ impl RecurrenceWalkStateLayout {
     /// walk alone.
     pub fn operands(&self) -> &'static [RecurrenceWalkOperand] {
         match self {
-            Self::Owned { .. } => &RecurrenceWalkOperand::ALL,
+            Self::Owned { .. } => &OWNED_OPERANDS,
             Self::Slots { .. } => &SLOTS_OPERANDS,
         }
     }
@@ -128,14 +144,17 @@ impl From<RecurrenceWalkStateLayout> for RecurrenceWalkStateKind {
     }
 }
 
-/// The gated delta rule over `batch` sequences of `positions` positions, as the host describes it:
-/// `key_heads · heads_per_group` value heads, each reading the queries and keys of the key head it is
-/// grouped under.
+/// The recurrence of an update rule over `batch` sequences of `positions` positions, as the host
+/// describes it: `key_heads · heads_per_group` value heads, each reading the queries and keys of
+/// the key head it is grouped under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecurrenceWalkProblem {
     pub batch: usize,
     pub positions: usize,
     pub heads: RecurrenceHeads,
+    /// How a position writes the state; the additive rule binds a skip beside the delta rule's
+    /// operands.
+    pub rule: UpdateRule,
     /// The element the output is written at, rounded from the `f32` read: the activations'.
     pub output_element: ElemType,
     /// Where the states live, and how many are kept.
@@ -177,6 +196,33 @@ impl RecurrenceWalkProblem {
         }
     }
 
+    /// The operands the walk binds: the state layout's, and the rule's.
+    pub fn operands(&self) -> impl Iterator<Item = RecurrenceWalkOperand> {
+        self.state
+            .operands()
+            .iter()
+            .chain(self.rule.operands())
+            .copied()
+    }
+
+    /// The buffers the walk binds, the metadata buffer included.
+    pub fn binding_buffers(&self) -> u32 {
+        self.state.binding_buffers() + self.rule.operands().len() as u32
+    }
+
+    /// Whether the routine of `rule` walks this problem.
+    ///
+    /// # Errors
+    ///
+    /// [`RECURRENCE_WALK_RULE_NOT_SERVED`] where the problem states the other rule.
+    pub fn admit_rule(&self, rule: UpdateRule) -> Result<(), Refusal> {
+        if self.rule == rule {
+            Ok(())
+        } else {
+            Err(RECURRENCE_WALK_RULE_NOT_SERVED)
+        }
+    }
+
     /// The first position whose state is kept.
     pub fn first_kept(&self) -> usize {
         self.positions - self.state.kept().get()
@@ -201,24 +247,26 @@ impl RecurrenceWalkProblem {
         {
             return Err(RECURRENCE_WALK_HEADS_EMPTY);
         }
-        if self.state.binding_buffers() > hw.properties.hardware.max_bindings {
+        if self.binding_buffers() > hw.properties.hardware.max_bindings {
             return Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE);
         }
         Ok(())
     }
 
-    /// Whether a device launches the walk at all: the floor, the walk at one run a cube and the
-    /// fewest registers, preparing, which includes [`admit_launch`](Self::admit_launch). Every
-    /// routine's guarantee rests on it, and a head too wide for the floor is declined by the
-    /// refusal that names what it overran.
+    /// Whether a device launches the walk at all: the floor of its rule's routine, the walk at one
+    /// run a cube and the fewest registers, preparing, which includes
+    /// [`admit_launch`](Self::admit_launch). Every routine's guarantee rests on it, and a head too
+    /// wide for the floor is declined by the refusal that names what it overran.
     ///
     /// # Errors
     ///
     /// What the floor declines, [`admit_launch`](Self::admit_launch)'s among them.
     pub fn admit(&self, hw: &Hardware) -> Result<(), Refusal> {
-        CubeDeltaWalkRoutine
-            .prepare(hw, self, &CubeWalkRoutineSettings::FLOOR)
-            .map(|_| ())
+        let floor = &CubeWalkRoutineSettings::FLOOR;
+        match self.rule {
+            UpdateRule::Delta => CubeDeltaWalkRoutine.prepare(hw, self, floor).map(|_| ()),
+            UpdateRule::Additive => CubeAdditiveWalkRoutine.prepare(hw, self, floor).map(|_| ()),
+        }
     }
 
     /// Every axis of the problem at its extent: what a routine partitions. The kept states sit
@@ -249,6 +297,7 @@ impl RecurrenceWalkProblem {
         batch: usize,
         positions: usize,
         heads: RecurrenceHeads,
+        rule: UpdateRule,
         output_element: ElemType,
         state: RecurrenceWalkStateLayout,
     ) -> Self {
@@ -264,6 +313,7 @@ impl RecurrenceWalkProblem {
             batch,
             positions,
             heads,
+            rule,
             output_element,
             state,
             alignments: RecurrenceWalkOperandMap {
@@ -290,8 +340,21 @@ impl RecurrenceWalkProblem {
                     ]),
                     RecurrenceWalkStateLayout::Slots { .. } => ElemAlignment::ONE,
                 },
+                skip: match rule {
+                    UpdateRule::Additive => rows(&[key_heads, heads_per_group]),
+                    UpdateRule::Delta => ElemAlignment::ONE,
+                },
             },
             start_bytes: RecurrenceWalkOperandMap::splat(0),
+        }
+    }
+
+    /// Operations a position makes on a cell of the state: the delta rule's decay, recall, write
+    /// and read, the additive rule's decay, write and read.
+    pub fn cell_ops(&self) -> usize {
+        match self.rule {
+            UpdateRule::Delta => 7,
+            UpdateRule::Additive => 5,
         }
     }
 
@@ -302,9 +365,9 @@ impl RecurrenceWalkProblem {
 }
 
 impl EstimatedProblem for RecurrenceWalkProblem {
-    /// Each key head's queries and keys, each head's values, rates and outputs, the state read
-    /// once and each kept state written once; per head and position, the decay, the recall, the
-    /// write and the read are each a pass over the state.
+    /// Each key head's queries and keys, each head's values, rates and outputs, the state read once
+    /// and each kept state written once; per head and position, the decay, the recall (the delta
+    /// rule's), the write and the read are each a pass over the state.
     fn demand(&self) -> Work {
         let heads = &self.heads;
         let (value_heads, positions) = (self.batch * heads.value_heads(), self.positions);
@@ -313,9 +376,17 @@ impl EstimatedProblem for RecurrenceWalkProblem {
         let valued = value_heads * positions * (heads.value_features + 2);
         let read = value_heads * positions * heads.value_features * self.output_element.size();
         let states = value_heads * (1 + self.state.kept().get()) * self.state_bytes();
+        let skipped = match self.rule {
+            UpdateRule::Delta => 0,
+            UpdateRule::Additive => value_heads * input_bytes,
+        };
         Work {
-            compute_ops: 7 * value_heads * positions * heads.key_features * heads.value_features,
-            bytes: (keyed + valued) * input_bytes + read + states,
+            compute_ops: self.cell_ops()
+                * value_heads
+                * positions
+                * heads.key_features
+                * heads.value_features,
+            bytes: (keyed + valued) * input_bytes + read + states + skipped,
         }
     }
 }
@@ -351,10 +422,15 @@ mod tests {
     }
 
     fn walk(heads: RecurrenceHeads) -> RecurrenceWalkProblem {
+        walk_of(UpdateRule::Delta, heads)
+    }
+
+    fn walk_of(rule: UpdateRule, heads: RecurrenceHeads) -> RecurrenceWalkProblem {
         RecurrenceWalkProblem::dense(
             1,
             8,
             heads,
+            rule,
             RECURRENCE_WALK_ELEMENT,
             RecurrenceWalkStateLayout::Owned {
                 kept: NonZeroUsize::MIN,
@@ -435,6 +511,53 @@ mod tests {
                 Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE)
             );
         }
+    }
+
+    /// The additive rule binds its skip beside the delta rule's operands, one buffer more,
+    /// whichever the layout of the states.
+    #[test]
+    fn the_additive_walk_binds_its_skip_beyond_the_delta_walk() {
+        let owned = |rule| walk_of(rule, sixteen_heads());
+        let slots = |rule| {
+            let mut problem = owned(rule);
+            problem.state = RecurrenceWalkStateLayout::Slots {
+                slots: NonZeroUsize::new(32).unwrap(),
+            };
+            problem
+        };
+        for (delta, additive, buffers) in [
+            (owned(UpdateRule::Delta), owned(UpdateRule::Additive), 8),
+            (slots(UpdateRule::Delta), slots(UpdateRule::Additive), 9),
+        ] {
+            assert_eq!(delta.binding_buffers(), buffers);
+            assert_eq!(additive.binding_buffers(), buffers + 1);
+            assert!(!delta.operands().any(|o| o == RecurrenceWalkOperand::Skip));
+            assert!(
+                additive
+                    .operands()
+                    .any(|o| o == RecurrenceWalkOperand::Skip)
+            );
+            let mut hw = devices::h100();
+            devices::topology(&mut hw).max_bindings = buffers;
+            assert_eq!(delta.admit(&hw), Ok(()));
+            assert_eq!(
+                additive.admit(&hw),
+                Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE)
+            );
+            devices::topology(&mut hw).max_bindings = buffers + 1;
+            assert_eq!(additive.admit(&hw), Ok(()));
+        }
+    }
+
+    /// A routine admits the rule it walks and declines the other by name.
+    #[test]
+    fn a_problem_admits_only_the_rule_it_states() {
+        let additive = walk_of(UpdateRule::Additive, sixteen_heads());
+        assert_eq!(additive.admit_rule(UpdateRule::Additive), Ok(()));
+        assert_eq!(
+            additive.admit_rule(UpdateRule::Delta),
+            Err(RECURRENCE_WALK_RULE_NOT_SERVED)
+        );
     }
 
     /// An output element that is packed or an integer is declined as not a float, a float the walk

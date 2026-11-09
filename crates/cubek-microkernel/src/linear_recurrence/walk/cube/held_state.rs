@@ -107,6 +107,45 @@ impl<N: Size> HeldState<N> {
         }
     }
 
+    /// The rows scaled by `factor`, `write` added along each row's key, and this unit's part of
+    /// what the written rows answer to the position's query (`Σ S[r] · q[r]`), left in `partials`.
+    /// `keys` and `queries` are windowed to the unit and the position.
+    pub fn decay_write_and_answer(
+        &mut self,
+        keys: &Tile,
+        queries: &Tile,
+        factor: f32,
+        write: &Array<Vector<f32, N>>,
+        partials: &mut UnitPartials<N>,
+    ) {
+        let width = N::value();
+        let (rows, columns) = comptime!((self.shape.rows(), self.shape.columns()));
+        let parts = comptime!(columns / width);
+
+        let key_lines = keys.flat::<f32, N>();
+        let query_lines = queries.flat::<f32, N>();
+        let factor_all = Vector::<f32, N>::cast_from(factor);
+
+        partials.clear();
+        #[unroll]
+        for chunk in 0..comptime!(rows / width) {
+            let key = key_lines.read(chunk);
+            let query = query_lines.read(chunk);
+            #[unroll]
+            for lane in 0..width {
+                let row = chunk * width + lane;
+                let k_all = Vector::<f32, N>::cast_from(key.extract(lane));
+                let q_all = Vector::<f32, N>::cast_from(query.extract(lane));
+                #[unroll]
+                for part in 0..parts {
+                    let written = self.lines[row * parts + part] * factor_all + k_all * write[part];
+                    self.lines[row * parts + part] = written;
+                    partials.add(part, written * q_all);
+                }
+            }
+        }
+    }
+
     /// The rows written as kept state `index` of `kept`, windowed to the unit: its states one
     /// after another, all the unit's rows of each.
     pub fn store(&self, kept: &mut Tile, index: usize) {
