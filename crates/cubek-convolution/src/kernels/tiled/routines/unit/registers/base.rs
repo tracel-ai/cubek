@@ -235,7 +235,7 @@ impl ConvRoutine<UnitRegistersMicrokernel> for UnitRegistersConvRoutine {
                 rhs,
                 out,
                 launcher.partitioning_arg(),
-                blueprint.microkernel.register_block(),
+                blueprint.microkernel.register_block().split_edge(),
                 problem.kernel_elements(),
             );
         }
