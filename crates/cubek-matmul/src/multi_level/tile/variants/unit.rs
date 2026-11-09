@@ -35,7 +35,7 @@ impl UnitTileLayout {
 #[cube]
 impl<E: Numeric> UnitTile<E> {
     pub fn new(#[comptime] layout: UnitTileLayout) -> UnitTile<E> {
-        let data = Array::new(comptime!(layout.num_rows * layout.num_cols) as usize);
+        let data = Array::new((layout.num_rows * layout.num_cols) as usize);
         UnitTile::<E> { data, layout }
     }
 

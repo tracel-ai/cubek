@@ -19,7 +19,7 @@ fn decompose_linear<I: FastDivmodInt>(pos: I, shape: &Sequence<FastDivmod<I>>) -
 
     #[unroll]
     for i in 0..rank {
-        let dim = comptime![rank - i - 1];
+        let dim = rank - i - 1;
         let (rem, offs_local) = shape.index(dim).div_mod(offs);
         out.push(offs_local);
         offs = rem;
@@ -224,7 +224,7 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
                 in_bounds,
                 weight_offs,
                 params,
-                comptime![kernel_dim + 1],
+                kernel_dim + 1,
                 has_padding,
                 accumulate_components,
                 base_v,

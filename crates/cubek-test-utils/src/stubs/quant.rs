@@ -203,7 +203,7 @@ fn field_code(q: f32, value: QuantValue) -> u32 {
 }
 
 /// Inverse of [`encode_packed_u32`]: unpack each `u32` into `num_quants` quant values, matching
-/// `unpack_q`.
+/// `unpack_cast_u32`.
 #[allow(dead_code)]
 fn decode_packed_u32(bytes: &[u8], scheme: &QuantScheme) -> Vec<f32> {
     let size_quant = scheme.size_bits_value();

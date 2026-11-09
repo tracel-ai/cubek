@@ -33,12 +33,14 @@ pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
     let width = N::value();
     let parts = comptime!(microkernel.columns / width);
     let mut write = Array::<Vector<f32, N>>::new(parts);
+
     for run in cube {
         for unit in run.walk() {
             let slot = unit.coord(KEY_FEATURE);
             let mut partials =
                 UnitPartials::<N>::new(run.coord(VALUE_FEATURE), slot, runs, microkernel);
             let mut held = HeldState::<N>::load(&state.read.at(&unit), state.fresh, microkernel);
+
             for step in unit.walk() {
                 let (keys, queries) = (key.at(&step), query.at(&step));
                 let value_window = value.at(&step);
@@ -48,12 +50,15 @@ pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
 
                 held.decay_and_recall(&keys, factor, &mut partials);
                 partials.sum(0usize);
+
                 #[unroll]
                 for part in 0..parts {
                     write[part] = (values.read(part) - partials.get(part)) * strength_all;
                 }
+
                 held.write_and_answer(&keys, &queries, &write, &mut partials);
                 partials.sum(1usize);
+
                 if slot == 0 {
                     let mut out_window = out.at(&step);
                     let mut writes = out_window.flat_mut::<E, N>();
@@ -62,6 +67,7 @@ pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
                         writes.write(part, Vector::<E, N>::cast_from(partials.get(part)));
                     }
                 }
+
                 let at = step.coord(POSITION);
                 if at >= state.first_kept {
                     held.store(&mut state.write.at(&unit), at - state.first_kept);

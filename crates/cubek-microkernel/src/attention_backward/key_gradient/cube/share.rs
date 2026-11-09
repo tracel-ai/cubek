@@ -64,19 +64,23 @@ impl QueryGradientShare {
             product.settings.along_m.get() * m,
             product.settings.along_n.get() * n
         ));
+
         let sum = self.sum.at(stage);
         let along_columns = comptime!(sum.space().extent(D) / columns);
+
         comptime!(assert!(
             rows == planes / along_columns * share,
             "QueryGradientShare::add_rows: {planes} planes split {rows} rows by {share} and the \
              head dim by {columns}"
         ));
+
         let at = plane.coord(S);
         let (row, column) = (at / along_columns, at % along_columns);
         let (own, run) = comptime!((Level::every(&[(Q, share)]), Level::every(&[(D, columns)])));
         let sum = sum.at(&sum.over(&own).region(row));
         let sum = sum.at(&sum.over(&run).region(column));
         let score_gradient = score_gradient.at(&score_gradient.over(&own).region(row));
+
         // The part is the plane's own, on the product's grid with no planes above it.
         let part = ScoreWindows::contract_held::<EA>(
             &score_gradient,
@@ -85,6 +89,7 @@ impl QueryGradientShare {
             product,
             comptime!(PlaneKeyGradientMicrokernel::grid_levels(product, &[])),
         );
+
         scale_rows::<EA>(&part, scale, share);
         ScoreWindows::store_cast(&sum, &part, product);
     }
@@ -119,12 +124,14 @@ impl<EA: Float> StageQueryGradientShare<EA> {
             PlaneFragmentDrain::Bounce => scratch,
             PlaneFragmentDrain::CellByCell | PlaneFragmentDrain::InLines => Scratch::None,
         });
+
         let mut part = self
             .sum
             .at(plane)
             .accumulator::<EA>(score_gradient, key, instruction, Semiring::SUM_PROD)
             .with_scratch(scratch);
         part.zero();
+
         plane_fragment_microkernel(
             plane,
             &part.clone(),

@@ -593,7 +593,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for Ar
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
         let num_args = comptime!(accumulator.args.len());
-        let args = if comptime!(num_args != 0) {
+        let args = if num_args != 0 {
             Value::new_single(accumulator.args[0][index])
         } else {
             Value::new_None()
@@ -609,7 +609,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for Ar
         accumulator.elements[index] = item.elements.item();
 
         let num_args = comptime!(accumulator.args.len());
-        if comptime!(num_args != 0) {
+        if num_args != 0 {
             let shared_args = &mut accumulator.args[0];
             shared_args[index] = item.args.item();
         }

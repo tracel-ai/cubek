@@ -11,6 +11,7 @@ pub mod extended;
 #[cfg(feature = "full")]
 pub mod full;
 pub mod im2col;
+mod split;
 pub mod unit;
 
 pub mod launcher_strategy;

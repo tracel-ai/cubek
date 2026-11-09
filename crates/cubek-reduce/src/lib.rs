@@ -16,6 +16,7 @@
 )]
 
 pub mod components;
+pub mod kernels;
 pub mod launch;
 pub mod routines;
 
@@ -180,7 +181,7 @@ pub fn reduce_with_indices(
     )
 }
 
-fn operation_name(operation: &ReduceOperationConfig) -> &'static str {
+pub(crate) fn operation_name(operation: &ReduceOperationConfig) -> &'static str {
     match operation {
         ReduceOperationConfig::Sum => "Sum",
         ReduceOperationConfig::Prod => "Prod",
@@ -198,7 +199,7 @@ fn operation_name(operation: &ReduceOperationConfig) -> &'static str {
 }
 
 // Check that the given axis is less than the rank of the input.
-fn validate_axis(rank: usize, axis: usize) -> Result<(), ReduceError> {
+pub(crate) fn validate_axis(rank: usize, axis: usize) -> Result<(), ReduceError> {
     if axis > rank {
         return Err(ReduceError::InvalidAxis { axis, rank });
     }
@@ -206,7 +207,7 @@ fn validate_axis(rank: usize, axis: usize) -> Result<(), ReduceError> {
 }
 
 // Check that the output shape match the input shape with the given axis set to 1.
-fn validate_shapes(
+pub(crate) fn validate_shapes(
     input_shape: &[usize],
     output_shape: &[usize],
     axis: usize,

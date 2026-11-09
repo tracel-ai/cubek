@@ -173,7 +173,7 @@ fn rfft_interleaved_kernel<F: Float>(
         FftNormalization::ByN => F::new(1.0) / F::cast_from(n_fft),
         FftNormalization::Ortho => F::new(1.0) / F::cast_from(n_fft).sqrt(),
     };
-    let n_freq = comptime![n_fft / 2 + 1];
+    let n_freq = n_fft / 2 + 1;
     {
         let mut real = spectrum.view_mut(InterleavedBatchSignalLayout::new(
             &*spectrum, window, dim, 0usize,

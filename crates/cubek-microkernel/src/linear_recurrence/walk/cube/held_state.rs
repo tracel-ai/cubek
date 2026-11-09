@@ -25,20 +25,23 @@ impl<N: Size> HeldState<N> {
         let width = N::value();
         let (rows, columns) = comptime!((microkernel.rows, microkernel.columns));
         let parts = comptime!(columns / width);
+
         let reads = state.flat::<f32, N>();
         let zero = Vector::<f32, N>::cast_from(0.0f32);
-        let mut lines = Array::<Vector<f32, N>>::new(comptime!(rows * parts));
+        let mut lines = Array::<Vector<f32, N>>::new(rows * parts);
+
         if fresh {
             #[unroll]
-            for line in 0..comptime!(rows * parts) {
+            for line in 0..(rows * parts) {
                 lines[line] = zero;
             }
         } else {
             #[unroll]
-            for line in 0..comptime!(rows * parts) {
+            for line in 0..(rows * parts) {
                 lines[line] = reads.read(line);
             }
         }
+
         HeldState::<N> { lines, microkernel }
     }
 
@@ -49,8 +52,10 @@ impl<N: Size> HeldState<N> {
         let width = N::value();
         let (rows, columns) = comptime!((self.microkernel.rows, self.microkernel.columns));
         let parts = comptime!(columns / width);
+
         let key_lines = keys.flat::<f32, N>();
         let factor_all = Vector::<f32, N>::cast_from(factor);
+
         partials.clear();
         #[unroll]
         for chunk in 0..comptime!(rows / width) {
@@ -82,8 +87,10 @@ impl<N: Size> HeldState<N> {
         let width = N::value();
         let (rows, columns) = comptime!((self.microkernel.rows, self.microkernel.columns));
         let parts = comptime!(columns / width);
+
         let key_lines = keys.flat::<f32, N>();
         let query_lines = queries.flat::<f32, N>();
+
         partials.clear();
         #[unroll]
         for chunk in 0..comptime!(rows / width) {
@@ -110,10 +117,11 @@ impl<N: Size> HeldState<N> {
         let width = N::value();
         let (rows, columns) = comptime!((self.microkernel.rows, self.microkernel.columns));
         let parts = comptime!(columns / width);
+
         let mut writes = kept.flat_mut::<f32, N>();
         #[unroll]
-        for line in 0..comptime!(rows * parts) {
-            writes.write(index * comptime!(rows * parts) + line, self.lines[line]);
+        for line in 0..(rows * parts) {
+            writes.write(index * (rows * parts) + line, self.lines[line]);
         }
     }
 }

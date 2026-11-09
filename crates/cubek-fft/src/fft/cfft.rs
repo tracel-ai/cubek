@@ -437,7 +437,7 @@ fn cfft_four_step_radix1_kernel<F: Float>(
     // Post-twiddle and strided write. W_N^{k1 * n2} with the total-N phase
     // factor is the Cooley-Tukey tying factor between the two sub-FFTs.
     let sign = F::new(comptime!(f64::from(fft_mode.sign())));
-    let n_total = comptime![n1 * n2];
+    let n_total = n1 * n2;
     let two_pi = F::new(2.0 * PI);
 
     let mut k1 = UNIT_POS as usize;
@@ -538,7 +538,7 @@ fn cfft_four_step_transpose_kernel<F: Float>(
         terminate!();
     }
 
-    let m = comptime![n1 * n2];
+    let m = n1 * n2;
     let pos_u = pos;
     let inner = pos_u % m;
     let window = pos_u / m;

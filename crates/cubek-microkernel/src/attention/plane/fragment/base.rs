@@ -193,13 +193,14 @@ impl PlaneFragmentAttentionMicrokernel {
     }
 
     /// The value's instruction beside `score`, where the device offers it: the score's own
-    /// instruction where it is a cmma one, of any shape, read through the windows; else the
-    /// deepest manual `mma` a whole number of the score's fragments deep that the plane's `keys`
-    /// a stage divide into, which reads that run of the score's fragments in their registers as
-    /// its `A`, on 16-bit operands, where the device's `A` lays its cells where the accumulator
-    /// does ([`Hardware::accumulator_as_a`]; a `tf32` `A` never does). The deepest contracts the
-    /// keys in the fewest calls, and a shallower call takes as long: on an RTX PRO 6000 an
-    /// `m16n8k8` runs at half the rate of an `m16n8k16`.
+    /// instruction where it is a cmma one, of any shape, read through the windows; else a manual
+    /// `mma` exactly as deep as the plane's `keys` a stage, which reads the plane's row of score
+    /// fragments in their registers as its `A`, on 16-bit operands, where the device's `A` lays
+    /// its cells where the accumulator does ([`Hardware::accumulator_as_a`]; a `tf32` `A` never
+    /// does). The tile reads that row as the `A` of one instruction
+    /// (`cubecl-tile`'s `accumulators_as_a`), so where the device has no instruction that deep
+    /// (Metal's `8x8x8` under a row of more than one fragment) there is none, and the `mma` score
+    /// is not offered; a cmma score, read through the windows, still is.
     fn value_instruction(
         hw: &Hardware,
         score: PlaneFragmentInstruction,
@@ -208,18 +209,17 @@ impl PlaneFragmentAttentionMicrokernel {
         match score {
             PlaneFragmentInstruction::Cmma { .. } => Some(score),
             PlaneFragmentInstruction::Mma { shape, .. } if shape.a_type.size() == 2 => {
-                // The score's tile and elements, a whole number of its fragments deep.
-                let run = |value: &MmaConfig| {
+                // The score's tile and elements, as deep as the plane's keys.
+                let row = |value: &MmaConfig| {
                     MmaConfig {
                         k: shape.k,
                         ..*value
                     } == shape
-                        && value.k.is_multiple_of(shape.n)
-                        && keys.is_multiple_of(value.k as usize)
+                        && value.k as usize == keys
                 };
 
                 hw.accumulator_as_a
-                    .then(|| manual_mma(hw).filter(run).max_by_key(|value| value.k))
+                    .then(|| manual_mma(hw).find(row))
                     .flatten()
                     .map(PlaneFragmentInstruction::mma)
             }

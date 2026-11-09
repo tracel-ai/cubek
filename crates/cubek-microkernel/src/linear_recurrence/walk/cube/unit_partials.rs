@@ -32,9 +32,7 @@ impl<N: Size> UnitPartials<N> {
         let width = N::value();
         let parts = comptime!(microkernel.columns / width);
         UnitPartials::<N> {
-            shared: Shared::<[Vector<f32, N>]>::new_slice(comptime!(
-                2 * runs * microkernel.units * parts
-            )),
+            shared: Shared::<[Vector<f32, N>]>::new_slice(2 * runs * microkernel.units * parts),
             own: Array::<Vector<f32, N>>::new(parts),
             run,
             unit,
@@ -69,20 +67,24 @@ impl<N: Size> UnitPartials<N> {
     /// memory.
     pub fn sum(&mut self, #[comptime] slice: usize) {
         let units = comptime!(self.microkernel.units);
-        if comptime!(units > 1) {
+        if units > 1 {
             let width = N::value();
             let parts = comptime!(self.microkernel.columns / width);
+
             let mine = self.slot(slice, self.unit);
             #[unroll]
             for part in 0..parts {
                 self.shared[mine + part] = self.own[part];
             }
+
             sync_cube();
+
             let head = self.slot(slice, 0usize);
             #[unroll]
             for part in 0..parts {
                 self.own[part] = self.shared[head + part];
             }
+
             for other in 1..units {
                 let at = self.slot(slice, other);
                 #[unroll]
