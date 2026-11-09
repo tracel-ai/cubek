@@ -2,8 +2,8 @@
 
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
-    AttentionRoutineProblem, AttentionScoring, KvSource, PAGED_PACKED_UNREAD,
-    PackedAttentionCache, QueryAxis,
+    AttentionRoutineProblem, AttentionScoring, KvSource, PAGED_PACKED_UNREAD, PackedAttentionCache,
+    QueryAxis,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
