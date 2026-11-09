@@ -58,21 +58,17 @@ impl ConvTuneKey {
             .unwrap_or(1)
     }
 
-    /// Where a candidate whose prepared launch is `partitioning` is tried on this problem: the
-    /// first of every candidate whose cuts the problem affords, lowered for what the launch
-    /// wastes and what it leaves idle. Arithmetic over the key's extents and the cube's box,
-    /// never a statement about speed.
-    ///
-    /// - The cells the boxes cover past the output's edge, in eighths of the output: a
-    ///   convolution reads each input many times, so the instruction is what it waits on, and a
-    ///   masked cell is a cell of it.
-    /// - The halvings the grid's cubes fall short of the device's workers, where it says how many
-    ///   it has.
-    /// - Where the grid fills the device, the times the rhs is read again by the boxes over the
-    ///   output positions: a box covering more positions reads it less.
-    /// - A ring of one stage, by the stages the walk has to fill one after another: a second in
-    ///   flight is what overlaps them.
-    fn priority(&self, hw: &Hardware, partitioning: &ConvPartitioning) -> CandidatePriority {
+    /// Where a candidate launching `partitioning` in cubes of `units` units is tried: first,
+    /// lowered by the doublings its boxes cover past the output's edge, the doublings its grid
+    /// falls short of filling the device, the doublings the boxes read the rhs again, and, at a
+    /// ring of one stage, the doublings of stages it fills one after another. Arithmetic over the
+    /// key's extents, never a statement about speed.
+    fn priority(
+        &self,
+        hw: &Hardware,
+        partitioning: &ConvPartitioning,
+        units: usize,
+    ) -> CandidatePriority {
         let problem = ConvProblem::from(self);
         let roles = problem.operation.roles();
         let axes = roles.axes();
@@ -86,13 +82,15 @@ impl ConvTuneKey {
         let boxes = [0, 1, 2].map(|axis| extents[axis].div_ceil(cuts[axis]));
         let covered: usize = (0..3).map(|axis| boxes[axis] * cuts[axis]).product();
         let work: usize = extents.iter().product();
-        let masked = ((covered - work) * 8 / work.max(1)) as u32;
+        let masked = (covered / work.max(1)).max(1).ilog2();
         let cubes = boxes.iter().product::<usize>() * problem.extent(roles.batch());
-        let (idle, reuse) = match hw.workers() {
-            None => (0, 0),
-            Some(workers) if cubes < workers as usize => ((workers as usize / cubes).ilog2(), 0),
-            Some(_) => (0, (boxes[0] * boxes[1]).ilog2()),
-        };
+        let idle = hw.cubes_to_fill(units as u32).map_or(0, |wanted| {
+            (wanted as usize)
+                .div_ceil(cubes.max(1))
+                .next_power_of_two()
+                .ilog2()
+        });
+        let reuse = (boxes[0] * boxes[1]).ilog2();
         let ring = match partitioning.ring().stages_in_flight.get() {
             1 => partitioning.stages().max(1).ilog2(),
             _ => 0,
@@ -228,7 +226,9 @@ impl TuneCandidate for ConvCandidate {
     /// anything.
     fn priority(&self, key: &ConvTuneKey) -> CandidatePriority {
         match self.prepared(key) {
-            Some((blueprint, _)) => key.priority(&self.hw, &blueprint.partitioning),
+            Some((blueprint, cube)) => {
+                key.priority(&self.hw, &blueprint.partitioning, cube.num_elems() as usize)
+            }
             None => CandidatePriority::LAST,
         }
     }
@@ -352,12 +352,14 @@ mod tests {
         blueprint.partitioning.block().rows
     }
 
-    /// Seven 8-row instructions cover a map 56 wide whole, and read each weight stage once for it.
+    /// Seven 8-row instructions cover a map 56 wide whole, so that candidate is tried no later
+    /// than the lead, whose boxes overhang it.
     #[test]
-    fn a_map_56_wide_ranks_the_56_row_candidate_first() {
-        let key = key(8, [12, 58]);
-        let ranked = ranked(&cmma_8x32_only(), &key);
-        assert_eq!(rows(&ranked[0], &key), 56);
+    fn a_map_56_wide_is_tried_by_the_56_row_candidate_no_later_than_the_lead() {
+        let (hw, key) = (cmma_8x32_only(), key(8, [12, 58]));
+        let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
+        let lead = ConvSettings::new(8, ConvAlong::new(2, 2), ConvAlong::new(2, 2));
+        assert!(priority(CubeStagedConvRoutine::F7X1_P1X2_T8) >= priority(lead));
     }
 
     /// A map 7 wide and 7 tall is held by 8 rows, and by planes across its rows that share each
@@ -371,23 +373,23 @@ mod tests {
         assert!(first.grid.across.get() > 1, "{first}");
     }
 
-    /// A grid whose cubes cannot fill the device is tried after one that can.
+    /// The same setting over a grid too small to fill the device is tried after the one over a
+    /// grid that does.
     #[test]
     fn a_grid_short_of_the_device_is_tried_later() {
-        let (hw, key) = (cmma_8x32_only(), key(1, [9, 9]));
-        let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
-        let one_cube_of_planes = CubeStagedConvRoutine::F1X1_P1X1_T8_A7;
-        let seven_cubes = CubeStagedConvRoutine::F1X1_P1X2_T8;
-        assert!(priority(one_cube_of_planes) < priority(seven_cubes));
+        let hw = cmma_8x32_only();
+        let settings = CubeStagedConvRoutine::F1X1_P1X1_T8_A7;
+        let priority = |key| ConvCandidate::new(settings, &hw).priority(&key);
+        assert!(priority(key(1, [9, 9])) < priority(key(64, [9, 9])));
     }
 
-    /// Boxes covering cells past the map's edge are tried after those that tile it.
+    /// Boxes covering at least twice the map are tried after those that tile it.
     #[test]
     fn masked_cells_lower_the_priority() {
         let (hw, key) = (cmma_8x32_only(), key(8, [12, 58]));
         let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
-        let eight_wide = ConvSettings::new(8, ConvAlong::new(8, 1), ConvAlong::new(1, 2));
-        assert!(priority(eight_wide) < priority(CubeStagedConvRoutine::F7X1_P1X2_T8));
+        let overhanging = ConvSettings::new(8, ConvAlong::new(16, 1), ConvAlong::new(1, 2));
+        assert!(priority(overhanging) < priority(CubeStagedConvRoutine::F7X1_P1X2_T8));
     }
 
     /// A contraction of one stage compiles one launch at either ring, so the round keeps one; one
