@@ -25,7 +25,8 @@ pub const CONV_SETTINGS_NOT_UNIT: Refusal = Refusal::Declined {
 /// The routines a caller names, each at a setting or at the one its autotune finds fastest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConvRoutineKind {
-    /// [`CubeStagedConvRoutine`].
+    /// [`CubeStagedConvRoutine`], and where no setting is named on a device offering no plane
+    /// instruction, [`UnitRegistersConvRoutine`] in its place.
     CubeStaged,
     /// [`UnitRegistersConvRoutine`] at the first of its settings that serves the convolution.
     UnitRegisters,
@@ -56,6 +57,9 @@ impl ConvRoutineKind {
         match self {
             Self::CubeStaged => match settings {
                 Some(settings) => CubeStagedConvRoutine.launch_on(hw, tensors, settings),
+                None if CubeStagedConvRoutine.settings(hw).is_empty() => {
+                    UnitRegistersConvRoutine.launch_first_served(hw, tensors)
+                }
                 None => launch_tuned(hw, tensors),
             },
             Self::UnitRegisters => match settings {
