@@ -4,8 +4,9 @@ mod strategy;
 
 pub use benchmark::bench;
 pub use problem::{Distribution, RandomProblem, problems};
-pub use strategy::{RandomStrategy, strategies};
+pub use strategy::strategies;
 
+use crate::kernels::RandomStrategy;
 use cubecl::prelude::*;
 use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
 

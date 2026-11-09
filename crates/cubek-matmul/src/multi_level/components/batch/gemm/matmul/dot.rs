@@ -19,7 +19,6 @@ use crate::multi_level::components::batch::{
 /// Layout precondition: lhs is row-major [M, K], rhs is col-major [K, N]
 /// (i.e. K is the contiguous axis on both operands).
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_dot<
     L: CubePrimitive,
     R: CubePrimitive,

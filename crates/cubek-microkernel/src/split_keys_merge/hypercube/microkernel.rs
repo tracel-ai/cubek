@@ -11,7 +11,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// plus the box's, at zero; the box's last cube leaves it at zero again. The cube meets on
 /// `sync_storage` before it counts, and on one `sync_cube`.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
     slot_box: &SlotBox,
     slot_out: &mut Tensor<Vector<EA, N>>,

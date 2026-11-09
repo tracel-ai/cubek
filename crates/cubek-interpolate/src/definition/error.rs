@@ -8,29 +8,6 @@ pub enum InterpolateError {
     #[error("Unsupported interpolation mode: {0}")]
     UnsupportedMode(String),
 
-    #[error(
-        "Requested shared memory {requested} bytes exceeds the device limit of {available} bytes"
-    )]
-    SharedMemoryLimitExceeded { requested: usize, available: usize },
-
-    #[error("Shared memory residence is not supported on CPU")]
-    SharedMemoryUnsupportedOnCpu,
-
-    #[error("Requested {requested} units per cube exceeds the device limit of {available} units")]
-    UnitsPerCubeExceeded { requested: usize, available: usize },
-
-    #[error("Interpolation config must use at least one plane per cube")]
-    ZeroPlanesPerCube,
-
-    #[error("Interpolation config must use at least one row per plane")]
-    ZeroRowsPerPlane,
-
-    #[error("Interpolation config must use at least one column per unit")]
-    ZeroColsPerUnit,
-
-    #[error("Interpolation config channel block must contain at least one channel")]
-    ZeroChannelBlock,
-
     #[error("Tensor shape {shape:?} has a zero-sized dimension at axis {axis}")]
     ZeroDimension { shape: Vec<usize>, axis: usize },
 
