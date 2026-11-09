@@ -176,9 +176,8 @@ fn a_weight_backward_contracts_the_output_positions() {
     assert!(!blueprint.partitioning.overhangs(CI));
 }
 
-/// Planes across a map seven tall cover that many rows of it a cube, the last box overhanging
-/// where they do not divide it, and each costs the lhs stage its rows but the rhs stage nothing, so the stage grows less than
-/// across times.
+/// Planes across cover that many rows of the map a cube, the last box overhanging where they do not
+/// divide it. Each costs the lhs stage its rows and the rhs stage nothing.
 #[test]
 fn planes_across_share_the_rhs_stage_and_overhang_the_rows() {
     let narrow = problem("narrow_width");

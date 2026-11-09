@@ -250,8 +250,8 @@ cases! {
     ci_12_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
 }
 
-/// Planes across the output rows of a cube, over a map seven tall that no two or four divide, and
-/// a map with whole groups.
+/// Planes across the output rows of a cube, over a map whose rows they overhang, and one they
+/// divide.
 cases! {
     check_problem;
     narrow_cmma_f1x1_p1x2_t8_a2: pinned(Staged::F1X1_P1X2_T8.across(2)), &conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);

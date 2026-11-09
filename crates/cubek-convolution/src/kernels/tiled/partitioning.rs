@@ -264,9 +264,9 @@ impl ConvPartitioning {
             .rev()
             .find(|steps| total % steps == 0)
             .unwrap_or(1);
-        // A walk with no divisor in reach (a prime one) would run a stage a step. Its whole
-        // walk is one stage where that fits; a walk with a divisor keeps it, as a deeper stage
-        // than the divisor measured slower.
+        // A walk with no divisor in reach (a prime one) would run a stage a step, so its whole
+        // walk is one stage where that fits. The bounce window shares those bytes (the larger
+        // of the two is held), so it does not count here.
         let whole = (divisor == 1 && total > 1)
             .then_some(total)
             .filter(|&steps| tiles.block(steps * k).bytes(&problem.elements, tiles.ring) <= budget);
