@@ -10,6 +10,12 @@ pub const CMMA_STEP_ACROSS_TAPS: Refusal = Refusal::Declined {
     why: "a cmma fragment load over a step made of taps and channels faults with a misaligned address (CUDA 716), unresolved",
 };
 
+/// What a launch declines before preparing anything: a tiled tensor whose dims the view reorders,
+/// since the tiling labels the buffer's dims and would no longer match.
+pub const CONV_PERMUTED_TILED: Refusal = Refusal::Declined {
+    why: "the tiled convolution reorders a tensor's dims, which it cannot do to a tiled one",
+};
+
 /// What a launch computes. Every operation contracts the same seven-axis space through the same
 /// gathered input; only the roles of the axes move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -139,12 +145,6 @@ impl ConvRoles {
         permuted(out, self.out_dims)
     }
 }
-
-/// What a launch declines before preparing anything: a tiled tensor whose dims the view reorders,
-/// since the tiling labels the buffer's dims and would no longer match.
-pub const CONV_PERMUTED_TILED: Refusal = Refusal::Declined {
-    why: "the tiled convolution reorders a tensor's dims, which it cannot do to a tiled one",
-};
 
 fn permuted(mut tensor: TensorBinding, dims: [usize; 4]) -> Result<TensorBinding, Refusal> {
     if dims == [0, 1, 2, 3] {
