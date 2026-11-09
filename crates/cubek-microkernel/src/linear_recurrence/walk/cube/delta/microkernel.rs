@@ -1,5 +1,6 @@
 use super::base::CubeDeltaWalkMicrokernel;
 use crate::linear_recurrence::walk::cube::{HeldState, StateAccess, UnitPartials};
+use crate::linear_recurrence::walk::{DECAY_RATE, STRENGTH_RATE};
 use crate::linear_recurrence::{KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -21,8 +22,7 @@ pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
     query: &Tile,
     key: &Tile,
     value: &Tile,
-    decay: &Tile,
-    strength: &Tile,
+    rates: &Tile,
     state: &StateAccess,
     out: &Tile,
     #[comptime] microkernel: CubeDeltaWalkMicrokernel,
@@ -44,8 +44,11 @@ pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
                 let (keys, queries) = (key.at(&step), query.at(&step));
                 let value_window = value.at(&step);
                 let values = value_window.flat::<f32, N>();
-                let factor = f32::exp(scalar(&decay.at(&step)));
-                let strength_all = Vector::<f32, N>::cast_from(scalar(&strength.at(&step)));
+                let rates_window = rates.at(&step);
+                let rate = rates_window.flat::<f32, Const<1>>();
+                let factor = f32::exp(rate.read(DECAY_RATE).extract(0usize));
+                let strength_all =
+                    Vector::<f32, N>::cast_from(rate.read(STRENGTH_RATE).extract(0usize));
 
                 held.decay_and_recall(&keys, factor, &mut partials);
                 partials.sum();
@@ -74,10 +77,4 @@ pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
             }
         }
     }
-}
-
-/// The one value a position's window of a per-head scalar holds: its decay, or its strength.
-#[cube]
-fn scalar(window: &Tile) -> f32 {
-    window.flat::<f32, Const<1>>().read(0usize).extract(0usize)
 }

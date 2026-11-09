@@ -21,14 +21,6 @@ pub(crate) fn admit_on_device(hw: &Hardware, elements: [ElemType; 2]) -> Result<
     Ok(())
 }
 
-/// The buffers a walk needs a device to bind: one for each of its 8 operands, and one for the
-/// metadata buffer some runtimes bind beside them.
-pub const RECURRENCE_WALK_BINDING_BUFFERS: u32 = 8 + 1;
-
-/// The buffers a walk in a store's slots needs a device to bind: the seven operands it shares with
-/// the owned walk, the slot table and the lengths table, and the metadata buffer.
-pub const RECURRENCE_WALK_SLOTS_BINDING_BUFFERS: u32 = 9 + 1;
-
 /// What admission declines a problem with when it describes no head: a walk needs a key row and a
 /// value column to work on.
 pub const RECURRENCE_WALK_HEADS_EMPTY: Refusal = Refusal::Declined {

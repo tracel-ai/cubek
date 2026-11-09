@@ -105,7 +105,7 @@ fn measured(_key: &RecurrenceWalkKey, inputs: &RecurrenceWalkInputs) -> Recurren
     };
     let client = &inputs.client;
     let [_, heads, key_features, value_features] = store.shape().dims::<4>();
-    let rows = inputs.decay.shape().dims::<3>()[0];
+    let rows = inputs.rates.shape().dims::<4>()[0];
     let table = |entry: &dyn Fn(usize) -> u32| {
         let entries: Vec<u32> = (0..rows).map(entry).collect();
         PlainTensor::of_u32s(client, &[rows], &entries)
@@ -168,23 +168,28 @@ mod tests {
     }
 
     /// The floor is served wherever the problem is admitted, and a device that binds too few
-    /// buffers declines it by name.
+    /// buffers declines the problem it cannot bind by name: of the devices that bind eight, the
+    /// walk over owned states is served, the walk in slots is not.
     #[test]
     fn the_table_serves_what_admission_admits() {
         let h100 = running(devices::h100(), &[F32, F16]);
         for state in [owned(), RecurrenceWalkStateKind::Slots] {
             assert_eq!(serves(&h100, heads(), state, F32), Ok(()));
             assert_eq!(serves(&h100, heads(), state, F16), Ok(()));
+            let binds = RecurrenceWalkProblem::dense(1, 1, heads(), F32, state.layout())
+                .state
+                .binding_buffers();
             for hw in [
                 devices::wgpu_no_subgroups(),
                 devices::rdna_range(),
                 devices::strix_halo(),
             ] {
-                assert_eq!(
-                    serves(&running(hw.clone(), &[F32, F16]), heads(), state, F32),
-                    Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE),
-                    "{hw:?}"
-                );
+                let served = serves(&running(hw.clone(), &[F32, F16]), heads(), state, F32);
+                if binds > hw.properties.hardware.max_bindings {
+                    assert_eq!(served, Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE), "{hw:?}");
+                } else {
+                    assert_ne!(served, Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE), "{hw:?}");
+                }
             }
         }
     }

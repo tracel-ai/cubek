@@ -7,7 +7,10 @@ use core::num::NonZeroUsize;
 use cubecl::benchmark::{Benchmark, ProfileDuration, TimingMethod};
 use cubecl::client::Client;
 use cubecl::prelude::*;
+use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::Shape;
+use cubecl::zspace::metadata::Metadata;
+use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::{Device, future};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_std::Hardware;
@@ -96,6 +99,36 @@ impl RecurrenceWalkBench {
                 .generate_without_host_data(),
         )
     }
+
+    /// The rates of every position and head: a log decay in `[-1, -0.05)` then a strength in
+    /// `[0, 1)`, which keep the state bounded over a long walk.
+    fn rates(&self, [b, t, h]: [usize; 3]) -> PlainTensor {
+        let draw = |seed, low, high| {
+            TestInput::builder(self.client.clone(), Shape::from(vec![b, t, h]))
+                .dtype(f32::elem_type_native())
+                .uniform(seed, low, high)
+                .generate_with_f32_host_data()
+                .1
+        };
+        let (decay, strength) = (draw(11, -1.0, -0.05), draw(12, 0.0, 1.0));
+        let bytes: Vec<u8> = decay
+            .iter_indexed_f32()
+            .zip(strength.iter_indexed_f32())
+            .flat_map(|((_, decay), (_, strength))| [decay, strength])
+            .flat_map(f32::to_le_bytes)
+            .collect();
+        let shape = [b, t, h, 2];
+        let handle = self.client.create_from_slice(&bytes);
+        let meta = Metadata::new(
+            Shape::from(shape.to_vec()),
+            row_major_contiguous_strides(shape),
+        );
+        PlainTensor::of_handle(TensorHandle::from_metadata(
+            handle,
+            meta,
+            f32::elem_type_native(),
+        ))
+    }
 }
 
 impl Benchmark for RecurrenceWalkBench {
@@ -136,8 +169,7 @@ impl Benchmark for RecurrenceWalkBench {
             query: self.uniform(vec![b, t, kh, heads.key_features], 0, -0.09, 0.09),
             key: self.uniform(vec![b, t, kh, heads.key_features], 1, -0.09, 0.09),
             value: self.uniform(vec![b, t, h, heads.value_features], 2, -1.0, 1.0),
-            decay: self.uniform(vec![b, t, h], 3, -1.0, -0.05),
-            strength: self.uniform(vec![b, t, h], 4, 0.0, 1.0),
+            rates: self.rates([b, t, h]),
             state,
             output_element: f32::elem_type_native(),
         }

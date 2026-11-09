@@ -30,6 +30,9 @@ pub const HEAD_CHANNEL: Axis = Axis(11);
 /// A position of a stream the conv reads by tap: its context columns first, so a stream is
 /// `taps - 1` positions longer than the positions it convolves, and no level cuts it.
 pub const STREAM_POSITION: Axis = Axis(12);
+/// The two rates of a position and value head, the log of its decay at 0 and its strength at 1: no
+/// level cuts it.
+pub const RATE: Axis = Axis(13);
 
 /// How the walk places its microkernel's runs over a problem: a cube for every box of value
 /// columns of one head of one sequence, and inside the cube's box the levels the routine and its

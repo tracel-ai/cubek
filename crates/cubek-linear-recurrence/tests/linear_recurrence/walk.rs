@@ -231,8 +231,15 @@ impl Case {
             query: up(&[b, t, kh, heads.key_features], &operands.query),
             key: up(&[b, t, kh, heads.key_features], &operands.key),
             value: up(&[b, t, h, heads.value_features], &operands.value),
-            decay: up(&[b, t, h], &operands.decay),
-            strength: up(&[b, t, h], &operands.strength),
+            rates: up(
+                &[b, t, h, 2],
+                &operands
+                    .decay
+                    .iter()
+                    .zip(&operands.strength)
+                    .flat_map(|(&decay, &strength)| [decay, strength])
+                    .collect::<Vec<_>>(),
+            ),
             state: RecurrenceWalkStateInputs::Owned {
                 state: up(
                     &[b, h, heads.key_features, heads.value_features],

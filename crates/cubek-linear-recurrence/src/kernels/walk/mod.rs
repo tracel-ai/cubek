@@ -12,7 +12,7 @@
 //!
 //! **Traffic**, per sequence and value head over `t` positions: the queries and keys of its key
 //! head, `2 · t · key_features`, shared by the value heads grouped under it; `t · value_features`
-//! values and outputs; two scalars a position; the state read once and each kept state written
+//! values and outputs; two rates a position; the state read once and each kept state written
 //! once, `key_features · value_features` each.
 
 mod blueprint;

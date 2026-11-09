@@ -14,8 +14,7 @@ pub fn cube_delta_walk_kernel<E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    decay: &TileTensor<'_>,
-    strength: &TileTensor<'_>,
+    rates: &TileTensor<'_>,
     state: &TileTensor<'_>,
     out: &TileTensor<'_>,
     kept: ComptimeOption<&TileTensor<'static>>,
@@ -29,8 +28,7 @@ pub fn cube_delta_walk_kernel<E: Float, N: Size>(
     let query = query.tile(&partitioning);
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
-    let decay = decay.tile(&partitioning);
-    let strength = strength.tile(&partitioning);
+    let rates = rates.tile(&partitioning);
     let state = state.tile(&partitioning);
     let out = out.tile(&partitioning);
     let kept: ComptimeOption<Tile> = kept.map(|kept| kept.tile(&partitioning));
@@ -47,8 +45,7 @@ pub fn cube_delta_walk_kernel<E: Float, N: Size>(
             &query.at(&cube),
             &key.at(&cube),
             &value.at(&cube),
-            &decay.at(&cube),
-            &strength.at(&cube),
+            &rates.at(&cube),
             &access,
             &out.at(&cube),
             microkernel,

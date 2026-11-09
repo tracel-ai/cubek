@@ -11,15 +11,15 @@ use cubek_microkernel::linear_recurrence::walk::cube::{
     CubeDeltaWalkMicrokernel, CubeWalkMicrokernelSettings, MAX_HELD_LINES_PER_UNIT,
 };
 use cubek_microkernel::linear_recurrence::{
-    HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceWalkPartitioning, VALUE_FEATURE,
+    HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RATE, RecurrenceWalkPartitioning, VALUE_FEATURE,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// The walk with every run of a head's value columns held by a few units, a cube holding several
-/// runs of one head side by side. It reads no plane feature; it needs units, shared memory and 9
-/// bindings, 10 in a store's slots: this kind's floor.
+/// runs of one head side by side. It reads no plane feature; it needs units, shared memory and 8
+/// bindings, 9 in a store's slots: this kind's floor.
 ///
 /// A unit owns a tile of the run's key rows: the partitioning's leaf holds `rows` of them and its
 /// units level cuts `KEY_FEATURE` into one leaf for each of a run's `units` units, a power of two.
@@ -182,6 +182,7 @@ impl Routine for CubeDeltaWalkRoutine {
         let runs = settings.runs_of(hw, &microkernel, problem);
         let mut unit_axes = vec![
             (POSITION, 1),
+            (RATE, 2),
             (KEY_HEAD, 1),
             (HEAD_IN_GROUP, 1),
             (KEY_FEATURE, microkernel.shape.rows()),
@@ -225,8 +226,7 @@ impl RecurrenceWalkRoutine<CubeDeltaWalkMicrokernel> for CubeDeltaWalkRoutine {
                 binding.query,
                 binding.key,
                 binding.value,
-                binding.decay,
-                binding.strength,
+                binding.rates,
                 binding.state,
                 binding.out,
                 binding.kept.into(),

@@ -1,9 +1,8 @@
 //! The problem a routine computes.
 
 use crate::kernels::refusals::{
-    RECURRENCE_WALK_BINDING_BUFFERS, RECURRENCE_WALK_BINDINGS_PAST_DEVICE,
-    RECURRENCE_WALK_ELEMENT_NOT_FLOAT, RECURRENCE_WALK_ELEMENT_UNVERIFIED,
-    RECURRENCE_WALK_HEADS_EMPTY, RECURRENCE_WALK_SLOTS_BINDING_BUFFERS,
+    RECURRENCE_WALK_BINDINGS_PAST_DEVICE, RECURRENCE_WALK_ELEMENT_NOT_FLOAT,
+    RECURRENCE_WALK_ELEMENT_UNVERIFIED, RECURRENCE_WALK_HEADS_EMPTY,
 };
 use crate::kernels::walk::{CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings};
 use core::num::NonZeroUsize;
@@ -15,8 +14,8 @@ use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, RecurrenceWalkOperandMap};
 use cubek_microkernel::linear_recurrence::{
-    BATCH, HEAD_IN_GROUP, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceHeads, STORE_SLOT,
-    VALUE_FEATURE,
+    BATCH, HEAD_IN_GROUP, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, RATE, RecurrenceHeads,
+    STORE_SLOT, VALUE_FEATURE,
 };
 use cubek_std::Hardware;
 use cubek_std::routine::{EstimatedProblem, Routine};
@@ -34,12 +33,11 @@ const OUTPUT_ELEMENTS: [ElemType; 3] = [
 ];
 
 /// The operands a walk in a store's slots binds: every one but the kept states.
-const SLOTS_OPERANDS: [RecurrenceWalkOperand; 7] = [
+const SLOTS_OPERANDS: [RecurrenceWalkOperand; 6] = [
     RecurrenceWalkOperand::Query,
     RecurrenceWalkOperand::Key,
     RecurrenceWalkOperand::Value,
-    RecurrenceWalkOperand::Decay,
-    RecurrenceWalkOperand::Strength,
+    RecurrenceWalkOperand::Rates,
     RecurrenceWalkOperand::State,
     RecurrenceWalkOperand::Out,
 ];
@@ -65,12 +63,14 @@ impl RecurrenceWalkStateLayout {
         }
     }
 
-    /// The buffers a walk over this layout binds, the metadata buffer included.
+    /// The buffers a walk over this layout binds: one for each operand, the slot and lengths
+    /// tables of a store's slots, and the metadata buffer some runtimes bind beside them.
     pub fn binding_buffers(&self) -> u32 {
-        match self {
-            Self::Owned { .. } => RECURRENCE_WALK_BINDING_BUFFERS,
-            Self::Slots { .. } => RECURRENCE_WALK_SLOTS_BINDING_BUFFERS,
-        }
+        let tables = match self {
+            Self::Owned { .. } => 0,
+            Self::Slots { .. } => 2,
+        };
+        (self.operands().len() + tables + 1) as u32
     }
 
     /// The operands of the walk this layout binds: the kept states are an operand of the owned
@@ -228,6 +228,7 @@ impl RecurrenceWalkProblem {
         let mut axes = vec![
             (BATCH, self.batch),
             (POSITION, self.positions),
+            (RATE, 2),
             (KEY_HEAD, heads.key_heads),
             (HEAD_IN_GROUP, heads.heads_per_group),
             (KEY_FEATURE, heads.key_features),
@@ -269,8 +270,7 @@ impl RecurrenceWalkProblem {
                 query: rows(&[batch, positions, key_heads, key_features]),
                 key: rows(&[batch, positions, key_heads, key_features]),
                 value: rows(&[batch, positions, key_heads, heads_per_group, value_features]),
-                decay: rows(&[batch, positions, key_heads, heads_per_group]),
-                strength: rows(&[batch, positions, key_heads, heads_per_group]),
+                rates: rows(&[batch, positions, key_heads, heads_per_group, 2]),
                 state: rows(&[
                     state.store_axis().map_or(batch, |(_, slots)| slots),
                     key_heads,
@@ -302,7 +302,7 @@ impl RecurrenceWalkProblem {
 }
 
 impl EstimatedProblem for RecurrenceWalkProblem {
-    /// Each key head's queries and keys, each head's values, scalars and outputs, the state read
+    /// Each key head's queries and keys, each head's values, rates and outputs, the state read
     /// once and each kept state written once; per head and position, the decay, the recall, the
     /// write and the read are each a pass over the state.
     fn demand(&self) -> Work {
@@ -326,8 +326,8 @@ pub(crate) mod fixtures {
     use cubek_std::devices;
 
     /// `hw` as a device that binds as many buffers as the walk's launch does: the fixtures that
-    /// bind eight are what the admission tests decline, and the routine tests would otherwise
-    /// prepare on none of them.
+    /// bind eight decline the slots walk, and the routine tests would otherwise prepare it on
+    /// none of them.
     pub(crate) fn binding_enough(mut hw: Hardware) -> Hardware {
         devices::topology(&mut hw).max_bindings = 32;
         hw
@@ -362,11 +362,18 @@ mod tests {
         )
     }
 
-    /// The launch needs eight buffers and the metadata buffer: a device binding fewer declines it,
-    /// whichever routine would place it.
+    fn in_slots() -> RecurrenceWalkProblem {
+        let mut problem = walk(sixteen_heads());
+        problem.state = RecurrenceWalkStateLayout::Slots {
+            slots: NonZeroUsize::new(32).unwrap(),
+        };
+        problem
+    }
+
+    /// The launch needs seven buffers and the metadata buffer, the slots walk eight: a device
+    /// binding eight serves the first and declines the second, whichever routine would place it.
     #[test]
     fn a_device_binding_fewer_buffers_than_the_launch_is_declined() {
-        let problem = walk(sixteen_heads());
         for hw in [
             devices::wgpu_no_subgroups(),
             devices::rdna_range(),
@@ -377,49 +384,46 @@ mod tests {
                 "the fixture is one that binds eight"
             );
             assert_eq!(
-                problem.admit(&hw),
+                in_slots().admit(&hw),
+                Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE),
+                "{hw:?}"
+            );
+            assert_ne!(
+                walk(sixteen_heads()).admit(&hw),
                 Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE),
                 "{hw:?}"
             );
         }
-        assert_eq!(problem.admit(&devices::h100()), Ok(()));
+        assert_eq!(in_slots().admit(&devices::h100()), Ok(()));
     }
 
-    /// Eight operands and the metadata buffer: a device binding eight declines, nine admits.
+    /// Seven operands and the metadata buffer: a device binding seven declines, eight admits.
     #[test]
     fn the_metadata_buffer_counts_against_the_devices_bindings() {
         let problem = walk(sixteen_heads());
         let mut hw = devices::h100();
-        devices::topology(&mut hw).max_bindings = RECURRENCE_WALK_BINDING_BUFFERS - 1;
+        devices::topology(&mut hw).max_bindings = 7;
         assert_eq!(
             problem.admit(&hw),
             Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE)
         );
-        devices::topology(&mut hw).max_bindings = RECURRENCE_WALK_BINDING_BUFFERS;
+        devices::topology(&mut hw).max_bindings = 8;
         assert_eq!(problem.admit(&hw), Ok(()));
     }
 
-    fn in_slots() -> RecurrenceWalkProblem {
-        let mut problem = walk(sixteen_heads());
-        problem.state = RecurrenceWalkStateLayout::Slots {
-            slots: NonZeroUsize::new(32).unwrap(),
-        };
-        problem
-    }
-
-    /// The walk in a store's slots binds nine operands and the metadata buffer: a device binding
-    /// ten declines the one in a store's slots by name and admits the one over states it owns.
+    /// The walk in a store's slots binds eight operands and the metadata buffer: a device binding
+    /// eight declines the one in a store's slots by name and admits the one over states it owns.
     #[test]
     fn the_slots_walk_binds_one_buffer_more_than_the_owned_walk() {
         let problem = in_slots();
         let mut hw = devices::h100();
-        devices::topology(&mut hw).max_bindings = RECURRENCE_WALK_SLOTS_BINDING_BUFFERS - 1;
+        devices::topology(&mut hw).max_bindings = 8;
         assert_eq!(
             problem.admit(&hw),
             Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE)
         );
         assert_eq!(walk(sixteen_heads()).admit(&hw), Ok(()));
-        devices::topology(&mut hw).max_bindings = RECURRENCE_WALK_SLOTS_BINDING_BUFFERS;
+        devices::topology(&mut hw).max_bindings = 9;
         assert_eq!(problem.admit(&hw), Ok(()));
         for hw in [
             devices::wgpu_no_subgroups(),
