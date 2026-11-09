@@ -6,8 +6,10 @@ use crate::kernels::tiled::routines::test_support::{F32, cmma_only, nvidia, prob
 use crate::kernels::tiled::{
     CI, CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED, ConvOperation, ConvProblem, OH, OW, RW,
 };
+use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_microkernel::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentTransport};
+use cubek_std::devices::topology;
 use cubek_std::microkernel::KernelEstimate;
 use cubek_std::routine::EstimatedProblem;
 use cubek_std::routine::Routine;
@@ -195,6 +197,26 @@ fn planes_across_share_the_rhs_stage_and_overhang_the_rows() {
         assert!(bytes(&split) > bytes(&plain));
         assert!(bytes(&split) < across * bytes(&plain));
     }
+}
+
+/// A split holding more planes than a cube of the device spawns is refused by name before any
+/// launch, at either plane width.
+#[test]
+fn planes_across_past_the_cube_are_refused_by_name() {
+    let narrow = problem("narrow_width");
+    let settings = CubeStagedConvRoutine::GRID_8X32.across(7);
+    for (plane_width, most_units) in [(32, 256), (64, 512)] {
+        let mut hw = nvidia();
+        let device = topology(&mut hw);
+        device.plane_size_min = plane_width;
+        device.plane_size_max = plane_width;
+        device.max_units_per_cube = most_units;
+        assert!(matches!(
+            ROUTINE.prepare(&hw, &narrow, &settings).err(),
+            Some(Refusal::CubePastDevice { .. })
+        ));
+    }
+    assert!(ROUTINE.prepare(&nvidia(), &narrow, &settings).is_ok());
 }
 
 /// A map seven wide makes a weight backward step of two axes, which cmma serves as Mma does.
