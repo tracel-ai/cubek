@@ -164,6 +164,8 @@ problem_tests! {
     dilation_2_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [12, 12], [3, 3], ([1, 1], [2, 2], [2, 2]));
     unequal_strides_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [12, 15], [3, 3], ([1, 2], [1, 1], [1, 1]));
     non_square_kernel_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [10, 12], [3, 5], ([1, 1], [1, 2], [1, 1]));
+    unequal_dilation_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [12, 15], [3, 3], ([1, 1], [1, 2], [1, 2]));
+    unequal_dilation_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (64, 32), [12, 15], [3, 3], ([1, 1], [1, 2], [1, 2]));
 }
 
 /// One and five channels, which make a step of taps, over a batch of one.
@@ -286,6 +288,12 @@ fn bound(client: &Client, shape: [usize; 4], values: Vec<f32>, binding: Binding)
 /// The convolution of a 3x3 weight over a `[2, 6, 7, 64]` input bound as `input` and `weight` say,
 /// against the host's.
 fn check_bound(strategy_id: &str, input: Binding, weight: Binding) {
+    check_bound_into(strategy_id, (input, weight, Binding::Dense));
+}
+
+/// [`check_bound`] with the output bound as `out` says. It starts as a value no output holds, so
+/// a cell the kernel leaves alone shows.
+fn check_bound_into(strategy_id: &str, (input, weight, out): (Binding, Binding, Binding)) {
     let client = client();
     let (shape, filter) = ([2, 6, 7, 64], [32, 3, 3, 64]);
     let (input_values, weight_values) = (
@@ -293,10 +301,19 @@ fn check_bound(strategy_id: &str, input: Binding, weight: Binding) {
         exact_values(filter.iter().product(), 5),
     );
     let (expected, out_shape) = naive((&input_values, shape), (&weight_values, [32, 3, 3]), 1);
-    let out = TestInput::builder(client.clone(), out_shape.to_vec())
+    let cells: usize = out_shape.iter().product();
+    let lead = usize::from(matches!(out, Binding::Offset));
+    let storage = TestInput::builder(client.clone(), [lead + cells])
         .dtype(F16)
-        .zeros()
+        .custom(vec![100.0; lead + cells])
         .generate_without_host_data();
+    let [_, h, w, c] = out_shape;
+    let out = TensorHandle::new(
+        storage.handle.offset_start((lead * F16.size()) as u64),
+        out_shape.to_vec(),
+        Strides::new(&[h * w * c, w * c, c, 1]),
+        F16,
+    );
     let inputs = ConvolutionInputs::Forward {
         input: InputBinding::new(bound(&client, shape, input_values, input), F16),
         weight: InputBinding::new(bound(&client, filter, weight_values, weight), F16),
@@ -344,6 +361,21 @@ bound_tests! {
     sliced_input_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Sliced, Dense;
     permuted_input_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Permuted, Dense;
     permuted_weight_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Dense, Permuted;
+}
+
+/// An output that starts a buffer element in.
+macro_rules! bound_output_tests {
+    ($($name:ident: $strategy:literal;)*) => {
+        $(#[test]
+        fn $name() {
+            check_bound_into($strategy, (Binding::Dense, Binding::Dense, Binding::Offset));
+        })*
+    };
+}
+
+bound_output_tests! {
+    offset_output_cube_staged_cmma: "cube_staged_cmma_grid_2x2";
+    offset_output_cube_staged_mma: "cube_staged_mma_grid_2x2";
 }
 
 /// What the launch of these operands is refused with, as its message.
@@ -578,6 +610,7 @@ weight_grad_tests! {
     weight_grad_stride_2: conv(2, (64, 32), [6, 20], [3, 3], ([2, 2], [1, 1], [1, 1])), Dense, Dense;
     weight_grad_stride_2_no_padding: conv(2, (32, 32), [7, 21], [3, 3], ([2, 2], [0, 0], [1, 1])), Dense, Dense;
     weight_grad_dilation_2: conv(2, (64, 32), [8, 17], [3, 3], ([1, 2], [2, 2], [2, 2])), Dense, Dense;
+    weight_grad_unequal_dilation: conv(2, (64, 32), [8, 17], [3, 3], ([1, 1], [1, 2], [1, 2])), Dense, Dense;
     weight_grad_batch_3: conv(3, (32, 16), [4, 12], [3, 3], SAME_3X3), Dense, Dense;
     weight_grad_channels_1: conv(2, (1, 16), [6, 12], [3, 3], SAME_3X3), Dense, Dense;
     weight_grad_channels_3: conv(2, (3, 10), [6, 12], [3, 3], SAME_3X3), Dense, Dense;
@@ -897,6 +930,9 @@ data_grad_tests! {
     data_grad_no_padding: conv(2, (32, 32), [7, 12], [3, 3], ([1, 1], [0, 0], [1, 1])), Dense, Dense;
     data_grad_padding_2: conv(2, (32, 32), [7, 12], [3, 3], ([1, 1], [2, 2], [1, 1])), Dense, Dense;
     data_grad_dilation_2: conv(2, (64, 32), [8, 17], [3, 3], ([1, 1], [2, 2], [2, 2])), Dense, Dense;
+    data_grad_unequal_dilation: conv(2, (64, 32), [8, 17], [3, 3], ([1, 1], [1, 2], [1, 2])), Dense, Dense;
+    data_grad_overhang_co_24: conv(2, (32, 24), [6, 12], [3, 3], SAME_3X3), Dense, Dense;
+    data_grad_overhang_co_40: conv(2, (32, 40), [6, 12], [3, 3], SAME_3X3), Dense, Dense;
     data_grad_kernel_5x3: conv(2, (32, 32), [9, 11], [5, 3], ([1, 1], [2, 1], [1, 1])), Dense, Dense;
     data_grad_1x1: conv(2, (64, 64), [5, 12], [1, 1], ([1, 1], [0, 0], [1, 1])), Dense, Dense;
     data_grad_batch_3: conv(3, (32, 16), [4, 12], [3, 3], SAME_3X3), Dense, Dense;
@@ -931,7 +967,7 @@ data_grad_offset_tests! {
 }
 
 /// Three and eight output channels make a step of taps and channels, which cmma declines by name
-/// and Mma serves.
+/// and Mma serves; twenty overhang Mma's step of eight.
 macro_rules! data_grad_mma_tests {
     ($($stem:ident: $problem:expr;)*) => {
         $(mod $stem {
@@ -949,6 +985,7 @@ macro_rules! data_grad_mma_tests {
 data_grad_mma_tests! {
     data_grad_co_3: conv(2, (32, 3), [6, 12], [3, 3], SAME_3X3);
     data_grad_co_8: conv(2, (32, 8), [6, 12], [3, 3], SAME_3X3);
+    data_grad_overhang_co_20: conv(2, (32, 20), [6, 12], [3, 3], SAME_3X3);
     data_grad_co_3_dilation_2: conv(2, (32, 3), [6, 12], [3, 3], ([1, 1], [2, 2], [2, 2]));
 }
 

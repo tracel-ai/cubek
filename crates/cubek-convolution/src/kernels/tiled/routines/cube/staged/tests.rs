@@ -161,6 +161,49 @@ fn a_weight_backward_over_a_narrow_map_is_served_by_cmma() {
     }
 }
 
+/// The catalog's 64 channel shape read as a data backward of `channels_out` output channels,
+/// which it contracts.
+fn data_backward(channels_out: usize) -> ConvProblem {
+    ConvProblem {
+        operation: ConvOperation::BackwardData,
+        channels_out,
+        ..problem("conv3x3_c64")
+    }
+}
+
+/// A data backward reads its gradient back through the taps, so a box that overhangs the output
+/// channels reads it one element wide, where whole boxes read lines.
+#[test]
+fn a_data_backward_over_overhanging_channels_reads_one_element_wide() {
+    let widths = |channels_out| {
+        let settings = CubeStagedConvRoutine::GRID_2X2;
+        ROUTINE
+            .prepare(&nvidia(), &data_backward(channels_out), &settings)
+            .expect("cmma serves whole steps of channels")
+            .0
+            .widths
+    };
+    assert!(widths(32).lhs > 1);
+    assert_eq!(widths(24).lhs, 1);
+}
+
+/// A few output channels make a data backward step of taps and channels, which cmma declines by
+/// name and Mma serves.
+#[test]
+fn cmma_declines_a_data_backward_step_across_taps_and_mma_serves_it() {
+    let problem = data_backward(3);
+    let settings = CubeStagedConvRoutine::GRID_2X2;
+    assert_eq!(
+        ROUTINE.prepare(&nvidia(), &problem, &settings).err(),
+        Some(CMMA_STEP_ACROSS_TAPS)
+    );
+    assert!(
+        ROUTINE
+            .prepare(&nvidia(), &problem, &settings.mma())
+            .is_ok()
+    );
+}
+
 /// A cube's estimate holds the staging its partitioning places, and the cubes perform at least
 /// what the problem asks.
 #[test]
