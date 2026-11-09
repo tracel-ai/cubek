@@ -3,7 +3,7 @@ use super::super::{
     adaptive_window_address_type, decompose_linear_5d, shape_divmod,
 };
 use crate::definition::PoolError;
-use crate::kernel::forward::{Position3d, view5d};
+use crate::legacy::forward::{Position3d, view5d};
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
     num_traits::Zero,

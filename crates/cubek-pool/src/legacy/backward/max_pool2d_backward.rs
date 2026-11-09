@@ -1,8 +1,8 @@
 use super::super::{decompose_linear, shape_divmod};
-use crate::kernel::accumulator_dtype;
+use crate::legacy::accumulator_dtype;
 use crate::{
     definition::{MaxPoolOptions, PoolError},
-    kernel::backward::{PoolBackwardArgs, PoolBackwardArgsLaunch},
+    legacy::backward::{PoolBackwardArgs, PoolBackwardArgsLaunch},
 };
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise, num_traits::Zero, prelude::TensorBinding, prelude::*,

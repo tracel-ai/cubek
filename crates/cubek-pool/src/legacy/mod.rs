@@ -88,7 +88,7 @@ pub(crate) fn adaptive_window_address_type(
 }
 
 /// Reject zero dilation before generating divisions or launching a kernel.
-fn validate_dilation(dilation: &[usize]) -> Result<(), crate::definition::PoolError> {
+pub(crate) fn validate_dilation(dilation: &[usize]) -> Result<(), crate::definition::PoolError> {
     if dilation.contains(&0) {
         return Err(crate::definition::PoolError::InvalidDilation {
             dilation: dilation.to_vec(),

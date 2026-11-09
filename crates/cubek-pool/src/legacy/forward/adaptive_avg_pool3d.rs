@@ -1,7 +1,7 @@
 use super::pool3d::{Position3d, view5d};
 use crate::{
     definition::PoolError,
-    kernel::{
+    legacy::{
         accumulator_dtype, adaptive_end_index as end_index, adaptive_start_index as start_index,
         adaptive_window_address_type, decompose_linear_5d, shape_divmod,
     },
