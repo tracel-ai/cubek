@@ -16,15 +16,31 @@ pub fn quantized_arg<'a>(
     values: Arg<'a, Labelled>,
     scales: impl IntoIterator<Item = Arg<'a, Labelled>>,
 ) -> Result<TileTensorLaunch, Refusal> {
+    quantized_arg_shifted(scheme, values, scales, Vec::new())
+}
+
+/// [`quantized_arg`], every part read at `offsets`: the value of each dynamic offset its
+/// projection shifts a dim by (`Offset::Dynamic`), the values' and each level's alike, as each
+/// states the dims a window moves along.
+pub fn quantized_arg_shifted<'a>(
+    scheme: &QuantScheme,
+    values: Arg<'a, Labelled>,
+    scales: impl IntoIterator<Item = Arg<'a, Labelled>>,
+    offsets: Vec<i32>,
+) -> Result<TileTensorLaunch, Refusal> {
     let fields = scheme
         .block_scale()
         .map(|block| block.dtype)
         .into_iter()
         .chain(scheme.tensor_scale())
         .map(Field::of_scale);
-    let mut tile = values.packed(scheme.value).build()?.arg();
+    let shifted = |arg: TileTensorLaunch| match offsets.is_empty() {
+        true => arg,
+        false => arg.runtime_map(Vec::new(), offsets.clone()),
+    };
+    let mut tile = shifted(values.packed(scheme.value).build()?.arg());
     for (scale, field) in scales.into_iter().zip(fields) {
-        tile = tile.scales(scale.packed(field).build()?.arg());
+        tile = tile.scales(shifted(scale.packed(field).build()?.arg()));
     }
     Ok(tile)
 }
