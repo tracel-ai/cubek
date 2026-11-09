@@ -25,8 +25,9 @@ pub struct ConvProblem {
     pub operation: ConvOperation,
     pub batch: usize,
     pub channels_in: usize,
-    /// The input's spatial extent.
-    pub input: [usize; 2],
+    /// The spatial extent of the gathered operand: the input, or the output gradient in the data
+    /// backward.
+    pub gathered: [usize; 2],
     pub channels_out: usize,
     pub kernel: [usize; 2],
     /// The output's spatial extent.
@@ -96,7 +97,7 @@ impl ConvProblem {
                 let window = &self.window;
                 let last = (self.out[dim].saturating_sub(1)) * window.stride[dim]
                     + (self.kernel[dim] - 1) * window.dilation[dim];
-                window.padding[dim] == 0 && last < self.input[dim]
+                window.padding[dim] == 0 && last < self.gathered[dim]
             })
     }
 
@@ -105,13 +106,13 @@ impl ConvProblem {
     #[cfg(test)]
     pub(crate) fn dense(
         batch: usize,
-        input: [usize; 2],
+        gathered: [usize; 2],
         (channels_in, channels_out): (usize, usize),
         kernel: [usize; 2],
         stride: usize,
         element: ElemType,
     ) -> Self {
-        let out = [0, 1].map(|dim| (input[dim] - kernel[dim]) / stride + 1);
+        let out = [0, 1].map(|dim| (gathered[dim] - kernel[dim]) / stride + 1);
         let aligned = |shape: [usize; 4]| {
             let strides = [
                 shape[1] * shape[2] * shape[3],
@@ -125,7 +126,7 @@ impl ConvProblem {
             operation: ConvOperation::Forward,
             batch,
             channels_in,
-            input,
+            gathered,
             channels_out,
             kernel,
             out,
@@ -137,7 +138,7 @@ impl ConvProblem {
             elements: MatmulOperands::all(element),
             sum: ElemType::Float(cubecl::ir::FloatKind::F32),
             alignments: MatmulOperands {
-                lhs: aligned([batch, input[0], input[1], channels_in]),
+                lhs: aligned([batch, gathered[0], gathered[1], channels_in]),
                 rhs: aligned([channels_out, kernel[0], kernel[1], channels_in]),
                 out: aligned([batch, out[0], out[1], channels_out]),
             },
@@ -150,8 +151,8 @@ impl EstimatedProblem for ConvProblem {
     fn demand(&self) -> Work {
         // The data backward is the forward convolution of the gradient's shape over the input's.
         let (spatial_in, spatial_out) = match self.operation {
-            ConvOperation::BackwardData => (self.out, self.input),
-            _ => (self.input, self.out),
+            ConvOperation::BackwardData => (self.out, self.gathered),
+            _ => (self.gathered, self.out),
         };
         Conv2dCost {
             batch: self.batch,

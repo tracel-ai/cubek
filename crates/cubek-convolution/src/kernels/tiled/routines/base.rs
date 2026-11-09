@@ -44,7 +44,7 @@ impl ConvLines {
 pub struct ConvSettings {
     /// The transport the planes reach the device's matrix instruction through first.
     pub instruction: PlaneFragmentTransport,
-    /// Instructions a plane holds along the output columns (`ow`) and the output channels.
+    /// Instructions a plane holds along the operation's two free axes.
     pub fragments: (usize, usize),
     /// Planes a cube holds along the same two axes.
     pub planes: (usize, usize),

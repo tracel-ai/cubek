@@ -33,9 +33,9 @@ pub enum Strategy {
     /// accelerated matmul. It takes its own strategy because it has no tile-matmul
     /// kind to pick, and its forced tilings span regimes autotune chooses from.
     Unit(UnitStrategy),
-    /// The forward or the weight backward of a 2D convolution with no groups and no bias, as one
-    /// tile contraction over a gathered input: the routine at `settings`, or at the first it
-    /// lists that serves the problem where none is named. The data backward is declined.
+    /// The forward, the weight backward or the data backward of a 2D convolution with no groups
+    /// and no bias, as one tile contraction over a gathered input: the routine at `settings`, or
+    /// at the first it lists that serves the problem where none is named.
     Tile {
         routine: ConvRoutineKind,
         settings: Option<ConvSettings>,

@@ -194,7 +194,7 @@ impl ConvTensors {
             operation: self.operation,
             batch: input[0],
             channels_in,
-            input: [input[1], input[2]],
+            gathered: [input[1], input[2]],
             channels_out,
             kernel,
             out: out_extent,

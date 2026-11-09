@@ -52,8 +52,9 @@ impl<M> ConvBlueprint<M> {
             });
             let innermost = problem.operation.roles().inner.get(operand);
             if partitioning.overhangs(innermost) {
-                // A padded input's lines cannot be tested a line at a time at an edge a tile
-                // overhangs: it is read one element wide there.
+                // Where a read can fall before the gathered operand's start (padding, or the
+                // data backward's taps), its lines cannot be tested a line at a time at an edge
+                // a tile overhangs: it is read one element wide there.
                 vectorization.require(
                     match (operand, problem.window.underflows(problem.operation)) {
                         (MatmulOperand::Lhs, true) => VectorRequirement::Masked {
