@@ -49,7 +49,7 @@ fn split_place<N: Size>(
                 + cube.coord(comptime!(split.rows[1]))
         }
     };
-    let first_line = match comptime!(layout) {
+    let first_line = match layout {
         // Along, a line holds `N` values of the row.
         ReduceLayout::Along => cube.origin(split.reduced) / N::value(),
         ReduceLayout::Across => cube.origin(split.reduced),

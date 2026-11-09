@@ -44,7 +44,7 @@ impl Distribution for Normal {
         let unit_0 = to_unit_interval_open(state.advance());
         let unit_1 = to_unit_interval_open(state.advance());
 
-        let (log, cosine, sine) = match comptime!(transcendentals) {
+        let (log, cosine, sine) = match transcendentals {
             Transcendentals::Instructions => {
                 let angle = Vector::new(2.0f32 * PI) * unit_1;
                 (unit_0.ln(), angle.cos(), angle.sin())
