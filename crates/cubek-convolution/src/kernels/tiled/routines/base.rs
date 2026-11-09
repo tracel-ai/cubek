@@ -66,6 +66,9 @@ pub struct ConvSettings {
     pub fragments: (usize, usize),
     /// Planes a cube holds along the same two axes.
     pub planes: (usize, usize),
+    /// Planes a cube holds along the across axis (OH in a forward), each a row group of its own
+    /// over the one stage of the rhs the cube's planes share.
+    pub planes_across: usize,
     /// Instruction steps of the contraction one stage holds, capped by what the problem has.
     pub stage_steps: usize,
     /// Stages a cube holds at once: one fills then contracts, two fill the next while contracting.
@@ -80,6 +83,7 @@ impl ConvSettings {
             instruction: PlaneFragmentTransport::Cmma,
             fragments,
             planes,
+            planes_across: 1,
             stage_steps: 4,
             ring: StageRing::SINGLE,
             lines,
@@ -91,6 +95,15 @@ impl ConvSettings {
     pub const fn eight_rows(self) -> Self {
         Self {
             tile: ConvTile::EightRows,
+            ..self
+        }
+    }
+
+    /// These settings with `planes` planes along the across axis, a cube then covering that many
+    /// of its positions with each weight stage.
+    pub const fn across(self, planes: usize) -> Self {
+        Self {
+            planes_across: planes,
             ..self
         }
     }
@@ -174,6 +187,9 @@ impl core::fmt::Display for ConvSettings {
             self.stage_steps
         )?;
         write!(f, "{}", self.ring)?;
+        if self.planes_across > 1 {
+            write!(f, " across={}", self.planes_across)?;
+        }
         match self.lines {
             ConvLines::One => write!(f, " width=1"),
             ConvLines::Widest => Ok(()),

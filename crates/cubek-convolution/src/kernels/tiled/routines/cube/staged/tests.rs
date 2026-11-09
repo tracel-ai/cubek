@@ -4,7 +4,7 @@
 use super::*;
 use crate::kernels::tiled::routines::test_support::{F32, cmma_only, nvidia, problems};
 use crate::kernels::tiled::{
-    CI, CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED, ConvOperation, ConvProblem, OW, RW,
+    CI, CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED, ConvOperation, ConvProblem, OH, OW, RW,
 };
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_microkernel::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentTransport};
@@ -168,6 +168,33 @@ fn a_weight_backward_contracts_the_output_positions() {
         .expect("the setting prepares");
     assert!(blueprint.partitioning.overhangs(OW));
     assert!(!blueprint.partitioning.overhangs(CI));
+}
+
+/// Planes across a map seven tall cover that many rows of it a cube, the last box overhanging
+/// where they do not divide it, and each costs the lhs stage its rows but the rhs stage nothing, so the stage grows less than
+/// across times.
+#[test]
+fn planes_across_share_the_rhs_stage_and_overhang_the_rows() {
+    let narrow = problem("narrow_width");
+    let prepared = |settings| {
+        ROUTINE
+            .prepare(&nvidia(), &narrow, &settings)
+            .expect("the setting prepares")
+            .0
+            .partitioning
+    };
+    let plain = prepared(CubeStagedConvRoutine::GRID_8X32);
+    assert!(!plain.overhangs(OH));
+    let bytes = |partitioning: &crate::kernels::tiled::ConvPartitioning| {
+        partitioning.stage_bytes(&narrow.elements)
+    };
+    for across in [2, 4, 7] {
+        let split = prepared(CubeStagedConvRoutine::GRID_8X32.across(across));
+        assert_eq!(split.planes(), plain.planes() * across);
+        assert_eq!(split.overhangs(OH), narrow.out[0] % across != 0);
+        assert!(bytes(&split) > bytes(&plain));
+        assert!(bytes(&split) < across * bytes(&plain));
+    }
 }
 
 /// A map seven wide makes a weight backward step of two axes, which cmma serves as Mma does.

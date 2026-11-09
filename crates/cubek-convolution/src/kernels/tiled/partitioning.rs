@@ -69,6 +69,8 @@ pub struct ConvTiles {
     fragments: (usize, usize),
     /// Planes along the same two axes.
     planes: (usize, usize),
+    /// Planes along the across axis.
+    across: usize,
     step: ConvStep,
     stage_steps: usize,
     ring: StageRing,
@@ -101,6 +103,7 @@ impl ConvTiles {
             instruction: (m, n, k),
             fragments: (plane.settings.along_m.get(), plane.settings.along_n.get()),
             planes: settings.planes,
+            across: settings.planes_across.max(1),
             step,
             stage_steps: settings.stage_steps,
             ring: settings.ring,
@@ -126,11 +129,13 @@ impl ConvTiles {
         }
     }
 
-    /// Rows and columns of the output one stage owner holds, with a stage `depth` cells deep.
+    /// Rows and columns of the output one stage owner holds, with a stage `depth` cells deep. The
+    /// rows count every position along the across axis the cube covers: the lhs stage holds them
+    /// all, the rhs stage is shared.
     fn cells(&self, depth: usize) -> (usize, usize, usize) {
         let (m, n, _) = self.instruction;
         (
-            m * self.fragments.0 * self.planes.0,
+            m * self.fragments.0 * self.planes.0 * self.across,
             n * self.fragments.1 * self.planes.1,
             depth,
         )
@@ -157,8 +162,8 @@ pub struct ConvPartitioning {
     partitioning: Partitioning,
     runs: MatmulOperands<usize>,
     ring: StageRing,
-    /// Rows and columns of the output one stage owner holds, and the contraction cells a stage
-    /// holds, `(rows, columns, depth)`.
+    /// Output positions (rows over every across position) and columns one stage owner holds, and
+    /// the contraction steps a stage holds, `(positions, columns, depth)`.
     stage: (usize, usize, usize),
     /// Elements one write brings along the output's innermost axis.
     out_run: usize,
@@ -178,12 +183,17 @@ impl ConvPartitioning {
         let (stage, steps) = Self::stage(problem, tiles, budget);
         let levels = tiles
             .leaf(stage)
-            .planes(&[(axes.m, planes_m), (axes.n, planes_n)])
+            .planes(&[
+                (axes.m, planes_m),
+                (axes.n, planes_n),
+                (roles.across(), tiles.across),
+            ])
             .walk_every(&roles.contracted)
             .cubes(&[axes.n, axes.m, roles.across()])
             .batches(&[roles.batch()])
             .build();
         let rows = m * tiles.fragments.0 * planes_m;
+        let positions = rows * tiles.across;
         let columns = n * tiles.fragments.1 * planes_n;
         let contracted: usize = roles
             .contracted
@@ -206,8 +216,8 @@ impl ConvPartitioning {
                 Some(MatmulDim::N) => columns,
                 _ => 1,
             },
-            stage: (rows, columns, steps),
-            planes: tiles.planes.0 * tiles.planes.1,
+            stage: (positions, columns, steps),
+            planes: tiles.planes.0 * tiles.planes.1 * tiles.across,
             contracted,
         }
     }

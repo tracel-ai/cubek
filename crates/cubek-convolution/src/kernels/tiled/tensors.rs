@@ -240,7 +240,10 @@ impl ConvTensors {
             .arg(self.input, problem.elements.lhs)
             .gathered(self.window.input(problem.operation, roles.lhs))
             .vectorize(widths.lhs);
-        let input = match problem.reads_inside() {
+        // A box that overhangs the across axis gathers past the input even where every real
+        // output position reads inside it.
+        let inside = problem.reads_inside() && !partitioning.overhangs(roles.across());
+        let input = match inside {
             true => input,
             false => input.boundary(BoundaryPolicy::Every(Boundary::Zero)),
         };
