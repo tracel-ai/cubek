@@ -7,7 +7,9 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::{Shape, Strides};
-use cubek_convolution::eval::benchmarks::{Conv2dCorrectness, Conv2dProblem, problems};
+use cubek_convolution::eval::benchmarks::{
+    Conv2dCorrectness, Conv2dElement, Conv2dProblem, problems,
+};
 use cubek_convolution::kernels::tiled::{
     ConvCandidate, ConvRoutineKind, ConvSettings, CubeStagedConvRoutine,
 };
@@ -23,6 +25,7 @@ use cubek_test_utils::{
 
 const SEEDS: [u64; 2] = [12, 34];
 const F16_EPS: f32 = 0.1;
+const F32_EPS: f32 = 0.01;
 
 /// The problem's channels, taps, stride and padding, over a small batch and a small map.
 fn small(problem: &Conv2dProblem) -> Conv2dProblem {
@@ -108,7 +111,11 @@ fn check_problem(strategy: &Strategy, problem: &Conv2dProblem) {
     let expected = Conv2dCorrectness
         .reference_result(problem, &SEEDS, None)
         .unwrap_or_else(|e| panic!("reference failed: {e}"));
-    assert_equals_approx(&actual, &expected, F16_EPS)
+    let eps = match problem.element {
+        Conv2dElement::F16 => F16_EPS,
+        Conv2dElement::F32 => F32_EPS,
+    };
+    assert_equals_approx(&actual, &expected, eps)
         .as_test_outcome()
         .enforce();
 }
@@ -166,6 +173,21 @@ fn conv(
             dilation,
         },
         operation: cubek_convolution::components::ConvolutionOperation::Forward,
+        element: Conv2dElement::F16,
+    }
+}
+
+/// [`conv`] over `f32`.
+fn conv_f32(
+    batch: usize,
+    channels: (usize, usize),
+    input: [usize; 2],
+    kernel: [usize; 2],
+    window: ([usize; 2], [usize; 2], [usize; 2]),
+) -> Conv2dProblem {
+    Conv2dProblem {
+        element: Conv2dElement::F32,
+        ..conv(batch, channels, input, kernel, window)
     }
 }
 
@@ -318,10 +340,14 @@ fn client() -> Client {
 }
 
 fn dtypes() -> MatmulElems {
+    dtypes_of(F16)
+}
+
+fn dtypes_of(element: ElemType) -> MatmulElems {
     MatmulElems::from_globals(&MatmulGlobalElems {
-        lhs: F16,
-        rhs: F16,
-        out: F16,
+        lhs: element,
+        rhs: element,
+        out: element,
     })
 }
 
@@ -339,7 +365,13 @@ enum Binding {
 }
 
 /// `values` as a tensor of `shape` bound as `binding` says.
-fn bound(client: &Client, shape: [usize; 4], values: Vec<f32>, binding: Binding) -> TensorBinding {
+fn bound(
+    client: &Client,
+    shape: [usize; 4],
+    values: Vec<f32>,
+    binding: Binding,
+    element: ElemType,
+) -> TensorBinding {
     let [_, h, w, c] = shape;
     let dense = [h * w * c, w * c, c, 1];
     let strides = match binding {
@@ -351,17 +383,17 @@ fn bound(client: &Client, shape: [usize; 4], values: Vec<f32>, binding: Binding)
         Binding::Offset => {
             let padded = [vec![0.0], values].concat();
             let flat = TestInput::builder(client.clone(), [padded.len()])
-                .dtype(F16)
+                .dtype(element)
                 .custom(padded)
                 .generate_without_host_data();
             let mut view = flat.binding();
             view.shape = Shape::from(shape.to_vec());
             view.strides = Strides::new(&strides);
-            view.handle.offset_start = Some(F16.size() as u64);
+            view.handle.offset_start = Some(element.size() as u64);
             view
         }
         _ => TestInput::builder(client.clone(), shape.to_vec())
-            .dtype(F16)
+            .dtype(element)
             .layout(StridedLayout::Explicit(strides.to_vec()))
             .custom(values)
             .generate_without_host_data()
@@ -399,8 +431,8 @@ fn check_bound_into(strategy: &Strategy, (input, weight, out): (Binding, Binding
         F16,
     );
     let inputs = ConvolutionInputs::Forward {
-        input: InputBinding::new(bound(&client, shape, input_values, input), F16),
-        weight: InputBinding::new(bound(&client, filter, weight_values, weight), F16),
+        input: InputBinding::new(bound(&client, shape, input_values, input, F16), F16),
+        weight: InputBinding::new(bound(&client, filter, weight_values, weight, F16), F16),
         bias: None,
         out: out.clone().binding(),
     };
@@ -476,6 +508,7 @@ fn dense(client: &Client, shape: [usize; 4]) -> TensorBinding {
         shape,
         exact_values(shape.iter().product(), 1),
         Binding::Dense,
+        F16,
     )
 }
 
@@ -567,6 +600,7 @@ fn weight_grad_values(
     (input, out_grad, weight_grad): (Binding, Binding, Binding),
 ) -> Result<(HostData, Vec<f32>, [usize; 4]), String> {
     let client = client();
+    let element = problem.element.elem_type();
     let [batch, channels, h, w] = problem.input_shape;
     let [filters, _, kh, kw] = problem.weight_shape;
     let args = problem.args.clone();
@@ -586,23 +620,29 @@ fn weight_grad_values(
     let cells: usize = weight_shape.iter().product();
     let lead = usize::from(matches!(weight_grad, Binding::Offset));
     let storage = TestInput::builder(client.clone(), [lead + cells])
-        .dtype(F16)
+        .dtype(element)
         .custom(vec![100.0; lead + cells])
         .generate_without_host_data();
     let weight_grad = TensorHandle::new(
-        storage.handle.offset_start((lead * F16.size()) as u64),
+        storage.handle.offset_start((lead * element.size()) as u64),
         weight_shape.to_vec(),
         Strides::new(&[kh * kw * channels, kw * channels, channels, 1]),
-        F16,
+        element,
     );
     let inputs = ConvolutionInputs::BackwardWeight {
-        input: InputBinding::new(bound(&client, input_shape, input_values, input), F16),
-        out_grad: InputBinding::new(bound(&client, grad_shape, grad_values, out_grad), F16),
+        input: InputBinding::new(
+            bound(&client, input_shape, input_values, input, element),
+            element,
+        ),
+        out_grad: InputBinding::new(
+            bound(&client, grad_shape, grad_values, out_grad, element),
+            element,
+        ),
         weight_grad: weight_grad.clone().binding(),
     };
     let outcome =
         launch_and_capture_outcome(&client, &[&weight_grad.handle], |c| {
-            match launch_ref::<2>(strategy, c, inputs, args, dtypes()) {
+            match launch_ref::<2>(strategy, c, inputs, args, dtypes_of(element)) {
                 Ok(()) => ExecutionOutcome::Executed,
                 Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
             }
@@ -871,6 +911,7 @@ fn data_grad_values(
     (out_grad, weights, in_grad): (Binding, Binding, Binding),
 ) -> Result<(HostData, Vec<f32>, [usize; 4]), String> {
     let client = client();
+    let element = problem.element.elem_type();
     let [batch, channels, h, w] = problem.input_shape;
     let [filters, _, kh, kw] = problem.weight_shape;
     let args = problem.args.clone();
@@ -890,22 +931,28 @@ fn data_grad_values(
     let cells: usize = in_shape.iter().product();
     let lead = usize::from(matches!(in_grad, Binding::Offset));
     let storage = TestInput::builder(client.clone(), [lead + cells])
-        .dtype(F16)
+        .dtype(element)
         .custom(vec![100.0; lead + cells])
         .generate_without_host_data();
     let in_grad = TensorHandle::new(
-        storage.handle.offset_start((lead * F16.size()) as u64),
+        storage.handle.offset_start((lead * element.size()) as u64),
         in_shape.to_vec(),
         Strides::new(&[h * w * channels, w * channels, channels, 1]),
-        F16,
+        element,
     );
     let inputs = ConvolutionInputs::BackwardData {
-        out_grad: InputBinding::new(bound(&client, grad_shape, grad_values, out_grad), F16),
-        weights: InputBinding::new(bound(&client, weight_shape, weight_values, weights), F16),
+        out_grad: InputBinding::new(
+            bound(&client, grad_shape, grad_values, out_grad, element),
+            element,
+        ),
+        weights: InputBinding::new(
+            bound(&client, weight_shape, weight_values, weights, element),
+            element,
+        ),
         in_grad: in_grad.clone().binding(),
     };
     let outcome = launch_and_capture_outcome(&client, &[&in_grad.handle], |c| {
-        match launch_ref::<2>(strategy, c, inputs, args, dtypes()) {
+        match launch_ref::<2>(strategy, c, inputs, args, dtypes_of(element)) {
             Ok(()) => ExecutionOutcome::Executed,
             Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
         }

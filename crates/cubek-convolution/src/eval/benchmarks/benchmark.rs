@@ -16,8 +16,10 @@ use cubek_std::InputBinding;
 use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::{
-    ConvolutionInputs, Strategy, components::ConvolutionOperation,
-    eval::benchmarks::problem::Conv2dProblem, launch_ref,
+    ConvolutionInputs, Strategy,
+    components::ConvolutionOperation,
+    eval::benchmarks::problem::{Conv2dElement, Conv2dProblem},
+    launch_ref,
 };
 
 type LhsG<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Global;
@@ -31,10 +33,21 @@ pub fn bench(
     problem: &Conv2dProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
+    match problem.element {
+        Conv2dElement::F16 => bench_as::<half::f16>(strategy, problem, num_samples),
+        Conv2dElement::F32 => bench_as::<f32>(strategy, problem, num_samples),
+    }
+}
+
+fn bench_as<MP: MatmulPrecision>(
+    strategy: &Strategy,
+    problem: &Conv2dProblem,
+    num_samples: usize,
+) -> Result<RunSamples, String> {
     let device = cubecl::test_device();
     let client = device.client();
 
-    let bench = Conv2dBench::<half::f16> {
+    let bench = Conv2dBench::<MP> {
         problem: problem.clone(),
         strategy: strategy.clone(),
         device,

@@ -13,10 +13,9 @@ mod strategy;
 
 pub use benchmark::bench;
 pub use correctness::Conv2dCorrectness;
-pub use problem::{Conv2dProblem, problems};
+pub use problem::{Conv2dElement, Conv2dProblem, problems};
 pub use strategy::strategies;
 
-use cubecl::prelude::*;
 use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples, client};
 
 use cubek_matmul::definition::MatmulGlobalElems;
@@ -63,9 +62,9 @@ impl cubek_test_utils::Category for Category {
     }
 
     /// Standard conv flop count: one multiply-add per (output element, kernel tap,
-    /// input channel). Runs in `half::f16`, the precision `bench` fixes.
+    /// input channel), in the element the problem states.
     fn work(&self, problem: &Conv2dProblem) -> Option<CategoryWork> {
-        let dtype = half::f16::elem_type_native();
+        let dtype = problem.element.elem_type();
 
         let [n, c_in, h_in, w_in] = problem.input_shape;
         let [c_out, _, k_h, k_w] = problem.weight_shape;

@@ -1,7 +1,7 @@
 use cubek_test_utils::CatalogEntry;
 
 use crate::{
-    AcceleratedTileKind, ConvAlgorithm, Strategy,
+    AcceleratedTileKind, ConvAlgorithm, Strategy, UnitStrategy, UnitTiling,
     kernels::tiled::{ConvRoutineKind, ConvSettings, CubeStagedConvRoutine},
 };
 
@@ -42,6 +42,26 @@ fn cube_staged(settings: Option<ConvSettings>) -> CatalogEntry<Strategy> {
     CatalogEntry::new(strategy.to_string(), label, strategy)
 }
 
+/// The unit routine of the tile convolution at the settings it derives from the device.
+fn unit_registers() -> CatalogEntry<Strategy> {
+    let strategy = Strategy::Tile {
+        routine: ConvRoutineKind::UnitRegisters,
+        settings: None,
+    };
+    CatalogEntry::new(
+        strategy.to_string(),
+        "Unit registers, at the device's settings",
+        strategy,
+    )
+}
+
+/// The register-tiled f32 convolution the tile routines replace, at its balanced tiling: the
+/// baseline for a device with no matrix instruction.
+fn unit_balanced() -> CatalogEntry<Strategy> {
+    let strategy = Strategy::Unit(UnitStrategy::Fixed(UnitTiling::BALANCED));
+    CatalogEntry::new(strategy.to_string(), "Unit / balanced tiling", strategy)
+}
+
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
     let mut strategies = vec![
         CatalogEntry::new(
@@ -61,6 +81,8 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             },
         ),
         cube_staged(None),
+        unit_registers(),
+        unit_balanced(),
     ];
     strategies.extend(
         CMMA.into_iter()

@@ -1,6 +1,23 @@
+use cubecl::{ir::ElemType, prelude::Scalar};
 use cubek_test_utils::CatalogEntry;
 
 use crate::{ConvolutionArgs, components::ConvolutionOperation};
+
+/// The element a problem's operands are stored in and its sums run in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Conv2dElement {
+    F16,
+    F32,
+}
+
+impl Conv2dElement {
+    pub fn elem_type(self) -> ElemType {
+        match self {
+            Self::F16 => half::f16::elem_type_native(),
+            Self::F32 => f32::elem_type_native(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Conv2dProblem {
@@ -9,6 +26,7 @@ pub struct Conv2dProblem {
     pub bias_shape: usize,
     pub args: ConvolutionArgs<2>,
     pub operation: ConvolutionOperation,
+    pub element: Conv2dElement,
 }
 
 impl Conv2dProblem {
@@ -28,7 +46,7 @@ impl Conv2dProblem {
 
 pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
     let batch_size = 16;
-    vec![
+    let mut problems = vec![
         CatalogEntry::new(
             "alexnet_like",
             "AlexNet-like (b=16 in=3x227x227 w=96x3x11x11 s=4)",
@@ -42,6 +60,7 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
                     dilation: [1, 1],
                 },
                 operation: ConvolutionOperation::Forward,
+                element: Conv2dElement::F16,
             },
         ),
         CatalogEntry::new(
@@ -57,6 +76,7 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
                     dilation: [1, 1],
                 },
                 operation: ConvolutionOperation::Forward,
+                element: Conv2dElement::F16,
             },
         ),
         CatalogEntry::new(
@@ -72,6 +92,7 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
                     dilation: [1, 1],
                 },
                 operation: ConvolutionOperation::Forward,
+                element: Conv2dElement::F16,
             },
         ),
         CatalogEntry::new(
@@ -87,6 +108,7 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
                     dilation: [1, 1],
                 },
                 operation: ConvolutionOperation::Forward,
+                element: Conv2dElement::F16,
             },
         ),
         CatalogEntry::new(
@@ -102,6 +124,7 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
                     dilation: [1, 1],
                 },
                 operation: ConvolutionOperation::Forward,
+                element: Conv2dElement::F16,
             },
         ),
         CatalogEntry::new(
@@ -117,6 +140,7 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
                     dilation: [1, 1],
                 },
                 operation: ConvolutionOperation::BackwardData,
+                element: Conv2dElement::F16,
             },
         ),
         CatalogEntry::new(
@@ -132,6 +156,7 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
                     dilation: [1, 1],
                 },
                 operation: ConvolutionOperation::BackwardWeight,
+                element: Conv2dElement::F16,
             },
         ),
         CatalogEntry::new(
@@ -147,7 +172,53 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
                     dilation: [1, 1],
                 },
                 operation: ConvolutionOperation::BackwardWeight,
+                element: Conv2dElement::F16,
             },
         ),
+    ];
+    problems.extend(cpu_problems());
+    problems
+}
+
+/// One image of f32 through a layer of a small network, for the runtimes that run on a CPU.
+fn cpu_problem(
+    id: &str,
+    (channels_in, channels_out): (usize, usize),
+    size: usize,
+    kernel: usize,
+    stride: usize,
+    operation: ConvolutionOperation,
+) -> CatalogEntry<Conv2dProblem> {
+    let padding = kernel / 2;
+    let label = format!(
+        "{operation:?} (b=1 in={channels_in}x{size}x{size} w={channels_out}x{channels_in}x{kernel}x{kernel} s={stride} p={padding}, f32)"
+    );
+    CatalogEntry::new(
+        id,
+        label,
+        Conv2dProblem {
+            input_shape: [1, channels_in, size, size],
+            weight_shape: [channels_out, channels_in, kernel, kernel],
+            bias_shape: channels_out,
+            args: ConvolutionArgs {
+                stride: [stride; 2],
+                padding: [padding; 2],
+                dilation: [1, 1],
+            },
+            operation,
+            element: Conv2dElement::F32,
+        },
+    )
+}
+
+fn cpu_problems() -> Vec<CatalogEntry<Conv2dProblem>> {
+    use ConvolutionOperation::{BackwardData, BackwardWeight, Forward};
+    vec![
+        cpu_problem("cpu_3x3_c64_56", (64, 64), 56, 3, 1, Forward),
+        cpu_problem("cpu_3x3_s2_c128_56", (128, 128), 56, 3, 2, Forward),
+        cpu_problem("cpu_narrow_c64_7", (64, 64), 7, 3, 1, Forward),
+        cpu_problem("cpu_1x1_c64_256_56", (64, 256), 56, 1, 1, Forward),
+        cpu_problem("cpu_bwd_data_c64_56", (64, 64), 56, 3, 1, BackwardData),
+        cpu_problem("cpu_bwd_weight_c64_56", (64, 64), 56, 3, 1, BackwardWeight),
     ]
 }

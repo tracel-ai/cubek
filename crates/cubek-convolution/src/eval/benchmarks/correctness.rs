@@ -9,7 +9,7 @@ use crate::{
     Strategy,
     components::ConvolutionOperation,
     eval::{
-        benchmarks::problem::Conv2dProblem,
+        benchmarks::problem::{Conv2dElement, Conv2dProblem},
         cpu_reference::{ConvSpec, cpu_reference_result, strategy_result},
     },
 };
@@ -33,7 +33,7 @@ impl cubek_test_utils::Correctness for Conv2dCorrectness {
         forward_only(problem)?;
         let device = cubecl::test_device();
         let client = device.client();
-        let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(problem);
+        let (spec, dtypes) = spec_and_dtypes(problem);
         strategy_result(client, spec, strategy.clone(), dtypes, seeds[0], seeds[1])
     }
 
@@ -46,7 +46,7 @@ impl cubek_test_utils::Correctness for Conv2dCorrectness {
         forward_only(problem)?;
         let device = cubecl::test_device();
         let client = device.client();
-        let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(problem);
+        let (spec, dtypes) = spec_and_dtypes(problem);
         cpu_reference_result(client, spec, dtypes, seeds[0], seeds[1], progress)
     }
 }
@@ -59,6 +59,13 @@ fn forward_only(problem: &Conv2dProblem) -> Result<(), String> {
         operation => Err(format!(
             "the correctness check runs the forward convolution, not {operation:?}"
         )),
+    }
+}
+
+fn spec_and_dtypes(problem: &Conv2dProblem) -> (ConvSpec, MatmulElems) {
+    match problem.element {
+        Conv2dElement::F16 => build_spec_and_dtypes::<half::f16>(problem),
+        Conv2dElement::F32 => build_spec_and_dtypes::<f32>(problem),
     }
 }
 
