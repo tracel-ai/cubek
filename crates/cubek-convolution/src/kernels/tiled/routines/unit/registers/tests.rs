@@ -7,7 +7,7 @@ use crate::kernels::tiled::{ConvOperation, ConvProblem, CubeStagedConvRoutine};
 use cubek_std::devices;
 use cubek_std::routine::Routine;
 
-const ROUTINE: UnitRegistersConvRoutine = UnitRegistersConvRoutine;
+const ROUTINE: UnitRegistersConvRoutine = UnitRegistersConvRoutine::new();
 
 fn on(operation: ConvOperation) -> ConvProblem {
     ConvProblem {

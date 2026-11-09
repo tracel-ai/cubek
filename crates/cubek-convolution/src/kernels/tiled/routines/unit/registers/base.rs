@@ -33,9 +33,27 @@ pub const CONV_UNIT_WEIGHT_BACKWARD: Refusal = Refusal::Declined {
 /// An operand whose buffer does not run along the axis a register block reads it in is read one
 /// element at a time. The weight backward is declined ([`CONV_UNIT_WEIGHT_BACKWARD`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct UnitRegistersConvRoutine;
+pub struct UnitRegistersConvRoutine {
+    weight_backward: bool,
+}
 
 impl UnitRegistersConvRoutine {
+    /// The routine as served: it declines the weight backward.
+    pub const fn new() -> Self {
+        Self {
+            weight_backward: false,
+        }
+    }
+
+    /// The routine with the weight backward let through, for the tests that probe why it reads
+    /// back wrong.
+    #[cfg(feature = "benchmarks")]
+    pub const fn probing_weight_backward() -> Self {
+        Self {
+            weight_backward: true,
+        }
+    }
+
     /// Blocks along an axis the list tries at most.
     const MOST_ALONG: usize = 4;
 
@@ -176,7 +194,7 @@ impl Routine for UnitRegistersConvRoutine {
         problem: &ConvProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        if problem.operation == ConvOperation::BackwardWeight {
+        if problem.operation == ConvOperation::BackwardWeight && !self.weight_backward {
             return Err(CONV_UNIT_WEIGHT_BACKWARD);
         }
         let microkernel = UnitRegistersMicrokernel::best(
