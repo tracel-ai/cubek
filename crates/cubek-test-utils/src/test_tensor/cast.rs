@@ -47,7 +47,7 @@ pub fn copy_casted(client: &Client, original: TensorHandle, target_type: ElemTyp
     );
     // A view starting partway into its buffer is read in lines that start on its own offset.
     let start = original.handle.offset_start.unwrap_or(0) as usize;
-    while !start.is_multiple_of(vector_size * original.dtype.size()) {
+    while vector_size > 1 && !start.is_multiple_of(vector_size * original.dtype.size()) {
         vector_size /= 2;
     }
 
