@@ -1,6 +1,7 @@
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionPartitioning,
-    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, HypercubeMerge, QueryOrder,
+    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, HypercubeMerge,
+    PACKED_QUERIES_UNREAD, QueryOrder,
 };
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
@@ -220,6 +221,9 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        if problem.packed_queries {
+            return Err(PACKED_QUERIES_UNREAD);
+        }
         M::MERGE.admits(hw)?;
         let item = problem.work_item();
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;

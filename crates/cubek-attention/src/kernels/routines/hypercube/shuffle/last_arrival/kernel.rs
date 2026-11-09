@@ -49,7 +49,14 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
 
-    let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
+    let visible = VisibleKeys::new(
+        len,
+        &ComptimeOption::new_None(),
+        &first_step,
+        queries,
+        &mask,
+        visibility,
+    );
     let steps = visible.steps(
         &first_step,
         microkernel.cube.seq_q(),
@@ -123,7 +130,14 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
 
-    let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
+    let visible = VisibleKeys::new(
+        len,
+        &ComptimeOption::new_None(),
+        &first_step,
+        queries,
+        &mask,
+        visibility,
+    );
     let steps = visible.steps(
         &first_step,
         microkernel.cube.seq_q(),

@@ -2,8 +2,8 @@
 
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
-    AttentionRoutineProblem, AttentionScoring, KvSource, PACKED_QUERIES_UNREAD,
-    PAGED_PACKED_UNREAD, PackedAttentionCache, QueryAxis,
+    AttentionRoutineProblem, AttentionScoring, KvSource, PAGED_PACKED_UNREAD,
+    PackedAttentionCache, QueryAxis,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
@@ -58,6 +58,9 @@ pub struct AttentionTensors {
     /// The `u32` attended length of each sequence, `[b]`: on the device, so a captured launch
     /// replays as the cache grows.
     lengths: PlainTensor,
+    /// Where every sequence's queries lie end to end: their `u32` cumulative counts `[b]`, and the
+    /// most queries any sequence has, which the launch covers.
+    query_runs: Option<(PlainTensor, usize)>,
     /// The output, `[b, q, h, dv]`.
     out: TensorHandle,
     /// The output as the kernel writes it, `[b, kv, g, q, dv]` over `out`'s buffer.
@@ -83,6 +86,7 @@ impl core::fmt::Debug for AttentionTensors {
             .field("query", &self.query)
             .field("kv", &self.kv)
             .field("lengths", &self.lengths)
+            .field("query_runs", &self.query_runs)
             .field("out", &self.out)
             .field("out_view", &self.out_view)
             .field("scoring", &self.scoring)
@@ -108,9 +112,8 @@ impl AttentionTensors {
     /// # Errors
     ///
     /// [`ATTENTION_ELEMENT_UNVERIFIED`], [`PACKED_WIDTH_UNREAD`] and [`ATTENTION_GROUP_UNEVEN`]:
-    /// what the routines decline whatever the device; [`PACKED_QUERIES_UNREAD`],
-    /// [`PAGED_PACKED_UNREAD`] and what [`KvSource::read_as_block_pages`] declines: sources no
-    /// routine reads; and
+    /// what the routines decline whatever the device; [`PAGED_PACKED_UNREAD`] and what
+    /// [`KvSource::read_as_block_pages`] declines: sources no routine reads; and
     /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run.
     ///
     /// # Panics
@@ -125,8 +128,29 @@ impl AttentionTensors {
         kv: KvSource,
         scoring: AttentionScoring,
     ) -> Result<Self, Refusal> {
-        let AttentionQueries::Dense { query, lengths } = queries else {
-            return Err(PACKED_QUERIES_UNREAD);
+        let (query, lengths, query_runs) = match queries {
+            AttentionQueries::Dense { query, lengths } => (query, lengths, None),
+            AttentionQueries::Packed {
+                query,
+                ends,
+                longest,
+                lengths,
+            } => {
+                // Every sequence's queries end to end, `[Σ q_b, h, d]`, viewed as a query of each
+                // sequence `ends` counts, `[b, h, Σ q_b, d]`, the batch at stride zero: each
+                // sequence's run of it is placed by its entry of `ends` as the launch binds it.
+                let (shape, strides) = (&query.binding.shape, &query.binding.strides);
+                assert_eq!(shape.len(), 3, "packed queries are [Σ q_b, h, d]");
+                assert!(
+                    ends.elem == Self::COUNTER && ends.shape().rank() == 1,
+                    "the ends of packed queries are u32 [b]"
+                );
+                let sequences = query.viewed(Metadata::new(
+                    [ends.shape()[0], shape[1], shape[0], shape[2]],
+                    [0, strides[1], strides[0], strides[2]],
+                ));
+                (sequences, lengths, Some((ends, longest)))
+            }
         };
         let kv = kv.read_as_block_pages(client, scoring.visibility)?;
         match (&kv.cache, &kv.pages) {
@@ -137,7 +161,9 @@ impl AttentionTensors {
             (AttentionCache::Packed(_), Some(_)) => return Err(PAGED_PACKED_UNREAD),
         }
         let group = Self::group(&query, kv.num_kv_heads())?;
-        Ok(Self::assemble(client, query, group, kv, lengths, scoring))
+        Ok(Self::assemble(
+            client, query, group, kv, lengths, scoring, query_runs,
+        ))
     }
 
     /// Attention of `query` (`[b, h, q, d]`) over each sequence's first `lengths[b]` of `key`
@@ -326,7 +352,10 @@ impl AttentionTensors {
     }
 
     /// The tensors of an attention of `query`, `group` heads a key head, over `kv`: the output
-    /// allocated, and the query and the output viewed along the query axis.
+    /// allocated, and the query and the output viewed along the query axis. Where `query_runs`
+    /// says every sequence's queries lie end to end, the output does too, `[Σ q_b, h, dv]`, viewed
+    /// as the query is, and the queries are read along
+    /// their positions.
     fn assemble(
         client: &Client,
         query: PlainTensor,
@@ -334,18 +363,37 @@ impl AttentionTensors {
         kv: KvSource,
         lengths: PlainTensor,
         scoring: AttentionScoring,
+        query_runs: Option<(PlainTensor, usize)>,
     ) -> Self {
         let q_shape = query.shape();
         let (batch, heads, queries) = (q_shape[0], q_shape[1], q_shape[2]);
-        let axis = QueryAxis::new(queries, scoring.visibility);
+        let value = kv.val_dim();
         // Dense, as every arm of the attention seam allocates it: a token's heads are one row, so
         // the caller merges them by a reshape. The views below are a factorization of these
         // strides, which a pitched allocation would invalidate.
-        let (out, out_plain) = PlainTensor::empty_contiguous(
-            client,
-            [batch, queries, heads, kv.val_dim()].into(),
-            query.elem,
-        );
+        let (axis, out, out_plain) = match &query_runs {
+            None => {
+                let (out, out_plain) = PlainTensor::empty_contiguous(
+                    client,
+                    [batch, queries, heads, value].into(),
+                    query.elem,
+                );
+                (QueryAxis::new(queries, scoring.visibility), out, out_plain)
+            }
+            Some(_) => {
+                let (out, end_to_end) = PlainTensor::empty_contiguous(
+                    client,
+                    [queries, heads, value].into(),
+                    query.elem,
+                );
+                let strides = &end_to_end.binding.strides;
+                let out_plain = end_to_end.viewed(Metadata::new(
+                    [batch, queries, heads, value],
+                    [0, strides[0], strides[1], strides[2]],
+                ));
+                (QueryAxis::Positions, out, out_plain)
+            }
+        };
         Self {
             client: client.clone(),
             query: axis.view(&query, group, [0, 1, 2, 3]),
@@ -353,6 +401,7 @@ impl AttentionTensors {
             out,
             kv,
             lengths: Self::one_per_sequence(lengths, batch),
+            query_runs,
             scoring,
             axis,
             arrivals: None,
@@ -432,6 +481,10 @@ impl AttentionTensors {
     ///
     /// A mask of another shape than the scores', `[b, h, q, s]`.
     pub fn with_mask(mut self, mask: PlainTensor) -> Self {
+        assert!(
+            self.query_runs.is_none(),
+            "queries that lie end to end take no mask"
+        );
         let [batch, queries, heads, _] = self.out.shape().dims::<4>();
         assert_eq!(
             mask.shape().as_slice(),
@@ -454,6 +507,10 @@ impl AttentionTensors {
         assert!(
             !matches!(self.kv.cache, AttentionCache::Packed(_)),
             "a packed cache's attention writes no logsumexp"
+        );
+        assert!(
+            self.query_runs.is_none(),
+            "queries that lie end to end write no logsumexp"
         );
         let [batch, queries, heads, _] = self.out.shape().dims::<4>();
         let (handle, rows) = PlainTensor::empty_contiguous(
@@ -491,7 +548,13 @@ impl AttentionTensors {
 
     /// The problem the tensors state.
     pub fn problem(&self) -> AttentionRoutineProblem {
-        let [batch, queries, heads, value] = self.out.shape().dims::<4>();
+        let [batch, queries, heads, value] = match &self.query_runs {
+            None => self.out.shape().dims::<4>(),
+            Some((ends, longest)) => {
+                let [_, heads, value] = self.out.shape().dims::<3>();
+                [ends.shape()[0], *longest, heads, value]
+            }
+        };
         let kv_heads = self.kv.num_kv_heads();
         let (group, queries, visibility) =
             self.axis
@@ -542,6 +605,7 @@ impl AttentionTensors {
                 out: start(&self.out_view),
             },
             cache: self.kv.layout(),
+            packed_queries: self.query_runs.is_some(),
         }
     }
 
@@ -561,7 +625,7 @@ impl AttentionTensors {
         self.scoring.scale.value()
     }
 
-    /// The output, `[b, q, h, dv]`.
+    /// The output, `[b, q, h, dv]`; `[Σ q_b, h, dv]` where the queries lie end to end.
     pub fn into_out(self) -> TensorHandle {
         self.out
     }
@@ -624,10 +688,29 @@ impl AttentionTensors {
                 .microkernel
                 .query_delivery(&widths, &problem.work_item()),
         };
-        let query = read_operand(&self.query, &[B, KV, G, Q, D], widths.query)
-            .delivery(query_delivery)
-            .build()
-            .expect(ADMITTED_PLAN_RUNS);
+        // Where the queries lie end to end, the query and the output each read the run of their
+        // sequence: its entry of the cumulative counts, keyed by the batch, places it along `Q`.
+        let runs = |bound: TileTensorLaunch| match &self.query_runs {
+            Some((ends, _)) => bound
+                .indexed(
+                    TileTensorLaunch::new(
+                        ends.binding.clone().into_tensor_arg(),
+                        Self::COUNTER,
+                        1,
+                        TileSpec::direct(&[B]),
+                    ),
+                    Indexing::Run(Q),
+                )
+                .expect(ADMITTED_PLAN_RUNS),
+            None => bound,
+        };
+        let query = runs(
+            read_operand(&self.query, &[B, KV, G, Q, D], widths.query)
+                .delivery(query_delivery)
+                .build()
+                .expect(ADMITTED_PLAN_RUNS)
+                .arg(),
+        );
         // The keys and values move into their stages as the microkernel says, unless they are
         // bound as words its stages decode, which pass through the units' registers.
         let delivery = match words {
@@ -672,14 +755,17 @@ impl AttentionTensors {
             }
             AttentionCache::Packed(cache) => AttentionCacheBinding::Packed(cache.bind(&launcher)),
         };
-        let out = arg(
-            &self.out_view,
-            &[B, KV, G, Q, DV],
-            widths.out,
-            problem.elements.out,
-        )
-        .build()
-        .expect(ADMITTED_PLAN_RUNS);
+        let out = runs(
+            arg(
+                &self.out_view,
+                &[B, KV, G, Q, DV],
+                widths.out,
+                problem.elements.out,
+            )
+            .build()
+            .expect(ADMITTED_PLAN_RUNS)
+            .arg(),
+        );
         // A value a query, written by whoever holds its row.
         let logsumexp = self.logsumexp.as_ref().map(|(_, view)| {
             arg(view, &[B, KV, G, Q], 1, AttentionRoutineProblem::SUM)
@@ -700,6 +786,10 @@ impl AttentionTensors {
             logsumexp,
             mask,
             lengths: self.lengths.binding.clone().into_tensor_arg(),
+            query_ends: self
+                .query_runs
+                .as_ref()
+                .map(|(ends, _)| ends.binding.clone().into_tensor_arg()),
         }
     }
 
