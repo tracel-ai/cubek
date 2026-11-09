@@ -14,7 +14,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// windowed to it. The bias is where the masking lies, read at each score's own coordinates. The
 /// dot product is written before the walk, for the keys' walk to read.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn unit_query_gradient_microkernel<EA: Float>(
     queries: &Region,
     query_gradient: &Tile,

@@ -31,7 +31,6 @@ pub fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 /// Every unit of the launch, reducing its rows into the carrier its operation accumulates into, and
 /// writing the values to `out` and their indices to `indices`, laid out as `out`.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn unit_reduce_with_indices_kernel<
     In: Numeric,
     Acc: Numeric,
