@@ -1,7 +1,8 @@
 use super::kernel::cube_staged_attention_kernel;
 use crate::kernels::{
-    ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors, QueryOrder,
+    AttentionBinding, AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning,
+    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, KeyFixup, PackedLayout,
+    QueryOrder,
 };
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::{Refusal, Vectorization};
@@ -10,8 +11,21 @@ use cubek_microkernel::attention::cube::{
 };
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
+
+/// What the staged cube declines on a packed cache whose keys carry the QJL fix-up: its stage
+/// holds the keys decoded from one tile, and the fix-up is a second.
+pub const STAGED_FIXUP_UNREAD: Refusal = Refusal::Declined {
+    why: "the staged cube stages a packed cache's keys from one tile, and a QJL fix-up is a second",
+};
+
+/// What the staged cube declines on a packed cache when its planes read the keys transposed: a
+/// packed cache is bound as its words lie, a key a row.
+pub const STAGED_PACKED_TRANSPOSED: Refusal = Refusal::Declined {
+    why: "a packed cache is bound a key a row, and these planes read the keys transposed",
+};
 
 /// Attention with every cube owning a box of queries of some heads of the group, and walking
 /// nothing else: the cube microkernel stages the keys and values once for its planes, each plane
@@ -119,11 +133,19 @@ impl Routine for CubeStagedAttentionRoutine {
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        if let AttentionCacheLayout::Packed(_) = problem.cache {
-            return Err(ATTENTION_PACKED_UNREAD);
-        }
+        let packed = match problem.cache {
+            AttentionCacheLayout::Packed(PackedLayout {
+                fixup: KeyFixup::Qjl,
+                ..
+            }) => return Err(STAGED_FIXUP_UNREAD),
+            AttentionCacheLayout::Packed(_) => true,
+            AttentionCacheLayout::Sequences | AttentionCacheLayout::Pages { .. } => false,
+        };
         let item = problem.work_item();
         let microkernel = CubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
+        if packed && microkernel.key_order() != BindingOrder::InBufferOrder {
+            return Err(STAGED_PACKED_TRANSPOSED);
+        }
         let partitioning = AttentionPartitioning::new(
             problem.space(),
             microkernel.tiling(),
