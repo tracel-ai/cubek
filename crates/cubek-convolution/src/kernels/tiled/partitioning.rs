@@ -258,8 +258,8 @@ impl ConvPartitioning {
     }
 
     /// A plane of the launch for every box of the output, its units taking `blocks_per_plane` of
-    /// them along the columns in turns, each walking every contracted cell from global memory in
-    /// `microkernel`'s steps. Nothing is staged: the box a unit owns is what it reads for.
+    /// them along the columns in turns, each contracting every contracted cell of its block from
+    /// global memory in one leaf. Nothing is staged: the box a unit owns is what it reads for.
     pub fn units(
         problem: &ConvProblem,
         microkernel: &UnitRegistersMicrokernel,
@@ -269,7 +269,7 @@ impl ConvPartitioning {
         let roles = problem.operation.roles();
         let axes = roles.axes();
         let levels = microkernel
-            .tiling_over(&roles.contracted)
+            .block_tiling()
             .units_distributed(axes.n, blocks_per_plane)
             .launch_planes(
                 &[axes.m, axes.n, roles.across(), roles.batch()],
@@ -281,10 +281,7 @@ impl ConvPartitioning {
         let contracted = roles
             .contracted
             .iter()
-            .map(|&axis| match axis == axes.k {
-                true => problem.extent(axis).next_multiple_of(depth),
-                false => problem.extent(axis),
-            })
+            .map(|&axis| problem.extent(axis))
             .product();
         let along = |axis: Axis| match axes.dim(axis) {
             Some(MatmulDim::K) => depth,

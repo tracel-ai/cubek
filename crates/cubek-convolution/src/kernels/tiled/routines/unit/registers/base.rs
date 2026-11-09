@@ -7,11 +7,17 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::PlaneOrder;
 use cubek_matmul::kernels::{UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings};
-use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{Grid, Routine};
+
+/// What a launch is declined with where the input's lines do not divide the contracted axis: the
+/// leaf walks the contraction in whole lines, and a line past the axis's end would read another's.
+pub const CONV_UNIT_LINES_UNDIVIDED: Refusal = Refusal::Declined {
+    why: "a unit block walks the contraction in whole lines of the input, which must divide the contracted axis",
+};
 
 /// Units each owning a block of the output in registers, reading the gathered input and the rhs
 /// straight from global memory through every contracted cell. It asks nothing of the hardware: no
@@ -42,6 +48,26 @@ impl UnitRegistersConvRoutine {
             .filter(|&(rows, columns)| lines(rows, columns) <= Self::LINE_REGISTERS)
             .max_by_key(|&(rows, columns)| (rows * columns, rows))
             .unwrap_or((1, 1))
+    }
+
+    /// Whether the input's lines, where it is read in them down the contraction, divide the
+    /// contracted axis.
+    ///
+    /// # Errors
+    ///
+    /// [`CONV_UNIT_LINES_UNDIVIDED`].
+    pub fn check_lines(
+        problem: &ConvProblem,
+        widths: &MatmulOperands<usize>,
+    ) -> Result<(), Refusal> {
+        let roles = problem.operation.roles();
+        let axes = roles.axes();
+        let divides =
+            roles.inner.lhs != axes.k || problem.extent(axes.k).is_multiple_of(widths.lhs.max(1));
+        match divides {
+            true => Ok(()),
+            false => Err(CONV_UNIT_LINES_UNDIVIDED),
+        }
     }
 
     /// The operands a register block cannot read in lines along the axis it reads them: the lhs
@@ -155,14 +181,23 @@ impl Routine for UnitRegistersConvRoutine {
         for operand in Self::unlined(problem) {
             vectorization.require(VectorRequirement::Elementwise { operand });
         }
-        ConvBlueprint::prepared_units(
+        let roles = problem.operation.roles();
+        if roles.inner.lhs == axes.k {
+            vectorization.require(VectorRequirement::Access {
+                operand: MatmulOperand::Lhs,
+                elements: problem.extent(axes.k),
+            });
+        }
+        let (blueprint, grid) = ConvBlueprint::prepared_units(
             hw,
             problem,
             microkernel,
             partitioning,
             vectorization,
             plane_width,
-        )
+        )?;
+        Self::check_lines(problem, &blueprint.widths)?;
+        Ok((blueprint, grid))
     }
 }
 
@@ -192,7 +227,7 @@ impl ConvRoutine<UnitRegistersMicrokernel> for UnitRegistersConvRoutine {
                 rhs,
                 out,
                 launcher.partitioning_arg(),
-                blueprint.microkernel,
+                blueprint.microkernel.register_block(),
                 problem.kernel_elements(),
             );
         }

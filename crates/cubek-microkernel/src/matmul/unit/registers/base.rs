@@ -5,7 +5,7 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Instruction, Levels, RegisterBlock};
+use cubecl::tile::{Instruction, Levels, RegisterBlock};
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
@@ -78,7 +78,7 @@ impl UnitRegistersMicrokernel {
     /// sum over a 512-wide value dim, walks its cells at runtime.
     pub fn tile_instruction(&self) -> Instruction {
         Instruction::Registers {
-            config: RegisterBlock::new(UNIT_REGISTERS as usize),
+            config: self.register_block(),
         }
     }
 
@@ -225,12 +225,19 @@ impl Microkernel for UnitRegistersMicrokernel {
 }
 
 impl UnitRegistersMicrokernel {
-    /// One step of the block, walked through every tile along `walked`: `K` alone for a matmul,
-    /// the taps beside it for a convolution.
-    pub fn tiling_over(&self, walked: &[Axis]) -> Levels {
-        let [rows, columns, depth] = self.extents();
-        let MatmulAxes { m, n, k } = self.axes;
-        Levels::leaf(&[(m, rows), (n, columns), (k, depth)]).walk_every(walked)
+    /// The block alone, `rows × columns` of the output with every contracted axis left whole, for
+    /// a contraction the leaf walks itself: a gathered operand's taps, which a register
+    /// accumulator cannot step.
+    pub fn block_tiling(&self) -> Levels {
+        let [rows, columns, _] = self.extents();
+        let MatmulAxes { m, n, .. } = self.axes;
+        Levels::leaf(&[(m, rows), (n, columns)])
+    }
+
+    /// The register block a memory window is accumulated under: unrolled while its cells fit a
+    /// unit's registers.
+    pub fn register_block(&self) -> RegisterBlock {
+        RegisterBlock::new(UNIT_REGISTERS as usize)
     }
 }
 
@@ -238,7 +245,9 @@ impl MatmulMicrokernel for UnitRegistersMicrokernel {
     /// The levels inside one unit's block, which a routine states the rest of the partitioning
     /// around: one step of the block, walked through all of `K`.
     fn tiling(&self) -> Levels {
-        self.tiling_over(&[self.axes.k])
+        let [rows, columns, depth] = self.extents();
+        let MatmulAxes { m, n, k } = self.axes;
+        Levels::leaf(&[(m, rows), (n, columns), (k, depth)]).walk_every(&[k])
     }
 
     fn orders(&self) -> MatmulOperands<BindingOrder> {

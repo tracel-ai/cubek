@@ -79,3 +79,36 @@ fn a_weight_backward_reads_one_value_at_a_time() {
         (1, 1, 1)
     );
 }
+
+/// Lines of the input that do not divide the contracted axis are refused by name: twelve channels
+/// cannot be read sixteen at a time.
+#[test]
+fn lines_past_the_contracted_axis_are_refused_by_name() {
+    let problem = ConvProblem::dense(1, [9, 9], (12, 16), [3, 3], 1, F32);
+    let widths = |lhs| cubek_microkernel::matmul::MatmulOperands {
+        lhs,
+        rhs: lhs,
+        out: 1,
+    };
+    assert_eq!(
+        UnitRegistersConvRoutine::check_lines(&problem, &widths(16)),
+        Err(CONV_UNIT_LINES_UNDIVIDED)
+    );
+    assert_eq!(
+        UnitRegistersConvRoutine::check_lines(&problem, &widths(4)),
+        Ok(())
+    );
+}
+
+/// The widths a forward prepares at divide its channels, so the check never refuses what the
+/// vectorization admitted.
+#[test]
+fn a_forward_over_twelve_channels_reads_lines_that_divide_them() {
+    let hw = devices::cpu_12();
+    let problem = ConvProblem::dense(1, [9, 9], (12, 16), [3, 3], 1, F32);
+    let settings = ROUTINE.settings(&hw)[0];
+    let (blueprint, _) = ROUTINE
+        .prepare(&hw, &problem, &settings)
+        .expect("the lead setting prepares");
+    assert_eq!(12 % blueprint.widths.lhs, 0);
+}
