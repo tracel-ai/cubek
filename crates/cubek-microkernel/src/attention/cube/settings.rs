@@ -37,6 +37,20 @@ pub struct CubeAttentionMicrokernelSettings {
 }
 
 impl CubeAttentionMicrokernelSettings {
+    /// What fills its stages, where not its units' copies, and its query landed as its keys are:
+    /// the end of its name, and of the name of a hypercube whose cubes run it.
+    pub(crate) fn fmt_delivery(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.delivery {
+            CubeStagedDelivery::Copy => {}
+            CubeStagedDelivery::AsyncCopy => write!(f, " delivery=async")?,
+            CubeStagedDelivery::Tma => write!(f, " delivery=tma")?,
+        }
+        match self.query_as_keys {
+            true => write!(f, " query=as_keys"),
+            false => Ok(()),
+        }
+    }
+
     /// The lead over plane fragments: a fragment of rows and one of keys a plane, four heads a
     /// cube, what a cube holds for a head dim of 128 in `f32` within 32 KiB of shared memory.
     pub const FRAGMENT: Self = Self {
@@ -386,14 +400,6 @@ impl core::fmt::Display for CubeAttentionMicrokernelSettings {
             self.ring,
             self.layout
         )?;
-        match self.delivery {
-            CubeStagedDelivery::Copy => {}
-            CubeStagedDelivery::AsyncCopy => write!(f, " delivery=async")?,
-            CubeStagedDelivery::Tma => write!(f, " delivery=tma")?,
-        }
-        match self.query_as_keys {
-            true => write!(f, " query=as_keys"),
-            false => Ok(()),
-        }
+        self.fmt_delivery(f)
     }
 }
