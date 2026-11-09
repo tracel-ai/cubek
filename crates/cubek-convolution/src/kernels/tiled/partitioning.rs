@@ -1,4 +1,4 @@
-use super::{ConvProblem, ConvRoles, ConvSettings};
+use super::{ConvProblem, ConvRoles, ConvSettings, OH, OW, RH, RW};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::stage::RowChunks;
@@ -266,6 +266,14 @@ impl ConvPartitioning {
     /// Whether the tiles overhang `axis`: a tile the problem's edge cuts short along it.
     pub fn overhangs(&self, axis: Axis) -> bool {
         self.partitioning.overhangs(axis)
+    }
+
+    /// Whether the tiles overhang an axis the window gathers the input over, where a read past
+    /// the real extents lands off the input whatever the padding.
+    pub fn overhangs_gathered(&self) -> bool {
+        [OH, OW, RH, RW]
+            .into_iter()
+            .any(|axis| self.overhangs(axis))
     }
 
     /// Planes in a cube.
