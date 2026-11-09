@@ -431,7 +431,6 @@ impl StageScore {
 /// windowed to `rows`; `planes` is how many planes along the queries share the cube, which a score
 /// read through windows is placed under.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
     rows: &Region,
     out: &Tile,

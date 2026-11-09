@@ -9,7 +9,6 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 /// `storage`, over the keys its rows see, and writing each row's logsumexp where the launch binds
 /// one.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,

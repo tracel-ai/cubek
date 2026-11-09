@@ -7,7 +7,7 @@ use cubecl::prelude::*;
 /// SIMD rather than a component loop.
 /// <https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-37-efficient-random-number-generation-and-application>
 #[derive(CubeType)]
-pub(crate) struct PrngState<N: Size> {
+pub struct PrngState<N: Size> {
     taus_0: Vector<u32, N>,
     taus_1: Vector<u32, N>,
     taus_2: Vector<u32, N>,
@@ -16,7 +16,7 @@ pub(crate) struct PrngState<N: Size> {
 
 /// The four seeds a launch draws from the host generator, as one argument.
 #[derive(CubeLaunch, CubeType)]
-pub(crate) struct Seeds {
+pub struct Seeds {
     taus_0: u32,
     taus_1: u32,
     taus_2: u32,
@@ -28,7 +28,7 @@ impl<N: Size> PrngState<N> {
     /// Give component `component` of unit `unit` the stream of the `unit * N + component`th
     /// generator, so a wider line splits the same sequence of streams further instead of repeating
     /// one.
-    pub fn seeded(unit: usize, seeds: Seeds) -> PrngState<N> {
+    pub fn seeded(unit: usize, seeds: &Seeds) -> PrngState<N> {
         // A large prime spreads consecutive stream indices across the u32 range;
         // truncation is fine here, a repeated seed is no issue.
         #[allow(arithmetic_overflow)]
@@ -44,7 +44,7 @@ impl<N: Size> PrngState<N> {
     }
 
     /// Advance every generator and return their combined output.
-    pub fn next(&mut self) -> Vector<u32, N> {
+    pub fn advance(&mut self) -> Vector<u32, N> {
         // L'Ecuyer's taus88 components, periods 2^31-1, 2^29-1, and 2^28-1; each mask
         // zeroes the low state bits that sit outside its component's period.
         self.taus_0 = taus_step(self.taus_0, 13u32, 19u32, 12u32, 4294967294u32);

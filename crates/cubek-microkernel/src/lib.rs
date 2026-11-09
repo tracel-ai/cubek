@@ -25,6 +25,8 @@ pub mod interpolate;
 pub mod matmul;
 #[cfg(feature = "pool")]
 pub mod pool;
+#[cfg(feature = "random")]
+pub mod random;
 #[cfg(feature = "reduce")]
 pub mod reduce;
 #[cfg(feature = "rms-norm")]

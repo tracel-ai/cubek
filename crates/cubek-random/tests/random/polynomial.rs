@@ -1,7 +1,7 @@
 use cubecl::{
     CubeDim,    prelude::{BufferArg, *},
 };
-use cubek_random::polynomial;
+use cubek_microkernel::random::polynomial;
 
 const POINTS: usize = 262_144;
 
