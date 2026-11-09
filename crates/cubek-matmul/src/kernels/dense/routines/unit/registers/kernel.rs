@@ -37,4 +37,5 @@ pub fn unit_registers_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destin
             sum.drained_into(&c);
         }
     }
+    O::finish::<E>(out);
 }

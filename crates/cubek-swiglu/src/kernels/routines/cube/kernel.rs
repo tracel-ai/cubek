@@ -26,4 +26,5 @@ pub fn cube_swiglu_kernel<E: Float, N: Size, O: Destination>(
             stage.clone(),
         );
     }
+    O::finish::<E>(out);
 }

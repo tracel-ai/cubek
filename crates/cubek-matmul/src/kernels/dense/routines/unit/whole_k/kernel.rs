@@ -32,4 +32,5 @@ pub fn unit_whole_k_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
             sum.drained_into(&c);
         }
     }
+    O::finish::<E>(out);
 }
