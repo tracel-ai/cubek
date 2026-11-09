@@ -27,6 +27,12 @@ impl CubeStagedConvRoutine {
     /// One tile of rows, which wastes less where the map is narrow.
     pub const GRID_1X2: ConvSettings = ConvSettings::new((1, 2), (1, 2), ConvLines::Widest);
 
+    /// 2x2 fragments on two planes across the channels: 32 rows hold a map 28 wide at 88%.
+    pub const GRID_2X2_ON_1X2: ConvSettings = ConvSettings::new((2, 2), (1, 2), ConvLines::Widest);
+
+    /// 1x2 fragments on 2x2 planes: 32 rows over four planes.
+    pub const GRID_1X2_ON_2X2: ConvSettings = ConvSettings::new((1, 2), (2, 2), ConvLines::Widest);
+
     /// An 8x32 instruction on two planes across the channels: 8 rows hold a map seven wide at 88%.
     pub const GRID_8X32: ConvSettings =
         ConvSettings::new((1, 1), (1, 2), ConvLines::Widest).eight_rows();
@@ -49,6 +55,8 @@ impl Routine for CubeStagedConvRoutine {
             Self::GRID_2X2.mma().width_one(),
             Self::GRID_2X2.mma(),
             Self::GRID_1X2.mma(),
+            Self::GRID_2X2_ON_1X2,
+            Self::GRID_1X2_ON_2X2.mma(),
         ]
     }
 

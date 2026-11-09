@@ -101,5 +101,21 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
                 }),
             },
         ),
+        CatalogEntry::new(
+            "cube_staged_cmma_grid_2x2_on_1x2",
+            "Cube staged / Cmma, lines, 2x2 on 1x2 planes",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(CubeStagedConvRoutine::GRID_2X2_ON_1X2),
+            },
+        ),
+        CatalogEntry::new(
+            "cube_staged_mma_grid_1x2_on_2x2",
+            "Cube staged / Mma, lines, 1x2 on 2x2 planes",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(CubeStagedConvRoutine::GRID_1X2_ON_2X2.mma()),
+            },
+        ),
     ]
 }

@@ -170,6 +170,14 @@ problem_tests! {
     unequal_dilation_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (64, 32), [12, 15], [3, 3], ([1, 1], [1, 2], [1, 2]));
 }
 
+/// Settings of 32 rows, at stride 2 and over an overhanging output width.
+problem_tests! {
+    stride_2_cube_staged_cmma_grid_2x2_on_1x2: "cube_staged_cmma_grid_2x2_on_1x2", conv(2, (64, 32), [12, 15], [3, 3], ([2, 2], [1, 1], [1, 1]));
+    ow_40_cube_staged_cmma_grid_2x2_on_1x2: "cube_staged_cmma_grid_2x2_on_1x2", conv(1, (64, 48), [3, 40], [3, 3], SAME_3X3);
+    stride_2_cube_staged_mma_grid_1x2_on_2x2: "cube_staged_mma_grid_1x2_on_2x2", conv(2, (64, 32), [12, 15], [3, 3], ([2, 2], [1, 1], [1, 1]));
+    ow_40_cube_staged_mma_grid_1x2_on_2x2: "cube_staged_mma_grid_1x2_on_2x2", conv(1, (64, 48), [3, 40], [3, 3], SAME_3X3);
+}
+
 /// One and five channels, which make a step of taps, over a batch of one.
 problem_tests! {
     channels_1_cube_staged: "cube_staged", conv(1, (1, 16), [12, 12], [3, 3], SAME_3X3);
@@ -643,6 +651,23 @@ macro_rules! weight_grad_offset_tests {
 weight_grad_offset_tests! {
     weight_grad_offset_output_cube_staged_cmma: "cube_staged_cmma_grid_2x2";
     weight_grad_offset_output_cube_staged_mma: "cube_staged_mma_grid_2x2";
+}
+
+/// The Mma setting of 32 rows over four planes, at stride 1 and 2.
+#[test]
+fn weight_grad_cube_staged_mma_grid_1x2_on_2x2() {
+    check_weight_grad(
+        "cube_staged_mma_grid_1x2_on_2x2",
+        &conv(2, (64, 32), [12, 15], [3, 3], SAME_3X3),
+        Binding::Dense,
+        Binding::Dense,
+    );
+    check_weight_grad(
+        "cube_staged_mma_grid_1x2_on_2x2",
+        &conv(2, (64, 32), [12, 15], [3, 3], ([2, 2], [1, 1], [1, 1])),
+        Binding::Dense,
+        Binding::Dense,
+    );
 }
 
 /// A map one to three positions wide makes a step of two axes.
