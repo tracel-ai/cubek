@@ -37,4 +37,5 @@ pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destina
 
         c.dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
     }
+    O::finish::<E>(out);
 }

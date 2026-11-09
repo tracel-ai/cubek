@@ -32,4 +32,5 @@ pub fn plane_rms_norm_kernel<E: Float, N: Size, O: Destination>(
             microkernel,
         );
     }
+    O::finish::<E>(out);
 }

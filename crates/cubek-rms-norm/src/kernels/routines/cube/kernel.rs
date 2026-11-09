@@ -34,4 +34,5 @@ pub fn cube_rms_norm_kernel<E: Float, N: Size, O: Destination>(
             stage.clone(),
         );
     }
+    O::finish::<E>(out);
 }
