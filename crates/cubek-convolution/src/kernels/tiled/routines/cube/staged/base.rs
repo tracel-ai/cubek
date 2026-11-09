@@ -83,7 +83,7 @@ impl Routine for CubeStagedConvRoutine {
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         let plane = settings.plane(hw, problem)?;
         let tiles = ConvTiles::new(problem, &plane, settings)?;
-        let partitioning = ConvPartitioning::cube(problem, &tiles);
+        let partitioning = ConvPartitioning::cube(problem, &tiles, hw.shared_memory_budget());
         let scratch = match plane.instruction.drain() {
             PlaneFragmentDrain::Bounce => Scratch::OneTile,
             PlaneFragmentDrain::CellByCell | PlaneFragmentDrain::InLines => Scratch::None,

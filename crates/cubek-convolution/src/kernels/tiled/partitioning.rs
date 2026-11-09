@@ -127,6 +127,16 @@ impl ConvTiles {
         }
     }
 
+    /// Rows and columns of the output one stage owner holds, with a stage `depth` cells deep.
+    fn cells(&self, depth: usize) -> (usize, usize, usize) {
+        let (m, n, _) = self.instruction;
+        (
+            m * self.fragments.0 * self.planes.0,
+            n * self.fragments.1 * self.planes.1,
+            depth,
+        )
+    }
+
     fn leaf(&self, stage: (Axis, usize)) -> Levels {
         let (m, n, _) = self.instruction;
         let axes = self.roles.axes();
@@ -159,13 +169,13 @@ pub struct ConvPartitioning {
 }
 
 impl ConvPartitioning {
-    /// A cube stages for all its planes.
-    pub fn cube(problem: &ConvProblem, tiles: &ConvTiles) -> Self {
+    /// A cube stages for all its planes, its stages within `budget` bytes of shared memory.
+    pub fn cube(problem: &ConvProblem, tiles: &ConvTiles, budget: usize) -> Self {
         let (planes_m, planes_n) = tiles.planes;
         let (m, n, _) = tiles.instruction;
         let roles = tiles.roles;
         let axes = roles.axes();
-        let (stage, steps) = Self::stage(problem, tiles);
+        let (stage, steps) = Self::stage(problem, tiles, budget);
         let levels = tiles
             .leaf(stage)
             .planes(&[(axes.m, planes_m), (axes.n, planes_n)])
@@ -202,15 +212,29 @@ impl ConvPartitioning {
     }
 
     /// The axis a stage walks and the steps along it, and the contraction cells that holds.
-    fn stage(problem: &ConvProblem, tiles: &ConvTiles) -> ((Axis, usize), usize) {
+    fn stage(problem: &ConvProblem, tiles: &ConvTiles, budget: usize) -> ((Axis, usize), usize) {
         let (_, _, k) = tiles.instruction;
         let (axis, total) = tiles.step.walk(&tiles.roles, problem);
         // A stage never overhangs: the most steps up to the setting's that divide the walk.
-        let steps = (1..=tiles.stage_steps.min(total))
+        let divisor = (1..=tiles.stage_steps.min(total))
             .rev()
             .find(|steps| total % steps == 0)
             .unwrap_or(1);
+        // A walk with no divisor in reach (a prime one) would run a stage a step. Its whole
+        // walk is one stage where that fits; a walk with a divisor keeps it, as a deeper stage
+        // than the divisor measured slower.
+        let whole = (divisor == 1 && total > 1)
+            .then_some(total)
+            .filter(|&steps| Self::bytes(tiles.cells(steps * k), &problem.elements) <= budget);
+        let steps = whole.unwrap_or(divisor);
         ((axis, steps), steps * k)
+    }
+
+    /// Bytes of shared memory the stages of `stage` hold, the operands in `elements`.
+    fn bytes(stage: (usize, usize, usize), elements: &MatmulOperands<ElemType>) -> usize {
+        let (rows, columns, depth) = stage;
+        let cells = rows * elements.lhs.size() + columns * elements.rhs.size();
+        STAGE_RING.stages_in_flight.get() * depth * cells
     }
 
     pub fn as_tile(&self) -> &Partitioning {
@@ -242,9 +266,7 @@ impl ConvPartitioning {
 
     /// Bytes of shared memory a cube's stages hold, the operands in `elements`.
     pub fn stage_bytes(&self, elements: &MatmulOperands<ElemType>) -> usize {
-        let (rows, columns, depth) = self.stage;
-        let cells = rows * elements.lhs.size() + columns * elements.rhs.size();
-        STAGE_RING.stages_in_flight.get() * depth * cells
+        Self::bytes(self.stage, elements)
     }
 
     /// What one cube moves and computes: the cube's box of the output read over the whole
@@ -289,5 +311,44 @@ impl ConvPartitioning {
                 elements: self.runs.get(operand),
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::tiled::routines::CubeStagedConvRoutine;
+    use crate::kernels::tiled::routines::test_support::{F16, nvidia};
+    use crate::kernels::tiled::{ConvOperation, ConvProblem};
+
+    const BUDGET: usize = 48 * 1024;
+
+    /// The steps a stage of the Mma 2x2 grid holds on `problem`, within `budget`.
+    fn steps(problem: &ConvProblem, budget: usize) -> usize {
+        let settings = CubeStagedConvRoutine::GRID_2X2.mma();
+        let plane = settings
+            .plane(&nvidia(), problem)
+            .expect("the device offers mma");
+        let tiles = ConvTiles::new(problem, &plane, &settings).expect("the tiles state");
+        ConvPartitioning::stage(problem, &tiles, budget).0.1
+    }
+
+    /// A weight backward of 56 steps of eight, prime, takes its whole walk as one stage.
+    #[test]
+    fn a_prime_walk_is_one_stage() {
+        let problem = ConvProblem {
+            operation: ConvOperation::BackwardWeight,
+            ..ConvProblem::dense(8, [58, 58], (64, 64), [3, 3], 1, F16)
+        };
+        assert_eq!(steps(&problem, BUDGET), 7);
+        assert_eq!(steps(&problem, 1024), 1);
+    }
+
+    /// A walk with a divisor in reach keeps it: six steps of the AlexNet-like forward run three
+    /// at a time.
+    #[test]
+    fn a_walk_with_a_divisor_keeps_it() {
+        let problem = ConvProblem::dense(8, [227, 227], (3, 64), [11, 11], 4, F16);
+        assert_eq!(steps(&problem, BUDGET), 3);
     }
 }
