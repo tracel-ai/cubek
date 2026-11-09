@@ -89,6 +89,8 @@ impl Destination for Encoded {
     fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
         arg.tile(partitioning)
     }
+
+    fn finish<E: Numeric>(_arg: &Self::Arg<E>) {}
 }
 
 impl DestinationLaunch for Encoded {
