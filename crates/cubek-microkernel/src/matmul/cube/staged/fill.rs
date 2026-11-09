@@ -8,6 +8,7 @@ use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::stage::Prefetch;
 use cubecl::tile::{Axis, Scratch, StageStorage};
+use cubek_std::launch::tma::swizzle_span_bytes;
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::StageRing;
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
@@ -83,9 +84,10 @@ pub enum CubeStagedTmaRefusal {
     /// A block-split product's stage holds a packed operand decoded, which the fill writes value
     /// by value: the engine lands the words only as they are stored.
     Decoded,
-    /// A block-split product's lhs is packed: its descriptors land a float lhs beside a packed
-    /// rhs's words.
-    PackedLhs,
+    /// A block-split product's stage is deeper than one of the rhs's stored tiles, whose rows are
+    /// shorter than the swizzle the stage's rows take: the engine pads each tile's row to the
+    /// swizzle's span, so the box lands twice its bytes, past the stage.
+    TileRowsUnderSwizzle,
 }
 
 /// Why the copy engine cannot fill a cube microkernel's stages.
@@ -247,9 +249,10 @@ impl CubeStagedTmaRefusal {
     /// Why a stage of a product in the block-split space `blocks`, over buffers as `buffers`
     /// states them, held as `storage`, is not one the engine lands for `microkernel`; `None`
     /// where it is. A float lhs lands through a descriptor over the matrix its blocks split, a
-    /// stage's rows its blocks of `K` side by side; the packed rhs's words through one over the
-    /// tiles they are stored in, a stage of whole tiles along its lines, at most one tile deep or
-    /// whole tiles deep; the rhs's scales are copied beside them by the units.
+    /// stage's rows its blocks of `K` side by side, and a packed one's words through one over its
+    /// rows; the packed rhs's words through one over the tiles they are stored in, a stage of
+    /// whole tiles along its lines, at most one tile deep, or whole tiles deep where a tile's rows
+    /// fill the swizzle's span; each packed input's scales are copied beside them by the units.
     fn of_blocks(
         item: &MatmulWorkItem,
         blocks: &MatmulBlocks,
@@ -275,17 +278,42 @@ impl CubeStagedTmaRefusal {
                 && (tile.columns.is_multiple_of(depth) || depth.is_multiple_of(tile.columns))
                 && words_bytes.is_multiple_of(TMA_ALIGNMENT_BYTES)
         });
+        // A packed lhs lands in the words it is packed in, as the rhs does, and is dense rows of
+        // words, which its buffer facts leave out: its rows are whole lines where `k` packs into
+        // them. A float one lands a value a cell, aligned as its buffer states.
+        let (lhs_cell, lhs_rows_aligned) = if blocks.packings.lhs.is_some() {
+            (
+                u32::BITS as usize / bits(MatmulOperand::Lhs),
+                (blocks.k * bits(MatmulOperand::Lhs) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES),
+            )
+        } else {
+            (
+                1,
+                buffers
+                    .alignments
+                    .lhs
+                    .admits(TMA_ALIGNMENT_BYTES * 8 / bits(MatmulOperand::Lhs)),
+            )
+        };
+        let rhs_swizzle = storage.tma_swizzle(
+            &rhs,
+            u32::BITS as usize / bits(MatmulOperand::Rhs),
+            bits(MatmulOperand::Rhs),
+        );
+        // A box deeper than one stored tile lands each tile's row as one row of the box, which
+        // the engine pads to the swizzle's span where the row is shorter.
+        let pads_tile_rows = |swizzle| {
+            buffers.stored_tiles.rhs.is_some_and(|tile| {
+                let row_bytes = tile.columns * bits(MatmulOperand::Rhs) / 8;
+                depth > tile.columns
+                    && swizzle_span_bytes(swizzle).is_some_and(|span| row_bytes < span)
+            })
+        };
         if microkernel.k_stated != PlaneFragmentKStatement::Blocks {
             Some(Self::Decoded)
-        } else if blocks.packings.lhs.is_some() {
-            Some(Self::PackedLhs)
         } else if blocks.packings.rhs.is_none() || !rhs_tiles {
             Some(Self::StoredInTiles(MatmulOperand::Rhs))
-        } else if !buffers
-            .alignments
-            .lhs
-            .admits(TMA_ALIGNMENT_BYTES * 8 / bits(MatmulOperand::Lhs))
-        {
+        } else if !lhs_rows_aligned {
             Some(Self::Misaligned(MatmulOperand::Lhs))
         } else if let Some(operand) = MatmulOperand::INPUTS.into_iter().find(|&operand| {
             !buffers
@@ -295,19 +323,14 @@ impl CubeStagedTmaRefusal {
         }) {
             Some(Self::UnalignedStart(operand))
         } else if storage
-            .tma_swizzle(&lhs, 1, bits(MatmulOperand::Lhs))
+            .tma_swizzle(&lhs, lhs_cell, bits(MatmulOperand::Lhs))
             .is_err()
         {
             Some(Self::Unlanded(MatmulOperand::Lhs))
-        } else if storage
-            .tma_swizzle(
-                &rhs,
-                u32::BITS as usize / bits(MatmulOperand::Rhs),
-                bits(MatmulOperand::Rhs),
-            )
-            .is_err()
-        {
+        } else if rhs_swizzle.is_err() {
             Some(Self::Unlanded(MatmulOperand::Rhs))
+        } else if rhs_swizzle.is_ok_and(pads_tile_rows) {
+            Some(Self::TileRowsUnderSwizzle)
         } else if [&lhs, &rhs]
             .into_iter()
             .any(|space| Delivery::Tma.moves(space).is_err())
@@ -395,8 +418,8 @@ impl From<CubeStagedTmaRefusal> for Refusal {
             CubeStagedTmaRefusal::Decoded => {
                 "the stage holds a packed operand decoded, and the TMA engine lands words as stored"
             }
-            CubeStagedTmaRefusal::PackedLhs => {
-                "the lhs is packed, and the descriptors land a float lhs beside a packed rhs"
+            CubeStagedTmaRefusal::TileRowsUnderSwizzle => {
+                "a stage is deeper than one rhs tile whose rows are shorter than the stage's swizzle, which the engine pads"
             }
         };
         Refusal::Declined { why }

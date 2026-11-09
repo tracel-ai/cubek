@@ -45,8 +45,9 @@ impl CubeStagedTmaMatmulRoutine {
 
     /// The settings a block-scaled product read as stored races on `hw`
     /// (`block_scaled`): for a prompt's rows, four by eight and two by
-    /// eight steps on four by two planes and two by four on two by two, two stages in flight; for
-    /// a decode's, a stage one step deep, the most one box lands, three or four in flight. None
+    /// eight steps on four by two planes and two by four on two by two, two stages in flight, and
+    /// four by four on two by four planes and two by eight on four by two, three in flight; for a
+    /// decode's, a stage one step deep, the most one box lands, three or four in flight. None
     /// without a bulk tensor copy.
     pub fn block_scaled_settings(&self, hw: &Hardware) -> Vec<CubeStagedTmaMatmulRoutineSettings> {
         if !hw.bulk_tensor_copy() {
@@ -70,6 +71,8 @@ impl CubeStagedTmaMatmulRoutine {
             shape((1, 2, 1), (1, 4), 1, triple),
             shape((1, 2, 1), (1, 2), 2, triple),
             shape((1, 1, 1), (1, 2), 2, QUAD),
+            shape((4, 4, 1), (2, 4), 1, triple),
+            shape((2, 8, 1), (4, 2), 1, triple),
         ];
         block_scaled::block_scaled_settings(hw, *self, &shapes, |microkernel| {
             CubeStagedTmaMatmulRoutineSettings {

@@ -5,6 +5,7 @@ use core::cmp::Reverse;
 use std::sync::Arc;
 
 use cubecl::tile::launch::Refusal;
+use cubecl::tile::layout::Stagger;
 use cubecl::{
     CubeDim,
     client::Client,
@@ -219,15 +220,11 @@ impl Hardware {
     /// Odd because a memory system that picks a channel from low power-of-two address bits sends
     /// runs a power of two bytes apart to one channel; an odd step reaches every slot of such an
     /// interleave. It costs at most one transaction of padding a run.
+    /// An element that does not divide a transaction lies at no whole pitch: its runs stay back
+    /// to back.
     pub fn staggered_pitch(&self, run: usize, elem: ElemType) -> usize {
-        let elem_bits = elem.size_bits().max(1);
-        let transaction_bits = self.transaction_bytes() * 8;
-        let transactions = (run * elem_bits).div_ceil(transaction_bits).max(1);
-        let odd = match transactions.is_multiple_of(2) {
-            true => transactions + 1,
-            false => transactions,
-        };
-        odd * transaction_bits / elem_bits
+        let transaction_bits = self.transaction_bytes() * u8::BITS as usize;
+        Stagger::new(transaction_bits, elem.size_bits()).map_or(run, |stagger| stagger.pitch(run))
     }
 
     /// Planes per cube for a plane-parallel launch of `working_units` units: on a CPU runtime

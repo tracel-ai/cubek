@@ -1,7 +1,7 @@
 //! Storing a tensor in storage tiles and back: the tiled buffer holds the tiles it states,
 //! the round trip is the identity, and what cannot be tiled is refused on the host.
 
-use cubecl::tile::{Axis, Geometry, kind::Field};
+use cubecl::tile::{Axis, Geometry, kind::Field, layout::Stagger};
 use cubecl::{
     bytes::Bytes, ir::ElemType, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle,
     zspace::Shape,
@@ -33,6 +33,18 @@ fn round_trip(
     (tr, tc): (usize, usize),
     grid: &[Axis],
 ) {
+    let storage = StorageLevels::new(&[(COLS, tc), (ROWS, tr)]).grid(grid);
+    round_trip_as(batches, rows, cols, (tr, tc), storage);
+}
+
+/// [`round_trip`] as `storage` states, its tiles `tr` by `tc`.
+fn round_trip_as(
+    batches: &[usize],
+    rows: usize,
+    cols: usize,
+    (tr, tc): (usize, usize),
+    storage: StoragePartitioning,
+) {
     let client = client();
     let dtype: ElemType = f32::elem_type_native();
     let shape: Vec<usize> = batches.iter().copied().chain([rows, cols]).collect();
@@ -43,7 +55,6 @@ fn round_trip(
         .custom(data.clone())
         .generate_with_f32_host_data();
 
-    let storage = StorageLevels::new(&[(COLS, tc), (ROWS, tr)]).grid(grid);
     let tiled = tile(&client, src.binding(), &[ROWS, COLS], dtype, None, storage).unwrap();
     let physical: Vec<usize> = batches
         .iter()
@@ -405,6 +416,69 @@ fn tiling_moves_packed_scales_whole() {
         .tile(&[(N, 4), (KB, 2)])
         .grid(&[KB, N]);
     packs_and_lands(Field::Quant(QuantValue::Q8S), &[(N, 8), (KB, 64)], storage);
+}
+
+/// 128-byte transactions over elements of `element_bits`.
+fn transactions_of(element_bits: usize) -> Stagger {
+    Stagger::new(1024, element_bits).expect("the element divides a 1024-bit transaction")
+}
+
+/// Staggered, a tensor's strips of tiles start an odd number of transactions apart, its batches
+/// each a whole padded buffer after the last: every cell lands in its tile and comes back.
+#[test]
+fn tiling_round_trips_a_staggered_tensor() {
+    let storage = StorageLevels::new(&[(COLS, 16), (ROWS, 8)])
+        .grid(&[COLS, ROWS])
+        .staggered(transactions_of(32));
+    round_trip_as(&[2], 32, 64, (8, 16), storage);
+}
+
+/// Staggered, a batch starts after the last batch's padded strips, not after its last value: four
+/// strips of eight 64-value rows, each sixteen 128-byte transactions padded to seventeen.
+#[test]
+fn a_staggered_tensor_pads_every_batch_whole() {
+    let storage = StorageLevels::new(&[(COLS, 16), (ROWS, 8)])
+        .grid(&[COLS, ROWS])
+        .staggered(transactions_of(32));
+    let client = client();
+    let dtype: ElemType = f32::elem_type_native();
+    let tiled = empty(&client, &[2, 32, 64], &[ROWS, COLS], dtype, None, storage).unwrap();
+    let pitch = 17 * 32;
+    assert_eq!(tiled.metadata.strides()[0], 4 * pitch);
+    assert_eq!(tiled.metadata.strides()[1], pitch);
+}
+
+/// Staggered, NVFP4 values and their byte scales each lay their strips of tiles an odd number of
+/// 128-byte transactions apart, two transactions dense, and still land where the statement puts
+/// them.
+#[test]
+fn tiling_staggers_packed_values_and_scales_alike() {
+    let values = StorageLevels::new(&[(KI, 8)])
+        .tile(&[(KI, 2), (N, 2)])
+        .tile(&[(KB, 4), (N, 2)])
+        .grid(&[KI, KB, N])
+        .staggered(transactions_of(4));
+    let extents = [(N, 8), (KB, 8), (KI, 16)];
+    let strip = values
+        .physical(&extents)
+        .unwrap()
+        .strides()
+        .iter()
+        .copied()
+        .max();
+    assert_eq!(
+        strip,
+        Some(3 * 256),
+        "two transactions of values padded to three"
+    );
+    packs_and_lands(Field::Quant(QuantValue::E2M1), &extents, values);
+
+    let scales = StorageLevels::new(&[(KB, 4)])
+        .tile(&[(KB, 4)])
+        .tile(&[(N, 4), (KB, 2)])
+        .grid(&[KB, N])
+        .staggered(transactions_of(8));
+    packs_and_lands(Field::Quant(QuantValue::Q8S), &[(N, 8), (KB, 64)], scales);
 }
 
 /// A packed tensor moves whole words, so a statement whose finest tile is not the word is

@@ -299,6 +299,17 @@ pub fn merged_contiguous_fragments(binding: TensorBinding) -> TensorBinding {
     }
 }
 
+/// Bytes one row of a box spans in shared memory under `swizzle`: the swizzle's span, which a
+/// shorter row is padded to, or `None` where the box is not swizzled and lands as it is.
+pub fn swizzle_span_bytes(swizzle: TensorMapSwizzle) -> Option<usize> {
+    match swizzle {
+        TensorMapSwizzle::B32 => Some(32),
+        TensorMapSwizzle::B64 => Some(64),
+        TensorMapSwizzle::B128 => Some(128),
+        _ => None,
+    }
+}
+
 /// Build a tiled [`TensorMapMeta`] with the defaults shared by every current call site
 /// (no interleave, no prefetch, OOB-fill = zero, elem_stride = `[1; rank]`).
 pub fn tma_meta_tiled(
