@@ -2,11 +2,11 @@
 //! the candidate each listed setting is raced as, and the autotune a launch without a setting runs.
 
 use super::{
-    ConvBlueprint, ConvOperation, ConvPartitioning, ConvProblem, ConvRoutine, ConvSettings,
-    ConvTensors, ConvWindow, CubeStagedConvRoutine,
+    ConvBinding, ConvBlueprint, ConvOperation, ConvPartitioning, ConvProblem, ConvRoutine,
+    ConvSettings, ConvTensors, ConvWindow, CubeStagedConvRoutine,
 };
 use cubecl::ir::ElemType;
-use cubecl::throughput::compute_throughput_key;
+use cubecl::throughput::{MemoryAccess, compute_throughput_key};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::{LocalTuner, TunableSet, local_tuner};
@@ -17,10 +17,13 @@ use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
 use cubek_std::autotune::{
     Autotune, CandidatePriority, Ceiling, GroupPriority, Identity, Roofline, TuneCandidate,
 };
-use cubek_std::routine::{EstimatedProblem, PreparedLaunches, Routine};
+use cubek_std::routine::{
+    EstimatedProblem, PreparedLaunches, ROUTINE_LISTS_NO_SETTING, Routine,
+};
 use cubek_std::{Hardware, Instructions, manual_mma};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 /// What makes two convolutions want the same setting.
 ///
@@ -186,13 +189,35 @@ impl ConvCandidate {
     ///
     /// # Errors
     ///
-    /// Why the device cannot run it at these settings.
+    /// Why the device cannot run it at these settings, as [`serves`](Self::serves) says.
     pub fn launch(&self, tensors: ConvTensors) -> Result<(), Refusal> {
+        let (problem, blueprint, binding) = self.bound(tensors)?;
+        CubeStagedConvRoutine.dispatch(&problem, binding, blueprint);
+        Ok(())
+    }
+
+    /// Whether the device runs `tensors` at these settings: prepared and bound, nothing launched.
+    ///
+    /// # Errors
+    ///
+    /// The refusal of the routine's preparation, or of the binding at a width its operands cannot
+    /// serve.
+    pub fn serves(&self, tensors: &ConvTensors) -> Result<(), Refusal> {
+        self.bound(tensors.clone()).map(drop)
+    }
+
+    /// The problem `tensors` state, the launch this candidate prepares for it (each problem
+    /// prepared once) and the tensors bound to it.
+    fn bound(
+        &self,
+        tensors: ConvTensors,
+    ) -> Result<(ConvProblem, Prepared, ConvBinding), Refusal> {
         let problem = tensors.problem();
-        let prepared =
+        let (blueprint, grid) =
             self.prepared
                 .prepare(&CubeStagedConvRoutine, &self.hw, &problem, &self.settings)?;
-        CubeStagedConvRoutine.launch_prepared(&problem, tensors, prepared)
+        let binding = tensors.bind(&problem, &blueprint, &grid)?;
+        Ok((problem, blueprint, binding))
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
@@ -240,65 +265,101 @@ impl TuneCandidate for ConvCandidate {
 
 static TUNER: LocalTuner<ConvTuneKey, ServiceId> = local_tuner!("tile-conv");
 
+/// The list each device races, built once so every launch and the autotune share the launches its
+/// candidates prepared.
+static LISTS: LazyLock<Mutex<HashMap<ServiceId, Arc<[ConvCandidate]>>>> =
+    LazyLock::new(Mutex::default);
+
+fn listed(id: &ServiceId, hw: &Hardware) -> Arc<[ConvCandidate]> {
+    LISTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .entry(id.clone())
+        .or_insert_with(|| ConvCandidate::list(hw).into())
+        .clone()
+}
+
 /// The convolution `tensors` state, at the setting the autotune finds fastest for it among the
 /// routine's listed settings on `hw`.
 ///
 /// # Errors
 ///
-/// The refusal of the last listed setting where none prepares the problem, so the autotune is
-/// never asked to choose among declines.
+/// The refusal of the last listed setting where none serves the problem, which is checked until
+/// the autotune has settled it, so the autotune is never asked to choose among refusals.
 pub fn launch_tuned(hw: &Hardware, tensors: ConvTensors) -> Result<(), Refusal> {
-    CubeStagedConvRoutine.prepare_first_served(hw, &tensors.problem())?;
     let client = tensors.client().clone();
     let id = client.service_id();
-    let hw = hw.clone();
-    let tunables = TUNER.init(&id, move || candidates(hw.clone()));
+    let list = listed(&id, hw);
+    let tunables = TUNER.init(&id, {
+        let (list, hw) = (list.clone(), hw.clone());
+        move || candidates(list.clone(), hw.clone())
+    });
+    let key = ConvTuneKey::from(&tensors.problem());
+    if TUNER.fastest_identity(&id, &tunables, &key).is_none() {
+        first_served(&list, &tensors)?;
+    }
     TUNER.execute(&id, &client, tunables, tensors);
     Ok(())
 }
 
-/// The autotune on `hw`: every listed setting, the lead again as the floor, a round stopping at the
-/// first within reach of the instruction the convolution is bound by.
-fn candidates(hw: Hardware) -> TunableSet<ConvTuneKey, ConvTensors, (), ()> {
+/// The first of `list` that serves `tensors`.
+fn first_served(list: &[ConvCandidate], tensors: &ConvTensors) -> Result<(), Refusal> {
+    let mut declined = ROUTINE_LISTS_NO_SETTING;
+    for candidate in list {
+        match candidate.serves(tensors) {
+            Ok(()) => return Ok(()),
+            Err(refusal) => declined = refusal,
+        }
+    }
+    Err(declined)
+}
+
+/// The autotune over `list` on `hw`: every listed setting, the first of them to serve the problem
+/// as the floor, a round stopping at the first within reach of the bound the convolution has.
+fn candidates(
+    list: Arc<[ConvCandidate]>,
+    hw: Hardware,
+) -> TunableSet<ConvTuneKey, ConvTensors, (), ()> {
     let mut autotune =
         Autotune::<ConvTuneKey, ConvTensors, (), ()>::new(|tensors: &ConvTensors| {
             ConvTuneKey::from(&tensors.problem())
         });
     let tile = autotune.group("tile", GroupPriority::DEFAULT);
-    let list = ConvCandidate::list(&hw);
-    let floor = list.first().cloned();
-    let roofline_hw = hw.clone();
-    let autotune = autotune
+    let floor = list.clone();
+    autotune
         .bounded(move |key: &ConvTuneKey, tensors: &ConvTensors| Roofline {
             client: tensors.client().clone(),
-            ceiling: instruction_ceiling(&roofline_hw, key),
+            ceiling: ceiling(&hw, key),
             work: tensors.problem().demand(),
         })
-        .prioritized(&tile, list, |candidate, tensors| {
+        .prioritized(&tile, list.to_vec(), |candidate, tensors| {
             candidate.launch(tensors).map_err(|refusal| {
                 format!(
                     "{} does not serve this problem: {refusal:?}",
                     candidate.strategy()
                 )
             })
-        });
-    let autotune = match floor {
-        Some(floor) => autotune.floor(<() as Identity>::named(
+        })
+        .floor(<() as Identity>::named(
             "conv-tile-floor",
             move |tensors: ConvTensors| {
-                floor
-                    .launch(tensors)
-                    .map_err(|refusal| format!("{refusal:?}"))
+                let mut declined = ROUTINE_LISTS_NO_SETTING;
+                for candidate in floor.iter() {
+                    match candidate.launch(tensors.clone()) {
+                        Ok(()) => return Ok(()),
+                        Err(refusal) => declined = refusal,
+                    }
+                }
+                Err(format!("{declined:?}"))
             },
-        )),
-        None => autotune,
-    };
-    autotune.finish()
+        ))
+        .finish()
 }
 
-/// The instruction the convolution's arithmetic runs on: the largest the device offers at the
-/// key's elements accumulating in the key's sum, plain arithmetic where it offers none.
-fn instruction_ceiling(hw: &Hardware, key: &ConvTuneKey) -> Ceiling {
+/// The bound the convolution has: the largest instruction the device offers at the key's elements
+/// accumulating in the key's sum (plain arithmetic where it offers none), or the read bus,
+/// whichever is higher for the key.
+fn ceiling(hw: &Hardware, key: &ConvTuneKey) -> Ceiling {
     let instruction = hw
         .properties
         .features
@@ -310,7 +371,10 @@ fn instruction_ceiling(hw: &Hardware, key: &ConvTuneKey) -> Ceiling {
         .for_triple(key.lhs, key.rhs, key.sum)
         .largest()
         .map(|shape| (shape.m, shape.n, shape.k));
-    Ceiling::Compute(compute_throughput_key(instruction, key.lhs, key.sum))
+    Ceiling::Either {
+        compute: compute_throughput_key(instruction, key.lhs, key.sum),
+        memory: MemoryAccess::Read,
+    }
 }
 
 #[cfg(test)]
