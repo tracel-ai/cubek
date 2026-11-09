@@ -19,6 +19,14 @@ pub const VALUE_FEATURE: Axis = Axis(6);
 /// A slot of a store that holds many sequences' states, which a table places each sequence at: no
 /// level cuts it.
 pub const STORE_SLOT: Axis = Axis(7);
+/// A channel of the `q|k|v` stream the conv mixes.
+pub const CHANNEL: Axis = Axis(8);
+/// A tap of the conv's filter.
+pub const TAP: Axis = Axis(9);
+/// A column of a window store's ring, the conv's past values of every channel.
+pub const RING_COLUMN: Axis = Axis(10);
+/// A channel of one key head, head local: no operand binds it, only the units level cuts it.
+pub const HEAD_CHANNEL: Axis = Axis(11);
 
 /// How the walk places its microkernel's runs over a problem: a cube for every box of value
 /// columns of one head of one sequence, and inside the cube's box the levels the routine and its
@@ -61,6 +69,41 @@ impl GatedDeltaWalkPartitioning {
     }
 
     /// cubek's partitioning, for what the tile engine reads of it: the launch and the binding.
+    pub fn as_cubek(&self) -> &Partitioning {
+        &self.partitioning
+    }
+}
+
+/// How the conv places its microkernel's work: a cube for every key head of every row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatedDeltaConvPartitioning {
+    partitioning: Partitioning,
+}
+
+impl GatedDeltaConvPartitioning {
+    /// `space` partitioned with `inside` a cube's box: key heads ride the grid's `x`, rows come one
+    /// a cube.
+    pub fn new(space: Space, inside: Levels) -> Self {
+        Self {
+            partitioning: Partitioning::new(
+                space,
+                inside.cubes(&[KEY_HEAD]).batches(&[BATCH]).build(),
+            ),
+        }
+    }
+
+    /// The partitioning a kernel compiles against: rows, slots and ring left to the launch.
+    pub fn kernel(&self) -> Partitioning {
+        Partitioning::new(
+            self.partitioning
+                .space()
+                .clone()
+                .with_dynamic(&[BATCH, STORE_SLOT, RING_COLUMN]),
+            self.partitioning.levels().to_vec(),
+        )
+    }
+
+    /// cubek's partitioning, for the launch and the binding.
     pub fn as_cubek(&self) -> &Partitioning {
         &self.partitioning
     }

@@ -6,6 +6,7 @@
 //! for each row it places: a round on the call's store would advance every live row's state once
 //! per candidate. A walk over states it owns is measured on the call's inputs.
 
+use crate::kernels::refusals::admit_on_device;
 use crate::kernels::walk::tune::GatedDeltaWalkCandidate;
 use crate::kernels::walk::tune::key::GatedDeltaWalkKey;
 use crate::kernels::walk::{
@@ -13,12 +14,11 @@ use crate::kernels::walk::{
     GatedDeltaWalkInputs, GatedDeltaWalkOutputs, GatedDeltaWalkProblem, GatedDeltaWalkStateInputs,
     GatedDeltaWalkStateKind,
 };
-use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tune::{LocalTuner, Tunable, local_tuner};
 use cubecl::{CubeTuneId, Device};
-use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
+use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::gated_delta::GatedDeltaHeads;
 use cubek_std::Hardware;
 use cubek_std::autotune::{Autotune, GroupPriority};
@@ -81,7 +81,8 @@ pub fn launch_tuned(
 /// # Errors
 ///
 /// What the element or the layer's problem is declined with
-/// ([`GatedDeltaWalkProblem::admit_output`], [`ELEMENT_NOT_ON_DEVICE`],
+/// ([`GatedDeltaWalkProblem::admit_output`],
+/// [`ELEMENT_NOT_ON_DEVICE`](cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE),
 /// [`GatedDeltaWalkProblem::admit`]).
 pub fn serves(
     hw: &Hardware,
@@ -90,12 +91,7 @@ pub fn serves(
     output_element: ElemType,
 ) -> Result<(), Refusal> {
     GatedDeltaWalkProblem::admit_output(output_element)?;
-    for element in [GATED_DELTA_WALK_ELEMENT, output_element] {
-        let usage = hw.properties.features.type_usage(element);
-        if !usage.is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer) {
-            return Err(ELEMENT_NOT_ON_DEVICE);
-        }
-    }
+    admit_on_device(hw, [GATED_DELTA_WALK_ELEMENT, output_element])?;
     let state = state.layout();
     GatedDeltaWalkProblem::dense(1, state.kept().get(), heads, output_element, state).admit(hw)
 }
@@ -137,7 +133,9 @@ mod tests {
         GATED_DELTA_WALK_HEADS_EMPTY,
     };
     use core::num::NonZeroUsize;
+    use cubecl::features::TypeUsage;
     use cubecl::ir::{FloatKind, UIntKind};
+    use cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE;
     use cubek_std::devices;
 
     const F32: ElemType = ElemType::Float(FloatKind::F32);

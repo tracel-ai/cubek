@@ -1,3 +1,4 @@
+use crate::gated_delta::walked;
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
@@ -41,9 +42,7 @@ impl StateAccess {
 fn is_fresh(lengths: &ComptimeOption<Tile>) -> bool {
     #[comptime]
     match lengths {
-        ComptimeOption::Some(lengths) => {
-            lengths.flat::<u32, Const<1>>().read(0usize).extract(0usize) == 0u32
-        }
+        ComptimeOption::Some(lengths) => walked(lengths) == 0u32,
         ComptimeOption::None => false,
     }
 }
