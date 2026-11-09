@@ -76,12 +76,7 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
         let client = self.device.client();
         let [n, c_in, h_in, w_in] = self.problem.input_shape;
         let [c_out, _, k_h, k_w] = self.problem.weight_shape;
-        let [s_h, s_w] = self.problem.args.stride;
-        let [p_h, p_w] = self.problem.args.padding;
-        let [d_h, d_w] = self.problem.args.dilation;
-
-        let h_out = (h_in + 2 * p_h - d_h * (k_h - 1) - 1) / s_h + 1;
-        let w_out = (w_in + 2 * p_w - d_w * (k_w - 1) - 1) / s_w + 1;
+        let [h_out, w_out] = self.problem.out_extent();
 
         match self.problem.operation {
             ConvolutionOperation::Forward => {
@@ -137,12 +132,7 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
         let client = self.device.client();
         let [n, c_in, h_in, w_in] = self.problem.input_shape;
         let [c_out, _, k_h, k_w] = self.problem.weight_shape;
-        let [s_h, s_w] = self.problem.args.stride;
-        let [p_h, p_w] = self.problem.args.padding;
-        let [d_h, d_w] = self.problem.args.dilation;
-
-        let h_out = (h_in + 2 * p_h - d_h * (k_h - 1) - 1) / s_h + 1;
-        let w_out = (w_in + 2 * p_w - d_w * (k_w - 1) - 1) / s_w + 1;
+        let [h_out, w_out] = self.problem.out_extent();
 
         let elems = MatmulElems::new_deprecated::<MP>();
 

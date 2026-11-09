@@ -11,6 +11,21 @@ pub struct Conv2dProblem {
     pub operation: ConvolutionOperation,
 }
 
+impl Conv2dProblem {
+    /// The output's height and width.
+    pub fn out_extent(&self) -> [usize; 2] {
+        let [_, _, h, w] = self.input_shape;
+        let [_, _, kh, kw] = self.weight_shape;
+        let extent = |side: usize, input: usize, kernel: usize| {
+            let args = &self.args;
+            (input + 2 * args.padding[side] - args.dilation[side] * (kernel - 1) - 1)
+                / args.stride[side]
+                + 1
+        };
+        [extent(0, h, kh), extent(1, w, kw)]
+    }
+}
+
 pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
     let batch_size = 16;
     vec![

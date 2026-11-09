@@ -471,11 +471,7 @@ fn weight_grad_values(
     let [batch, channels, h, w] = problem.input_shape;
     let [filters, _, kh, kw] = problem.weight_shape;
     let args = problem.args.clone();
-    let out_extent = |side: usize, extent: usize, tap: usize| {
-        (extent + 2 * args.padding[side] - args.dilation[side] * (tap - 1) - 1) / args.stride[side]
-            + 1
-    };
-    let (oh, ow) = (out_extent(0, h, kh), out_extent(1, w, kw));
+    let [oh, ow] = problem.out_extent();
     let (input_shape, grad_shape) = ([batch, h, w, channels], [batch, oh, ow, filters]);
     let (input_values, grad_values) = (
         small_integers(input_shape.iter().product(), 1),
@@ -799,11 +795,7 @@ fn data_grad_values(
     let [batch, channels, h, w] = problem.input_shape;
     let [filters, _, kh, kw] = problem.weight_shape;
     let args = problem.args.clone();
-    let out_extent = |side: usize, extent: usize, tap: usize| {
-        (extent + 2 * args.padding[side] - args.dilation[side] * (tap - 1) - 1) / args.stride[side]
-            + 1
-    };
-    let (oh, ow) = (out_extent(0, h, kh), out_extent(1, w, kw));
+    let [oh, ow] = problem.out_extent();
     let (grad_shape, weight_shape) = ([batch, oh, ow, filters], [filters, kh, kw, channels]);
     let (grad_values, weight_values) = (
         small_integers(grad_shape.iter().product(), 2),
