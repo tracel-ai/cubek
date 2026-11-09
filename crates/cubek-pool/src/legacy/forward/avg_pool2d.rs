@@ -6,7 +6,7 @@ use super::{
     },
 };
 use crate::definition::{AvgPoolOptions, PoolError};
-use crate::kernel::accumulator_dtype;
+use crate::legacy::accumulator_dtype;
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
     num_traits::Zero,

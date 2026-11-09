@@ -1,4 +1,4 @@
-use crate::kernel::decompose_linear;
+use crate::legacy::decompose_linear;
 use core::hash::Hash;
 use cubecl::{
     prelude::{TensorBinding, *},

@@ -148,7 +148,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
                 // Plane covers one M-row at `block_id`; cube_n indexes
                 // NR-blocks along N → `n_pos_base = cube_n * vs`.
                 let block_id = cube_m * config.num_planes + UNIT_POS_Y;
-                match comptime!(variant) {
+                match variant {
                     Variant::OuterN => (block_id, cube_n * vs_u32),
                     Variant::OuterM => (block_id * vs_u32, cube_n),
                     Variant::Dot => (block_id, cube_n),
@@ -159,7 +159,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
                 // N-col at `block_id`; cube_m indexes MR-blocks along M.
                 // Dot: 1×1 per plane.
                 let block_id = cube_n * config.num_planes + UNIT_POS_Y;
-                match comptime!(variant) {
+                match variant {
                     Variant::OuterN => (cube_m, block_id * vs_u32),
                     Variant::OuterM => (cube_m * vs_u32, block_id),
                     Variant::Dot => (cube_m, block_id),
@@ -167,7 +167,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
             }
         };
 
-        match comptime!(variant) {
+        match variant {
             Variant::Dot => {
                 execute_dot::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
                     lhs_view,
