@@ -32,7 +32,11 @@ fn only_a_device_with_no_plane_instruction_leaves_the_default_to_the_unit_routin
 #[test]
 fn every_operation_prepares_on_a_cpu_runtime() {
     let hw = devices::cpu_12();
-    for operation in [ConvOperation::Forward, ConvOperation::BackwardData] {
+    for operation in [
+        ConvOperation::Forward,
+        ConvOperation::BackwardData,
+        ConvOperation::BackwardWeight,
+    ] {
         for settings in ROUTINE.settings(&hw) {
             let prepared = ROUTINE.prepare(&hw, &on(operation), &settings);
             assert!(
@@ -55,16 +59,6 @@ fn a_forward_reads_its_rhs_as_wide_as_its_input() {
     assert!(blueprint.widths.lhs > 1);
     assert_eq!(blueprint.widths.rhs, blueprint.widths.lhs);
     assert_eq!(blueprint.widths.out, 1);
-}
-
-/// A weight backward is declined by name at every setting.
-#[test]
-fn a_weight_backward_is_refused_by_name() {
-    let hw = devices::cpu_12();
-    for settings in ROUTINE.settings(&hw) {
-        let prepared = ROUTINE.prepare(&hw, &on(ConvOperation::BackwardWeight), &settings);
-        assert_eq!(prepared.err(), Some(CONV_UNIT_WEIGHT_BACKWARD));
-    }
 }
 
 /// Lines of the input that do not divide the contracted axis are refused by name: twelve channels

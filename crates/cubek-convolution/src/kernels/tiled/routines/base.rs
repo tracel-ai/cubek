@@ -30,10 +30,6 @@ pub enum ConvRoutineKind {
     CubeStaged,
     /// [`UnitRegistersConvRoutine`] at the first of its settings that serves the convolution.
     UnitRegisters,
-    /// [`UnitRegistersConvRoutine`] with the weight backward let through, which it computes
-    /// wrongly: only for the tests that probe why.
-    #[cfg(feature = "benchmarks")]
-    UnitRegistersWeightBackwardProbe,
 }
 
 impl core::fmt::Display for ConvRoutineKind {
@@ -41,8 +37,6 @@ impl core::fmt::Display for ConvRoutineKind {
         match self {
             Self::CubeStaged => write!(f, "cube_staged"),
             Self::UnitRegisters => write!(f, "unit_registers"),
-            #[cfg(feature = "benchmarks")]
-            Self::UnitRegistersWeightBackwardProbe => write!(f, "unit_registers_weight_probe"),
         }
     }
 }
@@ -71,12 +65,6 @@ impl ConvRoutineKind {
             Self::UnitRegisters => match settings {
                 Some(_) => Err(CONV_SETTINGS_NOT_UNIT),
                 None => UnitRegistersConvRoutine::new().launch_first_served(hw, tensors),
-            },
-            #[cfg(feature = "benchmarks")]
-            Self::UnitRegistersWeightBackwardProbe => match settings {
-                Some(_) => Err(CONV_SETTINGS_NOT_UNIT),
-                None => UnitRegistersConvRoutine::probing_weight_backward()
-                    .launch_first_served(hw, tensors),
             },
         }
     }
