@@ -337,7 +337,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "benchmarks"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubek",
@@ -1380,7 +1380,7 @@ dependencies = [
 
 [[package]]
 name = "cubek"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubek-attention",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-attention"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "bytemuck",
  "cubecl",
@@ -1417,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-attention-backward"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubek-attention",
@@ -1431,7 +1431,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-convolution"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "bytemuck",
  "cubecl",
@@ -1447,7 +1447,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-fft"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1459,7 +1459,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-interpolate"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-linear-recurrence"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubek-matmul",
@@ -1487,7 +1487,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-matmul"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "bytemuck",
  "cubecl",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-microkernel"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubek-std",
@@ -1515,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-pool"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1528,7 +1528,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-quant"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1540,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-random"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1556,7 +1556,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-reduce"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1572,7 +1572,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-rms-norm"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubek-matmul",
@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-std"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1597,7 +1597,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-swiglu"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
  "cubek-matmul",
@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-test-utils"
-version = "0.4.0-pre.1"
+version = "0.4.0-pre.2"
 dependencies = [
  "bytemuck",
  "cubecl",
