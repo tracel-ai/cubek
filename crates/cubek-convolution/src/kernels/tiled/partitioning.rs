@@ -194,6 +194,7 @@ impl ConvTiles {
 pub struct ConvPartitioning {
     partitioning: Partitioning,
     runs: MatmulOperands<usize>,
+    /// The ring the launch holds: one stage where the walk has no second to fill ahead.
     ring: StageRing,
     /// What one cube covers, and the contraction cells its stage holds.
     block: ConvBlock,
@@ -235,10 +236,14 @@ impl ConvPartitioning {
                 }
             })
             .product();
+        let ring = match contracted.div_ceil(depth) {
+            0 | 1 => StageRing::SINGLE,
+            _ => tiles.ring,
+        };
         Self {
             partitioning: Partitioning::new(problem.space(), levels),
             runs: tiles.runs,
-            ring: tiles.ring,
+            ring,
             out_run: match axes.dim(roles.inner.out) {
                 Some(MatmulDim::M) => block.rows,
                 Some(MatmulDim::N) => block.columns,
@@ -307,6 +312,11 @@ impl ConvPartitioning {
     /// Bytes of shared memory a cube's stages hold, the operands in `elements`.
     pub fn stage_bytes(&self, elements: &MatmulOperands<ElemType>) -> usize {
         self.block.bytes(elements, self.ring)
+    }
+
+    /// The ring the launch holds.
+    pub fn ring(&self) -> StageRing {
+        self.ring
     }
 
     /// What one cube covers, and the contraction cells its stage holds.
@@ -402,6 +412,21 @@ mod tests {
         };
         let single = CubeStagedConvRoutine::F2X2_P2X2.mma();
         assert_eq!(bytes(single.double_ring()), 2 * bytes(single));
+    }
+
+    /// A contraction that fits one stage has no second to fill ahead, so a double ring holds one.
+    #[test]
+    fn a_double_ring_over_one_stage_holds_one() {
+        let problem = ConvProblem::dense(1, [8, 8], (16, 16), [1, 1], 1, F16);
+        let ring = |settings: ConvSettings| {
+            let plane = settings
+                .plane(&nvidia(), &problem)
+                .expect("the device offers mma");
+            let tiles = ConvTiles::new(&problem, &plane, &settings).expect("the tiles state");
+            ConvPartitioning::cube(&problem, &tiles, BUDGET).ring()
+        };
+        let single = CubeStagedConvRoutine::F2X2_P2X2.mma();
+        assert_eq!(ring(single.double_ring()), ring(single));
     }
 
     /// A walk with a divisor in reach keeps it: six steps of the AlexNet-like forward run three

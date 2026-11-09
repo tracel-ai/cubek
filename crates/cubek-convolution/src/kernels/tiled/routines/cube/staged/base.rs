@@ -122,7 +122,7 @@ impl Routine for CubeStagedConvRoutine {
             },
             planes_along_k: NonZeroUsize::MIN,
             scratch,
-            ring: settings.walk.ring,
+            ring: partitioning.ring(),
             fill: CubeStagedFill {
                 delivery: CubeStagedDelivery::Copy,
                 filling_planes: 0,
