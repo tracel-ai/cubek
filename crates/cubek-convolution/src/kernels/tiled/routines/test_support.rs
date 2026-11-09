@@ -39,14 +39,6 @@ pub fn cmma_8x32_only() -> Hardware {
     devices::offering_cmma(devices::h100(), [shape(F16, (8, 32, 16))])
 }
 
-/// `hw` with its planes `width` units wide.
-pub fn with_plane_width(mut hw: Hardware, width: u32) -> Hardware {
-    let device = devices::topology(&mut hw);
-    device.plane_size_min = width;
-    device.plane_size_max = width;
-    hw
-}
-
 /// The catalog's problem shapes, each as `(name, problem)`: few channels under a deep filter, 64
 /// channels, a stride of two, and a map seven wide.
 pub fn problems() -> [(&'static str, ConvProblem); 4] {

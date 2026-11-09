@@ -2,19 +2,28 @@ use crate::kernels::tiled::{
     ConvAlong, ConvGrid, ConvInstruction, ConvLines, ConvSettings, ConvWalk,
 };
 use core::num::NonZeroUsize;
+use cubecl::ir::ElemType;
 use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
 use cubek_std::microkernel::StageRing;
-use cubek_std::{Hardware, Instructions, manual_mma};
+use cubek_std::{Hardware, Instructions, UNIT_REGISTERS, manual_mma};
 
-/// Accumulator registers one unit holds over the fragments of its plane before they spill.
-const ACCUMULATOR_REGISTERS: usize = 64;
-
-/// The share of a full cube's planes a cube spends on across positions, so a worker holds several
-/// cubes and one waiting on a barrier does not idle it.
-const ACROSS_SHARE: usize = 4;
+/// The share of a unit's registers the accumulators take, the rest left to the operand fragments,
+/// the stage reads and the addressing. An assumption kept below the unit's limit, not a measured
+/// bound.
+const ACCUMULATOR_REGISTER_SHARE: usize = 4;
 
 /// Bytes of the widest operand element a stage holds, which the shared memory prune assumes.
 const WIDEST_ELEMENT_BYTES: usize = 4;
+
+/// The grid the others move one setting off: two fragments along each axis on two planes along each.
+const LEAD: ConvGrid = ConvGrid {
+    fragments: ConvAlong::new(2, 2),
+    planes: ConvAlong::new(2, 2),
+    across: NonZeroUsize::MIN,
+};
+
+/// The counts of row fragments tried, the lead's first.
+const ROW_FRAGMENTS: [usize; 3] = [LEAD.fragments.m.get(), 1, 4];
 
 /// One matrix instruction of the device, as the list reads it.
 struct Tile {
@@ -23,15 +32,11 @@ struct Tile {
     depth: usize,
 }
 
-/// How a count along one axis splits between the instructions of a plane and the planes of a cube.
-struct Cut {
-    fragments: usize,
-    planes: usize,
-}
-
-/// The settings worth measuring on a device: a lead grid, crossed over how the rows and the columns
-/// split into fragments and planes, with the across split, the ring and the width moved off it one
-/// at a time. The device prunes the list; the problem only orders it.
+/// The settings worth measuring on a device: a lead grid and, around it, each setting moved off it
+/// one at a time (the rows' fragments crossed with the ring, which share one budget; the planes;
+/// a plane's fragments grown to the register budget down the rows; planes across the output rows
+/// over the instruction of fewest rows). Main effects only: interactions the star misses are the
+/// ones it does not list. The device prunes the list; the problem only orders it.
 pub struct ConvCandidates<'a> {
     hw: &'a Hardware,
     plane_width: usize,
@@ -45,33 +50,51 @@ impl<'a> ConvCandidates<'a> {
         Some(Self { hw, plane_width })
     }
 
-    /// Every candidate, the lead first: for each instruction of each kind the device offers, the
-    /// grids it holds at both rings, then the lead at one element a read.
+    /// Every candidate, the lead first: the star of each instruction the device offers, then the
+    /// lead of each kind of instruction at one element a read.
     pub fn list(&self) -> Vec<ConvSettings> {
+        let tiles: Vec<_> = [PlaneFragmentTransport::Cmma, PlaneFragmentTransport::Mma]
+            .into_iter()
+            .flat_map(|transport| {
+                self.tiles(transport)
+                    .into_iter()
+                    .map(move |tile| (transport, tile))
+            })
+            .collect();
+        let narrowest = tiles
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (_, tile))| tile.rows)
+            .map(|(position, _)| position);
         let mut list = Vec::new();
-        for transport in [PlaneFragmentTransport::Cmma, PlaneFragmentTransport::Mma] {
-            for tile in self.tiles(transport) {
-                let grids = self.grids(&tile);
-                for &grid in &grids {
-                    for ring in [StageRing::SINGLE, StageRing::DOUBLE] {
-                        if self.fits(&tile, &grid, ring) {
-                            list.push(Self::settings(transport, &tile, grid, ring));
-                        }
-                    }
-                }
-                if let Some(&lead) = grids.first() {
-                    list.push(ConvSettings {
+        let mut keep = |settings: ConvSettings, tile: &Tile| {
+            let fits = self.fits(tile, &settings.grid, settings.walk.ring);
+            if fits && !list.contains(&settings) {
+                list.push(settings);
+            }
+        };
+        for (position, (transport, tile)) in tiles.iter().enumerate() {
+            let across = narrowest == Some(position);
+            for (grid, ring) in self.star(tile, across) {
+                keep(Self::settings(*transport, tile, grid, ring), tile);
+            }
+            if tiles[..position].iter().all(|(other, _)| other != transport) {
+                let lead = Self::settings(*transport, tile, LEAD, StageRing::SINGLE);
+                keep(
+                    ConvSettings {
                         lines: ConvLines::One,
-                        ..Self::settings(transport, &tile, lead, StageRing::SINGLE)
-                    });
-                }
+                        ..lead
+                    },
+                    tile,
+                );
             }
         }
         list
     }
 
-    /// The instructions of `transport` the device offers, one for each count of rows, the one
-    /// contracting the most first.
+    /// The instructions of `transport` the device offers, one for each count of rows of each
+    /// triple of elements, the one contracting the most first: a row count's columns and depth
+    /// are the triple's own, not those of whichever element's shape came first.
     fn tiles(&self, transport: PlaneFragmentTransport) -> Vec<Tile> {
         let shapes: Vec<_> = match transport {
             PlaneFragmentTransport::Cmma => self
@@ -87,12 +110,14 @@ impl<'a> ConvCandidates<'a> {
             PlaneFragmentTransport::Mma => manual_mma(self.hw).largest_first().collect(),
             PlaneFragmentTransport::Wgmma => Vec::new(),
         };
-        let mut tiles: Vec<Tile> = Vec::new();
+        let mut seen: Vec<(ElemType, ElemType, ElemType, u32)> = Vec::new();
+        let mut tiles = Vec::new();
         for shape in shapes {
-            let rows = shape.m as usize;
-            if tiles.iter().all(|tile| tile.rows != rows) {
+            let key = (shape.a_type, shape.b_type, shape.cd_type, shape.m);
+            if !seen.contains(&key) {
+                seen.push(key);
                 tiles.push(Tile {
-                    rows,
+                    rows: shape.m as usize,
                     columns: shape.n as usize,
                     depth: shape.k as usize,
                 });
@@ -101,44 +126,91 @@ impl<'a> ConvCandidates<'a> {
         tiles
     }
 
-    /// The grids around the lead: every split of the rows and of the columns, then planes across
-    /// over one instruction a plane.
-    fn grids(&self, tile: &Tile) -> Vec<ConvGrid> {
-        let grid = |rows: &Cut, columns: &Cut, across: usize| ConvGrid {
-            fragments: ConvAlong::new(rows.fragments, columns.fragments),
-            planes: ConvAlong::new(rows.planes, columns.planes),
-            across: NonZeroUsize::new(across).expect("a count across is at least one"),
+    /// The grids of `tile` around the lead, each with its ring, the lead first: fragments along
+    /// the rows crossed with the ring up to the lead's count, the planes cut, a plane grown to the
+    /// register budget down the rows with its planes across the columns, and, where `across`,
+    /// one instruction a plane with the planes spent across the output rows.
+    fn star(&self, tile: &Tile, across: bool) -> Vec<(ConvGrid, StageRing)> {
+        let with_rows = |rows: usize| ConvGrid {
+            fragments: ConvAlong::new(rows, LEAD.fragments.n.get()),
+            ..LEAD
         };
-        let cut = |fragments, planes| Cut { fragments, planes };
-        let rows = [cut(2, 2), cut(2, 1), cut(1, 2), cut(1, 1)]
-            .into_iter()
-            .chain((3..=ACCUMULATOR_REGISTERS).map(|fragments| cut(fragments, 1)));
-        let columns = [cut(2, 2), cut(1, 2), cut(1, 1)];
-        let mut grids = Vec::new();
-        for rows in rows {
-            for columns in &columns {
-                grids.push(grid(&rows, columns, 1));
+        let mut star = Vec::new();
+        for rows in ROW_FRAGMENTS {
+            star.push((with_rows(rows), StageRing::SINGLE));
+            if rows <= LEAD.fragments.m.get() {
+                star.push((with_rows(rows), StageRing::DOUBLE));
             }
         }
-        let single = cut(1, 1);
-        for across in 2..=self.hw.full_cube_planes() / ACROSS_SHARE {
-            grids.push(grid(&single, &single, across));
+        for planes in [ConvAlong::new(1, 2), ConvAlong::new(1, 1)] {
+            star.push((ConvGrid { planes, ..LEAD }, StageRing::SINGLE));
         }
-        grids.retain(|grid| self.fits(tile, grid, StageRing::SINGLE));
-        grids
+        star.push((
+            ConvGrid {
+                fragments: ConvAlong::new(self.fragments_in_budget(tile), 1),
+                planes: ConvAlong::new(1, 2),
+                across: NonZeroUsize::MIN,
+            },
+            StageRing::SINGLE,
+        ));
+        if across {
+            for planes in Self::counts(self.planes_across()) {
+                star.push((
+                    ConvGrid {
+                        fragments: ConvAlong::new(1, 1),
+                        planes: ConvAlong::new(1, 1),
+                        across: NonZeroUsize::new(planes).expect("a count across is at least one"),
+                    },
+                    StageRing::SINGLE,
+                ));
+            }
+        }
+        star
+    }
+
+    /// Registers of a unit the accumulators of its plane's fragments may take.
+    fn register_budget(&self) -> usize {
+        UNIT_REGISTERS as usize / ACCUMULATOR_REGISTER_SHARE
+    }
+
+    /// Registers one fragment of `tile` takes in each unit of a plane.
+    fn fragment_registers(&self, tile: &Tile) -> usize {
+        (tile.rows * tile.columns / self.plane_width.max(1)).max(1)
+    }
+
+    /// The most fragments of `tile` a plane holds along the rows with one along the columns, within
+    /// the register budget.
+    fn fragments_in_budget(&self, tile: &Tile) -> usize {
+        (self.register_budget() / self.fragment_registers(tile)).max(1)
+    }
+
+    /// The planes a cube holds along the across axis at most: the device's count of planes for a
+    /// cube of its full units.
+    fn planes_across(&self) -> usize {
+        let hardware = &self.hw.properties.hardware;
+        self.hw.plane_count_per_cube(
+            hardware.max_units_per_cube as usize,
+            self.plane_width as u32,
+        ) as usize
+    }
+
+    /// The counts from two to `most` worth trying: the powers of two, and every count in the top
+    /// octave, since the extents a map is cut into are rarely powers of two.
+    fn counts(most: usize) -> impl Iterator<Item = usize> {
+        (2..=most).filter(move |count| count.is_power_of_two() || *count > most / 2)
     }
 
     /// Whether the device holds `grid` of `tile`: its plane count in a cube, its accumulators in a
     /// unit's registers, and one step of its stages, at the widest element, in shared memory.
     fn fits(&self, tile: &Tile, grid: &ConvGrid, ring: StageRing) -> bool {
         let fragments = grid.fragments.m.get() * grid.fragments.n.get();
-        let registers = fragments * tile.rows * tile.columns / self.plane_width.max(1);
+        let registers = fragments * self.fragment_registers(tile);
         let planes = grid.planes.m.get() * grid.planes.n.get() * grid.across.get();
         let rows = tile.rows * grid.fragments.m.get() * grid.planes.m.get();
         let columns = tile.columns * grid.fragments.n.get() * grid.planes.n.get();
         let positions = rows * grid.across.get();
         let step = ring.bytes((positions + columns) * tile.depth * WIDEST_ELEMENT_BYTES);
-        registers <= ACCUMULATOR_REGISTERS
+        registers <= self.register_budget()
             && planes <= self.hw.full_cube_planes()
             && step <= self.hw.shared_memory_budget()
     }
@@ -167,9 +239,9 @@ impl<'a> ConvCandidates<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::tiled::routines::test_support::{
-        cmma_8x32_only, cmma_only, nvidia, with_plane_width,
-    };
+    use crate::kernels::tiled::CubeStagedConvRoutine;
+    use crate::kernels::tiled::routines::test_support::{cmma_only, nvidia};
+    use cubek_std::devices::topology;
 
     fn list(hw: &Hardware) -> Vec<ConvSettings> {
         ConvCandidates::on(hw)
@@ -219,13 +291,42 @@ mod tests {
         }
     }
 
-    /// A wider plane leaves a cube fewer planes, so it drops the large across splits.
+    /// A cube of fewer planes drops the large across splits, and a full one lists the splits
+    /// that cut a map of seven rows and of eight.
     #[test]
-    fn a_wide_plane_drops_large_across_splits() {
-        let wide = most_across(&with_plane_width(nvidia(), 64));
-        assert!(wide < most_across(&nvidia()));
-        assert!(wide < 7);
-        assert!(most_across(&cmma_8x32_only()) >= 7);
+    fn the_across_splits_follow_the_planes_of_a_cube() {
+        let mut small = nvidia();
+        topology(&mut small).max_units_per_cube = 128;
+        assert!(most_across(&small) <= 4);
+        assert!(most_across(&nvidia()) >= 7);
+        let across: Vec<_> = list(&nvidia())
+            .iter()
+            .map(|settings| settings.grid.across.get())
+            .collect();
+        assert!(across.contains(&7) && across.contains(&8));
+    }
+
+    /// A star keeps the list short.
+    #[test]
+    fn the_list_is_a_star() {
+        let len = list(&nvidia()).len();
+        assert!((15..=30).contains(&len), "{len} settings");
+    }
+
+    /// The settings that win measured problems are on the list, derived from the instructions
+    /// the device offers: a plane of seven 8-row fragments, one 8-row plane for each of seven
+    /// rows, two 16-row fragments on planes across the columns, and Mma at two stages.
+    #[test]
+    fn the_settings_that_win_are_listed() {
+        let list = list(&nvidia());
+        for settings in [
+            CubeStagedConvRoutine::F7X1_P1X2_T8,
+            CubeStagedConvRoutine::F1X1_P1X1_T8_A7,
+            CubeStagedConvRoutine::F2X2_P1X2,
+            CubeStagedConvRoutine::F1X2_P2X2.mma().double_ring(),
+        ] {
+            assert!(list.contains(&settings), "{settings}");
+        }
     }
 
     /// Every setting holds in a cube of the device: its planes, and the accumulators of its units.
