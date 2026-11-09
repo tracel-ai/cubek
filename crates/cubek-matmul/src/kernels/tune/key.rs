@@ -1,10 +1,10 @@
-//! How a product is told apart from another, for the tables — and what a table
+//! How a product is told apart from another, for the autotunes — and what an autotune
 //! reads off it when it prioritizes its candidates.
 //!
 //! The key is a description of the *problem* — what the operands are, how big
 //! they are, how they are laid out — so it lives beside the plans rather than
-//! beside the tables that consume it. A caller builds the tables; it is the
-//! kernels that know what makes two products the same product, and the fused matmul asks the many-rows table's tuner for its election
+//! beside the autotunes that consume it. A caller builds the autotunes; it is the
+//! kernels that know what makes two products the same product, and the fused matmul asks the many-rows autotune's tuner for its election
 //! under this key too.
 //!
 //! [`MatmulShape`] is the second half: the key read as extents, which is what a
@@ -12,8 +12,8 @@
 //! it reads the key alone because the key is the whole of what cubecl hands a priority
 //! function.
 
+use crate::kernels::MatmulRoutineProblem;
 use crate::kernels::select::problem::{MatmulProblem, OperandKind};
-use crate::kernels::{MatmulIndex, MatmulRoutineProblem};
 use cubecl::ir::ElemType;
 use cubecl::tile::Axis;
 use cubecl::{self as cubecl, AutotuneKey};
@@ -26,6 +26,7 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_std::layout::contiguous;
 
 use cubek_std::layout;
+use cubek_std::layout::tile_order::{TileOrder, TileWords};
 
 /// One input as the key tells problems apart: what it is, how it lies, and whether its batches
 /// read one matrix.
@@ -97,9 +98,12 @@ pub enum OperandLayout {
     Along(Axis),
     /// Contiguous along neither axis: a strided or broadcast view, read one element at a time.
     Strided,
-    /// Contiguous along this axis inside tiles of these extents over the operand's two axes: a
-    /// buffer stored a tile at a time. One of one value a tile is [`Along`](Self::Along).
-    Tiles(Axis, (usize, usize)),
+    /// Contiguous along this axis inside tiles of these extents over the operand's two axes, the
+    /// tiles' words lying as the order says: a buffer stored a tile at a time. One of one value a
+    /// tile is [`Along`](Self::Along). A float buffer's tiles, and a packed one's laid row by
+    /// row, are a row's run a tile row; a packed one's laid block by block are not, and a kernel may
+    /// decline one where it reads the other.
+    Tiles(Axis, (usize, usize), TileWords),
 }
 
 impl OperandLayout {
@@ -112,7 +116,7 @@ impl OperandLayout {
     /// pieces run along; `None` for a strided one.
     pub fn axis(self) -> Option<Axis> {
         match self {
-            Self::Along(axis) | Self::Tiles(axis, _) => Some(axis),
+            Self::Along(axis) | Self::Tiles(axis, ..) => Some(axis),
             Self::Strided => None,
         }
     }
@@ -123,11 +127,18 @@ impl core::fmt::Debug for OperandLayout {
         match self {
             Self::Along(axis) => f.write_str(cubek_std::matmul_axes::axis_name(*axis)),
             Self::Strided => f.write_str("strided"),
-            Self::Tiles(axis, (first, second)) => write!(
-                f,
-                "{} in {first}x{second} tiles",
-                cubek_std::matmul_axes::axis_name(*axis)
-            ),
+            Self::Tiles(axis, (first, second), words) => {
+                write!(
+                    f,
+                    "{} in {first}x{second} tiles",
+                    cubek_std::matmul_axes::axis_name(*axis)
+                )?;
+                // Row by row is the tiles every key named before the order did.
+                match words {
+                    TileWords::RowByRow => Ok(()),
+                    TileWords::BlockByBlock => f.write_str(" block by block"),
+                }
+            }
         }
     }
 }
@@ -207,9 +218,6 @@ pub enum MatmulBatching {
     Shared,
     /// It holds a matrix per batch.
     Batched,
-    /// It is a stack of `slabs` matrices, and each batch reads the one its entry of the product's
-    /// table names ([`MatmulIndex::Slab`]).
-    Slabs { slabs: usize },
 }
 
 impl MatmulBatching {
@@ -333,12 +341,8 @@ pub enum MaskedCells {
 impl From<&MatmulShape> for MatmulRoutineProblem {
     fn from(shape: &MatmulShape) -> Self {
         let held = |batching| match batching {
-            MatmulBatching::Shared | MatmulBatching::Slabs { .. } => 1,
+            MatmulBatching::Shared => 1,
             MatmulBatching::Batched => shape.batch,
-        };
-        let index = match shape.rhs.batching {
-            MatmulBatching::Slabs { slabs } => Some(MatmulIndex::Slab { slabs }),
-            MatmulBatching::Shared | MatmulBatching::Batched => None,
         };
         Self {
             batches: (shape.batch > 1)
@@ -350,7 +354,6 @@ impl From<&MatmulShape> for MatmulRoutineProblem {
                 rhs: held(shape.rhs.batching),
                 out: shape.batch,
             },
-            index,
             ..Self::dense(shape.m, shape.n, shape.k, shape.elem)
                 .laid(
                     MatmulOperand::Lhs,
@@ -387,16 +390,23 @@ pub fn create_key(
     let MatmulProblem {
         m, k, n, batches, ..
     } = MatmulProblem::new((&lhs_shape, lhs_kind), (&rhs_shape, rhs_kind));
-    // An operand keys by the axis it is contiguous along and the tile it is stored in, so a
-    // winner elected on one layout is never served to another, which its kernel may decline.
+    // An operand keys by the axis it is contiguous along, the tile it is stored in and the order
+    // the tile's words lie in, so a winner elected on one layout is never served to another, which
+    // its kernel may decline.
     let operand = |meta: &Metadata, kind: OperandKind, operand: MatmulOperand| {
         let shape = logical(meta);
+        let words = match kind {
+            OperandKind::Quantized(scheme) => {
+                TileOrder::of_matrix(&scheme, meta).map_or(TileWords::RowByRow, TileOrder::words)
+            }
+            _ => TileWords::RowByRow,
+        };
         OperandKey {
             kind,
             layout: match (contiguous(meta, operand.axes()), layout::tile(meta)) {
                 (None, _) => OperandLayout::Strided,
                 (Some(axis), (1, 1)) => OperandLayout::Along(axis),
-                (Some(axis), tile) => OperandLayout::Tiles(axis, tile),
+                (Some(axis), tile) => OperandLayout::Tiles(axis, tile, words),
             },
             batching: MatmulBatching::new(&shape.as_slice()[..shape.rank() - 2]),
         }
@@ -418,7 +428,6 @@ mod tests {
     use super::*;
     use cubecl::ir::FloatKind;
     use cubecl::quant::scheme::QuantScheme;
-    use cubek_std::matmul_axes::K;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
@@ -445,29 +454,8 @@ mod tests {
         assert_eq!(MatmulBatching::new(&[1, 8]), MatmulBatching::Batched);
     }
 
-    /// A key whose rhs is a stack of slabs states a problem every batch of which reads one slab
-    /// through the table: the stack is held once, not once a batch.
-    #[test]
-    fn a_stacked_rhs_states_a_problem_read_through_the_slab_table() {
-        let slabs = MatmulBatching::Slabs { slabs: 8 };
-        let key = MatmulTuneKey::new(
-            F16,
-            256,
-            64,
-            1,
-            32,
-            OperandKey::float(Some(K), MatmulBatching::Batched),
-            OperandKey::float(Some(K), slabs),
-        );
-        let problem = MatmulRoutineProblem::from(&key.shape());
-        assert_eq!(problem.index, Some(MatmulIndex::Slab { slabs: 8 }));
-        assert_eq!(problem.batches, vec![32]);
-        assert_eq!(problem.batches_held.lhs, 32);
-        assert_eq!(problem.batches_held.rhs, 1);
-    }
-
     /// The keys of a decode projection against a float col rhs and against a q4 rhs
-    /// packed along `k`, as they stand: a key is what a saved table is looked up by, so a change
+    /// packed along `k`, as they stand: a key is what a saved autotune is looked up by, so a change
     /// that moves one re-tunes every machine, and is made on purpose or not at all.
     #[test]
     fn a_projections_keys_are_pinned() {

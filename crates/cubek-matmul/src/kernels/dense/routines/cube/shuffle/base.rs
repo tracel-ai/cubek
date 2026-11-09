@@ -1,19 +1,17 @@
 use super::cube_shuffle_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
-    MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
+    MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
-use cubecl::tile::TileArgLaunch;
-use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::TileTensorLaunch;
+use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
+use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulOperand;
+use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
 };
-use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N};
@@ -22,7 +20,7 @@ use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine}
 
 /// `out = lhs · rhs` with every cube owning every row of a run of the output's columns, and its
 /// planes splitting the contraction between them: in software sums
-/// ([`PlaneShuffleMicrokernel`]), or, against a packed rhs, on the tensor cores, where an NVFP4
+/// ([`PlaneShuffleMicrokernel`](cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel)), or, against a packed rhs, on the tensor cores, where an NVFP4
 /// rhs against a 16-bit lhs holds up to a fragment's sixteen rows at the cost of
 /// reading the rhs
 /// ([`PlaneFragmentMicrokernel`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel)).
@@ -60,6 +58,10 @@ impl core::fmt::Display for CubeShuffleMatmulRoutineSettings {
 pub type CubeShuffleMatmulRoutineBlueprint = MatmulBlueprint<CubeShuffleMicrokernel>;
 
 impl CubeShuffleMatmulRoutine {
+    /// Steps of `K` a unit holds at once: its plane shuffles stage nothing in shared memory, and
+    /// load a step once the last is summed.
+    const STAGES_IN_FLIGHT: u32 = 1;
+
     /// The settings worth racing against a packed rhs
     /// ([`CubeShuffleMicrokernel::packed_settings`]): what the packed few-rows table races, and
     /// what a caller naming the routine and no setting runs against a packed rhs, in this
@@ -83,7 +85,8 @@ impl CubeShuffleMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let view = MatmulView::of::<CubeShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
+        let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)
+            .expect(MatmulView::PREPARED);
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let partitioning = &blueprint.partitioning;
         let (cube, leaf) = (&partitioning.cube_space().space, partitioning.leaf());
@@ -108,7 +111,7 @@ impl CubeShuffleMatmulRoutine {
             // output binds elementwise to match, so each write is one element.
             writes: vec![stream(MatmulOperand::Out, rows * columns, 1)],
             stages: k.div_ceil(k_per_stage),
-            stages_in_flight: PlaneShuffleMicrokernel::STAGES_IN_FLIGHT as u32,
+            stages_in_flight: Self::STAGES_IN_FLIGHT,
             drain_atomics: planes_along_k * rows * columns,
         });
         microkernel.estimate(&item, &(), grid.planes(), estimate);
@@ -127,7 +130,8 @@ impl CubeShuffleMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let view = MatmulView::of::<CubeShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
+        let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)
+            .expect(MatmulView::PREPARED);
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let [rows, k] = [view.rows(), problem.k].map(|extent| extent as u64);
         let leaf = blueprint.partitioning.leaf();
@@ -171,7 +175,7 @@ impl CubeShuffleMatmulRoutine {
         settings: &CubeShuffleMatmulRoutineSettings,
     ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
         problem.check_plain()?;
-        let view = MatmulView::of::<CubeShuffleMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
         let partitioning = view.partitioning(
@@ -184,7 +188,6 @@ impl CubeShuffleMatmulRoutine {
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
             MatmulBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ());
-        microkernel.plane.check_vectors(&blueprint.widths)?;
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
             shared_memory: microkernel.shared_memory(&item, blueprint.partitioning.cells()),
@@ -202,7 +205,7 @@ impl CubeShuffleMatmulRoutine {
         packing: &Packing,
         settings: &CubeShuffleMatmulRoutineSettings,
     ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
-        let view = MatmulView::of::<CubeShuffleMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?;
         view.check_steps(hw)?;
         let item = view.work_item();
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
@@ -230,7 +233,8 @@ impl Routine for CubeShuffleMatmulRoutine {
     type Blueprint = CubeShuffleMatmulRoutineBlueprint;
     type Partitioning = MatmulPartitioning;
 
-    /// Its microkernel's settings ([`CubeShuffleMicrokernel::settings`]): it has no knob of its own.
+    /// Its microkernel's settings ([`CubeShuffleMicrokernel::settings`]): it has no knob of its
+    /// own.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         CubeShuffleMicrokernel::settings(hw)
             .into_iter()
@@ -306,10 +310,13 @@ impl Routine for CubeShuffleMatmulRoutine {
 }
 
 impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
+    /// Its planes each hold every row.
+    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
-        binding: MatmulBinding<O::Operand, TileArgLaunch, TileArgLaunch>,
+        binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: CubeShuffleMatmulRoutineBlueprint,
         grid: Grid,
     ) {
@@ -347,6 +354,7 @@ mod tests {
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
     use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
     use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
+    use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
     use cubek_std::layout::stored::Operand;
@@ -482,18 +490,15 @@ mod tests {
 
     /// `m` rows against an NVFP4 `k × n` rhs in tile order, read as `hw` loads it.
     fn nvfp4(hw: &Hardware, m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
-        let scheme = tile_order::scheme();
+        let scheme = tile_order::nvfp4_scheme();
         let words = hw.load_values(ElemType::UInt(UIntKind::U32));
         let operand = Operand::of_scheme(&scheme, K, [K, N])
             .expect("one axis a block")
-            .stored(
+            .in_tile_order(
+                tile_order::TileOrder::laid(&scheme, tile_order::TileWords::RowByRow, (128, 8))
+                    .expect("NVFP4 is tile order"),
                 N,
                 words,
-                Some((
-                    &tile_order::values_axes(N),
-                    tile_order::values_storage(N, (128, 8), words).tiles(),
-                )),
-                None,
             )
             .expect("tile order is read");
         let packing = Packing { operand, scheme };

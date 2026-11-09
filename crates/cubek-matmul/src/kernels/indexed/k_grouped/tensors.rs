@@ -1,3 +1,7 @@
+use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::{
+    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
+};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
@@ -6,11 +10,6 @@ use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
-
-use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::{
-    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
-};
 
 /// The operands of one K-grouped product, `out[g] = lhs[rows of g]ᵀ · rhs[rows of g]`: the two row
 /// sets and each group's cumulative end row.

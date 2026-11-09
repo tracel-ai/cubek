@@ -1,4 +1,4 @@
-use cubecl::tile::{Partitioning, StageStorage, Tile, TileArg};
+use cubecl::tile::{Partitioning, StageStorage, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, cube_staged_attention_microkernel,
@@ -11,12 +11,12 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out: &TileArg<'_>,
-    logsumexp: ComptimeOption<&TileArg<'static>>,
-    mask: ComptimeOption<&TileArg<'static>>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    logsumexp: ComptimeOption<&TileTensor<'static>>,
+    mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,
@@ -27,22 +27,21 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+
     let q = query.tile(&partitioning);
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
+
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+
     for cube in &partitioning {
         let visible = VisibleKeys::new(len, &cube, queries, &mask, visibility);
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
-        let bias = visible.bias::<EA>(&partitioning);
-        let steps = visible.steps(
-            &cube,
-            comptime!(microkernel.seq_q()),
-            comptime!(microkernel.seq_kv()),
-            1usize,
-        );
+        let bias = visible.step_bias::<EA>(&partitioning, &cube);
+        let steps = visible.steps(&cube, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
+
         cube_staged_attention_microkernel::<EA, ES>(
             &cube,
             &o.at(&cube),
@@ -54,7 +53,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
             steps,
             EA::cast_from(scale),
             microkernel,
-            comptime!(storage.clone()),
+            storage.clone(),
         );
     }
 }

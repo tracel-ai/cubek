@@ -1,13 +1,18 @@
 //! Forced SIMT forward and gradient checks against an independent CPU convolution.
 
 use cubecl::{prelude::*, std::tensor::TensorHandle};
-use cubek_convolution::{
-    ConvolutionArgs, ConvolutionInputs, Strategy, UnitStrategy, UnitTiling, launch_ref,
-};
+#[cfg(feature = "heavy")]
+use cubek_convolution::UnitTiling;
+use cubek_convolution::{ConvolutionArgs, ConvolutionInputs, Strategy, UnitStrategy, launch_ref};
 use cubek_matmul::{definition::MatmulElems, multi_level::routines::TileSizeSelection};
 use cubek_std::InputBinding;
 
-fn upload(client: &Client, shape: &[usize], values: &[f32], channel_first: bool) -> TensorHandle {
+pub(super) fn upload(
+    client: &Client,
+    shape: &[usize],
+    values: &[f32],
+    channel_first: bool,
+) -> TensorHandle {
     let rank = shape.len();
     let mut order = vec![0];
     if channel_first {
@@ -48,7 +53,7 @@ fn offset(mut index: usize, shape: &[usize], strides: &[usize]) -> usize {
     offset
 }
 
-fn assert_close(client: &Client, tensor: TensorHandle, expected: &[f64], context: &str) {
+pub(super) fn assert_close(client: &Client, tensor: TensorHandle, expected: &[f64], context: &str) {
     let strides = tensor.strides().to_vec();
     let shape = tensor.shape().to_vec();
     let bytes = client.read_one_unchecked(tensor.handle);
@@ -62,11 +67,11 @@ fn assert_close(client: &Client, tensor: TensorHandle, expected: &[f64], context
     }
 }
 
-fn binding(tensor: &TensorHandle) -> InputBinding {
+pub(super) fn binding(tensor: &TensorHandle) -> InputBinding {
     InputBinding::new(tensor.clone().binding(), f32::elem_type_native())
 }
 
-fn values(size: usize, seed: usize) -> Vec<f32> {
+pub(super) fn values(size: usize, seed: usize) -> Vec<f32> {
     (0..size)
         .map(|i| (((i * 17 + seed) % 67) as f32 - 33.0) / 64.0)
         .collect()
@@ -81,6 +86,7 @@ const INFERRED: [UnitStrategy; 2] = [
 /// Every tiling, presets included. A preset only changes the matmul partition,
 /// and each one is a set of kernels the cpu runtime compiles slowly in debug,
 /// so the presets run on the small cases only.
+#[cfg(feature = "heavy")]
 const ALL: [UnitStrategy; 7] = [
     UnitStrategy::Inferred(TileSizeSelection::MinTileSize),
     UnitStrategy::Inferred(TileSizeSelection::MaxTileSize),
@@ -262,6 +268,7 @@ fn check<const N: usize>(
     }
 }
 
+#[cfg(feature = "heavy")]
 pub fn check_unit_reference(client: &Client) {
     check_unit_channel_padding(client);
     check(client, &INFERRED, 2, [13], 3, 7, [3], [2], [2], [(1, 2)]);
@@ -354,6 +361,7 @@ pub fn check_unit_reference(client: &Client) {
     );
 }
 
+#[cfg(feature = "heavy")]
 pub fn check_unit_channel_padding(client: &Client) {
     // The backward-data contraction pads C_out, even when C_in already
     // equals the padded C_out. Comparing C_in to the padding misses this tail.
@@ -372,6 +380,24 @@ pub fn check_unit_channel_padding(client: &Client) {
     check(client, &ALL, 1, [9], 4, 3, [3], [2], [1], [(1, 1)]);
 }
 
+/// The light tier's one case. Forward and both gradients, in both layouts.
+#[test]
+fn unit_convolution_small_matches_reference() {
+    check(
+        &cubecl::test_device().client(),
+        &INFERRED,
+        2,
+        [7, 9],
+        4,
+        8,
+        [3, 3],
+        [1, 1],
+        [1, 1],
+        [(1, 1), (1, 1)],
+    );
+}
+
+#[cfg(feature = "heavy")]
 #[test]
 fn unit_convolution_matches_reference() {
     check_unit_reference(&cubecl::test_device().client());

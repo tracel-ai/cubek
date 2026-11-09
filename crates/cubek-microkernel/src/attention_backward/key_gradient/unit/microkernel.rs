@@ -35,63 +35,75 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
     let mut key_sum = key_gradient.accumulator::<EA>(
         bias,
         query,
-        comptime!(microkernel.key_gradient.tile_instruction()),
+        microkernel.key_gradient.tile_instruction(),
         Semiring::SUM_PROD,
     );
+
     key_sum.zero();
     let mut value_sum = value_gradient.accumulator::<EA>(
         bias,
         out_gradient,
-        comptime!(microkernel.value_gradient.tile_instruction()),
+        microkernel.value_gradient.tile_instruction(),
         Semiring::SUM_PROD,
     );
+
     value_sum.zero();
     for head in keys.walk() {
         let queries = head.walk();
-        let steps = queries.total();
-        for step in queries.range(first_step, steps) {
+
+        // The queries from `first_step` to the head's last: a range takes its count of steps, so
+        // the steps before the first are not walked past the end. A key past every query takes
+        // none.
+        let first = first_step.min(queries.total());
+        let steps = queries.total() - first;
+
+        for step in queries.range(first, steps) {
             let (query, key, value) = (query.at(&step), key.at(&step), value.at(&step));
             let (out_gradient, bias) = (out_gradient.at(&step), bias.at(&step));
             let (logsumexp, delta) = (logsumexp.at(&step), delta.at(&step));
+
             let mut score = bias.accumulator::<EA>(
                 &key,
                 &query,
-                comptime!(microkernel.score.tile_instruction()),
+                microkernel.score.tile_instruction(),
                 Semiring::SUM_PROD,
             );
+
             score.zero();
             for depth in step.walk() {
                 unit_registers_microkernel(&depth, &score, &key, &query);
             }
+
             score.along(Q).probabilities::<EA>(scale, &bias, &logsumexp);
+
             let step_value_sum = value_sum.at(&step);
             for depth in step.walk() {
                 unit_registers_microkernel(&depth, &step_value_sum, &score, &out_gradient);
             }
+
             let mut gradient = bias.accumulator::<EA>(
                 &value,
                 &out_gradient,
-                comptime!(microkernel.score_gradient.tile_instruction()),
+                microkernel.score_gradient.tile_instruction(),
                 Semiring::SUM_PROD,
             );
+
             gradient.zero();
             for depth in step.walk() {
                 unit_registers_microkernel(&depth, &gradient, &value, &out_gradient);
             }
+
             gradient
                 .along(Q)
                 .softmax_gradient::<EA>(&score.along(Q), &delta);
+
             let step_key_sum = key_sum.at(&step);
             for depth in step.walk() {
                 unit_registers_microkernel(&depth, &step_key_sum, &gradient, &query);
             }
         }
     }
-    drain_scaled::<EA>(
-        &key_sum,
-        key_gradient,
-        scale,
-        comptime!(microkernel.seq_kv()),
-    );
+
+    drain_scaled::<EA>(&key_sum, key_gradient, scale, microkernel.seq_kv());
     value_sum.drained_into(value_gradient);
 }

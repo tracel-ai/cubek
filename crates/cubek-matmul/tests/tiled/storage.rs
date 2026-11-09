@@ -1,15 +1,24 @@
 //! Storing a tensor in storage tiles and back: the tiled buffer holds the tiles it states,
 //! the round trip is the identity, and what cannot be tiled is refused on the host.
 
-use cubecl::tile::{Axis, Geometry, kind::Field};
+use cubecl::tile::{Axis, Geometry, kind::Field, layout::Stagger};
 use cubecl::{
     bytes::Bytes, ir::ElemType, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle,
     zspace::Shape,
 };
 use cubek_matmul::{
     definition::MatmulSetupError,
-    tiled::storage::{StorageLevels, StoragePartitioning, empty, tile, untile},
+    tiled::storage::{
+        StorageLevels, StoragePartitioning, StoredValues, empty, matrix_storage, stored_tile, tile,
+        untile,
+    },
 };
+use cubek_microkernel::matmul::{MatmulOperand, MatmulStep};
+use cubek_std::layout::{
+    stored::Operand,
+    tile_order::{TileOrder, nvfp4_scheme},
+};
+use cubek_std::{Hardware, matmul_axes::K};
 use cubek_test_utils::{HostData, HostDataType, TestInput, client};
 
 const ROWS: Axis = Axis(0);
@@ -24,6 +33,18 @@ fn round_trip(
     (tr, tc): (usize, usize),
     grid: &[Axis],
 ) {
+    let storage = StorageLevels::new(&[(COLS, tc), (ROWS, tr)]).grid(grid);
+    round_trip_as(batches, rows, cols, (tr, tc), storage);
+}
+
+/// [`round_trip`] as `storage` states, its tiles `tr` by `tc`.
+fn round_trip_as(
+    batches: &[usize],
+    rows: usize,
+    cols: usize,
+    (tr, tc): (usize, usize),
+    storage: StoragePartitioning,
+) {
     let client = client();
     let dtype: ElemType = f32::elem_type_native();
     let shape: Vec<usize> = batches.iter().copied().chain([rows, cols]).collect();
@@ -34,7 +55,6 @@ fn round_trip(
         .custom(data.clone())
         .generate_with_f32_host_data();
 
-    let storage = StorageLevels::new(&[(COLS, tc), (ROWS, tr)]).grid(grid);
     let tiled = tile(&client, src.binding(), &[ROWS, COLS], dtype, None, storage).unwrap();
     let physical: Vec<usize> = batches
         .iter()
@@ -255,6 +275,52 @@ fn tiling_stores_a_tile_column_first() {
     assert_eq!(strides, vec![1536, 512, 1, 16]);
 }
 
+/// A matrix stored for a product, in 4 x 16 tiles: in memory, a tile's rows lie one after
+/// another and the tiles row-major, and the finest piece stated is the widest read the device
+/// serves that a row of the tile holds whole.
+#[test]
+fn a_matrix_is_stored_for_the_read_it_is_read_in() {
+    let client = client();
+    let dtype: ElemType = f32::elem_type_native();
+    let (rows, cols) = (8, 32);
+    let data: Vec<f32> = (0..rows * cols).map(|i| i as f32).collect();
+    let (src, _) = TestInput::builder(client.clone(), Shape::from(vec![rows, cols]))
+        .dtype(dtype)
+        .custom(data.clone())
+        .generate_with_f32_host_data();
+    let storage = matrix_storage(&client, dtype, [(ROWS, 4), (COLS, 16)]);
+    let tiled = tile(&client, src.binding(), &[ROWS, COLS], dtype, None, storage).unwrap();
+
+    let read = client
+        .io_optimized_vector_sizes(dtype.size())
+        .filter(|&width| 16usize.is_multiple_of(width))
+        .max()
+        .unwrap_or(1);
+    // A read of one value is no piece: the tile's row is then the finest.
+    let finest = tiled
+        .metadata
+        .strides()
+        .iter()
+        .position(|&stride| stride == 1);
+    let piece = if read > 1 { read } else { 16 };
+    assert_eq!(finest.map(|dim| tiled.shape()[dim]), Some(piece));
+
+    let raw = f32::from_bytes(&client.read_one_unchecked(tiled.handle.clone())).to_vec();
+    for r in 0..rows {
+        for c in 0..cols {
+            let at = (r / 4 * (cols / 16) + c / 16) * 64 + r % 4 * 16 + c % 16;
+            assert_eq!(raw[at], data[r * cols + c], "cell ({r}, {c}) at {at}");
+        }
+    }
+    let back = untile(&client, tiled.binding(), dtype).unwrap();
+    let got = HostData::from_tensor_handle(&client, back, HostDataType::F32);
+    for r in 0..rows {
+        for c in 0..cols {
+            assert_eq!(got.get_f32(&[r, c]), data[r * cols + c], "cell ({r}, {c})");
+        }
+    }
+}
+
 /// Where the value at `coords` (one per named axis) sits in a stored tensor, in values: each
 /// coordinate split over its axis's dims, finest last, dotted with their strides.
 fn value_offset(stored: &Geometry, axes: &[Axis], coords: &[usize]) -> usize {
@@ -350,6 +416,69 @@ fn tiling_moves_packed_scales_whole() {
         .tile(&[(N, 4), (KB, 2)])
         .grid(&[KB, N]);
     packs_and_lands(Field::Quant(QuantValue::Q8S), &[(N, 8), (KB, 64)], storage);
+}
+
+/// 128-byte transactions over elements of `element_bits`.
+fn transactions_of(element_bits: usize) -> Stagger {
+    Stagger::new(1024, element_bits).expect("the element divides a 1024-bit transaction")
+}
+
+/// Staggered, a tensor's strips of tiles start an odd number of transactions apart, its batches
+/// each a whole padded buffer after the last: every cell lands in its tile and comes back.
+#[test]
+fn tiling_round_trips_a_staggered_tensor() {
+    let storage = StorageLevels::new(&[(COLS, 16), (ROWS, 8)])
+        .grid(&[COLS, ROWS])
+        .staggered(transactions_of(32));
+    round_trip_as(&[2], 32, 64, (8, 16), storage);
+}
+
+/// Staggered, a batch starts after the last batch's padded strips, not after its last value: four
+/// strips of eight 64-value rows, each sixteen 128-byte transactions padded to seventeen.
+#[test]
+fn a_staggered_tensor_pads_every_batch_whole() {
+    let storage = StorageLevels::new(&[(COLS, 16), (ROWS, 8)])
+        .grid(&[COLS, ROWS])
+        .staggered(transactions_of(32));
+    let client = client();
+    let dtype: ElemType = f32::elem_type_native();
+    let tiled = empty(&client, &[2, 32, 64], &[ROWS, COLS], dtype, None, storage).unwrap();
+    let pitch = 17 * 32;
+    assert_eq!(tiled.metadata.strides()[0], 4 * pitch);
+    assert_eq!(tiled.metadata.strides()[1], pitch);
+}
+
+/// Staggered, NVFP4 values and their byte scales each lay their strips of tiles an odd number of
+/// 128-byte transactions apart, two transactions dense, and still land where the statement puts
+/// them.
+#[test]
+fn tiling_staggers_packed_values_and_scales_alike() {
+    let values = StorageLevels::new(&[(KI, 8)])
+        .tile(&[(KI, 2), (N, 2)])
+        .tile(&[(KB, 4), (N, 2)])
+        .grid(&[KI, KB, N])
+        .staggered(transactions_of(4));
+    let extents = [(N, 8), (KB, 8), (KI, 16)];
+    let strip = values
+        .physical(&extents)
+        .unwrap()
+        .strides()
+        .iter()
+        .copied()
+        .max();
+    assert_eq!(
+        strip,
+        Some(3 * 256),
+        "two transactions of values padded to three"
+    );
+    packs_and_lands(Field::Quant(QuantValue::E2M1), &extents, values);
+
+    let scales = StorageLevels::new(&[(KB, 4)])
+        .tile(&[(KB, 4)])
+        .tile(&[(N, 4), (KB, 2)])
+        .grid(&[KB, N])
+        .staggered(transactions_of(8));
+    packs_and_lands(Field::Quant(QuantValue::Q8S), &[(N, 8), (KB, 64)], scales);
 }
 
 /// A packed tensor moves whole words, so a statement whose finest tile is not the word is
@@ -554,4 +683,58 @@ fn packed_values_without_their_axes_are_refused() {
         StorageLevels::new(&[(KI, 8)]).grid(&[KI, KB, N]),
     );
     assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
+}
+
+/// A float input is stored in the step a product against it takes, over its own two axes, except
+/// on a device whose TMA engine fills the stages from rows.
+#[test]
+fn elements_are_stored_in_the_step_of_their_product() {
+    let hw = Hardware::from_client(&client());
+    let f16: ElemType = half::f16::elem_type_native();
+    for input in MatmulOperand::INPUTS {
+        let tile = stored_tile(&hw, input, StoredValues::Elements(f16), f16);
+        if hw.bulk_tensor_copy() {
+            assert_eq!(tile, None, "{input:?} stays in rows for the TMA fill");
+            continue;
+        }
+        let step = MatmulStep::stored_on(&hw, input, Operand::plain(), f16, f16);
+        let want = step.map(|step| input.axes().map(|axis| (axis, step.along(axis))));
+        assert_eq!(
+            tile.map(|tile| input.axes().map(|axis| (axis, tile.extent(axis)))),
+            want,
+            "{input:?}"
+        );
+    }
+}
+
+/// NVFP4 codes are stored in whole scale blocks along `k`, where a device contracts them.
+#[test]
+fn packed_codes_are_stored_in_whole_blocks() {
+    let hw = Hardware::from_client(&client());
+    let f16: ElemType = half::f16::elem_type_native();
+    let scheme = nvfp4_scheme();
+    for input in MatmulOperand::INPUTS {
+        if let Some(tile) = stored_tile(&hw, input, StoredValues::Packed(scheme), f16) {
+            assert!(
+                tile.extent(K).is_multiple_of(cubek_std::NVFP4_BLOCK),
+                "{input:?} tile {tile:?}"
+            );
+        }
+    }
+}
+
+/// Codes under a scheme tile order does not store keep the layout they were laid down in.
+#[test]
+fn codes_tile_order_does_not_store_take_no_tile() {
+    use cubecl::quant::scheme::{QuantScheme, QuantStore};
+    let hw = Hardware::from_client(&client());
+    let f16: ElemType = half::f16::elem_type_native();
+    let along_n = QuantScheme::default()
+        .with_value(QuantValue::Q8S)
+        .with_store(QuantStore::PackedU32(0));
+    assert!(!TileOrder::stores(&along_n));
+    assert_eq!(
+        stored_tile(&hw, MatmulOperand::Rhs, StoredValues::Packed(along_n), f16),
+        None
+    );
 }

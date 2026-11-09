@@ -1,4 +1,4 @@
-use crate::matmul::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands};
+use crate::matmul::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands, MatmulRead};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Space, StageStorage};
@@ -65,9 +65,10 @@ impl MatmulStage {
         }
     }
 
-    /// Elements of `operand` a plane reads contiguously over a cube's whole walk of the space `cube_space`, bound
-    /// in the order `orders` says: the whole of `K` a cube walks for an operand bound innermost
-    /// along it, whose stages continue each other's rows, and one stage's extent otherwise.
+    /// Elements of `operand` a plane reads contiguously over a cube's whole walk of the space
+    /// `cube_space`, bound in the order `orders` says: the whole of `K` a cube walks for an operand
+    /// bound innermost along it, whose stages continue each other's rows, and one stage's extent
+    /// otherwise.
     pub fn walk_run(
         &self,
         cube_space: &Space,
@@ -81,18 +82,25 @@ impl MatmulStage {
     }
 
     /// Both operands' boxes of one stage, each stored in its own element of `elements` and bound
-    /// in the order `orders` says.
+    /// in the order `orders` says, for a fill that reads them as `reads` say: an operand it decodes
+    /// is converted on its way into the stage.
     pub fn operands(
         &self,
         elements: MatmulOperands<ElemType>,
         orders: MatmulOperands<BindingOrder>,
+        reads: MatmulOperands<MatmulRead>,
     ) -> [StagedOperand; 2] {
-        MatmulOperand::INPUTS.map(|operand| StagedOperand {
-            element: elements.get(operand),
-            space: self
-                .space
-                .subspace(&operand.dims().map(|dim| self.axes.of(dim))),
-            innermost: self.axes.of(orders.innermost(operand)),
+        MatmulOperand::INPUTS.map(|operand| {
+            let staged = StagedOperand::new(
+                elements.get(operand),
+                self.space
+                    .subspace(&operand.dims().map(|dim| self.axes.of(dim))),
+                self.axes.of(orders.innermost(operand)),
+            );
+            match reads.get(operand).staged() {
+                Some(_) => staged.converted_by_fill(),
+                None => staged,
+            }
         })
     }
 
@@ -107,7 +115,7 @@ impl MatmulStage {
         orders: MatmulOperands<BindingOrder>,
     ) -> usize {
         let block: usize = self
-            .operands(elements, orders)
+            .operands(elements, orders, MatmulOperands::all(MatmulRead::AsBound))
             .iter()
             .map(|operand| operand.bytes(hw, storage))
             .sum();
@@ -129,5 +137,30 @@ impl MatmulStage {
     /// The axes the stage lies along.
     pub fn axes(&self) -> MatmulAxes {
         self.axes
+    }
+
+    /// The box `operand`'s stage lands over `axes`, bound in the order `orders` says: its part's
+    /// extent along each axis it names, the whole box's along one it lies beside (a block-split
+    /// space's blocks of `K`), and one along an axis the box does not hold. What one bulk copy
+    /// moves of the operand a stage.
+    pub fn landed_space(
+        &self,
+        operand: MatmulOperand,
+        orders: MatmulOperands<BindingOrder>,
+        axes: &[Axis],
+    ) -> Space {
+        let own = self.operand_space(operand, orders);
+        let extents: Vec<_> = axes
+            .iter()
+            .map(|&axis| {
+                let extent = match (own.contains(axis), self.space.contains(axis)) {
+                    (true, _) => own.extent(axis),
+                    (false, true) => self.space.extent(axis),
+                    (false, false) => 1,
+                };
+                (axis, extent)
+            })
+            .collect();
+        Space::new(&extents)
     }
 }

@@ -7,6 +7,12 @@ pub use cubek_random as random;
 #[cfg(feature = "reduce")]
 pub use cubek_reduce as reduce;
 
+#[cfg(feature = "rms-norm")]
+pub use cubek_rms_norm as rms_norm;
+
+#[cfg(feature = "swiglu")]
+pub use cubek_swiglu as swiglu;
+
 #[cfg(feature = "matmul")]
 pub use cubek_matmul as matmul;
 
@@ -21,6 +27,9 @@ pub use cubek_attention as attention;
 
 #[cfg(feature = "attention-backward")]
 pub use cubek_attention_backward as attention_backward;
+
+#[cfg(feature = "linear-recurrence")]
+pub use cubek_linear_recurrence as linear_recurrence;
 
 #[cfg(feature = "interpolate")]
 pub use cubek_interpolate as interpolate;

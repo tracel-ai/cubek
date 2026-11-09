@@ -1,4 +1,5 @@
-use cubecl::tile::{Partitioning, StageStorage, TileArg, launch::Destination};
+use cubecl::tile::launch::Destination;
+use cubecl::tile::{Partitioning, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeStagedWalk, cube_staged_microkernel};
 
@@ -28,8 +29,8 @@ pub fn cube_staged_matmul_kernel<
     VO: Size,
     O: Destination,
 >(
-    lhs: &TileArg<'_>,
-    rhs: &TileArg<'_>,
+    lhs: &TileTensor<'_>,
+    rhs: &TileTensor<'_>,
     out: &O::Arg<E>,
     partitioning: Partitioning,
     #[comptime] walk: CubeStagedWalk,
@@ -39,6 +40,7 @@ pub fn cube_staged_matmul_kernel<
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
     let c = O::tile::<E, VO>(out, &partitioning);
+
     for cube in &partitioning {
         let b = b.at(&cube);
         cube_staged_microkernel::<EA, EL>(
@@ -47,7 +49,8 @@ pub fn cube_staged_matmul_kernel<
             &b,
             &c.at(&cube),
             walk,
-            comptime!(storage.clone()),
+            storage.clone(),
         );
     }
+    O::finish::<E>(out);
 }

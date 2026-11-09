@@ -69,11 +69,11 @@ pub fn matmul_entry<
         &vector_sizes
     ));
 
-    if comptime!(config.is_err()) {
+    if config.is_err() {
         push_validation_error(config.err().unwrap().to_string());
         comptime!(return);
     }
-    let config = comptime!(config.unwrap());
+    let config = config.unwrap();
 
     let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
         inputs,
@@ -127,7 +127,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
         let size!(N) = vector_size;
 
         let check_bounds = config.check_bounds;
-        let variant = comptime!(config.variant);
+        let variant = config.variant;
 
         let lhs_view = lhs.view(MatLayout::new(lhs_batch, (m, k)));
         let rhs_view = rhs.view(MatLayout::new(rhs_batch, (k, n)));
@@ -142,7 +142,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
         // `vector_size` cells for the axis it walks in a block.
         let vs_u32 = comptime!(vector_size as u32);
 
-        let (m_id, n_id) = match comptime!(config.planes_split) {
+        let (m_id, n_id) = match config.planes_split {
             PlanesSplit::M => {
                 // OuterN splits M (and only OuterN uses split_M in v1).
                 // Plane covers one M-row at `block_id`; cube_n indexes

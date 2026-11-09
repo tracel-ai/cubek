@@ -71,6 +71,18 @@ pub struct GlobalLayoutConfig {
     pub check_col_bounds: bool,
 }
 
+impl GlobalLayoutConfig {
+    /// The config of a layout that sees the matmul's view transposed: its rows are the matmul's
+    /// columns and its columns the matmul's rows, so the bounds checks swap with them.
+    pub fn transposed(self) -> Self {
+        Self {
+            check_row_bounds: self.check_col_bounds,
+            check_col_bounds: self.check_row_bounds,
+            ..self
+        }
+    }
+}
+
 impl From<GlobalMemoryConfig> for GlobalLayoutConfig {
     fn from(gmem_config: GlobalMemoryConfig) -> Self {
         gmem_config.as_global_layout_config()

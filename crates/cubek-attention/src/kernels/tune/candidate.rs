@@ -1,12 +1,9 @@
 //! The tune candidates attention's autotunes race, the prompt's and the single position's.
 
+use crate::kernels::tune::AttentionTuneInputs;
 use crate::kernels::tune::key::AttentionKey;
-use crate::kernels::{
-    AttentionBlueprint, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
-};
+use crate::kernels::{AttentionBlueprint, AttentionRoutine, AttentionRoutineProblem};
 use cubecl::CubeDim;
-use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
@@ -54,20 +51,21 @@ impl<R, M: AttentionMicrokernel, SM> AttentionRoutineCandidate<R>
 where
     R: AttentionRoutine<M, SM> + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>,
 {
-    /// The attention `tensors` state, launched on their client's device by this candidate's
-    /// routine at its setting: [`AttentionRoutine::launch_on`] on the device the candidate was
-    /// listed for, each problem prepared once ([`PreparedLaunches`]).
-    ///
-    /// # Errors
-    ///
-    /// Why the routine cannot run the attention at this setting.
-    pub fn launch_on(&self, tensors: AttentionTensors) -> Result<TensorHandle, Refusal> {
-        let (blueprint, grid) =
-            self.prepared
-                .prepare(&self.routine, &self.hw, &tensors.problem(), &self.settings)?;
-        let binding = tensors.bind(&blueprint, &grid);
-        self.routine.dispatch(&tensors, binding, blueprint, grid);
-        Ok(tensors.into_out())
+    /// The attention `inputs` state, written into their output by this candidate's routine at its
+    /// setting on the device the candidate was listed for, each problem prepared once
+    /// ([`PreparedLaunches`]), or why it did not run.
+    pub fn launch(&self, inputs: AttentionTuneInputs) -> Result<(), String> {
+        let tensors = inputs.tensors;
+        self.prepared
+            .prepare(&self.routine, &self.hw, &tensors.problem(), &self.settings)
+            .map(|(blueprint, grid)| {
+                let binding = tensors.bind(&blueprint, &grid);
+                self.routine.dispatch(&tensors, binding, blueprint, grid);
+            })
+            .map_err(|why| {
+                let settings = &self.settings;
+                format!("{settings} does not serve this problem: {why:?}")
+            })
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the

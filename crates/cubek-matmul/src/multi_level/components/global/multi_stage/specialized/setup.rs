@@ -21,6 +21,18 @@ use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;
 use std::marker::PhantomData;
 
+/// The blueprint with the load flows the specialized matmul runs: both inputs load on the
+/// load-only planes, whatever flows the blueprint carries, so that the plane split, the stages and
+/// the readers all agree on which planes load.
+fn with_load_flows(blueprint: &BatchMatmulBlueprint) -> BatchMatmulBlueprint {
+    let mut blueprint = blueprint.clone();
+    blueprint.load_flows = LoadFlows {
+        lhs: InputLoadFlow::LoadOnly,
+        rhs: InputLoadFlow::LoadOnly,
+    };
+    blueprint
+}
+
 /// Double buffering matmul family for any precision
 pub struct SpecializedMatmulFamily<
     SP: StagePartitioner,
@@ -53,6 +65,7 @@ where
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
+        let blueprint = &with_load_flows(blueprint);
         let plane_dim = blueprint.plane_dim;
         let plane_flow_config =
             Self::cubedim_resource(blueprint, dtypes, vector_sizes)?.as_specialized(plane_dim)?;
@@ -169,11 +182,7 @@ where
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError> {
-        let mut blueprint = blueprint.clone();
-        blueprint.load_flows = LoadFlows {
-            lhs: InputLoadFlow::LoadOnly,
-            rhs: InputLoadFlow::LoadOnly,
-        };
+        let blueprint = with_load_flows(blueprint);
 
         let max_global_readers = MaxGlobalReaderPlanes::new::<L, L>(
             &blueprint.tiling_scheme,

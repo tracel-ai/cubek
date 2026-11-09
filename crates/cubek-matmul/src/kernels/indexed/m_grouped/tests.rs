@@ -1,5 +1,12 @@
 //! The M-grouped launch against a host reference.
 
+use super::{MGroupedFloors, MGroupedMatmulTensors, MGroupedSettings, launch_tuned};
+use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
+use crate::kernels::indexed::m_grouped::upload;
+use crate::kernels::indexed::stack::SlabAxis;
+use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::tune::{Listing, Product};
+use crate::tiled::storage::{StorageLevels, tile};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
@@ -8,13 +15,6 @@ use cubecl::tile::Axis;
 use cubecl::tile::launch::Refusal;
 use cubek_std::autotune::GroupPriority;
 use cubek_test_utils::client;
-
-use super::{MGroupedMatmulTensors, launch_tuned};
-use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
-use crate::kernels::indexed::m_grouped::upload;
-use crate::kernels::indexed::stack::SlabAxis;
-use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::tiled::storage::{StorageLevels, tile};
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 
@@ -143,4 +143,69 @@ fn a_stack_stored_in_tiles_is_refused() {
         matches!(declined, Err(MATMUL_SLABS_TAKE_NO_STORED_TILES)),
         "{declined:?}"
     );
+}
+
+/// The entry asks the floors listed for its stack's kind and no others: a float stack served only
+/// by a packed floor passes the entry and then every floor of the round declines it.
+#[test]
+fn a_float_stack_is_asked_every_plane_shuffle_floor_and_the_float_cube_staged_one() {
+    let floors = MGroupedFloors::LISTED;
+    let plane_shuffle: Vec<_> = Listing::admitted(&floors.plane_shuffle, Product::Float)
+        .map(|floor| floor.settings)
+        .collect();
+    let cube_staged: Vec<_> = Listing::admitted(&floors.cube_staged, Product::Float)
+        .map(|floor| floor.settings)
+        .collect();
+    assert_eq!(
+        plane_shuffle,
+        [
+            MGroupedSettings::PLANE_SHUFFLE,
+            MGroupedSettings::PLANE_SHUFFLE_PACKED
+        ]
+    );
+    assert_eq!(cube_staged, [MGroupedSettings::CUBE_STAGED]);
+}
+
+#[test]
+fn a_packed_stack_is_asked_every_plane_shuffle_floor_and_the_packed_cube_staged_one() {
+    let floors = MGroupedFloors::LISTED;
+    let plane_shuffle: Vec<_> = Listing::admitted(&floors.plane_shuffle, Product::Packed)
+        .map(|floor| floor.settings)
+        .collect();
+    let cube_staged: Vec<_> = Listing::admitted(&floors.cube_staged, Product::Packed)
+        .map(|floor| floor.settings)
+        .collect();
+    assert_eq!(
+        plane_shuffle,
+        [
+            MGroupedSettings::PLANE_SHUFFLE,
+            MGroupedSettings::PLANE_SHUFFLE_PACKED
+        ]
+    );
+    assert_eq!(cube_staged, [MGroupedSettings::CUBE_STAGED_PACKED]);
+}
+
+/// The rows are keyed by the power of two above them, so a bucket is the same power of two at
+/// every autotune level, which the derive's anchor attribute does not give (it scales its base by
+/// the level).
+#[test]
+fn the_key_anchors_its_rows_to_a_power_of_two() {
+    let client = client();
+    let (k, n) = (8usize, 4usize);
+    let key = |rows: usize| {
+        let ends = [rows as u32 / 2, rows as u32];
+        MGroupedMatmulTensors::new(
+            &client,
+            f32s(&client, [rows, k], [k, 1], &vec![1.0; rows * k]),
+            StoredTensor::Plain(f32s(&client, [k, 2 * n], [1, k], &vec![1.0; 2 * n * k])),
+            u32s(&client, &ends),
+            SlabAxis::Output,
+        )
+        .expect("float operands the routines read")
+        .key()
+    };
+    assert_eq!(key(65), key(128));
+    assert_eq!(key(100), key(128));
+    assert_ne!(key(100), key(129));
+    assert_ne!(key(5), key(100));
 }

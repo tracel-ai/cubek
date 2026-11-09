@@ -3,17 +3,15 @@
 //! ([`KGroupedMatmulTensors`]). A device it declines, as one offering no fragment instruction at
 //! the element, is the caller's to run another way.
 
+use crate::kernels::indexed::k_grouped::KGroupedMatmulTensors;
+use crate::kernels::{CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
-use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
-use cubek_microkernel::matmul::cube::{CubeStagedFill, CubeStagedMicrokernelSettings};
+use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_std::Hardware;
 use cubek_std::microkernel::StageRing;
-
-use crate::kernels::indexed::k_grouped::KGroupedMatmulTensors;
-use crate::kernels::{CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings};
 
 /// The setting a K-grouped product runs at: the dense default's box, one instruction deep, so a
 /// run that starts or ends mid-stage reads at most one instruction's rows of zeros at each end;
@@ -24,7 +22,6 @@ pub const K_GROUPED_SETTINGS: CubeStagedMatmulRoutineSettings = CubeStagedMatmul
         plane: PlaneFragmentMicrokernelSettings::DEFAULT,
         planes: MatmulPlaneLayout::new(2, 4),
         ring: StageRing::SINGLE,
-        fill: CubeStagedFill::BY_UNITS,
         ..CubeStagedMicrokernelSettings::DEFAULT
     },
     cube_order: CubeOrder::RowMajor,

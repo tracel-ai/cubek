@@ -22,11 +22,20 @@ use cubek_microkernel::attention::{B, G, KV, Q, S};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttentionPartitioning {
     partitioning: Partitioning,
-    cubes_along_keys: NonZeroUsize,
+    key_cubes: KeyCubes,
     /// Steps of the walk through `S` a page holds, where the walk takes a page at a time.
     page_steps: Option<NonZeroUsize>,
     /// The box one cube covers, its `S` a cube's run of the walk where several share a box.
     cube_space: Space,
+}
+
+/// How the cubes of one batch and key head share the walk through `S`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyCubes {
+    /// This many cubes share every box, each on its own run of `S`.
+    EveryBox(NonZeroUsize),
+    /// This many cubes share the line of every box's steps laid end to end.
+    Line(NonZeroUsize),
 }
 
 /// The order a launch's cubes take the boxes of queries in.
@@ -108,8 +117,31 @@ impl AttentionPartitioning {
         );
         Self {
             partitioning,
-            cubes_along_keys,
+            key_cubes: KeyCubes::EveryBox(cubes_along_keys),
             page_steps,
+            cube_space,
+        }
+    }
+
+    /// `space`, every axis of the problem, partitioned with `step` the levels inside one step of
+    /// the walk through `S`, every box of queries and heads holding the whole of `S`, and the steps
+    /// of each batch and key head's boxes laid end to end and shared by `cubes` cubes, each taking
+    /// a run that may start inside one box and end inside the next (the tile DSL's
+    /// [`Levels::shared_by`]): every cube walks as many steps as any other, however the boxes
+    /// divide them.
+    pub fn shared(space: Space, step: Levels, cubes: NonZeroUsize) -> Self {
+        let levels = step
+            .walk_every(&[S])
+            .cubes(&[Q, G])
+            .shared_by(cubes.get())
+            .batches(&[B, KV])
+            .build();
+        let partitioning = Partitioning::new(space, levels);
+        let cube_space = partitioning.box_of(ComputeScope::Cube);
+        Self {
+            partitioning,
+            key_cubes: KeyCubes::Line(cubes),
+            page_steps: None,
             cube_space,
         }
     }
@@ -151,7 +183,7 @@ impl AttentionPartitioning {
         );
         Self {
             partitioning,
-            cubes_along_keys: Self::ONE_CUBE_A_BOX,
+            key_cubes: KeyCubes::EveryBox(Self::ONE_CUBE_A_BOX),
             page_steps: None,
             cube_space,
         }
@@ -165,7 +197,10 @@ impl AttentionPartitioning {
 
     /// Cubes sharing every box of rows, each on its own run of `S`.
     pub fn cubes_along_keys(&self) -> NonZeroUsize {
-        self.cubes_along_keys
+        match self.key_cubes {
+            KeyCubes::EveryBox(cubes) => cubes,
+            KeyCubes::Line(_) => Self::ONE_CUBE_A_BOX,
+        }
     }
 
     /// The box one step of the walk through `S` covers: what a staged routine stages at once.
@@ -174,7 +209,7 @@ impl AttentionPartitioning {
     ///
     /// A partitioning whose cubes walk no `S`, alone or in runs.
     pub fn stage(&self) -> Space {
-        match (self.cubes_along_keys.get() > 1, self.page_steps) {
+        match (self.cubes_along_keys().get() > 1, self.page_steps) {
             // The cube level steps `S` itself, a run each: its tile is one step.
             (true, None) => self.partitioning.box_of(ComputeScope::Cube),
             // A cube walks the pages, then the steps inside each.
@@ -213,12 +248,25 @@ impl AttentionPartitioning {
         self.partitioning.overhangs(axis)
     }
 
+    /// The problem's space: every axis at its extent, or dynamic where a launch states it.
+    pub fn space(&self) -> &Space {
+        self.partitioning.space()
+    }
+
     /// Cubes one batch and key head of the problem spawns: one for every box of queries and
-    /// heads, times the cubes sharing each.
+    /// heads, times the cubes sharing each, or the cubes sharing the line of its boxes' steps.
     pub fn cubes(&self) -> usize {
+        match self.key_cubes {
+            KeyCubes::EveryBox(cubes) => self.boxes() * cubes.get(),
+            KeyCubes::Line(cubes) => cubes.get(),
+        }
+    }
+
+    /// Boxes of queries and heads one batch and key head of the problem holds.
+    pub fn boxes(&self) -> usize {
         let (space, cube) = (self.partitioning.space(), self.cube_space());
         let boxes = |axis| space.extent(axis).div_ceil(cube.extent(axis));
-        boxes(Q) * boxes(G) * self.cubes_along_keys.get()
+        boxes(Q) * boxes(G)
     }
 
     /// The partitioning a kernel compiles against: every extent a launch varies — the batches, the

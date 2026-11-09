@@ -4,6 +4,7 @@
 
 #[cfg(test)]
 mod plans;
+pub mod problem;
 pub mod selector;
 mod strategy;
 

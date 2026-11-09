@@ -1,12 +1,12 @@
 //! Benchmark registry for cubek.
 
-pub use cubek_attention::eval::forward::benchmarks as attention;
 pub use cubek_attention_backward::eval::benchmarks as attention_backward;
 pub use cubek_convolution::eval::benchmarks as conv2d;
 pub use cubek_convolution::eval::benchmarks::depthwise;
 pub use cubek_convolution::eval::benchmarks::direct as direct_conv;
 pub use cubek_fft::eval::benchmarks as fft;
 pub use cubek_interpolate::eval::benchmarks as interpolate;
+pub use cubek_linear_recurrence::eval::benchmarks as recurrence_walk;
 pub use cubek_matmul::eval::benchmarks::gemm;
 pub use cubek_matmul::eval::benchmarks::gemm_cpu;
 pub use cubek_matmul::multi_level::eval::gemv;
@@ -29,12 +29,12 @@ pub use cubek_test_utils::{
 /// Every benchmark category compiled into this build of the registry.
 pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
     &[
-        &crate::attention::Category,
         &crate::attention_backward::Category,
         &crate::contiguous::Category,
         &crate::conv2d::Category,
         &crate::depthwise::Category,
         &crate::fft::Category,
+        &crate::recurrence_walk::Category,
         &crate::gemm::Category,
         &crate::gemm_cpu::Category,
         &crate::gemv::Category,

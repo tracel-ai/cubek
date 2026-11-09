@@ -1,25 +1,23 @@
-use crate::matmul::{
-    MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,
-    MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
-};
-use cubecl::tile::launch::Refusal;
-use cubek_std::layout::BindingOrder;
-use cubek_std::{Hardware, Instructions, manual_mma};
-
-use crate::matmul::MatmulStage;
 use crate::matmul::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
-    PlaneFragmentMicrokernelSettings, PlaneFragmentStepSum, PlaneFragmentTransport,
+    PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong, PlaneFragmentStepSum,
+    PlaneFragmentTransport,
+};
+use crate::matmul::{
+    MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,
+    MatmulOperands, MatmulRows, MatmulStage, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::QuantValue;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, Scratch, Space, StageStorage};
+use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork};
+use cubek_std::{Hardware, Instructions, block_scaled_for, manual_mma};
 
 /// A tile of the output one plane owns: a grid of instructions its units hold between them,
 /// contracted a stage of `K` at a time out of shared memory, as its settings size it. The
@@ -30,7 +28,7 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayou
 /// memory and holds every row: one fragment of rows, its settings' fragments along `n`, each a
 /// window of `K` its steps deep, so each unit reads its run of `K` in whole loads and the rhs
 /// decodes into the lhs's element as each fragment loads (the tile DSL's lane runs); the
-/// fragments share the lhs the plane loads ([`step_levels`](Self::step_levels)).
+/// fragments share the lhs the plane loads (`step_levels`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentMicrokernel {
     /// What its fragments contract through.
@@ -44,6 +42,18 @@ pub struct PlaneFragmentMicrokernel {
     /// The block-split space a packed rhs it reads straight from memory puts the product in:
     /// none for a float rhs, or one decoded into a stage before the plane reads it.
     pub blocks: Option<MatmulBlocks>,
+    /// How the tiles it reads state `K` (`k_axes`).
+    pub k_stated: PlaneFragmentKStatement,
+}
+
+/// How the tiles a [`PlaneFragmentMicrokernel`] reads state `K`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PlaneFragmentKStatement {
+    /// Along the caller's `K` axis: a float operand's, or a packed rhs read straight from memory.
+    Caller,
+    /// In a packed rhs's blocks, `KB` beside `KI`: what the block-scaled instruction reads, and a
+    /// stage holding the rhs as it is stored.
+    Blocks,
 }
 
 impl PlaneFragmentMicrokernel {
@@ -57,7 +67,7 @@ impl PlaneFragmentMicrokernel {
 
     /// Units of a plane the decoding instruction's lane runs are laid over: the only width a
     /// plane against a packed rhs runs at.
-    pub const DECODING_PLANE_UNITS: usize = 32;
+    pub(crate) const DECODING_PLANE_UNITS: usize = 32;
 
     /// The values of `K` a fragment's lane run looks one scale up for: NVFP4's block. A packed
     /// rhs's fragments decode under scale blocks a whole number of them long, NVFP4's sixteen
@@ -72,7 +82,7 @@ impl PlaneFragmentMicrokernel {
 
     /// What a packed item whose operands are not a 16-bit lhs against an rhs of
     /// sixteen-value blocks along `K`, read along `K` alone, is declined with.
-    pub const OPERANDS_UNSERVED: Refusal = Refusal::Declined {
+    pub(crate) const OPERANDS_UNSERVED: Refusal = Refusal::Declined {
         why: "the plane fragment contracts a packed rhs against a 16-bit lhs, the rhs read along K alone, in blocks of sixteen",
     };
 
@@ -129,12 +139,14 @@ impl PlaneFragmentMicrokernel {
     }
 
     /// The planes against the packed rhs of `space`: one fragment of the decoding instruction's
-    /// rows, the settings' fragments along `n` and then every narrower count down to one, each
-    /// where its columns close `n`, each fragment a window of the settings' steps of `K` through
-    /// the tile DSL's transport. A window is whole windows of `K`, and a unit's run of it, one of
-    /// the four quads of `k` its fragment's units split, whole reads of the rhs. Only settings
-    /// stating such a grid size one ([`windowed`](PlaneFragmentMicrokernelSettings::windowed)), on
-    /// a device offering the decoding instruction over the lhs's element.
+    /// rows where the item holds its rows whole, the settings' fragments along `m` where a stage
+    /// tiles them; the settings' fragments along `n` and then every narrower count down to one,
+    /// each where its columns close `n`, each fragment a window of the settings' steps of `K`
+    /// through the tile DSL's transport. A window is whole windows of `K`, and a unit's run of it,
+    /// one of the four quads of `k` its fragment's units split, whole reads of the rhs. Only
+    /// settings stating such a grid size one
+    /// ([`windowed`](PlaneFragmentMicrokernelSettings::windowed)), on a device offering the
+    /// decoding instruction over the lhs's element.
     fn packed_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -149,7 +161,11 @@ impl PlaneFragmentMicrokernel {
         let blocks_whole = rhs
             .grouping(K, space.k)
             .is_some_and(|block| window.is_multiple_of(block));
-        let windowed = settings.along_m == NonZeroUsize::MIN
+        // A plane holding every row whole holds one fragment of them; one whose rows are tiled, a
+        // stage's, holds the settings' fragments along `M`, each against the rhs fragment
+        // decoded once a step.
+        let rows_fit = settings.along_m == NonZeroUsize::MIN || item.rows == MatmulRows::Tiled;
+        let windowed = rows_fit
             && settings.transport == PlaneFragmentTransport::Mma
             && settings.fragment_depth == PlaneFragmentDepth::Stage;
         let offered = windowed
@@ -157,10 +173,11 @@ impl PlaneFragmentMicrokernel {
             && blocks_whole
             && space.k.is_multiple_of(window)
             && Self::decodes(hw, item.elements.lhs, item.sum);
-        let instruction = PlaneFragmentInstruction::Mma { shape };
+        let instruction = PlaneFragmentInstruction::mma(shape);
+        let [_, (_, columns), _] = instruction.shape_along(settings.rows_along);
         (1..=settings.along_n.get())
             .rev()
-            .filter(move |&along_n| offered && space.n.is_multiple_of(along_n * shape.n as usize))
+            .filter(move |&along_n| offered && space.n.is_multiple_of(along_n * columns))
             .filter_map(move |along_n| {
                 Some(Self {
                     instruction,
@@ -171,6 +188,7 @@ impl PlaneFragmentMicrokernel {
                     },
                     axes: item.axes,
                     blocks: Some(space),
+                    k_stated: PlaneFragmentKStatement::Caller,
                 })
             })
     }
@@ -199,7 +217,7 @@ impl PlaneFragmentMicrokernel {
             .for_triple(lhs, rhs, sum)
             .deepest()
             .largest_first()
-            .map(|shape| PlaneFragmentInstruction::Mma { shape });
+            .map(PlaneFragmentInstruction::mma);
         let settings = *settings;
         let software = PlaneFragmentInstruction::Registers {
             step_sum: settings.step_sum.serving(item),
@@ -217,16 +235,13 @@ impl PlaneFragmentMicrokernel {
                 .collect(),
             PlaneFragmentTransport::Wgmma => Self::wgmma(hw, item, &settings).into_iter().collect(),
         };
-        // Only the manual-mma instruction contracts a fragment deeper than itself.
         let deep = settings.fragment_depth == PlaneFragmentDepth::Stage;
         let step = MatmulStep::new(hw, MatmulOperands::all(Operand::plain()), item.elements);
         instructions
             .into_iter()
-            .filter(move |instruction| {
-                !deep || matches!(instruction, PlaneFragmentInstruction::Mma { .. })
-            })
+            .filter(move |instruction| !deep || instruction.contracts_deeper_fragments())
             .filter_map(move |instruction| {
-                let [(_, m), (_, n), (_, k)] = instruction.shape();
+                let [(_, m), (_, n), (_, k)] = instruction.shape_along(settings.rows_along);
                 let step = step.clone().under(Space::new(&[(M, m), (N, n), (K, k)]));
                 Some(Self {
                     instruction,
@@ -245,16 +260,17 @@ impl PlaneFragmentMicrokernel {
                     },
                     axes: item.axes,
                     blocks: None,
+                    k_stated: PlaneFragmentKStatement::Caller,
                 })
             })
     }
 
     /// The planes reading both packed inputs of `space` as they are stored: each block-scaled
-    /// instruction the device offers for their values, the largest first, whose step of `K` is
-    /// a word of each input's block scales, the blocks one read of the scales covers
-    /// ([`Operand::scale_read`]). A fragment's window spans those blocks along `KB` and the whole
-    /// of each along `KI`, and the instruction reads the values and the word of scales beside
-    /// them as they lie.
+    /// instruction the device offers for their formats ([`block_scaled_for`]), the largest first,
+    /// whose step of `K` is whole blocks. A fragment's window spans its steps' blocks along `KB`
+    /// and the whole of each along `KI`, and the instruction reads the values as they lie, and
+    /// their scales as a word where a word of them is its step, one a block otherwise
+    /// ([`scale_word_is_a_step`](PlaneFragmentInstruction::scale_word_is_a_step)).
     fn block_scaled_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -262,42 +278,91 @@ impl PlaneFragmentMicrokernel {
         space: MatmulBlocks,
     ) -> Vec<Self> {
         let committed = hw.plane_dim().is_ok();
-        let rhs = space.operand(MatmulOperand::Rhs);
-        let step = rhs
-            .grouping(K, space.k)
-            .map(|block| block * rhs.scale_read(K));
-        manual_mma(hw)
-            .for_triple(item.elements.lhs, item.elements.rhs, item.sum)
-            .largest_first()
-            .map(|shape| PlaneFragmentInstruction::Mma { shape })
+        let deep = settings.fragment_depth == PlaneFragmentDepth::Stage;
+        let block = space.operand(MatmulOperand::Rhs).grouping(K, space.k);
+        // Each input under its own scheme, at its own block along `K`.
+        let input = |input: MatmulOperand| {
+            let packing = space.packings.get(input)?;
+            Some((packing.scheme, space.operand(input).grouping(K, space.k)?))
+        };
+        let offered: Vec<_> = match (input(MatmulOperand::Lhs), input(MatmulOperand::Rhs)) {
+            (Some((lhs, lhs_block)), Some((rhs, rhs_block))) => {
+                block_scaled_for(hw, (&lhs, lhs_block), (&rhs, rhs_block))
+                    .filter(|instruction| instruction.shape.cd_type == item.sum)
+                    .map(PlaneFragmentInstruction::block_scaled_mma)
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        // Along `K`, what one read of each packed input's scales covers: the tile DSL cuts a step's
+        // window of them on whole reads.
+        let scale_reads: Vec<usize> = MatmulOperand::INPUTS
+            .into_iter()
+            .filter(|&input| space.packings.get(input).is_some())
+            .filter_map(|input| space.operand(input).scale_read_space())
+            .map(|read| read.extent(K))
+            .collect();
+        offered
+            .into_iter()
+            // A step of the instruction is whole reads of each input's scales, so whole blocks too,
+            // or its window of them would start or end inside a read. MXFP4's step of 64 covers
+            // half a read of four scales of thirty-two, which leaves it to the planes that decode
+            // as they load.
             .filter(|instruction| {
                 let [_, _, (_, k)] = instruction.shape();
-                committed && instruction.block_scaled() && step == Some(k)
+                committed
+                    && block.is_some()
+                    && scale_reads.iter().all(|&read| k.is_multiple_of(read))
             })
+            // It contracts a fragment its own step deep, so a plane whose fragments span a
+            // stage's steps of `K` is not one it serves.
+            .filter(|instruction| !deep || instruction.contracts_deeper_fragments())
             .map(|instruction| Self {
                 instruction,
                 orders: instruction.orders(item.layouts),
                 settings,
                 axes: item.axes,
                 blocks: Some(space),
+                k_stated: PlaneFragmentKStatement::Blocks,
             })
             .collect()
     }
 
+    /// Its instruction's `m × n × k`, its rows along the axis the settings lay them along.
+    pub(crate) fn shape(&self) -> [(MatmulDim, usize); 3] {
+        self.instruction.shape_along(self.settings.rows_along)
+    }
+
+    /// Whether its instruction lays its rows where its settings ask: along `m` everywhere; along
+    /// `n` only for the manual-mma fragments as deep as a stage, a 16-bit instruction's, which
+    /// load both factors in lane runs and so fill either side of it. The block-scaled
+    /// instruction and the step-at-a-time decode read their packed factor as a `B` alone.
+    fn lays_its_rows(&self) -> bool {
+        match self.settings.rows_along {
+            PlaneFragmentRowsAlong::M => true,
+            PlaneFragmentRowsAlong::N => {
+                matches!(self.instruction, PlaneFragmentInstruction::Mma { .. })
+                    && !self.instruction.block_scaled()
+                    && self.settings.fragment_depth == PlaneFragmentDepth::Stage
+            }
+        }
+    }
+
     /// The axes `K` is stated over, each with what one fragment `depth` instruction steps deep
-    /// spans of it: the instruction's whole step along the caller's `K` axis, or, where a
-    /// block-scaled instruction reads packed inputs in their blocks, a word of block scales' blocks
-    /// along `KB` beside the whole of each block along `KI`.
+    /// spans of it: the instruction's whole step along the caller's `K` axis, or, where the plane
+    /// reads a packed rhs as stored (the block-scaled instruction, or fragments that decode it as
+    /// they load), the blocks its steps cover along `KB` beside the whole of each block along
+    /// `KI`.
     fn k_axes(&self, depth: usize) -> Vec<(Axis, usize)> {
-        let [_, _, (_, k)] = self.instruction.shape();
-        match (self.blocks, self.instruction.block_scaled()) {
-            (Some(space), true) => {
-                let rhs = space.operand(MatmulOperand::Rhs);
-                let block = rhs
+        let [_, _, (_, k)] = self.shape();
+        match (self.blocks, self.k_stated) {
+            (Some(space), PlaneFragmentKStatement::Blocks) => {
+                let block = space
+                    .operand(MatmulOperand::Rhs)
                     .grouping(K, space.k)
-                    .expect("a block-scaled plane reads inputs grouped along K");
+                    .expect("a plane reading a packed rhs as stored reads it grouped along K");
                 let (blocks, inside) = blocked(K);
-                vec![(blocks, rhs.scale_read(K) * depth), (inside, block)]
+                vec![(blocks, k * depth / block), (inside, block)]
             }
             _ => vec![(self.axes.k, k * depth)],
         }
@@ -306,10 +371,11 @@ impl PlaneFragmentMicrokernel {
     /// How a stage it reads holds its cells, filled by its units, laid out as `layout`: where it
     /// blocks the stage, in its instruction's tiles ([`PlaneFragmentInstruction::stage_tile`]),
     /// each one step deep along every axis `K` is stated over.
-    pub fn stage_storage(&self, layout: StageLayout, stage: &MatmulStage) -> StageStorage {
+    pub(crate) fn stage_storage(&self, layout: StageLayout, stage: &MatmulStage) -> StageStorage {
         let beside: Vec<Axis> = stage.beside().collect();
         let tile = Self::over_k(
-            self.instruction.stage_tile(&beside, stage.axes()),
+            self.instruction
+                .stage_tile(&beside, stage.axes(), self.settings.rows_along),
             &self.k_axes(1),
         );
         layout.storage(stage.space(), tile)
@@ -318,17 +384,19 @@ impl PlaneFragmentMicrokernel {
     /// How a stage it reads holds its cells where one TMA box lands it whole
     /// ([`PlaneFragmentInstruction::landed_stage_storage`]): each tile the whole stage deep along
     /// every axis `K` is stated over.
-    pub fn landed_stage_storage(&self, stage: &MatmulStage) -> StageStorage {
+    pub(crate) fn landed_stage_storage(&self, stage: &MatmulStage) -> StageStorage {
         let (beside, axes): (Vec<Axis>, _) = (stage.beside().collect(), stage.axes());
         let whole_k: Vec<_> = self
             .k_axes(1)
             .into_iter()
             .map(|(axis, _)| (axis, stage.extent(axis)))
             .collect();
-        match self
-            .instruction
-            .landed_stage_storage(&beside, axes, stage.extent(axes.k))
-        {
+        match self.instruction.landed_stage_storage(
+            &beside,
+            axes,
+            stage.extent(axes.k),
+            self.settings.rows_along,
+        ) {
             StageStorage::Tiled { block, chunks } => StageStorage::Tiled {
                 block: Self::over_k(block, &whole_k),
                 chunks,
@@ -352,11 +420,21 @@ impl PlaneFragmentMicrokernel {
             .collect()
     }
 
-    /// The axis its steps of `K` walk: `K` itself, or the blocks a block-scaled plane steps across.
-    pub fn walked(&self) -> Axis {
-        match (self.blocks, self.instruction.block_scaled()) {
-            (Some(_), true) => blocked(K).0,
+    /// The axis its steps of `K` walk: `K` itself, or the blocks a plane reading a packed rhs as
+    /// stored steps across.
+    pub(crate) fn walked(&self) -> Axis {
+        match (self.blocks, self.k_stated) {
+            (Some(_), PlaneFragmentKStatement::Blocks) => blocked(K).0,
             _ => self.axes.k,
+        }
+    }
+
+    /// This plane reading a stage that holds its packed rhs as it is stored, `K` in the rhs's
+    /// blocks ([`PlaneFragmentKStatement::Blocks`]).
+    pub(crate) fn reading_a_stage_as_stored(self) -> Self {
+        Self {
+            k_stated: PlaneFragmentKStatement::Blocks,
+            ..self
         }
     }
 
@@ -366,12 +444,12 @@ impl PlaneFragmentMicrokernel {
     /// nothing, so the plane contracts its whole grid of fragments at once and loads the
     /// lhs once for all of them. A cube whose planes share a step states them around this.
     /// `None` for a float rhs.
-    pub fn step_levels(&self) -> Option<Levels> {
+    pub(crate) fn step_levels(&self) -> Option<Levels> {
         let space = self.blocks?;
         let block = space.operand(MatmulOperand::Rhs).grouping(K, space.k)?;
         let MatmulAxes { m, n, .. } = self.axes;
         let (blocks, inside) = blocked(K);
-        let [(_, rows), (_, columns), _] = self.instruction.shape();
+        let [(_, rows), (_, columns), _] = self.shape();
         let window = self.leaf_extent(MatmulDim::K);
         let leaf = Levels::leaf(&[
             (m, rows),
@@ -387,14 +465,6 @@ impl PlaneFragmentMicrokernel {
         Some(fragments.units(&[]))
     }
 
-    /// The levels inside one plane's tile, which a routine states the rest of the partitioning
-    /// around: the steps of `K` it walks through one stage, and below them the instructions the
-    /// plane holds — a grid of fragments, one matrix instruction each, or each unit's block of the
-    /// software instruction's cells, one cell of every instruction it holds.
-    pub fn tiling(&self) -> Levels {
-        self.tiling_levels(&[], &[])
-    }
-
     /// [`tiling`](Self::tiling), its leaf also spanning `held`: axes of the caller's that this
     /// product does not name, each whole at every leaf, as attention's value holds the head dim
     /// its score contracts.
@@ -405,7 +475,7 @@ impl PlaneFragmentMicrokernel {
     /// [`tiling`](Self::tiling) through a stage `blocks` deep: its steps of `K` walk every block
     /// along `blocks.0` too, each step one grid of instructions inside one block. What a stage of
     /// several scale blocks of `K` is contracted in, the instruction stepping inside a block.
-    pub fn tiling_over(&self, blocks: (Axis, usize)) -> Levels {
+    pub(crate) fn tiling_over(&self, blocks: (Axis, usize)) -> Levels {
         self.tiling_levels(&[], &[blocks])
     }
 
@@ -422,7 +492,7 @@ impl PlaneFragmentMicrokernel {
         };
         let tiling = match self.instruction {
             PlaneFragmentInstruction::Cmma { .. } | PlaneFragmentInstruction::Mma { .. } => {
-                let [(_, rows), (_, columns), _] = self.instruction.shape();
+                let [(_, rows), (_, columns), _] = self.shape();
                 let leaf: Vec<_> = [(m, rows), (n, columns)]
                     .into_iter()
                     .chain(self.k_axes(depth))
@@ -445,7 +515,7 @@ impl PlaneFragmentMicrokernel {
             PlaneFragmentInstruction::Wgmma { .. } => {
                 let leaf: Vec<_> = self
                     .axes
-                    .name(self.instruction.shape())
+                    .name(self.shape())
                     .into_iter()
                     .chain(held.iter().copied())
                     .collect();
@@ -465,7 +535,7 @@ impl PlaneFragmentMicrokernel {
     /// stage.
     pub fn tile_extent(&self, axis: Axis) -> usize {
         let settings = self.settings;
-        let [(_, m), (_, n), (_, k)] = self.instruction.shape();
+        let [(_, m), (_, n), (_, k)] = self.shape();
         let (along_m, along_n) = match self.instruction {
             PlaneFragmentInstruction::Wgmma { .. } => (1, 1),
             _ => (settings.along_m.get(), settings.along_n.get()),
@@ -484,7 +554,7 @@ impl PlaneFragmentMicrokernel {
 
     /// The shape of one of its fragments, `depth` of the instruction's steps of `K` deep.
     fn fragment_shape(&self, depth: usize) -> [(MatmulDim, usize); 3] {
-        let [m, n, (dim, k)] = self.instruction.shape();
+        let [m, n, (dim, k)] = self.shape();
         [m, n, (dim, k * depth)]
     }
 
@@ -499,7 +569,7 @@ impl PlaneFragmentMicrokernel {
             PlaneFragmentInstruction::Cmma { .. } | PlaneFragmentInstruction::Mma { .. } => {
                 self.fragment_shape(depth)
             }
-            PlaneFragmentInstruction::Wgmma { .. } => self.instruction.shape(),
+            PlaneFragmentInstruction::Wgmma { .. } => self.shape(),
             PlaneFragmentInstruction::Registers { .. } => [
                 (MatmulDim::M, self.settings.along_m.get()),
                 (MatmulDim::N, self.settings.along_n.get()),
@@ -527,7 +597,7 @@ impl PlaneFragmentMicrokernel {
         let (along_m, along_n) = (self.settings.along_m.get(), self.settings.along_n.get());
         let bytes = match self.instruction {
             PlaneFragmentInstruction::Cmma { .. } | PlaneFragmentInstruction::Mma { .. } => {
-                let [(_, m), (_, n), (_, k)] = self.instruction.shape();
+                let [(_, m), (_, n), (_, k)] = self.shape();
                 // Bits rather than bytes: an `e2m1` value is half of one.
                 let plane = along_m * along_n * m * n * item.sum.size()
                     + along_m * m * k * item.elements.lhs.size_bits() / 8
@@ -549,7 +619,7 @@ impl PlaneFragmentMicrokernel {
             // The accumulator alone, spread over the group's planes: its operands stay in
             // shared memory.
             PlaneFragmentInstruction::Wgmma { .. } => {
-                let [(_, m), (_, n), _] = self.instruction.shape();
+                let [(_, m), (_, n), _] = self.shape();
                 let units = self.instruction.planes() * plane_width.max(1);
                 (m * n * item.sum.size()).div_ceil(units)
             }
@@ -560,24 +630,24 @@ impl PlaneFragmentMicrokernel {
     /// Bytes of the window one plane's fragments bounce through where `scratch` holds one: as many
     /// fragments as it holds of `item`'s sum. None for an instruction whose units write their own
     /// cells.
-    pub fn scratch_bytes(&self, item: &MatmulWorkItem, scratch: Scratch) -> usize {
+    pub(crate) fn scratch_bytes(&self, item: &MatmulWorkItem, scratch: Scratch) -> usize {
         match self.instruction.drain() {
             PlaneFragmentDrain::Bounce => {
                 let fragments = self.settings.along_m.get() * self.settings.along_n.get();
-                let [(_, m), (_, n), _] = self.instruction.shape();
+                let [(_, m), (_, n), _] = self.shape();
                 scratch.slots(fragments) * m * n * item.sum.size()
             }
             PlaneFragmentDrain::CellByCell | PlaneFragmentDrain::InLines => 0,
         }
     }
 
-    /// The warpgroup MMA for `item` at `settings`, where every rule it runs under holds: the
-    /// device offers its form and a bulk tensor copy to land its stages; its planes are as wide
-    /// as a warpgroup's ([`PlaneFragmentInstruction::WARPGROUP_PLANE_UNITS`]); the rhs lies
-    /// `{n, k}`, as both operands must, K-major; the settings hold one step along `m`, a form `along_n`
-    /// granules wide the form spans, and a stage of `depth` steps of `K` whose rows, each
-    /// operand's, are one 32, 64 or 128-byte swizzle span, which the instruction's descriptors
-    /// read. The cube walking it adds what only its fill decides
+    /// The warpgroup MMA for `item` at `settings`, where every rule it runs under holds: the device
+    /// offers its form and a bulk tensor copy to land its stages; its planes are as wide as a
+    /// warpgroup's ([`PlaneFragmentInstruction::WARPGROUP_PLANE_UNITS`]); the rhs lies `{n, k}`, as
+    /// both operands must, K-major; the settings hold one step along `m`, a form `along_n` granules
+    /// wide the form spans, and a stage of `depth` steps of `K` whose rows, each operand's, are one
+    /// 32, 64 or 128-byte swizzle span, which the instruction's descriptors read. The cube walking
+    /// it adds what only its fill decides
     /// ([`CubeStagedMicrokernel::resolve`](crate::matmul::cube::CubeStagedMicrokernel::resolve)).
     fn wgmma(
         hw: &Hardware,
@@ -594,7 +664,8 @@ impl PlaneFragmentMicrokernel {
             .copied()
             .find(|form| form.elems.a == lhs && form.elems.b == rhs && form.elems.cd == sum)?;
         let n = settings.along_n.get() * config.n_granularity as usize;
-        // Both operands' stage along_m are one swizzle span: each operand's descriptor reads its own.
+        // Both operands' stage along_m are one swizzle span: each operand's descriptor reads its
+        // own.
         let spans_a_swizzle = |elem: ElemType| {
             matches!(
                 settings.depth.get() * config.k as usize * elem.size(),
@@ -633,7 +704,7 @@ impl Microkernel for PlaneFragmentMicrokernel {
 
     /// Any float item. A packed one ([`MatmulWorkItem::blocks`]) of from one row to
     /// [`MAX_PACKED_ROWS`](Self::MAX_PACKED_ROWS), every one held whole, against operands it
-    /// contracts ([`OPERANDS_UNSERVED`](Self::OPERANDS_UNSERVED)).
+    /// contracts (`OPERANDS_UNSERVED`).
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         let Some(space) = &item.blocks else {
             return Ok(());
@@ -663,7 +734,7 @@ impl Microkernel for PlaneFragmentMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let packed: Vec<Self> = match item.blocks {
             None => Vec::new(),
-            Some(space) if item.stages_scales_beside() => {
+            Some(space) if item.both_stored_as_codes() => {
                 Self::block_scaled_candidates(hw, item, *settings, space)
             }
             Some(space) => Self::packed_candidates(hw, item, *settings, space).collect(),
@@ -672,7 +743,10 @@ impl Microkernel for PlaneFragmentMicrokernel {
             .blocks
             .is_none()
             .then(|| Self::float_candidates(hw, item, settings));
-        packed.into_iter().chain(float.into_iter().flatten())
+        packed
+            .into_iter()
+            .chain(float.into_iter().flatten())
+            .filter(Self::lays_its_rows)
     }
 
     /// The leaf a unit reads is one instruction's tile of each operand, or the unit's block of the
@@ -726,8 +800,13 @@ impl core::fmt::Display for PlaneFragmentMicrokernel {
 }
 
 impl MatmulMicrokernel for PlaneFragmentMicrokernel {
-    /// A plane owns a tile of the along_m.
-    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
+    /// The levels inside one plane's tile, which a routine states the rest of the partitioning
+    /// around: the steps of `K` it walks through one stage, and below them the instructions the
+    /// plane holds — a grid of fragments, one matrix instruction each, or each unit's block of the
+    /// software instruction's cells, one cell of every instruction it holds.
+    fn tiling(&self) -> Levels {
+        self.tiling_levels(&[], &[])
+    }
 
     fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.orders
@@ -745,7 +824,7 @@ mod tests {
     /// An `f16` activation against an `e2m1` weight packed down `k`, under scale blocks `block`
     /// long along `k`.
     fn against_blocks_of(block: usize) -> (MatmulWorkItem, MatmulBlocks) {
-        against(tile_order::scheme(), block)
+        against(tile_order::nvfp4_scheme(), block)
     }
 
     /// An `f16` activation against a weight packed down `k` under `scheme`, eight values a word
@@ -808,5 +887,80 @@ mod tests {
             .with_store(QuantStore::PackedU32(1));
         let (item, space) = against(mxfp8, 32);
         assert!(!PlaneFragmentMicrokernel::serves(&item, &space));
+    }
+
+    /// A plane over `instruction` at `settings`, its rows along `rows`.
+    fn plane(
+        instruction: PlaneFragmentInstruction,
+        settings: PlaneFragmentMicrokernelSettings,
+        rows: PlaneFragmentRowsAlong,
+    ) -> PlaneFragmentMicrokernel {
+        PlaneFragmentMicrokernel {
+            instruction,
+            orders: MatmulOperands::all(BindingOrder::Stated),
+            settings: settings.rows_along(rows),
+            axes: MatmulAxes::MNK,
+            blocks: None,
+            k_stated: PlaneFragmentKStatement::Caller,
+        }
+    }
+
+    /// The instruction's rows lie along `n` only for the manual-mma fragments as deep as a stage,
+    /// which load both factors in lane runs and so fill either side of it; everywhere else a
+    /// plane asked for them is not offered, rather than one whose kernel the tile DSL refuses or
+    /// contracts by position. Along `m`, every plane is offered as before.
+    #[test]
+    fn rows_lie_along_n_only_for_fragments_a_stage_deep() {
+        let f16 = ElemType::Float(FloatKind::F16);
+        let mma = PlaneFragmentInstruction::mma(MmaConfig {
+            a_type: f16,
+            b_type: f16,
+            cd_type: ElemType::Float(FloatKind::F32),
+            m: 16,
+            n: 8,
+            k: 16,
+        });
+        let software = PlaneFragmentInstruction::Registers {
+            step_sum: PlaneFragmentStepSum::Wide,
+        };
+        let stage_deep = PlaneFragmentMicrokernelSettings::windowed(2, 4);
+        let instruction_deep =
+            PlaneFragmentMicrokernelSettings::grid(2, 2, 1).through(PlaneFragmentTransport::Mma);
+        let (m, n) = (PlaneFragmentRowsAlong::M, PlaneFragmentRowsAlong::N);
+
+        assert!(plane(mma, stage_deep, n).lays_its_rows());
+        assert!(!plane(mma, instruction_deep, n).lays_its_rows());
+        assert!(!plane(software, stage_deep, n).lays_its_rows());
+        for (instruction, settings) in [
+            (mma, stage_deep),
+            (mma, instruction_deep),
+            (software, stage_deep),
+        ] {
+            assert!(plane(instruction, settings, m).lays_its_rows());
+        }
+    }
+
+    /// Rows along `n` exchange the instruction's edges along `m` and `n`, so a plane's box and its
+    /// stages' tiles follow: a `16 × 8` instruction is eight rows of the product by sixteen of its
+    /// columns.
+    #[test]
+    fn rows_along_n_exchange_the_instructions_edges() {
+        let f16 = ElemType::Float(FloatKind::F16);
+        let mma = PlaneFragmentInstruction::mma(MmaConfig {
+            a_type: f16,
+            b_type: f16,
+            cd_type: ElemType::Float(FloatKind::F32),
+            m: 16,
+            n: 8,
+            k: 16,
+        });
+        assert_eq!(
+            mma.shape_along(PlaneFragmentRowsAlong::M),
+            [(MatmulDim::M, 16), (MatmulDim::N, 8), (MatmulDim::K, 16)]
+        );
+        assert_eq!(
+            mma.shape_along(PlaneFragmentRowsAlong::N),
+            [(MatmulDim::M, 8), (MatmulDim::N, 16), (MatmulDim::K, 16)]
+        );
     }
 }

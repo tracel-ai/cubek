@@ -1,21 +1,21 @@
-use crate::matmul::{MatmulOperand, MatmulOperands, MatmulRowsKind, MatmulWorkItem};
+use crate::matmul::{MatmulOperand, MatmulOperands, MatmulWorkItem};
 use cubecl::ir::ElemType;
+use cubecl::tile::Levels;
 use cubecl::tile::launch::Delivery;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
 use cubek_std::microkernel::Microkernel;
 
 /// A microkernel of every matmul product: handed a [`MatmulWorkItem`], and read by a routine for
-/// the order it binds each operand in and how it moves its stages. A cube microkernel that stages is
-/// handed the space its cube covers ([`MatmulCubeSpace`](crate::matmul::cube::MatmulCubeSpace)); a
-/// cube shuffle, a tile group, a plane or a unit one reads only its own tiling, so its `CubeSpace`
-/// is `()`.
+/// the order it binds each operand in and how it moves its stages. A cube microkernel that stages
+/// is handed the space its cube covers ([`MatmulCubeSpace`](crate::matmul::cube::MatmulCubeSpace));
+/// a cube shuffle, a plane or a unit one reads only its own tiling, so its
+/// `CubeSpace` is `()`.
 pub trait MatmulMicrokernel:
     Microkernel<WorkItem = MatmulWorkItem, Operand = MatmulOperand> + core::fmt::Display + 'static
 {
-    /// How its launches hold a product's rows, which decides how their tensors and their view read
-    /// the problem and what their kernels compile in.
-    const ROWS_KIND: MatmulRowsKind;
+    /// The levels inside one owner, which its routine lays the rest of the partitioning around.
+    fn tiling(&self) -> Levels;
 
     /// The order it reads each operand's tiles in, which the launch binds the operand in.
     fn orders(&self) -> MatmulOperands<BindingOrder>;

@@ -182,8 +182,8 @@ impl CubeAttentionPlane {
     /// in slots.
     ///
     /// Fragments drain through a window of every row of the cube's box over the value dim, and two
-    /// of one cell a row, their softmax state's max and sum. A shuffle's rows leave their slots from
-    /// its units' registers, after its planes that split the same rows' keys meet
+    /// of one cell a row, their softmax state's max and sum. A shuffle's rows leave their slots
+    /// from its units' registers, after its planes that split the same rows' keys meet
     /// ([`merge_bytes`](Self::merge_bytes)).
     pub fn partial_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
         let rows = layout.row_groups() * self.seq_q();
@@ -200,6 +200,18 @@ impl CubeAttentionPlane {
     pub fn stage_storage(&self, layout: StageLayout, stage: &Space) -> StageStorage {
         match self {
             Self::Fragment(plane) => layout.storage(stage, plane.stage_tile()),
+            Self::Shuffle(_) => StageStorage::Strided,
+        }
+    }
+
+    /// The storage its query, staged once over `stage`, is held in, laid out as `layout` lays the
+    /// keys and values: in the tiles a fragment of the score reads
+    /// ([`query_tile`](PlaneFragmentAttentionMicrokernel::query_tile)) where the layout blocks it,
+    /// so a fragment's rows of the query meet the banks as a step's rows of the keys do, and
+    /// row-major for a shuffle, which reads no stage.
+    pub fn query_storage(&self, layout: StageLayout, stage: &Space) -> StageStorage {
+        match self {
+            Self::Fragment(plane) => layout.storage(stage, plane.query_tile()),
             Self::Shuffle(_) => StageStorage::Strided,
         }
     }

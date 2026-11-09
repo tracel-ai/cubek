@@ -1,6 +1,7 @@
 use crate::matmul::cube::MatmulPlaneLayout;
-use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore};
-use crate::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
+use crate::matmul::plane::{
+    PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong, PlaneFragmentTransport,
+};
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 use cubek_std::microkernel::{StageLayout, StageRing};
@@ -18,30 +19,23 @@ pub struct CubeStagedMicrokernelSettings {
     pub scratch: Scratch,
     /// How it holds the stages its planes contract.
     pub ring: StageRing,
-    /// Who fills them.
-    pub fill: CubeStagedFill,
     /// How a stage lays out the rows its fragments load: as the setting names, or as the
     /// instruction reads its own stage where it names none
     /// ([`PlaneFragmentInstruction::stage_layout`](crate::matmul::plane::PlaneFragmentInstruction::stage_layout)).
     /// Which reads faster depends on the device and on which way the operands run, so it is a
     /// setting a table races rather than a rule.
     pub stage_layout: Option<StageLayout>,
-    /// Who stores its box of the output.
-    pub store: CubeStagedStore,
 }
 
 impl CubeStagedMicrokernelSettings {
-    /// A box of four by four fragments on each of two by four planes, one stage at a time, filled
-    /// by the cube's units.
+    /// A box of four by four fragments on each of two by four planes, one stage at a time.
     pub const DEFAULT: Self = Self {
         plane: PlaneFragmentMicrokernelSettings::DEFAULT,
         planes: MatmulPlaneLayout::new(2, 4),
         planes_along_k: NonZeroUsize::MIN,
         scratch: Scratch::OneTile,
         ring: StageRing::SINGLE,
-        fill: CubeStagedFill::BY_UNITS,
         stage_layout: None,
-        store: CubeStagedStore::Fragments,
     };
 
     /// One tile a cube, four planes splitting its `K`: what a problem with too few output tiles to
@@ -85,9 +79,35 @@ impl CubeStagedMicrokernelSettings {
             planes_along_k: NonZeroUsize::MIN,
             scratch: Scratch::None,
             ring,
-            fill: CubeStagedFill::BY_UNITS,
             stage_layout: None,
-            store: CubeStagedStore::Fragments,
+        }
+    }
+
+    /// A box against a packed input its stages hold as it is stored, its planes decoding it as
+    /// each fragment loads: `fragments` of the decoding instruction along `m`, `n` and `k` on each
+    /// plane, through the tile DSL's transport, each fragment as deep as the stage
+    /// ([`windowed`](PlaneFragmentMicrokernelSettings::windowed)), on `planes` (along `m` by along
+    /// `n`), holding its stages in `ring`. Each fragment of the rhs is decoded once a step and
+    /// contracted against every fragment of the lhs along `m`.
+    ///
+    /// # Panics
+    ///
+    /// On a count of zero.
+    pub const fn stored(
+        fragments: (usize, usize, usize),
+        planes: (usize, usize),
+        ring: StageRing,
+    ) -> Self {
+        Self {
+            plane: PlaneFragmentMicrokernelSettings {
+                along_m: NonZeroUsize::new(fragments.0).unwrap(),
+                ..PlaneFragmentMicrokernelSettings::windowed(fragments.1, fragments.2)
+            },
+            planes: MatmulPlaneLayout::new(planes.0, planes.1),
+            planes_along_k: NonZeroUsize::MIN,
+            scratch: Scratch::OneTile,
+            ring,
+            stage_layout: None,
         }
     }
 
@@ -96,13 +116,13 @@ impl CubeStagedMicrokernelSettings {
     /// Qwen3-4B projections at a prompt's rows, whose planes contract the same stages these hold.
     pub const PACKED: Self = Self::in_steps((8, 1), (1, 2), StageRing::SINGLE);
 
-    /// Four by two steps on each of two by four planes, two stages in flight, the float input
-    /// handed to the copy engine while the units decode the packed one into the other stage. On
-    /// an RTX PRO 6000 at Qwen3-8B's projections it leads every other box against an NVFP4 weight
-    /// on the `o` and `down` projections, by 11 to 19%, both at 512 rows and at 2048, and runs
-    /// within 5% of the fastest on most of the others.
-    pub const PACKED_FLOAT_ON_ENGINE: Self =
-        Self::in_steps((4, 2), (2, 4), StageRing::DOUBLE).filled(CubeStagedDelivery::AsyncCopy, 0);
+    /// These settings with their planes' instruction laying its rows along `rows_along`.
+    pub const fn rows_along(self, rows_along: PlaneFragmentRowsAlong) -> Self {
+        Self {
+            plane: self.plane.rows_along(rows_along),
+            ..self
+        }
+    }
 
     /// These settings with `planes` planes sharing each box along `K`.
     ///
@@ -138,17 +158,6 @@ impl CubeStagedMicrokernelSettings {
         }
     }
 
-    /// These settings with their stages filled by `delivery`, `filling_planes` set aside for it.
-    pub const fn filled(self, delivery: CubeStagedDelivery, filling_planes: usize) -> Self {
-        Self {
-            fill: CubeStagedFill {
-                delivery,
-                filling_planes,
-            },
-            ..self
-        }
-    }
-
     /// Whether these settings hold the same box of the output as `other`: the same plane grid on
     /// the same layout of planes, whatever their stages.
     pub fn same_box(&self, other: &Self) -> bool {
@@ -156,8 +165,8 @@ impl CubeStagedMicrokernelSettings {
     }
 }
 
-/// Nothing for one plane along `K`, a one-fragment scratch or the instruction's own stage layout, so
-/// the settings that hold them keep their names.
+/// Nothing for one plane along `K`, a one-fragment scratch or the instruction's own stage layout,
+/// so the settings that hold them keep their names.
 impl core::fmt::Display for CubeStagedMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} {}", self.plane, self.planes)?;
@@ -167,10 +176,10 @@ impl core::fmt::Display for CubeStagedMicrokernelSettings {
         if self.scratch != Scratch::OneTile {
             write!(f, " scratch={}", self.scratch)?;
         }
-        write!(f, "{}{}", self.ring, self.fill)?;
+        write!(f, "{}", self.ring)?;
         if let Some(layout) = self.stage_layout {
             write!(f, "{layout}")?;
         }
-        write!(f, "{}", self.store)
+        Ok(())
     }
 }

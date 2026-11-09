@@ -1,20 +1,19 @@
 use super::kernel::plane_dequantize_kernel;
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::tensor::{PackedTensor, PlainTensor};
 use crate::kernels::{
     MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED, MatmulBlueprint, MatmulDequantizeBinding, MatmulInputs,
-    MatmulRoutineProblem, MatmulView, PlaneShuffleMatmulRoutineSettings,
+    MatmulPartitioning, MatmulRoutineProblem, MatmulView, PlaneShuffleMatmulRoutineSettings,
     PlaneShufflePackedPlacement,
 };
+use crate::kernels::{MatmulRoutine, PlaneShuffleMatmulRoutine};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
-use cubecl::tile::launch::{Buffered, DestinationLaunch};
+use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::zspace::metadata::Metadata;
+use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
@@ -37,8 +36,8 @@ pub struct PlaneDequantizeMatmulRoutine;
 pub type PlaneDequantizeMatmulRoutineBlueprint = MatmulBlueprint<PlaneShuffleMicrokernel>;
 
 impl PlaneDequantizeMatmulRoutine {
-    /// The settings every decode runs at: the plane shuffle routine's lead. The decode is a copy, so nothing
-    /// about it is worth racing.
+    /// The settings every decode runs at: the plane shuffle routine's lead. The decode is a copy,
+    /// so nothing about it is worth racing.
     pub const SETTINGS: PlaneShuffleMatmulRoutineSettings =
         PlaneShuffleMatmulRoutineSettings::PACKED;
 
@@ -162,7 +161,7 @@ impl Routine for PlaneDequantizeMatmulRoutine {
     ) {
         let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
         let alone = Self::alone(problem);
-        let item = MatmulView::of::<PlaneShuffleMicrokernel>(&alone)
+        let item = MatmulView::new(&alone, PlaneShuffleMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
             .work_item();
         let columns = blueprint.partitioning.columns();
@@ -204,12 +203,13 @@ impl Routine for PlaneDequantizeMatmulRoutine {
             planes,
         } = PlaneShufflePackedPlacement::new(hw, &alone, settings)?;
         let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
-        let partitioning = MatmulView::of::<PlaneShuffleMicrokernel>(&alone)?.partitioning(
-            microkernel.tiling().planes(&[(columns, planes)]),
-            &[columns],
-            CubeOrder::RowMajor,
-            MatmulView::ONE_CUBE_A_BOX,
-        );
+        let partitioning = MatmulView::new(&alone, PlaneShuffleMatmulRoutine::ROWS_KIND)?
+            .partitioning(
+                microkernel.tiling().planes(&[(columns, planes)]),
+                &[columns],
+                CubeOrder::RowMajor,
+                MatmulView::ONE_CUBE_A_BOX,
+            );
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
             shared_memory: 0,

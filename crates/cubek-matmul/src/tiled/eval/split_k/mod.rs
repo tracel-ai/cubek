@@ -35,7 +35,7 @@
 //! Only meaningful on a GPU: `plane_size == 1` on CPU collapses every strategy to `seq_k`.
 
 use cubecl::tile::{
-    Axis, Launcher, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg, launch::Grid,
+    Axis, Launcher, Levels, Partitioning, RegisterBlock, Semiring, Space, TileTensor, launch::Grid,
 };
 use cubecl::{
     CubeCount, CubeDim,
@@ -58,9 +58,9 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
 /// the leaf. The mapping is the only variable.
 #[cube(launch)]
 fn split_k_matmul_one_level(
-    a: &TileArg<'_>,
-    b: &TileArg<'_>,
-    c: &TileArg<'_>,
+    a: &TileTensor<'_>,
+    b: &TileTensor<'_>,
+    c: &TileTensor<'_>,
     space: Partitioning,
 ) {
     let a = a.tile(&space);
@@ -78,9 +78,9 @@ fn split_k_matmul_one_level(
 /// plane's units as a second level.
 #[cube(launch)]
 fn split_k_matmul_two_levels(
-    a: &TileArg<'_>,
-    b: &TileArg<'_>,
-    c: &TileArg<'_>,
+    a: &TileTensor<'_>,
+    b: &TileTensor<'_>,
+    c: &TileTensor<'_>,
     space: Partitioning,
 ) {
     let a = a.tile(&space);

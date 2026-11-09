@@ -4,12 +4,10 @@ use crate::matmul::plane::{
     PlaneShuffleMicrokernelSettings,
 };
 use crate::matmul::{
-    MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead, MatmulRowsKind,
-    MatmulWorkItem,
+    MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -208,15 +206,6 @@ impl CubeShuffleMicrokernel {
         settings
     }
 
-    /// The levels inside one cube's run, which a routine states the cubes around: its planes'
-    /// steps through all of `K`, dealt to the planes in runs along [`split`](Self::split), so the
-    /// planes need not divide them.
-    pub fn tiling(&self) -> Levels {
-        self.plane
-            .step_levels()
-            .planes_across(self.split(), self.planes_along_k.get())
-    }
-
     /// The axis its planes split `K` along: `K` itself, or a packed rhs's scale blocks.
     pub fn split(&self) -> Axis {
         match self.plane {
@@ -291,7 +280,7 @@ impl CubeShuffleMicrokernel {
 
 impl CubeShufflePlane {
     /// The levels of one plane's steps through `K`.
-    pub fn step_levels(&self) -> Levels {
+    pub(crate) fn step_levels(&self) -> Levels {
         match self {
             CubeShufflePlane::Shuffle(plane) => plane.step_levels(),
             CubeShufflePlane::Fragment(plane) => plane.step_levels(),
@@ -316,7 +305,8 @@ impl CubeShufflePlane {
     }
 
     /// Values of `K` one step of the plane covers, `leaf` its step's box: a unit's slice by the
-    /// units sharing a step, over both axes a packed rhs's `K` is split into, or a fragment's depth.
+    /// units sharing a step, over both axes a packed rhs's `K` is split into, or a fragment's
+    /// depth.
     pub fn step_depth(&self, leaf: &Space) -> usize {
         match self {
             CubeShufflePlane::Shuffle(plane) => {
@@ -330,20 +320,6 @@ impl CubeShufflePlane {
                 depth * plane.units_along_k
             }
             CubeShufflePlane::Fragment(plane) => plane.tile_extent(plane.axes.k),
-        }
-    }
-
-    /// Whether the operands bound at `widths` are read in vectors the plane merges: the software
-    /// plane's check ([`PlaneShuffleMicrokernel::check_vectors`]); a tensor-core plane states its
-    /// widths as it vectorizes.
-    ///
-    /// # Errors
-    ///
-    /// The software plane's refusal.
-    pub fn check_vectors(&self, widths: &MatmulOperands<usize>) -> Result<(), Refusal> {
-        match self {
-            CubeShufflePlane::Shuffle(plane) => plane.check_vectors(widths),
-            CubeShufflePlane::Fragment(_) => Ok(()),
         }
     }
 
@@ -370,7 +346,7 @@ impl CubeShufflePlane {
     /// ([`MatmulWorkItem::decoding_reads`]).
     pub fn reads(&self, item: &MatmulWorkItem) -> MatmulOperands<MatmulRead> {
         match self {
-            CubeShufflePlane::Shuffle(_) => MatmulOperands::all(MatmulRead::AsBound),
+            CubeShufflePlane::Shuffle(_) => MatmulOperands::AS_BOUND,
             CubeShufflePlane::Fragment(_) => item.decoding_reads(),
         }
     }
@@ -510,8 +486,14 @@ impl core::fmt::Display for CubeShuffleMicrokernel {
 }
 
 impl MatmulMicrokernel for CubeShuffleMicrokernel {
-    /// Its planes each hold every row.
-    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
+    /// The levels inside one cube's run, which a routine states the cubes around: its planes'
+    /// steps through all of `K`, dealt to the planes in runs along [`split`](Self::split), so the
+    /// planes need not divide them.
+    fn tiling(&self) -> Levels {
+        self.plane
+            .step_levels()
+            .planes_across(self.split(), self.planes_along_k.get())
+    }
 
     /// Its planes' orders: a float rhs's as the plane shuffle binds it, a packed rhs's
     /// words over the axes the product names.

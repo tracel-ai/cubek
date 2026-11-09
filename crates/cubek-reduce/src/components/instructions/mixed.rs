@@ -208,7 +208,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                     elements.push(Shared::new_slice(length));
                 }
 
-                if comptime!(!coordinate) {
+                if !coordinate {
                     DynamicSharedAccumulator::<P> {
                         elements: SharedAccumulatorKind::new_Multiple(elements),
                         args: SharedAccumulatorKind::new_None(),

@@ -1,16 +1,16 @@
 //! The tensors of one backward pass, and how a walk binds them.
 
 use crate::kernels::{
-    AttentionBackwardMicrokernel, AttentionBackwardProblem, AttentionBackwardWalk,
+    AttentionBackwardBinding, AttentionBackwardGradients, AttentionBackwardMicrokernel,
+    AttentionBackwardProblem, AttentionBackwardWalk,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Launcher;
 use cubecl::tile::launch::{Bound, Grid as LaunchGrid, Refusal};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
-use cubek_microkernel::attention::AttentionVisibility;
+use cubek_microkernel::attention::{AttentionVisibility, G};
 use cubek_microkernel::attention_backward::{AttentionBackwardOperand, AttentionBackwardOperands};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
@@ -49,17 +49,6 @@ impl core::fmt::Debug for AttentionBackwardTensors {
             .field("visibility", &self.visibility)
             .finish()
     }
-}
-
-/// The gradients a backward pass computes, each shaped as its input.
-#[derive(Debug, Clone)]
-pub struct AttentionBackwardGradients {
-    /// `[b, h, q, d]`.
-    pub query: TensorHandle,
-    /// `[b, kv, s, d]`.
-    pub key: TensorHandle,
-    /// `[b, kv, s, dv]`.
-    pub value: TensorHandle,
 }
 
 impl AttentionBackwardTensors {
@@ -114,6 +103,12 @@ impl AttentionBackwardTensors {
         assert!(
             q_shape.num_dims() == 4 && k_shape.num_dims() == 4 && v_shape.num_dims() == 4,
             "attention's backward pass reads [b, h, q, d], [b, kv, s, d] and [b, kv, s, dv]"
+        );
+        assert!(
+            out.shape().num_dims() == 4
+                && out_gradient.shape().num_dims() == 4
+                && logsumexp.shape().num_dims() == 3,
+            "the output and its gradient are [b, h, q, dv], the logsumexp [b, h, q]"
         );
         let [batch, heads, queries, head] = q_shape.dims::<4>();
         let [_, kv_heads, keys, _] = k_shape.dims::<4>();
@@ -242,9 +237,9 @@ impl AttentionBackwardTensors {
         AttentionBackwardBinding { launcher, operands }
     }
 
-    /// `tensor`, `[b, h, q, ·]` like the query's gradient, bound under `binding`'s launcher as
-    /// `operand` is under `walk`: a buffer a routine allocates beside the pass's own, such as a sum
-    /// it adds into.
+    /// `tensor`, shaped as `operand` is (`[b, h, q, ·]` like the query's gradient, `[b, kv, s, ·]`
+    /// like the keys'), bound under `binding`'s launcher as `operand` is under `walk`: a buffer a
+    /// routine allocates beside the pass's own, such as a sum it adds into.
     pub(crate) fn bind_beside<M, SM>(
         &self,
         binding: &AttentionBackwardBinding,
@@ -255,7 +250,10 @@ impl AttentionBackwardTensors {
     where
         M: AttentionBackwardMicrokernel,
     {
-        let view = Self::grouped(tensor, self.problem().group);
+        let view = match operand.axes().contains(&G) {
+            true => Self::grouped(tensor, self.problem().group),
+            false => tensor.clone(),
+        };
         binding
             .launcher
             .arg(view.binding.clone(), view.elem)
@@ -264,11 +262,4 @@ impl AttentionBackwardTensors {
             .build()
             .expect(ADMITTED_PLAN_RUNS)
     }
-}
-
-/// The arguments of one walk's launch, its operands bound under its launcher. Not `Debug`: the
-/// tile DSL's `Launcher` is not.
-pub(crate) struct AttentionBackwardBinding {
-    pub launcher: Launcher,
-    pub operands: AttentionBackwardOperands<Bound>,
 }
