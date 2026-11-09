@@ -19,6 +19,9 @@ pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric>(
     let out = out.tile(&partitioning);
 
     for cube in &partitioning {
+        // Lets the bounce window take the freed stages' bytes: the allocator reuses a memory
+        // inside a loop only past a cube barrier ahead of its first use in the iteration.
+        sync_cube();
         cube_staged_microkernel::<EA, EL>(
             cube.walk(),
             &input.at(&cube),
