@@ -47,6 +47,14 @@ fn pinned(settings: ConvSettings) -> Strategy {
     }
 }
 
+/// The unit registers routine, which reads every operand from global memory and serves a CPU.
+fn unit_registers() -> Strategy {
+    Strategy::Tile {
+        routine: ConvRoutineKind::UnitRegisters,
+        settings: None,
+    }
+}
+
 /// The cube staged routine at the setting its autotune finds fastest: what the smoke test and the
 /// refusal tests run, since every other test pins the setting it checks.
 fn tuned() -> Strategy {
@@ -1264,4 +1272,57 @@ fn every_listed_setting_matches_the_reference_or_is_declined_by_name() {
         }
         assert!(served > 0, "no listed setting serves {operation}");
     }
+}
+
+/// The unit registers routine in `f32`, which runs on the CPU runtime: windows and channels the
+/// blocks overhang or fill exactly.
+cases! {
+    check_problem;
+    unit_registers_forward_same_3x3: unit_registers(), &conv_f32(2, (64, 32), [9, 9], [3, 3], SAME_3X3);
+    unit_registers_forward_stride_2: unit_registers(), &conv_f32(2, (64, 32), [12, 15], [3, 3], ([2, 2], [1, 1], [1, 1]));
+    unit_registers_forward_dilation_2: unit_registers(), &conv_f32(2, (64, 32), [12, 12], [3, 3], ([1, 1], [2, 2], [2, 2]));
+    unit_registers_forward_unequal_strides: unit_registers(), &conv_f32(2, (64, 32), [12, 15], [3, 3], ([1, 2], [1, 1], [1, 1]));
+    unit_registers_forward_1x1: unit_registers(), &conv_f32(2, (64, 32), [5, 12], [1, 1], ([1, 1], [0, 0], [1, 1]));
+    unit_registers_forward_narrow: unit_registers(), &conv_f32(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    unit_registers_forward_no_padding: unit_registers(), &conv_f32(2, (64, 32), [5, 40], [3, 3], ([1, 1], [0, 0], [1, 1]));
+    unit_registers_forward_overhanging_ci: unit_registers(), &conv_f32(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
+    unit_registers_forward_overhanging_co: unit_registers(), &conv_f32(2, (64, 10), [9, 9], [3, 3], SAME_3X3);
+    unit_registers_forward_channels_1: unit_registers(), &conv_f32(1, (1, 16), [12, 12], [3, 3], SAME_3X3);
+    unit_registers_forward_channels_5: unit_registers(), &conv_f32(1, (5, 3), [12, 12], [3, 3], SAME_3X3);
+}
+
+cases! {
+    check_weight_grad;
+    unit_registers_weight_grad_same_3x3: unit_registers(), &conv_f32(2, (64, 32), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    unit_registers_weight_grad_stride_2: unit_registers(), &conv_f32(2, (32, 32), [7, 21], [3, 3], ([2, 2], [1, 1], [1, 1])), Binding::Dense, Binding::Dense;
+    unit_registers_weight_grad_dilation_2: unit_registers(), &conv_f32(2, (64, 32), [8, 17], [3, 3], ([1, 1], [2, 2], [2, 2])), Binding::Dense, Binding::Dense;
+    unit_registers_weight_grad_1x1: unit_registers(), &conv_f32(2, (64, 64), [5, 12], [1, 1], ([1, 1], [0, 0], [1, 1])), Binding::Dense, Binding::Dense;
+    unit_registers_weight_grad_narrow: unit_registers(), &conv_f32(2, (64, 64), [7, 7], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    unit_registers_weight_grad_overhanging_ci_co: unit_registers(), &conv_f32(2, (40, 12), [9, 11], [5, 3], ([1, 1], [2, 1], [1, 1])), Binding::Dense, Binding::Dense;
+    unit_registers_weight_grad_channels_3: unit_registers(), &conv_f32(2, (3, 10), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+}
+
+cases! {
+    check_data_grad;
+    unit_registers_data_grad_same_3x3: unit_registers(), &conv_f32(2, (64, 32), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    unit_registers_data_grad_no_padding: unit_registers(), &conv_f32(2, (32, 32), [7, 12], [3, 3], ([1, 1], [0, 0], [1, 1])), Binding::Dense, Binding::Dense;
+    unit_registers_data_grad_dilation_2: unit_registers(), &conv_f32(2, (64, 32), [8, 17], [3, 3], ([1, 1], [2, 2], [2, 2])), Binding::Dense, Binding::Dense;
+    unit_registers_data_grad_1x1: unit_registers(), &conv_f32(2, (64, 64), [5, 12], [1, 1], ([1, 1], [0, 0], [1, 1])), Binding::Dense, Binding::Dense;
+    unit_registers_data_grad_narrow: unit_registers(), &conv_f32(2, (64, 64), [7, 7], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    unit_registers_data_grad_overhanging_ci_co: unit_registers(), &conv_f32(2, (40, 12), [9, 11], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    unit_registers_data_grad_channels_3: unit_registers(), &conv_f32(2, (3, 16), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+}
+
+/// A cube staged setting is no setting of the unit routine, and is refused by name.
+#[test]
+fn a_cube_staged_setting_on_the_unit_routine_is_refused_by_name() {
+    let strategy = Strategy::Tile {
+        routine: ConvRoutineKind::UnitRegisters,
+        settings: Some(Staged::F2X2_P2X2),
+    };
+    let problem = conv_f32(1, (64, 32), [9, 9], [3, 3], SAME_3X3);
+    let message = Conv2dCorrectness
+        .kernel_result(&strategy, &problem, &SEEDS)
+        .expect_err("the launch was accepted");
+    assert!(message.contains("unit registers"), "{message}");
 }
