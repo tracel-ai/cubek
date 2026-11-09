@@ -1,6 +1,7 @@
 use super::base::CubeGatedDeltaConvMicrokernel;
+use super::past_taps::PastTaps;
 use super::tiles::GatedDeltaConvTiles;
-use crate::gated_delta::{CHANNEL, HEAD_CHANNEL, RING_COLUMN, walked};
+use crate::gated_delta::{CHANNEL, HEAD_CHANNEL};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
@@ -51,9 +52,9 @@ impl<N: Size> ConvolvedHead<N> {
         self.squares[lines + part]
     }
 
-    /// Each unit's lines of the head's channels: the causal taps over the ring columns the row
-    /// holds and its newest value, then the silu. The newest value is written as the ring's next
-    /// column after the taps are read, by the unit that owns the channel.
+    /// Each unit's lines of the head's channels: the causal taps over their past and the newest
+    /// value, then the silu. Over a window the newest value is written as the ring's next column
+    /// after the taps are read, by the unit that owns the channel.
     pub fn convolve<E: Float>(
         &mut self,
         cube: &Region,
@@ -63,31 +64,22 @@ impl<N: Size> ConvolvedHead<N> {
         let microkernel = comptime!(self.microkernel);
         let width = N::value();
         let read_columns = comptime!(microkernel.taps - 1);
-        let columns = tiles.columns;
-        let before = walked(&tiles.lengths) as usize;
-        let write_column = before % columns;
-        let newest = tiles.qkv.flat::<E, N>();
+        let past = PastTaps::new(cube, &*tiles, read_columns);
         let mut values = tiles.value.flat_mut::<f32, N>();
         for share in cube {
             let part = share.coord(HEAD_CHANNEL);
             let first = self.first_channel(part * width, head);
             let line = first / width;
-            let newest_line = newest.read(line);
-            let mut sums = Self::widened(newest_line)
-                * Self::weights::<E>(&tiles.filters, first, read_columns);
+            let newest = past.newest::<E, N>(line);
+            let mut sums =
+                Self::widened(newest) * Self::weights::<E>(&tiles.filters, first, read_columns);
             #[unroll]
             for column in 0..read_columns {
-                // The column wraps at a runtime length, which no window of the tile places.
-                let ring_column = (before + column + columns - read_columns) % columns;
-                let mut behind =
-                    Self::widened(Self::ring_line::<E>(&tiles.window, ring_column, line));
-                if before + column < read_columns {
-                    behind = Vector::<f32, N>::cast_from(0.0f32);
-                }
+                let behind = Self::widened(past.behind::<E, N>(column, line));
                 sums += behind * Self::weights::<E>(&tiles.filters, first, column);
             }
             let convolved = Self::activated::<E>(sums);
-            Self::write_ring_line::<E>(&tiles.window, write_column, line, newest_line);
+            past.advance::<E, N>(line, newest);
             if self.holds_query_or_key(part) {
                 self.keep(part, convolved);
             } else {
@@ -116,16 +108,6 @@ impl<N: Size> ConvolvedHead<N> {
             squares += x * x;
         }
         self.squares[part] = squares;
-    }
-
-    fn ring_line<E: Float>(window: &Tile, column: usize, line: usize) -> Vector<E, N> {
-        let placed = window.within(RING_COLUMN, column, column + 1);
-        placed.flat::<E, N>().read(line)
-    }
-
-    fn write_ring_line<E: Float>(window: &Tile, column: usize, line: usize, value: Vector<E, N>) {
-        let mut placed = window.within(RING_COLUMN, column, column + 1);
-        placed.flat_mut::<E, N>().write(line, value);
     }
 
     fn weights<E: Float>(filters: &Tile, first: usize, tap: usize) -> Vector<f32, N> {

@@ -1,7 +1,7 @@
 use super::kernel::cube_gated_delta_conv_kernel;
 use crate::kernels::conv::{
     GATED_DELTA_CONV_OUTPUT_ELEMENT, GatedDeltaConvBlueprint, GatedDeltaConvInputs,
-    GatedDeltaConvOutputs, GatedDeltaConvProblem, GatedDeltaConvTensors,
+    GatedDeltaConvOutputs, GatedDeltaConvPast, GatedDeltaConvProblem, GatedDeltaConvTensors,
 };
 use crate::kernels::refusals::admit_on_device;
 use cubecl::tile::launch::{Refusal, Vectorization};
@@ -14,8 +14,9 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{Grid, PreparedLaunches, Routine};
 
-/// The conv with a key head of a row in each cube, its units dealing the head's channels a line at
-/// a time. It reads no plane feature, so it is the floor every device runs.
+/// The conv with a key head of a row, or of a position of a sequence, in each cube, its units
+/// dealing the head's channels a line at a time. It reads no plane feature, so it is the floor
+/// every device runs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeGatedDeltaConvRoutine;
 
@@ -60,7 +61,8 @@ impl CubeGatedDeltaConvRoutine {
     ) -> GatedDeltaConvOutputs {
         let binding = tensors.bind(&blueprint, &grid);
         // SAFETY: every operand is bound through the launcher and indexed only through its tile,
-        // whose reads past an edge are masked. A unit writes only the window channels it reads.
+        // whose reads past an edge are masked. A unit writes only the window channels it reads, and
+        // a cube only its own position and key head of the outputs.
         unsafe {
             cube_gated_delta_conv_kernel::launch_unchecked(
                 tensors.client(),
@@ -69,8 +71,8 @@ impl CubeGatedDeltaConvRoutine {
                 blueprint.width,
                 binding.qkv,
                 binding.filters,
-                binding.window,
-                binding.lengths,
+                binding.window.into(),
+                binding.lengths.into(),
                 binding.query,
                 binding.key,
                 binding.value,
@@ -133,17 +135,29 @@ impl Routine for CubeGatedDeltaConvRoutine {
             bytes: (elements * element_bytes) as u64,
             run_bytes: run * element_bytes,
         };
+        let outputs = stream(channels, heads.key_features, output_size);
+        let filters = stream(channels * problem.taps, problem.taps, size);
+        let (reads, writes) = match problem.past {
+            GatedDeltaConvPast::Window { .. } => (
+                vec![
+                    stream(channels, heads.key_features, size),
+                    filters,
+                    stream(channels * (problem.taps - 1), heads.key_features, size),
+                ],
+                vec![stream(channels, heads.key_features, size), outputs],
+            ),
+            GatedDeltaConvPast::Stream { .. } => (
+                vec![
+                    stream(channels * problem.taps, heads.key_features, size),
+                    filters,
+                ],
+                vec![outputs],
+            ),
+        };
         estimate.staging = Some(CubeStaging {
             operations: problem.work_item().operations(channels) as f64,
-            reads: vec![
-                stream(channels, heads.key_features, size),
-                stream(channels * problem.taps, problem.taps, size),
-                stream(channels * (problem.taps - 1), heads.key_features, size),
-            ],
-            writes: vec![
-                stream(channels, heads.key_features, size),
-                stream(channels, heads.key_features, output_size),
-            ],
+            reads,
+            writes,
             stages: 1,
             stages_in_flight: 1,
             drain_atomics: 0,
@@ -167,11 +181,12 @@ impl Routine for CubeGatedDeltaConvRoutine {
 mod tests {
     use super::*;
     use crate::kernels::conv::GatedDeltaConvPast;
-    use crate::kernels::conv::fixtures::fleet;
+    use crate::kernels::conv::fixtures::{binding_enough, fleet};
     use core::num::NonZeroUsize;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::gated_delta::GatedDeltaHeads;
     use cubek_microkernel::gated_delta::HEAD_CHANNEL;
+    use cubek_std::devices;
     use cubek_std::routine::EstimatedProblem;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -191,13 +206,35 @@ mod tests {
         GatedDeltaConvProblem::dense(rows, heads, taps, past, F16)
     }
 
-    fn problems() -> [GatedDeltaConvProblem; 5] {
-        [
+    fn stream(
+        batch: usize,
+        positions: usize,
+        heads: [usize; 4],
+        taps: usize,
+    ) -> GatedDeltaConvProblem {
+        let [key_heads, group, key_features, value_features] = heads;
+        let heads = GatedDeltaHeads {
+            key_heads,
+            group,
+            key_features,
+            value_features,
+        };
+        let past = GatedDeltaConvPast::Stream { positions };
+        GatedDeltaConvProblem::dense(batch, heads, taps, past, F16)
+    }
+
+    fn problems() -> Vec<GatedDeltaConvProblem> {
+        vec![
             conv(1, [16, 3, 128, 128], 4),
             conv(8, [16, 3, 128, 128], 4),
             conv(3, [3, 3, 37, 53], 4),
             conv(2, [2, 2, 12, 8], 2),
             conv(5, [1, 2, 16, 37], 3),
+            stream(1, 512, [16, 1, 128, 128], 4),
+            stream(1, 512, [16, 3, 128, 128], 4),
+            stream(2, 67, [3, 3, 37, 53], 4),
+            stream(3, 1, [2, 2, 12, 8], 2),
+            stream(1, 9, [1, 2, 16, 37], 3),
         ]
     }
 
@@ -223,6 +260,12 @@ mod tests {
                     Some(lines)
                 );
                 assert!(blueprint.microkernel.units <= lines);
+                let positions = match problem.past {
+                    GatedDeltaConvPast::Window { .. } => 1,
+                    GatedDeltaConvPast::Stream { positions } => positions,
+                };
+                let cubes = problem.batch * positions * problem.heads.key_heads;
+                assert_eq!(grid.cubes(), Some(cubes as u64));
                 let mut estimate = KernelEstimate::from(&grid);
                 CubeGatedDeltaConvRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
                 let staging = estimate.staging.as_ref().expect("staging");
@@ -230,5 +273,15 @@ mod tests {
                 assert!(performed >= problem.demand().compute_ops as f64 * 0.5);
             }
         }
+    }
+
+    /// The positions of a stream ride the grid, so admission declines what a device's cube count
+    /// cannot hold.
+    #[test]
+    fn admission_follows_the_grid_a_device_holds() {
+        let hw = binding_enough(devices::wgpu_no_subgroups());
+        assert_eq!(hw.properties.hardware.max_cube_count.0, 65535);
+        assert!(stream(1, 65535, [1, 1, 16, 16], 4).admit(&hw).is_ok());
+        assert!(stream(1, 70000, [1, 1, 16, 16], 4).admit(&hw).is_err());
     }
 }
