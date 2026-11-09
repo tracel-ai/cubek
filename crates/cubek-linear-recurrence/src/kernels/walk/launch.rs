@@ -1,24 +1,24 @@
 //! The walk's routine trait: what a routine states, and its launch written once.
 
 use crate::kernels::walk::{
-    GatedDeltaWalkBinding, GatedDeltaWalkBlueprint, GatedDeltaWalkInputs, GatedDeltaWalkOutputs,
-    GatedDeltaWalkProblem, GatedDeltaWalkTensors,
+    RecurrenceWalkBinding, RecurrenceWalkBlueprint, RecurrenceWalkInputs, RecurrenceWalkOutputs,
+    RecurrenceWalkProblem, RecurrenceWalkTensors,
 };
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 
-/// A routine of this kind around microkernel `M`: it prepares a [`GatedDeltaWalkBlueprint`] and
+/// A routine of this kind around microkernel `M`: it prepares a [`RecurrenceWalkBlueprint`] and
 /// launches it on a walk's tensors.
-pub trait GatedDeltaWalkRoutine<M>:
-    Routine<Problem = GatedDeltaWalkProblem, Microkernel = M, Blueprint = GatedDeltaWalkBlueprint<M>>
+pub trait RecurrenceWalkRoutine<M>:
+    Routine<Problem = RecurrenceWalkProblem, Microkernel = M, Blueprint = RecurrenceWalkBlueprint<M>>
 {
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`.
     fn dispatch(
         &self,
-        tensors: &GatedDeltaWalkTensors,
-        binding: GatedDeltaWalkBinding,
-        blueprint: GatedDeltaWalkBlueprint<M>,
+        tensors: &RecurrenceWalkTensors,
+        binding: RecurrenceWalkBinding,
+        blueprint: RecurrenceWalkBlueprint<M>,
         grid: Grid,
     );
 
@@ -31,10 +31,10 @@ pub trait GatedDeltaWalkRoutine<M>:
     fn launch_on(
         &self,
         hw: &Hardware,
-        inputs: GatedDeltaWalkInputs,
+        inputs: RecurrenceWalkInputs,
         settings: &Self::Settings,
-    ) -> Result<GatedDeltaWalkOutputs, Refusal> {
-        let tensors = GatedDeltaWalkTensors::new(inputs)?;
+    ) -> Result<RecurrenceWalkOutputs, Refusal> {
+        let tensors = RecurrenceWalkTensors::new(inputs)?;
         let (blueprint, grid) = self.prepare(hw, tensors.problem(), settings)?;
         let binding = tensors.bind(&blueprint, &grid);
         self.dispatch(&tensors, binding, blueprint, grid);
@@ -49,8 +49,8 @@ pub trait GatedDeltaWalkRoutine<M>:
     fn launch_lead_on(
         &self,
         hw: &Hardware,
-        inputs: GatedDeltaWalkInputs,
-    ) -> Result<GatedDeltaWalkOutputs, Refusal> {
+        inputs: RecurrenceWalkInputs,
+    ) -> Result<RecurrenceWalkOutputs, Refusal> {
         let lead = self
             .settings(hw)
             .into_iter()

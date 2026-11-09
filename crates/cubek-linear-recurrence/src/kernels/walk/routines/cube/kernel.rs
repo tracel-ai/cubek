@@ -1,8 +1,8 @@
 use cubecl::ir::ElemType;
 use cubecl::tile::{Partitioning, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::gated_delta::walk::cube::{
-    CubeGatedDeltaWalkMicrokernel, StateAccess, cube_gated_delta_walk_microkernel,
+use cubek_microkernel::linear_recurrence::walk::cube::{
+    CubeDeltaWalkMicrokernel, StateAccess, cube_delta_walk_microkernel,
 };
 
 /// Every cube, walking its runs of value columns through every position over `state`. The states
@@ -10,7 +10,7 @@ use cubek_microkernel::gated_delta::walk::cube::{
 /// otherwise; `lengths`, where bound, says which rows start from zeros.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
-pub fn cube_gated_delta_walk_kernel<E: Float, N: Size>(
+pub fn cube_delta_walk_kernel<E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
@@ -22,7 +22,7 @@ pub fn cube_gated_delta_walk_kernel<E: Float, N: Size>(
     lengths: ComptimeOption<&TileTensor<'static>>,
     first_kept: usize,
     partitioning: Partitioning,
-    #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,
+    #[comptime] microkernel: CubeDeltaWalkMicrokernel,
     #[comptime] runs: usize,
     #[define(E)] _element: ElemType,
 ) {
@@ -42,7 +42,7 @@ pub fn cube_gated_delta_walk_kernel<E: Float, N: Size>(
             &lengths.clone().map(|lengths| lengths.at(&cube)),
             first_kept,
         );
-        cube_gated_delta_walk_microkernel::<E, N>(
+        cube_delta_walk_microkernel::<E, N>(
             &cube,
             &query.at(&cube),
             &key.at(&cube),

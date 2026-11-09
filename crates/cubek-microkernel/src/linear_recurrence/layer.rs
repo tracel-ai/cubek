@@ -1,19 +1,19 @@
 use serde::{Deserialize, Serialize};
 
-/// The heads of a gated delta-rule layer, fixed by the model: every number the kernels' layouts
+/// The heads of a linear recurrence layer, fixed by the model: every number the kernels' layouts
 /// derive from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct GatedDeltaHeads {
+pub struct RecurrenceHeads {
     pub key_heads: usize,
-    /// Value heads reading each key head.
-    pub group: usize,
+    /// Value heads reading each key head. Mamba2's `ngroups` is `key_heads`, not this.
+    pub heads_per_group: usize,
     /// The state's rows: the width of a query and a key.
     pub key_features: usize,
     /// The state's columns: the width of a value and an output.
     pub value_features: usize,
 }
 
-impl GatedDeltaHeads {
+impl RecurrenceHeads {
     /// The value columns a run holds: the largest of 4, 2 and 1 that divides both feature counts, so
     /// a line of the widest read the walk makes never straddles a head. The cap of 4 holds a run's
     /// registers and its shared memory slice to four columns however wide the device reads.
@@ -29,7 +29,7 @@ impl GatedDeltaHeads {
 
     /// Value heads, each owning a state.
     pub fn value_heads(&self) -> usize {
-        self.key_heads * self.group
+        self.key_heads * self.heads_per_group
     }
 
     /// Channels of the `q|k|v` stream the conv mixes.
@@ -44,6 +44,6 @@ impl GatedDeltaHeads {
 
     /// Channels one key head owns: its query and key, and its value heads' values.
     pub fn channels_per_key_head(&self) -> usize {
-        2 * self.key_features + self.group * self.value_features
+        2 * self.key_features + self.heads_per_group * self.value_features
     }
 }

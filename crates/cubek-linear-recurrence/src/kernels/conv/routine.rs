@@ -1,14 +1,14 @@
-use super::kernel::cube_gated_delta_conv_kernel;
+use super::kernel::cube_qk_normed_conv_kernel;
 use crate::kernels::conv::{
-    GATED_DELTA_CONV_OUTPUT_ELEMENT, GatedDeltaConvBlueprint, GatedDeltaConvInputs,
-    GatedDeltaConvOutputs, GatedDeltaConvPast, GatedDeltaConvProblem, GatedDeltaConvTensors,
+    GatedDeltaConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
+    QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors,
 };
 use crate::kernels::refusals::admit_on_device;
 use cubecl::tile::launch::{Refusal, Vectorization};
-use cubek_microkernel::gated_delta::GatedDeltaConvPartitioning;
-use cubek_microkernel::gated_delta::conv::GatedDeltaConvOperand;
-use cubek_microkernel::gated_delta::conv::cube::{
-    CubeGatedDeltaConvMicrokernel, GatedDeltaConvSettings,
+use cubek_microkernel::linear_recurrence::QkNormedConvPartitioning;
+use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperand;
+use cubek_microkernel::linear_recurrence::conv::cube::{
+    CubeQkNormedConvMicrokernel, QkNormedConvSettings,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
@@ -18,9 +18,9 @@ use cubek_std::routine::{Grid, PreparedLaunches, Routine};
 /// dealing the head's channels a line at a time. It reads no plane feature, so it is the floor
 /// every device runs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CubeGatedDeltaConvRoutine;
+pub struct CubeQkNormedConvRoutine;
 
-impl CubeGatedDeltaConvRoutine {
+impl CubeQkNormedConvRoutine {
     /// The conv of `inputs`, launched on their client's device, prepared for `hw`.
     ///
     /// # Errors
@@ -29,9 +29,9 @@ impl CubeGatedDeltaConvRoutine {
     pub fn launch_on(
         &self,
         hw: &Hardware,
-        inputs: GatedDeltaConvInputs,
-    ) -> Result<GatedDeltaConvOutputs, Refusal> {
-        let tensors = GatedDeltaConvTensors::new(inputs)?;
+        inputs: QkNormedConvInputs,
+    ) -> Result<QkNormedConvOutputs, Refusal> {
+        let tensors = QkNormedConvTensors::new(inputs)?;
         let (blueprint, grid) = self.prepare_first_served(hw, tensors.problem())?;
         Ok(self.launch(tensors, blueprint, grid))
     }
@@ -45,26 +45,26 @@ impl CubeGatedDeltaConvRoutine {
         &self,
         prepared: &PreparedLaunches<Self>,
         hw: &Hardware,
-        inputs: GatedDeltaConvInputs,
-    ) -> Result<GatedDeltaConvOutputs, Refusal> {
-        let tensors = GatedDeltaConvTensors::new(inputs)?;
+        inputs: QkNormedConvInputs,
+    ) -> Result<QkNormedConvOutputs, Refusal> {
+        let tensors = QkNormedConvTensors::new(inputs)?;
         let (blueprint, grid) =
-            prepared.prepare(self, hw, tensors.problem(), &GatedDeltaConvSettings)?;
+            prepared.prepare(self, hw, tensors.problem(), &QkNormedConvSettings)?;
         Ok(self.launch(tensors, blueprint, grid))
     }
 
     fn launch(
         &self,
-        tensors: GatedDeltaConvTensors,
-        blueprint: GatedDeltaConvBlueprint,
+        tensors: QkNormedConvTensors,
+        blueprint: QkNormedConvBlueprint,
         grid: Grid,
-    ) -> GatedDeltaConvOutputs {
+    ) -> QkNormedConvOutputs {
         let binding = tensors.bind(&blueprint, &grid);
         // SAFETY: every operand is bound through the launcher and indexed only through its tile,
         // whose reads past an edge are masked. A unit writes only the window channels it reads, and
         // a cube only its own position and key head of the outputs.
         unsafe {
-            cube_gated_delta_conv_kernel::launch_unchecked(
+            cube_qk_normed_conv_kernel::launch_unchecked(
                 tensors.client(),
                 grid.launch.cube_count,
                 grid.launch.cube_dim,
@@ -92,45 +92,45 @@ impl CubeGatedDeltaConvRoutine {
 /// # Errors
 ///
 /// [`ELEMENT_NOT_ON_DEVICE`](cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE) where the
-/// device lacks the activations' element or `f32`, or what [`GatedDeltaConvProblem::admit`]
+/// device lacks the activations' element or `f32`, or what [`QkNormedConvProblem::admit`]
 /// declines.
-pub fn serves(hw: &Hardware, problem: &GatedDeltaConvProblem) -> Result<(), Refusal> {
-    GatedDeltaConvProblem::admit_element(problem.element)?;
-    admit_on_device(hw, [problem.element, GATED_DELTA_CONV_OUTPUT_ELEMENT])?;
+pub fn serves(hw: &Hardware, problem: &QkNormedConvProblem) -> Result<(), Refusal> {
+    QkNormedConvProblem::admit_element(problem.element)?;
+    admit_on_device(hw, [problem.element, QK_NORMED_CONV_OUTPUT_ELEMENT])?;
     problem.admit(hw)
 }
 
-impl Routine for CubeGatedDeltaConvRoutine {
-    type Problem = GatedDeltaConvProblem;
-    type Microkernel = CubeGatedDeltaConvMicrokernel;
-    type Settings = GatedDeltaConvSettings;
-    type Blueprint = GatedDeltaConvBlueprint;
-    type Partitioning = GatedDeltaConvPartitioning;
+impl Routine for CubeQkNormedConvRoutine {
+    type Problem = QkNormedConvProblem;
+    type Microkernel = CubeQkNormedConvMicrokernel;
+    type Settings = QkNormedConvSettings;
+    type Blueprint = QkNormedConvBlueprint;
+    type Partitioning = QkNormedConvPartitioning;
 
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        CubeGatedDeltaConvMicrokernel::settings(hw)
+        CubeQkNormedConvMicrokernel::settings(hw)
     }
 
     fn vectorize(
         &self,
-        microkernel: &CubeGatedDeltaConvMicrokernel,
-        _: &GatedDeltaConvPartitioning,
-        vectorization: &mut Vectorization<GatedDeltaConvOperand>,
+        microkernel: &CubeQkNormedConvMicrokernel,
+        _: &QkNormedConvPartitioning,
+        vectorization: &mut Vectorization<QkNormedConvOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
     }
 
     fn estimate(
         &self,
-        problem: &GatedDeltaConvProblem,
-        blueprint: &GatedDeltaConvBlueprint,
+        problem: &QkNormedConvProblem,
+        blueprint: &QkNormedConvBlueprint,
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
         let heads = &problem.heads;
         let channels = heads.channels_per_key_head();
         let size = problem.element.size();
-        let output_size = GATED_DELTA_CONV_OUTPUT_ELEMENT.size();
+        let output_size = QK_NORMED_CONV_OUTPUT_ELEMENT.size();
         let stream = |elements: usize, run: usize, element_bytes: usize| GlobalStream {
             bytes: (elements * element_bytes) as u64,
             run_bytes: run * element_bytes,
@@ -170,10 +170,10 @@ impl Routine for CubeGatedDeltaConvRoutine {
     fn prepare(
         &self,
         hw: &Hardware,
-        problem: &GatedDeltaConvProblem,
+        problem: &QkNormedConvProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        GatedDeltaConvBlueprint::prepare(hw, problem, settings)
+        QkNormedConvBlueprint::prepare(hw, problem, settings)
     }
 }
 
@@ -184,18 +184,18 @@ mod tests {
     use crate::kernels::conv::fixtures::{binding_enough, fleet};
     use core::num::NonZeroUsize;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::gated_delta::GatedDeltaHeads;
-    use cubek_microkernel::gated_delta::HEAD_CHANNEL;
+    use cubek_microkernel::linear_recurrence::HEAD_CHANNEL;
+    use cubek_microkernel::linear_recurrence::RecurrenceHeads;
     use cubek_std::devices;
     use cubek_std::routine::EstimatedProblem;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
-    fn conv(rows: usize, heads: [usize; 4], taps: usize) -> GatedDeltaConvProblem {
-        let [key_heads, group, key_features, value_features] = heads;
-        let heads = GatedDeltaHeads {
+    fn conv(rows: usize, heads: [usize; 4], taps: usize) -> QkNormedConvProblem {
+        let [key_heads, heads_per_group, key_features, value_features] = heads;
+        let heads = RecurrenceHeads {
             key_heads,
-            group,
+            heads_per_group,
             key_features,
             value_features,
         };
@@ -203,7 +203,7 @@ mod tests {
             slots: NonZeroUsize::new(rows + 3).unwrap(),
             columns: taps + 1,
         };
-        GatedDeltaConvProblem::dense(rows, heads, taps, past, F16)
+        QkNormedConvProblem::dense(rows, heads, taps, past, F16)
     }
 
     fn stream(
@@ -211,19 +211,19 @@ mod tests {
         positions: usize,
         heads: [usize; 4],
         taps: usize,
-    ) -> GatedDeltaConvProblem {
-        let [key_heads, group, key_features, value_features] = heads;
-        let heads = GatedDeltaHeads {
+    ) -> QkNormedConvProblem {
+        let [key_heads, heads_per_group, key_features, value_features] = heads;
+        let heads = RecurrenceHeads {
             key_heads,
-            group,
+            heads_per_group,
             key_features,
             value_features,
         };
         let past = GatedDeltaConvPast::Stream { positions };
-        GatedDeltaConvProblem::dense(batch, heads, taps, past, F16)
+        QkNormedConvProblem::dense(batch, heads, taps, past, F16)
     }
 
-    fn problems() -> Vec<GatedDeltaConvProblem> {
+    fn problems() -> Vec<QkNormedConvProblem> {
         vec![
             conv(1, [16, 3, 128, 128], 4),
             conv(8, [16, 3, 128, 128], 4),
@@ -245,7 +245,7 @@ mod tests {
     fn the_floor_prepares_everything_admission_admits() {
         for hw in fleet() {
             for problem in problems() {
-                let prepared = CubeGatedDeltaConvRoutine.prepare_first_served(&hw, &problem);
+                let prepared = CubeQkNormedConvRoutine.prepare_first_served(&hw, &problem);
                 assert_eq!(problem.admit(&hw), prepared.clone().map(|_| ()));
                 let (blueprint, grid) =
                     prepared.unwrap_or_else(|why| panic!("{problem:?}: {why:?}"));
@@ -267,7 +267,7 @@ mod tests {
                 let cubes = problem.batch * positions * problem.heads.key_heads;
                 assert_eq!(grid.cubes(), Some(cubes as u64));
                 let mut estimate = KernelEstimate::from(&grid);
-                CubeGatedDeltaConvRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
+                CubeQkNormedConvRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
                 let staging = estimate.staging.as_ref().expect("staging");
                 let performed = staging.operations * estimate.cubes.expect("a static grid") as f64;
                 assert!(performed >= problem.demand().compute_ops as f64 * 0.5);

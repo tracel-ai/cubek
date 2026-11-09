@@ -1,5 +1,5 @@
-use crate::gated_delta::GatedDeltaHeads;
-use crate::gated_delta::walk::GatedDeltaWalkOperand;
+use crate::linear_recurrence::RecurrenceHeads;
+use crate::linear_recurrence::walk::RecurrenceWalkOperand;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
@@ -21,7 +21,7 @@ pub const MAX_HELD_LINES_PER_UNIT: usize = 16;
 /// meet in. It holds what it derived, not the settings it derived it from: two settings that
 /// derive one launch are one candidate, which a round compiles and times once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeGatedDeltaWalkMicrokernel {
+pub struct CubeDeltaWalkMicrokernel {
     /// Units sharing a run: a power of two, which the tile engine's units level needs. Units
     /// past the head's last key row hold nothing.
     pub units: usize,
@@ -33,13 +33,13 @@ pub struct CubeGatedDeltaWalkMicrokernel {
 
 /// How much of a run's state one unit holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeGatedDeltaWalkMicrokernelSettings {
+pub struct CubeWalkMicrokernelSettings {
     /// A target, not a demand: the `f32` cells of the state one unit holds in registers. Fewer
     /// cells is more units a run, and wider meetings.
     pub cells: NonZeroUsize,
 }
 
-impl CubeGatedDeltaWalkMicrokernelSettings {
+impl CubeWalkMicrokernelSettings {
     /// 64 cells a unit: a 128-row head read four columns wide in runs of eight units.
     pub const DEFAULT: Self = Self::new(64);
     /// The fewest cells whose lines stay within [`MAX_HELD_LINES_PER_UNIT`] at any width.
@@ -57,13 +57,13 @@ impl CubeGatedDeltaWalkMicrokernelSettings {
     }
 }
 
-impl core::fmt::Display for CubeGatedDeltaWalkMicrokernelSettings {
+impl core::fmt::Display for CubeWalkMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "cells={}", self.cells)
     }
 }
 
-impl CubeGatedDeltaWalkMicrokernel {
+impl CubeDeltaWalkMicrokernel {
     /// Vector lines of the state a unit holds at lines of `width` columns.
     pub fn held_lines(&self, width: usize) -> usize {
         self.rows * self.columns / width
@@ -76,7 +76,7 @@ impl CubeGatedDeltaWalkMicrokernel {
     }
 }
 
-impl core::fmt::Display for CubeGatedDeltaWalkMicrokernel {
+impl core::fmt::Display for CubeDeltaWalkMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
@@ -86,10 +86,10 @@ impl core::fmt::Display for CubeGatedDeltaWalkMicrokernel {
     }
 }
 
-impl Microkernel for CubeGatedDeltaWalkMicrokernel {
-    type WorkItem = GatedDeltaHeads;
-    type Settings = CubeGatedDeltaWalkMicrokernelSettings;
-    type Operand = GatedDeltaWalkOperand;
+impl Microkernel for CubeDeltaWalkMicrokernel {
+    type WorkItem = RecurrenceHeads;
+    type Settings = CubeWalkMicrokernelSettings;
+    type Operand = RecurrenceWalkOperand;
     type CubeSpace = ();
 
     const DECLINE: &'static str =
@@ -107,7 +107,7 @@ impl Microkernel for CubeGatedDeltaWalkMicrokernel {
     /// not divide it.
     fn candidates(
         hw: &Hardware,
-        item: &GatedDeltaHeads,
+        item: &RecurrenceHeads,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
         let columns = item.columns();
@@ -134,17 +134,17 @@ impl Microkernel for CubeGatedDeltaWalkMicrokernel {
             .into_iter()
     }
 
-    /// Every operand as [`GatedDeltaWalkOperand::require`] states it, a run `columns` wide and a
+    /// Every operand as [`RecurrenceWalkOperand::require`] states it, a run `columns` wide and a
     /// unit's rows.
-    fn vectorize(&self, _: &(), vectorization: &mut Vectorization<GatedDeltaWalkOperand>) {
-        GatedDeltaWalkOperand::require(self.columns, self.rows, vectorization);
+    fn vectorize(&self, _: &(), vectorization: &mut Vectorization<RecurrenceWalkOperand>) {
+        RecurrenceWalkOperand::require(self.columns, self.rows, vectorization);
     }
 
     /// Each unit holds its rows of the state beside its partial sums, computed with the device's
     /// vector arithmetic; the reads are its routine's to count.
     fn estimate(
         &self,
-        _item: &GatedDeltaHeads,
+        _item: &RecurrenceHeads,
         _: &(),
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,

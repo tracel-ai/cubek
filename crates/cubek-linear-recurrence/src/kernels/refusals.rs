@@ -1,4 +1,4 @@
-//! What the gated delta kernels decline with, by name.
+//! What the linear recurrence kernels decline with, by name.
 
 use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
@@ -23,69 +23,69 @@ pub(crate) fn admit_on_device(hw: &Hardware, elements: [ElemType; 2]) -> Result<
 
 /// The buffers a walk needs a device to bind: one for each of its 8 operands, and one for the
 /// metadata buffer some runtimes bind beside them.
-pub const GATED_DELTA_WALK_BINDING_BUFFERS: u32 = 8 + 1;
+pub const RECURRENCE_WALK_BINDING_BUFFERS: u32 = 8 + 1;
 
 /// The buffers a walk in a store's slots needs a device to bind: the seven operands it shares with
 /// the owned walk, the slot table and the lengths table, and the metadata buffer.
-pub const GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS: u32 = 9 + 1;
+pub const RECURRENCE_WALK_SLOTS_BINDING_BUFFERS: u32 = 9 + 1;
 
 /// What admission declines a problem with when it describes no head: a walk needs a key row and a
 /// value column to work on.
-pub const GATED_DELTA_WALK_HEADS_EMPTY: Refusal = Refusal::Declined {
-    why: "the gated delta walk needs a key head, a value head, a key feature and a value feature",
+pub const RECURRENCE_WALK_HEADS_EMPTY: Refusal = Refusal::Declined {
+    why: "the delta walk needs a key head, a value head, a key feature and a value feature",
 };
 
 /// What admission declines a device with that binds fewer buffers to a kernel than the walk's
 /// launch does.
-pub const GATED_DELTA_WALK_BINDINGS_PAST_DEVICE: Refusal = Refusal::Declined {
-    why: "the gated delta walk binds more buffers than the device binds to one kernel",
+pub const RECURRENCE_WALK_BINDINGS_PAST_DEVICE: Refusal = Refusal::Declined {
+    why: "the delta walk binds more buffers than the device binds to one kernel",
 };
 
 /// What admission declines an operand with that is not a plain float, a packed activation
 /// included: the walk reads floats, so a caller falls back to unpacking above it.
-pub const GATED_DELTA_WALK_ELEMENT_NOT_FLOAT: Refusal = Refusal::Declined {
-    why: "the gated delta walk reads plain float operands, not packed or integer ones",
+pub const RECURRENCE_WALK_ELEMENT_NOT_FLOAT: Refusal = Refusal::Declined {
+    why: "the delta walk reads plain float operands, not packed or integer ones",
 };
 
 /// What admission declines a float with that the walk is not verified at: an input that is not
 /// `f32`, or an output that is not `f32`, `f16` or `bf16`.
-pub const GATED_DELTA_WALK_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
-    why: "the gated delta walk reads f32 inputs and writes f32, f16 or bf16 outputs",
+pub const RECURRENCE_WALK_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+    why: "the delta walk reads f32 inputs and writes f32, f16 or bf16 outputs",
 };
 
 /// The buffers a conv over a window needs a device to bind: one for each of its 7 operands, the
 /// slot table among them, and one for the metadata buffer some runtimes bind beside them.
-pub const GATED_DELTA_CONV_WINDOW_BINDING_BUFFERS: u32 = 8 + 1;
+pub const QK_NORMED_CONV_WINDOW_BINDING_BUFFERS: u32 = 8 + 1;
 
 /// The buffers a conv over a stream needs a device to bind: one for each of its 5 operands, and one
 /// for the metadata buffer some runtimes bind beside them.
-pub const GATED_DELTA_CONV_STREAM_BINDING_BUFFERS: u32 = 5 + 1;
+pub const QK_NORMED_CONV_STREAM_BINDING_BUFFERS: u32 = 5 + 1;
 
 /// What admission declines a problem with when it describes no head: a conv needs a key head, a
 /// value head, a key feature and a value feature.
-pub const GATED_DELTA_CONV_HEADS_EMPTY: Refusal = Refusal::Declined {
-    why: "the gated delta conv needs a key head, a value head, a key feature and a value feature",
+pub const QK_NORMED_CONV_HEADS_EMPTY: Refusal = Refusal::Declined {
+    why: "the q|k|v conv needs a key head, a value head, a key feature and a value feature",
 };
 
 /// What admission declines a problem with that holds no row, or no position to convolve.
-pub const GATED_DELTA_CONV_NOTHING_TO_CONVOLVE: Refusal = Refusal::Declined {
-    why: "the gated delta conv needs a row and a position to convolve",
+pub const QK_NORMED_CONV_NOTHING_TO_CONVOLVE: Refusal = Refusal::Declined {
+    why: "the q|k|v conv needs a row and a position to convolve",
 };
 
 /// What admission declines a filter or a window with that cannot be read back: fewer than two
 /// taps, or a window of fewer columns than the taps read back.
-pub const GATED_DELTA_CONV_TAPS_PAST_WINDOW: Refusal = Refusal::Declined {
-    why: "the gated delta conv needs two taps or more and a window of a column fewer than its taps or more",
+pub const QK_NORMED_CONV_TAPS_PAST_WINDOW: Refusal = Refusal::Declined {
+    why: "the q|k|v conv needs two taps or more and a window of a column fewer than its taps or more",
 };
 
 /// What admission declines a device with that binds fewer buffers to a kernel than a conv's
 /// launch does.
-pub const GATED_DELTA_CONV_BINDINGS_PAST_DEVICE: Refusal = Refusal::Declined {
-    why: "the gated delta conv binds more buffers than the device binds to one kernel",
+pub const QK_NORMED_CONV_BINDINGS_PAST_DEVICE: Refusal = Refusal::Declined {
+    why: "the q|k|v conv binds more buffers than the device binds to one kernel",
 };
 
 /// What admission declines an element with that is not `f16` or `f32`: a packed or integer element
 /// is not a float the conv reads, and no other float is verified.
-pub const GATED_DELTA_CONV_ELEMENT_UNSUPPORTED: Refusal = Refusal::Declined {
-    why: "the gated delta conv reads f16 or f32 activations",
+pub const QK_NORMED_CONV_ELEMENT_UNSUPPORTED: Refusal = Refusal::Declined {
+    why: "the q|k|v conv reads f16 or f32 activations",
 };

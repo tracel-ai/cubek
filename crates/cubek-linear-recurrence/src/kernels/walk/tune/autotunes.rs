@@ -7,19 +7,19 @@
 //! per candidate. A walk over states it owns is measured on the call's inputs.
 
 use crate::kernels::refusals::admit_on_device;
-use crate::kernels::walk::tune::GatedDeltaWalkCandidate;
-use crate::kernels::walk::tune::key::GatedDeltaWalkKey;
+use crate::kernels::walk::tune::RecurrenceWalkCandidate;
+use crate::kernels::walk::tune::key::RecurrenceWalkKey;
 use crate::kernels::walk::{
-    CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GATED_DELTA_WALK_ELEMENT,
-    GatedDeltaWalkInputs, GatedDeltaWalkOutputs, GatedDeltaWalkProblem, GatedDeltaWalkStateInputs,
-    GatedDeltaWalkStateKind,
+    CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings, RECURRENCE_WALK_ELEMENT,
+    RecurrenceWalkInputs, RecurrenceWalkOutputs, RecurrenceWalkProblem, RecurrenceWalkStateInputs,
+    RecurrenceWalkStateKind,
 };
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tune::{LocalTuner, Tunable, local_tuner};
 use cubecl::{CubeTuneId, Device};
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::gated_delta::GatedDeltaHeads;
+use cubek_microkernel::linear_recurrence::RecurrenceHeads;
 use cubek_std::Hardware;
 use cubek_std::autotune::{Autotune, GroupPriority};
 
@@ -32,38 +32,38 @@ use cubek_std::autotune::{Autotune, GroupPriority};
 /// run.
 pub fn launch_tuned(
     device: &Device,
-    inputs: GatedDeltaWalkInputs,
+    inputs: RecurrenceWalkInputs,
     microkernel: GroupPriority,
-) -> GatedDeltaWalkOutputs {
+) -> RecurrenceWalkOutputs {
     let client = inputs.client.clone();
-    static TUNER: LocalTuner<GatedDeltaWalkKey, CubeTuneId> = local_tuner!("gated-delta-walk");
+    static TUNER: LocalTuner<RecurrenceWalkKey, CubeTuneId> = local_tuner!("delta-walk");
 
     let id = CubeTuneId::new(&client, device);
     let hw = Hardware::from_client(&client);
     let tunables = TUNER.init(&id, move || {
         let mut table =
-            Autotune::<GatedDeltaWalkKey, GatedDeltaWalkInputs, GatedDeltaWalkOutputs>::measured_on(
-                |inputs: &GatedDeltaWalkInputs| GatedDeltaWalkKey::from(inputs),
+            Autotune::<RecurrenceWalkKey, RecurrenceWalkInputs, RecurrenceWalkOutputs>::measured_on(
+                |inputs: &RecurrenceWalkInputs| RecurrenceWalkKey::from(inputs),
                 "scratch",
                 measured,
             );
         let group = table.group("microkernel", microkernel);
-        let floor = GatedDeltaWalkCandidate::new(
-            CubeGatedDeltaWalkRoutine,
-            CubeGatedDeltaWalkRoutineSettings::FLOOR,
+        let floor = RecurrenceWalkCandidate::new(
+            CubeDeltaWalkRoutine,
+            CubeDeltaWalkRoutineSettings::FLOOR,
             &hw,
         );
         table
             .prioritized(
                 &group,
-                GatedDeltaWalkCandidate::list(CubeGatedDeltaWalkRoutine, &hw),
-                GatedDeltaWalkCandidate::run,
+                RecurrenceWalkCandidate::list(CubeDeltaWalkRoutine, &hw),
+                RecurrenceWalkCandidate::run,
             )
             // The floor, which every admitted problem prepares: taking `microkernel` out of the
             // table stops the family being measured, not being served.
             .floor(Tunable::new(
-                "cube-gated-delta-walk-floor",
-                move |inputs: GatedDeltaWalkInputs| floor.run(inputs),
+                "cube-delta-walk-floor",
+                move |inputs: RecurrenceWalkInputs| floor.run(inputs),
             ))
             .finish()
     });
@@ -81,26 +81,26 @@ pub fn launch_tuned(
 /// # Errors
 ///
 /// What the element or the layer's problem is declined with
-/// ([`GatedDeltaWalkProblem::admit_output`],
+/// ([`RecurrenceWalkProblem::admit_output`],
 /// [`ELEMENT_NOT_ON_DEVICE`](cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE),
-/// [`GatedDeltaWalkProblem::admit`]).
+/// [`RecurrenceWalkProblem::admit`]).
 pub fn serves(
     hw: &Hardware,
-    heads: GatedDeltaHeads,
-    state: GatedDeltaWalkStateKind,
+    heads: RecurrenceHeads,
+    state: RecurrenceWalkStateKind,
     output_element: ElemType,
 ) -> Result<(), Refusal> {
-    GatedDeltaWalkProblem::admit_output(output_element)?;
-    admit_on_device(hw, [GATED_DELTA_WALK_ELEMENT, output_element])?;
+    RecurrenceWalkProblem::admit_output(output_element)?;
+    admit_on_device(hw, [RECURRENCE_WALK_ELEMENT, output_element])?;
     let state = state.layout();
-    GatedDeltaWalkProblem::dense(1, state.kept().get(), heads, output_element, state).admit(hw)
+    RecurrenceWalkProblem::dense(1, state.kept().get(), heads, output_element, state).admit(hw)
 }
 
 /// What a round runs on: the call's inputs, but for a walk in a store's slots, whose store is
 /// zeros at the call's strides, with a slot for each row, each row at its own and past its first
 /// position.
-fn measured(_key: &GatedDeltaWalkKey, inputs: &GatedDeltaWalkInputs) -> GatedDeltaWalkInputs {
-    let GatedDeltaWalkStateInputs::Slots { store, .. } = &inputs.state else {
+fn measured(_key: &RecurrenceWalkKey, inputs: &RecurrenceWalkInputs) -> RecurrenceWalkInputs {
+    let RecurrenceWalkStateInputs::Slots { store, .. } = &inputs.state else {
         return inputs.clone();
     };
     let client = &inputs.client;
@@ -110,8 +110,8 @@ fn measured(_key: &GatedDeltaWalkKey, inputs: &GatedDeltaWalkInputs) -> GatedDel
         let entries: Vec<u32> = (0..rows).map(entry).collect();
         PlainTensor::of_u32s(client, &[rows], &entries)
     };
-    GatedDeltaWalkInputs {
-        state: GatedDeltaWalkStateInputs::Slots {
+    RecurrenceWalkInputs {
+        state: RecurrenceWalkStateInputs::Slots {
             store: PlainTensor::zeros(
                 client,
                 &[rows, heads, key_features, value_features],
@@ -129,8 +129,8 @@ fn measured(_key: &GatedDeltaWalkKey, inputs: &GatedDeltaWalkInputs) -> GatedDel
 mod tests {
     use super::*;
     use crate::kernels::refusals::{
-        GATED_DELTA_WALK_BINDINGS_PAST_DEVICE, GATED_DELTA_WALK_ELEMENT_NOT_FLOAT,
-        GATED_DELTA_WALK_HEADS_EMPTY,
+        RECURRENCE_WALK_BINDINGS_PAST_DEVICE, RECURRENCE_WALK_ELEMENT_NOT_FLOAT,
+        RECURRENCE_WALK_HEADS_EMPTY,
     };
     use core::num::NonZeroUsize;
     use cubecl::features::TypeUsage;
@@ -152,16 +152,16 @@ mod tests {
         hw
     }
 
-    fn owned() -> GatedDeltaWalkStateKind {
-        GatedDeltaWalkStateKind::Owned {
+    fn owned() -> RecurrenceWalkStateKind {
+        RecurrenceWalkStateKind::Owned {
             kept: NonZeroUsize::MIN,
         }
     }
 
-    fn heads() -> GatedDeltaHeads {
-        GatedDeltaHeads {
+    fn heads() -> RecurrenceHeads {
+        RecurrenceHeads {
             key_heads: 16,
-            group: 3,
+            heads_per_group: 3,
             key_features: 128,
             value_features: 128,
         }
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn the_table_serves_what_admission_admits() {
         let h100 = running(devices::h100(), &[F32, F16]);
-        for state in [owned(), GatedDeltaWalkStateKind::Slots] {
+        for state in [owned(), RecurrenceWalkStateKind::Slots] {
             assert_eq!(serves(&h100, heads(), state, F32), Ok(()));
             assert_eq!(serves(&h100, heads(), state, F16), Ok(()));
             for hw in [
@@ -182,7 +182,7 @@ mod tests {
             ] {
                 assert_eq!(
                     serves(&running(hw.clone(), &[F32, F16]), heads(), state, F32),
-                    Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE),
+                    Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE),
                     "{hw:?}"
                 );
             }
@@ -209,13 +209,13 @@ mod tests {
     /// A layer with no key head is declined, not divided by.
     #[test]
     fn a_layer_with_no_key_head_is_declined() {
-        let heads = GatedDeltaHeads {
+        let heads = RecurrenceHeads {
             key_heads: 0,
             ..heads()
         };
         assert_eq!(
             serves(&running(devices::h100(), &[F32]), heads, owned(), F32),
-            Err(GATED_DELTA_WALK_HEADS_EMPTY)
+            Err(RECURRENCE_WALK_HEADS_EMPTY)
         );
     }
 
@@ -229,7 +229,7 @@ mod tests {
                 owned(),
                 ElemType::UInt(UIntKind::U32)
             ),
-            Err(GATED_DELTA_WALK_ELEMENT_NOT_FLOAT)
+            Err(RECURRENCE_WALK_ELEMENT_NOT_FLOAT)
         );
     }
 }

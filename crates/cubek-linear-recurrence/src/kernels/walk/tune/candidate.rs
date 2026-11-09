@@ -1,9 +1,9 @@
 //! The tune candidate the walk's autotune races.
 
-use crate::kernels::walk::tune::key::GatedDeltaWalkKey;
+use crate::kernels::walk::tune::key::RecurrenceWalkKey;
 use crate::kernels::walk::{
-    GatedDeltaWalkBlueprint, GatedDeltaWalkInputs, GatedDeltaWalkOutputs, GatedDeltaWalkProblem,
-    GatedDeltaWalkRoutine, GatedDeltaWalkTensors,
+    RecurrenceWalkBlueprint, RecurrenceWalkInputs, RecurrenceWalkOutputs, RecurrenceWalkProblem,
+    RecurrenceWalkRoutine, RecurrenceWalkTensors,
 };
 use cubecl::CubeDim;
 use cubecl::tile::launch::Refusal;
@@ -19,7 +19,7 @@ use std::sync::Arc;
 /// ([`short_of_the_device`]): a decode step of one sequence in cubes of a whole head is the shape
 /// that leaves it idle.
 #[derive(Debug, Clone)]
-pub struct GatedDeltaWalkCandidate<R: Routine> {
+pub struct RecurrenceWalkCandidate<R: Routine> {
     routine: R,
     settings: R::Settings,
     hw: Hardware,
@@ -28,7 +28,7 @@ pub struct GatedDeltaWalkCandidate<R: Routine> {
     prepared: Arc<PreparedLaunches<R>>,
 }
 
-impl<R: Routine> GatedDeltaWalkCandidate<R> {
+impl<R: Routine> RecurrenceWalkCandidate<R> {
     /// `routine` at `settings`, on `hw`, having prepared nothing yet.
     pub fn new(routine: R, settings: R::Settings, hw: &Hardware) -> Self {
         Self {
@@ -40,7 +40,7 @@ impl<R: Routine> GatedDeltaWalkCandidate<R> {
     }
 }
 
-impl<R: Routine + Copy> GatedDeltaWalkCandidate<R> {
+impl<R: Routine + Copy> RecurrenceWalkCandidate<R> {
     /// Every setting `routine` lists on `hw`, as candidates of the autotune, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
         routine
@@ -51,9 +51,9 @@ impl<R: Routine + Copy> GatedDeltaWalkCandidate<R> {
     }
 }
 
-impl<R, M> GatedDeltaWalkCandidate<R>
+impl<R, M> RecurrenceWalkCandidate<R>
 where
-    R: GatedDeltaWalkRoutine<M> + Routine<Microkernel = M, Blueprint = GatedDeltaWalkBlueprint<M>>,
+    R: RecurrenceWalkRoutine<M> + Routine<Microkernel = M, Blueprint = RecurrenceWalkBlueprint<M>>,
 {
     /// The walk of `inputs` launched on its device at this candidate's setting, each problem
     /// prepared once ([`PreparedLaunches`]).
@@ -61,8 +61,8 @@ where
     /// # Errors
     ///
     /// Why this device cannot run the walk at this setting.
-    pub fn launch(&self, inputs: GatedDeltaWalkInputs) -> Result<GatedDeltaWalkOutputs, Refusal> {
-        let tensors = GatedDeltaWalkTensors::new(inputs)?;
+    pub fn launch(&self, inputs: RecurrenceWalkInputs) -> Result<RecurrenceWalkOutputs, Refusal> {
+        let tensors = RecurrenceWalkTensors::new(inputs)?;
         let (blueprint, grid) =
             self.prepared
                 .prepare(&self.routine, &self.hw, tensors.problem(), &self.settings)?;
@@ -74,36 +74,36 @@ where
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device. Not held: a key's problem places the candidate in a
     /// round, and may never be launched.
-    fn prepared(&self, key: &GatedDeltaWalkKey) -> Option<(GatedDeltaWalkBlueprint<M>, Grid)> {
+    fn prepared(&self, key: &RecurrenceWalkKey) -> Option<(RecurrenceWalkBlueprint<M>, Grid)> {
         self.routine
-            .prepare(&self.hw, &GatedDeltaWalkProblem::from(key), &self.settings)
+            .prepare(&self.hw, &RecurrenceWalkProblem::from(key), &self.settings)
             .ok()
     }
 
     pub(super) fn run(
         &self,
-        inputs: GatedDeltaWalkInputs,
-    ) -> Result<GatedDeltaWalkOutputs, String> {
+        inputs: RecurrenceWalkInputs,
+    ) -> Result<RecurrenceWalkOutputs, String> {
         self.launch(inputs).map_err(|refusal| refusal.to_string())
     }
 }
 
 /// The candidate's name: its setting's, which is what a persisted winner is checksummed by.
-impl<R: Routine<Settings: core::fmt::Display>> core::fmt::Display for GatedDeltaWalkCandidate<R> {
+impl<R: Routine<Settings: core::fmt::Display>> core::fmt::Display for RecurrenceWalkCandidate<R> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.settings.fmt(f)
     }
 }
 
-impl<R, M: PartialEq> TuneCandidate for GatedDeltaWalkCandidate<R>
+impl<R, M: PartialEq> TuneCandidate for RecurrenceWalkCandidate<R>
 where
-    R: GatedDeltaWalkRoutine<M> + Routine<Microkernel = M, Blueprint = GatedDeltaWalkBlueprint<M>>,
+    R: RecurrenceWalkRoutine<M> + Routine<Microkernel = M, Blueprint = RecurrenceWalkBlueprint<M>>,
 {
     type Strategy = R::Settings;
-    type Key = GatedDeltaWalkKey;
+    type Key = RecurrenceWalkKey;
     /// The blueprint and the cube: the cube is kept out of a blueprint, and two settings preparing
     /// one blueprint can still launch different cubes.
-    type Blueprint = (GatedDeltaWalkBlueprint<M>, CubeDim);
+    type Blueprint = (RecurrenceWalkBlueprint<M>, CubeDim);
 
     fn strategy(&self) -> &R::Settings {
         &self.settings
@@ -111,7 +111,7 @@ where
 
     /// First, lowered a level for each halving the prepared grid falls short of filling the
     /// device; last where the routine declines the problem.
-    fn priority(&self, key: &GatedDeltaWalkKey) -> CandidatePriority {
+    fn priority(&self, key: &RecurrenceWalkKey) -> CandidatePriority {
         match self.prepared(key) {
             Some((_, grid)) => {
                 CandidatePriority::FIRST.lowered(short_of_the_device(&self.hw, &grid.launch))
@@ -120,7 +120,7 @@ where
         }
     }
 
-    fn blueprint(&self, key: &GatedDeltaWalkKey) -> Option<Self::Blueprint> {
+    fn blueprint(&self, key: &RecurrenceWalkKey) -> Option<Self::Blueprint> {
         self.prepared(key)
             .map(|(blueprint, grid)| (blueprint, grid.launch.cube_dim))
     }

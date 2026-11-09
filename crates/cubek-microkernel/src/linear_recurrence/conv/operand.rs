@@ -2,7 +2,7 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 
 /// One of the operands of the conv.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GatedDeltaConvOperand {
+pub enum QkNormedConvOperand {
     /// `[batch, channel]`: the newest value of every channel of the `q|k|v` stream over a window,
     /// or `[batch, stream_position, channel]` over a stream read by tap.
     Qkv,
@@ -16,11 +16,11 @@ pub enum GatedDeltaConvOperand {
     Query,
     /// `[batch, key_head, key_feature]`: the keys, normalized.
     Key,
-    /// `[batch, key_head, group, value_feature]`: the values.
+    /// `[batch, key_head, head_in_group, value_feature]`: the values.
     Value,
 }
 
-impl GatedDeltaConvOperand {
+impl QkNormedConvOperand {
     /// The operands a line of channels runs along over a window.
     pub const WINDOW_CHANNELS: [Self; 5] =
         [Self::Qkv, Self::Window, Self::Query, Self::Key, Self::Value];
@@ -54,7 +54,7 @@ impl GatedDeltaConvOperand {
 
 /// One value per operand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GatedDeltaConvOperandMap<T> {
+pub struct QkNormedConvOperandMap<T> {
     pub qkv: T,
     pub filters: T,
     pub window: T,
@@ -64,7 +64,7 @@ pub struct GatedDeltaConvOperandMap<T> {
     pub value: T,
 }
 
-impl<T: Copy> GatedDeltaConvOperandMap<T> {
+impl<T: Copy> QkNormedConvOperandMap<T> {
     /// The same value for every operand.
     pub fn splat(value: T) -> Self {
         Self {
@@ -79,15 +79,15 @@ impl<T: Copy> GatedDeltaConvOperandMap<T> {
     }
 
     /// The value `operand` holds.
-    pub fn get(&self, operand: GatedDeltaConvOperand) -> T {
+    pub fn get(&self, operand: QkNormedConvOperand) -> T {
         match operand {
-            GatedDeltaConvOperand::Qkv => self.qkv,
-            GatedDeltaConvOperand::Filters => self.filters,
-            GatedDeltaConvOperand::Window => self.window,
-            GatedDeltaConvOperand::Lengths => self.lengths,
-            GatedDeltaConvOperand::Query => self.query,
-            GatedDeltaConvOperand::Key => self.key,
-            GatedDeltaConvOperand::Value => self.value,
+            QkNormedConvOperand::Qkv => self.qkv,
+            QkNormedConvOperand::Filters => self.filters,
+            QkNormedConvOperand::Window => self.window,
+            QkNormedConvOperand::Lengths => self.lengths,
+            QkNormedConvOperand::Query => self.query,
+            QkNormedConvOperand::Key => self.key,
+            QkNormedConvOperand::Value => self.value,
         }
     }
 }

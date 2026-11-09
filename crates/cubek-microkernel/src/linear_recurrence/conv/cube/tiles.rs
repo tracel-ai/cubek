@@ -3,7 +3,7 @@ use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
 /// Every operand of the conv as a tile. The window and the lengths are absent over a stream.
 #[derive(CubeType)]
-pub struct GatedDeltaConvTiles {
+pub struct QkNormedConvTiles {
     /// The row's newest values over a window, the sequence's whole stream, its context columns
     /// first, over a stream.
     pub qkv: Tile,
@@ -19,9 +19,9 @@ pub struct GatedDeltaConvTiles {
 }
 
 #[cube]
-impl GatedDeltaConvTiles {
-    pub fn at(&self, region: &Region) -> GatedDeltaConvTiles {
-        GatedDeltaConvTiles {
+impl QkNormedConvTiles {
+    pub fn at(&self, region: &Region) -> QkNormedConvTiles {
+        QkNormedConvTiles {
             qkv: self.qkv.at(region),
             filters: self.filters.at(region),
             window: self.window.clone().map(|window| window.at(region)),

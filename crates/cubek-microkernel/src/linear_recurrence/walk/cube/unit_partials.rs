@@ -1,4 +1,4 @@
-use super::base::CubeGatedDeltaWalkMicrokernel;
+use super::base::CubeDeltaWalkMicrokernel;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
 /// What a unit's rows contribute to a sum over its run's units, as lines of the run's columns, and
@@ -14,7 +14,7 @@ pub struct UnitPartials<N: Size> {
     run: usize,
     unit: usize,
     #[cube(comptime)]
-    microkernel: CubeGatedDeltaWalkMicrokernel,
+    microkernel: CubeDeltaWalkMicrokernel,
     #[cube(comptime)]
     runs: usize,
 }
@@ -27,7 +27,7 @@ impl<N: Size> UnitPartials<N> {
         run: usize,
         unit: usize,
         #[comptime] runs: usize,
-        #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,
+        #[comptime] microkernel: CubeDeltaWalkMicrokernel,
     ) -> Self {
         let width = N::value();
         let parts = comptime!(microkernel.columns / width);

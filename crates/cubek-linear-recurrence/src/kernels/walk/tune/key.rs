@@ -1,9 +1,9 @@
 //! What makes two walks want the same kernel.
 
-use crate::kernels::walk::{GatedDeltaWalkInputs, GatedDeltaWalkProblem, GatedDeltaWalkStateKind};
+use crate::kernels::walk::{RecurrenceWalkInputs, RecurrenceWalkProblem, RecurrenceWalkStateKind};
 use cubecl::AutotuneKey;
 use cubecl::ir::ElemType;
-use cubek_microkernel::gated_delta::GatedDeltaHeads;
+use cubek_microkernel::linear_recurrence::RecurrenceHeads;
 use serde::{Deserialize, Serialize};
 
 /// What makes two walks want the same kernel.
@@ -14,23 +14,23 @@ use serde::{Deserialize, Serialize};
 /// varies. A store's slot count is no part of it: the kernel leaves the slots dynamic and a round
 /// measures on a scratch store of its rows.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
-pub struct GatedDeltaWalkKey {
-    heads: GatedDeltaHeads,
+pub struct RecurrenceWalkKey {
+    heads: RecurrenceHeads,
     output_element: ElemType,
-    state: GatedDeltaWalkStateKind,
+    state: RecurrenceWalkStateKind,
     #[autotune(anchor(exp(min = 1, max = 256, base = 2)))]
     batch: usize,
     #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
     positions: usize,
 }
 
-impl From<&GatedDeltaWalkInputs> for GatedDeltaWalkKey {
-    fn from(inputs: &GatedDeltaWalkInputs) -> Self {
+impl From<&RecurrenceWalkInputs> for RecurrenceWalkKey {
+    fn from(inputs: &RecurrenceWalkInputs) -> Self {
         let [batch, positions, key_heads, key_features] = inputs.query.shape().dims::<4>();
         let [_, _, value_heads, value_features] = inputs.value.shape().dims::<4>();
-        let heads = GatedDeltaHeads {
+        let heads = RecurrenceHeads {
             key_heads,
-            group: value_heads / key_heads,
+            heads_per_group: value_heads / key_heads,
             key_features,
             value_features,
         };
@@ -45,8 +45,8 @@ impl From<&GatedDeltaWalkInputs> for GatedDeltaWalkKey {
 }
 
 /// The problem a key describes, at its buckets' sequences and positions: dense operands.
-impl From<&GatedDeltaWalkKey> for GatedDeltaWalkProblem {
-    fn from(key: &GatedDeltaWalkKey) -> Self {
+impl From<&RecurrenceWalkKey> for RecurrenceWalkProblem {
+    fn from(key: &RecurrenceWalkKey) -> Self {
         Self::dense(
             key.batch,
             key.positions,

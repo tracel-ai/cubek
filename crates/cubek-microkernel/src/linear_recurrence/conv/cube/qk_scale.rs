@@ -1,5 +1,5 @@
 use super::convolved_head::ConvolvedHead;
-use crate::gated_delta::HEAD_CHANNEL;
+use crate::linear_recurrence::HEAD_CHANNEL;
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 

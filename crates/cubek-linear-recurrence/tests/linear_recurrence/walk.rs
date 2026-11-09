@@ -14,13 +14,13 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::metadata::Metadata;
-use cubek_gated_delta::kernels::walk::{
-    CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkInputs,
-    GatedDeltaWalkOutputs, GatedDeltaWalkProblem, GatedDeltaWalkRoutine, GatedDeltaWalkStateInputs,
-    GatedDeltaWalkTensors, launch_tuned,
+use cubek_linear_recurrence::kernels::walk::{
+    CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings, RecurrenceWalkInputs,
+    RecurrenceWalkOutputs, RecurrenceWalkProblem, RecurrenceWalkRoutine, RecurrenceWalkStateInputs,
+    RecurrenceWalkTensors, launch_tuned,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::gated_delta::GatedDeltaHeads;
+use cubek_microkernel::linear_recurrence::RecurrenceHeads;
 use cubek_std::Hardware;
 use cubek_std::autotune::GroupPriority;
 use cubek_std::routine::Routine;
@@ -30,7 +30,7 @@ use cubek_std::routine::Routine;
 pub struct Case {
     pub batch: usize,
     pub positions: usize,
-    pub heads: GatedDeltaHeads,
+    pub heads: RecurrenceHeads,
     pub kept: usize,
     pub masked: Vec<usize>,
 }
@@ -42,16 +42,16 @@ pub fn cases() -> Vec<Case> {
     let case = |batch,
                 positions,
                 key_heads,
-                group,
+                heads_per_group,
                 key_features,
                 value_features,
                 kept,
                 masked: &[usize]| Case {
         batch,
         positions,
-        heads: GatedDeltaHeads {
+        heads: RecurrenceHeads {
             key_heads,
-            group,
+            heads_per_group,
             key_features,
             value_features,
         },
@@ -206,7 +206,7 @@ impl Case {
         client: &Client,
         operands: &Operands,
         element: ElemType,
-    ) -> GatedDeltaWalkInputs {
+    ) -> RecurrenceWalkInputs {
         self.inputs_laid_out(client, operands, Layout::default(), element)
     }
 
@@ -217,7 +217,7 @@ impl Case {
         operands: &Operands,
         layout: Layout,
         element: ElemType,
-    ) -> GatedDeltaWalkInputs {
+    ) -> RecurrenceWalkInputs {
         let heads = &self.heads;
         let (b, t, kh, h) = (
             self.batch,
@@ -226,14 +226,14 @@ impl Case {
             self.value_heads(),
         );
         let up = |shape: &[usize], values: &[f32]| layout.upload(client, shape, values);
-        GatedDeltaWalkInputs {
+        RecurrenceWalkInputs {
             client: client.clone(),
             query: up(&[b, t, kh, heads.key_features], &operands.query),
             key: up(&[b, t, kh, heads.key_features], &operands.key),
             value: up(&[b, t, h, heads.value_features], &operands.value),
             decay: up(&[b, t, h], &operands.decay),
             strength: up(&[b, t, h], &operands.strength),
-            state: GatedDeltaWalkStateInputs::Owned {
+            state: RecurrenceWalkStateInputs::Owned {
                 state: up(
                     &[b, h, heads.key_features, heads.value_features],
                     &operands.state,
@@ -246,9 +246,9 @@ impl Case {
 
     /// The recurrence walked in `f64`: what each position reads, and the kept states.
     pub fn reference(&self, o: &Operands) -> (Vec<f64>, Vec<f64>) {
-        let GatedDeltaHeads {
+        let RecurrenceHeads {
             key_heads,
-            group,
+            heads_per_group,
             key_features: kd,
             value_features: vd,
         } = self.heads;
@@ -258,7 +258,7 @@ impl Case {
         let first = t_len - self.kept;
         for b in 0..self.batch {
             for h in 0..h_len {
-                let kh = h / group;
+                let kh = h / heads_per_group;
                 let at = ((b * h_len + h) * kd) * vd;
                 let mut s: Vec<f64> = o.state[at..at + kd * vd]
                     .iter()
@@ -295,7 +295,7 @@ impl Case {
         &self,
         client: &Client,
         o: &Operands,
-        walked: GatedDeltaWalkOutputs,
+        walked: RecurrenceWalkOutputs,
         element: ElemType,
         what: &str,
     ) {
@@ -330,8 +330,8 @@ pub fn output_tolerance(element: ElemType) -> f64 {
 }
 
 /// The problem `inputs` state, which a device admits or declines.
-fn problem_of(inputs: &GatedDeltaWalkInputs) -> GatedDeltaWalkProblem {
-    GatedDeltaWalkTensors::new(inputs.clone())
+fn problem_of(inputs: &RecurrenceWalkInputs) -> RecurrenceWalkProblem {
+    RecurrenceWalkTensors::new(inputs.clone())
         .expect("the harness hands elements the device runs")
         .problem()
         .clone()
@@ -342,12 +342,12 @@ fn problem_of(inputs: &GatedDeltaWalkInputs) -> GatedDeltaWalkProblem {
 /// refusal fails the test.
 pub fn walk_or_skip(
     hw: &Hardware,
-    inputs: GatedDeltaWalkInputs,
-    settings: &CubeGatedDeltaWalkRoutineSettings,
+    inputs: RecurrenceWalkInputs,
+    settings: &CubeDeltaWalkRoutineSettings,
     what: &str,
-) -> Option<GatedDeltaWalkOutputs> {
+) -> Option<RecurrenceWalkOutputs> {
     let problem = problem_of(&inputs);
-    match CubeGatedDeltaWalkRoutine.launch_on(hw, inputs, settings) {
+    match CubeDeltaWalkRoutine.launch_on(hw, inputs, settings) {
         Ok(walked) => Some(walked),
         Err(why) => {
             eprintln!("skipped, the device declines {what}: {why:?}");
@@ -361,9 +361,9 @@ pub fn walk_or_skip(
 pub fn tuned_or_skip(
     hw: &Hardware,
     device: &cubecl::Device,
-    inputs: GatedDeltaWalkInputs,
+    inputs: RecurrenceWalkInputs,
     what: &str,
-) -> Option<GatedDeltaWalkOutputs> {
+) -> Option<RecurrenceWalkOutputs> {
     if let Err(why) = problem_of(&inputs).admit(hw) {
         eprintln!("skipped, the device declines {what}: {why:?}");
         return None;
@@ -396,7 +396,7 @@ fn the_cube_walk_matches_the_reference() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
     for element in elements(&client) {
-        for settings in CubeGatedDeltaWalkRoutine.settings(&hw) {
+        for settings in CubeDeltaWalkRoutine.settings(&hw) {
             for case in cases() {
                 let operands = case.operands();
                 let inputs = case.inputs(&client, &operands, element);
@@ -414,7 +414,7 @@ fn the_cube_walk_matches_the_reference() {
 fn the_floor_matches_the_reference() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    let settings = CubeGatedDeltaWalkRoutineSettings::FLOOR;
+    let settings = CubeDeltaWalkRoutineSettings::FLOOR;
     for element in elements(&client) {
         for case in cases() {
             let operands = case.operands();
@@ -450,13 +450,13 @@ fn the_table_matches_the_reference() {
 fn a_masked_walk_passes_the_state_through() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    for settings in CubeGatedDeltaWalkRoutine.settings(&hw) {
+    for settings in CubeDeltaWalkRoutine.settings(&hw) {
         let case = Case {
             batch: 2,
             positions: 4,
-            heads: GatedDeltaHeads {
+            heads: RecurrenceHeads {
                 key_heads: 2,
-                group: 2,
+                heads_per_group: 2,
                 key_features: 40,
                 value_features: 36,
             },
@@ -513,8 +513,8 @@ fn the_walk_reads_operands_where_they_lie() {
     for element in elements(&client) {
         for layout in layouts {
             for settings in [
-                CubeGatedDeltaWalkRoutineSettings::DEFAULT,
-                CubeGatedDeltaWalkRoutineSettings::FLOOR,
+                CubeDeltaWalkRoutineSettings::DEFAULT,
+                CubeDeltaWalkRoutineSettings::FLOOR,
             ] {
                 for case in cases() {
                     let operands = case.operands();
@@ -539,9 +539,9 @@ fn the_table_serves_a_narrower_call_after_an_aligned_one() {
     let case = Case {
         batch: 1,
         positions: 8,
-        heads: GatedDeltaHeads {
+        heads: RecurrenceHeads {
             key_heads: 4,
-            group: 3,
+            heads_per_group: 3,
             key_features: 128,
             value_features: 128,
         },

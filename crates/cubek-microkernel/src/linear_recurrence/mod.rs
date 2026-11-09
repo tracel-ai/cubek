@@ -1,4 +1,4 @@
-//! The gated delta rule's microkernels: the recurrence a gated delta-rule layer carries per value
+//! The linear recurrence family's microkernels: the recurrence a layer carries per value
 //! head, walked through a sequence's positions ([`walk`]), the conv that produces its queries,
 //! keys and values ([`conv`]), and what its scopes share: the axes and the partitioning.
 

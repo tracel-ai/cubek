@@ -1,12 +1,12 @@
-//! The `gated_delta_walk` category: [`problems`] by [`strategies`], each row one walk in `f32`.
+//! The `recurrence_walk` category: [`problems`] by [`strategies`], each row one walk in `f32`.
 
 mod benchmark;
 mod problem;
 mod strategy;
 
 pub use benchmark::bench;
-pub use problem::{GatedDeltaWalkSpec, problems};
-pub use strategy::{GatedDeltaWalkStrategy, strategies};
+pub use problem::{RecurrenceWalkSpec, problems};
+pub use strategy::{RecurrenceWalkStrategy, strategies};
 
 use cubecl::benchmark::TimingMethod;
 use cubek_test_utils::{CatalogEntry, RunSamples};
@@ -14,22 +14,22 @@ use cubek_test_utils::{CatalogEntry, RunSamples};
 pub struct Category;
 
 impl cubek_test_utils::Category for Category {
-    type Problem = GatedDeltaWalkSpec;
-    type Strategy = GatedDeltaWalkStrategy;
+    type Problem = RecurrenceWalkSpec;
+    type Strategy = RecurrenceWalkStrategy;
 
     fn id(&self) -> &'static str {
-        "gated_delta_walk"
+        "recurrence_walk"
     }
 
     fn label(&self) -> &'static str {
-        "Gated delta walk"
+        "Recurrence walk"
     }
 
-    fn problems(&self) -> Vec<CatalogEntry<GatedDeltaWalkSpec>> {
+    fn problems(&self) -> Vec<CatalogEntry<RecurrenceWalkSpec>> {
         problems()
     }
 
-    fn strategies(&self) -> Vec<CatalogEntry<GatedDeltaWalkStrategy>> {
+    fn strategies(&self) -> Vec<CatalogEntry<RecurrenceWalkStrategy>> {
         strategies()
     }
 
@@ -39,8 +39,8 @@ impl cubek_test_utils::Category for Category {
 
     fn bench(
         &self,
-        strategy: &GatedDeltaWalkStrategy,
-        spec: &GatedDeltaWalkSpec,
+        strategy: &RecurrenceWalkStrategy,
+        spec: &RecurrenceWalkSpec,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
         bench(strategy, spec, num_samples)

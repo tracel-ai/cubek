@@ -1,11 +1,11 @@
 [package]
 authors = ["louisfd <louisfd94@gmail.com>"]
 categories = ["science", "mathematics", "algorithms"]
-description = "CubeK: Gated Delta Rule Kernels"
+description = "CubeK: Linear Recurrence Kernels"
 edition.workspace = true
 keywords = []
 license.workspace = true
-name = "cubek-gated-delta"
+name = "cubek-linear-recurrence"
 readme.workspace = true
 repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-linear-recurrence"
 version.workspace = true
@@ -24,7 +24,7 @@ benchmarks = ["std", "dep:cubek-test-utils", "cubecl/test-runtime"]
 
 [dependencies]
 cubek-matmul = { workspace = true, features = ["tiled"] }
-cubek-microkernel = { workspace = true, features = ["gated-delta"] }
+cubek-microkernel = { workspace = true, features = ["linear-recurrence"] }
 cubek-std = { workspace = true }
 
 cubecl = { workspace = true, features = ["stdlib", "tile"] }

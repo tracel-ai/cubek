@@ -5,7 +5,7 @@
 //! Each row reads the columns of its window slot that its length says it holds, and writes its
 //! newest values as the window's next column. A column it does not hold reads as zero. A stream
 //! reads its own context columns and writes nothing back. The microkernel is
-//! [`cubek_microkernel::gated_delta::conv`]'s.
+//! [`cubek_microkernel::linear_recurrence::conv`]'s.
 
 mod blueprint;
 mod kernel;

@@ -1,17 +1,17 @@
-use super::kernel::cube_gated_delta_walk_kernel;
+use super::kernel::cube_delta_walk_kernel;
 use crate::kernels::walk::{
-    GATED_DELTA_WALK_ELEMENT, GatedDeltaWalkBinding, GatedDeltaWalkBlueprint,
-    GatedDeltaWalkProblem, GatedDeltaWalkRoutine, GatedDeltaWalkTensors, settled_width,
+    RECURRENCE_WALK_ELEMENT, RecurrenceWalkBinding, RecurrenceWalkBlueprint, RecurrenceWalkProblem,
+    RecurrenceWalkRoutine, RecurrenceWalkTensors, settled_width,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Levels;
 use cubecl::tile::launch::{Refusal, Vectorization};
-use cubek_microkernel::gated_delta::walk::GatedDeltaWalkOperand;
-use cubek_microkernel::gated_delta::walk::cube::{
-    CubeGatedDeltaWalkMicrokernel, CubeGatedDeltaWalkMicrokernelSettings, MAX_HELD_LINES_PER_UNIT,
+use cubek_microkernel::linear_recurrence::walk::RecurrenceWalkOperand;
+use cubek_microkernel::linear_recurrence::walk::cube::{
+    CubeDeltaWalkMicrokernel, CubeWalkMicrokernelSettings, MAX_HELD_LINES_PER_UNIT,
 };
-use cubek_microkernel::gated_delta::{
-    GROUP, GatedDeltaWalkPartitioning, KEY_FEATURE, KEY_HEAD, POSITION, VALUE_FEATURE,
+use cubek_microkernel::linear_recurrence::{
+    HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceWalkPartitioning, VALUE_FEATURE,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
@@ -30,25 +30,25 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// Every run of a cube reads the same queries and keys, those of its head's key head, a position
 /// at a time, so the cube's runs share those reads through the device's caches.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CubeGatedDeltaWalkRoutine;
+pub struct CubeDeltaWalkRoutine;
 
-/// What a [`CubeGatedDeltaWalkRoutine`] launch is measured at: its microkernel's cells, and how
+/// What a [`CubeDeltaWalkRoutine`] launch is measured at: its microkernel's cells, and how
 /// many of its runs a cube holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeGatedDeltaWalkRoutineSettings {
-    pub microkernel: CubeGatedDeltaWalkMicrokernelSettings,
+pub struct CubeDeltaWalkRoutineSettings {
+    pub microkernel: CubeWalkMicrokernelSettings,
     /// Runs a cube holds, `columns` of the head's value columns each: a target, fewer where the
     /// cube's units run out or the head's runs of columns do not divide.
     pub runs: NonZeroUsize,
 }
 
-impl CubeGatedDeltaWalkRoutineSettings {
+impl CubeDeltaWalkRoutineSettings {
     /// Eight runs a cube: a 128-wide head read four columns at a time in four cubes.
-    pub const DEFAULT: Self = Self::new(CubeGatedDeltaWalkMicrokernelSettings::DEFAULT, 8);
+    pub const DEFAULT: Self = Self::new(CubeWalkMicrokernelSettings::DEFAULT, 8);
     /// One run a cube at the fewest registers: what every admitted problem prepares.
-    pub const FLOOR: Self = Self::new(CubeGatedDeltaWalkMicrokernelSettings::FLOOR, 1);
+    pub const FLOOR: Self = Self::new(CubeWalkMicrokernelSettings::FLOOR, 1);
 
-    pub const fn new(microkernel: CubeGatedDeltaWalkMicrokernelSettings, runs: usize) -> Self {
+    pub const fn new(microkernel: CubeWalkMicrokernelSettings, runs: usize) -> Self {
         Self {
             microkernel,
             runs: NonZeroUsize::new(runs).unwrap(),
@@ -61,8 +61,8 @@ impl CubeGatedDeltaWalkRoutineSettings {
     fn runs_of(
         &self,
         hw: &Hardware,
-        microkernel: &CubeGatedDeltaWalkMicrokernel,
-        problem: &GatedDeltaWalkProblem,
+        microkernel: &CubeDeltaWalkMicrokernel,
+        problem: &RecurrenceWalkProblem,
     ) -> usize {
         let in_head = problem.heads.value_features / microkernel.columns;
         let in_memory = hw.shared_memory_budget() / microkernel.shared_memory(1);
@@ -77,31 +77,26 @@ impl CubeGatedDeltaWalkRoutineSettings {
     }
 }
 
-impl core::fmt::Display for CubeGatedDeltaWalkRoutineSettings {
+impl core::fmt::Display for CubeDeltaWalkRoutineSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "cube-gated-delta-walk {} runs={}",
-            self.microkernel, self.runs
-        )
+        write!(f, "cube-delta-walk {} runs={}", self.microkernel, self.runs)
     }
 }
 
-pub type CubeGatedDeltaWalkRoutineBlueprint =
-    GatedDeltaWalkBlueprint<CubeGatedDeltaWalkMicrokernel>;
+pub type CubeDeltaWalkRoutineBlueprint = RecurrenceWalkBlueprint<CubeDeltaWalkMicrokernel>;
 
-impl Routine for CubeGatedDeltaWalkRoutine {
-    type Problem = GatedDeltaWalkProblem;
-    type Microkernel = CubeGatedDeltaWalkMicrokernel;
-    type Settings = CubeGatedDeltaWalkRoutineSettings;
-    type Blueprint = CubeGatedDeltaWalkRoutineBlueprint;
-    type Partitioning = GatedDeltaWalkPartitioning;
+impl Routine for CubeDeltaWalkRoutine {
+    type Problem = RecurrenceWalkProblem;
+    type Microkernel = CubeDeltaWalkMicrokernel;
+    type Settings = CubeDeltaWalkRoutineSettings;
+    type Blueprint = CubeDeltaWalkRoutineBlueprint;
+    type Partitioning = RecurrenceWalkPartitioning;
 
     /// Each of its microkernel's settings at the default runs, then the default's cells in
     /// cubes of a whole head and of a few runs.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         let default = Self::Settings::DEFAULT;
-        CubeGatedDeltaWalkMicrokernel::settings(hw)
+        CubeDeltaWalkMicrokernel::settings(hw)
             .into_iter()
             .map(|microkernel| Self::Settings::new(microkernel, default.runs.get()))
             .chain([
@@ -114,9 +109,9 @@ impl Routine for CubeGatedDeltaWalkRoutine {
     /// Nothing of its own: it walks cubes and runs, and its microkernel makes every access.
     fn vectorize(
         &self,
-        microkernel: &CubeGatedDeltaWalkMicrokernel,
-        _: &GatedDeltaWalkPartitioning,
-        vectorization: &mut Vectorization<GatedDeltaWalkOperand>,
+        microkernel: &CubeDeltaWalkMicrokernel,
+        _: &RecurrenceWalkPartitioning,
+        vectorization: &mut Vectorization<RecurrenceWalkOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
     }
@@ -126,12 +121,12 @@ impl Routine for CubeGatedDeltaWalkRoutine {
     /// work.
     fn estimate(
         &self,
-        problem: &GatedDeltaWalkProblem,
-        blueprint: &CubeGatedDeltaWalkRoutineBlueprint,
+        problem: &RecurrenceWalkProblem,
+        blueprint: &CubeDeltaWalkRoutineBlueprint,
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let input_bytes = GATED_DELTA_WALK_ELEMENT.size();
+        let input_bytes = RECURRENCE_WALK_ELEMENT.size();
         let columns = blueprint.runs * blueprint.microkernel.columns;
         let positions = problem.positions;
         let key_features = problem.heads.key_features;
@@ -167,7 +162,7 @@ impl Routine for CubeGatedDeltaWalkRoutine {
     fn prepare(
         &self,
         hw: &Hardware,
-        problem: &GatedDeltaWalkProblem,
+        problem: &RecurrenceWalkProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.admit_launch(hw)?;
@@ -175,9 +170,9 @@ impl Routine for CubeGatedDeltaWalkRoutine {
         // The width the operands bind at does not depend on the rows a unit holds, so it is settled
         // first, and the cells a unit holds are capped to the lines its registers bound at it.
         let mut vectorization = Vectorization::new();
-        GatedDeltaWalkOperand::require(heads.columns(), heads.columns(), &mut vectorization);
+        RecurrenceWalkOperand::require(heads.columns(), heads.columns(), &mut vectorization);
         let width = settled_width(hw, problem, vectorization);
-        let microkernel = CubeGatedDeltaWalkMicrokernel::best(
+        let microkernel = CubeDeltaWalkMicrokernel::best(
             hw,
             heads,
             &settings
@@ -188,19 +183,19 @@ impl Routine for CubeGatedDeltaWalkRoutine {
         let mut unit_axes = vec![
             (POSITION, 1),
             (KEY_HEAD, 1),
-            (GROUP, 1),
+            (HEAD_IN_GROUP, 1),
             (KEY_FEATURE, microkernel.rows),
             (VALUE_FEATURE, microkernel.columns),
         ];
         unit_axes.extend(problem.state.kept_axis());
         let unit = Levels::leaf(&unit_axes);
-        let partitioning = GatedDeltaWalkPartitioning::new(
+        let partitioning = RecurrenceWalkPartitioning::new(
             problem.space(),
             unit.walk_every(&[POSITION])
                 .units(&[(KEY_FEATURE, microkernel.units)])
                 .planes(&[(VALUE_FEATURE, runs)]),
         );
-        let blueprint = GatedDeltaWalkBlueprint::new(microkernel, partitioning, width, runs);
+        let blueprint = RecurrenceWalkBlueprint::new(microkernel, partitioning, width, runs);
         let cube = CubeResources {
             plane_width: microkernel.units as u32,
             shared_memory: microkernel.shared_memory(runs),
@@ -210,19 +205,19 @@ impl Routine for CubeGatedDeltaWalkRoutine {
     }
 }
 
-impl GatedDeltaWalkRoutine<CubeGatedDeltaWalkMicrokernel> for CubeGatedDeltaWalkRoutine {
+impl RecurrenceWalkRoutine<CubeDeltaWalkMicrokernel> for CubeDeltaWalkRoutine {
     fn dispatch(
         &self,
-        tensors: &GatedDeltaWalkTensors,
-        binding: GatedDeltaWalkBinding,
-        blueprint: CubeGatedDeltaWalkRoutineBlueprint,
+        tensors: &RecurrenceWalkTensors,
+        binding: RecurrenceWalkBinding,
+        blueprint: CubeDeltaWalkRoutineBlueprint,
         grid: Grid,
     ) {
         // SAFETY: every operand is bound through the launcher, and the kernel indexes no buffer but
         // through its tiles, which mask what the units overhang. Its shared memory is indexed by
         // its runs' and units' own positions, within the slots it declares.
         unsafe {
-            cube_gated_delta_walk_kernel::launch_unchecked(
+            cube_delta_walk_kernel::launch_unchecked(
                 tensors.client(),
                 grid.launch.cube_count,
                 grid.launch.cube_dim,
@@ -249,10 +244,10 @@ impl GatedDeltaWalkRoutine<CubeGatedDeltaWalkMicrokernel> for CubeGatedDeltaWalk
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::walk::GatedDeltaWalkStateLayout;
+    use crate::kernels::walk::RecurrenceWalkStateLayout;
     use crate::kernels::walk::problem::fixtures::binding_enough;
     use cubecl::tile::launch::Refusal;
-    use cubek_microkernel::gated_delta::GatedDeltaHeads;
+    use cubek_microkernel::linear_recurrence::RecurrenceHeads;
     use cubek_std::devices;
     use cubek_std::routine::EstimatedProblem;
 
@@ -261,20 +256,20 @@ mod tests {
         positions: usize,
         heads: (usize, usize, usize, usize),
         kept: usize,
-    ) -> GatedDeltaWalkProblem {
-        let (key_heads, group, key_features, value_features) = heads;
-        let heads = GatedDeltaHeads {
+    ) -> RecurrenceWalkProblem {
+        let (key_heads, heads_per_group, key_features, value_features) = heads;
+        let heads = RecurrenceHeads {
             key_heads,
-            group,
+            heads_per_group,
             key_features,
             value_features,
         };
-        GatedDeltaWalkProblem::dense(
+        RecurrenceWalkProblem::dense(
             batch,
             positions,
             heads,
-            GATED_DELTA_WALK_ELEMENT,
-            GatedDeltaWalkStateLayout::Owned {
+            RECURRENCE_WALK_ELEMENT,
+            RecurrenceWalkStateLayout::Owned {
                 kept: NonZeroUsize::new(kept).expect("a state is kept"),
             },
         )
@@ -285,9 +280,9 @@ mod tests {
         positions: usize,
         heads: (usize, usize, usize, usize),
         slots: usize,
-    ) -> GatedDeltaWalkProblem {
+    ) -> RecurrenceWalkProblem {
         let mut problem = walk(batch, positions, heads, 1);
-        problem.state = GatedDeltaWalkStateLayout::Slots {
+        problem.state = RecurrenceWalkStateLayout::Slots {
             slots: NonZeroUsize::new(slots).expect("a store holds a slot"),
         };
         problem
@@ -297,7 +292,7 @@ mod tests {
     /// state kept, value heads that are their own key heads, heads of odd widths, key rows no unit
     /// takes whole, and many sequences; then the walks in a store's slots of a decode step, three
     /// positions and an odd head.
-    fn problems() -> [GatedDeltaWalkProblem; 10] {
+    fn problems() -> [RecurrenceWalkProblem; 10] {
         [
             walk(1, 1, (16, 3, 128, 128), 1),
             walk(1, 512, (16, 3, 128, 128), 4),
@@ -330,14 +325,14 @@ mod tests {
     /// says so with the microkernel's refusal.
     #[test]
     fn the_floor_prepares_everything_a_cube_of_units_holds() {
-        let floor = CubeGatedDeltaWalkRoutineSettings::FLOOR;
+        let floor = CubeDeltaWalkRoutineSettings::FLOOR;
         let declined = Refusal::Declined {
-            why: CubeGatedDeltaWalkMicrokernel::DECLINE,
+            why: CubeDeltaWalkMicrokernel::DECLINE,
         };
         for hw in fleet() {
             let cpu = hw.properties.hardware.max_units_per_cube < 256;
             for problem in problems() {
-                let prepared = CubeGatedDeltaWalkRoutine.prepare(&hw, &problem, &floor);
+                let prepared = CubeDeltaWalkRoutine.prepare(&hw, &problem, &floor);
                 let key_features = problem.heads.key_features;
                 if key_features == 100 || (cpu && key_features == 128) {
                     assert_eq!(prepared.as_ref().err(), Some(&declined), "{problem:?}");
@@ -355,14 +350,14 @@ mod tests {
     #[test]
     fn no_setting_past_admission_declines_or_holds_more_lines_than_the_bound() {
         for hw in fleet() {
-            for settings in CubeGatedDeltaWalkRoutine.settings(&hw) {
+            for settings in CubeDeltaWalkRoutine.settings(&hw) {
                 for mut problem in problems() {
                     for start in [0, 4] {
                         problem.start_bytes.state = start;
                         if problem.admit(&hw).is_err() {
                             continue;
                         }
-                        let (blueprint, _) = CubeGatedDeltaWalkRoutine
+                        let (blueprint, _) = CubeDeltaWalkRoutine
                             .prepare(&hw, &problem, &settings)
                             .unwrap_or_else(|why| panic!("{settings} {problem:?}: {why:?}"));
                         let held = blueprint.microkernel.held_lines(blueprint.width);
@@ -381,11 +376,9 @@ mod tests {
     fn a_unit_holds_the_cells_its_settings_target() {
         let hw = binding_enough(devices::strix_halo());
         let shape = |heads: (usize, usize, usize, usize), cells: usize| {
-            let settings = CubeGatedDeltaWalkRoutineSettings::new(
-                CubeGatedDeltaWalkMicrokernelSettings::new(cells),
-                8,
-            );
-            let (blueprint, _) = CubeGatedDeltaWalkRoutine
+            let settings =
+                CubeDeltaWalkRoutineSettings::new(CubeWalkMicrokernelSettings::new(cells), 8);
+            let (blueprint, _) = CubeDeltaWalkRoutine
                 .prepare(&hw, &walk(1, 7, heads, 1), &settings)
                 .expect("the floor prepares");
             let microkernel = blueprint.microkernel;
@@ -412,8 +405,8 @@ mod tests {
             ((2, 3, 12, 8), false),
         ] {
             let problem = walk(1, 7, heads, 1);
-            let (blueprint, grid) = CubeGatedDeltaWalkRoutine
-                .prepare(&hw, &problem, &CubeGatedDeltaWalkRoutineSettings::DEFAULT)
+            let (blueprint, grid) = CubeDeltaWalkRoutine
+                .prepare(&hw, &problem, &CubeDeltaWalkRoutineSettings::DEFAULT)
                 .expect("prepares");
             let microkernel = blueprint.microkernel;
             let partitioning = blueprint.partitioning.as_cubek();
@@ -437,21 +430,21 @@ mod tests {
     fn a_head_whose_units_would_overrun_unmasked_is_declined() {
         let hw = devices::h100();
         let declined = Refusal::Declined {
-            why: CubeGatedDeltaWalkMicrokernel::DECLINE,
+            why: CubeDeltaWalkMicrokernel::DECLINE,
         };
         for heads in [(2, 3, 12, 8), (2, 3, 40, 36), (2, 3, 100, 12)] {
             let problem = walk(1, 7, heads, 1);
             assert_eq!(
-                CubeGatedDeltaWalkRoutine
-                    .prepare(&hw, &problem, &CubeGatedDeltaWalkRoutineSettings::FLOOR)
+                CubeDeltaWalkRoutine
+                    .prepare(&hw, &problem, &CubeDeltaWalkRoutineSettings::FLOOR)
                     .err(),
                 Some(declined.clone()),
                 "{heads:?}"
             );
             assert_eq!(problem.admit(&hw), Err(declined.clone()), "{heads:?}");
             assert!(
-                CubeGatedDeltaWalkRoutine
-                    .prepare(&hw, &problem, &CubeGatedDeltaWalkRoutineSettings::DEFAULT)
+                CubeDeltaWalkRoutine
+                    .prepare(&hw, &problem, &CubeDeltaWalkRoutineSettings::DEFAULT)
                     .is_ok(),
                 "{heads:?}"
             );
@@ -463,13 +456,13 @@ mod tests {
     #[test]
     fn a_narrower_width_holds_fewer_rows_in_more_units() {
         let hw = devices::h100();
-        let settings = CubeGatedDeltaWalkRoutineSettings::DEFAULT;
+        let settings = CubeDeltaWalkRoutineSettings::DEFAULT;
         let mut problem = walk(1, 7, (2, 3, 128, 128), 1);
-        let (aligned, _) = CubeGatedDeltaWalkRoutine
+        let (aligned, _) = CubeDeltaWalkRoutine
             .prepare(&hw, &problem, &settings)
             .expect("prepares");
         problem.start_bytes.state = 4;
-        let (offset, _) = CubeGatedDeltaWalkRoutine
+        let (offset, _) = CubeDeltaWalkRoutine
             .prepare(&hw, &problem, &settings)
             .expect("an offset view is served at the same setting");
         assert!(offset.width < aligned.width);
@@ -483,8 +476,8 @@ mod tests {
     fn the_cube_asks_the_shared_memory_its_microkernel_counts() {
         let hw = devices::h100();
         for problem in problems() {
-            let (blueprint, grid) = CubeGatedDeltaWalkRoutine
-                .prepare(&hw, &problem, &CubeGatedDeltaWalkRoutineSettings::DEFAULT)
+            let (blueprint, grid) = CubeDeltaWalkRoutine
+                .prepare(&hw, &problem, &CubeDeltaWalkRoutineSettings::DEFAULT)
                 .expect("prepares");
             assert_eq!(
                 grid.shared_memory,
@@ -499,16 +492,15 @@ mod tests {
     fn every_routine_estimates_every_setting_whole() {
         let hw = devices::h100();
         let mut prepared = 0;
-        for settings in CubeGatedDeltaWalkRoutine.settings(&hw) {
+        for settings in CubeDeltaWalkRoutine.settings(&hw) {
             for problem in problems() {
-                let Ok((blueprint, grid)) =
-                    CubeGatedDeltaWalkRoutine.prepare(&hw, &problem, &settings)
+                let Ok((blueprint, grid)) = CubeDeltaWalkRoutine.prepare(&hw, &problem, &settings)
                 else {
                     continue;
                 };
                 prepared += 1;
                 let mut estimate = KernelEstimate::from(&grid);
-                CubeGatedDeltaWalkRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
+                CubeDeltaWalkRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
                 assert!(estimate.work.is_some(), "{settings}: no work");
                 let staging = estimate.staging.as_ref().expect("staging");
                 assert!(

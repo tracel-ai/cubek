@@ -1,5 +1,5 @@
-use crate::gated_delta::GatedDeltaHeads;
-use crate::gated_delta::conv::GatedDeltaConvOperand;
+use crate::linear_recurrence::RecurrenceHeads;
+use crate::linear_recurrence::conv::QkNormedConvOperand;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
@@ -12,19 +12,19 @@ const MOST_UNITS: usize = 64;
 /// What a conv is: the heads whose channels it mixes, the filter's taps and the operands its case
 /// reads along their channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GatedDeltaConvWorkItem {
-    pub heads: GatedDeltaHeads,
+pub struct QkNormedConvWorkItem {
+    pub heads: RecurrenceHeads,
     pub taps: usize,
-    pub channels: &'static [GatedDeltaConvOperand],
+    pub channels: &'static [QkNormedConvOperand],
 }
 
-impl GatedDeltaConvWorkItem {
+impl QkNormedConvWorkItem {
     /// Whether the heads hold no key head, value head or feature: nothing to convolve.
     pub fn is_empty(&self) -> bool {
         let heads = &self.heads;
         [
             heads.key_heads,
-            heads.group,
+            heads.heads_per_group,
             heads.key_features,
             heads.value_features,
         ]
@@ -39,25 +39,25 @@ impl GatedDeltaConvWorkItem {
 
 /// The conv has nothing to measure: one rule places its units.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct GatedDeltaConvSettings;
+pub struct QkNormedConvSettings;
 
-impl core::fmt::Display for GatedDeltaConvSettings {
+impl core::fmt::Display for QkNormedConvSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("cube-gated-delta-conv")
+        f.write_str("cube-qk-normed-conv")
     }
 }
 
 /// A cube's key head, its channels dealt between `units` units. It reads no plane instruction, only
 /// shared memory to meet the norms in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeGatedDeltaConvMicrokernel {
+pub struct CubeQkNormedConvMicrokernel {
     pub units: usize,
     pub taps: usize,
-    pub heads: GatedDeltaHeads,
-    pub channels: &'static [GatedDeltaConvOperand],
+    pub heads: RecurrenceHeads,
+    pub channels: &'static [QkNormedConvOperand],
 }
 
-impl CubeGatedDeltaConvMicrokernel {
+impl CubeQkNormedConvMicrokernel {
     /// Bytes of shared memory for the head's convolved queries and keys and their sums of squares,
     /// at the narrowest width.
     pub fn shared_memory(&self) -> usize {
@@ -65,21 +65,21 @@ impl CubeGatedDeltaConvMicrokernel {
     }
 }
 
-impl Microkernel for CubeGatedDeltaConvMicrokernel {
-    type WorkItem = GatedDeltaConvWorkItem;
-    type Settings = GatedDeltaConvSettings;
-    type Operand = GatedDeltaConvOperand;
+impl Microkernel for CubeQkNormedConvMicrokernel {
+    type WorkItem = QkNormedConvWorkItem;
+    type Settings = QkNormedConvSettings;
+    type Operand = QkNormedConvOperand;
     type CubeSpace = ();
 
     const DECLINE: &'static str = "the device spawns no cube of units for the conv";
 
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
-        vec![GatedDeltaConvSettings]
+        vec![QkNormedConvSettings]
     }
 
     fn candidates(
         hw: &Hardware,
-        item: &GatedDeltaConvWorkItem,
+        item: &QkNormedConvWorkItem,
         _: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
         let hardware = &hw.properties.hardware;
@@ -97,8 +97,8 @@ impl Microkernel for CubeGatedDeltaConvMicrokernel {
             .into_iter()
     }
 
-    fn vectorize(&self, _: &(), vectorization: &mut Vectorization<GatedDeltaConvOperand>) {
-        GatedDeltaConvOperand::require(
+    fn vectorize(&self, _: &(), vectorization: &mut Vectorization<QkNormedConvOperand>) {
+        QkNormedConvOperand::require(
             self.channels,
             self.heads.key_features,
             self.heads.value_features,
@@ -108,7 +108,7 @@ impl Microkernel for CubeGatedDeltaConvMicrokernel {
 
     fn estimate(
         &self,
-        _item: &GatedDeltaConvWorkItem,
+        _item: &QkNormedConvWorkItem,
         _: &(),
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,

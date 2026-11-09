@@ -1,5 +1,5 @@
-use super::tiles::GatedDeltaConvTiles;
-use crate::gated_delta::{POSITION, RING_COLUMN, STREAM_POSITION, walked};
+use super::tiles::QkNormedConvTiles;
+use crate::linear_recurrence::{POSITION, RING_COLUMN, STREAM_POSITION, walked};
 use cubecl::tile::{Axis, Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
@@ -18,11 +18,7 @@ pub(super) struct PastTaps {
 
 #[cube]
 impl PastTaps {
-    pub fn new(
-        cube: &Region,
-        tiles: &GatedDeltaConvTiles,
-        #[comptime] read_columns: usize,
-    ) -> Self {
+    pub fn new(cube: &Region, tiles: &QkNormedConvTiles, #[comptime] read_columns: usize) -> Self {
         PastTaps {
             qkv: tiles.qkv.clone(),
             window: tiles.window.clone(),

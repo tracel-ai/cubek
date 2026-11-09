@@ -1,15 +1,15 @@
 //! A conv launch's compile-time decisions.
 
-use crate::kernels::conv::{GATED_DELTA_CONV_OUTPUT_ELEMENT, GatedDeltaConvProblem};
+use crate::kernels::conv::{QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem};
 use cubecl::client::Client;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Launcher, Levels};
-use cubek_microkernel::gated_delta::conv::GatedDeltaConvOperand;
-use cubek_microkernel::gated_delta::conv::cube::{
-    CubeGatedDeltaConvMicrokernel, GatedDeltaConvSettings,
+use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperand;
+use cubek_microkernel::linear_recurrence::conv::cube::{
+    CubeQkNormedConvMicrokernel, QkNormedConvSettings,
 };
-use cubek_microkernel::gated_delta::{GatedDeltaConvPartitioning, HEAD_CHANNEL};
+use cubek_microkernel::linear_recurrence::{HEAD_CHANNEL, QkNormedConvPartitioning};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_std::routine::{CubeResources, Grid};
@@ -17,29 +17,29 @@ use cubek_std::routine::{CubeResources, Grid};
 /// What a conv launch compiles: the microkernel, the partitioning, and the width the channels bind
 /// at.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GatedDeltaConvBlueprint {
-    pub microkernel: CubeGatedDeltaConvMicrokernel,
-    pub partitioning: GatedDeltaConvPartitioning,
+pub struct QkNormedConvBlueprint {
+    pub microkernel: CubeQkNormedConvMicrokernel,
+    pub partitioning: QkNormedConvPartitioning,
     pub width: usize,
 }
 
-impl GatedDeltaConvBlueprint {
+impl QkNormedConvBlueprint {
     /// The launch of `problem` on `hw`: no cube holds more units than a head has lines.
     pub(crate) fn prepare(
         hw: &Hardware,
-        problem: &GatedDeltaConvProblem,
-        settings: &GatedDeltaConvSettings,
+        problem: &QkNormedConvProblem,
+        settings: &QkNormedConvSettings,
     ) -> Result<(Self, Grid), Refusal> {
         problem.admit_launch(hw)?;
         let item = problem.work_item();
-        let provisional = CubeGatedDeltaConvMicrokernel::best(hw, &item, settings)?;
+        let provisional = CubeQkNormedConvMicrokernel::best(hw, &item, settings)?;
         let width = Self::settled_width(hw, problem, &provisional);
         let lines = item.heads.channels_per_key_head() / width;
-        let microkernel = CubeGatedDeltaConvMicrokernel {
+        let microkernel = CubeQkNormedConvMicrokernel {
             units: provisional.units.min(lines),
             ..provisional
         };
-        let partitioning = GatedDeltaConvPartitioning::new(
+        let partitioning = QkNormedConvPartitioning::new(
             problem.space(),
             Levels::leaf(&problem.leaf(width)).units_distributed(HEAD_CHANNEL, lines),
         );
@@ -69,13 +69,13 @@ impl GatedDeltaConvBlueprint {
     /// view start admit.
     fn settled_width(
         hw: &Hardware,
-        problem: &GatedDeltaConvProblem,
-        microkernel: &CubeGatedDeltaConvMicrokernel,
+        problem: &QkNormedConvProblem,
+        microkernel: &CubeQkNormedConvMicrokernel,
     ) -> usize {
         let element = |operand| match operand {
-            GatedDeltaConvOperand::Query
-            | GatedDeltaConvOperand::Key
-            | GatedDeltaConvOperand::Value => GATED_DELTA_CONV_OUTPUT_ELEMENT,
+            QkNormedConvOperand::Query | QkNormedConvOperand::Key | QkNormedConvOperand::Value => {
+                QK_NORMED_CONV_OUTPUT_ELEMENT
+            }
             _ => problem.element,
         };
         let mut vectorization = Vectorization::new();
@@ -93,7 +93,7 @@ impl GatedDeltaConvBlueprint {
                 ),
             });
         }
-        vectorization.width(GatedDeltaConvOperand::Qkv, |operand| {
+        vectorization.width(QkNormedConvOperand::Qkv, |operand| {
             hw.vector_ceiling(element(operand))
         })
     }

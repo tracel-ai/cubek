@@ -1,7 +1,7 @@
-use super::{GatedDeltaWalkSpec, GatedDeltaWalkStrategy};
+use super::{RecurrenceWalkSpec, RecurrenceWalkStrategy};
 use crate::kernels::walk::{
-    CubeGatedDeltaWalkRoutine, GatedDeltaWalkInputs, GatedDeltaWalkRoutine,
-    GatedDeltaWalkStateInputs, GatedDeltaWalkStateLayout, launch_tuned, serves,
+    CubeDeltaWalkRoutine, RecurrenceWalkInputs, RecurrenceWalkRoutine, RecurrenceWalkStateInputs,
+    RecurrenceWalkStateLayout, launch_tuned, serves,
 };
 use core::num::NonZeroUsize;
 use cubecl::benchmark::{Benchmark, ProfileDuration, TimingMethod};
@@ -17,13 +17,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// `spec`'s walk in `f32`, run by `strategy` on `cubecl::TestRuntime`: the raw samples.
 pub fn bench(
-    strategy: &GatedDeltaWalkStrategy,
-    spec: &GatedDeltaWalkSpec,
+    strategy: &RecurrenceWalkStrategy,
+    spec: &RecurrenceWalkSpec,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let device = cubecl::test_device();
     let client = device.client();
-    let bench = GatedDeltaWalkBench {
+    let bench = RecurrenceWalkBench {
         spec: *spec,
         strategy: *strategy,
         rotation: SlotRotation::new(&client, spec),
@@ -48,10 +48,10 @@ struct SlotRotation {
 impl SlotRotation {
     /// The tables that place `spec`'s rows in consecutive slots, wrapping around the store; none
     /// for a walk over states it owns.
-    fn new(client: &Client, spec: &GatedDeltaWalkSpec) -> Self {
+    fn new(client: &Client, spec: &RecurrenceWalkSpec) -> Self {
         let tables = match spec.state {
-            GatedDeltaWalkStateLayout::Owned { .. } => Vec::new(),
-            GatedDeltaWalkStateLayout::Slots { slots } => (0..slots.get() / spec.batch)
+            RecurrenceWalkStateLayout::Owned { .. } => Vec::new(),
+            RecurrenceWalkStateLayout::Slots { slots } => (0..slots.get() / spec.batch)
                 .map(|turn| {
                     let rows: Vec<u32> = (0..spec.batch)
                         .map(|row| ((turn * spec.batch + row) % slots.get()) as u32)
@@ -67,8 +67,8 @@ impl SlotRotation {
     }
 
     /// `inputs` with the next table of the rotation placing its rows.
-    fn turned(&self, mut inputs: GatedDeltaWalkInputs) -> GatedDeltaWalkInputs {
-        if let GatedDeltaWalkStateInputs::Slots { slots, .. } = &mut inputs.state {
+    fn turned(&self, mut inputs: RecurrenceWalkInputs) -> RecurrenceWalkInputs {
+        if let RecurrenceWalkStateInputs::Slots { slots, .. } = &mut inputs.state {
             let turn = self.next.fetch_add(1, Ordering::Relaxed);
             *slots = self.tables[turn % self.tables.len()].clone();
         }
@@ -76,16 +76,16 @@ impl SlotRotation {
     }
 }
 
-struct GatedDeltaWalkBench {
-    spec: GatedDeltaWalkSpec,
-    strategy: GatedDeltaWalkStrategy,
+struct RecurrenceWalkBench {
+    spec: RecurrenceWalkSpec,
+    strategy: RecurrenceWalkStrategy,
     rotation: SlotRotation,
     device: Device,
     client: Client,
     samples: usize,
 }
 
-impl GatedDeltaWalkBench {
+impl RecurrenceWalkBench {
     /// A tensor of values in `[low, high)`: what a row times does not depend on them, and the
     /// ranges keep the state bounded over a long walk.
     fn uniform(&self, shape: Vec<usize>, seed: u64, low: f32, high: f32) -> PlainTensor {
@@ -98,12 +98,12 @@ impl GatedDeltaWalkBench {
     }
 }
 
-impl Benchmark for GatedDeltaWalkBench {
-    type Input = GatedDeltaWalkInputs;
+impl Benchmark for RecurrenceWalkBench {
+    type Input = RecurrenceWalkInputs;
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let GatedDeltaWalkSpec {
+        let RecurrenceWalkSpec {
             batch,
             positions,
             heads,
@@ -111,7 +111,7 @@ impl Benchmark for GatedDeltaWalkBench {
         } = self.spec;
         let (b, t, kh, h) = (batch, positions, heads.key_heads, heads.value_heads());
         let state = match state {
-            GatedDeltaWalkStateLayout::Owned { .. } => GatedDeltaWalkStateInputs::Owned {
+            RecurrenceWalkStateLayout::Owned { .. } => RecurrenceWalkStateInputs::Owned {
                 state: self.uniform(
                     vec![b, h, heads.key_features, heads.value_features],
                     5,
@@ -120,7 +120,7 @@ impl Benchmark for GatedDeltaWalkBench {
                 ),
                 kept: NonZeroUsize::MIN,
             },
-            GatedDeltaWalkStateLayout::Slots { slots } => GatedDeltaWalkStateInputs::Slots {
+            RecurrenceWalkStateLayout::Slots { slots } => RecurrenceWalkStateInputs::Slots {
                 store: self.uniform(
                     vec![slots.get(), h, heads.key_features, heads.value_features],
                     5,
@@ -131,7 +131,7 @@ impl Benchmark for GatedDeltaWalkBench {
                 lengths: PlainTensor::of_u32s(&self.client, &[b], &vec![1; b]),
             },
         };
-        GatedDeltaWalkInputs {
+        RecurrenceWalkInputs {
             client: self.client.clone(),
             query: self.uniform(vec![b, t, kh, heads.key_features], 0, -0.09, 0.09),
             key: self.uniform(vec![b, t, kh, heads.key_features], 1, -0.09, 0.09),
@@ -146,14 +146,14 @@ impl Benchmark for GatedDeltaWalkBench {
     fn execute(&self, inputs: Self::Input) -> Result<(), String> {
         let inputs = self.rotation.turned(inputs);
         match self.strategy {
-            GatedDeltaWalkStrategy::CubeLead => {
+            RecurrenceWalkStrategy::CubeLead => {
                 let hw = Hardware::from_client(&self.client);
-                CubeGatedDeltaWalkRoutine
+                CubeDeltaWalkRoutine
                     .launch_lead_on(&hw, inputs)
                     .map(|_| ())
                     .map_err(|why| format!("the lead does not serve this problem: {why:?}"))
             }
-            GatedDeltaWalkStrategy::Tuned => {
+            RecurrenceWalkStrategy::Tuned => {
                 let hw = Hardware::from_client(&self.client);
                 serves(
                     &hw,
@@ -174,7 +174,7 @@ impl Benchmark for GatedDeltaWalkBench {
 
     fn name(&self) -> String {
         format!(
-            "{}-gated-delta-walk-f32-{:?}",
+            "{}-recurrence-walk-f32-{:?}",
             self.client.name(),
             self.strategy
         )
@@ -186,7 +186,7 @@ impl Benchmark for GatedDeltaWalkBench {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        cubek_test_utils::profile_launch(&self.client, "gated-delta-walk-bench", || {
+        cubek_test_utils::profile_launch(&self.client, "recurrence-walk-bench", || {
             self.execute(args)
         })
     }

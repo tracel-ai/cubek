@@ -8,13 +8,13 @@ use super::walk::{Case, assert_close};
 use cubecl::bytes::Bytes;
 use cubecl::tile::{Partitioning, Region, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_gated_delta::kernels::walk::{
-    CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkTensors,
+use cubek_linear_recurrence::kernels::walk::{
+    CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings, RecurrenceWalkTensors,
 };
-use cubek_microkernel::gated_delta::walk::cube::{
-    CubeGatedDeltaWalkMicrokernel, HeldState, UnitPartials,
+use cubek_microkernel::linear_recurrence::walk::cube::{
+    CubeDeltaWalkMicrokernel, HeldState, UnitPartials,
 };
-use cubek_microkernel::gated_delta::{GatedDeltaHeads, KEY_FEATURE, POSITION, VALUE_FEATURE};
+use cubek_microkernel::linear_recurrence::{KEY_FEATURE, POSITION, RecurrenceHeads, VALUE_FEATURE};
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 
@@ -28,7 +28,7 @@ fn partial_of(unit: usize, run: usize, position: usize, sum: usize, column: usiz
 #[cube(launch_unchecked)]
 fn unit_partials_probe<N: Size>(
     dump: &mut [f32],
-    #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,
+    #[comptime] microkernel: CubeDeltaWalkMicrokernel,
     #[comptime] runs: usize,
     positions: u32,
 ) {
@@ -87,7 +87,7 @@ fn unit_partials_sum_like_the_host() {
             continue;
         }
         for (columns, width) in [(1usize, 1usize), (2, 2), (4, 4), (4, 2), (4, 1)] {
-            let microkernel = CubeGatedDeltaWalkMicrokernel {
+            let microkernel = CubeDeltaWalkMicrokernel {
                 units,
                 rows: columns,
                 columns,
@@ -155,7 +155,7 @@ fn held_state_part<N: Size>(
     kept: &Tile,
     dump: &mut [f32],
     first_kept: usize,
-    #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,
+    #[comptime] microkernel: CubeDeltaWalkMicrokernel,
     #[comptime] runs: usize,
 ) {
     let width = N::value();
@@ -225,7 +225,7 @@ fn held_state_probe<N: Size>(
     dump: &mut [f32],
     first_kept: usize,
     partitioning: Partitioning,
-    #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,
+    #[comptime] microkernel: CubeDeltaWalkMicrokernel,
     #[comptime] runs: usize,
 ) {
     let query = query.tile(&partitioning);
@@ -258,9 +258,9 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
         let case = Case {
             batch: 1,
             positions: 3,
-            heads: GatedDeltaHeads {
+            heads: RecurrenceHeads {
                 key_heads: 1,
-                group: 1,
+                heads_per_group: 1,
                 key_features,
                 value_features,
             },
@@ -268,12 +268,12 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
             masked: vec![],
         };
         for settings in [
-            CubeGatedDeltaWalkRoutineSettings::FLOOR,
-            CubeGatedDeltaWalkRoutineSettings::DEFAULT,
+            CubeDeltaWalkRoutineSettings::FLOOR,
+            CubeDeltaWalkRoutineSettings::DEFAULT,
         ] {
             let o = case.operands();
-            let tensors = GatedDeltaWalkTensors::new(case.inputs(&client, &o, F32)).unwrap();
-            let prepared = CubeGatedDeltaWalkRoutine.prepare(&hw, tensors.problem(), &settings);
+            let tensors = RecurrenceWalkTensors::new(case.inputs(&client, &o, F32)).unwrap();
+            let prepared = CubeDeltaWalkRoutine.prepare(&hw, tensors.problem(), &settings);
             let (blueprint, grid) = match prepared {
                 Ok(prepared) => prepared,
                 Err(why) => {

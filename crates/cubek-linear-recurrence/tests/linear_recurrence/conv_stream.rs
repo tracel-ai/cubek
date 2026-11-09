@@ -10,10 +10,10 @@ use super::conv::{
 use super::harness::{F32, activation_elements, served};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
-use cubek_gated_delta::kernels::conv::{
-    CubeGatedDeltaConvRoutine, GatedDeltaConvInputs, GatedDeltaConvPastInputs,
+use cubek_linear_recurrence::kernels::conv::{
+    CubeQkNormedConvRoutine, GatedDeltaConvPastInputs, QkNormedConvInputs,
 };
-use cubek_gated_delta::kernels::refusals::GATED_DELTA_CONV_NOTHING_TO_CONVOLVE;
+use cubek_linear_recurrence::kernels::refusals::QK_NORMED_CONV_NOTHING_TO_CONVOLVE;
 use cubek_std::Hardware;
 
 /// A stream's shape.
@@ -77,7 +77,7 @@ impl StreamCase {
         filters: &[f32],
         layout: StreamLayout,
         elem: ElemType,
-    ) -> GatedDeltaConvInputs {
+    ) -> QkNormedConvInputs {
         let conv_dim = self.conv.conv_dim();
         let rows = self.stream_positions();
         let pitch = conv_dim + layout.pad;
@@ -102,7 +102,7 @@ impl StreamCase {
             &[self.conv.taps, 1],
             elem,
         );
-        GatedDeltaConvInputs {
+        QkNormedConvInputs {
             client: client.clone(),
             qkv,
             filters,
@@ -169,8 +169,8 @@ fn a_stream_with_no_position_is_declined() {
     let (stream, filters) = case.operands(F32);
     let inputs = case.inputs(&client, &stream, &filters, StreamLayout::default(), F32);
     assert_eq!(
-        CubeGatedDeltaConvRoutine.launch_on(&hw, inputs).err(),
-        Some(GATED_DELTA_CONV_NOTHING_TO_CONVOLVE)
+        CubeQkNormedConvRoutine.launch_on(&hw, inputs).err(),
+        Some(QK_NORMED_CONV_NOTHING_TO_CONVOLVE)
     );
 }
 
@@ -235,7 +235,7 @@ fn handed_on(prompt: usize, steps: usize, columns: usize, elem: ElemType) {
         let position = prompt + step;
         let newest = &stream[(position + taps - 1) * conv_dim..][..conv_dim];
         let (_, qkv) = view(&client, newest, 0, &[1, conv_dim], &[conv_dim, 1], elem);
-        let inputs = GatedDeltaConvInputs {
+        let inputs = QkNormedConvInputs {
             client: client.clone(),
             qkv,
             filters: filters_view.clone(),
@@ -250,7 +250,7 @@ fn handed_on(prompt: usize, steps: usize, columns: usize, elem: ElemType) {
         let what = format!("step {step} after a prompt of {prompt}");
         let Some(outputs) = served(
             &what,
-            CubeGatedDeltaConvRoutine.launch_on(&hw, inputs.clone()),
+            CubeQkNormedConvRoutine.launch_on(&hw, inputs.clone()),
             || admit(&hw, inputs),
         ) else {
             return;

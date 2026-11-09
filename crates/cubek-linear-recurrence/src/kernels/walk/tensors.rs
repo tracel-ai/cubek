@@ -1,8 +1,8 @@
 //! How a walk reads its operands and binds them.
 
 use crate::kernels::walk::{
-    GATED_DELTA_WALK_ELEMENT, GatedDeltaWalkBlueprint, GatedDeltaWalkProblem,
-    GatedDeltaWalkStateLayout,
+    RECURRENCE_WALK_ELEMENT, RecurrenceWalkBlueprint, RecurrenceWalkProblem,
+    RecurrenceWalkStateLayout,
 };
 use core::num::NonZeroUsize;
 use cubecl::client::Client;
@@ -14,9 +14,9 @@ use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
-use cubek_microkernel::gated_delta::walk::GatedDeltaWalkOperandMap;
-use cubek_microkernel::gated_delta::{
-    BATCH, GROUP, GatedDeltaHeads, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, STORE_SLOT,
+use cubek_microkernel::linear_recurrence::walk::RecurrenceWalkOperandMap;
+use cubek_microkernel::linear_recurrence::{
+    BATCH, HEAD_IN_GROUP, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceHeads, STORE_SLOT,
     VALUE_FEATURE,
 };
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
@@ -24,12 +24,12 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 /// The inputs of a walk, as a caller hands them: the queries and keys `[batch, positions,
 /// key_heads, key_features]`, the values `[batch, positions, value_heads, value_features]`, the
 /// decay and the strength `[batch, positions, value_heads]`, and the states
-/// ([`GatedDeltaWalkStateInputs`]), `value_heads` a multiple of `key_heads`. All are `f32`. Each is
+/// ([`RecurrenceWalkStateInputs`]), `value_heads` a multiple of `key_heads`. All are `f32`. Each is
 /// read where it lies, its rows padded or its view starting partway into a buffer included, the
 /// innermost axis of the wide ones contiguous; a padded row or a start off a whole read narrows the
 /// lines the walk reads.
 #[derive(Clone)]
-pub struct GatedDeltaWalkInputs {
+pub struct RecurrenceWalkInputs {
     /// The client every operand lives on.
     pub client: Client,
     pub query: PlainTensor,
@@ -37,7 +37,7 @@ pub struct GatedDeltaWalkInputs {
     pub value: PlainTensor,
     pub decay: PlainTensor,
     pub strength: PlainTensor,
-    pub state: GatedDeltaWalkStateInputs,
+    pub state: RecurrenceWalkStateInputs,
     /// The element the output is written at: the activations'.
     pub output_element: ElemType,
 }
@@ -46,7 +46,7 @@ pub struct GatedDeltaWalkInputs {
 // Built once a call and consumed by it, so the larger variant costs one copy of a few handles.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
-pub enum GatedDeltaWalkStateInputs {
+pub enum RecurrenceWalkStateInputs {
     /// `[batch, value_heads, key_features, value_features]`, one state a sequence, and the number
     /// of states kept for a rewind: the state after each of the last `kept` positions, written to
     /// a tensor of their own.
@@ -67,14 +67,14 @@ pub enum GatedDeltaWalkStateInputs {
     },
 }
 
-impl GatedDeltaWalkInputs {
+impl RecurrenceWalkInputs {
     /// Where the states live, as the problem states it.
-    pub fn state_layout(&self) -> GatedDeltaWalkStateLayout {
+    pub fn state_layout(&self) -> RecurrenceWalkStateLayout {
         match &self.state {
-            GatedDeltaWalkStateInputs::Owned { kept, .. } => {
-                GatedDeltaWalkStateLayout::Owned { kept: *kept }
+            RecurrenceWalkStateInputs::Owned { kept, .. } => {
+                RecurrenceWalkStateLayout::Owned { kept: *kept }
             }
-            GatedDeltaWalkStateInputs::Slots { store, .. } => GatedDeltaWalkStateLayout::Slots {
+            RecurrenceWalkStateInputs::Slots { store, .. } => RecurrenceWalkStateLayout::Slots {
                 slots: NonZeroUsize::new(store.shape().dims::<4>()[0])
                     .expect("a store holds a slot"),
             },
@@ -82,10 +82,10 @@ impl GatedDeltaWalkInputs {
     }
 }
 
-impl core::fmt::Debug for GatedDeltaWalkInputs {
+impl core::fmt::Debug for RecurrenceWalkInputs {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // The client says nothing about the walk.
-        f.debug_struct("GatedDeltaWalkInputs")
+        f.debug_struct("RecurrenceWalkInputs")
             .field("query", &self.query)
             .field("key", &self.key)
             .field("value", &self.value)
@@ -102,7 +102,7 @@ impl core::fmt::Debug for GatedDeltaWalkInputs {
 /// batch, value_heads, key_features, value_features]`. In a store's slots the states are left in
 /// the store.
 #[derive(Clone)]
-pub struct GatedDeltaWalkOutputs {
+pub struct RecurrenceWalkOutputs {
     /// The client the outputs live on, which the autotune checks read two candidates through.
     pub client: Client,
     pub out: TensorHandle,
@@ -111,7 +111,7 @@ pub struct GatedDeltaWalkOutputs {
 
 /// What lets a walk be an autotune candidate's output: two candidates must have read and kept the
 /// same values.
-impl cubecl::tune::AutotuneOutput for GatedDeltaWalkOutputs {
+impl cubecl::tune::AutotuneOutput for RecurrenceWalkOutputs {
     #[cfg(feature = "autotune-checks")]
     fn check_equivalence(&self, other: Self) {
         cubek_matmul::kernels::tune::assert_equivalent(&self.client, self.out.clone(), other.out);
@@ -142,7 +142,7 @@ enum StateTensors {
 /// The tensors of one walk, viewed as the kernel reads them, its outputs among them, and the
 /// problem they state.
 #[derive(Clone)]
-pub struct GatedDeltaWalkTensors {
+pub struct RecurrenceWalkTensors {
     client: Client,
     query: PlainTensor,
     key: PlainTensor,
@@ -153,11 +153,11 @@ pub struct GatedDeltaWalkTensors {
     states: StateTensors,
     out: TensorHandle,
     kept_out: Option<TensorHandle>,
-    problem: GatedDeltaWalkProblem,
+    problem: RecurrenceWalkProblem,
 }
 
 /// The operands of a launch bound under one launcher. Not `Debug`: cubek's `Launcher` is not.
-pub struct GatedDeltaWalkBinding {
+pub struct RecurrenceWalkBinding {
     pub launcher: Launcher,
     pub query: TileTensorLaunch,
     pub key: TileTensorLaunch,
@@ -201,13 +201,13 @@ impl StateTensors {
         Option<TileTensorLaunch>,
     ) {
         let bind = |tensor, axes: &'static [Axis], width| {
-            GatedDeltaWalkTensors::bound(launcher, tensor, axes, width)
+            RecurrenceWalkTensors::bound(launcher, tensor, axes, width)
         };
         match self {
             Self::Owned { state, kept } => (
                 bind(
                     state,
-                    &[BATCH, KEY_HEAD, GROUP, KEY_FEATURE, VALUE_FEATURE],
+                    &[BATCH, KEY_HEAD, HEAD_IN_GROUP, KEY_FEATURE, VALUE_FEATURE],
                     width,
                 ),
                 Some(bind(
@@ -216,7 +216,7 @@ impl StateTensors {
                         KEPT_STATE,
                         BATCH,
                         KEY_HEAD,
-                        GROUP,
+                        HEAD_IN_GROUP,
                         KEY_FEATURE,
                         VALUE_FEATURE,
                     ],
@@ -238,7 +238,13 @@ impl StateTensors {
                 (
                     bind(
                         store,
-                        &[STORE_SLOT, KEY_HEAD, GROUP, KEY_FEATURE, VALUE_FEATURE],
+                        &[
+                            STORE_SLOT,
+                            KEY_HEAD,
+                            HEAD_IN_GROUP,
+                            KEY_FEATURE,
+                            VALUE_FEATURE,
+                        ],
                         width,
                     )
                     .indexed(entries, Indexing::Coordinate(STORE_SLOT))
@@ -251,13 +257,13 @@ impl StateTensors {
     }
 }
 
-impl GatedDeltaWalkTensors {
+impl RecurrenceWalkTensors {
     /// The walk of `inputs`, its outputs allocated.
     ///
     /// # Errors
     ///
-    /// [`GatedDeltaWalkProblem::admit_output`]'s refusals for the output element,
-    /// [`GatedDeltaWalkProblem::admit_operand`]'s for an input not `f32`, and
+    /// [`RecurrenceWalkProblem::admit_output`]'s refusals for the output element,
+    /// [`RecurrenceWalkProblem::admit_operand`]'s for an input not `f32`, and
     /// [`ELEMENT_NOT_ON_DEVICE`]: what the routines decline whatever the device.
     ///
     /// # Panics
@@ -265,9 +271,9 @@ impl GatedDeltaWalkTensors {
     /// On operands whose shapes disagree, whose innermost axis is strided, on value heads that
     /// are not a multiple of the key heads, on tables that are not `u32`, on more kept states
     /// than positions or none, on a store of no slot, and on a walk in slots of no position.
-    pub fn new(inputs: GatedDeltaWalkInputs) -> Result<Self, Refusal> {
+    pub fn new(inputs: RecurrenceWalkInputs) -> Result<Self, Refusal> {
         let layout = inputs.state_layout();
-        let GatedDeltaWalkInputs {
+        let RecurrenceWalkInputs {
             client,
             query,
             key,
@@ -277,13 +283,13 @@ impl GatedDeltaWalkTensors {
             state,
             output_element,
         } = inputs;
-        GatedDeltaWalkProblem::admit_output(output_element)?;
+        RecurrenceWalkProblem::admit_output(output_element)?;
         let states = match &state {
-            GatedDeltaWalkStateInputs::Owned { state, .. } => state,
-            GatedDeltaWalkStateInputs::Slots { store, .. } => store,
+            RecurrenceWalkStateInputs::Owned { state, .. } => state,
+            RecurrenceWalkStateInputs::Slots { store, .. } => store,
         };
         for tensor in [&query, &key, &value, &decay, &strength, states] {
-            GatedDeltaWalkProblem::admit_operand(tensor.elem)?;
+            RecurrenceWalkProblem::admit_operand(tensor.elem)?;
         }
         if !query.runs_on(&client) {
             return Err(ELEMENT_NOT_ON_DEVICE);
@@ -311,22 +317,22 @@ impl GatedDeltaWalkTensors {
             key_heads > 0 && value_heads.is_multiple_of(key_heads),
             "{value_heads} value heads are not grouped under {key_heads} key heads"
         );
-        let group = value_heads / key_heads;
-        let heads = GatedDeltaHeads {
+        let heads_per_group = value_heads / key_heads;
+        let heads = RecurrenceHeads {
             key_heads,
-            group,
+            heads_per_group,
             key_features,
             value_features,
         };
 
-        // The value heads a key head groups are two axes, `[key_head, group]`, over the caller's
+        // The value heads a key head groups are two axes, `[key_head, head_in_group]`, over the caller's
         // stride along the value heads.
         let grouped = |tensor: &PlainTensor, head_axis: usize| {
             let mut shape = tensor.shape().to_vec();
             let mut strides = tensor.binding.strides.to_vec();
             let stride = strides[head_axis];
-            shape.splice(head_axis..=head_axis, [key_heads, group]);
-            strides.splice(head_axis..=head_axis, [stride * group, stride]);
+            shape.splice(head_axis..=head_axis, [key_heads, heads_per_group]);
+            strides.splice(head_axis..=head_axis, [stride * heads_per_group, stride]);
             tensor.viewed(Metadata::new(shape, strides))
         };
         let (out, out_view) = PlainTensor::empty_contiguous(
@@ -338,7 +344,7 @@ impl GatedDeltaWalkTensors {
             return Err(ELEMENT_NOT_ON_DEVICE);
         }
         let (states, kept_out) = match &state {
-            GatedDeltaWalkStateInputs::Owned { state, kept } => {
+            RecurrenceWalkStateInputs::Owned { state, kept } => {
                 assert_eq!(
                     state.shape().dims::<4>(),
                     [batch, value_heads, key_features, value_features]
@@ -352,12 +358,12 @@ impl GatedDeltaWalkTensors {
                 let (handle, plain) = PlainTensor::empty_contiguous(
                     &client,
                     Shape::from(shape),
-                    GATED_DELTA_WALK_ELEMENT,
+                    RECURRENCE_WALK_ELEMENT,
                 );
                 let (state, kept) = (grouped(state, 1), grouped(&plain, 2));
                 (StateTensors::Owned { state, kept }, Some(handle))
             }
-            GatedDeltaWalkStateInputs::Slots {
+            RecurrenceWalkStateInputs::Slots {
                 store,
                 slots,
                 lengths,
@@ -388,13 +394,13 @@ impl GatedDeltaWalkTensors {
             grouped(&strength, 2),
             grouped(&out_view, 2),
         );
-        let problem = GatedDeltaWalkProblem {
+        let problem = RecurrenceWalkProblem {
             batch,
             positions,
             heads,
             output_element,
             state: layout,
-            alignments: GatedDeltaWalkOperandMap {
+            alignments: RecurrenceWalkOperandMap {
                 query: query.elem_alignment(),
                 key: key.elem_alignment(),
                 value: value.elem_alignment(),
@@ -406,7 +412,7 @@ impl GatedDeltaWalkTensors {
                     .kept()
                     .map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
             },
-            start_bytes: GatedDeltaWalkOperandMap {
+            start_bytes: RecurrenceWalkOperandMap {
                 query: query.start_bytes(),
                 key: key.start_bytes(),
                 value: value.start_bytes(),
@@ -438,13 +444,13 @@ impl GatedDeltaWalkTensors {
     }
 
     /// The problem the tensors state.
-    pub fn problem(&self) -> &GatedDeltaWalkProblem {
+    pub fn problem(&self) -> &RecurrenceWalkProblem {
         &self.problem
     }
 
     /// The outputs, written.
-    pub fn into_outputs(self) -> GatedDeltaWalkOutputs {
-        GatedDeltaWalkOutputs {
+    pub fn into_outputs(self) -> RecurrenceWalkOutputs {
+        RecurrenceWalkOutputs {
             client: self.client,
             out: self.out,
             kept: self.kept_out,
@@ -455,9 +461,9 @@ impl GatedDeltaWalkTensors {
     /// width, the decay and the strength a scalar at a time.
     pub fn bind<M>(
         &self,
-        blueprint: &GatedDeltaWalkBlueprint<M>,
+        blueprint: &RecurrenceWalkBlueprint<M>,
         grid: &Grid,
-    ) -> GatedDeltaWalkBinding {
+    ) -> RecurrenceWalkBinding {
         let partitioning = &blueprint.partitioning;
         // The grid's launcher, settled over the extents on its first launch and cloned after.
         let launcher = grid.launcher(self.client(), || {
@@ -471,7 +477,7 @@ impl GatedDeltaWalkTensors {
             Self::bound(&launcher, tensor, axes, width)
         };
         let (state, kept, lengths) = self.states.bind(&launcher, width);
-        GatedDeltaWalkBinding {
+        RecurrenceWalkBinding {
             query: bind(
                 &self.query,
                 &[BATCH, POSITION, KEY_HEAD, KEY_FEATURE],
@@ -480,14 +486,18 @@ impl GatedDeltaWalkTensors {
             key: bind(&self.key, &[BATCH, POSITION, KEY_HEAD, KEY_FEATURE], width),
             value: bind(
                 &self.value,
-                &[BATCH, POSITION, KEY_HEAD, GROUP, VALUE_FEATURE],
+                &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
                 width,
             ),
-            decay: bind(&self.decay, &[BATCH, POSITION, KEY_HEAD, GROUP], 1),
-            strength: bind(&self.strength, &[BATCH, POSITION, KEY_HEAD, GROUP], 1),
+            decay: bind(&self.decay, &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP], 1),
+            strength: bind(
+                &self.strength,
+                &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP],
+                1,
+            ),
             out: bind(
                 &self.out_view,
-                &[BATCH, POSITION, KEY_HEAD, GROUP, VALUE_FEATURE],
+                &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
                 width,
             ),
             state,

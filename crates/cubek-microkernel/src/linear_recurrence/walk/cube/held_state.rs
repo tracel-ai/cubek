@@ -1,4 +1,4 @@
-use super::base::CubeGatedDeltaWalkMicrokernel;
+use super::base::CubeDeltaWalkMicrokernel;
 use super::unit_partials::UnitPartials;
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
@@ -10,7 +10,7 @@ use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 pub struct HeldState<N: Size> {
     lines: Array<Vector<f32, N>>,
     #[cube(comptime)]
-    microkernel: CubeGatedDeltaWalkMicrokernel,
+    microkernel: CubeDeltaWalkMicrokernel,
 }
 
 #[cube]
@@ -20,7 +20,7 @@ impl<N: Size> HeldState<N> {
     pub fn load(
         state: &Tile,
         fresh: bool,
-        #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,
+        #[comptime] microkernel: CubeDeltaWalkMicrokernel,
     ) -> Self {
         let width = N::value();
         let (rows, columns) = comptime!((microkernel.rows, microkernel.columns));

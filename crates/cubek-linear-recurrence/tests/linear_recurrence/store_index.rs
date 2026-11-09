@@ -8,9 +8,9 @@ use cubecl::tile::launch::Grid as LaunchGrid;
 use cubecl::tile::{Indexing, Launcher, Levels, Partitioning, Space, TileTensor};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_gated_delta::kernels::walk::GATED_DELTA_WALK_ELEMENT;
+use cubek_linear_recurrence::kernels::walk::RECURRENCE_WALK_ELEMENT;
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::gated_delta::{BATCH, KEY_FEATURE, STORE_SLOT, VALUE_FEATURE};
+use cubek_microkernel::linear_recurrence::{BATCH, KEY_FEATURE, STORE_SLOT, VALUE_FEATURE};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// Every cube doubles its row's slot of the store and adds one, each element read, then written
@@ -62,7 +62,7 @@ fn indexed_store(start: usize, gap: usize) {
     let store = PlainTensor::of_handle(TensorHandle::from_metadata(
         handle.clone(),
         Metadata::new([slots, keys, values], [pitch, values, 1]),
-        GATED_DELTA_WALK_ELEMENT,
+        RECURRENCE_WALK_ELEMENT,
     ));
     let table = PlainTensor::of_u32s(&client, &[listed.len()], &listed);
 
@@ -97,7 +97,7 @@ fn indexed_store(start: usize, gap: usize) {
         .expect(ADMITTED_PLAN_RUNS)
         .arg();
     let store_arg = launcher
-        .arg(store.binding.clone(), GATED_DELTA_WALK_ELEMENT)
+        .arg(store.binding.clone(), RECURRENCE_WALK_ELEMENT)
         .axes(&[STORE_SLOT, KEY_FEATURE, VALUE_FEATURE])
         .vectorize(1)
         .build()

@@ -1,11 +1,11 @@
 //! The problem a routine computes.
 
 use crate::kernels::refusals::{
-    GATED_DELTA_WALK_BINDING_BUFFERS, GATED_DELTA_WALK_BINDINGS_PAST_DEVICE,
-    GATED_DELTA_WALK_ELEMENT_NOT_FLOAT, GATED_DELTA_WALK_ELEMENT_UNVERIFIED,
-    GATED_DELTA_WALK_HEADS_EMPTY, GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS,
+    RECURRENCE_WALK_BINDING_BUFFERS, RECURRENCE_WALK_BINDINGS_PAST_DEVICE,
+    RECURRENCE_WALK_ELEMENT_NOT_FLOAT, RECURRENCE_WALK_ELEMENT_UNVERIFIED,
+    RECURRENCE_WALK_HEADS_EMPTY, RECURRENCE_WALK_SLOTS_BINDING_BUFFERS,
 };
-use crate::kernels::walk::{CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings};
+use crate::kernels::walk::{CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
@@ -13,9 +13,9 @@ use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Space};
 use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
-use cubek_microkernel::gated_delta::walk::{GatedDeltaWalkOperand, GatedDeltaWalkOperandMap};
-use cubek_microkernel::gated_delta::{
-    BATCH, GROUP, GatedDeltaHeads, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, STORE_SLOT,
+use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, RecurrenceWalkOperandMap};
+use cubek_microkernel::linear_recurrence::{
+    BATCH, HEAD_IN_GROUP, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceHeads, STORE_SLOT,
     VALUE_FEATURE,
 };
 use cubek_std::Hardware;
@@ -24,29 +24,29 @@ use serde::{Deserialize, Serialize};
 
 /// The element every operand of the walk but its output is in: `f32`, as the recurrence sums a
 /// decayed running state, which is where a narrow float costs accuracy.
-pub const GATED_DELTA_WALK_ELEMENT: ElemType = ElemType::Float(FloatKind::F32);
+pub const RECURRENCE_WALK_ELEMENT: ElemType = ElemType::Float(FloatKind::F32);
 
 /// The elements the output is written at: the activations' float elements.
 const OUTPUT_ELEMENTS: [ElemType; 3] = [
     ElemType::Float(FloatKind::F16),
     ElemType::Float(FloatKind::BF16),
-    GATED_DELTA_WALK_ELEMENT,
+    RECURRENCE_WALK_ELEMENT,
 ];
 
 /// The operands a walk in a store's slots binds: every one but the kept states.
-const SLOTS_OPERANDS: [GatedDeltaWalkOperand; 7] = [
-    GatedDeltaWalkOperand::Query,
-    GatedDeltaWalkOperand::Key,
-    GatedDeltaWalkOperand::Value,
-    GatedDeltaWalkOperand::Decay,
-    GatedDeltaWalkOperand::Strength,
-    GatedDeltaWalkOperand::State,
-    GatedDeltaWalkOperand::Out,
+const SLOTS_OPERANDS: [RecurrenceWalkOperand; 7] = [
+    RecurrenceWalkOperand::Query,
+    RecurrenceWalkOperand::Key,
+    RecurrenceWalkOperand::Value,
+    RecurrenceWalkOperand::Decay,
+    RecurrenceWalkOperand::Strength,
+    RecurrenceWalkOperand::State,
+    RecurrenceWalkOperand::Out,
 ];
 
 /// Where a walk's states live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum GatedDeltaWalkStateLayout {
+pub enum RecurrenceWalkStateLayout {
     /// A state tensor the walk resumes from, one a sequence, and kept states it writes to a tensor
     /// of their own: the state after each of the last `kept` positions.
     Owned { kept: NonZeroUsize },
@@ -56,7 +56,7 @@ pub enum GatedDeltaWalkStateLayout {
     Slots { slots: NonZeroUsize },
 }
 
-impl GatedDeltaWalkStateLayout {
+impl RecurrenceWalkStateLayout {
     /// States kept for a rewind: the state after each of the last this many positions.
     pub fn kept(&self) -> NonZeroUsize {
         match self {
@@ -68,16 +68,16 @@ impl GatedDeltaWalkStateLayout {
     /// The buffers a walk over this layout binds, the metadata buffer included.
     pub fn binding_buffers(&self) -> u32 {
         match self {
-            Self::Owned { .. } => GATED_DELTA_WALK_BINDING_BUFFERS,
-            Self::Slots { .. } => GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS,
+            Self::Owned { .. } => RECURRENCE_WALK_BINDING_BUFFERS,
+            Self::Slots { .. } => RECURRENCE_WALK_SLOTS_BINDING_BUFFERS,
         }
     }
 
     /// The operands of the walk this layout binds: the kept states are an operand of the owned
     /// walk alone.
-    pub fn operands(&self) -> &'static [GatedDeltaWalkOperand] {
+    pub fn operands(&self) -> &'static [RecurrenceWalkOperand] {
         match self {
-            Self::Owned { .. } => &GatedDeltaWalkOperand::ALL,
+            Self::Owned { .. } => &RecurrenceWalkOperand::ALL,
             Self::Slots { .. } => &SLOTS_OPERANDS,
         }
     }
@@ -99,68 +99,68 @@ impl GatedDeltaWalkStateLayout {
     }
 }
 
-/// Where a walk's states live, as far as its kernel cares: a [`GatedDeltaWalkStateLayout`] without
+/// Where a walk's states live, as far as its kernel cares: a [`RecurrenceWalkStateLayout`] without
 /// the store's size, which the kernel leaves to the launch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum GatedDeltaWalkStateKind {
+pub enum RecurrenceWalkStateKind {
     Owned { kept: NonZeroUsize },
     Slots,
 }
 
-impl GatedDeltaWalkStateKind {
+impl RecurrenceWalkStateKind {
     /// The layout a problem of this kind prepares on: a store of one slot, as no level cuts them.
-    pub fn layout(self) -> GatedDeltaWalkStateLayout {
+    pub fn layout(self) -> RecurrenceWalkStateLayout {
         match self {
-            Self::Owned { kept } => GatedDeltaWalkStateLayout::Owned { kept },
-            Self::Slots => GatedDeltaWalkStateLayout::Slots {
+            Self::Owned { kept } => RecurrenceWalkStateLayout::Owned { kept },
+            Self::Slots => RecurrenceWalkStateLayout::Slots {
                 slots: NonZeroUsize::MIN,
             },
         }
     }
 }
 
-impl From<GatedDeltaWalkStateLayout> for GatedDeltaWalkStateKind {
-    fn from(layout: GatedDeltaWalkStateLayout) -> Self {
+impl From<RecurrenceWalkStateLayout> for RecurrenceWalkStateKind {
+    fn from(layout: RecurrenceWalkStateLayout) -> Self {
         match layout {
-            GatedDeltaWalkStateLayout::Owned { kept } => Self::Owned { kept },
-            GatedDeltaWalkStateLayout::Slots { .. } => Self::Slots,
+            RecurrenceWalkStateLayout::Owned { kept } => Self::Owned { kept },
+            RecurrenceWalkStateLayout::Slots { .. } => Self::Slots,
         }
     }
 }
 
 /// The gated delta rule over `batch` sequences of `positions` positions, as the host describes it:
-/// `key_heads · group` value heads, each reading the queries and keys of the key head it is
+/// `key_heads · heads_per_group` value heads, each reading the queries and keys of the key head it is
 /// grouped under.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GatedDeltaWalkProblem {
+pub struct RecurrenceWalkProblem {
     pub batch: usize,
     pub positions: usize,
-    pub heads: GatedDeltaHeads,
+    pub heads: RecurrenceHeads,
     /// The element the output is written at, rounded from the `f32` read: the activations'.
     pub output_element: ElemType,
     /// Where the states live, and how many are kept.
-    pub state: GatedDeltaWalkStateLayout,
+    pub state: RecurrenceWalkStateLayout,
     /// The alignment of each operand's buffer in elements, over the axes the walk names. The kept
     /// states are bound by the owned walk alone: a walk in a store's slots holds
     /// [`ElemAlignment::ONE`] for them, which nothing reads.
-    pub alignments: GatedDeltaWalkOperandMap<ElemAlignment>,
+    pub alignments: RecurrenceWalkOperandMap<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start.
-    pub start_bytes: GatedDeltaWalkOperandMap<u64>,
+    pub start_bytes: RecurrenceWalkOperandMap<u64>,
 }
 
-impl GatedDeltaWalkProblem {
+impl RecurrenceWalkProblem {
     /// Whether the walk writes its output at `output_element`: a plain float the activations are
     /// in.
     ///
     /// # Errors
     ///
-    /// [`GATED_DELTA_WALK_ELEMENT_NOT_FLOAT`] for an element that is not a float, a packed one
-    /// included, [`GATED_DELTA_WALK_ELEMENT_UNVERIFIED`] for a float the walk is not verified at.
+    /// [`RECURRENCE_WALK_ELEMENT_NOT_FLOAT`] for an element that is not a float, a packed one
+    /// included, [`RECURRENCE_WALK_ELEMENT_UNVERIFIED`] for a float the walk is not verified at.
     pub fn admit_output(output_element: ElemType) -> Result<(), Refusal> {
         match output_element {
             element if OUTPUT_ELEMENTS.contains(&element) => Ok(()),
-            element if element.is_float() => Err(GATED_DELTA_WALK_ELEMENT_UNVERIFIED),
-            _ => Err(GATED_DELTA_WALK_ELEMENT_NOT_FLOAT),
+            element if element.is_float() => Err(RECURRENCE_WALK_ELEMENT_UNVERIFIED),
+            _ => Err(RECURRENCE_WALK_ELEMENT_NOT_FLOAT),
         }
     }
 
@@ -171,9 +171,9 @@ impl GatedDeltaWalkProblem {
     /// As [`admit_output`](Self::admit_output).
     pub fn admit_operand(element: ElemType) -> Result<(), Refusal> {
         match element {
-            GATED_DELTA_WALK_ELEMENT => Ok(()),
-            element if element.is_float() => Err(GATED_DELTA_WALK_ELEMENT_UNVERIFIED),
-            _ => Err(GATED_DELTA_WALK_ELEMENT_NOT_FLOAT),
+            RECURRENCE_WALK_ELEMENT => Ok(()),
+            element if element.is_float() => Err(RECURRENCE_WALK_ELEMENT_UNVERIFIED),
+            _ => Err(RECURRENCE_WALK_ELEMENT_NOT_FLOAT),
         }
     }
 
@@ -187,22 +187,22 @@ impl GatedDeltaWalkProblem {
     ///
     /// # Errors
     ///
-    /// The first of: no head ([`GATED_DELTA_WALK_HEADS_EMPTY`]), more buffers bound than the device
-    /// binds ([`GATED_DELTA_WALK_BINDINGS_PAST_DEVICE`]).
+    /// The first of: no head ([`RECURRENCE_WALK_HEADS_EMPTY`]), more buffers bound than the device
+    /// binds ([`RECURRENCE_WALK_BINDINGS_PAST_DEVICE`]).
     pub fn admit_launch(&self, hw: &Hardware) -> Result<(), Refusal> {
         let heads = &self.heads;
         if [
             heads.key_heads,
-            heads.group,
+            heads.heads_per_group,
             heads.key_features,
             heads.value_features,
         ]
         .contains(&0)
         {
-            return Err(GATED_DELTA_WALK_HEADS_EMPTY);
+            return Err(RECURRENCE_WALK_HEADS_EMPTY);
         }
         if self.state.binding_buffers() > hw.properties.hardware.max_bindings {
-            return Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE);
+            return Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE);
         }
         Ok(())
     }
@@ -216,8 +216,8 @@ impl GatedDeltaWalkProblem {
     ///
     /// What the floor declines, [`admit_launch`](Self::admit_launch)'s among them.
     pub fn admit(&self, hw: &Hardware) -> Result<(), Refusal> {
-        CubeGatedDeltaWalkRoutine
-            .prepare(hw, self, &CubeGatedDeltaWalkRoutineSettings::FLOOR)
+        CubeDeltaWalkRoutine
+            .prepare(hw, self, &CubeDeltaWalkRoutineSettings::FLOOR)
             .map(|_| ())
     }
 
@@ -229,7 +229,7 @@ impl GatedDeltaWalkProblem {
             (BATCH, self.batch),
             (POSITION, self.positions),
             (KEY_HEAD, heads.key_heads),
-            (GROUP, heads.group),
+            (HEAD_IN_GROUP, heads.heads_per_group),
             (KEY_FEATURE, heads.key_features),
             (VALUE_FEATURE, heads.value_features),
         ];
@@ -247,15 +247,15 @@ impl GatedDeltaWalkProblem {
     pub fn dense(
         batch: usize,
         positions: usize,
-        heads: GatedDeltaHeads,
+        heads: RecurrenceHeads,
         output_element: ElemType,
-        state: GatedDeltaWalkStateLayout,
+        state: RecurrenceWalkStateLayout,
     ) -> Self {
         let rows =
             |shape: &[usize]| ElemAlignment::new(shape, &row_major_contiguous_strides(shape));
-        let GatedDeltaHeads {
+        let RecurrenceHeads {
             key_heads,
-            group,
+            heads_per_group,
             key_features,
             value_features,
         } = heads;
@@ -265,50 +265,50 @@ impl GatedDeltaWalkProblem {
             heads,
             output_element,
             state,
-            alignments: GatedDeltaWalkOperandMap {
+            alignments: RecurrenceWalkOperandMap {
                 query: rows(&[batch, positions, key_heads, key_features]),
                 key: rows(&[batch, positions, key_heads, key_features]),
-                value: rows(&[batch, positions, key_heads, group, value_features]),
-                decay: rows(&[batch, positions, key_heads, group]),
-                strength: rows(&[batch, positions, key_heads, group]),
+                value: rows(&[batch, positions, key_heads, heads_per_group, value_features]),
+                decay: rows(&[batch, positions, key_heads, heads_per_group]),
+                strength: rows(&[batch, positions, key_heads, heads_per_group]),
                 state: rows(&[
                     state.store_axis().map_or(batch, |(_, slots)| slots),
                     key_heads,
-                    group,
+                    heads_per_group,
                     key_features,
                     value_features,
                 ]),
-                out: rows(&[batch, positions, key_heads, group, value_features]),
+                out: rows(&[batch, positions, key_heads, heads_per_group, value_features]),
                 kept: match state {
-                    GatedDeltaWalkStateLayout::Owned { kept } => rows(&[
+                    RecurrenceWalkStateLayout::Owned { kept } => rows(&[
                         kept.get(),
                         batch,
                         key_heads,
-                        group,
+                        heads_per_group,
                         key_features,
                         value_features,
                     ]),
-                    GatedDeltaWalkStateLayout::Slots { .. } => ElemAlignment::ONE,
+                    RecurrenceWalkStateLayout::Slots { .. } => ElemAlignment::ONE,
                 },
             },
-            start_bytes: GatedDeltaWalkOperandMap::splat(0),
+            start_bytes: RecurrenceWalkOperandMap::splat(0),
         }
     }
 
     /// Bytes of one state.
     fn state_bytes(&self) -> usize {
-        self.heads.key_features * self.heads.value_features * GATED_DELTA_WALK_ELEMENT.size()
+        self.heads.key_features * self.heads.value_features * RECURRENCE_WALK_ELEMENT.size()
     }
 }
 
-impl EstimatedProblem for GatedDeltaWalkProblem {
+impl EstimatedProblem for RecurrenceWalkProblem {
     /// Each key head's queries and keys, each head's values, scalars and outputs, the state read
     /// once and each kept state written once; per head and position, the decay, the recall, the
     /// write and the read are each a pass over the state.
     fn demand(&self) -> Work {
         let heads = &self.heads;
         let (value_heads, positions) = (self.batch * heads.value_heads(), self.positions);
-        let input_bytes = GATED_DELTA_WALK_ELEMENT.size();
+        let input_bytes = RECURRENCE_WALK_ELEMENT.size();
         let keyed = self.batch * heads.key_heads * positions * 2 * heads.key_features;
         let valued = value_heads * positions * (heads.value_features + 2);
         let read = value_heads * positions * heads.value_features * self.output_element.size();
@@ -337,26 +337,26 @@ pub(crate) mod fixtures {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubek_microkernel::gated_delta::walk::cube::CubeGatedDeltaWalkMicrokernel;
+    use cubek_microkernel::linear_recurrence::walk::cube::CubeDeltaWalkMicrokernel;
     use cubek_std::devices;
     use cubek_std::microkernel::Microkernel;
 
-    fn sixteen_heads() -> GatedDeltaHeads {
-        GatedDeltaHeads {
+    fn sixteen_heads() -> RecurrenceHeads {
+        RecurrenceHeads {
             key_heads: 16,
-            group: 3,
+            heads_per_group: 3,
             key_features: 128,
             value_features: 128,
         }
     }
 
-    fn walk(heads: GatedDeltaHeads) -> GatedDeltaWalkProblem {
-        GatedDeltaWalkProblem::dense(
+    fn walk(heads: RecurrenceHeads) -> RecurrenceWalkProblem {
+        RecurrenceWalkProblem::dense(
             1,
             8,
             heads,
-            GATED_DELTA_WALK_ELEMENT,
-            GatedDeltaWalkStateLayout::Owned {
+            RECURRENCE_WALK_ELEMENT,
+            RecurrenceWalkStateLayout::Owned {
                 kept: NonZeroUsize::MIN,
             },
         )
@@ -378,7 +378,7 @@ mod tests {
             );
             assert_eq!(
                 problem.admit(&hw),
-                Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE),
+                Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE),
                 "{hw:?}"
             );
         }
@@ -390,18 +390,18 @@ mod tests {
     fn the_metadata_buffer_counts_against_the_devices_bindings() {
         let problem = walk(sixteen_heads());
         let mut hw = devices::h100();
-        devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_BINDING_BUFFERS - 1;
+        devices::topology(&mut hw).max_bindings = RECURRENCE_WALK_BINDING_BUFFERS - 1;
         assert_eq!(
             problem.admit(&hw),
-            Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE)
+            Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE)
         );
-        devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_BINDING_BUFFERS;
+        devices::topology(&mut hw).max_bindings = RECURRENCE_WALK_BINDING_BUFFERS;
         assert_eq!(problem.admit(&hw), Ok(()));
     }
 
-    fn in_slots() -> GatedDeltaWalkProblem {
+    fn in_slots() -> RecurrenceWalkProblem {
         let mut problem = walk(sixteen_heads());
-        problem.state = GatedDeltaWalkStateLayout::Slots {
+        problem.state = RecurrenceWalkStateLayout::Slots {
             slots: NonZeroUsize::new(32).unwrap(),
         };
         problem
@@ -413,13 +413,13 @@ mod tests {
     fn the_slots_walk_binds_one_buffer_more_than_the_owned_walk() {
         let problem = in_slots();
         let mut hw = devices::h100();
-        devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS - 1;
+        devices::topology(&mut hw).max_bindings = RECURRENCE_WALK_SLOTS_BINDING_BUFFERS - 1;
         assert_eq!(
             problem.admit(&hw),
-            Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE)
+            Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE)
         );
         assert_eq!(walk(sixteen_heads()).admit(&hw), Ok(()));
-        devices::topology(&mut hw).max_bindings = GATED_DELTA_WALK_SLOTS_BINDING_BUFFERS;
+        devices::topology(&mut hw).max_bindings = RECURRENCE_WALK_SLOTS_BINDING_BUFFERS;
         assert_eq!(problem.admit(&hw), Ok(()));
         for hw in [
             devices::wgpu_no_subgroups(),
@@ -428,7 +428,7 @@ mod tests {
         ] {
             assert_eq!(
                 problem.admit(&hw),
-                Err(GATED_DELTA_WALK_BINDINGS_PAST_DEVICE)
+                Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE)
             );
         }
     }
@@ -439,28 +439,28 @@ mod tests {
     #[test]
     fn elements_that_are_not_plain_floats_are_declined() {
         use cubecl::ir::UIntKind;
-        let (f16, f32) = (ElemType::Float(FloatKind::F16), GATED_DELTA_WALK_ELEMENT);
+        let (f16, f32) = (ElemType::Float(FloatKind::F16), RECURRENCE_WALK_ELEMENT);
         let packed = ElemType::UInt(UIntKind::U32);
         let f64 = ElemType::Float(FloatKind::F64);
         for element in [f16, ElemType::Float(FloatKind::BF16), f32] {
-            assert_eq!(GatedDeltaWalkProblem::admit_output(element), Ok(()));
+            assert_eq!(RecurrenceWalkProblem::admit_output(element), Ok(()));
         }
         assert_eq!(
-            GatedDeltaWalkProblem::admit_output(packed),
-            Err(GATED_DELTA_WALK_ELEMENT_NOT_FLOAT)
+            RecurrenceWalkProblem::admit_output(packed),
+            Err(RECURRENCE_WALK_ELEMENT_NOT_FLOAT)
         );
         assert_eq!(
-            GatedDeltaWalkProblem::admit_output(f64),
-            Err(GATED_DELTA_WALK_ELEMENT_UNVERIFIED)
+            RecurrenceWalkProblem::admit_output(f64),
+            Err(RECURRENCE_WALK_ELEMENT_UNVERIFIED)
         );
-        assert_eq!(GatedDeltaWalkProblem::admit_operand(f32), Ok(()));
+        assert_eq!(RecurrenceWalkProblem::admit_operand(f32), Ok(()));
         assert_eq!(
-            GatedDeltaWalkProblem::admit_operand(f16),
-            Err(GATED_DELTA_WALK_ELEMENT_UNVERIFIED)
+            RecurrenceWalkProblem::admit_operand(f16),
+            Err(RECURRENCE_WALK_ELEMENT_UNVERIFIED)
         );
         assert_eq!(
-            GatedDeltaWalkProblem::admit_operand(packed),
-            Err(GATED_DELTA_WALK_ELEMENT_NOT_FLOAT)
+            RecurrenceWalkProblem::admit_operand(packed),
+            Err(RECURRENCE_WALK_ELEMENT_NOT_FLOAT)
         );
     }
 
@@ -470,23 +470,26 @@ mod tests {
         let hw = devices::h100();
         let heads = sixteen_heads();
         for heads in [
-            GatedDeltaHeads {
+            RecurrenceHeads {
                 key_heads: 0,
                 ..heads
             },
-            GatedDeltaHeads { group: 0, ..heads },
-            GatedDeltaHeads {
+            RecurrenceHeads {
+                heads_per_group: 0,
+                ..heads
+            },
+            RecurrenceHeads {
                 key_features: 0,
                 ..heads
             },
-            GatedDeltaHeads {
+            RecurrenceHeads {
                 value_features: 0,
                 ..heads
             },
         ] {
             assert_eq!(
                 walk(heads).admit(&hw),
-                Err(GATED_DELTA_WALK_HEADS_EMPTY),
+                Err(RECURRENCE_WALK_HEADS_EMPTY),
                 "{heads:?}"
             );
         }
@@ -497,16 +500,16 @@ mod tests {
     #[test]
     fn a_head_too_wide_for_the_floor_is_declined() {
         let hw = super::fixtures::binding_enough(devices::wgpu_no_subgroups());
-        let wide = GatedDeltaHeads {
+        let wide = RecurrenceHeads {
             key_heads: 1,
-            group: 1,
+            heads_per_group: 1,
             key_features: 1 << 20,
             value_features: 4,
         };
         assert_eq!(
             walk(wide).admit(&hw),
             Err(Refusal::Declined {
-                why: CubeGatedDeltaWalkMicrokernel::DECLINE
+                why: CubeDeltaWalkMicrokernel::DECLINE
             })
         );
         assert_eq!(walk(sixteen_heads()).admit(&hw), Ok(()));

@@ -1,4 +1,4 @@
-use crate::gated_delta::walked;
+use crate::linear_recurrence::walked;
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 

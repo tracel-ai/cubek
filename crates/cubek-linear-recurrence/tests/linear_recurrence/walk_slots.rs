@@ -16,12 +16,12 @@ use cubecl::ir::ElemType;
 use cubecl::server::Handle;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::metadata::Metadata;
-use cubek_gated_delta::kernels::walk::{
-    CubeGatedDeltaWalkRoutine, CubeGatedDeltaWalkRoutineSettings, GatedDeltaWalkInputs,
-    GatedDeltaWalkOutputs, GatedDeltaWalkStateInputs,
+use cubek_linear_recurrence::kernels::walk::{
+    CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings, RecurrenceWalkInputs,
+    RecurrenceWalkOutputs, RecurrenceWalkStateInputs,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::gated_delta::GatedDeltaHeads;
+use cubek_microkernel::linear_recurrence::RecurrenceHeads;
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 
@@ -94,14 +94,14 @@ impl SlotCase {
         rows: &[(usize, usize)],
         masked: &[usize],
     ) -> Self {
-        let (key_heads, group, key_features, value_features) = heads;
+        let (key_heads, heads_per_group, key_features, value_features) = heads;
         Self {
             case: Case {
                 batch: rows.len(),
                 positions,
-                heads: GatedDeltaHeads {
+                heads: RecurrenceHeads {
                     key_heads,
-                    group,
+                    heads_per_group,
                     key_features,
                     value_features,
                 },
@@ -257,9 +257,9 @@ impl SlotCase {
         client: &Client,
         slotted: &Slotted,
         element: ElemType,
-    ) -> GatedDeltaWalkInputs {
-        GatedDeltaWalkInputs {
-            state: GatedDeltaWalkStateInputs::Slots {
+    ) -> RecurrenceWalkInputs {
+        RecurrenceWalkInputs {
+            state: RecurrenceWalkStateInputs::Slots {
                 store: slotted.store.clone(),
                 slots: slotted.slots.clone(),
                 lengths: slotted.lengths.clone(),
@@ -276,7 +276,7 @@ impl SlotCase {
         hw: &Hardware,
         client: &Client,
         element: ElemType,
-        settings: &CubeGatedDeltaWalkRoutineSettings,
+        settings: &CubeDeltaWalkRoutineSettings,
         pitch: Pitch,
     ) {
         let slotted = self.slotted(client, pitch);
@@ -293,7 +293,7 @@ impl SlotCase {
         &self,
         client: &Client,
         slotted: &Slotted,
-        walked: GatedDeltaWalkOutputs,
+        walked: RecurrenceWalkOutputs,
         element: ElemType,
         what: &str,
     ) {
@@ -365,10 +365,10 @@ impl SlotCase {
 fn the_slots_walk_matches_the_reference() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    let settings: Vec<_> = CubeGatedDeltaWalkRoutine
+    let settings: Vec<_> = CubeDeltaWalkRoutine
         .settings(&hw)
         .into_iter()
-        .chain([CubeGatedDeltaWalkRoutineSettings::FLOOR])
+        .chain([CubeDeltaWalkRoutineSettings::FLOOR])
         .collect();
     for element in elements(&client) {
         for settings in &settings {
@@ -389,8 +389,8 @@ fn the_slots_walk_reads_a_strided_store_where_it_lies() {
     for element in elements(&client) {
         for pitch in STRIDED_PITCHES {
             for settings in [
-                CubeGatedDeltaWalkRoutineSettings::DEFAULT,
-                CubeGatedDeltaWalkRoutineSettings::FLOOR,
+                CubeDeltaWalkRoutineSettings::DEFAULT,
+                CubeDeltaWalkRoutineSettings::FLOOR,
             ] {
                 for case in cases() {
                     case.walk_and_check(&hw, &client, element, &settings, pitch);
@@ -415,8 +415,8 @@ fn rows_parked_on_the_null_slot_leave_the_others_whole() {
     )
     .parked(&[0, 2, 4]);
     for settings in [
-        CubeGatedDeltaWalkRoutineSettings::DEFAULT,
-        CubeGatedDeltaWalkRoutineSettings::FLOOR,
+        CubeDeltaWalkRoutineSettings::DEFAULT,
+        CubeDeltaWalkRoutineSettings::FLOOR,
     ] {
         case.walk_and_check(&hw, &client, F32, &settings, Pitch::default());
     }

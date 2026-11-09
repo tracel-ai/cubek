@@ -9,12 +9,12 @@ use cubecl::server::Handle;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::metadata::Metadata;
-use cubek_gated_delta::kernels::conv::{
-    CubeGatedDeltaConvRoutine, GatedDeltaConvInputs, GatedDeltaConvOutputs,
-    GatedDeltaConvPastInputs, GatedDeltaConvTensors,
+use cubek_linear_recurrence::kernels::conv::{
+    CubeQkNormedConvRoutine, GatedDeltaConvPastInputs, QkNormedConvInputs, QkNormedConvOutputs,
+    QkNormedConvTensors,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::gated_delta::GatedDeltaHeads;
+use cubek_microkernel::linear_recurrence::RecurrenceHeads;
 use cubek_std::Hardware;
 use cubek_std::routine::PreparedLaunches;
 
@@ -23,7 +23,7 @@ pub const EPSILON: f32 = 1e-6;
 /// A conv's shape, and the rows it convolves: each a `(slot, positions convolved already)`.
 #[derive(Debug, Clone)]
 pub struct ConvCase {
-    pub heads: GatedDeltaHeads,
+    pub heads: RecurrenceHeads,
     pub taps: usize,
     /// Columns a slot of the window holds.
     pub columns: usize,
@@ -49,11 +49,11 @@ pub fn case(
     slots: usize,
     rows: &[(usize, usize)],
 ) -> ConvCase {
-    let (key_heads, group, key_features, value_features) = heads;
+    let (key_heads, heads_per_group, key_features, value_features) = heads;
     ConvCase {
-        heads: GatedDeltaHeads {
+        heads: RecurrenceHeads {
             key_heads,
-            group,
+            heads_per_group,
             key_features,
             value_features,
         },
@@ -205,8 +205,8 @@ impl ConvCase {
         let mut channels = Vec::new();
         channels.extend(&convolved[head * heads.key_features..][..heads.key_features]);
         channels.extend(&convolved[key_dim + head * heads.key_features..][..heads.key_features]);
-        let values = 2 * key_dim + head * heads.group * heads.value_features;
-        channels.extend(&convolved[values..values + heads.group * heads.value_features]);
+        let values = 2 * key_dim + head * heads.heads_per_group * heads.value_features;
+        channels.extend(&convolved[values..values + heads.heads_per_group * heads.value_features]);
         channels
     }
 
@@ -307,7 +307,7 @@ pub fn table(client: &Client, entries: Vec<u32>) -> PlainTensor {
 }
 
 /// The slot and lengths tables of `inputs`, which a case over a window holds.
-pub fn tables_of(inputs: &mut GatedDeltaConvInputs) -> (&mut PlainTensor, &mut PlainTensor) {
+pub fn tables_of(inputs: &mut QkNormedConvInputs) -> (&mut PlainTensor, &mut PlainTensor) {
     let GatedDeltaConvPastInputs::Window { slots, lengths, .. } = &mut inputs.past else {
         panic!("the inputs are over a window");
     };
@@ -329,7 +329,7 @@ impl ConvCase {
         o: &ConvOperands,
         layout: ConvLayout,
         elem: ElemType,
-    ) -> (GatedDeltaConvInputs, Stored) {
+    ) -> (QkNormedConvInputs, Stored) {
         let conv_dim = self.conv_dim();
         let rows = self.rows.len();
         let row_pitch = conv_dim + layout.qkv_pad;
@@ -358,7 +358,7 @@ impl ConvCase {
             &[slot_pitch, column_pitch, 1],
             elem,
         );
-        let inputs = GatedDeltaConvInputs {
+        let inputs = QkNormedConvInputs {
             client: client.clone(),
             qkv,
             filters,
@@ -404,7 +404,7 @@ pub fn compare(got: &[f32], want: &[f64], tolerance: f64, what: &str) {
 /// `outputs` against `want`: the queries, keys and values.
 pub fn compare_outputs(
     client: &Client,
-    outputs: &GatedDeltaConvOutputs,
+    outputs: &QkNormedConvOutputs,
     want: &HostOutputs,
     elem: ElemType,
     what: &str,
@@ -426,16 +426,16 @@ pub fn compare_outputs(
 /// The conv of `inputs`, or `None` where this device declines it by the refusal admission names.
 pub fn conv_or_skip(
     hw: &Hardware,
-    inputs: GatedDeltaConvInputs,
+    inputs: QkNormedConvInputs,
     what: &str,
-) -> Option<GatedDeltaConvOutputs> {
-    let launched = CubeGatedDeltaConvRoutine.launch_on(hw, inputs.clone());
+) -> Option<QkNormedConvOutputs> {
+    let launched = CubeQkNormedConvRoutine.launch_on(hw, inputs.clone());
     served(what, launched, || admit(hw, inputs))
 }
 
 /// Whether `hw` admits the problem `inputs` state: what a refusal of their launch must name.
-pub fn admit(hw: &Hardware, inputs: GatedDeltaConvInputs) -> Result<(), Refusal> {
-    let tensors = GatedDeltaConvTensors::new(inputs).expect("the elements are served");
+pub fn admit(hw: &Hardware, inputs: QkNormedConvInputs) -> Result<(), Refusal> {
+    let tensors = QkNormedConvTensors::new(inputs).expect("the elements are served");
     tensors.problem().admit(hw)
 }
 
@@ -448,7 +448,7 @@ impl ConvCase {
         client: &Client,
         o: &ConvOperands,
         stored: &Stored,
-        outputs: GatedDeltaConvOutputs,
+        outputs: QkNormedConvOutputs,
         elem: ElemType,
         what: &str,
     ) {
@@ -566,7 +566,7 @@ fn a_prepared_problem_is_right_for_each_slot_table() {
         let case = case((2, 3, 37, 53), 4, 5, 6, rows);
         let operands = case.operands(F32);
         let (inputs, stored) = case.inputs(&client, &operands, ConvLayout::default(), F32);
-        let launched = CubeGatedDeltaConvRoutine.launch_prepared_on(&prepared, &hw, inputs.clone());
+        let launched = CubeQkNormedConvRoutine.launch_prepared_on(&prepared, &hw, inputs.clone());
         let outputs = served("a prepared launch", launched, || admit(&hw, inputs));
         if let Some(outputs) = outputs {
             case.check(&client, &operands, &stored, outputs, F32, "prepared");

@@ -1,11 +1,11 @@
 //! A walk launch's compile-time decisions.
 
-use crate::kernels::walk::{GATED_DELTA_WALK_ELEMENT, GatedDeltaWalkProblem};
+use crate::kernels::walk::{RECURRENCE_WALK_ELEMENT, RecurrenceWalkProblem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
-use cubek_microkernel::gated_delta::GatedDeltaWalkPartitioning;
-use cubek_microkernel::gated_delta::walk::GatedDeltaWalkOperand;
+use cubek_microkernel::linear_recurrence::RecurrenceWalkPartitioning;
+use cubek_microkernel::linear_recurrence::walk::RecurrenceWalkOperand;
 use cubek_std::Hardware;
 
 /// The width the operands bind at on `hw`: to the requirements enqueued in `vectorization`, the
@@ -14,8 +14,8 @@ use cubek_std::Hardware;
 /// and the strength, one scalar a position, at one.
 pub fn settled_width(
     hw: &Hardware,
-    problem: &GatedDeltaWalkProblem,
-    mut vectorization: Vectorization<GatedDeltaWalkOperand>,
+    problem: &RecurrenceWalkProblem,
+    mut vectorization: Vectorization<RecurrenceWalkOperand>,
 ) -> usize {
     for &operand in problem.state.operands() {
         let element = operand_element(operand, problem);
@@ -28,17 +28,17 @@ pub fn settled_width(
             alignment: ElemAlignment::at_start(problem.start_bytes.get(operand), element.size()),
         });
     }
-    vectorization.width(GatedDeltaWalkOperand::Value, |_| {
-        hw.vector_ceiling(GATED_DELTA_WALK_ELEMENT)
+    vectorization.width(RecurrenceWalkOperand::Value, |_| {
+        hw.vector_ceiling(RECURRENCE_WALK_ELEMENT)
             .min(hw.vector_ceiling(problem.output_element))
     })
 }
 
 /// The element `operand` is bound at: the output's is the activations', every other's `f32`.
-fn operand_element(operand: GatedDeltaWalkOperand, problem: &GatedDeltaWalkProblem) -> ElemType {
+fn operand_element(operand: RecurrenceWalkOperand, problem: &RecurrenceWalkProblem) -> ElemType {
     match operand {
-        GatedDeltaWalkOperand::Out => problem.output_element,
-        _ => GATED_DELTA_WALK_ELEMENT,
+        RecurrenceWalkOperand::Out => problem.output_element,
+        _ => RECURRENCE_WALK_ELEMENT,
     }
 }
 
@@ -48,19 +48,19 @@ fn operand_element(operand: GatedDeltaWalkOperand, problem: &GatedDeltaWalkProbl
 ///
 /// One type for every routine of this kind: what differs between them is the microkernel.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GatedDeltaWalkBlueprint<M> {
+pub struct RecurrenceWalkBlueprint<M> {
     pub microkernel: M,
-    pub partitioning: GatedDeltaWalkPartitioning,
+    pub partitioning: RecurrenceWalkPartitioning,
     pub width: usize,
     pub runs: usize,
 }
 
-impl<M> GatedDeltaWalkBlueprint<M> {
+impl<M> RecurrenceWalkBlueprint<M> {
     /// `microkernel` placed by `partitioning`, `runs` a cube, the operands bound at `width`
     /// ([`settled_width`]).
     pub fn new(
         microkernel: M,
-        partitioning: GatedDeltaWalkPartitioning,
+        partitioning: RecurrenceWalkPartitioning,
         width: usize,
         runs: usize,
     ) -> Self {

@@ -1,10 +1,9 @@
 //! How a conv reads its operands and binds them.
 
 use crate::kernels::conv::{
-    GATED_DELTA_CONV_OUTPUT_ELEMENT, GatedDeltaConvBlueprint, GatedDeltaConvPast,
-    GatedDeltaConvProblem,
+    GatedDeltaConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvProblem,
 };
-use crate::kernels::refusals::GATED_DELTA_CONV_NOTHING_TO_CONVOLVE;
+use crate::kernels::refusals::QK_NORMED_CONV_NOTHING_TO_CONVOLVE;
 use core::num::NonZeroUsize;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
@@ -16,9 +15,9 @@ use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
-use cubek_microkernel::gated_delta::conv::GatedDeltaConvOperandMap;
-use cubek_microkernel::gated_delta::{
-    BATCH, CHANNEL, GROUP, GatedDeltaHeads, KEY_FEATURE, KEY_HEAD, POSITION, RING_COLUMN,
+use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperandMap;
+use cubek_microkernel::linear_recurrence::{
+    BATCH, CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RING_COLUMN, RecurrenceHeads,
     STORE_SLOT, STREAM_POSITION, TAP, VALUE_FEATURE,
 };
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
@@ -29,14 +28,14 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 /// context columns first. They are read where they lie, the innermost axis contiguous; a padded row
 /// or an off-line start narrows the conv's lines.
 #[derive(Clone)]
-pub struct GatedDeltaConvInputs {
+pub struct QkNormedConvInputs {
     /// The client every operand lives on.
     pub client: Client,
     pub qkv: PlainTensor,
     pub filters: PlainTensor,
     pub past: GatedDeltaConvPastInputs,
     /// The heads whose channels the stream holds.
-    pub heads: GatedDeltaHeads,
+    pub heads: RecurrenceHeads,
     /// Added to the sum of squares of a head's queries and of its keys before the square root.
     pub epsilon: f32,
 }
@@ -60,9 +59,9 @@ pub enum GatedDeltaConvPastInputs {
     Stream,
 }
 
-impl core::fmt::Debug for GatedDeltaConvInputs {
+impl core::fmt::Debug for QkNormedConvInputs {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("GatedDeltaConvInputs")
+        f.debug_struct("QkNormedConvInputs")
             .field("qkv", &self.qkv)
             .field("filters", &self.filters)
             .field("past", &self.past)
@@ -76,13 +75,13 @@ impl core::fmt::Debug for GatedDeltaConvInputs {
 /// key_features]` and the values `[rows, 1, value_heads, value_features]` of a window conv, or
 /// `[batch, positions, ..]` of a stream conv.
 #[derive(Clone)]
-pub struct GatedDeltaConvOutputs {
+pub struct QkNormedConvOutputs {
     pub query: TensorHandle,
     pub key: TensorHandle,
     pub value: TensorHandle,
 }
 
-impl GatedDeltaConvOutputs {
+impl QkNormedConvOutputs {
     /// The outputs over `batch` rows or sequences, and the same buffers as the kernel binds them,
     /// without the unit position dim of a window conv.
     ///
@@ -91,7 +90,7 @@ impl GatedDeltaConvOutputs {
     /// [`ELEMENT_NOT_ON_DEVICE`] where the device has no buffer of `f32`.
     fn allocate(
         client: &Client,
-        heads: &GatedDeltaHeads,
+        heads: &RecurrenceHeads,
         batch: usize,
         past: &GatedDeltaConvPast,
     ) -> Result<(Self, [PlainTensor; 3]), Refusal> {
@@ -105,7 +104,7 @@ impl GatedDeltaConvOutputs {
             let (handle, plain) = PlainTensor::empty_contiguous(
                 client,
                 Shape::from([lead.as_slice(), tail].concat()),
-                GATED_DELTA_CONV_OUTPUT_ELEMENT,
+                QK_NORMED_CONV_OUTPUT_ELEMENT,
             );
             let shape = [bound.as_slice(), bound_tail].concat();
             let strides = row_major_contiguous_strides(&shape).to_vec();
@@ -116,7 +115,7 @@ impl GatedDeltaConvOutputs {
         let (key, bound_key) = make(&keyed, &keyed);
         let (value, bound_value) = make(
             &[heads.value_heads(), heads.value_features],
-            &[heads.key_heads, heads.group, heads.value_features],
+            &[heads.key_heads, heads.heads_per_group, heads.value_features],
         );
         if !bound_query.runs_on(client) {
             return Err(ELEMENT_NOT_ON_DEVICE);
@@ -131,7 +130,7 @@ impl GatedDeltaConvOutputs {
 /// The tensors of one conv viewed as the kernel reads them, its outputs among them, and the
 /// problem they state.
 #[derive(Clone)]
-pub struct GatedDeltaConvTensors {
+pub struct QkNormedConvTensors {
     client: Client,
     qkv: PlainTensor,
     filters: PlainTensor,
@@ -139,13 +138,13 @@ pub struct GatedDeltaConvTensors {
     key: PlainTensor,
     value: PlainTensor,
     past: GatedDeltaConvPastInputs,
-    outputs: GatedDeltaConvOutputs,
+    outputs: QkNormedConvOutputs,
     epsilon: f32,
-    problem: GatedDeltaConvProblem,
+    problem: QkNormedConvProblem,
 }
 
 /// The operands of a launch bound under one launcher. Not `Debug`: cubek's `Launcher` is not.
-pub(crate) struct GatedDeltaConvBinding {
+pub(crate) struct QkNormedConvBinding {
     pub launcher: Launcher,
     pub qkv: TileTensorLaunch,
     pub filters: TileTensorLaunch,
@@ -193,7 +192,7 @@ impl GatedDeltaConvPastInputs {
                     1,
                     TileSpec::direct(&[BATCH]),
                 );
-                let window = GatedDeltaConvTensors::bound(
+                let window = QkNormedConvTensors::bound(
                     launcher,
                     window,
                     &[STORE_SLOT, RING_COLUMN, CHANNEL],
@@ -201,7 +200,7 @@ impl GatedDeltaConvPastInputs {
                 )
                 .indexed(entries, Indexing::Coordinate(STORE_SLOT))
                 .expect(ADMITTED_PLAN_RUNS);
-                let lengths = GatedDeltaConvTensors::bound(launcher, lengths, &[BATCH], 1);
+                let lengths = QkNormedConvTensors::bound(launcher, lengths, &[BATCH], 1);
                 (Some(window), Some(lengths))
             }
             Self::Stream => (None, None),
@@ -209,20 +208,20 @@ impl GatedDeltaConvPastInputs {
     }
 }
 
-impl GatedDeltaConvTensors {
+impl QkNormedConvTensors {
     /// The conv of `inputs`, its outputs allocated.
     ///
     /// # Errors
     ///
-    /// [`GatedDeltaConvProblem::admit_element`]'s refusal, [`GATED_DELTA_CONV_NOTHING_TO_CONVOLVE`]
+    /// [`QkNormedConvProblem::admit_element`]'s refusal, [`QK_NORMED_CONV_NOTHING_TO_CONVOLVE`]
     /// for no row or position, and [`ELEMENT_NOT_ON_DEVICE`].
     ///
     /// # Panics
     ///
     /// On operands whose shapes disagree with the heads, whose innermost axis is strided, on
     /// operands of different elements, on tables that are not `u32`, and on a store of no slot.
-    pub fn new(inputs: GatedDeltaConvInputs) -> Result<Self, Refusal> {
-        let GatedDeltaConvInputs {
+    pub fn new(inputs: QkNormedConvInputs) -> Result<Self, Refusal> {
+        let QkNormedConvInputs {
             client,
             qkv,
             filters,
@@ -231,7 +230,7 @@ impl GatedDeltaConvTensors {
             epsilon,
         } = inputs;
         let element = qkv.elem;
-        GatedDeltaConvProblem::admit_element(element)?;
+        QkNormedConvProblem::admit_element(element)?;
         for tensor in [Some(&qkv), Some(&filters), past.window()]
             .into_iter()
             .flatten()
@@ -269,8 +268,8 @@ impl GatedDeltaConvTensors {
         };
         let batch = qkv.shape()[0];
         let (outputs, [query, key, value]) =
-            GatedDeltaConvOutputs::allocate(&client, &heads, batch, &past)?;
-        let alignments = GatedDeltaConvOperandMap {
+            QkNormedConvOutputs::allocate(&client, &heads, batch, &past)?;
+        let alignments = QkNormedConvOperandMap {
             qkv: qkv.elem_alignment(),
             filters: filters.elem_alignment(),
             window: (viewed.window()).map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
@@ -279,7 +278,7 @@ impl GatedDeltaConvTensors {
             key: key.elem_alignment(),
             value: value.elem_alignment(),
         };
-        let start_bytes = GatedDeltaConvOperandMap {
+        let start_bytes = QkNormedConvOperandMap {
             qkv: qkv.start_bytes(),
             filters: filters.start_bytes(),
             window: viewed.window().map_or(0, PlainTensor::start_bytes),
@@ -288,7 +287,7 @@ impl GatedDeltaConvTensors {
             key: key.start_bytes(),
             value: value.start_bytes(),
         };
-        let problem = GatedDeltaConvProblem {
+        let problem = QkNormedConvProblem {
             batch,
             heads,
             taps,
@@ -323,7 +322,7 @@ impl GatedDeltaConvTensors {
         let qkv_shape = qkv.shape().to_vec();
         let rows = qkv_shape[0];
         if rows == 0 {
-            return Err(GATED_DELTA_CONV_NOTHING_TO_CONVOLVE);
+            return Err(QK_NORMED_CONV_NOTHING_TO_CONVOLVE);
         }
         assert!(
             qkv_shape.last() == Some(&conv_dim)
@@ -376,7 +375,7 @@ impl GatedDeltaConvTensors {
         );
         let positions = stream_positions.saturating_sub(taps.saturating_sub(1));
         if batch == 0 || positions == 0 {
-            return Err(GATED_DELTA_CONV_NOTHING_TO_CONVOLVE);
+            return Err(QK_NORMED_CONV_NOTHING_TO_CONVOLVE);
         }
         let qkv = qkv.viewed(Metadata::new(
             vec![batch, stream_positions, conv_dim],
@@ -395,7 +394,7 @@ impl GatedDeltaConvTensors {
     }
 
     /// The problem the tensors state.
-    pub fn problem(&self) -> &GatedDeltaConvProblem {
+    pub fn problem(&self) -> &QkNormedConvProblem {
         &self.problem
     }
 
@@ -405,7 +404,7 @@ impl GatedDeltaConvTensors {
     }
 
     /// The outputs, written.
-    pub(crate) fn into_outputs(self) -> GatedDeltaConvOutputs {
+    pub(crate) fn into_outputs(self) -> QkNormedConvOutputs {
         self.outputs
     }
 
@@ -413,9 +412,9 @@ impl GatedDeltaConvTensors {
     /// table names.
     pub(crate) fn bind(
         &self,
-        blueprint: &GatedDeltaConvBlueprint,
+        blueprint: &QkNormedConvBlueprint,
         grid: &Grid,
-    ) -> GatedDeltaConvBinding {
+    ) -> QkNormedConvBinding {
         let launcher = blueprint.launcher(&self.client, grid);
         let width = blueprint.width;
         let bind = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
@@ -425,16 +424,16 @@ impl GatedDeltaConvTensors {
             GatedDeltaConvPastInputs::Window { .. } => (
                 &[BATCH, CHANNEL],
                 &[BATCH, KEY_HEAD, KEY_FEATURE],
-                &[BATCH, KEY_HEAD, GROUP, VALUE_FEATURE],
+                &[BATCH, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
             ),
             GatedDeltaConvPastInputs::Stream => (
                 &[BATCH, STREAM_POSITION, CHANNEL],
                 &[BATCH, POSITION, KEY_HEAD, KEY_FEATURE],
-                &[BATCH, POSITION, KEY_HEAD, GROUP, VALUE_FEATURE],
+                &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
             ),
         };
         let (window, lengths) = self.past.bind(&launcher, width);
-        GatedDeltaConvBinding {
+        QkNormedConvBinding {
             qkv: bind(&self.qkv, qkv, width),
             filters: bind(&self.filters, &[CHANNEL, TAP], 1),
             query: bind(&self.query, keyed, width),

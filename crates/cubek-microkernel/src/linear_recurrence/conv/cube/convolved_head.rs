@@ -1,7 +1,7 @@
-use super::base::CubeGatedDeltaConvMicrokernel;
+use super::base::CubeQkNormedConvMicrokernel;
 use super::past_taps::PastTaps;
-use super::tiles::GatedDeltaConvTiles;
-use crate::gated_delta::{CHANNEL, HEAD_CHANNEL};
+use super::tiles::QkNormedConvTiles;
+use crate::linear_recurrence::{CHANNEL, HEAD_CHANNEL};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
@@ -17,12 +17,12 @@ pub(super) struct ConvolvedHead<N: Size> {
     queries_then_keys: Shared<[Vector<f32, N>]>,
     squares: Shared<[f32]>,
     #[cube(comptime)]
-    microkernel: CubeGatedDeltaConvMicrokernel,
+    microkernel: CubeQkNormedConvMicrokernel,
 }
 
 #[cube]
 impl<N: Size> ConvolvedHead<N> {
-    pub fn new(#[comptime] microkernel: CubeGatedDeltaConvMicrokernel) -> Self {
+    pub fn new(#[comptime] microkernel: CubeQkNormedConvMicrokernel) -> Self {
         let width = N::value();
         let lines = comptime!(2 * microkernel.heads.key_features / width);
         ConvolvedHead::<N> {
@@ -58,7 +58,7 @@ impl<N: Size> ConvolvedHead<N> {
     pub fn convolve<E: Float>(
         &mut self,
         cube: &Region,
-        tiles: &mut GatedDeltaConvTiles,
+        tiles: &mut QkNormedConvTiles,
         head: usize,
     ) {
         let microkernel = comptime!(self.microkernel);
@@ -136,15 +136,18 @@ impl<N: Size> ConvolvedHead<N> {
     /// three ranges of the stream that no one window of its tile spans.
     fn first_channel(&self, local: usize, head: usize) -> usize {
         let heads = comptime!(self.microkernel.heads);
-        let (key_features, group, value_features) =
-            comptime!((heads.key_features, heads.group, heads.value_features));
+        let (key_features, heads_per_group, value_features) = comptime!((
+            heads.key_features,
+            heads.heads_per_group,
+            heads.value_features
+        ));
         let key_dim = comptime!(heads.key_dim());
         if local < key_features {
             head * key_features + local
         } else if local < 2 * key_features {
             key_dim + head * key_features + (local - key_features)
         } else {
-            2 * key_dim + head * group * value_features + (local - 2 * key_features)
+            2 * key_dim + head * heads_per_group * value_features + (local - 2 * key_features)
         }
     }
 

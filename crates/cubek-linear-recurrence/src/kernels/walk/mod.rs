@@ -8,7 +8,7 @@
 //!
 //! The problem, tensors, blueprint, `launch` (its routine trait) and [`tune`] live here, and
 //! `routines`, one per scope of microkernel; the microkernels and what they read are
-//! [`cubek_microkernel::gated_delta::walk`]'s.
+//! [`cubek_microkernel::linear_recurrence::walk`]'s.
 //!
 //! **Traffic**, per sequence and value head over `t` positions: the queries and keys of its key
 //! head, `2 · t · key_features`, shared by the value heads grouped under it; `t · value_features`

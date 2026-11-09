@@ -1,8 +1,8 @@
-use super::base::CubeGatedDeltaWalkMicrokernel;
+use super::base::CubeDeltaWalkMicrokernel;
 use super::held_state::HeldState;
 use super::state_access::StateAccess;
 use super::unit_partials::UnitPartials;
-use crate::gated_delta::{KEY_FEATURE, POSITION, VALUE_FEATURE};
+use crate::linear_recurrence::{KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -18,7 +18,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// together, since their units meet in its shared memory.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
+pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
     cube: &Region,
     query: &Tile,
     key: &Tile,
@@ -27,7 +27,7 @@ pub fn cube_gated_delta_walk_microkernel<E: Float, N: Size>(
     strength: &Tile,
     state: &StateAccess,
     out: &Tile,
-    #[comptime] microkernel: CubeGatedDeltaWalkMicrokernel,
+    #[comptime] microkernel: CubeDeltaWalkMicrokernel,
     #[comptime] runs: usize,
 ) {
     let width = N::value();

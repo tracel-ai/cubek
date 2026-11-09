@@ -1,16 +1,16 @@
-use crate::kernels::walk::GatedDeltaWalkStateLayout;
+use crate::kernels::walk::RecurrenceWalkStateLayout;
 use core::num::NonZeroUsize;
-use cubek_microkernel::gated_delta::GatedDeltaHeads;
+use cubek_microkernel::linear_recurrence::RecurrenceHeads;
 use cubek_test_utils::CatalogEntry;
 
 /// One walk's shape: `batch` sequences of `positions` positions over `heads`, keeping the last
 /// state, its states owned or in the slots of a store.
 #[derive(Debug, Clone, Copy)]
-pub struct GatedDeltaWalkSpec {
+pub struct RecurrenceWalkSpec {
     pub batch: usize,
     pub positions: usize,
-    pub heads: GatedDeltaHeads,
-    pub state: GatedDeltaWalkStateLayout,
+    pub heads: RecurrenceHeads,
+    pub state: RecurrenceWalkStateLayout,
 }
 
 /// The slots of the store the in place rows rotate through: 3 MiB each, past the L2 of the cards
@@ -20,26 +20,26 @@ const STORE_SLOTS: usize = 32;
 /// A decode step, a short prompt and a long one of a layer with 16 key heads of 3 value heads
 /// each, over states of 128 by 128, and a decode step of one row and of eight in the slots of a
 /// store.
-pub fn problems() -> Vec<CatalogEntry<GatedDeltaWalkSpec>> {
-    let heads = GatedDeltaHeads {
+pub fn problems() -> Vec<CatalogEntry<RecurrenceWalkSpec>> {
+    let heads = RecurrenceHeads {
         key_heads: 16,
-        group: 3,
+        heads_per_group: 3,
         key_features: 128,
         value_features: 128,
     };
-    let owned = |positions| GatedDeltaWalkSpec {
+    let owned = |positions| RecurrenceWalkSpec {
         batch: 1,
         positions,
         heads,
-        state: GatedDeltaWalkStateLayout::Owned {
+        state: RecurrenceWalkStateLayout::Owned {
             kept: NonZeroUsize::MIN,
         },
     };
-    let in_slots = |batch| GatedDeltaWalkSpec {
+    let in_slots = |batch| RecurrenceWalkSpec {
         batch,
         positions: 1,
         heads,
-        state: GatedDeltaWalkStateLayout::Slots {
+        state: RecurrenceWalkStateLayout::Slots {
             slots: NonZeroUsize::new(STORE_SLOTS).unwrap(),
         },
     };

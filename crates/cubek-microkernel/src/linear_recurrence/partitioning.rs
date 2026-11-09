@@ -4,11 +4,11 @@ use cubecl::tile::{Axis, Levels, Partitioning, Space};
 pub const BATCH: Axis = Axis(0);
 /// A position of the sequence: the axis the recurrence walks, one step at a time.
 pub const POSITION: Axis = Axis(1);
-/// A key head, which `GROUP` value heads read.
+/// A key head, which `heads_per_group` value heads read. Mamba2's `ngroups` is the count of these.
 pub const KEY_HEAD: Axis = Axis(2);
-/// A value head's place among the `group` heads reading one key head: value head
-/// `key_head * group + place`.
-pub const GROUP: Axis = Axis(3);
+/// A value head's place among the `heads_per_group` heads reading one key head: value head
+/// `key_head * heads_per_group + place`.
+pub const HEAD_IN_GROUP: Axis = Axis(3);
 /// A state the walk keeps for the caller to rewind to: the state after each of its last positions,
 /// oldest first.
 pub const KEPT_STATE: Axis = Axis(4);
@@ -35,11 +35,11 @@ pub const STREAM_POSITION: Axis = Axis(12);
 /// columns of one head of one sequence, and inside the cube's box the levels the routine and its
 /// microkernel state.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GatedDeltaWalkPartitioning {
+pub struct RecurrenceWalkPartitioning {
     partitioning: Partitioning,
 }
 
-impl GatedDeltaWalkPartitioning {
+impl RecurrenceWalkPartitioning {
     /// `space`, every axis of the problem, partitioned with `inside` a cube's box: the boxes of
     /// value columns ride the grid's `x`, the value heads of a key head its `y`, the key heads its
     /// `z`, and the sequences come one a cube.
@@ -48,7 +48,7 @@ impl GatedDeltaWalkPartitioning {
             partitioning: Partitioning::new(
                 space,
                 inside
-                    .cubes(&[VALUE_FEATURE, GROUP, KEY_HEAD])
+                    .cubes(&[VALUE_FEATURE, HEAD_IN_GROUP, KEY_HEAD])
                     .batches(&[BATCH])
                     .build(),
             ),
@@ -80,11 +80,11 @@ impl GatedDeltaWalkPartitioning {
 /// How the conv places its microkernel's work: a cube for every key head of every row, and of every
 /// position when the space has positions.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GatedDeltaConvPartitioning {
+pub struct QkNormedConvPartitioning {
     partitioning: Partitioning,
 }
 
-impl GatedDeltaConvPartitioning {
+impl QkNormedConvPartitioning {
     /// `space` partitioned with `inside` a cube's box: key heads ride the grid's `x`, or its `y`
     /// behind the positions, and rows come one a cube.
     pub fn new(space: Space, inside: Levels) -> Self {

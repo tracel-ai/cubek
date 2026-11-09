@@ -2,31 +2,31 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 
 /// One of the operands of the walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GatedDeltaWalkOperand {
+pub enum RecurrenceWalkOperand {
     /// `[batch, position, key_head, key_feature]`: the queries, normalized and scaled.
     Query,
     /// `[batch, position, key_head, key_feature]`: the keys, normalized.
     Key,
-    /// `[batch, position, key_head, group, value_feature]`: the values.
+    /// `[batch, position, key_head, head_in_group, value_feature]`: the values.
     Value,
-    /// `[batch, position, key_head, group]`: the log of the factor the state decays by before each
+    /// `[batch, position, key_head, head_in_group]`: the log of the factor the state decays by before each
     /// write.
     Decay,
-    /// `[batch, position, key_head, group]`: the strength of each write.
+    /// `[batch, position, key_head, head_in_group]`: the strength of each write.
     Strength,
-    /// `[batch, key_head, group, key_feature, value_feature]`: the state the walk resumes from.
+    /// `[batch, key_head, head_in_group, key_feature, value_feature]`: the state the walk resumes from.
     /// In a store's slots the first axis is the store's, `[store_slot, ..]`, and the walk writes
     /// the state after its last position back to it.
     State,
-    /// `[batch, position, key_head, group, value_feature]`: what each position reads of the state
+    /// `[batch, position, key_head, head_in_group, value_feature]`: what each position reads of the state
     /// it wrote.
     Out,
-    /// `[kept_state, batch, key_head, group, key_feature, value_feature]`: the states after the
+    /// `[kept_state, batch, key_head, head_in_group, key_feature, value_feature]`: the states after the
     /// walk's last positions, oldest first.
     Kept,
 }
 
-impl GatedDeltaWalkOperand {
+impl RecurrenceWalkOperand {
     /// Every operand.
     pub const ALL: [Self; 8] = [
         Self::Query,
@@ -75,7 +75,7 @@ impl GatedDeltaWalkOperand {
 
 /// One value per operand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GatedDeltaWalkOperandMap<T> {
+pub struct RecurrenceWalkOperandMap<T> {
     pub query: T,
     pub key: T,
     pub value: T,
@@ -86,7 +86,7 @@ pub struct GatedDeltaWalkOperandMap<T> {
     pub kept: T,
 }
 
-impl<T: Copy> GatedDeltaWalkOperandMap<T> {
+impl<T: Copy> RecurrenceWalkOperandMap<T> {
     /// The same value for every operand.
     pub fn splat(value: T) -> Self {
         Self {
@@ -102,16 +102,16 @@ impl<T: Copy> GatedDeltaWalkOperandMap<T> {
     }
 
     /// The value `operand` holds.
-    pub fn get(&self, operand: GatedDeltaWalkOperand) -> T {
+    pub fn get(&self, operand: RecurrenceWalkOperand) -> T {
         match operand {
-            GatedDeltaWalkOperand::Query => self.query,
-            GatedDeltaWalkOperand::Key => self.key,
-            GatedDeltaWalkOperand::Value => self.value,
-            GatedDeltaWalkOperand::Decay => self.decay,
-            GatedDeltaWalkOperand::Strength => self.strength,
-            GatedDeltaWalkOperand::State => self.state,
-            GatedDeltaWalkOperand::Out => self.out,
-            GatedDeltaWalkOperand::Kept => self.kept,
+            RecurrenceWalkOperand::Query => self.query,
+            RecurrenceWalkOperand::Key => self.key,
+            RecurrenceWalkOperand::Value => self.value,
+            RecurrenceWalkOperand::Decay => self.decay,
+            RecurrenceWalkOperand::Strength => self.strength,
+            RecurrenceWalkOperand::State => self.state,
+            RecurrenceWalkOperand::Out => self.out,
+            RecurrenceWalkOperand::Kept => self.kept,
         }
     }
 }

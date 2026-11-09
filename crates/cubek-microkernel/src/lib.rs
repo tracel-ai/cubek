@@ -17,9 +17,8 @@
 pub mod attention;
 #[cfg(feature = "attention-backward")]
 pub mod attention_backward;
-#[cfg(feature = "gated-delta")]
-#[path = "linear_recurrence/mod.rs"]
-pub mod gated_delta;
+#[cfg(feature = "linear-recurrence")]
+pub mod linear_recurrence;
 #[cfg(feature = "matmul")]
 pub mod matmul;
 #[cfg(feature = "reduce")]

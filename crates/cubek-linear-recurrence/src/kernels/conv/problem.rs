@@ -1,11 +1,11 @@
 //! The problem a conv routine computes.
 
-use crate::kernels::conv::CubeGatedDeltaConvRoutine;
+use crate::kernels::conv::CubeQkNormedConvRoutine;
 use crate::kernels::refusals::{
-    GATED_DELTA_CONV_BINDINGS_PAST_DEVICE, GATED_DELTA_CONV_ELEMENT_UNSUPPORTED,
-    GATED_DELTA_CONV_HEADS_EMPTY, GATED_DELTA_CONV_NOTHING_TO_CONVOLVE,
-    GATED_DELTA_CONV_STREAM_BINDING_BUFFERS, GATED_DELTA_CONV_TAPS_PAST_WINDOW,
-    GATED_DELTA_CONV_WINDOW_BINDING_BUFFERS,
+    QK_NORMED_CONV_BINDINGS_PAST_DEVICE, QK_NORMED_CONV_ELEMENT_UNSUPPORTED,
+    QK_NORMED_CONV_HEADS_EMPTY, QK_NORMED_CONV_NOTHING_TO_CONVOLVE,
+    QK_NORMED_CONV_STREAM_BINDING_BUFFERS, QK_NORMED_CONV_TAPS_PAST_WINDOW,
+    QK_NORMED_CONV_WINDOW_BINDING_BUFFERS,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
@@ -14,17 +14,17 @@ use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Space};
 use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
-use cubek_microkernel::gated_delta::conv::cube::GatedDeltaConvWorkItem;
-use cubek_microkernel::gated_delta::conv::{GatedDeltaConvOperand, GatedDeltaConvOperandMap};
-use cubek_microkernel::gated_delta::{
-    BATCH, CHANNEL, GROUP, GatedDeltaHeads, HEAD_CHANNEL, KEY_FEATURE, KEY_HEAD, POSITION,
-    RING_COLUMN, STORE_SLOT, STREAM_POSITION, TAP, VALUE_FEATURE,
+use cubek_microkernel::linear_recurrence::conv::cube::QkNormedConvWorkItem;
+use cubek_microkernel::linear_recurrence::conv::{QkNormedConvOperand, QkNormedConvOperandMap};
+use cubek_microkernel::linear_recurrence::{
+    BATCH, CHANNEL, HEAD_CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RING_COLUMN,
+    RecurrenceHeads, STORE_SLOT, STREAM_POSITION, TAP, VALUE_FEATURE,
 };
 use cubek_std::Hardware;
 use cubek_std::routine::{EstimatedProblem, Routine};
 
 /// The element the queries, keys and values are written at: `f32`, as the walk reads them.
-pub const GATED_DELTA_CONV_OUTPUT_ELEMENT: ElemType = ElemType::Float(FloatKind::F32);
+pub const QK_NORMED_CONV_OUTPUT_ELEMENT: ElemType = ElemType::Float(FloatKind::F32);
 
 /// The activation elements the conv is verified at.
 const ELEMENTS: [ElemType; 2] = [
@@ -49,8 +49,8 @@ impl GatedDeltaConvPast {
     /// The buffers a conv over this past binds, the metadata buffer included.
     pub fn binding_buffers(&self) -> u32 {
         match self {
-            Self::Window { .. } => GATED_DELTA_CONV_WINDOW_BINDING_BUFFERS,
-            Self::Stream { .. } => GATED_DELTA_CONV_STREAM_BINDING_BUFFERS,
+            Self::Window { .. } => QK_NORMED_CONV_WINDOW_BINDING_BUFFERS,
+            Self::Stream { .. } => QK_NORMED_CONV_STREAM_BINDING_BUFFERS,
         }
     }
 
@@ -63,10 +63,10 @@ impl GatedDeltaConvPast {
     }
 
     /// The operands of the conv this past binds, which a line of channels runs along.
-    pub fn channels(&self) -> &'static [GatedDeltaConvOperand] {
+    pub fn channels(&self) -> &'static [QkNormedConvOperand] {
         match self {
-            Self::Window { .. } => &GatedDeltaConvOperand::WINDOW_CHANNELS,
-            Self::Stream { .. } => &GatedDeltaConvOperand::STREAM_CHANNELS,
+            Self::Window { .. } => &QkNormedConvOperand::WINDOW_CHANNELS,
+            Self::Stream { .. } => &QkNormedConvOperand::STREAM_CHANNELS,
         }
     }
 
@@ -83,9 +83,9 @@ impl GatedDeltaConvPast {
 /// The conv over `batch` rows of one position each, or sequences of positions: the `q|k|v` stream
 /// of `heads` and a filter of `taps`, in activations of `element`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GatedDeltaConvProblem {
+pub struct QkNormedConvProblem {
     pub batch: usize,
-    pub heads: GatedDeltaHeads,
+    pub heads: RecurrenceHeads,
     /// Taps of the filter, the newest the row's own value.
     pub taps: usize,
     /// The element of the stream, the filters and the window.
@@ -93,22 +93,22 @@ pub struct GatedDeltaConvProblem {
     /// Where the past the taps read lives.
     pub past: GatedDeltaConvPast,
     /// The alignment of each operand's buffer in elements.
-    pub alignments: GatedDeltaConvOperandMap<ElemAlignment>,
+    pub alignments: QkNormedConvOperandMap<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's start. Both narrow the conv's lines.
-    pub start_bytes: GatedDeltaConvOperandMap<u64>,
+    pub start_bytes: QkNormedConvOperandMap<u64>,
 }
 
-impl GatedDeltaConvProblem {
+impl QkNormedConvProblem {
     /// Whether the conv reads and writes activations of `element`.
     ///
     /// # Errors
     ///
-    /// [`GATED_DELTA_CONV_ELEMENT_UNSUPPORTED`] for any but `f16` and `f32`.
+    /// [`QK_NORMED_CONV_ELEMENT_UNSUPPORTED`] for any but `f16` and `f32`.
     pub fn admit_element(element: ElemType) -> Result<(), Refusal> {
         if ELEMENTS.contains(&element) {
             Ok(())
         } else {
-            Err(GATED_DELTA_CONV_ELEMENT_UNSUPPORTED)
+            Err(QK_NORMED_CONV_ELEMENT_UNSUPPORTED)
         }
     }
 
@@ -119,7 +119,7 @@ impl GatedDeltaConvProblem {
     /// What admission declines: no head, no row or position, an unsupported element, a filter or
     /// window the taps cannot be read back from, more buffers than the device binds.
     pub fn admit(&self, hw: &Hardware) -> Result<(), Refusal> {
-        CubeGatedDeltaConvRoutine
+        CubeQkNormedConvRoutine
             .prepare_first_served(hw, self)
             .map(|_| ())
     }
@@ -127,10 +127,10 @@ impl GatedDeltaConvProblem {
     /// What every launch declines a problem with before it places anything.
     pub(crate) fn admit_launch(&self, hw: &Hardware) -> Result<(), Refusal> {
         if self.work_item().is_empty() {
-            return Err(GATED_DELTA_CONV_HEADS_EMPTY);
+            return Err(QK_NORMED_CONV_HEADS_EMPTY);
         }
         if self.batch == 0 || self.past == (GatedDeltaConvPast::Stream { positions: 0 }) {
-            return Err(GATED_DELTA_CONV_NOTHING_TO_CONVOLVE);
+            return Err(QK_NORMED_CONV_NOTHING_TO_CONVOLVE);
         }
         Self::admit_element(self.element)?;
         let window_short = match self.past {
@@ -138,16 +138,16 @@ impl GatedDeltaConvProblem {
             GatedDeltaConvPast::Stream { .. } => false,
         };
         if self.taps < 2 || window_short {
-            return Err(GATED_DELTA_CONV_TAPS_PAST_WINDOW);
+            return Err(QK_NORMED_CONV_TAPS_PAST_WINDOW);
         }
         if self.past.binding_buffers() > hw.properties.hardware.max_bindings {
-            return Err(GATED_DELTA_CONV_BINDINGS_PAST_DEVICE);
+            return Err(QK_NORMED_CONV_BINDINGS_PAST_DEVICE);
         }
         Ok(())
     }
 
-    pub(crate) fn work_item(&self) -> GatedDeltaConvWorkItem {
-        GatedDeltaConvWorkItem {
+    pub(crate) fn work_item(&self) -> QkNormedConvWorkItem {
+        QkNormedConvWorkItem {
             heads: self.heads,
             taps: self.taps,
             channels: self.past.channels(),
@@ -160,7 +160,7 @@ impl GatedDeltaConvProblem {
         let mut axes = vec![
             (BATCH, self.batch),
             (KEY_HEAD, heads.key_heads),
-            (GROUP, heads.group),
+            (HEAD_IN_GROUP, heads.heads_per_group),
             (KEY_FEATURE, heads.key_features),
             (VALUE_FEATURE, heads.value_features),
             (CHANNEL, heads.conv_dim()),
@@ -185,7 +185,7 @@ impl GatedDeltaConvProblem {
         let heads = &self.heads;
         let mut axes = vec![
             (KEY_HEAD, 1),
-            (GROUP, heads.group),
+            (HEAD_IN_GROUP, heads.heads_per_group),
             (KEY_FEATURE, heads.key_features),
             (VALUE_FEATURE, heads.value_features),
             (CHANNEL, heads.conv_dim()),
@@ -201,16 +201,16 @@ impl GatedDeltaConvProblem {
     /// A problem of dense operands, each starting where its buffer does.
     pub fn dense(
         batch: usize,
-        heads: GatedDeltaHeads,
+        heads: RecurrenceHeads,
         taps: usize,
         past: GatedDeltaConvPast,
         element: ElemType,
     ) -> Self {
         let rows =
             |shape: &[usize]| ElemAlignment::new(shape, &row_major_contiguous_strides(shape));
-        let GatedDeltaHeads {
+        let RecurrenceHeads {
             key_heads,
-            group,
+            heads_per_group,
             key_features,
             value_features,
         } = heads;
@@ -218,25 +218,25 @@ impl GatedDeltaConvProblem {
         let alignments = match past {
             GatedDeltaConvPast::Window { slots, columns } => {
                 let keyed = rows(&[batch, key_heads, key_features]);
-                GatedDeltaConvOperandMap {
+                QkNormedConvOperandMap {
                     qkv: rows(&[batch, conv_dim]),
                     filters: rows(&[conv_dim, taps]),
                     window: rows(&[slots.get(), columns, conv_dim]),
                     lengths: rows(&[batch]),
                     query: keyed,
                     key: keyed,
-                    value: rows(&[batch, key_heads, group, value_features]),
+                    value: rows(&[batch, key_heads, heads_per_group, value_features]),
                 }
             }
             GatedDeltaConvPast::Stream { positions } => {
                 let keyed = rows(&[batch, positions, key_heads, key_features]);
-                GatedDeltaConvOperandMap {
+                QkNormedConvOperandMap {
                     qkv: rows(&[batch, past.stream_len(taps), conv_dim]),
                     filters: rows(&[conv_dim, taps]),
                     query: keyed,
                     key: keyed,
-                    value: rows(&[batch, positions, key_heads, group, value_features]),
-                    ..GatedDeltaConvOperandMap::splat(ElemAlignment::ONE)
+                    value: rows(&[batch, positions, key_heads, heads_per_group, value_features]),
+                    ..QkNormedConvOperandMap::splat(ElemAlignment::ONE)
                 }
             }
         };
@@ -247,12 +247,12 @@ impl GatedDeltaConvProblem {
             element,
             past,
             alignments,
-            start_bytes: GatedDeltaConvOperandMap::splat(0),
+            start_bytes: QkNormedConvOperandMap::splat(0),
         }
     }
 }
 
-impl EstimatedProblem for GatedDeltaConvProblem {
+impl EstimatedProblem for QkNormedConvProblem {
     /// Every operand once, and a handful of operations a channel a tap.
     fn demand(&self) -> Work {
         let conv_dim = self.heads.conv_dim();
@@ -271,7 +271,7 @@ impl EstimatedProblem for GatedDeltaConvProblem {
         let channels = self.batch * positions * conv_dim;
         Work {
             compute_ops: self.work_item().operations(channels),
-            bytes: read + filters + written + channels * GATED_DELTA_CONV_OUTPUT_ELEMENT.size(),
+            bytes: read + filters + written + channels * QK_NORMED_CONV_OUTPUT_ELEMENT.size(),
         }
     }
 }
@@ -307,10 +307,10 @@ mod tests {
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
-    fn heads() -> GatedDeltaHeads {
-        GatedDeltaHeads {
+    fn heads() -> RecurrenceHeads {
+        RecurrenceHeads {
             key_heads: 16,
-            group: 3,
+            heads_per_group: 3,
             key_features: 128,
             value_features: 128,
         }
@@ -323,8 +323,8 @@ mod tests {
         }
     }
 
-    fn conv(heads: GatedDeltaHeads, taps: usize, columns: usize) -> GatedDeltaConvProblem {
-        GatedDeltaConvProblem::dense(8, heads, taps, window(9, columns), F16)
+    fn conv(heads: RecurrenceHeads, taps: usize, columns: usize) -> QkNormedConvProblem {
+        QkNormedConvProblem::dense(8, heads, taps, window(9, columns), F16)
     }
 
     /// A window launch needs seven operands, the slot table and the metadata buffer: a device
@@ -334,7 +334,7 @@ mod tests {
         let problem = conv(heads(), 4, 3);
         assert_eq!(
             problem.admit(&devices::wgpu_no_subgroups()),
-            Err(GATED_DELTA_CONV_BINDINGS_PAST_DEVICE)
+            Err(QK_NORMED_CONV_BINDINGS_PAST_DEVICE)
         );
         let mut hw = devices::h100();
         devices::topology(&mut hw).max_bindings = problem.past.binding_buffers();
@@ -346,7 +346,7 @@ mod tests {
     fn elements_the_conv_is_not_verified_at_are_declined() {
         use cubecl::ir::UIntKind;
         let hw = devices::h100();
-        let dense = |element| GatedDeltaConvProblem::dense(1, heads(), 4, window(2, 3), element);
+        let dense = |element| QkNormedConvProblem::dense(1, heads(), 4, window(2, 3), element);
         assert_eq!(dense(F16).admit(&hw), Ok(()));
         for element in [
             ElemType::UInt(UIntKind::U32),
@@ -354,7 +354,7 @@ mod tests {
         ] {
             assert_eq!(
                 dense(element).admit(&hw),
-                Err(GATED_DELTA_CONV_ELEMENT_UNSUPPORTED)
+                Err(QK_NORMED_CONV_ELEMENT_UNSUPPORTED)
             );
         }
     }
@@ -365,7 +365,7 @@ mod tests {
         let hw = devices::h100();
         assert_eq!(
             conv(heads(), 4, 2).admit(&hw),
-            Err(GATED_DELTA_CONV_TAPS_PAST_WINDOW)
+            Err(QK_NORMED_CONV_TAPS_PAST_WINDOW)
         );
         assert_eq!(conv(heads(), 4, 3).admit(&hw), Ok(()));
     }
@@ -376,11 +376,11 @@ mod tests {
     fn a_stream_is_declined_without_positions_and_binds_less_than_a_window() {
         let stream = |positions| {
             let past = GatedDeltaConvPast::Stream { positions };
-            GatedDeltaConvProblem::dense(1, heads(), 4, past, F16)
+            QkNormedConvProblem::dense(1, heads(), 4, past, F16)
         };
         assert_eq!(
             stream(0).admit(&devices::h100()),
-            Err(GATED_DELTA_CONV_NOTHING_TO_CONVOLVE)
+            Err(QK_NORMED_CONV_NOTHING_TO_CONVOLVE)
         );
         assert_eq!(stream(8).admit(&devices::wgpu_no_subgroups()), Ok(()));
     }
