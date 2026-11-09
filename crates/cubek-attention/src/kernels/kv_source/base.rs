@@ -452,7 +452,7 @@ mod tests {
         };
         let float = |key, value| KvSource::new(AttentionCache::Float { key, value });
         let scoring = AttentionScoring::standard(AttentionVisibility::Attended, DIM);
-        let mut served = 0;
+        let mut served = Vec::new();
         for kernel in AttentionKernel::all() {
             let run = |kv: KvSource| {
                 AttentionTensors::attention(&client, queries(), kv, scoring)
@@ -478,8 +478,11 @@ mod tests {
                     "{kernel:?}: {compared:?}"
                 );
             }
-            served += 1;
+            served.push(kernel);
         }
-        assert!(served > 0, "the unit routine serves any problem");
+        assert!(
+            served.contains(&AttentionKernel::Unit),
+            "the unit routine serves any problem: {served:?}"
+        );
     }
 }
