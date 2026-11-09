@@ -408,10 +408,10 @@ mod tests {
         assert_eq!(blueprint.microkernel.page_steps, None);
     }
 
-    /// Every routine but the two hypercube shuffles declines a packed cache, at every setting it
-    /// lists; each hypercube shuffle prepares it.
+    /// Every routine but the two hypercube shuffles and the staged cube declines a packed cache, at
+    /// every setting it lists; each of those three prepares a round-only one.
     #[test]
-    fn only_the_hypercube_shuffles_read_a_packed_cache() {
+    fn only_the_hypercube_shuffles_and_the_staged_cube_read_a_packed_cache() {
         fn reads<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
             routine: R,
             hw: &Hardware,
@@ -454,10 +454,29 @@ mod tests {
             &hw,
             &packed
         ));
+        assert!(reads(CubeStagedAttentionRoutine, &hw, &packed));
         declines(UnitAttentionRoutine, &hw, &packed);
-        declines(CubeStagedAttentionRoutine, &hw, &packed);
         declines(CubeShuffleAttentionRoutine, &hw, &packed);
         declines(HypercubeSecondLaunchFragmentAttentionRoutine, &hw, &packed);
+
+        // The staged cube stages its keys from one tile, which a QJL fix-up's second is not.
+        use cubek_std::routine::Routine;
+        let qjl = AttentionRoutineProblem {
+            cache: AttentionCacheLayout::Packed(PackedLayout {
+                fixup: crate::kernels::KeyFixup::Qjl,
+                ..layout
+            }),
+            ..packed
+        };
+        for settings in CubeStagedAttentionRoutine.settings(&hw) {
+            assert_eq!(
+                CubeStagedAttentionRoutine
+                    .prepare(&hw, &qjl, &settings)
+                    .err(),
+                Some(STAGED_FIXUP_UNREAD),
+                "{settings}"
+            );
+        }
     }
 
     fn assert_steps_divide<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
