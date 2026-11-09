@@ -68,6 +68,7 @@ name = "attention_backward"
 [[bench]]
 harness = false
 name = "gated_delta_walk"
+path = "benches/recurrence_walk.rs"
 
 [[bench]]
 harness = false

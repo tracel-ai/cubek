@@ -7,7 +7,7 @@ keywords = []
 license.workspace = true
 name = "cubek-gated-delta"
 readme.workspace = true
-repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-gated-delta"
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-linear-recurrence"
 version.workspace = true
 
 [lints]
