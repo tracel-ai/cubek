@@ -113,3 +113,34 @@ fn a_forward_over_twelve_channels_reads_lines_that_divide_them() {
         .expect("the lead setting prepares");
     assert_eq!(12 % blueprint.widths.lhs, 0);
 }
+
+fn wasted(tiles: (usize, usize), split: (usize, usize)) -> f64 {
+    let slots = tiles.0.next_multiple_of(split.0) * tiles.1.next_multiple_of(split.1);
+    1.0 - (tiles.0 * tiles.1) as f64 / slots as f64
+}
+
+/// A 56 wide map in 3 wide blocks has 19 tiles along a row, so 32 planes laid along the rows
+/// alone would leave most of the last group idle: the split takes the across axis too.
+#[test]
+fn a_56_by_56_map_splits_its_planes_over_rows_and_across() {
+    let tiles = (56_usize.div_ceil(3), 56);
+    let split = UnitRegistersConvRoutine::plane_split(tiles, 32);
+    assert_eq!(split, (4, 8));
+    assert!(wasted(tiles, split) < 0.1, "{split:?}");
+}
+
+/// A 7 by 7 map is held by fewer planes than a cube offers, so the split leaves the rest out.
+#[test]
+fn a_7_by_7_map_takes_only_the_planes_it_fills() {
+    let tiles = (7_usize.div_ceil(3), 7);
+    let split = UnitRegistersConvRoutine::plane_split(tiles, 32);
+    assert_eq!(split, (3, 7));
+    assert!(wasted(tiles, split) < 0.1, "{split:?}");
+}
+
+/// A single plane, or a single tile, splits to one.
+#[test]
+fn a_split_is_never_empty() {
+    assert_eq!(UnitRegistersConvRoutine::plane_split((5, 5), 1), (1, 1));
+    assert_eq!(UnitRegistersConvRoutine::plane_split((1, 1), 32), (1, 1));
+}

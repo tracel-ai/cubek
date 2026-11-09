@@ -55,6 +55,18 @@ impl UnitRegistersConvRoutine {
             .unwrap_or((1, 1))
     }
 
+    /// The planes of a cube along the rows and along the across axis, of at most `planes`, that
+    /// cover `tiles` (rows, across) in the fewest blocks. Of those it takes the fewest planes, then
+    /// the most along the rows, whose tiles are contiguous.
+    pub(super) fn plane_split(tiles: (usize, usize), planes: usize) -> (usize, usize) {
+        let blocks =
+            |&(rows, across): &(usize, usize)| tiles.0.div_ceil(rows) * tiles.1.div_ceil(across);
+        (1..=planes)
+            .flat_map(|rows| (1..=planes / rows).map(move |across| (rows, across)))
+            .min_by_key(|split| (blocks(split), split.0 * split.1, std::cmp::Reverse(split.0)))
+            .unwrap_or((1, 1))
+    }
+
     /// Whether the input's lines, where it is read in them down the contraction, divide the
     /// contracted axis.
     ///
@@ -166,8 +178,8 @@ impl Routine for UnitRegistersConvRoutine {
         );
     }
 
-    /// The register block `settings` size, a plane of the launch for every box of the output, its
-    /// units taking blocks along the columns in turns: as wide a plane as the device dispatches,
+    /// The register block `settings` size, a plane of the launch for every box of the output, laid
+    /// over the rows and the across axis, its units taking blocks along the columns in turns: as wide a plane as the device dispatches,
     /// since units cooperate on nothing.
     fn prepare(
         &self,
@@ -189,10 +201,19 @@ impl Routine for UnitRegistersConvRoutine {
             settings.microkernel.columns.get(),
             plane_width,
         );
+        let across = problem.operation.roles().across();
+        let (along_m, along_across) = Self::plane_split(
+            (
+                problem.extent(axes.m).div_ceil(microkernel.rows),
+                problem.extent(across),
+            ),
+            planes.along_m.get(),
+        );
         let order = PlaneOrder::new(
             &[
-                (axes.m, planes.along_m.get()),
+                (axes.m, along_m),
                 (axes.n, planes.along_n.get()),
+                (across, along_across),
             ],
             settings.cube_order,
         );

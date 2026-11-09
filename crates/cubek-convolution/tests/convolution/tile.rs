@@ -1289,6 +1289,8 @@ cases! {
     unit_registers_forward_overhanging_co: unit_registers(), &conv_f32(2, (64, 10), [9, 9], [3, 3], SAME_3X3);
     unit_registers_forward_channels_1: unit_registers(), &conv_f32(1, (1, 16), [12, 12], [3, 3], SAME_3X3);
     unit_registers_forward_channels_5: unit_registers(), &conv_f32(1, (5, 3), [12, 12], [3, 3], SAME_3X3);
+    unit_registers_forward_ragged_13x9: unit_registers(), &conv_f32(2, (64, 32), [13, 9], [3, 3], SAME_3X3);
+    unit_registers_forward_ragged_57x5: unit_registers(), &conv_f32(2, (64, 32), [57, 5], [3, 3], SAME_3X3);
 }
 
 cases! {
@@ -1300,6 +1302,8 @@ cases! {
     unit_registers_weight_grad_narrow: unit_registers(), &conv_f32(2, (64, 64), [7, 7], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
     unit_registers_weight_grad_overhanging_ci_co: unit_registers(), &conv_f32(2, (40, 12), [9, 11], [5, 3], ([1, 1], [2, 1], [1, 1])), Binding::Dense, Binding::Dense;
     unit_registers_weight_grad_channels_3: unit_registers(), &conv_f32(2, (3, 10), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    unit_registers_weight_grad_ragged_13x9: unit_registers(), &conv_f32(2, (64, 32), [13, 9], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    unit_registers_weight_grad_ragged_57x5: unit_registers(), &conv_f32(2, (64, 32), [57, 5], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
 }
 
 cases! {
@@ -1311,6 +1315,8 @@ cases! {
     unit_registers_data_grad_narrow: unit_registers(), &conv_f32(2, (64, 64), [7, 7], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
     unit_registers_data_grad_overhanging_ci_co: unit_registers(), &conv_f32(2, (40, 12), [9, 11], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
     unit_registers_data_grad_channels_3: unit_registers(), &conv_f32(2, (3, 16), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    unit_registers_data_grad_ragged_13x9: unit_registers(), &conv_f32(2, (64, 32), [13, 9], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    unit_registers_data_grad_ragged_57x5: unit_registers(), &conv_f32(2, (64, 32), [57, 5], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
 }
 
 /// A cube staged setting is no setting of the unit routine, and is refused by name.
