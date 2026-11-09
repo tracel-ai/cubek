@@ -17,9 +17,7 @@ use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
 use cubek_std::autotune::{
     Autotune, CandidatePriority, Ceiling, GroupPriority, Identity, Roofline, TuneCandidate,
 };
-use cubek_std::routine::{
-    EstimatedProblem, PreparedLaunches, ROUTINE_LISTS_NO_SETTING, Routine,
-};
+use cubek_std::routine::{EstimatedProblem, PreparedLaunches, ROUTINE_LISTS_NO_SETTING, Routine};
 use cubek_std::{Hardware, Instructions, manual_mma};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -61,11 +59,11 @@ impl ConvTuneKey {
             .unwrap_or(1)
     }
 
-    /// Where a candidate launching `partitioning` in cubes of `units` units is tried: first,
-    /// lowered by the doublings its boxes cover past the output's edge, the doublings its grid
-    /// falls short of filling the device, the doublings the boxes read the rhs again, and, at a
-    /// ring of one stage, the doublings of stages it fills one after another. Arithmetic over the
-    /// key's extents, never a statement about speed.
+    /// Where a candidate launching `partitioning` in cubes of `units` units is tried: the top band
+    /// unless its boxes cover at least twice the output or its grid fills less than half the
+    /// device, then one band lower. A band is raced whole and a lower one only when it measures
+    /// nothing, so the priority only separates the clearly wasteful from the rest and never picks
+    /// among those that could win.
     fn priority(
         &self,
         hw: &Hardware,
@@ -85,20 +83,15 @@ impl ConvTuneKey {
         let boxes = [0, 1, 2].map(|axis| extents[axis].div_ceil(cuts[axis]));
         let covered: usize = (0..3).map(|axis| boxes[axis] * cuts[axis]).product();
         let work: usize = extents.iter().product();
-        let masked = (covered / work.max(1)).max(1).ilog2();
+        let wasteful = covered >= 2 * work.max(1);
         let cubes = boxes.iter().product::<usize>() * problem.extent(roles.batch());
-        let idle = hw.cubes_to_fill(units as u32).map_or(0, |wanted| {
-            (wanted as usize)
-                .div_ceil(cubes.max(1))
-                .next_power_of_two()
-                .ilog2()
-        });
-        let reuse = (boxes[0] * boxes[1]).ilog2();
-        let ring = match partitioning.ring().stages_in_flight.get() {
-            1 => partitioning.stages().max(1).ilog2(),
-            _ => 0,
-        };
-        CandidatePriority::FIRST.lowered(masked + idle + reuse + ring)
+        let idle = hw
+            .cubes_to_fill(units as u32)
+            .is_some_and(|wanted| wanted as usize > 2 * cubes.max(1));
+        match wasteful || idle {
+            true => CandidatePriority::FIRST.lowered(1),
+            false => CandidatePriority::FIRST,
+        }
     }
 }
 
@@ -213,10 +206,7 @@ impl ConvCandidate {
 
     /// The problem `tensors` state, the launch this candidate prepares for it (each problem
     /// prepared once) and the tensors bound to it.
-    fn bound(
-        &self,
-        tensors: ConvTensors,
-    ) -> Result<(ConvProblem, Prepared, ConvBinding), Refusal> {
+    fn bound(&self, tensors: ConvTensors) -> Result<(ConvProblem, Prepared, ConvBinding), Refusal> {
         let problem = tensors.problem();
         let (blueprint, grid) =
             self.prepared
@@ -421,41 +411,56 @@ mod tests {
         blueprint.partitioning.block().rows
     }
 
-    /// Seven 8-row instructions cover a map 56 wide whole, so that candidate is tried no later
-    /// than the lead, whose boxes overhang it.
+    /// Every grid is wide enough to fill the device, so only the boxes' fit sets the band.
+    const WIDE: usize = 8192;
+
+    /// Seven 8-row instructions cover a map 56 wide whole, and the lead's boxes overhang it
+    /// little: both are raced in the top band.
     #[test]
-    fn a_map_56_wide_is_tried_by_the_56_row_candidate_no_later_than_the_lead() {
-        let (hw, key) = (cmma_8x32_only(), key(8, [12, 58]));
+    fn a_map_56_wide_races_the_56_row_candidate_and_the_lead_together() {
+        let (hw, key) = (cmma_8x32_only(), key(WIDE, [12, 58]));
         let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
         let lead = ConvSettings::new(8, ConvAlong::new(2, 2), ConvAlong::new(2, 2));
-        assert!(priority(CubeStagedConvRoutine::F7X1_P1X2_T8) >= priority(lead));
+        assert_eq!(
+            priority(CubeStagedConvRoutine::F7X1_P1X2_T8),
+            CandidatePriority::FIRST
+        );
+        assert_eq!(priority(lead), CandidatePriority::FIRST);
     }
 
     /// A map 7 wide and 7 tall is held by 8 rows, and by planes across its rows that share each
-    /// weight stage.
+    /// weight stage: such a candidate is raced in the top band.
     #[test]
-    fn a_map_7_by_7_ranks_an_8_row_candidate_with_an_across_split_first() {
-        let key = key(128, [9, 9]);
-        let ranked = ranked(&cmma_8x32_only(), &key);
-        let first = ranked[0].strategy();
-        assert_eq!(rows(&ranked[0], &key), 8);
-        assert!(first.grid.across.get() > 1, "{first}");
+    fn a_map_7_by_7_races_an_8_row_candidate_with_an_across_split_in_the_top_band() {
+        let key = key(WIDE, [9, 9]);
+        let top: Vec<_> = ranked(&cmma_8x32_only(), &key)
+            .into_iter()
+            .filter(|candidate| candidate.priority(&key) == CandidatePriority::FIRST)
+            .collect();
+        assert!(
+            top.iter()
+                .any(|c| rows(c, &key) == 8 && c.strategy().grid.across.get() > 1),
+            "{:?}",
+            top.iter()
+                .map(|c| c.strategy().to_string())
+                .collect::<Vec<_>>()
+        );
     }
 
-    /// The same setting over a grid too small to fill the device is tried after the one over a
-    /// grid that does.
+    /// The same setting over a grid that cannot fill half the device is raced after the one over
+    /// a grid that fills it.
     #[test]
-    fn a_grid_short_of_the_device_is_tried_later() {
+    fn a_grid_short_of_half_the_device_is_in_a_lower_band() {
         let hw = cmma_8x32_only();
         let settings = CubeStagedConvRoutine::F1X1_P1X1_T8_A7;
         let priority = |key| ConvCandidate::new(settings, &hw).priority(&key);
-        assert!(priority(key(1, [9, 9])) < priority(key(64, [9, 9])));
+        assert!(priority(key(1, [9, 9])) < priority(key(WIDE, [9, 9])));
     }
 
-    /// Boxes covering at least twice the map are tried after those that tile it.
+    /// Boxes covering at least twice the map are raced after those that tile it.
     #[test]
-    fn masked_cells_lower_the_priority() {
-        let (hw, key) = (cmma_8x32_only(), key(8, [12, 58]));
+    fn boxes_covering_twice_the_map_are_in_a_lower_band() {
+        let (hw, key) = (cmma_8x32_only(), key(WIDE, [12, 58]));
         let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
         let overhanging = ConvSettings::new(8, ConvAlong::new(16, 1), ConvAlong::new(1, 2));
         assert!(priority(overhanging) < priority(CubeStagedConvRoutine::F7X1_P1X2_T8));
