@@ -386,7 +386,7 @@ mod tests {
     fn masked_cells_lower_the_priority() {
         let (hw, key) = (cmma_8x32_only(), key(8, [12, 58]));
         let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
-        let eight_wide = ConvSettings::new(ConvAlong::new(8, 1), ConvAlong::new(1, 2)).rows(8);
+        let eight_wide = ConvSettings::new(8, ConvAlong::new(8, 1), ConvAlong::new(1, 2));
         assert!(priority(eight_wide) < priority(CubeStagedConvRoutine::F7X1_P1X2_T8));
     }
 

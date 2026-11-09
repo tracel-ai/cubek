@@ -28,33 +28,6 @@ impl ConvLines {
     }
 }
 
-/// Which of the device's matrix instructions of the asked kind a setting takes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ConvTile {
-    /// The largest the device offers.
-    Largest,
-    /// The largest of exactly this many rows.
-    Rows(NonZeroUsize),
-}
-
-impl ConvTile {
-    fn admits(self, rows: usize) -> bool {
-        match self {
-            Self::Largest => true,
-            Self::Rows(only) => rows == only.get(),
-        }
-    }
-}
-
-impl core::fmt::Display for ConvTile {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Largest => Ok(()),
-            Self::Rows(rows) => write!(f, "_T{rows}"),
-        }
-    }
-}
-
 /// A count along each of the operation's two free axes, the rows and the columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConvAlong {
@@ -85,7 +58,8 @@ impl core::fmt::Display for ConvAlong {
 pub struct ConvInstruction {
     /// The transport the planes reach the device's matrix instruction through first.
     pub transport: PlaneFragmentTransport,
-    pub tile: ConvTile,
+    /// Rows of the instruction: the largest the device offers of exactly this many.
+    pub rows: NonZeroUsize,
 }
 
 impl core::fmt::Display for ConvInstruction {
@@ -159,12 +133,17 @@ pub struct ConvSettings {
 }
 
 impl ConvSettings {
-    /// Cmma over `fragments` instructions a plane and `planes` planes a cube, reading lines.
-    pub const fn new(fragments: ConvAlong, planes: ConvAlong) -> Self {
+    /// Cmma of an instruction of `rows` rows over `fragments` instructions a plane and `planes`
+    /// planes a cube, reading lines.
+    ///
+    /// # Panics
+    ///
+    /// On a count of zero.
+    pub const fn new(rows: usize, fragments: ConvAlong, planes: ConvAlong) -> Self {
         Self {
             instruction: ConvInstruction {
                 transport: PlaneFragmentTransport::Cmma,
-                tile: ConvTile::Largest,
+                rows: NonZeroUsize::new(rows).expect("an instruction has a row"),
             },
             grid: ConvGrid {
                 fragments,
@@ -174,17 +153,6 @@ impl ConvSettings {
             walk: ConvWalk::DEFAULT,
             lines: ConvLines::Widest,
         }
-    }
-
-    /// These settings through the instruction of `rows` rows.
-    ///
-    /// # Panics
-    ///
-    /// On a count of zero.
-    pub const fn rows(mut self, rows: usize) -> Self {
-        self.instruction.tile =
-            ConvTile::Rows(NonZeroUsize::new(rows).expect("an instruction has a row"));
-        self
     }
 
     /// These settings with `planes` planes along the across axis, a cube then covering that many
@@ -207,16 +175,6 @@ impl ConvSettings {
     /// These settings holding two stages in flight.
     pub const fn double_ring(mut self) -> Self {
         self.walk.ring = StageRing::DOUBLE;
-        self
-    }
-
-    /// These settings holding `steps` instruction steps of the contraction in a stage.
-    ///
-    /// # Panics
-    ///
-    /// On a count of zero.
-    pub const fn stage_steps(mut self, steps: usize) -> Self {
-        self.walk.stage_steps = NonZeroUsize::new(steps).expect("a stage holds a step");
         self
     }
 
@@ -247,7 +205,7 @@ impl ConvSettings {
         PlaneFragmentMicrokernel::candidates(hw, &problem.work_item(), &grid)
             .filter(|plane| {
                 let [(_, rows), ..] = plane.instruction.shape();
-                self.instruction.tile.admits(rows)
+                rows == self.instruction.rows.get()
             })
             .find(|plane| match transport {
                 PlaneFragmentTransport::Cmma => {
@@ -266,8 +224,7 @@ impl ConvSettings {
 
 impl core::fmt::Display for ConvSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let ConvInstruction { tile, .. } = self.instruction;
-        write!(f, "{}_{}{tile}", self.instruction, self.grid)?;
+        write!(f, "{}_{}_T{}", self.instruction, self.grid, self.instruction.rows)?;
         if self.grid.across.get() > 1 {
             write!(f, "_A{}", self.grid.across)?;
         }

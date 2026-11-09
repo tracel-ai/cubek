@@ -1,5 +1,5 @@
 use crate::kernels::tiled::{
-    ConvAlong, ConvGrid, ConvInstruction, ConvLines, ConvSettings, ConvTile, ConvWalk,
+    ConvAlong, ConvGrid, ConvInstruction, ConvLines, ConvSettings, ConvWalk,
 };
 use core::num::NonZeroUsize;
 use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
@@ -152,9 +152,7 @@ impl<'a> ConvCandidates<'a> {
         ConvSettings {
             instruction: ConvInstruction {
                 transport,
-                tile: ConvTile::Rows(
-                    NonZeroUsize::new(tile.rows).expect("an instruction has rows"),
-                ),
+                rows: NonZeroUsize::new(tile.rows).expect("an instruction has rows"),
             },
             grid,
             walk: ConvWalk {
@@ -211,12 +209,12 @@ mod tests {
     /// eight rows, and without a manual mma none takes it.
     #[test]
     fn a_device_lists_only_the_instructions_it_offers() {
-        let eight = ConvTile::Rows(NonZeroUsize::new(8).unwrap());
-        assert!(list(&nvidia()).iter().any(|s| s.instruction.tile == eight));
+        let eight = NonZeroUsize::new(8).unwrap();
+        assert!(list(&nvidia()).iter().any(|s| s.instruction.rows == eight));
         let list = list(&cmma_only());
         assert!(!list.is_empty());
         for settings in list {
-            assert_ne!(settings.instruction.tile, eight, "{settings}");
+            assert_ne!(settings.instruction.rows, eight, "{settings}");
             assert_eq!(settings.instruction.transport, PlaneFragmentTransport::Cmma);
         }
     }

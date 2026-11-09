@@ -22,35 +22,33 @@ use cubek_std::routine::{Grid, Routine};
 pub struct CubeStagedConvRoutine;
 
 impl CubeStagedConvRoutine {
-    /// 2x2 fragments on each of 2x2 planes.
+    /// 2x2 fragments of 16 rows on each of 2x2 planes.
     pub const F2X2_P2X2: ConvSettings =
-        ConvSettings::new(ConvAlong::new(2, 2), ConvAlong::new(2, 2));
+        ConvSettings::new(16, ConvAlong::new(2, 2), ConvAlong::new(2, 2));
 
-    /// 1x2 fragments on each of 1x2 planes: one tile of rows.
+    /// 1x2 fragments of 16 rows on each of 1x2 planes: one tile of rows.
     pub const F1X2_P1X2: ConvSettings =
-        ConvSettings::new(ConvAlong::new(1, 2), ConvAlong::new(1, 2));
+        ConvSettings::new(16, ConvAlong::new(1, 2), ConvAlong::new(1, 2));
 
-    /// 2x2 fragments on each of 1x2 planes: two tiles of rows.
+    /// 2x2 fragments of 16 rows on each of 1x2 planes: two tiles of rows.
     pub const F2X2_P1X2: ConvSettings =
-        ConvSettings::new(ConvAlong::new(2, 2), ConvAlong::new(1, 2));
+        ConvSettings::new(16, ConvAlong::new(2, 2), ConvAlong::new(1, 2));
 
-    /// 1x2 fragments on each of 2x2 planes: two tiles of rows.
+    /// 1x2 fragments of 16 rows on each of 2x2 planes: two tiles of rows.
     pub const F1X2_P2X2: ConvSettings =
-        ConvSettings::new(ConvAlong::new(1, 2), ConvAlong::new(2, 2));
+        ConvSettings::new(16, ConvAlong::new(1, 2), ConvAlong::new(2, 2));
 
     /// Seven 8x32 instructions down each of two planes across the columns.
     pub const F7X1_P1X2_T8: ConvSettings =
-        ConvSettings::new(ConvAlong::new(7, 1), ConvAlong::new(1, 2)).rows(8);
+        ConvSettings::new(8, ConvAlong::new(7, 1), ConvAlong::new(1, 2));
 
     /// One 8x32 instruction on each of two planes across the columns.
     pub const F1X1_P1X2_T8: ConvSettings =
-        ConvSettings::new(ConvAlong::new(1, 1), ConvAlong::new(1, 2)).rows(8);
+        ConvSettings::new(8, ConvAlong::new(1, 1), ConvAlong::new(1, 2));
 
     /// One 8x32 plane for each of seven output rows, which share each staged weight block.
     pub const F1X1_P1X1_T8_A7: ConvSettings =
-        ConvSettings::new(ConvAlong::new(1, 1), ConvAlong::new(1, 1))
-            .rows(8)
-            .across(7);
+        ConvSettings::new(8, ConvAlong::new(1, 1), ConvAlong::new(1, 1)).across(7);
 }
 
 impl Routine for CubeStagedConvRoutine {
