@@ -12,8 +12,8 @@ use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::{LocalTuner, TunableSet, local_tuner};
 use cubecl::{self as cubecl, AutotuneKey, CubeDim};
 use cubecl_common::device::ServiceId;
-use cubek_microkernel::matmul::MatmulOperands;
 use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::autotune::{
     Autotune, CandidatePriority, Ceiling, GroupPriority, Identity, Roofline, TuneCandidate,
 };
@@ -28,7 +28,8 @@ use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 /// Every extent is **exact**: they are a model's handful of layer shapes, and anchoring would merge
 /// layers whose winners differ. The batch is the axis a caller varies freely, so it is anchored to
 /// the power of two above it. The widths are how wide each operand's alignment lets it be read,
-/// since a setting's reads follow them.
+/// since a setting's reads follow them, and a view starting partway into its buffer narrows them
+/// to its start's own alignment.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct ConvTuneKey {
     operation: ConvOperation,
@@ -50,13 +51,21 @@ impl ConvTuneKey {
     /// The most batches a bucket stands for.
     const MOST_BATCH: usize = 1 << 16;
 
-    /// The widest power-of-two width `alignment` admits.
-    fn width(alignment: ElemAlignment) -> usize {
+    /// The widest power-of-two width `alignment` admits for a view starting at `start`.
+    fn width(alignment: ElemAlignment, start: ElemAlignment) -> usize {
         (0..=5)
             .map(|power| 1usize << power)
-            .take_while(|&width| alignment.admits(width))
+            .take_while(|&width| alignment.admits(width) && start.admits(width))
             .last()
             .unwrap_or(1)
+    }
+
+    /// The alignment a view of `problem`'s operand starts at, as the launch it prepares reads it.
+    fn start(problem: &ConvProblem, operand: MatmulOperand) -> ElemAlignment {
+        ElemAlignment::at_start(
+            problem.start_bytes.get(operand),
+            problem.elements.get(operand).size(),
+        )
     }
 
     /// Where a candidate launching `partitioning` in cubes of `units` units is tried: the top band
@@ -111,9 +120,15 @@ impl From<&ConvProblem> for ConvTuneKey {
             problem.channels_out,
             problem.window,
             [
-                Self::width(problem.alignments.lhs),
-                Self::width(problem.alignments.rhs),
-                Self::width(problem.alignments.out),
+                Self::width(
+                    problem.alignments.lhs,
+                    Self::start(problem, MatmulOperand::Lhs),
+                ),
+                Self::width(
+                    problem.alignments.rhs,
+                    Self::start(problem, MatmulOperand::Rhs),
+                ),
+                Self::width(problem.alignments.out, ElemAlignment::at_start(0, 1)),
             ],
         )
     }
