@@ -1,7 +1,7 @@
 use super::kernel::cube_staged_conv_kernel;
 use crate::kernels::tiled::{
     ConvBinding, ConvBlueprint, ConvLines, ConvPartitioning, ConvProblem, ConvRoutine,
-    ConvSettings, ConvTiles, STAGE_RING,
+    ConvSettings, ConvTiles,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
@@ -105,7 +105,7 @@ impl Routine for CubeStagedConvRoutine {
             planes: MatmulPlaneLayout::new(settings.planes.0, settings.planes.1),
             planes_along_k: NonZeroUsize::MIN,
             scratch,
-            ring: STAGE_RING,
+            ring: settings.ring,
             fill: CubeStagedFill {
                 delivery: CubeStagedDelivery::Copy,
                 filling_planes: 0,

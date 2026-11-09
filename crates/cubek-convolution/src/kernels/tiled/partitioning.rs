@@ -7,9 +7,6 @@ use cubek_microkernel::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentMi
 use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, StageRing};
 
-/// The ring every conv stage is held in.
-pub const STAGE_RING: StageRing = StageRing::SINGLE;
-
 /// What one step of the contraction, the instruction's `k` cells, is made of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConvStep {
@@ -74,6 +71,7 @@ pub struct ConvTiles {
     planes: (usize, usize),
     step: ConvStep,
     stage_steps: usize,
+    ring: StageRing,
     /// Elements one read of a stage fill brings along each input's innermost axis.
     runs: MatmulOperands<usize>,
 }
@@ -105,6 +103,7 @@ impl ConvTiles {
             planes: settings.planes,
             step,
             stage_steps: settings.stage_steps,
+            ring: settings.ring,
             runs: MatmulOperands::all(1),
         };
         let cells = |operand| settings.lines.cells(tiles.run(operand));
@@ -157,6 +156,7 @@ impl ConvTiles {
 pub struct ConvPartitioning {
     partitioning: Partitioning,
     runs: MatmulOperands<usize>,
+    ring: StageRing,
     /// Rows and columns of the output one stage owner holds, and the contraction cells a stage
     /// holds, `(rows, columns, depth)`.
     stage: (usize, usize, usize),
@@ -200,6 +200,7 @@ impl ConvPartitioning {
         Self {
             partitioning: Partitioning::new(problem.space(), levels),
             runs: tiles.runs,
+            ring: tiles.ring,
             out_run: match axes.dim(roles.inner.out) {
                 Some(MatmulDim::M) => rows,
                 Some(MatmulDim::N) => columns,
@@ -225,16 +226,22 @@ impl ConvPartitioning {
         // than the divisor measured slower.
         let whole = (divisor == 1 && total > 1)
             .then_some(total)
-            .filter(|&steps| Self::bytes(tiles.cells(steps * k), &problem.elements) <= budget);
+            .filter(|&steps| {
+                Self::bytes(tiles.cells(steps * k), &problem.elements, tiles.ring) <= budget
+            });
         let steps = whole.unwrap_or(divisor);
         ((axis, steps), steps * k)
     }
 
     /// Bytes of shared memory the stages of `stage` hold, the operands in `elements`.
-    fn bytes(stage: (usize, usize, usize), elements: &MatmulOperands<ElemType>) -> usize {
+    fn bytes(
+        stage: (usize, usize, usize),
+        elements: &MatmulOperands<ElemType>,
+        ring: StageRing,
+    ) -> usize {
         let (rows, columns, depth) = stage;
         let cells = rows * elements.lhs.size() + columns * elements.rhs.size();
-        STAGE_RING.stages_in_flight.get() * depth * cells
+        ring.bytes(depth * cells)
     }
 
     pub fn as_tile(&self) -> &Partitioning {
@@ -266,7 +273,7 @@ impl ConvPartitioning {
 
     /// Bytes of shared memory a cube's stages hold, the operands in `elements`.
     pub fn stage_bytes(&self, elements: &MatmulOperands<ElemType>) -> usize {
-        Self::bytes(self.stage, elements)
+        Self::bytes(self.stage, elements, self.ring)
     }
 
     /// What one cube moves and computes: the cube's box of the output read over the whole
@@ -297,7 +304,7 @@ impl ConvPartitioning {
                 self.out_run * size(MatmulOperand::Out),
             )],
             stages: self.contracted.div_ceil(depth) as u64,
-            stages_in_flight: STAGE_RING.stages_in_flight.get() as u32,
+            stages_in_flight: self.ring.stages_in_flight.get() as u32,
             drain_atomics: 0,
         }
     }

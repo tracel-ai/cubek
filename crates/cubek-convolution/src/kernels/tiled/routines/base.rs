@@ -6,7 +6,7 @@ use cubek_microkernel::matmul::plane::{
     PlaneFragmentTransport,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
+use cubek_std::microkernel::{Microkernel, StageRing};
 
 /// What a setting is declined with where the device offers no instruction of its kind for the
 /// problem's elements.
@@ -68,6 +68,8 @@ pub struct ConvSettings {
     pub planes: (usize, usize),
     /// Instruction steps of the contraction one stage holds, capped by what the problem has.
     pub stage_steps: usize,
+    /// Stages a cube holds at once: one fills then contracts, two fill the next while contracting.
+    pub ring: StageRing,
     pub lines: ConvLines,
     pub tile: ConvTile,
 }
@@ -79,6 +81,7 @@ impl ConvSettings {
             fragments,
             planes,
             stage_steps: 4,
+            ring: StageRing::SINGLE,
             lines,
             tile: ConvTile::Largest,
         }
@@ -96,6 +99,14 @@ impl ConvSettings {
     pub const fn mma(self) -> Self {
         Self {
             instruction: PlaneFragmentTransport::Mma,
+            ..self
+        }
+    }
+
+    /// These settings holding two stages in flight.
+    pub const fn double_ring(self) -> Self {
+        Self {
+            ring: StageRing::DOUBLE,
             ..self
         }
     }
@@ -162,6 +173,7 @@ impl core::fmt::Display for ConvSettings {
             self.planes.1,
             self.stage_steps
         )?;
+        write!(f, "{}", self.ring)?;
         match self.lines {
             ConvLines::One => write!(f, " width=1"),
             ConvLines::Widest => Ok(()),
