@@ -23,10 +23,9 @@ impl<M> ConvBlueprint<M> {
     /// `microkernel`, whose planes are `plane`, placed by `partitioning`, and the grid that spawns
     /// it.
     ///
-    /// To the requirements the routine enqueued in `vectorization`, the binding adds its own: each
-    /// input's buffer alignment and where its view starts, and the masking of an innermost run
-    /// the tiles overhang. Each input then binds at the widest width this device reads its element in
-    /// that they admit, and the output one element wide, as a manual fragment writes it.
+    /// Each input binds at the widest width this device reads its element in that
+    /// [`widths`](Self::widths) admits, and the output one element wide, as a manual fragment
+    /// writes it.
     ///
     /// # Errors
     ///
@@ -36,9 +35,85 @@ impl<M> ConvBlueprint<M> {
         problem: &ConvProblem,
         (microkernel, plane): (M, &PlaneFragmentMicrokernel),
         partitioning: ConvPartitioning,
-        mut vectorization: Vectorization<MatmulOperand>,
+        vectorization: Vectorization<MatmulOperand>,
     ) -> Result<(Self, Grid), Refusal> {
-        for operand in [MatmulOperand::Lhs, MatmulOperand::Rhs] {
+        let widths = Self::widths(
+            hw,
+            problem,
+            &partitioning,
+            vectorization,
+            &[MatmulOperand::Lhs, MatmulOperand::Rhs],
+        );
+        let bounces = plane.instruction.drain() == PlaneFragmentDrain::Bounce;
+        let windows = match bounces {
+            true => {
+                let [(_, m), (_, n), _] = plane.instruction.shape();
+                partitioning.planes() * m * n * problem.work_item().sum.size()
+            }
+            false => 0,
+        };
+        let cube = CubeResources {
+            plane_width: hw.plane_dim()?,
+            shared_memory: partitioning.stage_bytes(&problem.elements).max(windows),
+        };
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
+        let blueprint = Self {
+            microkernel,
+            partitioning,
+            widths,
+            masks_out: bounces,
+        };
+        Ok((blueprint, grid))
+    }
+
+    /// `microkernel` placed by `partitioning` for units that read their operands from global
+    /// memory, `plane_width` of them to a plane, and the grid that spawns them. All three operands
+    /// bind at the widths their accesses admit, and no shared memory is held.
+    ///
+    /// # Errors
+    ///
+    /// A cube or a grid the device does not spawn.
+    pub fn prepared_units(
+        hw: &Hardware,
+        problem: &ConvProblem,
+        microkernel: M,
+        partitioning: ConvPartitioning,
+        vectorization: Vectorization<MatmulOperand>,
+        plane_width: u32,
+    ) -> Result<(Self, Grid), Refusal> {
+        let widths = Self::widths(
+            hw,
+            problem,
+            &partitioning,
+            vectorization,
+            &MatmulOperand::ALL,
+        );
+        let cube = CubeResources {
+            plane_width,
+            shared_memory: 0,
+        };
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
+        let blueprint = Self {
+            microkernel,
+            partitioning,
+            widths,
+            masks_out: false,
+        };
+        Ok((blueprint, grid))
+    }
+
+    /// To the requirements the routine enqueued in `vectorization`, the binding adds its own for
+    /// each of `operands`: its buffer's alignment and where its view starts, and the masking of an
+    /// innermost run the tiles overhang. Each then binds at the widest width this device reads its
+    /// element in that they admit; an operand not listed binds one element wide.
+    fn widths(
+        hw: &Hardware,
+        problem: &ConvProblem,
+        partitioning: &ConvPartitioning,
+        mut vectorization: Vectorization<MatmulOperand>,
+        operands: &[MatmulOperand],
+    ) -> MatmulOperands<usize> {
+        for &operand in operands {
             vectorization.require(VectorRequirement::Aligned {
                 operand,
                 alignment: problem.alignments.get(operand),
@@ -66,34 +141,17 @@ impl<M> ConvBlueprint<M> {
                 );
             }
         }
-        let width = |operand| {
-            let ceiling = hw.vector_ceiling(problem.elements.get(operand));
-            vectorization.width(operand, |_| ceiling)
+        let width = |operand| match operands.contains(&operand) {
+            true => {
+                let ceiling = hw.vector_ceiling(problem.elements.get(operand));
+                vectorization.width(operand, |_| ceiling)
+            }
+            false => 1,
         };
-        let widths = MatmulOperands {
+        MatmulOperands {
             lhs: width(MatmulOperand::Lhs),
             rhs: width(MatmulOperand::Rhs),
-            out: 1,
-        };
-        let bounces = plane.instruction.drain() == PlaneFragmentDrain::Bounce;
-        let windows = match bounces {
-            true => {
-                let [(_, m), (_, n), _] = plane.instruction.shape();
-                partitioning.planes() * m * n * problem.work_item().sum.size()
-            }
-            false => 0,
-        };
-        let cube = CubeResources {
-            plane_width: hw.plane_dim()?,
-            shared_memory: partitioning.stage_bytes(&problem.elements).max(windows),
-        };
-        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
-        let blueprint = Self {
-            microkernel,
-            partitioning,
-            widths,
-            masks_out: bounces,
-        };
-        Ok((blueprint, grid))
+            out: width(MatmulOperand::Out),
+        }
     }
 }
