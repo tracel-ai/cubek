@@ -12,11 +12,11 @@ use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal, TmaCoordinates, Tma
 use cubecl::tile::{
     Axis, Launcher, Projection, TileTensorLaunch,
     kind::Field,
-    layout::{DimsBuilder, PhysicalAxisMap, split},
+    layout::{DimsBuilder, Offset, PhysicalAxisMap, split},
 };
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulStoredTile;
-use cubek_quant::quantized_arg;
+use cubek_quant::quantized_arg_shifted;
 use cubek_std::Hardware;
 use cubek_std::launch::tma::tma_operand_tiled_typed;
 use cubek_std::layout::stored::{BlockScales, Operand, Packing};
@@ -51,6 +51,14 @@ pub const PACKED_STACK_UNREAD: Refusal = Refusal::Declined {
           scale blocks and whole words of block scales",
 };
 
+/// What reading a packed tensor as a batch of matrices, or a window of its rows, declines: words
+/// stored in tiles, a two-level scheme, whose per-tensor scale is the whole tensor's, a read
+/// already stacked or windowed, rows a batch does not divide, or rows past the matrix's.
+pub const PACKED_BATCH_UNREAD: Refusal = Refusal::Declined {
+    why: "a packed batch or window is read from words in rows under a one-level scheme, once, \
+          over rows the matrix holds",
+};
+
 /// What a read of a packed tensor declines: values stored in tiles it reads no whole load of.
 pub const STORED_TILES_UNREAD: Refusal = Refusal::Declined {
     why: "a packed read takes values stored in tiles shaped [n, k / block, block] from a \
@@ -73,15 +81,34 @@ pub struct PackedTensor {
     operand: Operand,
     axes: [(Axis, usize); 2],
     stack: Option<PackedStack>,
+    window: Option<RowWindow>,
 }
 
-/// A packed tensor holding `slabs` matrices end to end along one of its axes, `along`: the words
-/// and scales of each slab one slab's extent further along it, bound as a leading [`EXPERT`] dim
-/// a table's entry picks one of.
+/// A run of a packed matrix's rows read where they lie: the matrix's extent along its rows is the
+/// run's, its words and scales bound over every row `stored` holds, and the axis its rows split
+/// into shifted by `at`, a dynamic offset, so one compiled launch reads every run of its length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PackedStack {
-    slabs: usize,
-    along: Axis,
+struct RowWindow {
+    at: usize,
+    stored: usize,
+}
+
+/// The matrices a packed tensor holds past its first, bound as a leading dim of its words and
+/// scales.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PackedStack {
+    /// `slabs` matrices end to end along one of its axes, `along`: the words and scales of each
+    /// slab one slab's extent further along it, bound as a leading [`EXPERT`] dim a table's entry
+    /// picks one of.
+    Slabs { slabs: usize, along: Axis },
+    /// `batches` matrices end to end along its rows, each `pitch` rows of its words and scales
+    /// past the one before, bound as a leading dim over `axis`, which the launch walks as it walks
+    /// the matrix's own axes.
+    Batch {
+        batches: usize,
+        pitch: usize,
+        axis: Axis,
+    },
 }
 
 impl PackedTensor {
@@ -118,6 +145,7 @@ impl PackedTensor {
             operand,
             axes,
             stack: None,
+            window: None,
         }
     }
 
@@ -196,7 +224,7 @@ impl PackedTensor {
             .map(|(axis, extent)| (axis, if axis == along { slab } else { extent }));
         Ok(Self {
             axes,
-            stack: Some(PackedStack { slabs, along }),
+            stack: Some(PackedStack::Slabs { slabs, along }),
             ..self
         })
     }
@@ -234,9 +262,89 @@ impl PackedTensor {
             .ok_or(STORED_TILES_UNREAD)
     }
 
+    /// This matrix read as `batches` matrices laid end to end along its rows, each its rows
+    /// divided by `batches`, its rows those of the axis its words do not run along: a leading dim
+    /// over `axis` the launch walks, as every head of a cache is one matrix of its positions.
+    /// [`stacked`](Self::stacked)'s split, walked rather than picked by a table, so the words and
+    /// scales stay bound over the whole matrix. Read before a [`window`](Self::window) of it.
+    ///
+    /// # Errors
+    ///
+    /// [`PACKED_BATCH_UNREAD`]: words stored in tiles, a two-level scheme, a stack or a window
+    /// already, or rows `batches` does not divide.
+    pub fn batched(self, batches: usize, axis: Axis) -> Result<Self, Refusal> {
+        let rows_axis = self.rows_axis();
+        let rows = self.extent(rows_axis);
+        let unread = self.operand.tile_order().is_some()
+            || self.global_scale.is_some()
+            || self.stack.is_some()
+            || self.window.is_some()
+            || batches == 0
+            || !rows.is_multiple_of(batches);
+        if unread {
+            return Err(PACKED_BATCH_UNREAD);
+        }
+        let pitch = rows / batches;
+        let axes = self
+            .axes
+            .map(|(own, extent)| (own, if own == rows_axis { pitch } else { extent }));
+        Ok(Self {
+            axes,
+            stack: Some(PackedStack::Batch {
+                batches,
+                pitch,
+                axis,
+            }),
+            ..self
+        })
+    }
+
+    /// This matrix's rows `at..at + count` read where they lie, of the axis its words do not run
+    /// along: a matrix of `count` rows whose launch reads `at` as a dynamic offset, so one compiled
+    /// launch reads every run of `count`, as a cache's write and read land at any position. Every
+    /// matrix of a batch is read at the same rows. Its block scales are read as fields
+    /// ([`BlockScales::Fields`]).
+    ///
+    /// # Errors
+    ///
+    /// [`PACKED_BATCH_UNREAD`]: words stored in tiles, a two-level scheme, slabs or a window
+    /// already, or rows past the matrix's.
+    pub fn window(self, at: usize, count: usize) -> Result<Self, Refusal> {
+        let rows_axis = self.rows_axis();
+        let stored = self.extent(rows_axis);
+        let unread = self.operand.tile_order().is_some()
+            || self.global_scale.is_some()
+            || matches!(self.stack, Some(PackedStack::Slabs { .. }))
+            || self.window.is_some()
+            || at + count > stored
+            || i32::try_from(at).is_err();
+        if unread {
+            return Err(PACKED_BATCH_UNREAD);
+        }
+        let axes = self
+            .axes
+            .map(|(axis, extent)| (axis, if axis == rows_axis { count } else { extent }));
+        Ok(Self {
+            axes,
+            window: Some(RowWindow { at, stored }),
+            ..self
+        })
+    }
+
+    /// The matrices it holds where it is read as a batch ([`batched`](Self::batched)).
+    pub fn batches(&self) -> Option<usize> {
+        match self.stack {
+            Some(PackedStack::Batch { batches, .. }) => Some(batches),
+            Some(PackedStack::Slabs { .. }) | None => None,
+        }
+    }
+
     /// The slabs it holds where it is read as a stack ([`stacked`](Self::stacked)).
     pub fn slabs(&self) -> Option<usize> {
-        self.stack.map(|stack| stack.slabs)
+        match self.stack {
+            Some(PackedStack::Slabs { slabs, .. }) => Some(slabs),
+            Some(PackedStack::Batch { .. }) | None => None,
+        }
     }
 
     /// The tensor holding its words.
@@ -280,9 +388,20 @@ impl PackedTensor {
         Self {
             operand: self.operand.renamed(from, to),
             axes: self.axes.map(|(axis, extent)| (rename(axis), extent)),
-            stack: self.stack.map(|stack| PackedStack {
-                along: rename(stack.along),
-                ..stack
+            stack: self.stack.map(|stack| match stack {
+                PackedStack::Slabs { slabs, along } => PackedStack::Slabs {
+                    slabs,
+                    along: rename(along),
+                },
+                PackedStack::Batch {
+                    batches,
+                    pitch,
+                    axis,
+                } => PackedStack::Batch {
+                    batches,
+                    pitch,
+                    axis: rename(axis),
+                },
             }),
             ..self
         }
@@ -374,10 +493,11 @@ impl PackedTensor {
         let lined = operand.lined();
         // The buffer steps its rows before its words, so its dims are named that way.
         let rows_along = self.other_axis(lined);
-        let rows = self.extent(rows_along);
+        // Bound over every row it stores; a window reads its run of them.
+        let rows = self.stored_rows();
         let axes = self
             .stack_dim()
-            .dim(self.dim(rows_along))
+            .dim(self.rows_dim(rows_along))
             .dim(self.dim(lined))
             .build();
         let across = self.other_axis(K);
@@ -431,7 +551,7 @@ impl PackedTensor {
         // carry: values in tiles carry the position inside the rows' axis, not its blocks, which
         // no scale groups.
         let scale_rows = match operand.tile_order() {
-            None => self.dim(rows_along),
+            None => self.rows_dim(rows_along),
             Some(_) => PhysicalAxisMap::of(blocked(rows_along).1),
         };
         let global = self.global_scale.as_ref().map(|scale| {
@@ -468,13 +588,18 @@ impl PackedTensor {
                 }
                 // A whole read of the scales at once: the scales of every row a read spans.
                 .vectorize(operand.scale_read_values());
-                quantized_arg(
+                quantized_arg_shifted(
                     &self.scheme,
                     words,
                     [block_scales].into_iter().chain(global),
+                    self.runtime_offsets(),
                 )
             }
             BlockScales::Words => {
+                assert!(
+                    self.window.is_none(),
+                    "bind: a window of rows reads its block scales as fields"
+                );
                 // A launch taking its scales as words declines scales in tiles before it binds
                 // (`MATMUL_SCALE_WORDS_IN_TILES`): their rows are no tile's.
                 assert_ne!(
@@ -656,26 +781,61 @@ impl PackedTensor {
     /// The dims a binding of words or scales starts with: the slabs, where this tensor is a stack.
     fn stack_dim(&self) -> DimsBuilder {
         match self.stack {
-            Some(_) => Projection::dims().dim(PhysicalAxisMap::of(EXPERT)),
+            Some(PackedStack::Slabs { .. }) => Projection::dims().dim(PhysicalAxisMap::of(EXPERT)),
+            Some(PackedStack::Batch { axis, .. }) => {
+                Projection::dims().dim(PhysicalAxisMap::of(axis))
+            }
             None => Projection::dims(),
         }
     }
 
     /// `binding`, words or scales of one matrix over its two axes in the order the buffer steps
-    /// them, rows then line, once per slab where this tensor is a stack: the slabs a leading dim,
-    /// each one slab's run of the dim the stack lies along further. As it is otherwise.
+    /// them, rows then line, once per matrix where this tensor holds several: a leading dim, each
+    /// slab one slab's run of the dim the stack lies along further, each matrix of a batch its
+    /// pitch of rows. As it is otherwise.
     fn per_slab(&self, binding: TensorBinding) -> TensorBinding {
-        let Some(PackedStack { slabs, along }) = self.stack else {
-            return binding;
+        let (count, step) = match self.stack {
+            None => return binding,
+            Some(PackedStack::Slabs { slabs, along }) => {
+                let dim = usize::from(along == self.operand.lined());
+                (slabs, binding.shape[dim] * binding.strides[dim])
+            }
+            Some(PackedStack::Batch { batches, pitch, .. }) => {
+                (batches, pitch * binding.strides[0])
+            }
         };
-        let dim = usize::from(along == self.operand.lined());
-        let step = binding.shape[dim] * binding.strides[dim];
-        let lead = |slab: usize, dims: &[usize]| [&[slab][..], dims].concat();
+        let lead = |first: usize, dims: &[usize]| [&[first][..], dims].concat();
         TensorBinding {
-            shape: lead(slabs, &binding.shape).into(),
+            shape: lead(count, &binding.shape).into(),
             strides: lead(step, &binding.strides).into(),
             ..binding
         }
+    }
+
+    /// The axis the matrix's rows run along: the one its words do not.
+    fn rows_axis(&self) -> Axis {
+        self.other_axis(self.operand.lined())
+    }
+
+    /// The rows its words and scales are bound over: every row stored, past a window's.
+    fn stored_rows(&self) -> usize {
+        self.window
+            .map_or(self.extent(self.rows_axis()), |window| window.stored)
+    }
+
+    /// The rows' dim, as [`dim`](Self::dim), shifted by a window's dynamic offset where it has one.
+    fn rows_dim(&self, rows_along: Axis) -> PhysicalAxisMap {
+        match self.window {
+            Some(_) => self.dim(rows_along).shifted(Offset::Dynamic),
+            None => self.dim(rows_along),
+        }
+    }
+
+    /// The value of each dynamic offset its parts' projections hold: a window's start.
+    fn runtime_offsets(&self) -> Vec<i32> {
+        self.window
+            .map(|window| vec![i32::try_from(window.at).expect("a window's start fits an i32")])
+            .unwrap_or_default()
     }
 
     /// The matrix's axis other than `axis`.
