@@ -45,7 +45,7 @@ impl UnitRegistersMatmulRoutine {
     /// `n / columns` up to `setting`, so no plane's row overhangs `n` and masks its accesses.
     /// Wider planes keep `setting`, since fewer blocks would idle their units, as does an `n`
     /// that `columns` does not divide.
-    fn fitted_blocks_per_plane(
+    pub fn fitted_blocks_per_plane(
         setting: usize,
         n: usize,
         columns: usize,

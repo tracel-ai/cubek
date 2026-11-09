@@ -5,7 +5,7 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Instruction, Levels, RegisterBlock};
+use cubecl::tile::{Axis, Instruction, Levels, RegisterBlock};
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
@@ -224,13 +224,21 @@ impl Microkernel for UnitRegistersMicrokernel {
     }
 }
 
+impl UnitRegistersMicrokernel {
+    /// One step of the block, walked through every tile along `walked`: `K` alone for a matmul,
+    /// the taps beside it for a convolution.
+    pub fn tiling_over(&self, walked: &[Axis]) -> Levels {
+        let [rows, columns, depth] = self.extents();
+        let MatmulAxes { m, n, k } = self.axes;
+        Levels::leaf(&[(m, rows), (n, columns), (k, depth)]).walk_every(walked)
+    }
+}
+
 impl MatmulMicrokernel for UnitRegistersMicrokernel {
     /// The levels inside one unit's block, which a routine states the rest of the partitioning
     /// around: one step of the block, walked through all of `K`.
     fn tiling(&self) -> Levels {
-        let [rows, columns, depth] = self.extents();
-        let MatmulAxes { m, n, k } = self.axes;
-        Levels::leaf(&[(m, rows), (n, columns), (k, depth)]).walk_every(&[k])
+        self.tiling_over(&[self.axes.k])
     }
 
     fn orders(&self) -> MatmulOperands<BindingOrder> {
