@@ -1,6 +1,6 @@
 use super::kernel::cube_staged_conv_kernel;
 use crate::kernels::tiled::{
-    ConvBinding, ConvBlueprint, ConvLines, ConvPartitioning, ConvProblem, ConvRoutine,
+    ConvAlong, ConvBinding, ConvBlueprint, ConvPartitioning, ConvProblem, ConvRoutine,
     ConvSettings, ConvTiles,
 };
 use core::num::NonZeroUsize;
@@ -22,30 +22,34 @@ pub struct CubeStagedConvRoutine;
 
 impl CubeStagedConvRoutine {
     /// 2x2 fragments on each of 2x2 planes.
-    pub const GRID_2X2: ConvSettings = ConvSettings::new((2, 2), (2, 2), ConvLines::Widest);
+    pub const F2X2_P2X2: ConvSettings =
+        ConvSettings::new(ConvAlong::new(2, 2), ConvAlong::new(2, 2));
 
-    /// One tile of rows, which wastes less where the map is narrow.
-    pub const GRID_1X2: ConvSettings = ConvSettings::new((1, 2), (1, 2), ConvLines::Widest);
+    /// 1x2 fragments on each of 1x2 planes: one tile of rows.
+    pub const F1X2_P1X2: ConvSettings =
+        ConvSettings::new(ConvAlong::new(1, 2), ConvAlong::new(1, 2));
 
-    /// 2x2 fragments on two planes across the channels: 32 rows hold a map 28 wide at 88%.
-    pub const GRID_2X2_ON_1X2: ConvSettings = ConvSettings::new((2, 2), (1, 2), ConvLines::Widest);
+    /// 2x2 fragments on each of 1x2 planes: two tiles of rows.
+    pub const F2X2_P1X2: ConvSettings =
+        ConvSettings::new(ConvAlong::new(2, 2), ConvAlong::new(1, 2));
 
-    /// 1x2 fragments on 2x2 planes: 32 rows over four planes.
-    pub const GRID_1X2_ON_2X2: ConvSettings = ConvSettings::new((1, 2), (2, 2), ConvLines::Widest);
+    /// 1x2 fragments on each of 2x2 planes: two tiles of rows.
+    pub const F1X2_P2X2: ConvSettings =
+        ConvSettings::new(ConvAlong::new(1, 2), ConvAlong::new(2, 2));
 
-    /// Seven 8x32 instructions down two planes: 56 rows hold a map 56 wide whole.
-    pub const GRID_56_ROWS: ConvSettings =
-        ConvSettings::new((7, 1), (1, 2), ConvLines::Widest).eight_rows();
+    /// Seven 8x32 instructions down each of two planes across the columns.
+    pub const F7X1_P1X2_T8: ConvSettings =
+        ConvSettings::new(ConvAlong::new(7, 1), ConvAlong::new(1, 2)).rows(8);
+
+    /// One 8x32 instruction on each of two planes across the columns.
+    pub const F1X1_P1X2_T8: ConvSettings =
+        ConvSettings::new(ConvAlong::new(1, 1), ConvAlong::new(1, 2)).rows(8);
 
     /// One 8x32 plane for each of seven output rows, which share each staged weight block.
-    pub const GRID_8X32_ACROSS_7: ConvSettings =
-        ConvSettings::new((1, 1), (1, 1), ConvLines::Widest)
-            .eight_rows()
+    pub const F1X1_P1X1_T8_A7: ConvSettings =
+        ConvSettings::new(ConvAlong::new(1, 1), ConvAlong::new(1, 1))
+            .rows(8)
             .across(7);
-
-    /// An 8x32 instruction on two planes across the channels: 8 rows hold a map seven wide at 88%.
-    pub const GRID_8X32: ConvSettings =
-        ConvSettings::new((1, 1), (1, 2), ConvLines::Widest).eight_rows();
 }
 
 impl Routine for CubeStagedConvRoutine {
@@ -60,13 +64,13 @@ impl Routine for CubeStagedConvRoutine {
     /// deep filter wants, then lines at both.
     fn settings(&self, _hw: &Hardware) -> Vec<ConvSettings> {
         vec![
-            Self::GRID_2X2,
-            Self::GRID_1X2,
-            Self::GRID_2X2.mma().width_one(),
-            Self::GRID_2X2.mma(),
-            Self::GRID_1X2.mma(),
-            Self::GRID_2X2_ON_1X2,
-            Self::GRID_1X2_ON_2X2.mma(),
+            Self::F2X2_P2X2,
+            Self::F1X2_P1X2,
+            Self::F2X2_P2X2.mma().width_one(),
+            Self::F2X2_P2X2.mma(),
+            Self::F1X2_P1X2.mma(),
+            Self::F2X2_P1X2,
+            Self::F1X2_P2X2.mma(),
         ]
     }
 
@@ -112,10 +116,13 @@ impl Routine for CubeStagedConvRoutine {
         };
         let microkernel = CubeStagedMicrokernel {
             plane,
-            planes: MatmulPlaneLayout::new(settings.planes.0, settings.planes.1),
+            planes: MatmulPlaneLayout {
+                along_m: settings.grid.planes.m,
+                along_n: settings.grid.planes.n,
+            },
             planes_along_k: NonZeroUsize::MIN,
             scratch,
-            ring: settings.ring,
+            ring: settings.walk.ring,
             fill: CubeStagedFill {
                 delivery: CubeStagedDelivery::Copy,
                 filling_planes: 0,

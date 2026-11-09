@@ -102,11 +102,11 @@ impl ConvTiles {
             roles: problem.operation.roles(),
             instruction: (m, n, k),
             fragments: (plane.settings.along_m.get(), plane.settings.along_n.get()),
-            planes: settings.planes,
-            across: settings.planes_across.get(),
+            planes: (settings.grid.planes.m.get(), settings.grid.planes.n.get()),
+            across: settings.grid.across.get(),
             step,
-            stage_steps: settings.stage_steps,
-            ring: settings.ring,
+            stage_steps: settings.walk.stage_steps.get(),
+            ring: settings.walk.ring,
             runs: MatmulOperands::all(1),
         };
         let cells = |operand| settings.lines.cells(tiles.run(operand));
@@ -350,7 +350,7 @@ mod tests {
 
     /// The steps a stage of the Mma 2x2 grid holds on `problem`, within `budget`.
     fn steps(problem: &ConvProblem, budget: usize) -> usize {
-        let settings = CubeStagedConvRoutine::GRID_2X2.mma();
+        let settings = CubeStagedConvRoutine::F2X2_P2X2.mma();
         let plane = settings
             .plane(&nvidia(), problem)
             .expect("the device offers mma");
@@ -380,7 +380,7 @@ mod tests {
             let tiles = ConvTiles::new(&problem, &plane, &settings).expect("the tiles state");
             ConvPartitioning::cube(&problem, &tiles, BUDGET).stage_bytes(&problem.elements)
         };
-        let single = CubeStagedConvRoutine::GRID_2X2.mma();
+        let single = CubeStagedConvRoutine::F2X2_P2X2.mma();
         assert_eq!(bytes(single.double_ring()), 2 * bytes(single));
     }
 

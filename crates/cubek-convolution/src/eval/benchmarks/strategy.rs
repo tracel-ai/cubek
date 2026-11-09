@@ -2,7 +2,7 @@ use cubek_test_utils::CatalogEntry;
 
 use crate::{
     AcceleratedTileKind, ConvAlgorithm, Strategy,
-    kernels::tiled::{ConvRoutineKind, ConvSettings, CubeStagedConvRoutine},
+    kernels::tiled::{ConvRoutineKind, CubeStagedConvRoutine},
 };
 
 /// Planes across the output rows a cube holds in the rows that split them.
@@ -13,17 +13,17 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
         (
             "cmma_8x32",
             "Cmma, lines, 8x32",
-            CubeStagedConvRoutine::GRID_8X32,
+            CubeStagedConvRoutine::F1X1_P1X2_T8,
         ),
         (
             "cmma_grid_1x2",
             "Cmma, lines, 1x2 grid",
-            CubeStagedConvRoutine::GRID_1X2,
+            CubeStagedConvRoutine::F1X2_P1X2,
         ),
         (
             "mma_grid_1x2",
             "Mma, lines, 1x2 grid",
-            CubeStagedConvRoutine::GRID_1X2.mma(),
+            CubeStagedConvRoutine::F1X2_P1X2.mma(),
         ),
     ]
     .into_iter()
@@ -69,7 +69,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Cmma, lines, 2x2 grid",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(CubeStagedConvRoutine::GRID_2X2),
+                settings: Some(CubeStagedConvRoutine::F2X2_P2X2),
             },
         ),
         CatalogEntry::new(
@@ -77,7 +77,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Cmma, lines, 1x2 grid",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(CubeStagedConvRoutine::GRID_1X2),
+                settings: Some(CubeStagedConvRoutine::F1X2_P1X2),
             },
         ),
         CatalogEntry::new(
@@ -85,7 +85,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Cmma, lines, 8x32",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(CubeStagedConvRoutine::GRID_8X32),
+                settings: Some(CubeStagedConvRoutine::F1X1_P1X2_T8),
             },
         ),
         CatalogEntry::new(
@@ -93,7 +93,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Mma, width 1, 2x2 grid",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(CubeStagedConvRoutine::GRID_2X2.mma().width_one()),
+                settings: Some(CubeStagedConvRoutine::F2X2_P2X2.mma().width_one()),
             },
         ),
         CatalogEntry::new(
@@ -101,7 +101,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Mma, lines, 2x2 grid",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(CubeStagedConvRoutine::GRID_2X2.mma()),
+                settings: Some(CubeStagedConvRoutine::F2X2_P2X2.mma()),
             },
         ),
         CatalogEntry::new(
@@ -109,7 +109,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Mma, lines, 1x2 grid",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(CubeStagedConvRoutine::GRID_1X2.mma()),
+                settings: Some(CubeStagedConvRoutine::F1X2_P1X2.mma()),
             },
         ),
         CatalogEntry::new(
@@ -117,10 +117,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Mma, lines, 2x2 grid, 7 steps a stage",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(ConvSettings {
-                    stage_steps: 7,
-                    ..CubeStagedConvRoutine::GRID_2X2.mma()
-                }),
+                settings: Some(CubeStagedConvRoutine::F2X2_P2X2.mma().stage_steps(7)),
             },
         ),
         CatalogEntry::new(
@@ -128,10 +125,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Mma, lines, 1x2 grid, 7 steps a stage",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(ConvSettings {
-                    stage_steps: 7,
-                    ..CubeStagedConvRoutine::GRID_1X2.mma()
-                }),
+                settings: Some(CubeStagedConvRoutine::F1X2_P1X2.mma().stage_steps(7)),
             },
         ),
         CatalogEntry::new(
@@ -139,7 +133,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Cmma, lines, 2x2 on 1x2 planes",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(CubeStagedConvRoutine::GRID_2X2_ON_1X2),
+                settings: Some(CubeStagedConvRoutine::F2X2_P1X2),
             },
         ),
         CatalogEntry::new(
@@ -147,7 +141,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Mma, lines, 1x2 on 2x2 planes",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(CubeStagedConvRoutine::GRID_1X2_ON_2X2.mma()),
+                settings: Some(CubeStagedConvRoutine::F1X2_P2X2.mma()),
             },
         ),
         CatalogEntry::new(
@@ -155,7 +149,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Mma, lines, 1x2 on 2x2 planes, two stages in flight",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(CubeStagedConvRoutine::GRID_1X2_ON_2X2.mma().double_ring()),
+                settings: Some(CubeStagedConvRoutine::F1X2_P2X2.mma().double_ring()),
             },
         ),
         CatalogEntry::new(
@@ -163,7 +157,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Cmma, lines, 56 rows of 8x32",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(CubeStagedConvRoutine::GRID_56_ROWS),
+                settings: Some(CubeStagedConvRoutine::F7X1_P1X2_T8),
             },
         ),
         CatalogEntry::new(
@@ -171,7 +165,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "Cube staged / Cmma, lines, 8x32, 7 rows on one plane each",
             Strategy::Tile {
                 routine: ConvRoutineKind::CubeStaged,
-                settings: Some(CubeStagedConvRoutine::GRID_8X32_ACROSS_7),
+                settings: Some(CubeStagedConvRoutine::F1X1_P1X1_T8_A7),
             },
         ),
     ];

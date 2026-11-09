@@ -35,15 +35,15 @@ fn cmma_serves_whole_channel_steps() {
             .0
     };
     assert!(matches!(
-        prepared(CubeStagedConvRoutine::GRID_2X2)
+        prepared(CubeStagedConvRoutine::F2X2_P2X2)
             .microkernel
             .plane
             .instruction,
         PlaneFragmentInstruction::Cmma { .. }
     ));
     let widths = |settings| prepared(settings).widths;
-    assert!(widths(CubeStagedConvRoutine::GRID_2X2).lhs > 1);
-    assert_eq!(widths(CubeStagedConvRoutine::GRID_2X2.width_one()).lhs, 1);
+    assert!(widths(CubeStagedConvRoutine::F2X2_P2X2).lhs > 1);
+    assert_eq!(widths(CubeStagedConvRoutine::F2X2_P2X2.width_one()).lhs, 1);
 }
 
 /// A few channels make a step of taps, which cmma declines by name and the Mma settings serve, so
@@ -52,8 +52,8 @@ fn cmma_serves_whole_channel_steps() {
 fn cmma_declines_a_step_of_taps_and_mma_serves_it() {
     let (hw, problem) = (nvidia(), problem("alexnet_like"));
     for settings in [
-        CubeStagedConvRoutine::GRID_2X2,
-        CubeStagedConvRoutine::GRID_1X2,
+        CubeStagedConvRoutine::F2X2_P2X2,
+        CubeStagedConvRoutine::F1X2_P1X2,
     ] {
         let prepared = ROUTINE.prepare(&hw, &problem, &settings);
         assert_eq!(prepared.err(), Some(CMMA_STEP_ACROSS_TAPS));
@@ -78,14 +78,14 @@ fn a_pair_the_device_lacks_declines() {
     let declined =
         |hw, problem: &ConvProblem, settings| ROUTINE.prepare(&hw, problem, &settings).err();
     assert_eq!(
-        declined(nvidia(), &f32_problem, CubeStagedConvRoutine::GRID_2X2),
+        declined(nvidia(), &f32_problem, CubeStagedConvRoutine::F2X2_P2X2),
         Some(CONV_INSTRUCTION_UNOFFERED)
     );
     assert_eq!(
         declined(
             cmma_only(),
             &problem("conv3x3_c64"),
-            CubeStagedConvRoutine::GRID_2X2.mma()
+            CubeStagedConvRoutine::F2X2_P2X2.mma()
         ),
         Some(CONV_INSTRUCTION_UNOFFERED)
     );
@@ -109,11 +109,11 @@ fn the_eight_row_setting_takes_the_8x32_instruction() {
         let [(_, m), (_, n), _] = blueprint.microkernel.plane.instruction.shape();
         (m, n)
     };
-    assert_eq!(rows(CubeStagedConvRoutine::GRID_8X32), (8, 32));
-    assert_eq!(rows(CubeStagedConvRoutine::GRID_2X2), (16, 16));
+    assert_eq!(rows(CubeStagedConvRoutine::F1X1_P1X2_T8), (8, 32));
+    assert_eq!(rows(CubeStagedConvRoutine::F2X2_P2X2), (16, 16));
     assert_eq!(
         ROUTINE
-            .prepare(&cmma_only(), &narrow, &CubeStagedConvRoutine::GRID_8X32)
+            .prepare(&cmma_only(), &narrow, &CubeStagedConvRoutine::F1X1_P1X2_T8)
             .err(),
         Some(CONV_INSTRUCTION_UNOFFERED)
     );
@@ -124,8 +124,8 @@ fn the_eight_row_setting_takes_the_8x32_instruction() {
 fn the_space_is_the_problems_and_a_wide_box_overhangs_it() {
     let narrow = problem("narrow_width");
     for settings in [
-        CubeStagedConvRoutine::GRID_2X2,
-        CubeStagedConvRoutine::GRID_1X2,
+        CubeStagedConvRoutine::F2X2_P2X2,
+        CubeStagedConvRoutine::F1X2_P1X2,
     ] {
         let (blueprint, _) = ROUTINE
             .prepare(&nvidia(), &narrow, &settings)
@@ -143,7 +143,7 @@ fn a_step_of_taps_overhangs_the_channels() {
         .prepare(
             &nvidia(),
             &problem("alexnet_like"),
-            &CubeStagedConvRoutine::GRID_2X2.mma(),
+            &CubeStagedConvRoutine::F2X2_P2X2.mma(),
         )
         .expect("Mma serves a step of taps");
     let partitioning = &blueprint.partitioning;
@@ -166,7 +166,7 @@ fn a_weight_backward_contracts_the_output_positions() {
         ..problem("conv3x3_c64")
     };
     let (blueprint, _) = ROUTINE
-        .prepare(&nvidia(), &problem, &CubeStagedConvRoutine::GRID_2X2)
+        .prepare(&nvidia(), &problem, &CubeStagedConvRoutine::F2X2_P2X2)
         .expect("the setting prepares");
     assert!(blueprint.partitioning.overhangs(OW));
     assert!(!blueprint.partitioning.overhangs(CI));
@@ -185,13 +185,13 @@ fn planes_across_share_the_rhs_stage_and_overhang_the_rows() {
             .0
             .partitioning
     };
-    let plain = prepared(CubeStagedConvRoutine::GRID_8X32);
+    let plain = prepared(CubeStagedConvRoutine::F1X1_P1X2_T8);
     assert!(!plain.overhangs(OH));
     let bytes = |partitioning: &crate::kernels::tiled::ConvPartitioning| {
         partitioning.stage_bytes(&narrow.elements)
     };
     for across in [2, 4, 7] {
-        let split = prepared(CubeStagedConvRoutine::GRID_8X32.across(across));
+        let split = prepared(CubeStagedConvRoutine::F1X1_P1X2_T8.across(across));
         assert_eq!(split.planes(), plain.planes() * across);
         assert_eq!(split.overhangs(OH), narrow.out[0] % across != 0);
         assert!(bytes(&split) > bytes(&plain));
@@ -204,7 +204,7 @@ fn planes_across_share_the_rhs_stage_and_overhang_the_rows() {
 #[test]
 fn planes_across_past_the_cube_are_refused_by_name() {
     let narrow = problem("narrow_width");
-    let settings = CubeStagedConvRoutine::GRID_8X32.across(7);
+    let settings = CubeStagedConvRoutine::F1X1_P1X2_T8.across(7);
     for (plane_width, most_units) in [(32, 256), (64, 512)] {
         let mut hw = nvidia();
         let device = topology(&mut hw);
@@ -226,7 +226,7 @@ fn a_weight_backward_over_a_narrow_map_is_served_by_cmma() {
         operation: ConvOperation::BackwardWeight,
         ..problem("narrow_width")
     };
-    let settings = CubeStagedConvRoutine::GRID_2X2;
+    let settings = CubeStagedConvRoutine::F2X2_P2X2;
     for settings in [settings, settings.mma()] {
         assert!(ROUTINE.prepare(&nvidia(), &problem, &settings).is_ok());
     }
@@ -247,7 +247,7 @@ fn data_backward(channels_out: usize) -> ConvProblem {
 #[test]
 fn a_data_backward_over_overhanging_channels_reads_one_element_wide() {
     let widths = |channels_out| {
-        let settings = CubeStagedConvRoutine::GRID_2X2;
+        let settings = CubeStagedConvRoutine::F2X2_P2X2;
         ROUTINE
             .prepare(&nvidia(), &data_backward(channels_out), &settings)
             .expect("cmma serves whole steps of channels")
@@ -263,7 +263,7 @@ fn a_data_backward_over_overhanging_channels_reads_one_element_wide() {
 #[test]
 fn cmma_declines_a_data_backward_step_across_taps_and_mma_serves_it() {
     let problem = data_backward(3);
-    let settings = CubeStagedConvRoutine::GRID_2X2;
+    let settings = CubeStagedConvRoutine::F2X2_P2X2;
     assert_eq!(
         ROUTINE.prepare(&nvidia(), &problem, &settings).err(),
         Some(CMMA_STEP_ACROSS_TAPS)
@@ -314,8 +314,8 @@ fn every_setting_prepares_or_declines_by_name() {
     for settings in ROUTINE.settings(&hw) {
         for (name, problem) in problems() {
             let prepared = ROUTINE.prepare(&hw, &problem, &settings);
-            let cmma_on_taps =
-                settings.instruction == PlaneFragmentTransport::Cmma && name == "alexnet_like";
+            let cmma_on_taps = settings.instruction.transport == PlaneFragmentTransport::Cmma
+                && name == "alexnet_like";
             assert!(
                 prepared.is_ok() != cmma_on_taps,
                 "{settings} on {name}: {:?}",
