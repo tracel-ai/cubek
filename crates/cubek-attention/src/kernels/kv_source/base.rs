@@ -271,10 +271,7 @@ mod tests {
     use core::num::NonZeroUsize;
     use cubecl::client::Client;
     use cubecl::prelude::*;
-    use cubecl::std::tensor::TensorHandle;
     use cubecl::zspace::Shape;
-    use cubecl::zspace::metadata::Metadata;
-    use cubecl::zspace::striding::row_major_contiguous_strides;
     use cubek_matmul::kernels::tensor::PlainTensor;
     use cubek_std::Hardware;
     use cubek_test_utils::{HostData, HostDataType, TestInput, ValidationResult};
@@ -353,23 +350,6 @@ mod tests {
         assert_eq!(attention(dense(), listed_packed), Some(INDEXED_KEYS_UNREAD));
     }
 
-    /// `values`, laid out row major as `shape`, on `client`'s device.
-    fn floats(client: &Client, shape: &[usize], values: &[f32]) -> PlainTensor {
-        let bytes: Vec<u8> = values
-            .iter()
-            .flat_map(|value| value.to_le_bytes())
-            .collect();
-        let meta = Metadata::new(
-            Shape::from(shape.to_vec()),
-            row_major_contiguous_strides(shape),
-        );
-        PlainTensor::of_handle(TensorHandle::from_metadata(
-            client.create_from_slice(&bytes),
-            meta,
-            f32::elem_type_native(),
-        ))
-    }
-
     /// Attention over listed blocks of keys reads what attention over the same keys gathered into a
     /// cache of their own reads, from a cache laid out as sequences and from the same cache in
     /// pools of pages, at the lead of every kernel that serves the problem: two sequences of two
@@ -412,7 +392,12 @@ mod tests {
                     }
                 }
             }
-            floats(&client, shape, &values)
+            PlainTensor::of_handle(
+                TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
+                    .dtype(f32::elem_type_native())
+                    .custom(values)
+                    .generate_without_host_data(),
+            )
         };
         let listed_slots = LISTED[0].len() * BLOCK;
         let gathered = |host: &HostData| {
