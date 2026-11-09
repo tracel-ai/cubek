@@ -4,7 +4,7 @@ use cubecl::tile::{Axis, Levels, Partitioning, Space};
 pub const BATCH: Axis = Axis(0);
 /// A position of the sequence: the axis the recurrence walks, one step at a time.
 pub const POSITION: Axis = Axis(1);
-/// A key head, which `heads_per_group` value heads read. Mamba2's `ngroups` is the count of these.
+/// A key head, which `heads_per_group` value heads read: a selective state space model's group.
 pub const KEY_HEAD: Axis = Axis(2);
 /// A value head's place among the `heads_per_group` heads reading one key head: value head
 /// `key_head * heads_per_group + place`.
