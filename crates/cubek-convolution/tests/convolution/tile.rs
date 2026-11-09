@@ -190,6 +190,15 @@ problem_tests! {
     across_7_one_plane_overhang_cube_staged_cmma: "cube_staged_cmma_8x32_across_7_one_plane", conv(2, (64, 32), [9, 7], [3, 3], SAME_3X3);
 }
 
+/// No padding, where a box that overhangs the output width or the output rows reads past the
+/// input whatever the real positions read: at the last row of the last batch, and across rows.
+problem_tests! {
+    ow_38_no_padding_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [5, 40], [3, 3], ([1, 1], [0, 0], [1, 1]));
+    ow_38_no_padding_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (64, 32), [5, 40], [3, 3], ([1, 1], [0, 0], [1, 1]));
+    across_4_no_padding_cube_staged_cmma_8x32: "cube_staged_cmma_8x32_across_4", conv(2, (64, 64), [8, 9], [3, 3], ([1, 1], [0, 0], [1, 1]));
+    across_4_no_padding_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2_across_4", conv(2, (64, 64), [8, 9], [3, 3], ([1, 1], [0, 0], [1, 1]));
+}
+
 /// One and five channels, which make a step of taps, over a batch of one.
 problem_tests! {
     channels_1_cube_staged: "cube_staged", conv(1, (1, 16), [12, 12], [3, 3], SAME_3X3);
@@ -214,6 +223,8 @@ problem_tests! {
     across_7_cube_staged_cmma_grid_1x2_narrow: "cube_staged_cmma_grid_1x2_across_7", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
     across_2_cube_staged_cmma_8x32_even_rows: "cube_staged_cmma_8x32_across_2", conv(2, (64, 64), [8, 7], [3, 3], SAME_3X3);
     across_4_cube_staged_cmma_8x32_even_rows: "cube_staged_cmma_8x32_across_4", conv(2, (64, 64), [8, 7], [3, 3], SAME_3X3);
+    across_2_cube_staged_mma_grid_1x2_narrow: "cube_staged_mma_grid_1x2_across_2", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    across_4_cube_staged_mma_grid_1x2_narrow: "cube_staged_mma_grid_1x2_across_4", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
 }
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -781,6 +792,20 @@ weight_grad_across_tests! {
     weight_grad_across_2_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_2";
     weight_grad_across_4_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_4";
     weight_grad_across_2_cube_staged_cmma_8x32: "cube_staged_cmma_8x32_across_2";
+    weight_grad_across_2_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2_across_2";
+    weight_grad_across_4_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2_across_4";
+}
+
+/// Planes across the filter's width with no padding, whose overhanging taps gather past the input.
+#[test]
+fn weight_grad_across_2_no_padding_cube_staged_cmma_grid_1x2() {
+    let problem = conv(2, (16, 64), [8, 9], [3, 3], ([1, 1], [0, 0], [1, 1]));
+    check_weight_grad(
+        "cube_staged_cmma_grid_1x2_across_2",
+        &problem,
+        Binding::Dense,
+        Binding::Dense,
+    );
 }
 
 /// What the launch of these weight backward operands through `strategy_id` is refused with, as its
@@ -1062,6 +1087,8 @@ data_grad_across_tests! {
     data_grad_across_2_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_2";
     data_grad_across_4_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_4";
     data_grad_across_4_cube_staged_cmma_8x32: "cube_staged_cmma_8x32_across_4";
+    data_grad_across_2_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2_across_2";
+    data_grad_across_4_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2_across_4";
 }
 
 /// A data gradient that starts a buffer element in, for the two settings.

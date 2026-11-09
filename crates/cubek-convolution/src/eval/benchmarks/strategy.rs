@@ -10,15 +10,28 @@ const ACROSS: [usize; 3] = [2, 4, 7];
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
     let across = [
-        ("cmma_8x32", "8x32", CubeStagedConvRoutine::GRID_8X32),
-        ("cmma_grid_1x2", "1x2 grid", CubeStagedConvRoutine::GRID_1X2),
+        (
+            "cmma_8x32",
+            "Cmma, lines, 8x32",
+            CubeStagedConvRoutine::GRID_8X32,
+        ),
+        (
+            "cmma_grid_1x2",
+            "Cmma, lines, 1x2 grid",
+            CubeStagedConvRoutine::GRID_1X2,
+        ),
+        (
+            "mma_grid_1x2",
+            "Mma, lines, 1x2 grid",
+            CubeStagedConvRoutine::GRID_1X2.mma(),
+        ),
     ]
     .into_iter()
     .flat_map(|(id, label, settings)| {
         ACROSS.map(|planes| {
             CatalogEntry::new(
                 format!("cube_staged_{id}_across_{planes}"),
-                format!("Cube staged / Cmma, lines, {label}, {planes} planes across"),
+                format!("Cube staged / {label}, {planes} planes across"),
                 Strategy::Tile {
                     routine: ConvRoutineKind::CubeStaged,
                     settings: Some(settings.across(planes)),
