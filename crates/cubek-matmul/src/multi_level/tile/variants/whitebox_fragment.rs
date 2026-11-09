@@ -48,7 +48,7 @@ pub enum InnerLayout {
 #[cube]
 impl<E: Numeric> WhiteboxFragment<E> {
     pub fn new(#[comptime] layout: WhiteboxFragmentLayout) -> WhiteboxFragment<E> {
-        let array = Array::new(comptime!(layout.unit_size.0 * layout.unit_size.1) as usize);
+        let array = Array::new((layout.unit_size.0 * layout.unit_size.1) as usize);
 
         WhiteboxFragment::<E> { array, layout }
     }
@@ -250,7 +250,7 @@ pub fn whitebox_fragment_absolute_pos(
 ) -> Coords2d {
     let abs_row_index = {
         let row_0 = UNIT_POS_X / layout.num_units_per_row;
-        let row_jump = comptime!(layout.plane_dim / layout.num_units_per_row);
+        let row_jump = layout.plane_dim / layout.num_units_per_row;
         local_pos.0 * row_jump + row_0
     };
     let abs_col_index = layout.unit_size.1 * (UNIT_POS_X % layout.num_units_per_row) + local_pos.1;

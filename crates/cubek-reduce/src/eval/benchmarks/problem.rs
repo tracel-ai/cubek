@@ -209,5 +209,28 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
         ));
     }
 
+    // A decode sampler's row: one row of logits over a vocabulary, which one cube walks alone
+    // unless the row is split across cubes. Its argmax, and a top-20 to sample among.
+    let vocabulary = 151_936;
+    let sampled = |config, kind| ReduceProblem {
+        shape: vec![1, vocabulary],
+        axis: 1,
+        config,
+        kind,
+        precision,
+    };
+    entries.push(CatalogEntry::new(
+        id(format!("arg_topk1_sampler_1x{vocabulary}")),
+        label(format!("ArgTopK(1) sampler row, axis=1 (1x{vocabulary})")),
+        sampled(ReduceOperationConfig::ArgTopK(1), ReduceBenchKind::Single),
+    ));
+    entries.push(CatalogEntry::new(
+        id(format!("topk20_sampler_1x{vocabulary}")),
+        label(format!(
+            "TopK(20) values+indices, 1 fused launch, sampler row, axis=1 (1x{vocabulary})"
+        )),
+        sampled(ReduceOperationConfig::TopK(20), ReduceBenchKind::Fused),
+    ));
+
     entries
 }

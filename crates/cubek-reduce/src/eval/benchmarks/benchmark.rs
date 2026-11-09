@@ -13,6 +13,7 @@ use crate::ReduceStrategy;
 use crate::components::instructions::ReduceOperationConfig;
 use crate::eval::benchmarks::correctness::ReduceCorrectness;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
+use crate::eval::cpu_reference::ReduceEntry;
 
 pub fn bench(
     strategy: &ReduceStrategy,
@@ -31,6 +32,7 @@ pub fn bench(
         kind: problem.kind,
         value_dtype: problem.precision.dtype(),
         strategy: strategy.clone(),
+        entry: ReduceEntry::from_env(),
         device,
         client,
         samples: num_samples,
@@ -126,6 +128,7 @@ struct ReduceBench {
     kind: ReduceBenchKind,
     value_dtype: ElemType,
     strategy: ReduceStrategy,
+    entry: ReduceEntry,
     device: cubecl::Device,
     client: Client,
     samples: usize,
@@ -172,7 +175,7 @@ impl Benchmark for ReduceBench {
             ReduceBenchKind::Single => {
                 let output_dtype =
                     crate::eval::cpu_reference::output_dtype_for(&self.config, value_dtype);
-                crate::reduce(
+                self.entry.reduce()(
                     &self.client,
                     input.binding(),
                     out.binding(),
@@ -191,7 +194,7 @@ impl Benchmark for ReduceBench {
             // reduction twice, discarding half of each result.
             ReduceBenchKind::TwoLaunch => {
                 let (values_config, indices_config) = two_launch_configs(self.config);
-                crate::reduce(
+                self.entry.reduce()(
                     &self.client,
                     input.clone().binding(),
                     out.binding(),
@@ -205,7 +208,7 @@ impl Benchmark for ReduceBench {
                     },
                 )
                 .map_err(|err| format!("{err}"))?;
-                crate::reduce(
+                self.entry.reduce()(
                     &self.client,
                     input.binding(),
                     indices.binding(),
@@ -221,7 +224,7 @@ impl Benchmark for ReduceBench {
                 .map_err(|err| format!("{err}"))?;
             }
             ReduceBenchKind::Fused => {
-                crate::reduce_with_indices(
+                self.entry.reduce_with_indices()(
                     &self.client,
                     input.binding(),
                     out.binding(),
@@ -254,8 +257,13 @@ impl Benchmark for ReduceBench {
     }
 
     fn name(&self) -> String {
+        // Only the tile runs are named apart, so today's keep the names saved runs know them by.
+        let entry = match self.entry {
+            ReduceEntry::Kernels => "",
+            ReduceEntry::Tiles => "-tiles",
+        };
         format!(
-            "reduce-axis({})-{}-{:?}-{:?}-{:?}-{:?}",
+            "reduce-axis({})-{}-{:?}-{:?}-{:?}-{:?}{entry}",
             self.axis, self.value_dtype, self.shape, self.strategy, self.config, self.kind,
         )
         .to_lowercase()
