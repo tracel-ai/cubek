@@ -1,4 +1,4 @@
-use super::base::CubeDeltaWalkMicrokernel;
+use super::delta::CubeDeltaWalkMicrokernel;
 use super::unit_partials::UnitPartials;
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};

@@ -1,7 +1,5 @@
 use super::base::CubeDeltaWalkMicrokernel;
-use super::held_state::HeldState;
-use super::state_access::StateAccess;
-use super::unit_partials::UnitPartials;
+use crate::linear_recurrence::walk::cube::{HeldState, StateAccess, UnitPartials};
 use crate::linear_recurrence::{KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};

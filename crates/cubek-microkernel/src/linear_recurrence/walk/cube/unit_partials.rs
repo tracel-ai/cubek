@@ -1,4 +1,4 @@
-use super::base::CubeDeltaWalkMicrokernel;
+use super::delta::CubeDeltaWalkMicrokernel;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
 /// What a unit's rows contribute to a sum over its run's units, as lines of the run's columns, and
