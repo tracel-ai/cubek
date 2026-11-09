@@ -7,8 +7,11 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::{Shape, Strides};
-use cubek_convolution::eval::benchmarks::{Conv2dCorrectness, Conv2dProblem, problems, strategies};
-use cubek_convolution::{ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref};
+use cubek_convolution::eval::benchmarks::{Conv2dCorrectness, Conv2dProblem, problems};
+use cubek_convolution::kernels::tiled::{ConvRoutineKind, ConvSettings, CubeStagedConvRoutine};
+use cubek_convolution::{
+    AcceleratedTileKind, ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref,
+};
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
 use cubek_std::InputBinding;
 use cubek_test_utils::{
@@ -29,27 +32,73 @@ fn small(problem: &Conv2dProblem) -> Conv2dProblem {
     small
 }
 
-fn strategy(strategy_id: &str) -> Strategy {
-    strategies()
-        .into_iter()
-        .find(|entry| entry.id == strategy_id)
-        .unwrap_or_else(|| panic!("unknown strategy: {strategy_id}"))
-        .value
+use CubeStagedConvRoutine as Staged;
+
+/// The cube staged routine pinned at `settings`.
+fn pinned(settings: ConvSettings) -> Strategy {
+    Strategy::Tile {
+        routine: ConvRoutineKind::CubeStaged,
+        settings: Some(settings),
+    }
 }
 
-fn check(strategy_id: &str, problem_id: &str) {
+/// The cube staged routine at the setting its autotune finds fastest.
+fn tuned() -> Strategy {
+    Strategy::Tile {
+        routine: ConvRoutineKind::CubeStaged,
+        settings: None,
+    }
+}
+
+/// The inferred routine over the manual-mma tile, which the tiled one is held to.
+fn legacy_mma() -> Strategy {
+    Strategy::Inferred {
+        algorithm: ConvAlgorithm::SimpleSyncCyclic,
+        tile_kind: AcceleratedTileKind::Mma,
+    }
+}
+
+/// One test for each line, `check(&strategy, args..)`: a launch that faults poisons the device
+/// for its process, so no two cases share a test.
+macro_rules! cases {
+    ($check:ident; $($name:ident: $strategy:expr $(, $arg:expr)*;)*) => {
+        $(#[test]
+        fn $name() {
+            $check(&$strategy $(, $arg)*);
+        })*
+    };
+}
+
+/// A module for each line, a test in it for the cube routine through cmma and through Mma at 2x2
+/// fragments on 2x2 planes, which are the two that serve a step of whole channels.
+macro_rules! on_cmma_and_mma {
+    ($check:ident; $($stem:ident: $($arg:expr),+;)*) => {
+        $(mod $stem {
+            use super::*;
+
+            #[test]
+            fn cmma_f2x2_p2x2() {
+                $check(&pinned(Staged::F2X2_P2X2), $($arg),+);
+            }
+
+            #[test]
+            fn mma_f2x2_p2x2() {
+                $check(&pinned(Staged::F2X2_P2X2.mma()), $($arg),+);
+            }
+        })*
+    };
+}
+
+fn check(strategy: &Strategy, problem_id: &str) {
     let entry = problems()
         .into_iter()
         .find(|entry| entry.id == problem_id)
         .unwrap_or_else(|| panic!("unknown problem: {problem_id}"));
-    check_problem(strategy_id, &small(&entry.value));
+    check_problem(strategy, &small(&entry.value));
 }
 
-fn check_problem(strategy_id: &str, problem: &Conv2dProblem) {
-    let strategy = strategy(strategy_id);
-    let problem = problem.clone();
-    let problem = &problem;
-    let actual = match Conv2dCorrectness.kernel_result(&strategy, problem, &SEEDS) {
+fn check_problem(strategy: &Strategy, problem: &Conv2dProblem) {
+    let actual = match Conv2dCorrectness.kernel_result(strategy, problem, &SEEDS) {
         Ok(host) => host,
         Err(e) => panic!("the launch was refused: {e}"),
     };
@@ -63,50 +112,40 @@ fn check_problem(strategy_id: &str, problem: &Conv2dProblem) {
 
 /// A setting through cmma declines a step made of taps, so it has no test on the two problems with
 /// few channels; the first setting that serves them is Mma.
-///
-/// One test per strategy and problem: a launch that faults poisons the device for its process.
-macro_rules! tiled_tests {
-    ($($name:ident: $strategy:literal, $problem:literal;)*) => {
-        $(#[test]
-        fn $name() {
-            check($strategy, $problem);
-        })*
-    };
-}
-
-tiled_tests! {
-    cube_staged_cmma_grid_2x2_conv3x3_c64: "cube_staged_cmma_grid_2x2", "conv3x3_c64";
-    cube_staged_cmma_grid_2x2_conv3x3_c64_stride2: "cube_staged_cmma_grid_2x2", "conv3x3_c64_stride2";
-    cube_staged_cmma_grid_2x2_narrow_width: "cube_staged_cmma_grid_2x2", "narrow_width";
-    cube_staged_cmma_grid_1x2_conv3x3_c64: "cube_staged_cmma_grid_1x2", "conv3x3_c64";
-    cube_staged_cmma_grid_1x2_conv3x3_c64_stride2: "cube_staged_cmma_grid_1x2", "conv3x3_c64_stride2";
-    cube_staged_cmma_grid_1x2_narrow_width: "cube_staged_cmma_grid_1x2", "narrow_width";
-    cube_staged_cmma_8x32_conv3x3_c64: "cube_staged_cmma_8x32", "conv3x3_c64";
-    cube_staged_cmma_8x32_narrow_width: "cube_staged_cmma_8x32", "narrow_width";
-    cube_staged_cmma_8x32_across_2_conv3x3_c64: "cube_staged_cmma_8x32_across_2", "conv3x3_c64";
-    cube_staged_cmma_8x32_across_4_conv3x3_c64: "cube_staged_cmma_8x32_across_4", "conv3x3_c64";
-    cube_staged_cmma_grid_1x2_across_2_conv3x3_c64: "cube_staged_cmma_grid_1x2_across_2", "conv3x3_c64";
-    cube_staged_cmma_8x32_across_2_narrow_width: "cube_staged_cmma_8x32_across_2", "narrow_width";
-    cube_staged_mma_grid_2x2_width_1_alexnet_like: "cube_staged_mma_grid_2x2_width_1", "alexnet_like";
-    cube_staged_mma_grid_2x2_width_1_large_kernel: "cube_staged_mma_grid_2x2_width_1", "large_kernel";
-    cube_staged_mma_grid_2x2_width_1_conv3x3_c64: "cube_staged_mma_grid_2x2_width_1", "conv3x3_c64";
-    cube_staged_mma_grid_2x2_width_1_conv3x3_c64_stride2: "cube_staged_mma_grid_2x2_width_1", "conv3x3_c64_stride2";
-    cube_staged_mma_grid_2x2_width_1_narrow_width: "cube_staged_mma_grid_2x2_width_1", "narrow_width";
-    cube_staged_mma_grid_2x2_alexnet_like: "cube_staged_mma_grid_2x2", "alexnet_like";
-    cube_staged_mma_grid_2x2_large_kernel: "cube_staged_mma_grid_2x2", "large_kernel";
-    cube_staged_mma_grid_2x2_conv3x3_c64: "cube_staged_mma_grid_2x2", "conv3x3_c64";
-    cube_staged_mma_grid_2x2_conv3x3_c64_stride2: "cube_staged_mma_grid_2x2", "conv3x3_c64_stride2";
-    cube_staged_mma_grid_2x2_narrow_width: "cube_staged_mma_grid_2x2", "narrow_width";
-    cube_staged_mma_grid_1x2_alexnet_like: "cube_staged_mma_grid_1x2", "alexnet_like";
-    cube_staged_mma_grid_1x2_large_kernel: "cube_staged_mma_grid_1x2", "large_kernel";
-    cube_staged_mma_grid_1x2_conv3x3_c64: "cube_staged_mma_grid_1x2", "conv3x3_c64";
-    cube_staged_mma_grid_1x2_conv3x3_c64_stride2: "cube_staged_mma_grid_1x2", "conv3x3_c64_stride2";
-    cube_staged_mma_grid_1x2_narrow_width: "cube_staged_mma_grid_1x2", "narrow_width";
-    cube_staged_alexnet_like: "cube_staged", "alexnet_like";
-    cube_staged_large_kernel: "cube_staged", "large_kernel";
-    cube_staged_conv3x3_c64: "cube_staged", "conv3x3_c64";
-    cube_staged_conv3x3_c64_stride2: "cube_staged", "conv3x3_c64_stride2";
-    cube_staged_narrow_width: "cube_staged", "narrow_width";
+cases! {
+    check;
+    conv3x3_c64_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), "conv3x3_c64";
+    conv3x3_c64_stride2_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), "conv3x3_c64_stride2";
+    narrow_width_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), "narrow_width";
+    conv3x3_c64_cmma_f1x2_p1x2: pinned(Staged::F1X2_P1X2), "conv3x3_c64";
+    conv3x3_c64_stride2_cmma_f1x2_p1x2: pinned(Staged::F1X2_P1X2), "conv3x3_c64_stride2";
+    narrow_width_cmma_f1x2_p1x2: pinned(Staged::F1X2_P1X2), "narrow_width";
+    conv3x3_c64_cmma_f1x1_p1x2_t8: pinned(Staged::F1X1_P1X2_T8), "conv3x3_c64";
+    narrow_width_cmma_f1x1_p1x2_t8: pinned(Staged::F1X1_P1X2_T8), "narrow_width";
+    conv3x3_c64_cmma_f1x1_p1x2_t8_a2: pinned(Staged::F1X1_P1X2_T8.across(2)), "conv3x3_c64";
+    conv3x3_c64_cmma_f1x1_p1x2_t8_a4: pinned(Staged::F1X1_P1X2_T8.across(4)), "conv3x3_c64";
+    conv3x3_c64_cmma_f1x2_p1x2_a2: pinned(Staged::F1X2_P1X2.across(2)), "conv3x3_c64";
+    narrow_width_cmma_f1x1_p1x2_t8_a2: pinned(Staged::F1X1_P1X2_T8.across(2)), "narrow_width";
+    alexnet_like_mma_f2x2_p2x2_w1: pinned(Staged::F2X2_P2X2.mma().width_one()), "alexnet_like";
+    large_kernel_mma_f2x2_p2x2_w1: pinned(Staged::F2X2_P2X2.mma().width_one()), "large_kernel";
+    conv3x3_c64_mma_f2x2_p2x2_w1: pinned(Staged::F2X2_P2X2.mma().width_one()), "conv3x3_c64";
+    conv3x3_c64_stride2_mma_f2x2_p2x2_w1: pinned(Staged::F2X2_P2X2.mma().width_one()), "conv3x3_c64_stride2";
+    narrow_width_mma_f2x2_p2x2_w1: pinned(Staged::F2X2_P2X2.mma().width_one()), "narrow_width";
+    alexnet_like_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), "alexnet_like";
+    large_kernel_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), "large_kernel";
+    conv3x3_c64_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), "conv3x3_c64";
+    conv3x3_c64_stride2_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), "conv3x3_c64_stride2";
+    narrow_width_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), "narrow_width";
+    alexnet_like_mma_f1x2_p1x2: pinned(Staged::F1X2_P1X2.mma()), "alexnet_like";
+    large_kernel_mma_f1x2_p1x2: pinned(Staged::F1X2_P1X2.mma()), "large_kernel";
+    conv3x3_c64_mma_f1x2_p1x2: pinned(Staged::F1X2_P1X2.mma()), "conv3x3_c64";
+    conv3x3_c64_stride2_mma_f1x2_p1x2: pinned(Staged::F1X2_P1X2.mma()), "conv3x3_c64_stride2";
+    narrow_width_mma_f1x2_p1x2: pinned(Staged::F1X2_P1X2.mma()), "narrow_width";
+    alexnet_like_tuned: tuned(), "alexnet_like";
+    large_kernel_tuned: tuned(), "large_kernel";
+    conv3x3_c64_tuned: tuned(), "conv3x3_c64";
+    conv3x3_c64_stride2_tuned: tuned(), "conv3x3_c64_stride2";
+    narrow_width_tuned: tuned(), "narrow_width";
 }
 
 /// A forward problem of `channels` in and `channels_out` out, with the window as stated.
@@ -133,98 +172,98 @@ fn conv(
 
 const SAME_3X3: ([usize; 2], [usize; 2], [usize; 2]) = ([1, 1], [1, 1], [1, 1]);
 
-/// One test per strategy and problem, as above.
-macro_rules! problem_tests {
-    ($($name:ident: $strategy:literal, $problem:expr;)*) => {
-        $(#[test]
-        fn $name() {
-            check_problem($strategy, &$problem);
-        })*
-    };
-}
-
 /// Output channels that are no multiple of a box, so the last box overhangs them.
-problem_tests! {
-    co_3_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 3), [9, 9], [3, 3], SAME_3X3);
-    co_3_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (64, 3), [9, 9], [3, 3], SAME_3X3);
-    co_48_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 48), [9, 9], [3, 3], SAME_3X3);
-    co_48_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (64, 48), [9, 9], [3, 3], SAME_3X3);
+cases! {
+    check_problem;
+    co_3_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (64, 3), [9, 9], [3, 3], SAME_3X3);
+    co_3_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (64, 3), [9, 9], [3, 3], SAME_3X3);
+    co_48_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (64, 48), [9, 9], [3, 3], SAME_3X3);
+    co_48_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (64, 48), [9, 9], [3, 3], SAME_3X3);
 }
 
 /// Enough pixels that a write past the output channels would land in a neighbour's.
-problem_tests! {
-    co_10_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 10), [20, 20], [3, 3], SAME_3X3);
+cases! {
+    check_problem;
+    co_10_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (64, 10), [20, 20], [3, 3], SAME_3X3);
 }
 
 /// An output width that is a whole number of boxes, and one past 64 that is not.
-problem_tests! {
-    ow_64_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(1, (64, 32), [3, 64], [3, 3], SAME_3X3);
-    ow_128_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(1, (64, 32), [3, 128], [3, 3], SAME_3X3);
-    ow_32_cube_staged_cmma: "cube_staged_cmma_grid_1x2", conv(1, (64, 32), [3, 32], [3, 3], SAME_3X3);
-    ow_64_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(1, (64, 32), [3, 64], [3, 3], SAME_3X3);
-    ow_130_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(1, (64, 32), [3, 130], [3, 3], SAME_3X3);
+cases! {
+    check_problem;
+    ow_64_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(1, (64, 32), [3, 64], [3, 3], SAME_3X3);
+    ow_128_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(1, (64, 32), [3, 128], [3, 3], SAME_3X3);
+    ow_32_cmma_f1x2_p1x2: pinned(Staged::F1X2_P1X2), &conv(1, (64, 32), [3, 32], [3, 3], SAME_3X3);
+    ow_64_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(1, (64, 32), [3, 64], [3, 3], SAME_3X3);
+    ow_130_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(1, (64, 32), [3, 130], [3, 3], SAME_3X3);
 }
 
 /// Windows that are not the square, dense, symmetric one.
-problem_tests! {
-    dilation_2_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [12, 12], [3, 3], ([1, 1], [2, 2], [2, 2]));
-    unequal_strides_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [12, 15], [3, 3], ([1, 2], [1, 1], [1, 1]));
-    non_square_kernel_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [10, 12], [3, 5], ([1, 1], [1, 2], [1, 1]));
-    unequal_dilation_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [12, 15], [3, 3], ([1, 1], [1, 2], [1, 2]));
-    unequal_dilation_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (64, 32), [12, 15], [3, 3], ([1, 1], [1, 2], [1, 2]));
+cases! {
+    check_problem;
+    dilation_2_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (64, 32), [12, 12], [3, 3], ([1, 1], [2, 2], [2, 2]));
+    unequal_strides_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (64, 32), [12, 15], [3, 3], ([1, 2], [1, 1], [1, 1]));
+    non_square_kernel_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (64, 32), [10, 12], [3, 5], ([1, 1], [1, 2], [1, 1]));
+    unequal_dilation_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (64, 32), [12, 15], [3, 3], ([1, 1], [1, 2], [1, 2]));
+    unequal_dilation_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (64, 32), [12, 15], [3, 3], ([1, 1], [1, 2], [1, 2]));
 }
 
 /// Settings of 32 rows, at stride 2 and over an overhanging output width.
-problem_tests! {
-    stride_2_cube_staged_cmma_grid_2x2_on_1x2: "cube_staged_cmma_grid_2x2_on_1x2", conv(2, (64, 32), [12, 15], [3, 3], ([2, 2], [1, 1], [1, 1]));
-    ow_40_cube_staged_cmma_grid_2x2_on_1x2: "cube_staged_cmma_grid_2x2_on_1x2", conv(1, (64, 48), [3, 40], [3, 3], SAME_3X3);
-    stride_2_cube_staged_mma_grid_1x2_on_2x2: "cube_staged_mma_grid_1x2_on_2x2", conv(2, (64, 32), [12, 15], [3, 3], ([2, 2], [1, 1], [1, 1]));
-    ow_40_cube_staged_mma_grid_1x2_on_2x2: "cube_staged_mma_grid_1x2_on_2x2", conv(1, (64, 48), [3, 40], [3, 3], SAME_3X3);
+cases! {
+    check_problem;
+    stride_2_cmma_f2x2_p1x2: pinned(Staged::F2X2_P1X2), &conv(2, (64, 32), [12, 15], [3, 3], ([2, 2], [1, 1], [1, 1]));
+    ow_40_cmma_f2x2_p1x2: pinned(Staged::F2X2_P1X2), &conv(1, (64, 48), [3, 40], [3, 3], SAME_3X3);
+    stride_2_mma_f1x2_p2x2: pinned(Staged::F1X2_P2X2.mma()), &conv(2, (64, 32), [12, 15], [3, 3], ([2, 2], [1, 1], [1, 1]));
+    ow_40_mma_f1x2_p2x2: pinned(Staged::F1X2_P2X2.mma()), &conv(1, (64, 48), [3, 40], [3, 3], SAME_3X3);
 }
 
 /// Seven instructions of eight rows over a map 56 wide, and seven rows of one plane each.
-problem_tests! {
-    rows_56_cube_staged_cmma: "cube_staged_cmma_56_rows", conv(1, (64, 32), [3, 56], [3, 3], SAME_3X3);
-    rows_56_overhang_cube_staged_cmma: "cube_staged_cmma_56_rows", conv(1, (64, 32), [3, 60], [3, 3], SAME_3X3);
-    across_7_one_plane_cube_staged_cmma: "cube_staged_cmma_8x32_across_7_one_plane", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
-    across_7_one_plane_overhang_cube_staged_cmma: "cube_staged_cmma_8x32_across_7_one_plane", conv(2, (64, 32), [9, 7], [3, 3], SAME_3X3);
+cases! {
+    check_problem;
+    rows_56_cmma_f7x1_p1x2_t8: pinned(Staged::F7X1_P1X2_T8), &conv(1, (64, 32), [3, 56], [3, 3], SAME_3X3);
+    rows_56_overhang_cmma_f7x1_p1x2_t8: pinned(Staged::F7X1_P1X2_T8), &conv(1, (64, 32), [3, 60], [3, 3], SAME_3X3);
+    one_plane_cmma_f1x1_p1x1_t8_a7: pinned(Staged::F1X1_P1X1_T8_A7), &conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    one_plane_overhang_cmma_f1x1_p1x1_t8_a7: pinned(Staged::F1X1_P1X1_T8_A7), &conv(2, (64, 32), [9, 7], [3, 3], SAME_3X3);
 }
 
 /// No padding, where a box that overhangs the output width or the output rows reads past the
 /// input whatever the real positions read: at the last row of the last batch, and across rows.
-problem_tests! {
-    ow_38_no_padding_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (64, 32), [5, 40], [3, 3], ([1, 1], [0, 0], [1, 1]));
-    ow_38_no_padding_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (64, 32), [5, 40], [3, 3], ([1, 1], [0, 0], [1, 1]));
-    across_4_no_padding_cube_staged_cmma_8x32: "cube_staged_cmma_8x32_across_4", conv(2, (64, 64), [8, 9], [3, 3], ([1, 1], [0, 0], [1, 1]));
-    across_4_no_padding_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2_across_4", conv(2, (64, 64), [8, 9], [3, 3], ([1, 1], [0, 0], [1, 1]));
+cases! {
+    check_problem;
+    ow_38_no_padding_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (64, 32), [5, 40], [3, 3], ([1, 1], [0, 0], [1, 1]));
+    ow_38_no_padding_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (64, 32), [5, 40], [3, 3], ([1, 1], [0, 0], [1, 1]));
+    no_padding_cmma_f1x1_p1x2_t8_a4: pinned(Staged::F1X1_P1X2_T8.across(4)), &conv(2, (64, 64), [8, 9], [3, 3], ([1, 1], [0, 0], [1, 1]));
+    no_padding_mma_f1x2_p1x2_a4: pinned(Staged::F1X2_P1X2.mma().across(4)), &conv(2, (64, 64), [8, 9], [3, 3], ([1, 1], [0, 0], [1, 1]));
 }
 
 /// One and five channels, which make a step of taps, over a batch of one.
-problem_tests! {
-    channels_1_cube_staged: "cube_staged", conv(1, (1, 16), [12, 12], [3, 3], SAME_3X3);
-    channels_5_cube_staged: "cube_staged", conv(1, (5, 16), [12, 12], [3, 3], SAME_3X3);
+cases! {
+    check_problem;
+    channels_1_tuned: tuned(), &conv(1, (1, 16), [12, 12], [3, 3], SAME_3X3);
+    channels_5_tuned: tuned(), &conv(1, (5, 16), [12, 12], [3, 3], SAME_3X3);
 }
 
 /// Twelve input channels under a padded window: a width of four divides them, yet a tile of
 /// sixteen overhangs them.
-problem_tests! {
-    ci_12_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
-    ci_12_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
+cases! {
+    check_problem;
+    ci_12_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
+    ci_12_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
 }
 
 /// Planes across the output rows of a cube, over a map seven tall that no two or four divide, and
 /// a map with whole groups.
-problem_tests! {
-    across_2_cube_staged_cmma_8x32_narrow: "cube_staged_cmma_8x32_across_2", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
-    across_4_cube_staged_cmma_8x32_narrow: "cube_staged_cmma_8x32_across_4", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
-    across_7_cube_staged_cmma_8x32_narrow: "cube_staged_cmma_8x32_across_7", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
-    across_2_cube_staged_cmma_grid_1x2_narrow: "cube_staged_cmma_grid_1x2_across_2", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
-    across_4_cube_staged_cmma_grid_1x2_narrow: "cube_staged_cmma_grid_1x2_across_4", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
-    across_7_cube_staged_cmma_grid_1x2_narrow: "cube_staged_cmma_grid_1x2_across_7", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
-    across_2_cube_staged_cmma_8x32_even_rows: "cube_staged_cmma_8x32_across_2", conv(2, (64, 64), [8, 7], [3, 3], SAME_3X3);
-    across_4_cube_staged_cmma_8x32_even_rows: "cube_staged_cmma_8x32_across_4", conv(2, (64, 64), [8, 7], [3, 3], SAME_3X3);
-    across_2_cube_staged_mma_grid_1x2_narrow: "cube_staged_mma_grid_1x2_across_2", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
-    across_4_cube_staged_mma_grid_1x2_narrow: "cube_staged_mma_grid_1x2_across_4", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+cases! {
+    check_problem;
+    narrow_cmma_f1x1_p1x2_t8_a2: pinned(Staged::F1X1_P1X2_T8.across(2)), &conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    narrow_cmma_f1x1_p1x2_t8_a4: pinned(Staged::F1X1_P1X2_T8.across(4)), &conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    narrow_cmma_f1x1_p1x2_t8_a7: pinned(Staged::F1X1_P1X2_T8.across(7)), &conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    narrow_cmma_f1x2_p1x2_a2: pinned(Staged::F1X2_P1X2.across(2)), &conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    narrow_cmma_f1x2_p1x2_a4: pinned(Staged::F1X2_P1X2.across(4)), &conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    narrow_cmma_f1x2_p1x2_a7: pinned(Staged::F1X2_P1X2.across(7)), &conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    even_rows_cmma_f1x1_p1x2_t8_a2: pinned(Staged::F1X1_P1X2_T8.across(2)), &conv(2, (64, 64), [8, 7], [3, 3], SAME_3X3);
+    even_rows_cmma_f1x1_p1x2_t8_a4: pinned(Staged::F1X1_P1X2_T8.across(4)), &conv(2, (64, 64), [8, 7], [3, 3], SAME_3X3);
+    narrow_mma_f1x2_p1x2_a2: pinned(Staged::F1X2_P1X2.mma().across(2)), &conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    narrow_mma_f1x2_p1x2_a4: pinned(Staged::F1X2_P1X2.mma().across(4)), &conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
 }
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -333,13 +372,13 @@ fn bound(client: &Client, shape: [usize; 4], values: Vec<f32>, binding: Binding)
 
 /// The convolution of a 3x3 weight over a `[2, 6, 7, 64]` input bound as `input` and `weight` say,
 /// against the host's.
-fn check_bound(strategy_id: &str, input: Binding, weight: Binding) {
-    check_bound_into(strategy_id, (input, weight, Binding::Dense));
+fn check_bound(strategy: &Strategy, input: Binding, weight: Binding) {
+    check_bound_into(strategy, (input, weight, Binding::Dense));
 }
 
 /// [`check_bound`] with the output bound as `out` says. It starts as a value no output holds, so
 /// a cell the kernel leaves alone shows.
-fn check_bound_into(strategy_id: &str, (input, weight, out): (Binding, Binding, Binding)) {
+fn check_bound_into(strategy: &Strategy, (input, weight, out): (Binding, Binding, Binding)) {
     let client = client();
     let (shape, filter) = ([2, 6, 7, 64], [32, 3, 3, 64]);
     let (input_values, weight_values) = (
@@ -372,7 +411,7 @@ fn check_bound_into(strategy_id: &str, (input, weight, out): (Binding, Binding, 
         dilation: [1, 1],
     };
     let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
-        match launch_ref::<2>(&strategy(strategy_id), c, inputs, args, dtypes()) {
+        match launch_ref::<2>(strategy, c, inputs, args, dtypes()) {
             Ok(()) => ExecutionOutcome::Executed,
             Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
         }
@@ -390,38 +429,21 @@ fn check_bound_into(strategy_id: &str, (input, weight, out): (Binding, Binding, 
         .enforce();
 }
 
-macro_rules! bound_tests {
-    ($($name:ident: $strategy:literal, $input:ident, $weight:ident;)*) => {
-        $(#[test]
-        fn $name() {
-            check_bound($strategy, Binding::$input, Binding::$weight);
-        })*
-    };
-}
-
 /// Views that are not dense rows from the buffer's start: a start a buffer element in, rows
 /// stepping past channels that are not the view's, and a tensor stored channels first.
-bound_tests! {
-    offset_input_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Offset, Dense;
-    offset_weight_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Dense, Offset;
-    sliced_input_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Sliced, Dense;
-    permuted_input_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Permuted, Dense;
-    permuted_weight_cube_staged_cmma: "cube_staged_cmma_grid_2x2", Dense, Permuted;
+cases! {
+    check_bound;
+    offset_input_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), Binding::Offset, Binding::Dense;
+    offset_weight_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), Binding::Dense, Binding::Offset;
+    sliced_input_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), Binding::Sliced, Binding::Dense;
+    permuted_input_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), Binding::Permuted, Binding::Dense;
+    permuted_weight_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), Binding::Dense, Binding::Permuted;
 }
 
-/// An output that starts a buffer element in.
-macro_rules! bound_output_tests {
-    ($($name:ident: $strategy:literal;)*) => {
-        $(#[test]
-        fn $name() {
-            check_bound_into($strategy, (Binding::Dense, Binding::Dense, Binding::Offset));
-        })*
-    };
-}
-
-bound_output_tests! {
-    offset_output_cube_staged_cmma: "cube_staged_cmma_grid_2x2";
-    offset_output_cube_staged_mma: "cube_staged_mma_grid_2x2";
+cases! {
+    check_bound_into;
+    offset_output_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), (Binding::Dense, Binding::Dense, Binding::Offset);
+    offset_output_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), (Binding::Dense, Binding::Dense, Binding::Offset);
 }
 
 /// What the launch of these operands is refused with, as its message.
@@ -443,7 +465,7 @@ fn refusal(input: InputBinding, weight: TensorBinding, out: [usize; 4]) -> Strin
         padding: [1, 1],
         dilation: [1, 1],
     };
-    match launch_ref::<2>(&strategy("cube_staged"), &client, inputs, args, dtypes()) {
+    match launch_ref::<2>(&tuned(), &client, inputs, args, dtypes()) {
         Ok(()) => panic!("the launch was accepted"),
         Err(e) => format!("{e:?}"),
     }
@@ -537,11 +559,11 @@ fn naive_weight_grad(
     grad
 }
 
-/// The weight gradient of `problem` through `strategy_id`, the input and the output gradient bound
+/// The weight gradient of `problem` through `strategy`, the input and the output gradient bound
 /// as `input` and `out_grad` say, and the host's. The output starts as a value no gradient holds,
 /// so a cell the kernel leaves alone shows.
 fn weight_grad_values(
-    strategy_id: &str,
+    strategy: &Strategy,
     problem: &Conv2dProblem,
     (input, out_grad, weight_grad): (Binding, Binding, Binding),
 ) -> Result<(HostData, Vec<f32>, [usize; 4]), String> {
@@ -581,7 +603,7 @@ fn weight_grad_values(
     };
     let outcome =
         launch_and_capture_outcome(&client, &[&weight_grad.handle], |c| {
-            match launch_ref::<2>(&strategy(strategy_id), c, inputs, args, dtypes()) {
+            match launch_ref::<2>(strategy, c, inputs, args, dtypes()) {
                 Ok(()) => ExecutionOutcome::Executed,
                 Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
             }
@@ -594,20 +616,20 @@ fn weight_grad_values(
 }
 
 fn check_weight_grad(
-    strategy_id: &str,
+    strategy: &Strategy,
     problem: &Conv2dProblem,
     input: Binding,
     out_grad: Binding,
 ) {
-    check_weight_grad_into(strategy_id, problem, (input, out_grad, Binding::Dense));
+    check_weight_grad_into(strategy, problem, (input, out_grad, Binding::Dense));
 }
 
 fn check_weight_grad_into(
-    strategy_id: &str,
+    strategy: &Strategy,
     problem: &Conv2dProblem,
     bindings: (Binding, Binding, Binding),
 ) {
-    let (actual, expected, shape) = match weight_grad_values(strategy_id, problem, bindings) {
+    let (actual, expected, shape) = match weight_grad_values(strategy, problem, bindings) {
         Ok(values) => values,
         Err(e) => panic!("a setting that serves this problem refused it: {e}"),
     };
@@ -624,82 +646,49 @@ fn check_weight_grad_into(
 /// below 2048.
 const GRAD_EPS: f32 = 0.01;
 
-/// One module per problem, a test in it for each of the two settings that serve a step of whole
-/// output positions: the cube routine through cmma and through Mma.
-macro_rules! weight_grad_tests {
-    ($($stem:ident: $problem:expr, $input:ident, $out_grad:ident;)*) => {
-        $(mod $stem {
-            use super::*;
-
-            fn check(strategy: &str) {
-                check_weight_grad(strategy, &$problem, Binding::$input, Binding::$out_grad);
-            }
-
-            #[test]
-            fn cube_staged_cmma() {
-                check("cube_staged_cmma_grid_2x2");
-            }
-
-            #[test]
-            fn cube_staged_mma() {
-                check("cube_staged_mma_grid_2x2");
-            }
-        })*
-    };
-}
-
 /// Windows, channels and extents the boxes overhang or fill exactly: output channels and input
 /// channels (the gradient's columns and rows) that are no multiple of a box and that are whole
 /// boxes, and a batch of more than one.
-weight_grad_tests! {
-    weight_grad_same_3x3_c64: conv(2, (64, 64), [4, 12], [3, 3], SAME_3X3), Dense, Dense;
-    weight_grad_stride_2: conv(2, (64, 32), [6, 20], [3, 3], ([2, 2], [1, 1], [1, 1])), Dense, Dense;
-    weight_grad_stride_2_no_padding: conv(2, (32, 32), [7, 21], [3, 3], ([2, 2], [0, 0], [1, 1])), Dense, Dense;
-    weight_grad_dilation_2: conv(2, (64, 32), [8, 17], [3, 3], ([1, 2], [2, 2], [2, 2])), Dense, Dense;
-    weight_grad_unequal_dilation: conv(2, (64, 32), [8, 17], [3, 3], ([1, 1], [1, 2], [1, 2])), Dense, Dense;
-    weight_grad_batch_3: conv(3, (32, 16), [4, 12], [3, 3], SAME_3X3), Dense, Dense;
-    weight_grad_channels_1: conv(2, (1, 16), [6, 12], [3, 3], SAME_3X3), Dense, Dense;
-    weight_grad_channels_3: conv(2, (3, 10), [6, 12], [3, 3], SAME_3X3), Dense, Dense;
-    weight_grad_overhang_ci_co: conv(2, (40, 48), [9, 11], [5, 3], ([1, 1], [2, 1], [1, 1])), Dense, Dense;
-    weight_grad_whole_ci_128_co_32: conv(1, (128, 32), [4, 12], [3, 3], SAME_3X3), Dense, Dense;
-    weight_grad_whole_ci_32_co_128: conv(1, (32, 128), [4, 12], [3, 3], SAME_3X3), Dense, Dense;
-    weight_grad_no_padding: conv(2, (32, 32), [5, 12], [3, 3], ([1, 1], [0, 0], [1, 1])), Dense, Dense;
-    weight_grad_1x1: conv(2, (64, 64), [5, 12], [1, 1], ([1, 1], [0, 0], [1, 1])), Dense, Dense;
-    weight_grad_ow_21: conv(1, (32, 32), [5, 21], [3, 3], SAME_3X3), Dense, Dense;
-    weight_grad_offset_views: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Offset, Offset;
-    weight_grad_sliced_input: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Sliced, Dense;
-    weight_grad_permuted_out_grad: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Dense, Permuted;
-    weight_grad_permuted_input: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Permuted, Dense;
-    weight_grad_sliced_out_grad: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Dense, Sliced;
+on_cmma_and_mma! {
+    check_weight_grad;
+    weight_grad_same_3x3_c64: &conv(2, (64, 64), [4, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_stride_2: &conv(2, (64, 32), [6, 20], [3, 3], ([2, 2], [1, 1], [1, 1])), Binding::Dense, Binding::Dense;
+    weight_grad_stride_2_no_padding: &conv(2, (32, 32), [7, 21], [3, 3], ([2, 2], [0, 0], [1, 1])), Binding::Dense, Binding::Dense;
+    weight_grad_dilation_2: &conv(2, (64, 32), [8, 17], [3, 3], ([1, 2], [2, 2], [2, 2])), Binding::Dense, Binding::Dense;
+    weight_grad_unequal_dilation: &conv(2, (64, 32), [8, 17], [3, 3], ([1, 1], [1, 2], [1, 2])), Binding::Dense, Binding::Dense;
+    weight_grad_batch_3: &conv(3, (32, 16), [4, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_channels_1: &conv(2, (1, 16), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_channels_3: &conv(2, (3, 10), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_overhang_ci_co: &conv(2, (40, 48), [9, 11], [5, 3], ([1, 1], [2, 1], [1, 1])), Binding::Dense, Binding::Dense;
+    weight_grad_whole_ci_128_co_32: &conv(1, (128, 32), [4, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_whole_ci_32_co_128: &conv(1, (32, 128), [4, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_no_padding: &conv(2, (32, 32), [5, 12], [3, 3], ([1, 1], [0, 0], [1, 1])), Binding::Dense, Binding::Dense;
+    weight_grad_1x1: &conv(2, (64, 64), [5, 12], [1, 1], ([1, 1], [0, 0], [1, 1])), Binding::Dense, Binding::Dense;
+    weight_grad_ow_21: &conv(1, (32, 32), [5, 21], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_offset_views: &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Binding::Offset, Binding::Offset;
+    weight_grad_sliced_input: &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Binding::Sliced, Binding::Dense;
+    weight_grad_permuted_out_grad: &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Permuted;
+    weight_grad_permuted_input: &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Binding::Permuted, Binding::Dense;
+    weight_grad_sliced_out_grad: &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Sliced;
 }
 
-/// A weight gradient that starts a buffer element in, for the two settings.
-macro_rules! weight_grad_offset_tests {
-    ($($name:ident: $strategy:literal;)*) => {
-        $(#[test]
-        fn $name() {
-            let problem = conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3);
-            check_weight_grad_into($strategy, &problem, (Binding::Dense, Binding::Dense, Binding::Offset));
-        })*
-    };
-}
-
-weight_grad_offset_tests! {
-    weight_grad_offset_output_cube_staged_cmma: "cube_staged_cmma_grid_2x2";
-    weight_grad_offset_output_cube_staged_mma: "cube_staged_mma_grid_2x2";
+cases! {
+    check_weight_grad_into;
+    weight_grad_offset_output_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), (Binding::Dense, Binding::Dense, Binding::Offset);
+    weight_grad_offset_output_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), (Binding::Dense, Binding::Dense, Binding::Offset);
 }
 
 /// The Mma setting of 32 rows over four planes, at stride 1 and 2.
 #[test]
 fn weight_grad_cube_staged_mma_grid_1x2_on_2x2() {
     check_weight_grad(
-        "cube_staged_mma_grid_1x2_on_2x2",
+        &pinned(Staged::F1X2_P2X2.mma()),
         &conv(2, (64, 32), [12, 15], [3, 3], SAME_3X3),
         Binding::Dense,
         Binding::Dense,
     );
     check_weight_grad(
-        "cube_staged_mma_grid_1x2_on_2x2",
+        &pinned(Staged::F1X2_P2X2.mma()),
         &conv(2, (64, 32), [12, 15], [3, 3], ([2, 2], [1, 1], [1, 1])),
         Binding::Dense,
         Binding::Dense,
@@ -710,90 +699,42 @@ fn weight_grad_cube_staged_mma_grid_1x2_on_2x2() {
 #[test]
 fn weight_grad_cube_staged_mma_grid_1x2_on_2x2_double() {
     check_weight_grad(
-        "cube_staged_mma_grid_1x2_on_2x2_double",
+        &pinned(Staged::F1X2_P2X2.mma().double_ring()),
         &conv(2, (64, 32), [12, 15], [3, 3], ([2, 2], [1, 1], [1, 1])),
         Binding::Dense,
         Binding::Dense,
     );
 }
 
-/// A map one to three positions wide makes a step of two axes.
-macro_rules! weight_grad_mma_tests {
-    ($($stem:ident: $problem:expr;)*) => {
-        $(mod $stem {
-            use super::*;
-
-            #[test]
-            fn cube_staged_mma() {
-                check_weight_grad("cube_staged_mma_grid_2x2", &$problem, Binding::Dense, Binding::Dense);
-            }
-
-        })*
-    };
+cases! {
+    check_weight_grad;
+    weight_grad_ow_3_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (32, 16), [6, 3], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_ow_1_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (32, 16), [6, 1], [3, 1], ([1, 1], [1, 0], [1, 1])), Binding::Dense, Binding::Dense;
+    weight_grad_ow_3_stride_2_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (32, 16), [6, 5], [3, 3], ([2, 2], [1, 1], [1, 1])), Binding::Dense, Binding::Dense;
+    weight_grad_ow_3_dilation_2_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (32, 16), [6, 5], [3, 3], ([1, 1], [1, 1], [2, 2])), Binding::Dense, Binding::Dense;
 }
 
-weight_grad_mma_tests! {
-    weight_grad_ow_3: conv(2, (32, 16), [6, 3], [3, 3], SAME_3X3);
-    weight_grad_ow_1: conv(2, (32, 16), [6, 1], [3, 1], ([1, 1], [1, 0], [1, 1]));
-    weight_grad_ow_3_stride_2: conv(2, (32, 16), [6, 5], [3, 3], ([2, 2], [1, 1], [1, 1]));
-    weight_grad_ow_3_dilation_2: conv(2, (32, 16), [6, 5], [3, 3], ([1, 1], [1, 1], [2, 2]));
+cases! {
+    check_weight_grad;
+    two_axes_weight_grad_ow_3_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (32, 16), [6, 3], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    two_axes_weight_grad_ow_1_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (32, 16), [6, 1], [3, 1], ([1, 1], [1, 0], [1, 1])), Binding::Dense, Binding::Dense;
+    two_axes_weight_grad_ow_3_stride_2_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (32, 16), [6, 5], [3, 3], ([2, 2], [1, 1], [1, 1])), Binding::Dense, Binding::Dense;
+    two_axes_weight_grad_ow_3_dilation_2_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (32, 16), [6, 5], [3, 3], ([1, 1], [1, 1], [2, 2])), Binding::Dense, Binding::Dense;
 }
 
-/// The same steps of two axes through cmma, in modules named `two_axes` to be run apart.
-macro_rules! weight_grad_cmma_tests {
-    ($($stem:ident: $problem:expr;)*) => {
-        $(mod $stem {
-            use super::*;
-
-            #[test]
-            fn cube_staged_cmma() {
-                check_weight_grad("cube_staged_cmma_grid_2x2", &$problem, Binding::Dense, Binding::Dense);
-            }
-        })*
-    };
+cases! {
+    check_weight_grad;
+    weight_grad_whole_ci_16_cmma_f1x2_p1x2: pinned(Staged::F1X2_P1X2), &conv(2, (16, 64), [8, 9], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_whole_ci_16_mma_f1x2_p1x2: pinned(Staged::F1X2_P1X2.mma()), &conv(2, (16, 64), [8, 9], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
 }
 
-weight_grad_cmma_tests! {
-    two_axes_weight_grad_ow_3: conv(2, (32, 16), [6, 3], [3, 3], SAME_3X3);
-    two_axes_weight_grad_ow_1: conv(2, (32, 16), [6, 1], [3, 1], ([1, 1], [1, 0], [1, 1]));
-    two_axes_weight_grad_ow_3_stride_2: conv(2, (32, 16), [6, 5], [3, 3], ([2, 2], [1, 1], [1, 1]));
-    two_axes_weight_grad_ow_3_dilation_2: conv(2, (32, 16), [6, 5], [3, 3], ([1, 1], [1, 1], [2, 2]));
-}
-
-/// The grids of one tile of rows, whose boxes are a quarter of the others'.
-macro_rules! weight_grad_narrow_tests {
-    ($($name:ident: $strategy:literal;)*) => {
-        $(#[test]
-        fn $name() {
-            let problem = conv(2, (16, 64), [8, 9], [3, 3], SAME_3X3);
-            check_weight_grad($strategy, &problem, Binding::Dense, Binding::Dense);
-        })*
-    };
-}
-
-weight_grad_narrow_tests! {
-    weight_grad_whole_ci_16_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2";
-    weight_grad_whole_ci_16_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2";
-}
-
-/// Planes across the filter's width (the weight gradient's across axis, three taps): two overhang
-/// it, three divide it.
-macro_rules! weight_grad_across_tests {
-    ($($name:ident: $strategy:literal;)*) => {
-        $(#[test]
-        fn $name() {
-            let problem = conv(2, (16, 64), [8, 9], [3, 3], SAME_3X3);
-            check_weight_grad($strategy, &problem, Binding::Dense, Binding::Dense);
-        })*
-    };
-}
-
-weight_grad_across_tests! {
-    weight_grad_across_2_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_2";
-    weight_grad_across_4_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_4";
-    weight_grad_across_2_cube_staged_cmma_8x32: "cube_staged_cmma_8x32_across_2";
-    weight_grad_across_2_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2_across_2";
-    weight_grad_across_4_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2_across_4";
+cases! {
+    check_weight_grad;
+    weight_grad_cmma_f1x2_p1x2_a2: pinned(Staged::F1X2_P1X2.across(2)), &conv(2, (16, 64), [8, 9], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_cmma_f1x2_p1x2_a4: pinned(Staged::F1X2_P1X2.across(4)), &conv(2, (16, 64), [8, 9], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_cmma_f1x1_p1x2_t8_a2: pinned(Staged::F1X1_P1X2_T8.across(2)), &conv(2, (16, 64), [8, 9], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_mma_f1x2_p1x2_a2: pinned(Staged::F1X2_P1X2.mma().across(2)), &conv(2, (16, 64), [8, 9], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    weight_grad_mma_f1x2_p1x2_a4: pinned(Staged::F1X2_P1X2.mma().across(4)), &conv(2, (16, 64), [8, 9], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
 }
 
 /// Planes across the filter's width with no padding, whose overhanging taps gather past the input.
@@ -801,17 +742,17 @@ weight_grad_across_tests! {
 fn weight_grad_across_2_no_padding_cube_staged_cmma_grid_1x2() {
     let problem = conv(2, (16, 64), [8, 9], [3, 3], ([1, 1], [0, 0], [1, 1]));
     check_weight_grad(
-        "cube_staged_cmma_grid_1x2_across_2",
+        &pinned(Staged::F1X2_P1X2.across(2)),
         &problem,
         Binding::Dense,
         Binding::Dense,
     );
 }
 
-/// What the launch of these weight backward operands through `strategy_id` is refused with, as its
+/// What the launch of these weight backward operands through `strategy` is refused with, as its
 /// message.
 fn weight_grad_refusal(
-    strategy_id: &str,
+    strategy: &Strategy,
     input: InputBinding,
     out_grad: TensorBinding,
     weight_grad: [usize; 4],
@@ -832,7 +773,7 @@ fn weight_grad_refusal(
         padding: [1, 1],
         dilation: [1, 1],
     };
-    match launch_ref::<2>(&strategy(strategy_id), &client, inputs, args, dtypes()) {
+    match launch_ref::<2>(strategy, &client, inputs, args, dtypes()) {
         Ok(()) => panic!("the launch was accepted"),
         Err(e) => format!("{e:?}"),
     }
@@ -851,7 +792,7 @@ fn a_quantized_weight_backward_input_is_refused_by_name() {
         scheme: Default::default(),
     };
     let out_grad = dense(&client, [1, 6, 6, 32]);
-    let message = weight_grad_refusal("cube_staged", input, out_grad, [32, 3, 3, 64]);
+    let message = weight_grad_refusal(&tuned(), input, out_grad, [32, 3, 3, 64]);
     assert!(message.contains("quantized"), "{message}");
 }
 
@@ -860,7 +801,7 @@ fn a_weight_gradient_of_other_channels_is_refused_by_name() {
     let client = client();
     let input = InputBinding::new(dense(&client, [1, 6, 6, 64]), F16);
     let out_grad = dense(&client, [1, 6, 6, 32]);
-    let message = weight_grad_refusal("cube_staged", input, out_grad, [32, 3, 3, 16]);
+    let message = weight_grad_refusal(&tuned(), input, out_grad, [32, 3, 3, 16]);
     assert!(message.contains("no groups"), "{message}");
 }
 
@@ -869,7 +810,7 @@ fn a_weight_gradient_of_other_filters_is_refused_by_name() {
     let client = client();
     let input = InputBinding::new(dense(&client, [1, 6, 6, 64]), F16);
     let out_grad = dense(&client, [1, 6, 6, 32]);
-    let message = weight_grad_refusal("cube_staged", input, out_grad, [16, 3, 3, 64]);
+    let message = weight_grad_refusal(&tuned(), input, out_grad, [16, 3, 3, 64]);
     assert!(message.contains("output channels"), "{message}");
 }
 
@@ -878,7 +819,7 @@ fn an_output_gradient_of_another_batch_is_refused_by_name() {
     let client = client();
     let input = InputBinding::new(dense(&client, [2, 6, 6, 64]), F16);
     let out_grad = dense(&client, [1, 6, 6, 32]);
-    let message = weight_grad_refusal("cube_staged", input, out_grad, [32, 3, 3, 64]);
+    let message = weight_grad_refusal(&tuned(), input, out_grad, [32, 3, 3, 64]);
     assert!(message.contains("batch"), "{message}");
 }
 
@@ -922,11 +863,11 @@ fn naive_data_grad(
 }
 
 /// The data gradient of `problem` (read as the forward one it is the gradient of) through
-/// `strategy_id`, the output gradient and the weights bound as `out_grad` and `weights` say, and
+/// `strategy`, the output gradient and the weights bound as `out_grad` and `weights` say, and
 /// the host's. The output starts as a value no gradient holds, so a cell the kernel leaves alone
 /// shows.
 fn data_grad_values(
-    strategy_id: &str,
+    strategy: &Strategy,
     problem: &Conv2dProblem,
     (out_grad, weights, in_grad): (Binding, Binding, Binding),
 ) -> Result<(HostData, Vec<f32>, [usize; 4]), String> {
@@ -965,7 +906,7 @@ fn data_grad_values(
         in_grad: in_grad.clone().binding(),
     };
     let outcome = launch_and_capture_outcome(&client, &[&in_grad.handle], |c| {
-        match launch_ref::<2>(&strategy(strategy_id), c, inputs, args, dtypes()) {
+        match launch_ref::<2>(strategy, c, inputs, args, dtypes()) {
             Ok(()) => ExecutionOutcome::Executed,
             Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
         }
@@ -978,11 +919,11 @@ fn data_grad_values(
 }
 
 fn check_data_grad_into(
-    strategy_id: &str,
+    strategy: &Strategy,
     problem: &Conv2dProblem,
     bindings: (Binding, Binding, Binding),
 ) {
-    let (actual, expected, shape) = match data_grad_values(strategy_id, problem, bindings) {
+    let (actual, expected, shape) = match data_grad_values(strategy, problem, bindings) {
         Ok(values) => values,
         Err(e) => panic!("a setting that serves this problem refused it: {e}"),
     };
@@ -996,36 +937,12 @@ fn check_data_grad_into(
 }
 
 fn check_data_grad(
-    strategy_id: &str,
+    strategy: &Strategy,
     problem: &Conv2dProblem,
     out_grad: Binding,
     weights: Binding,
 ) {
-    check_data_grad_into(strategy_id, problem, (out_grad, weights, Binding::Dense));
-}
-
-/// One module per problem, a test in it for each of the two settings that serve a step of whole
-/// output channels: the cube routine through cmma and through Mma.
-macro_rules! data_grad_tests {
-    ($($stem:ident: $problem:expr, $out_grad:ident, $weights:ident;)*) => {
-        $(mod $stem {
-            use super::*;
-
-            fn check(strategy: &str) {
-                check_data_grad(strategy, &$problem, Binding::$out_grad, Binding::$weights);
-            }
-
-            #[test]
-            fn cube_staged_cmma() {
-                check("cube_staged_cmma_grid_2x2");
-            }
-
-            #[test]
-            fn cube_staged_mma() {
-                check("cube_staged_mma_grid_2x2");
-            }
-        })*
-    };
+    check_data_grad_into(strategy, problem, (out_grad, weights, Binding::Dense));
 }
 
 /// The setting of 56 rows over a map 56 wide and one it overhangs.
@@ -1036,7 +953,7 @@ fn data_grad_cube_staged_cmma_56_rows() {
         conv(1, (64, 32), [3, 60], [3, 3], SAME_3X3),
     ] {
         check_data_grad(
-            "cube_staged_cmma_56_rows",
+            &pinned(Staged::F7X1_P1X2_T8),
             &problem,
             Binding::Dense,
             Binding::Dense,
@@ -1047,87 +964,53 @@ fn data_grad_cube_staged_cmma_56_rows() {
 /// Windows, channels and extents the boxes overhang or fill exactly: input channels (the gradient's
 /// columns) and output channels (the contraction) that are no multiple of a box and that are whole
 /// ones, taps in both directions, and a batch of more than one.
-data_grad_tests! {
-    data_grad_same_3x3_c64: conv(2, (64, 64), [6, 12], [3, 3], SAME_3X3), Dense, Dense;
-    data_grad_no_padding: conv(2, (32, 32), [7, 12], [3, 3], ([1, 1], [0, 0], [1, 1])), Dense, Dense;
-    data_grad_padding_2: conv(2, (32, 32), [7, 12], [3, 3], ([1, 1], [2, 2], [1, 1])), Dense, Dense;
-    data_grad_dilation_2: conv(2, (64, 32), [8, 17], [3, 3], ([1, 1], [2, 2], [2, 2])), Dense, Dense;
-    data_grad_unequal_dilation: conv(2, (64, 32), [8, 17], [3, 3], ([1, 1], [1, 2], [1, 2])), Dense, Dense;
-    data_grad_overhang_co_24: conv(2, (32, 24), [6, 12], [3, 3], SAME_3X3), Dense, Dense;
-    data_grad_overhang_co_40: conv(2, (32, 40), [6, 12], [3, 3], SAME_3X3), Dense, Dense;
-    data_grad_kernel_5x3: conv(2, (32, 32), [9, 11], [5, 3], ([1, 1], [2, 1], [1, 1])), Dense, Dense;
-    data_grad_1x1: conv(2, (64, 64), [5, 12], [1, 1], ([1, 1], [0, 0], [1, 1])), Dense, Dense;
-    data_grad_batch_3: conv(3, (32, 16), [4, 12], [3, 3], SAME_3X3), Dense, Dense;
-    data_grad_overhang_ci_co: conv(2, (40, 48), [9, 11], [3, 3], SAME_3X3), Dense, Dense;
-    data_grad_channels_1: conv(2, (1, 16), [6, 12], [3, 3], SAME_3X3), Dense, Dense;
-    data_grad_channels_3: conv(2, (3, 16), [6, 12], [3, 3], SAME_3X3), Dense, Dense;
-    data_grad_width_1: conv(2, (32, 32), [6, 1], [3, 1], ([1, 1], [1, 0], [1, 1])), Dense, Dense;
-    data_grad_width_2: conv(2, (32, 32), [6, 2], [3, 3], SAME_3X3), Dense, Dense;
-    data_grad_width_3: conv(2, (32, 32), [6, 3], [3, 3], SAME_3X3), Dense, Dense;
-    data_grad_width_21: conv(1, (32, 32), [5, 21], [3, 3], SAME_3X3), Dense, Dense;
-    data_grad_offset_views: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Offset, Offset;
-    data_grad_sliced_out_grad: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Sliced, Dense;
-    data_grad_sliced_weights: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Dense, Sliced;
-    data_grad_permuted_out_grad: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Permuted, Dense;
-    data_grad_permuted_weights: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Dense, Permuted;
+on_cmma_and_mma! {
+    check_data_grad;
+    data_grad_same_3x3_c64: &conv(2, (64, 64), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_no_padding: &conv(2, (32, 32), [7, 12], [3, 3], ([1, 1], [0, 0], [1, 1])), Binding::Dense, Binding::Dense;
+    data_grad_padding_2: &conv(2, (32, 32), [7, 12], [3, 3], ([1, 1], [2, 2], [1, 1])), Binding::Dense, Binding::Dense;
+    data_grad_dilation_2: &conv(2, (64, 32), [8, 17], [3, 3], ([1, 1], [2, 2], [2, 2])), Binding::Dense, Binding::Dense;
+    data_grad_unequal_dilation: &conv(2, (64, 32), [8, 17], [3, 3], ([1, 1], [1, 2], [1, 2])), Binding::Dense, Binding::Dense;
+    data_grad_overhang_co_24: &conv(2, (32, 24), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_overhang_co_40: &conv(2, (32, 40), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_kernel_5x3: &conv(2, (32, 32), [9, 11], [5, 3], ([1, 1], [2, 1], [1, 1])), Binding::Dense, Binding::Dense;
+    data_grad_1x1: &conv(2, (64, 64), [5, 12], [1, 1], ([1, 1], [0, 0], [1, 1])), Binding::Dense, Binding::Dense;
+    data_grad_batch_3: &conv(3, (32, 16), [4, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_overhang_ci_co: &conv(2, (40, 48), [9, 11], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_channels_1: &conv(2, (1, 16), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_channels_3: &conv(2, (3, 16), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_width_1: &conv(2, (32, 32), [6, 1], [3, 1], ([1, 1], [1, 0], [1, 1])), Binding::Dense, Binding::Dense;
+    data_grad_width_2: &conv(2, (32, 32), [6, 2], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_width_3: &conv(2, (32, 32), [6, 3], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_width_21: &conv(1, (32, 32), [5, 21], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_offset_views: &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Binding::Offset, Binding::Offset;
+    data_grad_sliced_out_grad: &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Binding::Sliced, Binding::Dense;
+    data_grad_sliced_weights: &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Sliced;
+    data_grad_permuted_out_grad: &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Binding::Permuted, Binding::Dense;
+    data_grad_permuted_weights: &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Permuted;
 }
 
-/// Planes across the gradient's rows, six of them, which two divide and four overhang.
-macro_rules! data_grad_across_tests {
-    ($($name:ident: $strategy:literal;)*) => {
-        $(#[test]
-        fn $name() {
-            let problem = conv(2, (32, 32), [6, 12], [3, 3], SAME_3X3);
-            check_data_grad($strategy, &problem, Binding::Dense, Binding::Dense);
-        })*
-    };
+cases! {
+    check_data_grad;
+    data_grad_cmma_f1x2_p1x2_a2: pinned(Staged::F1X2_P1X2.across(2)), &conv(2, (32, 32), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_cmma_f1x2_p1x2_a4: pinned(Staged::F1X2_P1X2.across(4)), &conv(2, (32, 32), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_cmma_f1x1_p1x2_t8_a4: pinned(Staged::F1X1_P1X2_T8.across(4)), &conv(2, (32, 32), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_mma_f1x2_p1x2_a2: pinned(Staged::F1X2_P1X2.mma().across(2)), &conv(2, (32, 32), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_mma_f1x2_p1x2_a4: pinned(Staged::F1X2_P1X2.mma().across(4)), &conv(2, (32, 32), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
 }
 
-data_grad_across_tests! {
-    data_grad_across_2_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_2";
-    data_grad_across_4_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_4";
-    data_grad_across_4_cube_staged_cmma_8x32: "cube_staged_cmma_8x32_across_4";
-    data_grad_across_2_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2_across_2";
-    data_grad_across_4_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2_across_4";
+cases! {
+    check_data_grad_into;
+    data_grad_offset_output_cmma_f2x2_p2x2: pinned(Staged::F2X2_P2X2), &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), (Binding::Dense, Binding::Dense, Binding::Offset);
+    data_grad_offset_output_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), (Binding::Dense, Binding::Dense, Binding::Offset);
 }
 
-/// A data gradient that starts a buffer element in, for the two settings.
-macro_rules! data_grad_offset_tests {
-    ($($name:ident: $strategy:literal;)*) => {
-        $(#[test]
-        fn $name() {
-            let problem = conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3);
-            check_data_grad_into($strategy, &problem, (Binding::Dense, Binding::Dense, Binding::Offset));
-        })*
-    };
-}
-
-data_grad_offset_tests! {
-    data_grad_offset_output_cube_staged_cmma: "cube_staged_cmma_grid_2x2";
-    data_grad_offset_output_cube_staged_mma: "cube_staged_mma_grid_2x2";
-}
-
-/// Three and eight output channels make a step of taps and channels, which cmma declines by name
-/// and Mma serves; twenty overhang Mma's step of eight.
-macro_rules! data_grad_mma_tests {
-    ($($stem:ident: $problem:expr;)*) => {
-        $(mod $stem {
-            use super::*;
-
-            #[test]
-            fn cube_staged_mma() {
-                check_data_grad("cube_staged_mma_grid_2x2", &$problem, Binding::Dense, Binding::Dense);
-            }
-
-        })*
-    };
-}
-
-data_grad_mma_tests! {
-    data_grad_co_3: conv(2, (32, 3), [6, 12], [3, 3], SAME_3X3);
-    data_grad_co_8: conv(2, (32, 8), [6, 12], [3, 3], SAME_3X3);
-    data_grad_overhang_co_20: conv(2, (32, 20), [6, 12], [3, 3], SAME_3X3);
-    data_grad_co_3_dilation_2: conv(2, (32, 3), [6, 12], [3, 3], ([1, 1], [2, 2], [2, 2]));
+cases! {
+    check_data_grad;
+    data_grad_co_3_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (32, 3), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_co_8_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (32, 8), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_overhang_co_20_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (32, 20), [6, 12], [3, 3], SAME_3X3), Binding::Dense, Binding::Dense;
+    data_grad_co_3_dilation_2_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(2, (32, 3), [6, 12], [3, 3], ([1, 1], [2, 2], [2, 2])), Binding::Dense, Binding::Dense;
 }
 
 /// The data gradient of one shape through the legacy Mma kernel and through the tiled one, which
@@ -1136,10 +1019,10 @@ data_grad_mma_tests! {
 fn data_grad_matches_the_legacy_kernel_on_mma() {
     let problem = conv(2, (64, 32), [6, 12], [3, 3], SAME_3X3);
     let bindings = (Binding::Dense, Binding::Dense, Binding::Dense);
-    let legacy = data_grad_values("simple_sync_cyclic_mma", &problem, bindings)
+    let legacy = data_grad_values(&legacy_mma(), &problem, bindings)
         .unwrap_or_else(|e| panic!("the legacy launch was refused: {e}"))
         .0;
-    let tiled = data_grad_values("cube_staged_mma_grid_2x2", &problem, bindings)
+    let tiled = data_grad_values(&pinned(Staged::F2X2_P2X2.mma()), &problem, bindings)
         .unwrap_or_else(|e| panic!("the tiled launch was refused: {e}"))
         .0;
     assert_equals_approx(&tiled, &legacy, GRAD_EPS)
@@ -1147,10 +1030,10 @@ fn data_grad_matches_the_legacy_kernel_on_mma() {
         .enforce();
 }
 
-/// What the launch of these data backward operands through `strategy_id` over `args` is refused
+/// What the launch of these data backward operands through `strategy` over `args` is refused
 /// with, as its message.
 fn data_grad_refusal(
-    strategy_id: &str,
+    strategy: &Strategy,
     out_grad: InputBinding,
     weights: TensorBinding,
     in_grad: [usize; 4],
@@ -1167,7 +1050,7 @@ fn data_grad_refusal(
         weights: InputBinding::new(weights, F16),
         in_grad,
     };
-    match launch_ref::<2>(&strategy(strategy_id), &client, inputs, args, dtypes()) {
+    match launch_ref::<2>(strategy, &client, inputs, args, dtypes()) {
         Ok(()) => panic!("the launch was accepted"),
         Err(e) => format!("{e:?}"),
     }
@@ -1188,7 +1071,7 @@ fn a_strided_data_backward_is_refused_by_name() {
         ..SAME_ARGS
     };
     let message = data_grad_refusal(
-        "cube_staged",
+        &tuned(),
         out_grad,
         dense(&client, [32, 3, 3, 64]),
         [1, 6, 6, 64],
@@ -1210,7 +1093,7 @@ fn a_quantized_data_backward_out_grad_is_refused_by_name() {
         scheme: Default::default(),
     };
     let weights = dense(&client, [32, 3, 3, 64]);
-    let message = data_grad_refusal("cube_staged", out_grad, weights, [1, 6, 6, 64], SAME_ARGS);
+    let message = data_grad_refusal(&tuned(), out_grad, weights, [1, 6, 6, 64], SAME_ARGS);
     assert!(message.contains("quantized"), "{message}");
 }
 
@@ -1219,7 +1102,7 @@ fn a_data_gradient_of_other_channels_is_refused_by_name() {
     let client = client();
     let out_grad = InputBinding::new(dense(&client, [1, 6, 6, 32]), F16);
     let weights = dense(&client, [32, 3, 3, 64]);
-    let message = data_grad_refusal("cube_staged", out_grad, weights, [1, 6, 6, 16], SAME_ARGS);
+    let message = data_grad_refusal(&tuned(), out_grad, weights, [1, 6, 6, 16], SAME_ARGS);
     assert!(message.contains("no groups"), "{message}");
 }
 
@@ -1228,7 +1111,7 @@ fn a_data_gradient_of_other_filters_is_refused_by_name() {
     let client = client();
     let out_grad = InputBinding::new(dense(&client, [1, 6, 6, 32]), F16);
     let weights = dense(&client, [16, 3, 3, 64]);
-    let message = data_grad_refusal("cube_staged", out_grad, weights, [1, 6, 6, 64], SAME_ARGS);
+    let message = data_grad_refusal(&tuned(), out_grad, weights, [1, 6, 6, 64], SAME_ARGS);
     assert!(message.contains("output channels"), "{message}");
 }
 
@@ -1237,7 +1120,7 @@ fn a_data_gradient_of_another_batch_is_refused_by_name() {
     let client = client();
     let out_grad = InputBinding::new(dense(&client, [2, 6, 6, 32]), F16);
     let weights = dense(&client, [32, 3, 3, 64]);
-    let message = data_grad_refusal("cube_staged", out_grad, weights, [1, 6, 6, 64], SAME_ARGS);
+    let message = data_grad_refusal(&tuned(), out_grad, weights, [1, 6, 6, 64], SAME_ARGS);
     assert!(message.contains("batch"), "{message}");
 }
 
@@ -1248,7 +1131,7 @@ fn cmma_declines_a_data_backward_step_across_taps() {
     let out_grad = InputBinding::new(dense(&client, [2, 6, 6, 3]), F16);
     let weights = dense(&client, [3, 3, 3, 32]);
     let message = data_grad_refusal(
-        "cube_staged_cmma_grid_2x2",
+        &pinned(Staged::F2X2_P2X2),
         out_grad,
         weights,
         [2, 6, 6, 32],
