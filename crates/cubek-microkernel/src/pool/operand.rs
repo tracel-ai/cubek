@@ -1,7 +1,6 @@
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 
-/// One of the operands of a pooling that are bound to a buffer. An average's weights are
-/// computed, never read.
+/// One of the operands of a max pooling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PoolOperand {
     /// `[b, ih, iw, c]`, gathered over the window of each output position.

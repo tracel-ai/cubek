@@ -1,12 +1,11 @@
-//! Max and average pooling as routines on the tile stack: every output position's window
-//! gathered from the input, then reduced (a max) or contracted against weights (an average).
+//! Max pooling as a routine on the tile stack: every output position's window gathered from the
+//! input and reduced to its largest tap.
 
 mod geometry;
 mod launch;
 mod problem;
 mod routines;
 mod space;
-mod weights;
 
 pub use geometry::*;
 pub use launch::*;

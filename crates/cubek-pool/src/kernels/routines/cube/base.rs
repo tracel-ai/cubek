@@ -1,37 +1,37 @@
-use super::kernel::cube_pool_kernel;
+use super::kernel::cube_max_pool_kernel;
 use crate::kernels::geometry::TileGeometry;
 use crate::kernels::space;
 use crate::kernels::{PoolRoutine, PoolRoutineProblem, PoolTensors};
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::pool::PoolOperand;
-use cubek_microkernel::pool::cube::{CubePoolMicrokernel, CubePoolMicrokernelSettings};
+use cubek_microkernel::pool::cube::{CubeMaxPoolMicrokernel, CubeMaxPoolMicrokernelSettings};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Every cube a box of output rows and columns, walking its channels a block at a time, each
-/// block's windows read from the input where it lies.
+/// block's windows read from the input where it lies and reduced to their largest tap.
 ///
 /// Every device runs it: it holds no shared memory.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct CubePoolRoutine;
+pub struct CubeMaxPoolRoutine;
 
 /// How a cube covers its box: its planes, each walking rows, each unit taking columns and a run
 /// of channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubePoolRoutineSettings {
-    pub microkernel: CubePoolMicrokernelSettings,
+pub struct CubeMaxPoolRoutineSettings {
+    pub microkernel: CubeMaxPoolMicrokernelSettings,
     pub planes: usize,
     pub rows_per_plane: usize,
     pub cols_per_unit: usize,
 }
 
-impl CubePoolRoutineSettings {
+impl CubeMaxPoolRoutineSettings {
     /// `planes` a cube, each walking `rows_per_plane` rows, each unit `cols_per_unit` columns.
     pub const fn new(planes: usize, rows_per_plane: usize, cols_per_unit: usize) -> Self {
         Self {
-            microkernel: CubePoolMicrokernelSettings,
+            microkernel: CubeMaxPoolMicrokernelSettings,
             planes,
             rows_per_plane,
             cols_per_unit,
@@ -39,7 +39,7 @@ impl CubePoolRoutineSettings {
     }
 }
 
-impl core::fmt::Display for CubePoolRoutineSettings {
+impl core::fmt::Display for CubeMaxPoolRoutineSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
@@ -49,10 +49,10 @@ impl core::fmt::Display for CubePoolRoutineSettings {
     }
 }
 
-/// What a launch of [`CubePoolRoutine`] compiles.
+/// What a launch of [`CubeMaxPoolRoutine`] compiles.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CubePoolRoutineBlueprint {
-    pub microkernel: CubePoolMicrokernel,
+pub struct CubeMaxPoolRoutineBlueprint {
+    pub microkernel: CubeMaxPoolMicrokernel,
     pub partitioning: Partitioning,
     /// The width both operands bind at.
     pub width: usize,
@@ -60,21 +60,21 @@ pub struct CubePoolRoutineBlueprint {
     pub checked: bool,
 }
 
-impl Routine for CubePoolRoutine {
+impl Routine for CubeMaxPoolRoutine {
     type Problem = PoolRoutineProblem;
-    type Microkernel = CubePoolMicrokernel;
-    type Settings = CubePoolRoutineSettings;
-    type Blueprint = CubePoolRoutineBlueprint;
+    type Microkernel = CubeMaxPoolMicrokernel;
+    type Settings = CubeMaxPoolRoutineSettings;
+    type Blueprint = CubeMaxPoolRoutineBlueprint;
     type Partitioning = Partitioning;
 
     /// Four planes of two rows a cube by default, then eight and sixteen planes.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        CubePoolMicrokernel::settings(hw)
+        CubeMaxPoolMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
-                [4, 8, 16].map(|planes| CubePoolRoutineSettings {
+                [4, 8, 16].map(|planes| CubeMaxPoolRoutineSettings {
                     microkernel,
-                    ..CubePoolRoutineSettings::new(planes, 2, 1)
+                    ..CubeMaxPoolRoutineSettings::new(planes, 2, 1)
                 })
             })
             .collect()
@@ -83,7 +83,7 @@ impl Routine for CubePoolRoutine {
     /// Its blocks hand the microkernel a unit's channel run: the operands' lines divide it.
     fn vectorize(
         &self,
-        microkernel: &CubePoolMicrokernel,
+        microkernel: &CubeMaxPoolMicrokernel,
         partitioning: &Partitioning,
         vectorization: &mut Vectorization<PoolOperand>,
     ) {
@@ -101,9 +101,9 @@ impl Routine for CubePoolRoutine {
         let plane_width = hw.dispatch_plane_size() as usize;
         let geometry = TileGeometry::new(settings, problem.channels, plane_width);
         let partitioning = problem.space(geometry, plane_width).partitioning();
-        let microkernel = CubePoolMicrokernel::best(
+        let microkernel = CubeMaxPoolMicrokernel::best(
             hw,
-            &space::work_item(&partitioning, problem.reduction),
+            &space::work_item(&partitioning),
             &settings.microkernel,
         )?;
         let mut vectorization = Vectorization::new();
@@ -114,7 +114,7 @@ impl Routine for CubePoolRoutine {
             shared_memory: 0,
         };
         let grid = Grid::new(hw, &partitioning, cube)?;
-        let blueprint = CubePoolRoutineBlueprint {
+        let blueprint = CubeMaxPoolRoutineBlueprint {
             microkernel,
             partitioning,
             width,
@@ -125,13 +125,13 @@ impl Routine for CubePoolRoutine {
 
     fn estimate(
         &self,
-        problem: &PoolRoutineProblem,
+        _problem: &PoolRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
         blueprint.microkernel.estimate(
-            &space::work_item(&blueprint.partitioning, problem.reduction),
+            &space::work_item(&blueprint.partitioning),
             &(),
             grid.planes(),
             estimate,
@@ -139,8 +139,8 @@ impl Routine for CubePoolRoutine {
     }
 }
 
-impl PoolRoutine for CubePoolRoutine {
-    fn dispatch(&self, tensors: &PoolTensors, blueprint: CubePoolRoutineBlueprint, grid: Grid) {
+impl PoolRoutine for CubeMaxPoolRoutine {
+    fn dispatch(&self, tensors: &PoolTensors, blueprint: CubeMaxPoolRoutineBlueprint, grid: Grid) {
         let problem = tensors.problem();
         let binding = tensors.bind(
             &blueprint.partitioning,
@@ -148,17 +148,13 @@ impl PoolRoutine for CubePoolRoutine {
             blueprint.checked,
             &grid,
         );
-        cube_pool_kernel::launch(
+        cube_max_pool_kernel::launch(
             tensors.client(),
             grid.launch.cube_count,
             grid.launch.cube_dim,
             binding.input.arg(),
             binding.output.arg(),
             binding.launcher.partitioning_arg(),
-            problem.windows,
-            problem.input,
-            problem.count,
-            blueprint.microkernel,
             problem.element,
         );
     }

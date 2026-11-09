@@ -7,24 +7,11 @@ use cubecl::tile::Partitioning;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::Work;
-use cubek_microkernel::pool::{PoolOperand, PoolReduction};
+use cubek_microkernel::pool::PoolOperand;
 use cubek_std::Hardware;
 use cubek_std::routine::EstimatedProblem;
 
-/// What an average divides each window's sum by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AverageCount {
-    /// Every tap of the window: no tap of any window leaves the input, so the divisor is the
-    /// window's size everywhere.
-    Window,
-    /// The taps inside the input.
-    InBounds,
-    /// The taps inside the padded input: what lies past the padding (a ceil mode's last window)
-    /// does not count.
-    Padded,
-}
-
-/// An NHWC input pooled to the output's height and width, as the host describes it.
+/// An NHWC input max pooled to the output's height and width, as the host describes it.
 #[derive(Debug, Clone)]
 pub struct PoolRoutineProblem {
     pub batch: usize,
@@ -33,9 +20,6 @@ pub struct PoolRoutineProblem {
     pub channels: usize,
     /// The window along the rows, then along the columns.
     pub windows: [WindowAxis; 2],
-    pub reduction: PoolReduction,
-    /// What an average divides by; `None` for a max.
-    pub count: Option<AverageCount>,
     /// The element both tensors are stored in.
     pub element: ElemType,
     /// The alignment of the input's and the output's buffers in elements.
@@ -84,7 +68,7 @@ impl PoolRoutineProblem {
 }
 
 impl EstimatedProblem for PoolRoutineProblem {
-    /// One operation a tap, every tap read once and every output written once.
+    /// One comparison a tap, every input read once and every output written once.
     fn demand(&self) -> Work {
         let outputs = self.batch * self.output[0] * self.output[1] * self.channels;
         let taps = self.windows[0].taps * self.windows[1].taps;

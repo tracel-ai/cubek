@@ -1,4 +1,4 @@
-use crate::kernels::CubePoolRoutineSettings;
+use crate::kernels::CubeMaxPoolRoutineSettings;
 use cubek_std::selector::divisor_at_most;
 
 /// How the output is spread over cubes, over a cube's planes, and over a plane's units.
@@ -22,7 +22,7 @@ pub struct TileGeometry {
 impl TileGeometry {
     /// The geometry `settings` state over `channels` on planes of `units`, the unit split solved
     /// around them.
-    pub fn new(settings: &CubePoolRoutineSettings, channels: usize, units: usize) -> Self {
+    pub fn new(settings: &CubeMaxPoolRoutineSettings, channels: usize, units: usize) -> Self {
         let (unit_cols, unit_channels, channel_block) = unit_split(channels, units);
         Self {
             planes_per_cube: settings.planes,

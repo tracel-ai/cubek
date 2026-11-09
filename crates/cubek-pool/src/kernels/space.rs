@@ -1,6 +1,6 @@
 use super::geometry::TileGeometry;
 use cubecl::tile::{Axis, Level, Levels, Partitioning, Projection, Space, layout::PhysicalAxisMap};
-use cubek_microkernel::pool::{PoolReduction, PoolWorkItem};
+use cubek_microkernel::pool::PoolWorkItem;
 
 pub const BATCH: Axis = Axis(0);
 pub const OUTPUT_H: Axis = Axis(1);
@@ -61,7 +61,7 @@ impl PoolSpace {
     /// From the leaf up, in counts: one unit's columns by its channel run by a plane's rows, the
     /// units of a plane across columns and channels, the planes of a cube across rows, every
     /// channel block of the cube's box, and a cube per box. The taps never divide: every tap of
-    /// one output position pools into the same cell.
+    /// one output position reduces into the same cell.
     pub fn levels(&self) -> Vec<Level> {
         let (geometry, plane_size) = (self.geometry, self.plane_size);
         assert!(
@@ -100,11 +100,10 @@ impl PoolSpace {
 }
 
 /// What one unit of `partitioning` is handed: its leaf's output positions, each its channel run.
-pub fn work_item(partitioning: &Partitioning, reduction: PoolReduction) -> PoolWorkItem {
+pub fn work_item(partitioning: &Partitioning) -> PoolWorkItem {
     let leaf = partitioning.leaf();
     let channels = leaf.extent(CHANNEL);
     PoolWorkItem {
-        reduction,
         channels,
         outputs: leaf.extent(OUTPUT_H) * leaf.extent(OUTPUT_W) * channels,
     }
