@@ -89,7 +89,9 @@ impl AttentionTuneInputs {
     }
 
     /// Attention of `queries` over the float keys and values `kv` states, the output allocated
-    /// ([`AttentionTensors::attention`]); otherwise as [`new`](Self::new).
+    /// ([`AttentionTensors::attention`]); otherwise as [`new`](Self::new). A source listing blocks
+    /// of keys is keyed and measured as the pages of one block each that the routines read
+    /// ([`KvSource::read_as_block_pages`]).
     ///
     /// # Errors
     ///
@@ -102,6 +104,7 @@ impl AttentionTuneInputs {
         arrivals: Option<PlainTensor>,
         scoring: AttentionScoring,
     ) -> Result<Self, Refusal> {
+        let kv = kv.read_as_block_pages(client, scoring.visibility)?;
         let AttentionCache::Float { key, value } = kv.cache.clone() else {
             return Err(ATTENTION_PACKED_UNREAD);
         };
