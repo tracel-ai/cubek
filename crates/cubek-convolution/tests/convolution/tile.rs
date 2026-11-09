@@ -83,6 +83,10 @@ tiled_tests! {
     cube_staged_cmma_grid_1x2_narrow_width: "cube_staged_cmma_grid_1x2", "narrow_width";
     cube_staged_cmma_8x32_conv3x3_c64: "cube_staged_cmma_8x32", "conv3x3_c64";
     cube_staged_cmma_8x32_narrow_width: "cube_staged_cmma_8x32", "narrow_width";
+    cube_staged_cmma_8x32_across_2_conv3x3_c64: "cube_staged_cmma_8x32_across_2", "conv3x3_c64";
+    cube_staged_cmma_8x32_across_4_conv3x3_c64: "cube_staged_cmma_8x32_across_4", "conv3x3_c64";
+    cube_staged_cmma_grid_1x2_across_2_conv3x3_c64: "cube_staged_cmma_grid_1x2_across_2", "conv3x3_c64";
+    cube_staged_cmma_8x32_across_2_narrow_width: "cube_staged_cmma_8x32_across_2", "narrow_width";
     cube_staged_mma_grid_2x2_width_1_alexnet_like: "cube_staged_mma_grid_2x2_width_1", "alexnet_like";
     cube_staged_mma_grid_2x2_width_1_large_kernel: "cube_staged_mma_grid_2x2_width_1", "large_kernel";
     cube_staged_mma_grid_2x2_width_1_conv3x3_c64: "cube_staged_mma_grid_2x2_width_1", "conv3x3_c64";
@@ -189,6 +193,19 @@ problem_tests! {
 problem_tests! {
     ci_12_cube_staged_cmma: "cube_staged_cmma_grid_2x2", conv(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
     ci_12_cube_staged_mma: "cube_staged_mma_grid_2x2", conv(2, (12, 16), [9, 9], [3, 3], SAME_3X3);
+}
+
+/// Planes across the output rows of a cube, over a map seven tall that no two or four divide, and
+/// a map with whole groups.
+problem_tests! {
+    across_2_cube_staged_cmma_8x32_narrow: "cube_staged_cmma_8x32_across_2", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    across_4_cube_staged_cmma_8x32_narrow: "cube_staged_cmma_8x32_across_4", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    across_7_cube_staged_cmma_8x32_narrow: "cube_staged_cmma_8x32_across_7", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    across_2_cube_staged_cmma_grid_1x2_narrow: "cube_staged_cmma_grid_1x2_across_2", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    across_4_cube_staged_cmma_grid_1x2_narrow: "cube_staged_cmma_grid_1x2_across_4", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    across_7_cube_staged_cmma_grid_1x2_narrow: "cube_staged_cmma_grid_1x2_across_7", conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3);
+    across_2_cube_staged_cmma_8x32_even_rows: "cube_staged_cmma_8x32_across_2", conv(2, (64, 64), [8, 7], [3, 3], SAME_3X3);
+    across_4_cube_staged_cmma_8x32_even_rows: "cube_staged_cmma_8x32_across_4", conv(2, (64, 64), [8, 7], [3, 3], SAME_3X3);
 }
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -740,6 +757,24 @@ weight_grad_narrow_tests! {
     weight_grad_whole_ci_16_cube_staged_mma_grid_1x2: "cube_staged_mma_grid_1x2";
 }
 
+/// Planes across the filter's width (the weight gradient's across axis, three taps): two overhang
+/// it, three divide it.
+macro_rules! weight_grad_across_tests {
+    ($($name:ident: $strategy:literal;)*) => {
+        $(#[test]
+        fn $name() {
+            let problem = conv(2, (16, 64), [8, 9], [3, 3], SAME_3X3);
+            check_weight_grad($strategy, &problem, Binding::Dense, Binding::Dense);
+        })*
+    };
+}
+
+weight_grad_across_tests! {
+    weight_grad_across_2_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_2";
+    weight_grad_across_4_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_4";
+    weight_grad_across_2_cube_staged_cmma_8x32: "cube_staged_cmma_8x32_across_2";
+}
+
 /// What the launch of these weight backward operands through `strategy_id` is refused with, as its
 /// message.
 fn weight_grad_refusal(
@@ -986,6 +1021,23 @@ data_grad_tests! {
     data_grad_sliced_weights: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Dense, Sliced;
     data_grad_permuted_out_grad: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Permuted, Dense;
     data_grad_permuted_weights: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Dense, Permuted;
+}
+
+/// Planes across the gradient's rows, six of them, which two divide and four overhang.
+macro_rules! data_grad_across_tests {
+    ($($name:ident: $strategy:literal;)*) => {
+        $(#[test]
+        fn $name() {
+            let problem = conv(2, (32, 32), [6, 12], [3, 3], SAME_3X3);
+            check_data_grad($strategy, &problem, Binding::Dense, Binding::Dense);
+        })*
+    };
+}
+
+data_grad_across_tests! {
+    data_grad_across_2_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_2";
+    data_grad_across_4_cube_staged_cmma_grid_1x2: "cube_staged_cmma_grid_1x2_across_4";
+    data_grad_across_4_cube_staged_cmma_8x32: "cube_staged_cmma_8x32_across_4";
 }
 
 /// A data gradient that starts a buffer element in, for the two settings.
