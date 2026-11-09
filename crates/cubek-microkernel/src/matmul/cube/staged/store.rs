@@ -1,16 +1,15 @@
-use crate::matmul::MatmulAxesKind;
-use crate::matmul::MatmulStage;
 use crate::matmul::cube::{MatmulCubeSpace, MatmulCubeWrite};
-use crate::matmul::{MatmulBuffers, MatmulDestination, MatmulOperand, MatmulWorkItem};
+use crate::matmul::{
+    MatmulAxesKind, MatmulBuffers, MatmulDestination, MatmulOperand, MatmulStage, MatmulWorkItem,
+};
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Delivery;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 
-/// Who moves a cube microkernel's box of the output into global memory once its walk ends. A
-/// request the microkernel resolves against the device and the problem
-/// ([`resolve`](Self::resolve)), so every setting runs on every problem.
+/// Who moves a cube microkernel's box of the output into global memory once its walk ends. The
+/// routine's structure, never a setting: each routine stores one way and refuses a problem it
+/// cannot store so.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CubeStagedStore {
     /// Each plane's fragments store their own cells, through a scratch where they cannot land
@@ -22,7 +21,7 @@ pub enum CubeStagedStore {
     Tma,
 }
 
-/// Why a box asked of the TMA engine is stored by the fragments instead.
+/// Why the TMA engine cannot store a cube microkernel's box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CubeStagedTmaStoreRefusal {
     /// The device offers no bulk tensor copy ([`Hardware::bulk_tensor_copy`]).
@@ -99,35 +98,6 @@ impl CubeStagedTmaStoreRefusal {
 }
 
 impl CubeStagedStore {
-    /// This store as `hw` runs it for `item` over `buffers`, its cubes handed the box `cube_space`
-    /// and reaching the output as `write`, its planes split `planes_along_k` ways along `K`: the
-    /// TMA engine where nothing refuses it ([`CubeStagedTmaStoreRefusal`]), the fragments
-    /// elsewhere.
-    pub fn resolve(
-        self,
-        hw: &Hardware,
-        item: &MatmulWorkItem,
-        buffers: &MatmulBuffers,
-        cube_space: &MatmulCubeSpace,
-        write: MatmulCubeWrite,
-        planes_along_k: NonZeroUsize,
-    ) -> Self {
-        match self {
-            Self::Tma => match CubeStagedTmaStoreRefusal::new(
-                hw,
-                item,
-                buffers,
-                cube_space,
-                write,
-                planes_along_k,
-            ) {
-                None => Self::Tma,
-                Some(_) => Self::Fragments,
-            },
-            Self::Fragments => Self::Fragments,
-        }
-    }
-
     /// Bytes of shared memory the box it stores through takes, `elem_bytes` a cell, aligned as a
     /// bulk copy's box is: none where the fragments store.
     pub fn box_bytes(self, stage: &MatmulStage, elem_bytes: usize) -> usize {
@@ -150,12 +120,37 @@ impl CubeStagedStore {
     }
 }
 
-/// Nothing for a store by the fragments, so the settings that hold one keep their names.
-impl core::fmt::Display for CubeStagedStore {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Fragments => Ok(()),
-            Self::Tma => write!(f, " store=tma"),
-        }
+impl From<CubeStagedTmaStoreRefusal> for Refusal {
+    fn from(refusal: CubeStagedTmaStoreRefusal) -> Self {
+        let why = match refusal {
+            CubeStagedTmaStoreRefusal::NoBulkTensorCopy => {
+                "this device offers no bulk tensor copy for the TMA engine to store the box with"
+            }
+            CubeStagedTmaStoreRefusal::Sink => {
+                "the output is a sink, which has no address for a descriptor to encode"
+            }
+            CubeStagedTmaStoreRefusal::Shared(_) => {
+                "the cubes share their boxes, and their meetings read the output back"
+            }
+            CubeStagedTmaStoreRefusal::SplitAlongK => {
+                "the planes split K and merge in shared memory, which the cube copies out itself"
+            }
+            CubeStagedTmaStoreRefusal::Batched => {
+                "a descriptor addresses one matrix, and the problem holds several"
+            }
+            CubeStagedTmaStoreRefusal::Misaligned => {
+                "the output's rows are not whole 16-byte lines"
+            }
+            CubeStagedTmaStoreRefusal::UnalignedStart => {
+                "the output's view starts at an address a descriptor cannot encode"
+            }
+            CubeStagedTmaStoreRefusal::BoxPastDescriptor => {
+                "the box's edge is past what one descriptor's box holds"
+            }
+            CubeStagedTmaStoreRefusal::BlockSplit => {
+                "the box is stated in a packed input's scale blocks, and a descriptor's box in rows and columns"
+            }
+        };
+        Refusal::Declined { why }
     }
 }

@@ -38,9 +38,6 @@ use crate::{
             SimpleAsyncCyclicConv, SimpleAsyncStridedConv, SimpleAsyncTmaConv,
             SimpleSyncCyclicConv, SimpleSyncStridedConv, SimpleSyncTilewiseConv,
         },
-        specialized::{
-            SpecializedAsyncCyclicConv, SpecializedAsyncStridedConv, SpecializedTmaConv,
-        },
     },
 };
 
@@ -175,37 +172,6 @@ fn dispatch_routine<const N_SPATIAL: usize>(
             dtypes,
         ),
         ConvAlgorithm::SimpleAsyncTma => dispatch_inputs::<N_SPATIAL, SimpleAsyncTmaConv>(
-            client,
-            inputs,
-            args,
-            kind,
-            plane_tiling,
-            forced_matmul,
-            dtypes,
-        ),
-        ConvAlgorithm::SpecializedAsyncCyclic => {
-            dispatch_inputs::<N_SPATIAL, SpecializedAsyncCyclicConv>(
-                client,
-                inputs,
-                args,
-                kind,
-                plane_tiling,
-                forced_matmul,
-                dtypes,
-            )
-        }
-        ConvAlgorithm::SpecializedAsyncStrided => {
-            dispatch_inputs::<N_SPATIAL, SpecializedAsyncStridedConv>(
-                client,
-                inputs,
-                args,
-                kind,
-                plane_tiling,
-                forced_matmul,
-                dtypes,
-            )
-        }
-        ConvAlgorithm::SpecializedTma => dispatch_inputs::<N_SPATIAL, SpecializedTmaConv>(
             client,
             inputs,
             args,

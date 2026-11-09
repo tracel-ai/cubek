@@ -2,13 +2,12 @@ use super::kernel::hypercube_fragment_attention_kernel;
 use crate::kernels::routines::hypercube::merge::HypercubeSecondLaunch;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, HypercubeMerge,
+    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
+    HypercubeMerge, QueryOrder,
 };
-use crate::kernels::{AttentionPartitioning, QueryOrder};
 use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::attention::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
 };

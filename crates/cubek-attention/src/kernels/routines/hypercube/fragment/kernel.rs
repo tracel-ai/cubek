@@ -1,4 +1,4 @@
-use cubecl::tile::{Partitioning, StageStorage, TileArg};
+use cubecl::tile::{Partitioning, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_staged_attention_partial_microkernel;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
@@ -12,14 +12,14 @@ use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
-    query: &TileArg<'_>,
-    key: &TileArg<'_>,
-    value: &TileArg<'_>,
-    out: &TileArg<'_>,
+    query: &TileTensor<'_>,
+    key: &TileTensor<'_>,
+    value: &TileTensor<'_>,
+    out: &TileTensor<'_>,
     slot_out: &mut Tensor<Vector<EA, Const<1>>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
-    mask: ComptimeOption<&TileArg<'static>>,
+    mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,
@@ -31,11 +31,13 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+
     // The cube level's walk, this cube's run of the steps of keys: once for the staging ring,
     // once for where the slots lie.
     let run = partitioning.walk();
     let first_step = run.region(0);
     let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
+
     let q = query.tile(&partitioning);
     let k = key
         .tile(&partitioning)
@@ -44,13 +46,15 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
         .tile(&partitioning)
         .within(S, 0, visible.attended as usize);
     let o = out.tile(&partitioning);
-    let bias = visible.bias::<EA>(&partitioning);
+    let bias = visible.step_bias::<EA>(&partitioning, &first_step);
+
     let steps = visible.steps(
         &first_step,
-        comptime!(microkernel.cube.seq_q()),
-        comptime!(microkernel.cube.seq_kv()),
-        comptime!(merge.cubes),
+        microkernel.cube.seq_q(),
+        microkernel.cube.seq_kv(),
+        merge.cubes,
     );
+
     // The query and the output span no key: their box is the first step's.
     let _ = cube_staged_attention_partial_microkernel::<EA, ES>(
         partitioning.walk(),
@@ -65,8 +69,8 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
         slot_out,
         slot_max,
         slot_sum,
-        comptime!(microkernel.cube),
-        comptime!(merge.slots.splits),
+        microkernel.cube,
+        merge.slots.splits,
         storage,
     );
 }

@@ -23,10 +23,12 @@ pub fn group_tiles(
 ) {
     let groups = ends.len();
     let tiles = table.len();
+
     let group = ABSOLUTE_POS;
     if group >= groups {
         terminate!();
     }
+
     let mut tile = 0u32;
     let mut start = 0u32;
     for before in 0..group {
@@ -34,9 +36,11 @@ pub fn group_tiles(
         tile += tiles_of(start, end, align);
         start = end;
     }
+
     let end = ends[group];
     let owned = tiles_of(start, end, align);
     starts[group] = tile;
+
     for t in 0..owned {
         let at = (tile + t) as usize;
         if at < tiles {
@@ -44,6 +48,7 @@ pub fn group_tiles(
             sources[at] = start + t * align;
         }
     }
+
     if group == groups - 1 {
         starts[groups] = tile + owned;
         for at in (tile + owned) as usize..tiles {
@@ -61,6 +66,7 @@ fn tiles_of(start: u32, end: u32, #[comptime] align: u32) -> u32 {
     if end > start {
         rows = end - start;
     }
+
     rows.div_ceil(align)
 }
 
@@ -86,10 +92,12 @@ impl Source {
         let tile = row / align;
         let group = table[tile] as usize;
         let source = sources[tile] as usize + row % align;
+
         let mut real = false;
         if group < ends.len() {
             real = source < ends[group] as usize && source < limit;
         }
+
         Source { row: source, real }
     }
 }
@@ -116,18 +124,22 @@ pub fn pad_rows<E: Numeric, N: Size>(
     if at >= padded.len() {
         terminate!();
     }
+
     let vectors = padded.shape(1) / padded.vector_size();
     let (row, v) = (at / vectors, at % vectors);
     let source = Source::new(row, grouped as usize, ends, table, sources, align);
+
     // Each row at the stride its buffer has, which may pad past the row.
     let (rows_step, padded_step) = (
         rows.stride(0) / rows.vector_size(),
         padded.stride(0) / padded.vector_size(),
     );
+
     let mut value = Vector::<E, N>::cast_from(0u32);
     if source.real {
         value = rows[row_read(source.row, route_at_place, slots) * rows_step + v];
     }
+
     padded[row * padded_step + v] = value;
 }
 
@@ -159,6 +171,7 @@ fn padded_row_of(
     if group > 0 {
         first = ends[group - 1] as usize;
     }
+
     starts[group] as usize * align + place - first
 }
 
@@ -184,19 +197,23 @@ pub fn gate_rows<F: Float, N: Size>(
     if at >= gated.len() {
         terminate!();
     }
+
     let vectors = gated.shape(1) / gated.vector_size();
     let (row, v) = (at / vectors, at % vectors);
     let source = Source::new(row, rows as usize, ends, table, sources, align);
+
     let (both_step, gated_step) = (
         both.stride(0) / both.vector_size(),
         gated.stride(0) / gated.vector_size(),
     );
+
     let mut out = Vector::<F, N>::cast_from(0u32);
     if source.real {
         let group = table[row / align] as usize;
         let from = padded_row_of(source.row, group, ends, from_starts, from_align);
         let gate = both[from * both_step + v];
         let up = both[from * both_step + vectors + v];
+
         #[unroll]
         for lane in 0..gated.vector_size() {
             let g = f32::cast_from(gate.extract(lane));
@@ -204,6 +221,7 @@ pub fn gate_rows<F: Float, N: Size>(
             out.insert(lane, F::cast_from(g / (1.0 + (-g).exp()) * u));
         }
     }
+
     gated[row * gated_step + v] = out;
 }
 
@@ -228,23 +246,28 @@ pub fn combine_routes<F: Float, N: Size>(
     if at >= out.len() {
         terminate!();
     }
+
     let vectors = out.shape(1) / out.vector_size();
     let (token, v) = (at / vectors, at % vectors);
+
     let (grouped_step, out_step) = (
         grouped.stride(0) / grouped.vector_size(),
         out.stride(0) / out.vector_size(),
     );
+
     let slots = slots as usize;
     let mut sum = Vector::<f32, N>::cast_from(0u32);
     for slot in 0..slots {
         let route = token * slots + slot;
         let group = routes[route] as usize;
+
         // A route naming no group has no padded row, and adds nothing.
         if group < ends.len() {
             let row = padded_row_of(place_of_route[route] as usize, group, ends, starts, align);
             let weight =
                 f32::cast_from(weights[token * weights.stride(0) + slot * weights.stride(1)]);
             let value = grouped[row * grouped_step + v];
+
             #[unroll]
             for lane in 0..out.vector_size() {
                 let added = sum.extract(lane) + weight * f32::cast_from(value.extract(lane));
@@ -252,11 +275,13 @@ pub fn combine_routes<F: Float, N: Size>(
             }
         }
     }
+
     let mut written = Vector::<F, N>::empty();
     #[unroll]
     for lane in 0..out.vector_size() {
         written.insert(lane, F::cast_from(sum.extract(lane)));
     }
+
     out[token * out_step + v] = written;
 }
 
@@ -277,14 +302,17 @@ pub fn unpad_rows<E: Numeric, N: Size>(
     if at >= padded.len() {
         terminate!();
     }
+
     let vectors = padded.shape(1) / padded.vector_size();
     let (row, v) = (at / vectors, at % vectors);
     let source = Source::new(row, rows.shape(0), ends, table, sources, align);
+
     // Each row at the stride its buffer has, which may pad past the row.
     let (rows_step, padded_step) = (
         rows.stride(0) / rows.vector_size(),
         padded.stride(0) / padded.vector_size(),
     );
+
     if source.real {
         rows[source.row * rows_step + v] = padded[row * padded_step + v];
     }

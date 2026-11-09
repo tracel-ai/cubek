@@ -97,7 +97,7 @@ pub(crate) fn build_reduce_output_layout<Out: NumericVector>(
     let num_vectored_reductions = output.shape(out_vec_axis) / vec;
     let len = output.len();
 
-    if comptime![accumulator_length == 1] {
+    if accumulator_length == 1 {
         // Simple reduce: `write_index` is a flat vector offset into the
         // output, which matches the pre-topk behavior.
         ReduceOutputLayout::new(

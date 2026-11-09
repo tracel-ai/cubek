@@ -71,11 +71,11 @@ pub(crate) fn matmul_entry<
         &vector_sizes
     ));
 
-    if comptime!(config.is_err()) {
+    if config.is_err() {
         push_validation_error(config.err().unwrap().to_string());
         comptime!(return);
     }
-    let config = comptime!(config.unwrap());
+    let config = config.unwrap();
 
     let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
         inputs,

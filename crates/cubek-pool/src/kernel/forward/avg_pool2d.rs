@@ -59,7 +59,7 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for AvgPoolStrategy {
         let count = &mut accumulator.1;
 
         // Only count valid positions when count_include_pad=false
-        if comptime![!config.count_include_pad] {
+        if !config.count_include_pad {
             *count += 1;
         }
 

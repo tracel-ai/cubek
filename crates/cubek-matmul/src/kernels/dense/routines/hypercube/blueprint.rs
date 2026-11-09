@@ -1,6 +1,5 @@
-use crate::kernels::{
-    CubeStagedMatmulRoutine, MatmulBlueprint, MatmulPartitioning, MatmulRoutineProblem,
-};
+use crate::kernels::dense::routines::cube::widths_in_blocks;
+use crate::kernels::{MatmulBlueprint, MatmulPartitioning, MatmulRoutineProblem};
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubek_microkernel::matmul::hypercube::HypercubeStagedMicrokernel;
@@ -12,7 +11,7 @@ use cubek_std::microkernel::Microkernel;
 /// `partitioning` places them and staging as `storage` lays the stages out. Over a float product,
 /// each operand as wide as its buffer and the microkernel let it, the output no wider than a line
 /// of the sum the cubes meet in. Over a block-split space, the widths a cube staged routine binds
-/// there ([`CubeStagedMatmulRoutine::widths_in_blocks`]), each cube contracting the item its
+/// there ([`widths_in_blocks`]), each cube contracting the item its
 /// microkernel reads.
 pub(super) fn hypercube_blueprint(
     hw: &Hardware,
@@ -35,25 +34,20 @@ pub(super) fn hypercube_blueprint(
                 operand: MatmulOperand::Out,
                 elements: hw.vector_ceiling(problem.sum()),
             });
-            let mut blueprint = MatmulBlueprint::new(
+            MatmulBlueprint::new(
                 hw,
                 problem,
                 microkernel,
                 partitioning,
                 vectorization,
                 storage,
-            );
-            blueprint.microkernel.cube.fill = blueprint
-                .microkernel
-                .cube
-                .fill
-                .at_widths(&blueprint.widths, item);
-            blueprint
+            )
         }
         Some(_) => MatmulBlueprint {
-            widths: CubeStagedMatmulRoutine::widths_in_blocks(
+            widths: widths_in_blocks(
                 hw,
-                &microkernel.cube.contracted(item),
+                problem,
+                item,
                 &microkernel.cube,
                 &partitioning,
                 &storage,

@@ -1,7 +1,6 @@
 use crate::Hardware;
-use crate::microkernel::StagedOperand;
+use crate::microkernel::{StageFill, StagedOperand};
 use core::num::NonZeroUsize;
-use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::stage::Prefetch;
 
 /// How a walk through shared memory holds its stages: a staged cube's, or each plane's own,
@@ -60,6 +59,16 @@ impl StageRing {
         self.stages_in_flight.get() * stage_bytes
     }
 
+    /// Times a walk through the ring expands the body it runs on each stage, so the copies of
+    /// whatever shared memory that body declares: once a slot in the laps that fill ahead and
+    /// once a slot in the last, except for one slot filled in place, which has no laps ahead.
+    pub fn bodies(&self) -> usize {
+        match (self.prefetch, self.stages_in_flight.get()) {
+            (Prefetch::InSlots, 1) => 1,
+            (_, slots) => 2 * slots,
+        }
+    }
+
     /// The ring that fills stages of `operands` on a cube of `units` units: this one, prefetching
     /// into its slots where the tile DSL would refuse to hold the next stage in registers. A
     /// refusal is made at expansion, where it is a launch that writes nothing; so every setting
@@ -69,18 +78,16 @@ impl StageRing {
     /// Asked before the operands' widths are settled, so each operand's share is its most over
     /// every width it could bind at: the powers of two up to the widest line `hw` reads.
     ///
-    /// An operand of an element no buffer stores, e2m1 or tf32, is read from words: the register
-    /// prefetch, which reads a plain source at its own width, does not carry it, and its ring
-    /// prefetches into its slots.
+    /// An operand whose fill converts it ([`StageFill::Converted`]) is not carried by the register
+    /// prefetch, which reads a plain source at its own width: its ring prefetches into its slots.
     ///
     /// The tile DSL holds one stage ahead in registers, so a ring of more than two stages would
     /// leave the slots past the second idle; and it holds at most [`Prefetch::fits`] scalars a unit
     /// of every operand's stage ([`StagedOperand::most_prefetched`]).
     pub fn resolve(self, hw: &Hardware, operands: &[StagedOperand], units: usize) -> Self {
-        let words = [FloatKind::E2M1, FloatKind::TF32].map(ElemType::Float);
         if operands
             .iter()
-            .any(|operand| words.contains(&operand.element))
+            .any(|operand| operand.fill == StageFill::Converted)
         {
             return Self {
                 prefetch: Prefetch::InSlots,
@@ -130,8 +137,21 @@ mod tests {
             element: ElemType::Float(FloatKind::F16),
             space: Space::new(&axes),
             innermost: axes[1].0,
+            fill: StageFill::AsStored,
         };
         [operand([(M, 16), (K, 16)]), operand([(K, 16), (N, 16)])]
+    }
+
+    /// The register prefetch does not carry an operand its fill converts, so its ring keeps the
+    /// slots.
+    #[test]
+    fn an_operand_converted_by_its_fill_prefetches_into_its_slots() {
+        let [lhs, rhs] = small_stage();
+        let converted = [lhs.converted_by_fill(), rhs];
+        assert_eq!(
+            StageRing::DOUBLE_THROUGH_REGISTERS.resolve(&devices::m2_pro(), &converted, 128),
+            StageRing::DOUBLE
+        );
     }
 
     /// The tile DSL holds one stage ahead in registers and refuses a deeper ring at expansion,
@@ -149,5 +169,16 @@ mod tests {
             StageRing::DOUBLE_THROUGH_REGISTERS.resolve(&devices::m2_pro(), &small_stage(), 128),
             StageRing::DOUBLE_THROUGH_REGISTERS
         );
+    }
+
+    /// What the tile DSL's walks expand: one body for a single slot filled in place, and two a slot
+    /// otherwise. The first three are what the hypercube attention backward's compiled kernels
+    /// hold in shared memory, on CUDA.
+    #[test]
+    fn a_walk_expands_its_body_once_a_slot_ahead_and_once_a_slot_last() {
+        assert_eq!(StageRing::SINGLE.bodies(), 1);
+        assert_eq!(StageRing::SINGLE_THROUGH_REGISTERS.bodies(), 2);
+        assert_eq!(StageRing::DOUBLE.bodies(), 4);
+        assert_eq!(StageRing::DOUBLE_THROUGH_REGISTERS.bodies(), 4);
     }
 }

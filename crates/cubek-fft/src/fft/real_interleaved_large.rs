@@ -113,7 +113,7 @@ fn rfft_post_interleaved_kernel<F: Float>(
     if pos >= total as usize {
         terminate!();
     }
-    let n_freq = comptime![m + 1];
+    let n_freq = m + 1;
     let k = pos % n_freq;
     let window = pos / n_freq;
     let re = packed_re.view(BatchSignalLayout::new(packed_re, window, dim));
@@ -306,7 +306,7 @@ fn irfft_unpack_interleaved_kernel<F: Float>(
     let re = packed_re.view(BatchSignalLayout::new(packed_re, window, dim));
     let im = packed_im.view(BatchSignalLayout::new(packed_im, window, dim));
     let mut output = signal.view_mut(BatchSignalLayout::new(&*signal, window, dim));
-    let n_fft = comptime![2 * m];
+    let n_fft = 2 * m;
     let adjustment = match normalization {
         FftNormalization::None => F::cast_from(n_fft),
         FftNormalization::ByN => F::new(1.0),

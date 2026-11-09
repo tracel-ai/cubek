@@ -5,14 +5,11 @@ use crate::kernels::MatmulRoutineProblem;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::{Axis, Space};
-use cubek_microkernel::matmul::MatmulOperands;
-use cubek_microkernel::matmul::MatmulStep;
-use cubek_std::Hardware;
-use cubek_std::devices;
-use cubek_std::layout::stored::Operand;
-use cubek_std::layout::stored::Packing;
-use cubek_std::layout::tile_order;
+use cubek_microkernel::matmul::{MatmulOperands, MatmulStep};
+use cubek_std::layout::stored::{Operand, Packing};
+use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 use cubek_std::matmul_axes::{K, M, N, blocked};
+use cubek_std::{Hardware, devices};
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
 
@@ -50,23 +47,23 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
         let operand = Operand::of_scheme(&scheme, axis, [K, N]).expect("one axis a block");
         problem(m, scheme, operand)
     };
-    let nvfp4 = tile_order::scheme();
+    let nvfp4 = tile_order::nvfp4_scheme();
     let words = devices::m2_pro().load_values(ElemType::UInt(UIntKind::U32));
-    let tile_order = Operand::of_scheme(&nvfp4, K, [K, N])
-        .expect("one axis a block")
-        .stored(
-            N,
-            words,
-            Some((
-                &tile_order::values_axes(N),
-                tile_order::values_storage(N, (128, 8), words).tiles(),
-            )),
-            None,
-        )
-        .expect("tile order is read");
+    let in_tiles = |words_laid: TileWords| {
+        let order = TileOrder::laid(&nvfp4, words_laid, (128, 8)).expect("NVFP4 is tile order");
+        let operand = Operand::of_scheme(&nvfp4, K, [K, N])
+            .expect("one axis a block")
+            .in_tile_order(order, N, words)
+            .expect("tile order is read");
+        problem(m, nvfp4, operand)
+    };
     vec![
         ("nvfp4 rows", in_rows(nvfp4, K)),
-        ("nvfp4 tile order", problem(m, nvfp4, tile_order)),
+        ("nvfp4 tile order", in_tiles(TileWords::RowByRow)),
+        (
+            "nvfp4 tile order block by block",
+            in_tiles(TileWords::BlockByBlock),
+        ),
         (
             "mxfp4",
             in_rows(scheme(QuantValue::E2M1, K, 32, ScaleDtype::UE8M0), K),
@@ -102,8 +99,8 @@ fn step(hw: &Hardware, problem: &MatmulRoutineProblem) -> MatmulStep {
     MatmulStep::new(hw, operands, problem.elements)
 }
 
-/// Whether `space` covers a whole number of `step`s along `M`, `N` and `K`, each over the block axis
-/// and the inside axis it is split into.
+/// Whether `space` covers a whole number of `step`s along `M`, `N` and `K`, each over the block
+/// axis and the inside axis it is split into.
 fn whole_steps(step: &MatmulStep, space: &Space) -> bool {
     [M, N, K].into_iter().all(|axis| {
         let (blocks, inside) = blocked(axis);
@@ -186,9 +183,9 @@ mod cube_staged {
     use cubecl::tile::StageStorage;
     use cubecl::tile::launch::Refusal;
     use cubecl::tile::stage::RowChunks;
-    use cubek_microkernel::matmul::MatmulDim;
     use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
     use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
+    use cubek_microkernel::matmul::{MatmulDim, MatmulMicrokernel};
     use cubek_std::devices;
     use cubek_std::routine::Routine;
 
@@ -223,7 +220,7 @@ mod cube_staged {
                     }
                     Err(error) => panic!("{name} at {settings}: {error:?}"),
                 };
-                if name == "nvfp4 tile order" {
+                if name.starts_with("nvfp4 tile order") {
                     tile_order_prepared += 1;
                 }
                 let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.instruction.shape();
@@ -278,6 +275,10 @@ mod cube_staged {
             else {
                 continue;
             };
+            // A stage holding the rhs as it is stored decodes nothing into it.
+            if blueprint.microkernel.decoded_stage().is_none() {
+                continue;
+            }
             let StageStorage::Tiled { chunks, .. } = blueprint.shared_memory else {
                 panic!("{settings}: a matrix instruction's stage is tiled");
             };
@@ -385,15 +386,13 @@ mod packed_lhs {
 mod hypercube_last_arrival {
     use super::*;
     use crate::kernels::select::packed::nvfp4_scheme;
-    use crate::kernels::{
-        HypercubeLastArrivalMatmulRoutine, HypercubeRelayMatmulRoutine, MATMUL_HYPERCUBE_PACKED_LHS,
-    };
+    use crate::kernels::{HypercubeLastArrivalMatmulRoutine, MATMUL_HYPERCUBE_PACKED_LHS};
     use cubecl::features::MmaConfig;
     use cubek_std::devices;
     use cubek_std::routine::Routine;
 
-    /// Two NVFP4 inputs, the block-scaled instruction's, are declined by both hypercube routines
-    /// at every setting they list, before anything is compiled: they bind a packed rhs beside a
+    /// Two NVFP4 inputs, the block-scaled instruction's, are declined by the hypercube routine at
+    /// every setting it lists, before anything is compiled: they bind a packed rhs beside a
     /// float lhs, and a launch over a packed lhs would fail to expand.
     #[test]
     fn two_packed_inputs_are_declined() {
@@ -413,9 +412,9 @@ mod hypercube_last_arrival {
             scheme: nvfp4_scheme(),
         };
         let rhs = Packing {
-            operand: Operand::of_scheme(&tile_order::scheme(), K, [K, N])
+            operand: Operand::of_scheme(&tile_order::nvfp4_scheme(), K, [K, N])
                 .expect("one axis a block"),
-            scheme: tile_order::scheme(),
+            scheme: tile_order::nvfp4_scheme(),
         };
         let problem = MatmulRoutineProblem::packed(
             512,
@@ -428,12 +427,9 @@ mod hypercube_last_arrival {
                 out: None,
             },
         );
-        let (last_arrival, relay) = (
-            HypercubeLastArrivalMatmulRoutine.settings(&hw),
-            HypercubeRelayMatmulRoutine.settings(&hw),
-        );
+        let last_arrival = HypercubeLastArrivalMatmulRoutine.settings(&hw);
         assert!(
-            !last_arrival.is_empty() && !relay.is_empty(),
+            !last_arrival.is_empty(),
             "a device whose cubes meet lists hypercube settings"
         );
         for settings in last_arrival {
@@ -443,15 +439,6 @@ mod hypercube_last_arrival {
                     .err(),
                 Some(MATMUL_HYPERCUBE_PACKED_LHS),
                 "last arrival at {settings}"
-            );
-        }
-        for settings in relay {
-            assert_eq!(
-                HypercubeRelayMatmulRoutine
-                    .prepare(&hw, &problem, &settings)
-                    .err(),
-                Some(MATMUL_HYPERCUBE_PACKED_LHS),
-                "relay at {settings}"
             );
         }
     }

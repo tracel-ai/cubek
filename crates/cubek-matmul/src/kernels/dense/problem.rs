@@ -11,7 +11,8 @@ use cubek_microkernel::matmul::{
     MatmulStoredTile,
 };
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::Packing;
+use cubek_std::layout::stored::{BlockScales, Packing};
+use cubek_std::layout::tile_order::TileWords;
 use cubek_std::matmul_axes::{EXPERT, K, batch_axis};
 use cubek_std::routine::EstimatedProblem;
 
@@ -132,6 +133,26 @@ impl MatmulRoutineProblem {
         match self.index {
             None => Ok(()),
             Some(_) => Err(MATMUL_INDEX_UNREAD),
+        }
+    }
+
+    /// Checks every packed input's block scales lie where a launch binding them as
+    /// `block_scales` reads them: what a routine whose microkernel may take them as words
+    /// declines, those words being bound from rows.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_SCALE_WORDS_IN_TILES`], for scales taken as words over an input keeping them in
+    /// tiles of their own.
+    pub fn check_block_scales(&self, block_scales: BlockScales) -> Result<(), Refusal> {
+        let scales_in_tiles = [self.packings.lhs, self.packings.rhs]
+            .into_iter()
+            .flatten()
+            .filter_map(|packing| packing.operand.tile_order())
+            .any(|order| order.words() == TileWords::BlockByBlock);
+        match block_scales == BlockScales::Words && scales_in_tiles {
+            true => Err(MATMUL_SCALE_WORDS_IN_TILES),
+            false => Ok(()),
         }
     }
 
@@ -388,6 +409,29 @@ impl MatmulRoutineProblem {
         }
     }
 
+    /// Whether `operand`, bound in `order`, may be rows one element wide, more than one of them:
+    /// a `[k, 1]` rhs, or its `[m, 1]` output. Each row steps to the next by the one element it
+    /// holds, a stride no tensor map takes, while its alignment, which a dim of one element leaves
+    /// out, reads as the column it is.
+    ///
+    /// Read as stated, those are its columns. Read in its buffer's order, a col operand's two
+    /// dims swap only where its strides say the second is the coarser, which a dense `[k, 1]`
+    /// buffer, both strides one, does not: so either extent of one counts there.
+    pub fn rows_one_element_wide(&self, operand: MatmulOperand, order: BindingOrder) -> bool {
+        let [rows, columns] = match operand {
+            MatmulOperand::Lhs => [self.stated_rows, self.k],
+            MatmulOperand::Rhs => [self.k, self.n],
+            MatmulOperand::Out => [self.stated_rows, self.n],
+        };
+        let one_wide = |rows: usize, columns: usize| columns == 1 && rows > 1;
+        match (order, self.layouts.get(operand)) {
+            (BindingOrder::InBufferOrder, MatmulLayout::Col) => {
+                one_wide(rows, columns) || one_wide(columns, rows)
+            }
+            _ => one_wide(rows, columns),
+        }
+    }
+
     /// The element the product sums in, whatever it reads and writes: an integer product its own
     /// integer, which sums exactly, and a float one `f32`. An output its cubes add into is held in
     /// it too.
@@ -460,6 +504,22 @@ pub const MATMUL_INDEX_UNREAD: Refusal = Refusal::Declined {
 /// tensor map, addressing its tensor whole, does not.
 pub const MATMUL_INDEX_UNREAD_BY_TMA: Refusal = Refusal::Declined {
     why: "a tensor map reads no table; an indexed input is staged by the cube's units",
+};
+
+/// What a launch taking its block scales as words declines over a matrix whose scales are stored
+/// in tiles of their own ([`TileWords::BlockByBlock`](cubek_std::layout::tile_order::TileWords)):
+/// the words are bound from the rows a matrix in rows or laid row by row keeps them in.
+pub const MATMUL_SCALE_WORDS_IN_TILES: Refusal = Refusal::Declined {
+    why: "this launch binds its block scales as words of their rows, and this matrix keeps them in \
+          tiles of their own beside its values laid block by block",
+};
+
+/// What a fill or a store the TMA engine moves declines: an operand of rows one element wide
+/// ([`rows_one_element_wide`](MatmulRoutineProblem::rows_one_element_wide)), whose rows a tensor
+/// map cannot step between, so the cube's units move them.
+pub const MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA: Refusal = Refusal::Declined {
+    why: "a tensor map steps between rows by whole 16-byte lines, and this operand's rows are one \
+          element wide; the cube's units move them",
 };
 
 /// What a launch over a packed input declines where its levels reach past the end of `K`: the

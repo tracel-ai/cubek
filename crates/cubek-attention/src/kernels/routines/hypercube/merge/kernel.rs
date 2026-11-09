@@ -22,14 +22,16 @@ pub fn hypercube_attention_merge_kernel<EA: Float, E: Float, N: Size>(
         CUBE_POS_Y as usize,
         CUBE_POS_X as usize,
     );
+
     let slot_box = SlotBox::new::<EA>(
         slot_max,
         batch,
         query_head / group,
         query_head % group,
         query,
-        comptime!(merge.seq_q),
+        merge.seq_q,
     );
+
     plane_split_keys_merge_microkernel::<EA, E, N>(
         slot_out,
         slot_max,

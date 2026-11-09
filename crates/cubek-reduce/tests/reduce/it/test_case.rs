@@ -6,7 +6,7 @@ use cubecl::{
 };
 use cubek_reduce::{
     ReduceDtypes, ReducePrecision, ReduceStrategy, ReduceWithIndicesDtypes,
-    components::instructions::ReduceOperationConfig, reduce, reduce_with_indices,
+    components::instructions::ReduceOperationConfig,
 };
 use cubek_test_utils::{
     Distribution, ExecutionOutcome, HostData, HostDataType, HostDataVec, StridedLayout, TestInput,
@@ -14,9 +14,9 @@ use cubek_test_utils::{
 };
 
 use cubek_reduce::eval::cpu_reference::{
-    contiguous_strides, reference_all, reference_any, reference_argmax, reference_argmin,
-    reference_argtopk, reference_max, reference_max_abs, reference_mean, reference_min,
-    reference_prod, reference_sum, reference_topk,
+    ReduceEntry, contiguous_strides, reference_all, reference_any, reference_argmax,
+    reference_argmin, reference_argtopk, reference_max, reference_max_abs, reference_mean,
+    reference_min, reference_prod, reference_sum, reference_topk,
 };
 
 pub struct TestCase {
@@ -279,7 +279,7 @@ impl TestCase {
             &client,
             &[&values_handle.handle, &indices_handle.handle],
             |c| {
-                reduce_with_indices(
+                ReduceEntry::from_env().reduce_with_indices()(
                     c,
                     input_binding,
                     values_binding,
@@ -367,7 +367,7 @@ impl TestCase {
         let input_binding = input_handle.binding();
         let output_binding = output_handle.clone().binding();
         let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-            reduce(
+            ReduceEntry::from_env().reduce()(
                 c,
                 input_binding,
                 output_binding,

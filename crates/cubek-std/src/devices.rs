@@ -112,6 +112,33 @@ pub fn h100() -> Hardware {
     }
 }
 
+/// The RTX PRO 6000 (Blackwell, `sm_120`), as cubecl's CUDA runtime reports it: 188 SMs, 99 KiB
+/// of shared memory a cube, TMA beside async copies and barriers, and a 128 MiB L2. Like
+/// [`h100`] it offers no instruction of its own: a test that needs one states it.
+pub fn rtx_pro_6000() -> Hardware {
+    let mut device = device(HardwareProperties {
+        num_streaming_multiprocessors: Some(188),
+        num_tensor_cores: Some(4),
+        min_tensor_cores_dim: Some(8),
+        max_cube_dim: (1024, 1024, 64),
+        max_cube_count: (2147483647, 65535, 65535),
+        max_bindings: 1024,
+        last_level_cache_size: Some(128 * 1024 * 1024),
+        ..gpu(32, 99 * 1024)
+    });
+    device.features.plane = Plane::Ops | Plane::Sync | Plane::NonUniformControlFlow;
+    device.features.device_memory_scope = true;
+    device.features.tma = Tma::Base | Tma::SwizzleAtomicity;
+    device.features.copy_async = true;
+    device.features.types.opaque.insert(OpaqueType::Barrier);
+    f32_atomic_add(&mut device);
+    shared_f32_atomic_add(&mut device);
+    Hardware {
+        accumulator_as_a: true,
+        ..hardware(device)
+    }
+}
+
 /// A 12-core CPU runtime, as cubecl's `CpuRuntime` reports it: single-unit planes with no
 /// plane ops, a cube of one unit per core on every axis, its L1d as shared memory, reads sized
 /// to four 128-bit registers back to back, and unbounded vectors.
@@ -170,6 +197,52 @@ pub fn offering_nvfp4(hw: Hardware) -> Hardware {
             scales_factor: 4,
         }],
     )
+}
+
+/// `hw` offering every block-scaled instruction Blackwell's `sm_120` does (the CUDA runtime's set
+/// under a 13.1 toolkit): the 8-bit kind over every 8-, 6- and 4-bit code pair under a `ue8m0`
+/// scale every thirty-two of `k`; and the 4-bit kind over `e2m1` pairs, under `ue8m0` scales of
+/// thirty-two (MXFP4) or sixteen, or `e4m3` scales of sixteen (NVFP4). Each `16 × 8`, summed in
+/// `f32`.
+pub fn offering_block_scaled(hw: Hardware) -> Hardware {
+    let f32 = ElemType::Float(FloatKind::F32);
+    let ue8m0 = ElemType::Float(FloatKind::UE8M0);
+    let fp4 = ElemType::Float(FloatKind::E2M1x2);
+    let codes = [
+        FloatKind::E4M3,
+        FloatKind::E5M2,
+        FloatKind::E3M2,
+        FloatKind::E2M3,
+        FloatKind::E2M1,
+    ];
+    let eight_bit = codes.iter().flat_map(|&a| {
+        codes.iter().map(move |&b| ScaledMmaConfig {
+            a_type: ElemType::Float(a),
+            b_type: ElemType::Float(b),
+            cd_type: f32,
+            scales_type: ue8m0,
+            m: 16,
+            n: 8,
+            k: 32,
+            scales_factor: 1,
+        })
+    });
+    let four_bit = [
+        (ue8m0, 2),
+        (ElemType::Float(FloatKind::E4M3), 4),
+        (ue8m0, 4),
+    ]
+    .map(|(scales_type, scales_factor)| ScaledMmaConfig {
+        a_type: fp4,
+        b_type: fp4,
+        cd_type: f32,
+        scales_type,
+        m: 16,
+        n: 8,
+        k: 64,
+        scales_factor,
+    });
+    offering_scaled_mma(hw, eight_bit.chain(four_bit))
 }
 
 /// `hw` offering exactly `forms` as warpgroup MMAs.

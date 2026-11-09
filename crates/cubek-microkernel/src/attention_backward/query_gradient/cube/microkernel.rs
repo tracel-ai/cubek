@@ -1,10 +1,8 @@
 use super::base::CubeQueryGradientMicrokernel;
 use crate::attention::{G, Q, S};
-use crate::attention_backward::query_gradient::plane::{
-    plane_query_gradient_step, query_gradient_sum,
-};
-use crate::attention_backward::{ScoreWindows, drain_scaled};
-use cubecl::tile::{Region, StageStorage, Stages, Tile};
+use crate::attention_backward::query_gradient::plane::PlaneQueryGradientMicrokernel;
+use crate::attention_backward::{ScoreWindows, drain_scaled, stage_storage};
+use cubecl::tile::{Region, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
 
@@ -37,32 +35,47 @@ pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
         let mut delta = delta.at(&plane);
         delta.dot::<EA>(&out_gradient.at(&plane), &out.at(&plane));
     }
+
     let walk = cube.walk().range(0, steps);
-    let sum = query_gradient_sum::<EA>(query_gradient, bias, key, microkernel.plane);
+    let sum =
+        PlaneQueryGradientMicrokernel::open_sum::<EA>(query_gradient, bias, key, microkernel.plane);
+
     // The query and the output's gradient span no key: staged once for every plane, before the
     // walk.
-    let mut staged_query = query.stage_for(&walk, StageStorage::Strided, None);
+    let storage = comptime!(stage_storage(
+        microkernel.plane.holder(),
+        microkernel.plane.score
+    ));
+    let mut staged_query = query.stage_for(&walk, storage.clone(), None);
     staged_query.copy_from(query);
-    let mut staged_out_gradient = out_gradient.stage_for(&walk, StageStorage::Strided, None);
+    let mut staged_out_gradient = out_gradient.stage_for(&walk, storage.clone(), None);
     staged_out_gradient.copy_from(out_gradient);
-    let windows = ScoreWindows::open::<EA, ES>(&walk, comptime!(vec![G, Q, S]));
+
+    let windows = ScoreWindows::held_or_open::<EA, ES>(
+        &walk,
+        comptime!(vec![G, Q, S]),
+        microkernel.plane.holder(),
+    );
+
     // The staged operands and the dot products land before any plane reads them.
     sync_cube();
+
     let mut stages = Stages::smem(
         &walk,
         key,
         value,
-        StageStorage::Strided,
-        comptime!(ring.stages_in_flight.get()),
+        storage.clone(),
+        ring.stages_in_flight.get(),
         None,
     );
-    stages.walk(walk, comptime!(ring.prefetch), |slot, stage| {
+
+    stages.walk(walk, ring.prefetch, |slot, stage| {
         slot.consume(|key, value| {
             for plane in stage {
-                plane_query_gradient_step::<EA>(
+                PlaneQueryGradientMicrokernel::step::<EA, ES>(
                     &plane,
                     &sum.at(&plane),
-                    &windows.at(&plane),
+                    &ScoreWindows::held_at(&windows, &plane),
                     &staged_query.at(&plane),
                     &staged_out_gradient.at(&plane),
                     &key.at(&plane),
@@ -71,19 +84,20 @@ pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
                     &logsumexp.at(&plane),
                     &delta.at(&plane),
                     scale,
-                    comptime!(microkernel.plane),
-                    comptime!(microkernel.score_levels()),
-                    comptime!(microkernel.score_gradient_levels()),
+                    microkernel.plane,
+                    microkernel.score_levels(),
+                    microkernel.score_gradient_levels(),
                 );
             }
         });
     });
+
     for plane in cube.planes() {
         drain_scaled::<EA>(
             &sum.at(&plane),
             &query_gradient.at(&plane),
             scale,
-            comptime!(microkernel.plane.seq_q()),
+            microkernel.plane.seq_q(),
         );
     }
 }

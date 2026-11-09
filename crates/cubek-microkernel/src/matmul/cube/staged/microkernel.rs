@@ -1,13 +1,12 @@
 use super::base::CubeStagedDrain;
 use crate::matmul::cube::CubeStagedStore;
 use crate::matmul::plane::{
-    PlaneFragmentStepSum, plane_fragment_microkernel, plane_fragment_partial,
+    PlaneFragmentRowsAlong, PlaneFragmentStepSum, plane_fragment_microkernel,
+    plane_fragment_partial,
 };
 use crate::matmul::{MatmulOperands, MatmulRead};
-use cubecl::tile::{
-    Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk,
-    stage::{AsyncStage, AsyncStageExpand, Role},
-};
+use cubecl::tile::stage::{AsyncStage, AsyncStageExpand, Role};
+use cubecl::tile::{Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
 
@@ -25,6 +24,8 @@ pub struct CubeStagedWalk {
     /// How the planes read each operand: as bound, or dequantized at the element they contract,
     /// which a stage the fill decodes holds too.
     pub reads: MatmulOperands<MatmulRead>,
+    /// The axis its planes' instruction lays its rows along, which the sum is opened for.
+    pub rows_along: PlaneFragmentRowsAlong,
 }
 
 impl CubeStagedWalk {
@@ -37,26 +38,47 @@ impl CubeStagedWalk {
 
 #[cube]
 impl CubeStagedWalk {
-    /// A zeroed sum over `over`'s box, its planes reading `a` and `b` as `walk` says.
+    /// A zeroed sum over `over`'s box, its planes reading `a` and `b` as `walk` says: opened on
+    /// the factor the instruction's rows lie along first, which fills its `A`.
     pub fn open_sum<EA: Numeric>(
         over: &Tile,
         a: &Tile,
         b: &Tile,
         #[comptime] walk: CubeStagedWalk,
     ) -> Tile {
-        let mut sum = over.accumulator::<EA>(a, b, comptime!(walk.instruction), Semiring::SUM_PROD);
+        let mut sum = match walk.rows_along {
+            PlaneFragmentRowsAlong::M => {
+                over.accumulator::<EA>(a, b, walk.instruction, Semiring::SUM_PROD)
+            }
+            PlaneFragmentRowsAlong::N => {
+                over.accumulator::<EA>(b, a, walk.instruction, Semiring::SUM_PROD)
+            }
+        };
+
         sum.zero();
         sum
+    }
+
+    /// `input` as the walk's stages hold it: as it lies, its scales kept beside its values, where
+    /// the fill copies the inputs as stored and the planes decode them as they load; as it is
+    /// where the fill decodes it. A float input carries no scales and stages as before.
+    pub(crate) fn as_staged(input: &Tile, #[comptime] walk: CubeStagedWalk) -> Tile {
+        if walk.decoded().is_none() {
+            input.scales_kept_beside()
+        } else {
+            input.clone()
+        }
     }
 
     /// `sum`, walked, bouncing its fragments through the scratch `walk` holds as it drains. The
     /// scratch is opened once the walk has freed its stages, past a cube barrier, so it takes
     /// their bytes rather than its own.
     pub fn drain_sum(sum: Tile, #[comptime] walk: CubeStagedWalk) -> Tile {
-        if comptime!(walk.scratch != Scratch::None) {
+        if walk.scratch != Scratch::None {
             sync_cube();
         }
-        sum.with_scratch(comptime!(walk.scratch))
+
+        sum.with_scratch(walk.scratch)
     }
 
     /// `c = a · b` over `run`, each plane draining its own tile of `c`: every plane fills the
@@ -69,7 +91,7 @@ impl CubeStagedWalk {
         #[comptime] walk: CubeStagedWalk,
         #[comptime] storage: StageStorage,
     ) {
-        if comptime!(walk.filling_planes == 0) {
+        if walk.filling_planes == 0 {
             Self::every_plane_fills::<EA, EL>(run, a, b, c, walk, storage);
         } else {
             Self::planes_set_aside::<EA, EL>(run, a, b, c, walk, storage);
@@ -87,10 +109,13 @@ impl CubeStagedWalk {
         #[comptime] storage: StageStorage,
     ) {
         let mut c = c.clone();
-        let (a, a_factor) = a.factor(c.space(), comptime!(walk.instruction));
-        let (b, b_factor) = b.factor(c.space(), comptime!(walk.instruction));
+        let (a, a_factor) = a.factor(c.space(), walk.instruction);
+        let (b, b_factor) = b.factor(c.space(), walk.instruction);
+        let (a, b) = (Self::as_staged(&a, walk), Self::as_staged(&b, walk));
+
         let sum = Self::open_sum::<EA>(&c, &a, &b, walk);
         cube_staged_sum_microkernel::<EL>(run, &sum, &c, &a, &b, walk, storage);
+
         let sum = Self::drain_sum(sum, walk);
         c.dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
     }
@@ -110,20 +135,24 @@ impl CubeStagedWalk {
         #[comptime] storage: StageStorage,
     ) {
         let mut c = c.clone();
-        let (a, a_factor) = a.factor(c.space(), comptime!(walk.instruction));
-        let (b, b_factor) = b.factor(c.space(), comptime!(walk.instruction));
-        let depth = comptime!(walk.ring.stages_in_flight.get());
-        let mut stages = Stages::smem(&run, &a, &b, storage, depth, comptime!(walk.decoded()));
+        let (a, a_factor) = a.factor(c.space(), walk.instruction);
+        let (b, b_factor) = b.factor(c.space(), walk.instruction);
+        let (a, b) = (Self::as_staged(&a, walk), Self::as_staged(&b, walk));
+
+        let depth = walk.ring.stages_in_flight.get();
+        let mut stages = Stages::smem(&run, &a, &b, storage, depth, walk.decoded());
+
         // Both sets drive the same ring, so both count its laps alike: `depth` stages a lap, the
         // last lap short wherever the walk ends.
         let total = run.total();
-        let laps = (total + comptime!(depth - 1)) / comptime!(depth);
+        let laps = total.div_ceil(depth);
+
         match stages.role() {
             Role::Fill => {
                 for lap in 0..laps {
                     #[unroll]
                     for slot in 0..depth {
-                        let index = lap * comptime!(depth) + slot;
+                        let index = lap * depth + slot;
                         if index < total {
                             stages.fill(slot, &run.region(index));
                         }
@@ -132,25 +161,22 @@ impl CubeStagedWalk {
             }
             Role::Compute => {
                 let sum = Self::open_sum::<EA>(&c, &a, &b, walk);
-                let partial = plane_fragment_partial::<EL>(
-                    &c,
-                    &a,
-                    &b,
-                    comptime!(walk.step_sum),
-                    comptime!(walk.instruction),
-                );
-                if comptime!(walk.instruction == Instruction::Wgmma) {
+                let partial =
+                    plane_fragment_partial::<EL>(&c, &a, &b, walk.step_sum, walk.instruction);
+
+                if walk.instruction == Instruction::Wgmma {
                     let issue = WarpgroupStages {
                         sum: sum.clone(),
                         partial: partial.clone(),
                         walk,
                     };
+
                     stages.consume_async::<WarpgroupStages>(&run, &issue);
                 } else {
                     for lap in 0..laps {
                         #[unroll]
                         for slot in 0..depth {
-                            let index = lap * comptime!(depth) + slot;
+                            let index = lap * depth + slot;
                             if index < total {
                                 let stage = run.region(index);
                                 let sum_stage = sum.at(&stage);
@@ -163,6 +189,7 @@ impl CubeStagedWalk {
                         }
                     }
                 }
+
                 c.dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
             }
         }
@@ -186,9 +213,9 @@ impl CubeStagedWalk {
                 partial,
                 &a_stage.at(&plane),
                 &b_stage.at(&plane),
-                comptime!(walk.instruction),
+                walk.instruction,
                 None,
-                comptime!(walk.reads),
+                walk.reads,
             );
         }
     }
@@ -216,7 +243,8 @@ pub fn cube_staged_microkernel<EA: Numeric, EL: Numeric>(
     #[comptime] storage: StageStorage,
 ) {
     let mut c = c.clone();
-    match comptime!((walk.drain, walk.store)) {
+
+    match (walk.drain, walk.store) {
         (CubeStagedDrain::EachPlane, CubeStagedStore::Fragments) => {
             CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &c, walk, storage);
         }
@@ -228,17 +256,17 @@ pub fn cube_staged_microkernel<EA: Numeric, EL: Numeric>(
         (CubeStagedDrain::Merged, _) => {
             let accumulator = c.smem_accumulation::<EA>();
             CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &accumulator.sink, walk, storage);
+
             sync_cube();
+
             c.copy_from(&accumulator.source);
         }
     }
 }
 
 /// `sum += a · b` over `run`, a run of `K` of the box `over`, whose sum is already open: every
-/// plane fills the stages a step of `K` at a time and contracts its tile out of each with the
-/// plane microkernel, and nothing drains. A run that arrives as boxes adds each into one sum, as a
-/// hypercube's cube walks its run
-/// ([`hypercube_staged_relay_microkernel`](crate::matmul::hypercube::hypercube_staged_relay_microkernel())).
+/// plane fills the stages a step of `K` at a time and contracts its tile out of each with the plane
+/// microkernel, and nothing drains.
 #[cube]
 pub fn cube_staged_sum_microkernel<EL: Numeric>(
     run: Walk,
@@ -249,27 +277,18 @@ pub fn cube_staged_sum_microkernel<EL: Numeric>(
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,
 ) {
-    let partial = plane_fragment_partial::<EL>(
-        over,
-        a,
-        b,
-        comptime!(walk.step_sum),
-        comptime!(walk.instruction),
-    );
-    let mut stages = Stages::smem(
-        &run,
-        a,
-        b,
-        storage,
-        comptime!(walk.ring.stages_in_flight.get()),
-        comptime!(walk.decoded()),
-    );
-    stages.walk(run, comptime!(walk.ring.prefetch), |slot, stage| {
+    let partial = plane_fragment_partial::<EL>(over, a, b, walk.step_sum, walk.instruction);
+
+    let in_flight = walk.ring.stages_in_flight.get();
+    let mut stages = Stages::smem(&run, a, b, storage, in_flight, walk.decoded());
+
+    stages.walk(run, walk.ring.prefetch, |slot, stage| {
         let sum_stage = sum.at(stage);
         slot.consume(|a_stage, b_stage| {
             CubeStagedWalk::contract_stage(stage, &sum_stage, &partial, a_stage, b_stage, walk);
         });
     });
+
     stages.free();
 }
 

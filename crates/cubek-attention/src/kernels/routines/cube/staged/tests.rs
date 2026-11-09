@@ -3,25 +3,27 @@
 
 mod fragment {
     use super::super::*;
-    use crate::kernels::AttentionRoutineProblem;
-    use crate::kernels::QueryOrder;
-    use cubecl::tile::launch::Refusal;
+    use crate::kernels::{AttentionRoutineProblem, QueryOrder};
+    use cubecl::tile::launch::{Delivery, Refusal};
     use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
+    use cubek_microkernel::matmul::cube::CubeStagedDelivery;
+    use cubek_microkernel::matmul::plane::PlaneFragmentDepth;
 
-    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernelSettings;
-    use cubek_std::Hardware;
-    use cubek_std::devices;
+    use cubek_microkernel::attention::plane::{
+        BLOCK_ROW_BYTES, PlaneFragmentAttentionMicrokernelSettings,
+    };
     use cubek_std::routine::Routine;
+    use cubek_std::{Hardware, devices};
 
     use core::num::NonZeroUsize;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::stage::RowChunks;
-    use cubek_microkernel::attention::AttentionMicrokernel;
     use cubek_microkernel::attention::cube::{CubeAttentionPlane, CubeAttentionPlaneSettings};
-    use cubek_microkernel::attention::plane::InstructionShape;
-    use cubek_microkernel::attention::plane::{ROW_STATE_HELD_BY_UNIT, ScoreHolder};
-    use cubek_microkernel::attention::{G, Q, S};
+    use cubek_microkernel::attention::plane::{
+        InstructionShape, ROW_STATE_HELD_BY_UNIT, ScoreHolder,
+    };
+    use cubek_microkernel::attention::{AttentionMicrokernel, G, Q, S};
     use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 
     const ROUTINE: CubeStagedAttentionRoutine = CubeStagedAttentionRoutine;
@@ -54,9 +56,19 @@ mod fragment {
         ]
     }
 
+    /// Whether `settings` hold the score the whole head dim deep, which only manual-mma fragments do.
+    fn holds_whole_head(settings: &Settings) -> bool {
+        matches!(
+            settings.microkernel.plane,
+            CubeAttentionPlaneSettings::Fragment(plane)
+                if plane.score_depth == PlaneFragmentDepth::Stage
+        )
+    }
+
     /// Every setting prepares where the device offers a square instruction and a cube holds a plane
     /// for every head; one other than the default may ask for more than a cube holds, or for a
-    /// layout its planes do not read, and says so.
+    /// layout its planes do not read, and says so, and one holding its score the whole head dim
+    /// deep declines on these devices, which offer the cmma instruction alone.
     #[test]
     fn every_setting_prepares_where_planes_run() {
         for hw in [
@@ -69,7 +81,8 @@ mod fragment {
                     let declined = matches!(
                         prepared,
                         Err(Refusal::SharedMemoryPastDevice { .. } | Refusal::CubePastDevice { .. })
-                    ) || prepared.as_ref().err() == Some(&SWIZZLED_STAGE_UNREAD);
+                    ) || prepared.as_ref().err() == Some(&SWIZZLED_STAGE_UNREAD)
+                        || (prepared.is_err() && holds_whole_head(settings));
                     assert!(
                         prepared.is_ok() || (position > 0 && declined),
                         "{settings} on {hw:?}: {prepared:?}"
@@ -204,10 +217,12 @@ mod fragment {
         assert_eq!(blueprint.microkernel.ring, StageRing::SINGLE);
     }
 
-    /// A padded stage costs one chunk a row of its keys and values, and a blocked one lays the same
-    /// cells out at no cost: what the cube counts, so a layout that does not fit the device
-    /// declines instead of overflowing. Padded blocks of the instruction's tiles cost nothing
-    /// either here: a tile's row of eight `f16` is one chunk, which the tile DSL keeps in order.
+    /// A padded stage costs one chunk a row of its keys and values, and of the query staged beside
+    /// them in the same layout, and a blocked one lays the same cells out at no cost: what the
+    /// cube counts, so a layout that does not fit the device declines instead of overflowing.
+    /// Padded blocks cost one chunk a row of a block whose row spans more than one: a stage block
+    /// is a cache line wide along the keys' and values' dims, the query's an instruction's tile,
+    /// whose row of eight `f16` is one chunk the tile DSL keeps in order.
     #[test]
     fn a_padded_stage_costs_a_chunk_a_row() {
         let hw = offering(devices::m2_pro(), 8);
@@ -236,6 +251,7 @@ mod fragment {
         let stage = item.stage(microkernel.seq_kv(), microkernel.key_order());
         let whole_rows: usize = stage
             .iter()
+            .chain([&microkernel.staged_query(&item)])
             .map(|operand| operand.cells() / operand.space.extent(operand.innermost))
             .sum();
         let chunk = RowChunks::CHUNK_BYTES.max(hw.vector_ceiling(F16) * F16.size());
@@ -246,7 +262,81 @@ mod fragment {
             panic!("the routine runs plane fragments")
         };
         assert_eq!(plane.out_edge() * F16.size(), RowChunks::CHUNK_BYTES);
-        assert_eq!(bytes(StageLayout::PaddedBlocks), strided);
+        let block = plane.stage_tile();
+        let padded_block_rows: usize = stage
+            .iter()
+            .map(|operand| {
+                let (_, row) = *block
+                    .iter()
+                    .find(|(axis, _)| *axis == operand.innermost)
+                    .expect("a stage block spans every axis of the stage");
+                let dim = operand.space.extent(operand.innermost);
+                if operand.innermost != S {
+                    assert_eq!(
+                        row * F16.size(),
+                        BLOCK_ROW_BYTES.min(dim * F16.size()),
+                        "a block row spans a cache line, or its whole dim"
+                    );
+                }
+                match row * F16.size() > RowChunks::CHUNK_BYTES {
+                    true => operand.cells() / row,
+                    false => 0,
+                }
+            })
+            .sum();
+        assert_eq!(
+            bytes(StageLayout::PaddedBlocks),
+            strided + padded_block_rows * chunk
+        );
+    }
+
+    /// The copy engine fills a stage where the device has one and the ring lands the lines in
+    /// shared memory, and only lines of 4, 8 or 16 bytes, the copies it makes. A ring that
+    /// prefetches through the units' registers, or a device with no engine, has the units copy.
+    #[test]
+    fn the_copy_engine_fills_the_stages_the_ring_lands_in_shared_memory() {
+        let hw = offering_nvidia(devices::h100());
+        let [_, _, problem, _] = problems();
+        let item = problem.work_item();
+        let prepared = |hw: &Hardware, ring| {
+            let settings = Settings {
+                microkernel: CubeAttentionMicrokernelSettings {
+                    ring,
+                    delivery: CubeStagedDelivery::AsyncCopy,
+                    ..Settings::DEFAULT.microkernel
+                },
+                ..Settings::DEFAULT
+            };
+            let (blueprint, _) = ROUTINE
+                .prepare(hw, &problem, &settings)
+                .expect("the lead prepares on any ring");
+            blueprint
+        };
+        let blueprint = prepared(&hw, StageRing::DOUBLE);
+        assert_eq!(
+            blueprint.microkernel.delivery,
+            CubeStagedDelivery::AsyncCopy
+        );
+        assert_eq!(
+            blueprint.microkernel.delivery(&blueprint.widths, &item),
+            Delivery::AsyncPerUnit
+        );
+        let single_cells = blueprint.widths.map(|_, _| 1);
+        assert_eq!(
+            blueprint.microkernel.delivery(&single_cells, &item),
+            Delivery::SyncPerUnit
+        );
+        let through_registers = prepared(&hw, StageRing::DOUBLE_THROUGH_REGISTERS);
+        assert_eq!(
+            through_registers.microkernel.delivery,
+            CubeStagedDelivery::Copy
+        );
+        let mut no_engine = hw.clone();
+        devices::features(&mut no_engine).copy_async = false;
+        assert_eq!(
+            prepared(&no_engine, StageRing::DOUBLE).microkernel.delivery,
+            CubeStagedDelivery::Copy
+        );
     }
 
     /// A cube's box is its heads over its queries, a plane each, and its stage is that box against
@@ -348,10 +438,11 @@ mod fragment {
         );
     }
 
-    /// The lead takes the boxes of queries in order, and the one setting listed last first is
-    /// its default reversed: a table may race the order, and nothing takes it unasked.
+    /// The default takes the boxes of queries in order, and every listed setting after it takes
+    /// them last first, the lead holding its score the whole head dim deep among them: the lead
+    /// is listed both ways, so a race still weighs the order.
     #[test]
-    fn only_the_listed_setting_takes_the_queries_last_first() {
+    fn the_listed_settings_take_the_queries_last_first() {
         let hw = offering(devices::m2_pro(), 8);
         let [_, _, problem, _] = problems();
         let reverses_queries = |settings: &Settings| {
@@ -366,18 +457,23 @@ mod fragment {
                 .any(|level| level.is_reversed(Q))
         };
         let settings = ROUTINE.settings(&hw);
-        let last_first: Vec<_> = settings
-            .iter()
-            .filter(|settings| settings.queries == QueryOrder::LastFirst)
-            .collect();
-        assert_eq!(
-            last_first,
-            [&Settings {
-                queries: QueryOrder::LastFirst,
-                ..Settings::DEFAULT
-            }]
+        assert_eq!(settings[0], Settings::DEFAULT);
+        assert!(
+            settings[1..]
+                .iter()
+                .all(|settings| settings.queries == QueryOrder::LastFirst)
         );
+        let reversed = Settings {
+            queries: QueryOrder::LastFirst,
+            ..Settings::DEFAULT
+        };
+        let whole_head = Settings {
+            microkernel: reversed.microkernel.whole_head(),
+            ..reversed
+        };
+        assert_eq!(settings[1], reversed);
+        assert!(settings.contains(&whole_head));
         assert!(!reverses_queries(&settings[0]));
-        assert!(reverses_queries(last_first[0]));
+        assert!(reverses_queries(&settings[1]));
     }
 }

@@ -66,15 +66,14 @@ fn get_random_uniform_data(shape: &[usize], lower_bound: f32, upper_bound: f32) 
     let client = cubecl::test_device().client();
     let output = TensorHandle::empty(&client, shape.to_vec(), TestDType::elem_type_native());
 
-    with_seed(0, || {
-        random_uniform(
-            &client,
-            lower_bound,
-            upper_bound,
-            output.clone().binding(),
-            TestDType::elem_type_native(),
-        )
-    })
+    random_uniform(
+        &client,
+        lower_bound,
+        upper_bound,
+        output.clone().binding(),
+        TestDType::elem_type_native(),
+        0,
+    )
     .unwrap();
 
     let output_data = client.read_one_unchecked_tensor(output.into_copy_descriptor());

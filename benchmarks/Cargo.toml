@@ -22,7 +22,6 @@ workspace = true
 # `cubek` crate doesn't re-expose `cpu-reference` today, so consumers that need
 # the correctness flow turn it on here and pick up the per-kernel toggle.
 cpu-reference = [
-    "cubek-attention/cpu-reference",
     "cubek-matmul/cpu-reference",
     "cubek-interpolate/cpu-reference",
     "cubek-pool/cpu-reference",
@@ -47,10 +46,10 @@ cubek = { workspace = true, features = [
     "fft",
     "quantization",
 ] }
-cubek-attention = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-attention-backward = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-convolution = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-fft = {workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-gated-delta = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-interpolate = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-matmul = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-pool = { workspace = true, default-features = true, features = ["benchmarks"] }
@@ -65,6 +64,10 @@ half = { workspace = true }
 [[bench]]
 harness = false
 name = "attention_backward"
+
+[[bench]]
+harness = false
+name = "gated_delta_walk"
 
 [[bench]]
 harness = false
@@ -125,10 +128,6 @@ name = "memcpy_async"
 [[bench]]
 harness = false
 name = "unary"
-
-[[bench]]
-harness = false
-name = "attention"
 
 [[bench]]
 harness = false

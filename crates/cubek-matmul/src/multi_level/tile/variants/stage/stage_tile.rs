@@ -68,8 +68,8 @@ impl<E: Numeric> StageTile<E> {
                 let tile_size_y =
                     comptime!(self.config.elements_per_tile_along_col / stage_vector_size);
 
-                let stride = comptime!(tile_count_y * tile_size_y);
-                let length = comptime!((tile_size_x - 1) * stride + tile_size_y);
+                let stride = tile_count_y * tile_size_y;
+                let length = (tile_size_x - 1) * stride + tile_size_y;
                 let start = row * tile_size_x * stride + col * tile_size_y;
 
                 SharedTile::<E> {
@@ -86,8 +86,8 @@ impl<E: Numeric> StageTile<E> {
                     comptime!(self.config.elements_per_tile_along_row / stage_vector_size);
                 let tile_size_y = comptime!(self.config.elements_per_tile_along_col);
 
-                let stride = comptime!(tile_count_x * tile_size_x);
-                let length = comptime!((tile_size_y - 1) * stride + tile_size_x);
+                let stride = tile_count_x * tile_size_x;
+                let length = (tile_size_y - 1) * stride + tile_size_x;
                 let start = row * tile_size_x + col * tile_size_y * stride;
 
                 SharedTile::<E> {
@@ -118,7 +118,7 @@ impl<E: Numeric> StageTile<E> {
             MatrixLayout::RowMajor => comptime!(self.config.elements_per_tile_along_col),
             MatrixLayout::ColMajor => comptime!(self.config.elements_per_tile_along_row),
         };
-        let stride = comptime!(stride_elements / stage_vector_size);
+        let stride = stride_elements / stage_vector_size;
         let start = (comptime!(self.config.elements_per_tile()) * nth) / stage_vector_size;
 
         SharedTile::<E> {
@@ -145,14 +145,14 @@ fn to_nth_tile_contiguous(
         TilingOrderEnum::RowMajor => row * tile_count_cols + col,
         TilingOrderEnum::ColMajor => col * tile_count_rows + row,
         TilingOrderEnum::Ordered => {
-            let group_rows = comptime!(tile_count_rows / config.num_planes);
-            let tiles_per_group = comptime!(group_rows * tile_count_cols);
+            let group_rows = tile_count_rows / config.num_planes;
+            let tiles_per_group = group_rows * tile_count_cols;
             let group = row / group_rows;
             let local_row = row % group_rows;
             let pos_within_group = col * group_rows + local_row;
             group * tiles_per_group + pos_within_group
         }
-        TilingOrderEnum::Tma => match comptime!(config.matrix_layout) {
+        TilingOrderEnum::Tma => match config.matrix_layout {
             MatrixLayout::RowMajor => col * tile_count_rows + row,
             MatrixLayout::ColMajor => row * tile_count_cols + col,
         },

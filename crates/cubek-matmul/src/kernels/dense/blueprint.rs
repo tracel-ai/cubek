@@ -34,11 +34,6 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
     /// binding adds its own: each operand's buffer alignment in the order the microkernel binds the
     /// rhs in, and the masking of an operand whose innermost bound axis the tiles overhang. Each
     /// operand then binds at the widest width this device reads its element in that they admit.
-    ///
-    /// # Panics
-    ///
-    /// A partitioning holding its rows other than the microkernel does
-    /// ([`MatmulMicrokernel::ROWS_KIND`]).
     pub fn new(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
@@ -47,11 +42,6 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
         mut vectorization: Vectorization<MatmulOperand>,
         shared_memory: SM,
     ) -> Self {
-        assert_eq!(
-            partitioning.rows_kind(),
-            M::ROWS_KIND,
-            "a partitioning holds its rows as its microkernel does"
-        );
         let orders = microkernel.orders();
         let alignments = orders.map(|operand, order| problem.alignment(operand, order));
         for operand in MatmulOperand::ALL {
@@ -67,8 +57,21 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
                     problem.elements.get(operand).size(),
                 ),
             });
-            if partitioning.overhangs(MatmulAxes::MNK.of(orders.innermost(operand))) {
-                vectorization.require(VectorRequirement::Masked { operand });
+            let innermost = MatmulAxes::MNK.of(orders.innermost(operand));
+            // A table entry placing the innermost axis — a run of `K` read along a row — places an
+            // element, which a line would straddle: the input reads it one value a line.
+            let indexed_along_a_line = problem.index.is_some_and(|index| {
+                index.readers().get(operand) && index.indexing().axis() == innermost
+            });
+            if indexed_along_a_line {
+                vectorization.require(VectorRequirement::Elementwise { operand });
+            }
+            if partitioning.overhangs(innermost) {
+                vectorization.require(VectorRequirement::masked(
+                    operand,
+                    partitioning.space(),
+                    innermost,
+                ));
             }
         }
         let widths = alignments.map(|operand, _| {

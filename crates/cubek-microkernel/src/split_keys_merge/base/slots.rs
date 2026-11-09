@@ -56,10 +56,12 @@ impl SlotBox {
     ) -> SlotBox {
         let (kv_heads, group, held_queries) =
             (slot_max.shape(1), slot_max.shape(2), slot_max.shape(3));
+
         let mut held = 0usize;
         if head < group && held_queries > first_query {
             held = held_queries - first_query;
         }
+
         let head_index = (batch * kv_heads + kv) * group + head;
         SlotBox {
             batch,

@@ -1,25 +1,21 @@
 use super::super::blueprint::hypercube_blueprint;
 use super::kernel::hypercube_last_arrival_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
-    MATMUL_HYPERCUBE_PACKED_LHS, MATMUL_PACKED_WALK_PAST_K, MatmulBlueprint, MatmulOutput,
-    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    CubeStagedMatmulRoutine, MATMUL_HYPERCUBE_PACKED_LHS, MATMUL_PACKED_WALK_PAST_K, MatmulBinding,
+    MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
+    MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
-use cubecl::tile::{Space, StageStorage, TileArgLaunch, launch::DestinationLaunch};
-use cubek_microkernel::matmul::MatmulOperand;
+use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::{Space, StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::MatmulCubeWrite;
-use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedMicrokernel};
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
+use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand, MatmulRowsKind};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
-use cubek_std::microkernel::StageRing;
-use cubek_std::microkernel::{KernelEstimate, Microkernel};
+use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// `out = lhs · rhs` with every tile's steps of `K` laid end to end and shared between a fixed
@@ -46,18 +42,18 @@ pub struct HypercubeLastArrivalMatmulRoutine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeLastArrivalMatmulRoutineSettings {
-    /// What each cube runs over its part of a tile: the hypercube microkernel the relay routine
-    /// runs too, since a tile several runs share is a tile cut along `K` between them.
+    /// What each cube runs over its part of a tile: a tile several runs share is a tile cut along
+    /// `K` between them.
     pub microkernel: HypercubeStagedMicrokernelSettings,
     /// Cubes the grid holds for every worker of the device.
     pub cubes_per_worker: NonZeroUsize,
 }
 
 impl HypercubeLastArrivalMatmulRoutineSettings {
-    /// The staged cube's own box, four cubes a worker. A product that wants this routine has more tiles
-    /// than the device holds at once, which is the problem the staged cube's box is for, and four
-    /// of its cubes are what a worker holding a thousand units runs at once, so the grid is one
-    /// round.
+    /// The staged cube's own box, four cubes a worker. A product that wants this routine has more
+    /// tiles than the device holds at once, which is the problem the staged cube's box is for, and
+    /// four of its cubes are what a worker holding a thousand units runs at once, so the grid is
+    /// one round.
     pub const DEFAULT: Self = Self {
         microkernel: HypercubeStagedMicrokernelSettings::CUBE_BOX,
         cubes_per_worker: NonZeroUsize::new(4).unwrap(),
@@ -74,8 +70,8 @@ impl core::fmt::Display for HypercubeLastArrivalMatmulRoutineSettings {
     }
 }
 
-/// The last-arrival routine's blueprint: how a stage its cubes' microkernel walks holds its cells, as
-/// the cube routine's does.
+/// The last-arrival routine's blueprint: how a stage its cubes' microkernel walks holds its cells,
+/// as the cube routine's does.
 pub type HypercubeLastArrivalMatmulRoutineBlueprint =
     MatmulBlueprint<HypercubeStagedMicrokernel, StageStorage>;
 
@@ -185,7 +181,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         let partitioning = &blueprint.partitioning;
         let cubes = grid.cubes().expect("a static grid");
         blueprint.microkernel.estimate(
-            &MatmulView::of::<HypercubeStagedMicrokernel>(problem)
+            &MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
             &Self::one_run(partitioning, cubes as usize).cube_space(),
@@ -205,7 +201,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_unindexed()?;
-        let view = MatmulView::of::<HypercubeStagedMicrokernel>(problem)?;
+        let view = MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         if item
             .blocks
@@ -214,6 +210,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             return Err(MATMUL_HYPERCUBE_PACKED_LHS);
         }
         let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
+        problem.check_block_scales(microkernel.block_scales())?;
         if microkernel.cube.walk().decoded().is_some() {
             view.check_steps(hw)?;
         }
@@ -224,8 +221,6 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         let resolved = microkernel.cube.resolve(
             hw,
             &microkernel.cube.contracted(&item),
-            &problem.buffers(microkernel.cube.plane.orders),
-            <Self as MatmulRoutine<HypercubeStagedMicrokernel, StageStorage>>::WRITE,
             &view
                 .shared_partitioning(microkernel.cube.tiling(), &axes, target)
                 .cube_space(),
@@ -258,20 +253,20 @@ impl HypercubeLastArrivalMatmulRoutine {
     /// Cubes a worker the settings against a packed input race.
     const PACKED_CUBES_PER_WORKER: [usize; 3] = [1, 2, 4];
 
-    /// The settings a product against a packed input races on `hw`: each box the cube staged
-    /// microkernel races against one ([`CubeStagedMicrokernel::packed_settings`]) whose planes
-    /// each drain their own tile and set none aside to fill, which is what a hypercube's cubes run,
-    /// at one, two and four cubes a worker. None where the routine's own list is empty: on a
+    /// The settings a product against a packed input races on `hw`: each box the units' cube
+    /// staged routine races against one ([`CubeStagedMatmulRoutine::packed_settings`]) whose
+    /// planes each drain their own tile, which is what a hypercube's cubes run, at one, two and
+    /// four cubes a worker. None where the routine's own list is empty: on a
     /// device whose cubes do not meet within a launch, or that reports no workers.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<HypercubeLastArrivalMatmulRoutineSettings> {
         if self.settings(hw).is_empty() {
             return Vec::new();
         }
-        CubeStagedMicrokernel::packed_settings(hw)
+        CubeStagedMatmulRoutine
+            .packed_settings(hw)
             .into_iter()
-            .filter(|cube| {
-                cube.planes_along_k == NonZeroUsize::MIN && cube.fill.filling_planes == 0
-            })
+            .map(|settings| settings.microkernel)
+            .filter(|cube| cube.planes_along_k == NonZeroUsize::MIN)
             .flat_map(|cube| {
                 Self::PACKED_CUBES_PER_WORKER.map(|cubes| {
                     HypercubeLastArrivalMatmulRoutineSettings {
@@ -285,12 +280,15 @@ impl HypercubeLastArrivalMatmulRoutine {
 }
 
 impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastArrivalMatmulRoutine {
+    /// Its cubes own a box of the rows together.
+    const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
+
     const WRITE: MatmulCubeWrite = MatmulCubeWrite::LastArrival;
 
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
-        binding: MatmulBinding<O::Operand, TileArgLaunch, TileArgLaunch>,
+        binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: HypercubeLastArrivalMatmulRoutineBlueprint,
         grid: Grid,
     ) {
@@ -301,57 +299,29 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastAr
             .cube
             .contracted(&tensors.work_item())
             .kernel_elements();
-        let stage = blueprint.partitioning.stage();
         let merge = tensors.bind_last_arrival(&blueprint, &binding.launcher);
         let out_width = blueprint.widths.out;
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
-        // of a tile the problem's edge cuts short, or by a descriptor, whose copies fill what lies
-        // past the operand with zeros; the kernel indexes no buffer but through its tiles and the
+        // of a tile the problem's edge cuts short; the kernel indexes no buffer but through its tiles and the
         // arrival counter of each tile its run touches. Its shared memory is sized by the planes of
         // the grid it launches on: the stage fill counts `grid.launch.cube_dim`'s units, the
         // scratch windows `grid.planes()`. The counters arrive holding zero.
-        match blueprint.microkernel.cube.fill.delivery {
-            CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => unsafe {
-                hypercube_last_arrival_matmul_kernel::launch_unchecked::<O>(
-                    tensors.client(),
-                    grid.launch.cube_count.clone(),
-                    grid.launch.cube_dim,
-                    out_width,
-                    binding.lhs,
-                    binding.rhs,
-                    O::arg(binding.out),
-                    merge.slots.arg(),
-                    merge.arrivals,
-                    binding.launcher.partitioning_arg(),
-                    blueprint.microkernel,
-                    blueprint.shared_memory,
-                    elements,
-                );
-            },
-            CubeStagedDelivery::Tma => {
-                let (lhs_map, rhs_map) = tensors.tma_operands(
-                    &stage,
-                    &blueprint.shared_memory,
-                    blueprint.microkernel.cube.plane.orders,
-                );
-                unsafe {
-                    hypercube_last_arrival_matmul_kernel::launch_unchecked::<O>(
-                        tensors.client(),
-                        grid.launch.cube_count.clone(),
-                        grid.launch.cube_dim,
-                        out_width,
-                        lhs_map,
-                        rhs_map,
-                        O::arg(binding.out),
-                        merge.slots.arg(),
-                        merge.arrivals,
-                        binding.launcher.partitioning_arg(),
-                        blueprint.microkernel,
-                        blueprint.shared_memory,
-                        elements,
-                    );
-                }
-            }
+        unsafe {
+            hypercube_last_arrival_matmul_kernel::launch_unchecked::<O>(
+                tensors.client(),
+                grid.launch.cube_count.clone(),
+                grid.launch.cube_dim,
+                out_width,
+                binding.lhs,
+                binding.rhs,
+                O::arg(binding.out),
+                merge.slots.arg(),
+                merge.arrivals,
+                binding.launcher.partitioning_arg(),
+                blueprint.microkernel,
+                blueprint.shared_memory,
+                elements,
+            );
         }
     }
 }
@@ -382,14 +352,12 @@ mod tests {
         )
     }
 
-    /// A setting asking for the warpgroup MMA declines, on a device and product it runs on, with
-    /// its stages landed by the TMA engine and planes set aside to fill them or none: the
-    /// hypercube's cubes fill with every plane, and its walk releases each stage as its consume
-    /// returns, before the MMAs reading it are done.
+    /// A setting asking for the warpgroup MMA declines, on a device and product it runs on: the
+    /// hypercube's cubes fill their stages by their units, which never land the swizzled rows its
+    /// descriptors read.
     #[test]
     fn declines_the_warpgroup_mma() {
         use cubecl::features::{WgmmaConfig, WgmmaElems};
-        use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedFill};
         use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
         use cubek_std::microkernel::StageRing;
 
@@ -411,29 +379,23 @@ mod tests {
             .laid(MatmulOperand::Rhs, MatmulLayout::Col);
         let lead = HypercubeLastArrivalMatmulRoutineSettings::DEFAULT;
         let cube = lead.microkernel.cube;
-        for filling_planes in [0, 1] {
-            let mut settings = lead;
-            settings.microkernel.cube = CubeStagedMicrokernelSettings {
-                plane: PlaneFragmentMicrokernelSettings {
-                    along_m: NonZeroUsize::MIN,
-                    along_n: NonZeroUsize::new(16).unwrap(),
-                    depth: NonZeroUsize::new(4).unwrap(),
-                    transport: PlaneFragmentTransport::Wgmma,
-                    ..cube.plane
-                },
-                ring: StageRing::DOUBLE,
-                fill: CubeStagedFill {
-                    delivery: CubeStagedDelivery::Tma,
-                    filling_planes,
-                },
-                ..cube
-            };
-            let declined = HypercubeLastArrivalMatmulRoutine.prepare(&hw, &problem, &settings);
-            assert!(
-                matches!(declined, Err(Refusal::Declined { .. })),
-                "{settings}: {declined:?}"
-            );
-        }
+        let mut settings = lead;
+        settings.microkernel.cube = CubeStagedMicrokernelSettings {
+            plane: PlaneFragmentMicrokernelSettings {
+                along_m: NonZeroUsize::MIN,
+                along_n: NonZeroUsize::new(16).unwrap(),
+                depth: NonZeroUsize::new(4).unwrap(),
+                transport: PlaneFragmentTransport::Wgmma,
+                ..cube.plane
+            },
+            ring: StageRing::DOUBLE,
+            ..cube
+        };
+        let declined = HypercubeLastArrivalMatmulRoutine.prepare(&hw, &problem, &settings);
+        assert!(
+            matches!(declined, Err(Refusal::Declined { .. })),
+            "{settings}: {declined:?}"
+        );
     }
 
     /// Every setting it lists prepares, on a ragged problem, on an integrated part and on an

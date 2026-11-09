@@ -2,11 +2,13 @@ use crate::matmul::plane::{PlaneFragmentStepSum, PlaneFragmentTransport};
 use core::num::NonZeroUsize;
 
 /// The steps a plane holds along `m` and `n`, and how many steps of `K` it walks per stage, each
-/// step the fewest calls of the instruction every load fills whole ([`MatmulStep`](crate::matmul::MatmulStep)). The
-/// instruction itself is a candidate, not a setting.
+/// step the fewest calls of the instruction every load fills whole
+/// ([`MatmulStep`](crate::matmul::MatmulStep)). The instruction itself is a candidate, not a
+/// setting.
 ///
 /// A warpgroup MMA holds one instruction a plane group, `along_n` times its form's granularity
-/// wide: there `along_m` is one, and the steps along `n` size the instruction rather than a grid of them.
+/// wide: there `along_m` is one, and the steps along `n` size the instruction rather than a grid of
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentMicrokernelSettings {
     pub along_m: NonZeroUsize,
@@ -20,6 +22,20 @@ pub struct PlaneFragmentMicrokernelSettings {
     pub transport: PlaneFragmentTransport,
     /// How deep along `K` each of its fragments is ([`PlaneFragmentDepth`]).
     pub fragment_depth: PlaneFragmentDepth,
+    /// The axis the instruction's rows, and its accumulator's, lie along
+    /// ([`PlaneFragmentRowsAlong`]).
+    pub rows_along: PlaneFragmentRowsAlong,
+}
+
+/// The axis a plane's instruction lays its rows along: which factor fills its `A`, the other its
+/// `B`. Along `m`, the lhs is `A`, as the product names it. Along `n`, the rhs is: a packed weight
+/// decoded into `A` writes each value straight into the register `A` reads it from, and the
+/// activation in `B` loads a lane's run of `k` as one row's run, where an `A` takes two rows
+/// interleaved a register at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PlaneFragmentRowsAlong {
+    M,
+    N,
 }
 
 /// How deep along `K` a plane's fragments are: one instruction step, or every step of a stage.
@@ -33,7 +49,8 @@ pub enum PlaneFragmentDepth {
     /// loaded out of the stage as an instruction-deep fragment's are. A packed operand decodes in
     /// registers as each fragment loads, which is what lets an NVFP4 input be staged as it is
     /// stored under a 16-bit instruction, or read straight from memory a window of `K` at a time.
-    /// Only the manual-mma instruction offers it.
+    /// Only the manual-mma instruction over plain operands offers it
+    /// ([`contracts_deeper_fragments`](super::PlaneFragmentInstruction::contracts_deeper_fragments)).
     Stage,
 }
 
@@ -54,6 +71,7 @@ impl PlaneFragmentMicrokernelSettings {
             step_sum: PlaneFragmentStepSum::Wide,
             transport: PlaneFragmentTransport::Cmma,
             fragment_depth: PlaneFragmentDepth::Instruction,
+            rows_along: PlaneFragmentRowsAlong::M,
         }
     }
 
@@ -76,6 +94,11 @@ impl PlaneFragmentMicrokernelSettings {
     pub const fn through(self, transport: PlaneFragmentTransport) -> Self {
         Self { transport, ..self }
     }
+
+    /// This grid with its instruction's rows along `rows_along`.
+    pub const fn rows_along(self, rows_along: PlaneFragmentRowsAlong) -> Self {
+        Self { rows_along, ..self }
+    }
 }
 
 impl core::fmt::Display for PlaneFragmentMicrokernelSettings {
@@ -88,6 +111,9 @@ impl core::fmt::Display for PlaneFragmentMicrokernelSettings {
         }
         if self.fragment_depth == PlaneFragmentDepth::Stage {
             write!(f, " fragments_through_stage")?;
+        }
+        if self.rows_along == PlaneFragmentRowsAlong::N {
+            write!(f, " rows_along=n")?;
         }
         match self.step_sum {
             PlaneFragmentStepSum::Wide => Ok(()),

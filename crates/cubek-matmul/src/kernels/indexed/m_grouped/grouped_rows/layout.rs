@@ -1,3 +1,6 @@
+use super::PaddedRows;
+use super::kernel::{combine_routes, gate_rows, group_tiles, pad_rows, unpad_rows};
+use crate::kernels::tensor::PlainTensor;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::ComptimeOptionArgs;
@@ -5,10 +8,6 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::Shape;
 use cubecl::{CubeCount, CubeDim};
 use cubek_std::Hardware;
-
-use super::PaddedRows;
-use super::kernel::{combine_routes, gate_rows, group_tiles, pad_rows, unpad_rows};
-use crate::kernels::tensor::PlainTensor;
 
 const U32: ElemType = ElemType::UInt(UIntKind::U32);
 

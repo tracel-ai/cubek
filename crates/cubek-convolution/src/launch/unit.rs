@@ -190,9 +190,9 @@ pub(crate) fn launch<const N: usize>(
         } => {
             let rows = out_grad.shape()[..N + 1].iter().product::<usize>();
             if dtypes.lhs_global == f32::elem_type_native()
-                && backward_weight::unit::split_count(rows) > 1
+                && backward_weight::split::split_count(rows) > 1
             {
-                return backward_weight::unit::launch_split::<N>(
+                return backward_weight::split::launch_unit::<N>(
                     client,
                     input,
                     out_grad,
