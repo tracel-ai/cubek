@@ -546,8 +546,8 @@ fn check_weight_grad_into(
 /// below 2048.
 const GRAD_EPS: f32 = 0.01;
 
-/// One module per problem, a test in it for each of the four settings that serve a step of whole
-/// output positions: a cube and a plane routine, each through cmma and Mma.
+/// One module per problem, a test in it for each of the two settings that serve a step of whole
+/// output positions: the cube routine through cmma and through Mma.
 macro_rules! weight_grad_tests {
     ($($stem:ident: $problem:expr, $input:ident, $out_grad:ident;)*) => {
         $(mod $stem {
@@ -594,7 +594,7 @@ weight_grad_tests! {
     weight_grad_sliced_out_grad: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Dense, Sliced;
 }
 
-/// A weight gradient that starts a buffer element in, for the four settings.
+/// A weight gradient that starts a buffer element in, for the two settings.
 macro_rules! weight_grad_offset_tests {
     ($($name:ident: $strategy:literal;)*) => {
         $(#[test]
@@ -865,8 +865,8 @@ fn check_data_grad(
     check_data_grad_into(strategy_id, problem, (out_grad, weights, Binding::Dense));
 }
 
-/// One module per problem, a test in it for each of the four settings that serve a step of whole
-/// output channels: a cube and a plane routine, each through cmma and Mma.
+/// One module per problem, a test in it for each of the two settings that serve a step of whole
+/// output channels: the cube routine through cmma and through Mma.
 macro_rules! data_grad_tests {
     ($($stem:ident: $problem:expr, $out_grad:ident, $weights:ident;)*) => {
         $(mod $stem {
@@ -914,7 +914,7 @@ data_grad_tests! {
     data_grad_permuted_weights: conv(2, (64, 32), [5, 12], [3, 3], SAME_3X3), Dense, Permuted;
 }
 
-/// A data gradient that starts a buffer element in, for the four settings.
+/// A data gradient that starts a buffer element in, for the two settings.
 macro_rules! data_grad_offset_tests {
     ($($name:ident: $strategy:literal;)*) => {
         $(#[test]
@@ -1063,17 +1063,18 @@ fn a_data_gradient_of_another_batch_is_refused_by_name() {
     assert!(message.contains("batch"), "{message}");
 }
 
-/// A step of taps and output channels is declined through cmma by name, .
+/// A step of taps and output channels is declined through cmma by name.
 #[test]
 fn cmma_declines_a_data_backward_step_across_taps() {
     let client = client();
-    for strategy in ["cube_staged_cmma_grid_2x2"] {
-        let out_grad = InputBinding::new(dense(&client, [2, 6, 6, 3]), F16);
-        let weights = dense(&client, [3, 3, 3, 32]);
-        let message = data_grad_refusal(strategy, out_grad, weights, [2, 6, 6, 32], SAME_ARGS);
-        assert!(
-            message.contains("taps and channels"),
-            "{strategy}: {message}"
-        );
-    }
+    let out_grad = InputBinding::new(dense(&client, [2, 6, 6, 3]), F16);
+    let weights = dense(&client, [3, 3, 3, 32]);
+    let message = data_grad_refusal(
+        "cube_staged_cmma_grid_2x2",
+        out_grad,
+        weights,
+        [2, 6, 6, 32],
+        SAME_ARGS,
+    );
+    assert!(message.contains("taps and channels"), "{message}");
 }
