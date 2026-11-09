@@ -19,6 +19,11 @@ impl CubeWalkMicrokernelSettings {
     /// The fewest cells whose lines stay within [`MAX_HELD_LINES_PER_UNIT`] at any width.
     pub const FLOOR: Self = Self::new(MAX_HELD_LINES_PER_UNIT);
 
+    /// The default, then half its cells: what every microkernel of the cube scope lists.
+    pub fn listed() -> Vec<Self> {
+        vec![Self::DEFAULT, Self::new(32)]
+    }
+
     pub const fn new(cells: usize) -> Self {
         Self {
             cells: NonZeroUsize::new(cells).unwrap(),

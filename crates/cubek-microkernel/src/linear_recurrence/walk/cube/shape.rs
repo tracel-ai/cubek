@@ -1,6 +1,7 @@
 use super::settings::{CubeWalkMicrokernelSettings, MAX_HELD_LINES_PER_UNIT};
 use crate::linear_recurrence::RecurrenceHeads;
 use cubek_std::Hardware;
+use cubek_std::microkernel::{ArithmeticInstruction, KernelEstimate, UnitWork};
 
 /// How a cube holds a run's state: `columns` value columns a run, cut over its key rows into one
 /// tile of `rows` rows for each of `units` units, whose partial sums over the rows meet in the
@@ -71,6 +72,15 @@ impl HeldStateShape {
     /// Vector lines of the state a unit holds at lines of `width` columns.
     pub fn held_lines(&self, width: usize) -> usize {
         self.rows * self.columns / width
+    }
+
+    /// The work each unit holds: its rows of the state beside its partial sums, computed with the
+    /// device's vector arithmetic. The reads are its routine's to count.
+    pub fn estimate(&self, estimate: &mut KernelEstimate) {
+        estimate.work = Some(UnitWork {
+            instruction: ArithmeticInstruction::Vector,
+            registers: (self.rows * self.columns + 3 * self.columns) as u32,
+        });
     }
 
     /// Bytes of shared memory a cube of `runs` runs meets in: two slices, each holding every

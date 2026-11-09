@@ -3,5 +3,5 @@
 mod base;
 mod delta;
 
-pub use base::*;
+pub use base::CubeWalkRoutineSettings;
 pub use delta::*;

@@ -10,8 +10,8 @@ use crate::kernels::refusals::admit_on_device;
 use crate::kernels::walk::tune::RecurrenceWalkCandidate;
 use crate::kernels::walk::tune::key::RecurrenceWalkKey;
 use crate::kernels::walk::{
-    CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings, RECURRENCE_WALK_ELEMENT,
-    RecurrenceWalkInputs, RecurrenceWalkOutputs, RecurrenceWalkProblem, RecurrenceWalkStateInputs,
+    CubeDeltaWalkRoutine, CubeWalkRoutineSettings, RECURRENCE_WALK_ELEMENT, RecurrenceWalkInputs,
+    RecurrenceWalkOutputs, RecurrenceWalkProblem, RecurrenceWalkRoutine, RecurrenceWalkStateInputs,
     RecurrenceWalkStateKind,
 };
 use cubecl::ir::ElemType;
@@ -48,11 +48,8 @@ pub fn launch_tuned(
                 measured,
             );
         let group = table.group("microkernel", microkernel);
-        let floor = RecurrenceWalkCandidate::new(
-            CubeDeltaWalkRoutine,
-            CubeDeltaWalkRoutineSettings::FLOOR,
-            &hw,
-        );
+        let floor =
+            RecurrenceWalkCandidate::new(CubeDeltaWalkRoutine, CubeWalkRoutineSettings::FLOOR, &hw);
         table
             .prioritized(
                 &group,
@@ -62,7 +59,7 @@ pub fn launch_tuned(
             // The floor, which every admitted problem prepares: taking `microkernel` out of the
             // table stops the family being measured, not being served.
             .floor(Tunable::new(
-                "cube-delta-walk-floor",
+                &format!("{}-floor", CubeDeltaWalkRoutine::NAME),
                 move |inputs: RecurrenceWalkInputs| floor.run(inputs),
             ))
             .finish()

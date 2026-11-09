@@ -9,7 +9,7 @@ use cubecl::bytes::Bytes;
 use cubecl::tile::{Partitioning, Region, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_linear_recurrence::kernels::walk::{
-    CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings, RecurrenceWalkTensors,
+    CubeDeltaWalkRoutine, CubeWalkRoutineSettings, RecurrenceWalkTensors,
 };
 use cubek_microkernel::linear_recurrence::walk::cube::{
     CubeWalkMicrokernelSettings, HeldState, HeldStateShape, UnitPartials,
@@ -279,8 +279,8 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
             masked: vec![],
         };
         for settings in [
-            CubeDeltaWalkRoutineSettings::FLOOR,
-            CubeDeltaWalkRoutineSettings::DEFAULT,
+            CubeWalkRoutineSettings::FLOOR,
+            CubeWalkRoutineSettings::DEFAULT,
         ] {
             let o = case.operands();
             let tensors = RecurrenceWalkTensors::new(case.inputs(&client, &o, F32)).unwrap();

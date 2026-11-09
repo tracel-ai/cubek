@@ -1,11 +1,11 @@
 use crate::linear_recurrence::RecurrenceHeads;
 use crate::linear_recurrence::walk::RecurrenceWalkOperand;
-use crate::linear_recurrence::walk::cube::{CubeWalkMicrokernelSettings, HeldStateShape};
+use crate::linear_recurrence::walk::cube::{
+    CubeWalkMicrokernel, CubeWalkMicrokernelSettings, HeldStateShape,
+};
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
-use cubek_std::microkernel::{
-    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
-};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// A cube's runs of a head's value columns walked through every position one at a time, held as
 /// its [`HeldStateShape`] states: each position decays the state, recalls the key from it and
@@ -32,9 +32,8 @@ impl Microkernel for CubeDeltaWalkMicrokernel {
 
     const DECLINE: &'static str = HeldStateShape::DECLINE;
 
-    /// The default, then half its cells.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
-        vec![Self::Settings::DEFAULT, Self::Settings::new(32)]
+        CubeWalkMicrokernelSettings::listed()
     }
 
     fn candidates(
@@ -53,8 +52,6 @@ impl Microkernel for CubeDeltaWalkMicrokernel {
         RecurrenceWalkOperand::require(self.shape.columns(), self.shape.rows(), vectorization);
     }
 
-    /// Each unit holds its rows of the state beside its partial sums, computed with the device's
-    /// vector arithmetic; the reads are its routine's to count.
     fn estimate(
         &self,
         _item: &RecurrenceHeads,
@@ -62,10 +59,12 @@ impl Microkernel for CubeDeltaWalkMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        let (rows, columns) = (self.shape.rows(), self.shape.columns());
-        estimate.work = Some(UnitWork {
-            instruction: ArithmeticInstruction::Vector,
-            registers: (rows * columns + 3 * columns) as u32,
-        });
+        self.shape.estimate(estimate);
+    }
+}
+
+impl CubeWalkMicrokernel for CubeDeltaWalkMicrokernel {
+    fn shape(&self) -> HeldStateShape {
+        self.shape
     }
 }

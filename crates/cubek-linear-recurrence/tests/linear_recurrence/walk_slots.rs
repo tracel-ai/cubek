@@ -17,8 +17,8 @@ use cubecl::server::Handle;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::metadata::Metadata;
 use cubek_linear_recurrence::kernels::walk::{
-    CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings, RecurrenceWalkInputs,
-    RecurrenceWalkOutputs, RecurrenceWalkStateInputs,
+    CubeDeltaWalkRoutine, CubeWalkRoutineSettings, RecurrenceWalkInputs, RecurrenceWalkOutputs,
+    RecurrenceWalkStateInputs,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
@@ -276,7 +276,7 @@ impl SlotCase {
         hw: &Hardware,
         client: &Client,
         element: ElemType,
-        settings: &CubeDeltaWalkRoutineSettings,
+        settings: &CubeWalkRoutineSettings,
         pitch: Pitch,
     ) {
         let slotted = self.slotted(client, pitch);
@@ -368,7 +368,7 @@ fn the_slots_walk_matches_the_reference() {
     let settings: Vec<_> = CubeDeltaWalkRoutine
         .settings(&hw)
         .into_iter()
-        .chain([CubeDeltaWalkRoutineSettings::FLOOR])
+        .chain([CubeWalkRoutineSettings::FLOOR])
         .collect();
     for element in elements(&client) {
         for settings in &settings {
@@ -389,8 +389,8 @@ fn the_slots_walk_reads_a_strided_store_where_it_lies() {
     for element in elements(&client) {
         for pitch in STRIDED_PITCHES {
             for settings in [
-                CubeDeltaWalkRoutineSettings::DEFAULT,
-                CubeDeltaWalkRoutineSettings::FLOOR,
+                CubeWalkRoutineSettings::DEFAULT,
+                CubeWalkRoutineSettings::FLOOR,
             ] {
                 for case in cases() {
                     case.walk_and_check(&hw, &client, element, &settings, pitch);
@@ -415,8 +415,8 @@ fn rows_parked_on_the_null_slot_leave_the_others_whole() {
     )
     .parked(&[0, 2, 4]);
     for settings in [
-        CubeDeltaWalkRoutineSettings::DEFAULT,
-        CubeDeltaWalkRoutineSettings::FLOOR,
+        CubeWalkRoutineSettings::DEFAULT,
+        CubeWalkRoutineSettings::FLOOR,
     ] {
         case.walk_and_check(&hw, &client, F32, &settings, Pitch::default());
     }

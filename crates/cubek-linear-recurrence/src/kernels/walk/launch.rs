@@ -13,6 +13,9 @@ use cubek_std::routine::{Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 pub trait RecurrenceWalkRoutine<M>:
     Routine<Problem = RecurrenceWalkProblem, Microkernel = M, Blueprint = RecurrenceWalkBlueprint<M>>
 {
+    /// What the routine's candidates and floor are named after in a tuning table.
+    const NAME: &'static str;
+
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`.
     fn dispatch(
         &self,

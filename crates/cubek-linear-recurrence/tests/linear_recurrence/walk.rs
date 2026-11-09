@@ -15,9 +15,9 @@ use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::metadata::Metadata;
 use cubek_linear_recurrence::kernels::walk::{
-    CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings, RecurrenceWalkInputs,
-    RecurrenceWalkOutputs, RecurrenceWalkProblem, RecurrenceWalkRoutine, RecurrenceWalkStateInputs,
-    RecurrenceWalkTensors, launch_tuned,
+    CubeDeltaWalkRoutine, CubeWalkRoutineSettings, RecurrenceWalkInputs, RecurrenceWalkOutputs,
+    RecurrenceWalkProblem, RecurrenceWalkRoutine, RecurrenceWalkStateInputs, RecurrenceWalkTensors,
+    launch_tuned,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
@@ -350,7 +350,7 @@ fn problem_of(inputs: &RecurrenceWalkInputs) -> RecurrenceWalkProblem {
 pub fn walk_or_skip(
     hw: &Hardware,
     inputs: RecurrenceWalkInputs,
-    settings: &CubeDeltaWalkRoutineSettings,
+    settings: &CubeWalkRoutineSettings,
     what: &str,
 ) -> Option<RecurrenceWalkOutputs> {
     let problem = problem_of(&inputs);
@@ -421,7 +421,7 @@ fn the_cube_walk_matches_the_reference() {
 fn the_floor_matches_the_reference() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    let settings = CubeDeltaWalkRoutineSettings::FLOOR;
+    let settings = CubeWalkRoutineSettings::FLOOR;
     for element in elements(&client) {
         for case in cases() {
             let operands = case.operands();
@@ -520,8 +520,8 @@ fn the_walk_reads_operands_where_they_lie() {
     for element in elements(&client) {
         for layout in layouts {
             for settings in [
-                CubeDeltaWalkRoutineSettings::DEFAULT,
-                CubeDeltaWalkRoutineSettings::FLOOR,
+                CubeWalkRoutineSettings::DEFAULT,
+                CubeWalkRoutineSettings::FLOOR,
             ] {
                 for case in cases() {
                     let operands = case.operands();

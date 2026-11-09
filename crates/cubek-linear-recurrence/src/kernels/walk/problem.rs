@@ -4,7 +4,7 @@ use crate::kernels::refusals::{
     RECURRENCE_WALK_BINDINGS_PAST_DEVICE, RECURRENCE_WALK_ELEMENT_NOT_FLOAT,
     RECURRENCE_WALK_ELEMENT_UNVERIFIED, RECURRENCE_WALK_HEADS_EMPTY,
 };
-use crate::kernels::walk::{CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings};
+use crate::kernels::walk::{CubeDeltaWalkRoutine, CubeWalkRoutineSettings};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
@@ -217,7 +217,7 @@ impl RecurrenceWalkProblem {
     /// What the floor declines, [`admit_launch`](Self::admit_launch)'s among them.
     pub fn admit(&self, hw: &Hardware) -> Result<(), Refusal> {
         CubeDeltaWalkRoutine
-            .prepare(hw, self, &CubeDeltaWalkRoutineSettings::FLOOR)
+            .prepare(hw, self, &CubeWalkRoutineSettings::FLOOR)
             .map(|_| ())
     }
 

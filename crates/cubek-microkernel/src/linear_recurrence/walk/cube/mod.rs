@@ -3,6 +3,7 @@
 
 mod delta;
 mod held_state;
+mod microkernel;
 mod settings;
 mod shape;
 mod state_access;
@@ -10,6 +11,7 @@ mod unit_partials;
 
 pub use delta::*;
 pub use held_state::*;
+pub use microkernel::*;
 pub use settings::*;
 pub use shape::*;
 pub use state_access::*;
