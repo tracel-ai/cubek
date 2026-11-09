@@ -4,7 +4,6 @@ use crate::kernels::tiled::{
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::RegisterBlock;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::ops::matmul::LhsLine;
 use cubecl::tile::space::PlaneOrder;
@@ -90,22 +89,6 @@ impl UnitRegistersConvRoutine {
             &space.subspace(&roles.free),
             width,
         )
-    }
-
-    /// The block a unit accumulates in: its edge split from its interior, and where the input is
-    /// lined along a contraction that steps one value at a time, a line read once for every
-    /// component rather than one line per value.
-    fn register_block(
-        problem: &ConvProblem,
-        blueprint: &ConvBlueprint<UnitRegistersMicrokernel>,
-    ) -> RegisterBlock {
-        let roles = problem.operation.roles();
-        let one_value_a_step = roles.inner.rhs != roles.axes().k;
-        let block = blueprint.microkernel.register_block().split_edge();
-        match one_value_a_step && blueprint.widths.lhs > 1 {
-            true => block.component_fanout(),
-            false => block,
-        }
     }
 
     /// The operands a register block cannot read in lines along the axis it reads them: the lhs
@@ -266,7 +249,7 @@ impl ConvRoutine<UnitRegistersMicrokernel> for UnitRegistersConvRoutine {
                 rhs,
                 out,
                 launcher.partitioning_arg(),
-                Self::register_block(problem, &blueprint),
+                blueprint.microkernel.register_block().split_edge(),
                 problem.kernel_elements(),
             );
         }
