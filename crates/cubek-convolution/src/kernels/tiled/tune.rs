@@ -185,6 +185,11 @@ impl ConvCandidate {
             .collect()
     }
 
+    /// The settings this candidate launches.
+    pub fn settings(&self) -> &ConvSettings {
+        &self.settings
+    }
+
     /// The convolution `tensors` state, at this candidate's settings.
     ///
     /// # Errors

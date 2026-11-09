@@ -8,12 +8,14 @@ use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::{Shape, Strides};
 use cubek_convolution::eval::benchmarks::{Conv2dCorrectness, Conv2dProblem, problems};
-use cubek_convolution::kernels::tiled::{ConvRoutineKind, ConvSettings, CubeStagedConvRoutine};
+use cubek_convolution::kernels::tiled::{
+    ConvCandidate, ConvRoutineKind, ConvSettings, CubeStagedConvRoutine,
+};
 use cubek_convolution::{
     AcceleratedTileKind, ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref,
 };
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
-use cubek_std::InputBinding;
+use cubek_std::{Hardware, InputBinding};
 use cubek_test_utils::{
     Correctness, ExecutionOutcome, HostData, HostDataType, StridedLayout, TestInput, TestOutcome,
     assert_equals_approx, launch_and_capture_outcome,
@@ -42,7 +44,8 @@ fn pinned(settings: ConvSettings) -> Strategy {
     }
 }
 
-/// The cube staged routine at the setting its autotune finds fastest.
+/// The cube staged routine at the setting its autotune finds fastest: what the smoke test and the
+/// refusal tests run, since every other test pins the setting it checks.
 fn tuned() -> Strategy {
     Strategy::Tile {
         routine: ConvRoutineKind::CubeStaged,
@@ -141,10 +144,6 @@ cases! {
     conv3x3_c64_mma_f1x2_p1x2: pinned(Staged::F1X2_P1X2.mma()), "conv3x3_c64";
     conv3x3_c64_stride2_mma_f1x2_p1x2: pinned(Staged::F1X2_P1X2.mma()), "conv3x3_c64_stride2";
     narrow_width_mma_f1x2_p1x2: pinned(Staged::F1X2_P1X2.mma()), "narrow_width";
-    alexnet_like_tuned: tuned(), "alexnet_like";
-    large_kernel_tuned: tuned(), "large_kernel";
-    conv3x3_c64_tuned: tuned(), "conv3x3_c64";
-    conv3x3_c64_stride2_tuned: tuned(), "conv3x3_c64_stride2";
     narrow_width_tuned: tuned(), "narrow_width";
 }
 
@@ -238,8 +237,8 @@ cases! {
 /// One and five channels, which make a step of taps, over a batch of one.
 cases! {
     check_problem;
-    channels_1_tuned: tuned(), &conv(1, (1, 16), [12, 12], [3, 3], SAME_3X3);
-    channels_5_tuned: tuned(), &conv(1, (5, 16), [12, 12], [3, 3], SAME_3X3);
+    channels_1_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(1, (1, 16), [12, 12], [3, 3], SAME_3X3);
+    channels_5_mma_f2x2_p2x2: pinned(Staged::F2X2_P2X2.mma()), &conv(1, (5, 16), [12, 12], [3, 3], SAME_3X3);
 }
 
 /// Twelve input channels under a padded window: a width of four divides them, yet a tile of
@@ -1138,4 +1137,84 @@ fn cmma_declines_a_data_backward_step_across_taps() {
         SAME_ARGS,
     );
     assert!(message.contains("taps and channels"), "{message}");
+}
+
+/// The problems every listed setting is held to: a map the boxes overhang, a map seven wide, and
+/// few channels, which make a step of taps.
+fn listed_problems() -> [Conv2dProblem; 3] {
+    [
+        conv(2, (64, 32), [9, 9], [3, 3], SAME_3X3),
+        conv(2, (64, 64), [7, 7], [3, 3], SAME_3X3),
+        conv(1, (3, 16), [9, 9], [3, 3], SAME_3X3),
+    ]
+}
+
+/// Whether the launch served the problem, and the refusal it was declined with otherwise.
+type Served = Result<(), String>;
+
+fn forward_served(strategy: &Strategy, problem: &Conv2dProblem) -> Served {
+    let actual = Conv2dCorrectness.kernel_result(strategy, problem, &SEEDS)?;
+    let expected = Conv2dCorrectness
+        .reference_result(problem, &SEEDS, None)
+        .unwrap_or_else(|e| panic!("reference failed: {e}"));
+    assert_equals_approx(&actual, &expected, F16_EPS)
+        .as_test_outcome()
+        .enforce();
+    Ok(())
+}
+
+fn weight_grad_served(strategy: &Strategy, problem: &Conv2dProblem) -> Served {
+    let bindings = (Binding::Dense, Binding::Dense, Binding::Dense);
+    let (actual, expected, shape) = weight_grad_values(strategy, problem, bindings)?;
+    let expected = TestInput::builder(client(), shape.to_vec())
+        .dtype(F32)
+        .custom(expected)
+        .f32_host_data();
+    assert_equals_approx(&actual, &expected, GRAD_EPS)
+        .as_test_outcome()
+        .enforce();
+    Ok(())
+}
+
+fn data_grad_served(strategy: &Strategy, problem: &Conv2dProblem) -> Served {
+    let bindings = (Binding::Dense, Binding::Dense, Binding::Dense);
+    let (actual, expected, shape) = data_grad_values(strategy, problem, bindings)?;
+    let expected = TestInput::builder(client(), shape.to_vec())
+        .dtype(F32)
+        .custom(expected)
+        .f32_host_data();
+    assert_equals_approx(&actual, &expected, GRAD_EPS)
+        .as_test_outcome()
+        .enforce();
+    Ok(())
+}
+
+/// Every setting the device lists, pinned, on a few small problems of each operation: it matches
+/// the host's result or it is declined by name, and each operation is served by some setting.
+#[test]
+fn every_listed_setting_matches_the_reference_or_is_declined_by_name() {
+    let list = ConvCandidate::list(&Hardware::from_client(&client()));
+    assert!(!list.is_empty(), "the device lists no setting");
+    let operations: [(&str, fn(&Strategy, &Conv2dProblem) -> Served); 3] = [
+        ("forward", forward_served),
+        ("weight backward", weight_grad_served),
+        ("data backward", data_grad_served),
+    ];
+    for (operation, run) in operations {
+        let mut served = 0;
+        for candidate in &list {
+            let strategy = pinned(*candidate.settings());
+            for problem in &listed_problems() {
+                match run(&strategy, problem) {
+                    Ok(()) => served += 1,
+                    Err(refusal) => assert!(
+                        !refusal.trim().is_empty(),
+                        "{operation} {} was declined without a name",
+                        candidate.settings()
+                    ),
+                }
+            }
+        }
+        assert!(served > 0, "no listed setting serves {operation}");
+    }
 }
