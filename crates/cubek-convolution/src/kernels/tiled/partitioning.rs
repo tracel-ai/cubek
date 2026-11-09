@@ -107,8 +107,12 @@ impl ConvTiles {
             stage_steps: settings.stage_steps,
             runs: MatmulOperands::all(1),
         };
-        tiles.runs =
-            MatmulOperands::all(()).map(|operand, ()| settings.lines.cells(tiles.run(operand)));
+        let cells = |operand| settings.lines.cells(tiles.run(operand));
+        tiles.runs = MatmulOperands {
+            lhs: cells(MatmulOperand::Lhs),
+            rhs: cells(MatmulOperand::Rhs),
+            out: 1,
+        };
         Ok(tiles)
     }
 
@@ -146,8 +150,6 @@ pub struct ConvPartitioning {
     /// Rows and columns of the output one stage owner holds, and the contraction cells a stage
     /// holds, `(rows, columns, depth)`.
     stage: (usize, usize, usize),
-    /// Owners of a stage in one cube.
-    owners: usize,
     /// Elements one write brings along the output's innermost axis.
     out_run: usize,
     /// Planes in a cube.
@@ -173,30 +175,6 @@ impl ConvPartitioning {
             .build();
         let rows = m * tiles.fragments.0 * planes_m;
         let columns = n * tiles.fragments.1 * planes_n;
-        Self::new(problem, tiles, levels, (rows, columns, steps), 1)
-    }
-
-    /// The axis a stage walks and the steps along it, and the contraction cells that holds.
-    fn stage(problem: &ConvProblem, tiles: &ConvTiles) -> ((Axis, usize), usize) {
-        let (_, _, k) = tiles.instruction;
-        let (axis, total) = tiles.step.walk(&tiles.roles, problem);
-        // A stage never overhangs: the most steps up to the setting's that divide the walk.
-        let steps = (1..=tiles.stage_steps.min(total))
-            .rev()
-            .find(|steps| total % steps == 0)
-            .unwrap_or(1);
-        ((axis, steps), steps * k)
-    }
-
-    fn new(
-        problem: &ConvProblem,
-        tiles: &ConvTiles,
-        levels: Vec<cubecl::tile::Level>,
-        (rows, columns, depth): (usize, usize, usize),
-        owners: usize,
-    ) -> Self {
-        let roles = tiles.roles;
-        let axes = roles.axes();
         let contracted: usize = roles
             .contracted
             .iter()
@@ -217,11 +195,22 @@ impl ConvPartitioning {
                 Some(MatmulDim::N) => columns,
                 _ => 1,
             },
-            stage: (rows, columns, depth),
-            owners,
+            stage: (rows, columns, steps),
             planes: tiles.planes.0 * tiles.planes.1,
             contracted,
         }
+    }
+
+    /// The axis a stage walks and the steps along it, and the contraction cells that holds.
+    fn stage(problem: &ConvProblem, tiles: &ConvTiles) -> ((Axis, usize), usize) {
+        let (_, _, k) = tiles.instruction;
+        let (axis, total) = tiles.step.walk(&tiles.roles, problem);
+        // A stage never overhangs: the most steps up to the setting's that divide the walk.
+        let steps = (1..=tiles.stage_steps.min(total))
+            .rev()
+            .find(|steps| total % steps == 0)
+            .unwrap_or(1);
+        ((axis, steps), steps * k)
     }
 
     pub fn as_tile(&self) -> &Partitioning {
@@ -255,22 +244,22 @@ impl ConvPartitioning {
     pub fn stage_bytes(&self, elements: &MatmulOperands<ElemType>) -> usize {
         let (rows, columns, depth) = self.stage;
         let cells = rows * elements.lhs.size() + columns * elements.rhs.size();
-        STAGE_RING.stages_in_flight.get() * self.owners * depth * cells
+        STAGE_RING.stages_in_flight.get() * depth * cells
     }
 
-    /// What one cube moves and computes: every owner's box of the output read over the whole
+    /// What one cube moves and computes: the cube's box of the output read over the whole
     /// contraction and written once, the cells its edge cuts short counted as spent.
     pub fn staging(&self, elements: &MatmulOperands<ElemType>) -> CubeStaging {
         let (rows, columns, depth) = self.stage;
-        let (rows, columns, owners) = (rows as u64, columns as u64, self.owners as u64);
+        let (rows, columns) = (rows as u64, columns as u64);
         let contracted = self.contracted as u64;
         let size = |operand| elements.get(operand).size();
         let stream = |bytes: u64, run: usize| GlobalStream {
-            bytes: bytes * owners,
+            bytes,
             run_bytes: run,
         };
         CubeStaging {
-            operations: (2 * rows * columns * contracted * owners) as f64,
+            operations: (2 * rows * columns * contracted) as f64,
             reads: vec![
                 stream(
                     rows * contracted * size(MatmulOperand::Lhs) as u64,
