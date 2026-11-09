@@ -10,7 +10,6 @@ use cubek_microkernel::interpolate::cube::{
 /// block's tap window staged in shared memory once and read there by every tap. Where `padded`,
 /// the stage lays the channels out in lines of that width.
 #[cube(launch)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_staged_interpolate_kernel<E: Float, F: SeparableFilterFamily>(
     input: &TileTensor<'_>,
     output: &TileTensor<'_>,

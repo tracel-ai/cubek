@@ -19,7 +19,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_reduce_microkernel<
     In: Numeric,
     Acc: Numeric,
@@ -107,7 +106,6 @@ pub fn hypercube_reduce_microkernel<
 }
 
 #[cube]
-#[allow(clippy::too_many_arguments)]
 fn hypercube_reduce<
     In: Numeric,
     Acc: Numeric,

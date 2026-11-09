@@ -14,7 +14,6 @@ use cubek_std::microkernel::StageRing;
 /// a stage at a time for all its planes, holding as many stages as `ring` says, met on
 /// `sync_cube`. Every tile is windowed to `cube`.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
     cube: &Region,
     query_gradient: &Tile,
