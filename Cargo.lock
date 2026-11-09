@@ -344,8 +344,8 @@ dependencies = [
  "cubek-attention-backward",
  "cubek-convolution",
  "cubek-fft",
- "cubek-gated-delta",
  "cubek-interpolate",
+ "cubek-linear-recurrence",
  "cubek-matmul",
  "cubek-pool",
  "cubek-random",
@@ -1387,8 +1387,8 @@ dependencies = [
  "cubek-attention-backward",
  "cubek-convolution",
  "cubek-fft",
- "cubek-gated-delta",
  "cubek-interpolate",
+ "cubek-linear-recurrence",
  "cubek-matmul",
  "cubek-microkernel",
  "cubek-pool",
@@ -1458,19 +1458,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cubek-gated-delta"
-version = "0.4.0-pre.1"
-dependencies = [
- "cubecl",
- "cubek-matmul",
- "cubek-microkernel",
- "cubek-std",
- "cubek-test-utils",
- "half",
- "serde",
-]
-
-[[package]]
 name = "cubek-interpolate"
 version = "0.4.0-pre.1"
 dependencies = [
@@ -1483,6 +1470,19 @@ dependencies = [
  "half",
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "cubek-linear-recurrence"
+version = "0.4.0-pre.1"
+dependencies = [
+ "cubecl",
+ "cubek-matmul",
+ "cubek-microkernel",
+ "cubek-std",
+ "cubek-test-utils",
+ "half",
+ "serde",
 ]
 
 [[package]]

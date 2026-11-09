@@ -30,7 +30,7 @@ default = [
     "cubek-convolution?/default",
     "cubek-attention?/default",
     "cubek-attention-backward?/default",
-    "cubek-gated-delta?/default",
+    "cubek-linear-recurrence?/default",
     "cubek-interpolate?/default",
     "cubek-pool?/default",
     "cubek-fft?/default",
@@ -48,7 +48,7 @@ std = [
     "cubek-convolution?/std",
     "cubek-attention?/std",
     "cubek-attention-backward?/std",
-    "cubek-gated-delta?/std",
+    "cubek-linear-recurrence?/std",
     "cubek-interpolate?/std",
     "cubek-pool?/std",
     "cubek-fft?/std",
@@ -58,8 +58,8 @@ std = [
 attention = ["cubek-attention"]
 # Attention's backward pass, for training: its own crate, off unless a caller asks for it.
 attention-backward = ["cubek-attention-backward"]
-# The gated delta rule's walk.
-gated-delta = ["cubek-gated-delta"]
+# The linear recurrence family: the delta rule walk and the q|k|v conv.
+linear-recurrence = ["cubek-linear-recurrence"]
 interpolate = ["cubek-interpolate"]
 pool = ["cubek-pool"]
 convolution = ["cubek-convolution"]
@@ -79,7 +79,7 @@ swiglu = ["cubek-swiglu"]
 stdlib = ["cubek-std"]
 fft = ["cubek-fft"]
 # Autotune compares every candidate's output against the first's: a debugging instrument.
-autotune-checks = ["cubek-matmul?/autotune-checks", "cubek-gated-delta?/autotune-checks"]
+autotune-checks = ["cubek-matmul?/autotune-checks", "cubek-linear-recurrence?/autotune-checks"]
 
 
 [dependencies]
@@ -88,7 +88,7 @@ cubek-attention = { workspace = true, optional = true }
 cubek-attention-backward = { workspace = true, optional = true }
 cubek-convolution = { workspace = true, optional = true }
 cubek-fft = { workspace = true, optional = true }
-cubek-gated-delta = { workspace = true, optional = true }
+cubek-linear-recurrence = { workspace = true, optional = true }
 cubek-interpolate = { workspace = true, optional = true }
 cubek-matmul = { workspace = true, optional = true }
 cubek-microkernel = { workspace = true, optional = true }
