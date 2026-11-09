@@ -1,3 +1,4 @@
+use super::ConvCandidates;
 use super::kernel::cube_staged_conv_kernel;
 use crate::kernels::tiled::{
     ConvAlong, ConvBinding, ConvBlueprint, ConvPartitioning, ConvProblem, ConvRoutine,
@@ -59,19 +60,11 @@ impl Routine for CubeStagedConvRoutine {
     type Blueprint = ConvBlueprint<CubeStagedMicrokernel>;
     type Partitioning = ConvPartitioning;
 
-    /// Cmma over lines at 64 rows and at one tile of rows; then Mma, which serves the steps of
-    /// taps and channels cmma declines: one element at a time at 64 rows, which a
-    /// deep filter wants, then lines at both.
-    fn settings(&self, _hw: &Hardware) -> Vec<ConvSettings> {
-        vec![
-            Self::F2X2_P2X2,
-            Self::F1X2_P1X2,
-            Self::F2X2_P2X2.mma().width_one(),
-            Self::F2X2_P2X2.mma(),
-            Self::F1X2_P1X2.mma(),
-            Self::F2X2_P1X2,
-            Self::F1X2_P2X2.mma(),
-        ]
+    /// The device's own: [`ConvCandidates`].
+    fn settings(&self, hw: &Hardware) -> Vec<ConvSettings> {
+        ConvCandidates::on(hw)
+            .map(|candidates| candidates.list())
+            .unwrap_or_default()
     }
 
     /// Nothing of its microkernel's: the stage fill's own reads are the partitioning's.

@@ -1,5 +1,5 @@
 use super::CubeStagedConvRoutine;
-use crate::kernels::tiled::{ConvRoutine, ConvSettings, ConvTensors};
+use crate::kernels::tiled::{ConvRoutine, ConvSettings, ConvTensors, launch_tuned};
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
 
@@ -15,7 +15,7 @@ pub const CONV_WGMMA_UNSERVED: Refusal = Refusal::Declined {
     why: "a warpgroup MMA reads its stages as the TMA engine lands them",
 };
 
-/// The routines a caller names, each at a setting or at the first it lists that serves.
+/// The routines a caller names, each at a setting or at the one its autotune finds fastest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConvRoutineKind {
     /// [`CubeStagedConvRoutine`].
@@ -31,8 +31,8 @@ impl core::fmt::Display for ConvRoutineKind {
 }
 
 impl ConvRoutineKind {
-    /// `tensors` launched on `hw` by this routine at `settings`, or at the first it lists that
-    /// serves where none is named.
+    /// `tensors` launched on `hw` by this routine at `settings`, or at the setting its autotune
+    /// finds fastest where none is named.
     ///
     /// # Errors
     ///
@@ -44,7 +44,10 @@ impl ConvRoutineKind {
         settings: Option<&ConvSettings>,
     ) -> Result<(), Refusal> {
         match self {
-            Self::CubeStaged => CubeStagedConvRoutine.launch_on(hw, tensors, settings),
+            Self::CubeStaged => match settings {
+                Some(settings) => CubeStagedConvRoutine.launch_on(hw, tensors, settings),
+                None => launch_tuned(hw, tensors),
+            },
         }
     }
 }

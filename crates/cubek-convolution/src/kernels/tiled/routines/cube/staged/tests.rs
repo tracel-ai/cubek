@@ -65,6 +65,10 @@ fn cmma_declines_a_step_of_taps_and_mma_serves_it() {
         blueprint.microkernel.plane.instruction,
         PlaneFragmentInstruction::Mma { .. }
     ));
+    assert_eq!(
+        ROUTINE.prepare_first_served(&cmma_only(), &problem).err(),
+        Some(CMMA_STEP_ACROSS_TAPS)
+    );
 }
 
 /// An element the device has no instruction for, and an instruction it does not offer at all, are
@@ -91,7 +95,7 @@ fn a_pair_the_device_lacks_declines() {
     );
     assert_eq!(
         ROUTINE
-            .prepare_first_served(&cmma_only(), &problem("alexnet_like"))
+            .prepare_first_served(&cmma_only(), &f32_problem)
             .err(),
         Some(CONV_INSTRUCTION_UNOFFERED)
     );
@@ -306,21 +310,23 @@ fn every_setting_estimates_whole() {
     assert!(prepared > 0, "no setting prepares here");
 }
 
-/// Every setting the routine lists prepares on every problem, or declines with a refusal the
-/// routine names.
+/// Every setting the routine lists prepares on a problem or declines it by name, and a step of
+/// taps is declined through cmma by its own refusal and served by some setting of the list.
 #[test]
 fn every_setting_prepares_or_declines_by_name() {
     let hw = nvidia();
-    for settings in ROUTINE.settings(&hw) {
-        for (name, problem) in problems() {
+    for (name, problem) in problems() {
+        for settings in ROUTINE.settings(&hw) {
             let prepared = ROUTINE.prepare(&hw, &problem, &settings);
             let cmma_on_taps = settings.instruction.transport == PlaneFragmentTransport::Cmma
                 && name == "alexnet_like";
-            assert!(
-                prepared.is_ok() != cmma_on_taps,
-                "{settings} on {name}: {:?}",
-                prepared.err()
-            );
+            if cmma_on_taps {
+                assert_eq!(prepared.err(), Some(CMMA_STEP_ACROSS_TAPS), "{settings}");
+            }
         }
+        assert!(
+            ROUTINE.prepare_first_served(&hw, &problem).is_ok(),
+            "no setting serves {name}"
+        );
     }
 }
