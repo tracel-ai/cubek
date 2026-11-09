@@ -37,6 +37,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
     let run = partitioning.walk();
     let first_step = run.region(0);
     let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
+
     let q = query.tile(&partitioning);
     let k = key
         .tile(&partitioning)
@@ -46,6 +47,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
         .within(S, 0, visible.attended as usize);
     let o = out.tile(&partitioning);
     let bias = visible.step_bias::<EA>(&partitioning, &first_step);
+
     let steps = visible.steps(
         &first_step,
         microkernel.cube.seq_q(),

@@ -71,11 +71,11 @@ pub(crate) fn matmul_entry<
         &vector_sizes
     ));
 
-    if comptime!(config.is_err()) {
+    if config.is_err() {
         push_validation_error(config.err().unwrap().to_string());
         comptime!(return);
     }
-    let config = comptime!(config.unwrap());
+    let config = config.unwrap();
 
     let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
         inputs,
@@ -201,7 +201,7 @@ fn shuffle<E: Numeric, N: Size>(
     unit: u32,
     #[comptime] plane_dim: u32,
 ) -> Vector<E, N> {
-    if comptime!(plane_dim > 1) {
+    if plane_dim > 1 {
         plane_shuffle(shared_value, unit)
     } else {
         shared_value

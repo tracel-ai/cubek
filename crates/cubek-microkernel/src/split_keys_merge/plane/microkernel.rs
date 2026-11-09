@@ -27,6 +27,7 @@ pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
     let width = slot_out.vector_size();
     let lines = comptime!(val_dim / width);
     let elements = lines.div_ceil(units);
+
     let lane = UNIT_POS_PLANE as usize;
 
     #[unroll]
@@ -56,11 +57,13 @@ pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
             }
 
             let merged = row.normalized();
+
             let row_start = slot_box.batch * out.stride(0)
                 + slot_box.kv * out.stride(1)
                 + slot_box.head * out.stride(2)
                 + (slot_box.first_query + r) * out.stride(3);
             let element_stride = out.stride(4);
+
             #[unroll]
             for e in 0..elements {
                 let line = lane + e * units;
@@ -103,7 +106,9 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
     } = slots;
     let width = N::value();
     let lines_of_value = comptime!(val_dim / width);
+
     let lane = UNIT_POS_PLANE as usize;
+
     let mut out = out.clone();
     let mut lines = out.flat_mut::<E, N>();
 
@@ -133,6 +138,7 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
             }
 
             let merged = row.normalized();
+
             #[unroll]
             for e in 0..lines_of_value.div_ceil(units) {
                 let line = lane + e * units;
@@ -167,7 +173,9 @@ pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
     let SlotShape { units, val_dim, .. } = slots;
     let width = N::value();
     let lines_of_value = comptime!(val_dim / width);
+
     let lane = UNIT_POS_PLANE as usize;
+
     let mut out = out.clone();
     let mut lines = out.flat_mut::<E, N>();
 
@@ -197,6 +205,7 @@ pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
             }
 
             let merged = row.normalized();
+
             #[unroll]
             for e in 0..lines_of_value.div_ceil(units) {
                 let line = lane + e * units;
@@ -237,6 +246,7 @@ pub(crate) fn plane_merge_rows_partial_microkernel<EA: Float, N: Size>(
     } = slots;
     let width = N::value();
     let lines_of_value = comptime!(val_dim / width);
+
     let lane = UNIT_POS_PLANE as usize;
 
     #[unroll]

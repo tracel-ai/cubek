@@ -40,11 +40,14 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     #[define(EA, E, ES)] _elements: [ElemType; 3],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+
     let q = query.tile(&partitioning);
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
+
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+
     let keys_per_step = microkernel.cube.seq_kv();
 
     // The longest sequence's attended steps, a box's share of the line; one at least, so a box of
@@ -61,6 +64,7 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
         let cube = portion.region(i);
         let (from, steps) = portion.steps(i);
         let (first, holders) = portion.holders(i);
+
         let visible = VisibleKeys::new(len, &cube, queries, &mask, visibility);
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);

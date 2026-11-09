@@ -25,14 +25,16 @@ pub fn cube_groups_rms_norm_microkernel<E: Float, N: Size>(
     #[comptime] stage: CubeStage,
 ) {
     let mut store = CubeStore::new::<E, N>(out.clone(), stage);
-    let units = comptime!(microkernel.units);
+    let units = microkernel.units;
+
     for group in cube {
         // A group's units lie along `x` and the cube's groups along `y`, as its resources state
         // them.
         let (slot, unit) = (UNIT_POS_Y as usize, UNIT_POS_X as usize);
-        let mut row = HeldRow::<E, N>::new(comptime!(microkernel.held_row()));
+        let mut row = HeldRow::<E, N>::new(microkernel.held_row());
         let partial = row.load(&input.at(&group), unit);
-        let sum = match comptime!(microkernel.sum) {
+
+        let sum = match microkernel.sum {
             GroupSum::Alone => partial,
             GroupSum::Shuffles => {
                 let lanes = comptime!(UnitShare::Group {
@@ -42,42 +44,51 @@ pub fn cube_groups_rms_norm_microkernel<E: Float, N: Size>(
             }
             GroupSum::Planes { lanes } => {
                 let planes = comptime!(units / lanes);
-                let mut slots = Shared::<[f32]>::new_slice(comptime!(groups * planes));
+                let mut slots = Shared::<[f32]>::new_slice(groups * planes);
                 let first = slot * planes;
+
                 let plane_sum = UnitShare::Plane.reduce::<f32>(partial, Monoid::Sum);
                 if unit % lanes == 0 {
                     slots[first + unit / lanes] = plane_sum;
                 }
+
                 sync_cube();
+
                 let mut sum = 0.0f32;
                 #[unroll]
                 for p in 0..planes {
                     sum += slots[first + p];
                 }
+
                 sync_cube();
                 sum
             }
             GroupSum::Halving => {
-                let mut slots = Shared::<[f32]>::new_slice(comptime!(groups * units));
+                let mut slots = Shared::<[f32]>::new_slice(groups * units);
                 let first = slot * units;
                 slots[first + unit] = partial;
+
                 sync_cube();
+
                 #[unroll]
                 for step in 1..comptime!(units.ilog2() as usize + 1) {
-                    let half = comptime!(units >> step);
+                    let half = units >> step;
                     if unit < half {
                         slots[first + unit] += slots[first + unit + half];
                     }
                     sync_cube();
                 }
+
                 let sum = slots[first];
                 sync_cube();
                 sum
             }
         };
-        let row_lines = comptime!(microkernel.held_row().lines);
+
+        let row_lines = microkernel.held_row().lines;
         let mut row_out = store.owner(&group, slot * row_lines);
         row.write(&weight.at(&group), &mut row_out, unit, scale.of(sum));
     }
+
     store.finish();
 }

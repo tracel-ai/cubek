@@ -23,6 +23,7 @@ pub fn group_tiles(
 ) {
     let groups = ends.len();
     let tiles = table.len();
+
     let group = ABSOLUTE_POS;
     if group >= groups {
         terminate!();
@@ -39,6 +40,7 @@ pub fn group_tiles(
     let end = ends[group];
     let owned = tiles_of(start, end, align);
     starts[group] = tile;
+
     for t in 0..owned {
         let at = (tile + t) as usize;
         if at < tiles {
@@ -90,6 +92,7 @@ impl Source {
         let tile = row / align;
         let group = table[tile] as usize;
         let source = sources[tile] as usize + row % align;
+
         let mut real = false;
         if group < ends.len() {
             real = source < ends[group] as usize && source < limit;
@@ -131,6 +134,7 @@ pub fn pad_rows<E: Numeric, N: Size>(
         rows.stride(0) / rows.vector_size(),
         padded.stride(0) / padded.vector_size(),
     );
+
     let mut value = Vector::<E, N>::cast_from(0u32);
     if source.real {
         value = rows[row_read(source.row, route_at_place, slots) * rows_step + v];
@@ -197,16 +201,19 @@ pub fn gate_rows<F: Float, N: Size>(
     let vectors = gated.shape(1) / gated.vector_size();
     let (row, v) = (at / vectors, at % vectors);
     let source = Source::new(row, rows as usize, ends, table, sources, align);
+
     let (both_step, gated_step) = (
         both.stride(0) / both.vector_size(),
         gated.stride(0) / gated.vector_size(),
     );
+
     let mut out = Vector::<F, N>::cast_from(0u32);
     if source.real {
         let group = table[row / align] as usize;
         let from = padded_row_of(source.row, group, ends, from_starts, from_align);
         let gate = both[from * both_step + v];
         let up = both[from * both_step + vectors + v];
+
         #[unroll]
         for lane in 0..gated.vector_size() {
             let g = f32::cast_from(gate.extract(lane));
@@ -242,10 +249,12 @@ pub fn combine_routes<F: Float, N: Size>(
 
     let vectors = out.shape(1) / out.vector_size();
     let (token, v) = (at / vectors, at % vectors);
+
     let (grouped_step, out_step) = (
         grouped.stride(0) / grouped.vector_size(),
         out.stride(0) / out.vector_size(),
     );
+
     let slots = slots as usize;
     let mut sum = Vector::<f32, N>::cast_from(0u32);
     for slot in 0..slots {
@@ -258,6 +267,7 @@ pub fn combine_routes<F: Float, N: Size>(
             let weight =
                 f32::cast_from(weights[token * weights.stride(0) + slot * weights.stride(1)]);
             let value = grouped[row * grouped_step + v];
+
             #[unroll]
             for lane in 0..out.vector_size() {
                 let added = sum.extract(lane) + weight * f32::cast_from(value.extract(lane));

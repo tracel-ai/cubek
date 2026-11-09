@@ -24,9 +24,11 @@ pub fn unit_attention_kernel<EA: Float>(
     #[define(EA)] _sum: ElemType,
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+
     let q = query.tile(&partitioning);
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
+
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
 

@@ -96,3 +96,11 @@ bench_catalog! {
     max_fused: [unit_parallel, cube_serial],
     min_fused: [unit_parallel, cube_serial],
 }
+
+bench_catalog! {
+    sampler_1x151936;
+
+    // The cube scope is the one that splits a long row across cubes on the tile routines.
+    arg_topk1: [cube_parallel],
+    topk20: [cube_parallel],
+}
