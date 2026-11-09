@@ -4,6 +4,7 @@ use crate::kernels::tiled::{
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::tile::Axis;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::ops::matmul::LhsLine;
 use cubecl::tile::space::PlaneOrder;
@@ -101,6 +102,16 @@ impl UnitRegistersConvRoutine {
             &space.subspace(&roles.free),
             width,
         )
+    }
+
+    /// The axes a plane may land past the end of, with their extents.
+    fn bounds(problem: &ConvProblem) -> Vec<(Axis, usize)> {
+        let roles = problem.operation.roles();
+        let axes = roles.axes();
+        [axes.m, roles.across(), roles.batch()]
+            .into_iter()
+            .map(|axis| (axis, problem.extent(axis)))
+            .collect()
     }
 
     /// The operands a register block cannot read in lines along the axis it reads them: the lhs
@@ -271,6 +282,7 @@ impl ConvRoutine<UnitRegistersMicrokernel> for UnitRegistersConvRoutine {
                 out,
                 launcher.partitioning_arg(),
                 blueprint.microkernel.register_block().split_edge(),
+                Self::bounds(problem),
                 problem.kernel_elements(),
             );
         }
