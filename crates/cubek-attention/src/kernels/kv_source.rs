@@ -163,7 +163,8 @@ mod tests {
         assert_eq!(attention(dense(), float()), None);
         let packed_queries = AttentionQueries::Packed {
             query: tensor(&[3, 4, 8], f32),
-            offsets: tensor(&[2], u32),
+            ends: tensor(&[1], u32),
+            longest: 3,
             lengths: lengths(),
         };
         assert_eq!(

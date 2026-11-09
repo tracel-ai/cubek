@@ -22,10 +22,13 @@ pub enum AttentionQueries {
         lengths: PlainTensor,
     },
     /// The users' queries one after another, `[Σ q_b, h, d]`: user `b`'s are
-    /// `offsets[b] .. offsets[b + 1]` along the first dim, of the `u32` `offsets` `[b + 1]`.
+    /// `ends[b - 1] .. ends[b]` along the first dim (from `0` for the first), of the `u32`
+    /// cumulative counts `ends` `[b]`. `longest` is the most queries any user has, which the
+    /// launch's grid covers.
     Packed {
         query: PlainTensor,
-        offsets: PlainTensor,
+        ends: PlainTensor,
+        longest: usize,
         lengths: PlainTensor,
     },
 }

@@ -9,7 +9,9 @@ Every attention goes through one entry, `AttentionTensors::attention(client, que
 
 - `Dense`: every user's `q` queries, `[b, h, q, d]`.
 - `Packed`: the users' queries one after another, `[Σ q_b, h, d]`, user `b`'s queries
-  `offsets[b] .. offsets[b + 1]` along the first dim, of a `u32` `offsets` `[b + 1]`.
+  `ends[b - 1] .. ends[b]` along the first dim (from `0` for the first), of the `u32` cumulative
+  counts `ends` `[b]`, and `longest`, the most queries any user has, which the launch's grid
+  covers.
 
 A decode step is either kind with one query per user.
 
