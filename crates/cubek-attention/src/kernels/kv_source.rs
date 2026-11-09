@@ -14,27 +14,27 @@ pub const PAGED_PACKED_UNREAD: Refusal = Refusal::Declined {
     why: "the packed attention reads a packed cache laid out as sequences, not in pages",
 };
 
-/// The keys and values an attention reads, and where each user's positions lie in them.
+/// The keys and values an attention reads, and where each sequence's positions lie in them.
 ///
 /// Three independent choices, each of which combines with the others:
 /// - what is stored, the [`cache`](Self::cache): float keys and values, or a packed cache;
-/// - where a position lies, the [`pages`](Self::pages): along each user's own positions, or in pools
-///   of pages a table names;
-/// - which positions a user reads, the [`indices`](Self::indices): every attended one, or the
+/// - where a position lies, the [`pages`](Self::pages): along each sequence's own positions, or in
+///   pools of pages a table names;
+/// - which positions a sequence reads, the [`indices`](Self::indices): every attended one, or the
 ///   ones its list names.
 ///
-/// A source only says how a tile of positions `[p, p + T)` of user `b` and key head `h` is
+/// A source only says how a tile of positions `[p, p + T)` of sequence `b` and key head `h` is
 /// loaded: the attention gives the same answer wherever the pages break, so neither the pages nor
 /// the index list is an axis of the attention's space.
 #[derive(Debug, Clone)]
 pub struct KvSource {
     pub cache: AttentionCache,
-    /// The `u32` table `[b, pages_per_sequence]` naming each user's pages in order: user `b`'s
-    /// position `s` lies in page `pages[b, s / page_size]`, and the cache's buffers are pools of
-    /// pages, `[pages, kv, page_size, ·]`. `None` where the buffers are `[b, kv, s, ·]`.
+    /// The `u32` table `[b, pages_per_sequence]` naming each sequence's pages in order: sequence
+    /// `b`'s position `s` lies in page `pages[b, s / page_size]`, and the cache's buffers are pools
+    /// of pages, `[pages, kv, page_size, ·]`. `None` where the buffers are `[b, kv, s, ·]`.
     pub pages: Option<PlainTensor>,
-    /// The `u32` positions `[b, n]` each user reads, in order. `None` where a user reads every
-    /// position its length attends.
+    /// The `u32` positions `[b, n]` each sequence reads, in order. `None` where a sequence reads
+    /// every position its length attends.
     pub indices: Option<PlainTensor>,
 }
 
@@ -72,7 +72,7 @@ impl KvSource {
         }
     }
 
-    /// The same source, each user reading the positions `indices` lists
+    /// The same source, each sequence reading the positions `indices` lists
     /// ([`indices`](Self::indices)).
     pub fn indexed(self, indices: PlainTensor) -> Self {
         Self {
@@ -89,7 +89,7 @@ impl KvSource {
         }
     }
 
-    /// Keys each user holds, attended or not: a pool's are its table's pages.
+    /// Keys each sequence holds, attended or not: a pool's are its table's pages.
     pub(crate) fn seq_kv(&self) -> usize {
         let positions = match &self.cache {
             AttentionCache::Float { key, .. } => key.shape()[2],

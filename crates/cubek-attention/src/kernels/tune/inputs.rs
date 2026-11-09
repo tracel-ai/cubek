@@ -187,14 +187,6 @@ impl AttentionTuneInputs {
         }
     }
 
-    /// Query positions of a sequence: the query's, or the longest run.
-    fn queries(&self) -> usize {
-        match &self.query_runs {
-            Some((_, longest)) => *longest,
-            None => self.query.shape()[2],
-        }
-    }
-
     /// Query heads, and the elements of a query: the query's second and last dims either way.
     fn heads_and_dim(&self) -> (usize, usize) {
         let q = self.query.shape();
@@ -212,7 +204,11 @@ impl AttentionTuneInputs {
     pub(super) fn many_queries_key(&self) -> AttentionKey {
         let (queries, keys) = match self.attended {
             AttendedKeys::Lengths => (AttentionKey::CHUNK_QUERIES, AttentionKey::CHUNK_PREFIX),
-            AttendedKeys::Every => (self.queries(), self.keys()),
+            // Query positions of a sequence: the query's, or the longest run.
+            AttendedKeys::Every => match &self.query_runs {
+                Some((_, longest)) => (*longest, self.keys()),
+                None => (self.query.shape()[2], self.keys()),
+            },
         };
         self.key_of(queries, keys)
     }

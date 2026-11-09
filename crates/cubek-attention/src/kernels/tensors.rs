@@ -134,11 +134,22 @@ impl AttentionTensors {
                 ends,
                 longest,
                 lengths,
-            } => (
-                Self::sequences_of(&query, &ends),
-                lengths,
-                Some((ends, longest)),
-            ),
+            } => {
+                // Every sequence's queries end to end, `[Σ q_b, h, d]`, viewed as a query of each
+                // sequence `ends` counts, `[b, h, Σ q_b, d]`, the batch at stride zero: each
+                // sequence's run of it is placed by its entry of `ends` as the launch binds it.
+                let (shape, strides) = (&query.binding.shape, &query.binding.strides);
+                assert_eq!(shape.len(), 3, "packed queries are [Σ q_b, h, d]");
+                assert!(
+                    ends.elem == Self::COUNTER && ends.shape().rank() == 1,
+                    "the ends of packed queries are u32 [b]"
+                );
+                let sequences = query.viewed(Metadata::new(
+                    [ends.shape()[0], shape[1], shape[0], shape[2]],
+                    [0, strides[1], strides[0], strides[2]],
+                ));
+                (sequences, lengths, Some((ends, longest)))
+            }
         };
         if kv.indices.is_some() {
             return Err(INDEXED_KEYS_UNREAD);
@@ -153,26 +164,6 @@ impl AttentionTensors {
         let group = Self::group(&query, kv.num_kv_heads())?;
         Ok(Self::assemble(
             client, query, group, kv, lengths, scoring, query_runs,
-        ))
-    }
-
-    /// `query`, every sequence's queries end to end `[Σ q_b, h, d]`, viewed as a query of each of
-    /// the sequences `ends` counts, `[b, h, Σ q_b, d]`, the batch at stride zero: each sequence's
-    /// run of it is placed by its entry of `ends` as the launch binds it.
-    ///
-    /// # Panics
-    ///
-    /// A query not of rank three, or `ends` not a `u32` of rank one.
-    fn sequences_of(query: &PlainTensor, ends: &PlainTensor) -> PlainTensor {
-        let (shape, strides) = (&query.binding.shape, &query.binding.strides);
-        assert_eq!(shape.len(), 3, "packed queries are [Σ q_b, h, d]");
-        assert!(
-            ends.elem == Self::COUNTER && ends.shape().rank() == 1,
-            "the ends of packed queries are u32 [b]"
-        );
-        query.viewed(Metadata::new(
-            [ends.shape()[0], shape[1], shape[0], shape[2]],
-            [0, strides[1], strides[0], strides[2]],
         ))
     }
 
@@ -364,7 +355,7 @@ impl AttentionTensors {
     /// The tensors of an attention of `query`, `group` heads a key head, over `kv`: the output
     /// allocated, and the query and the output viewed along the query axis. Where `query_runs`
     /// says every sequence's queries lie end to end, the output does too, `[Σ q_b, h, dv]`, viewed
-    /// as the query is ([`sequences_of`](Self::sequences_of)), and the queries are read along
+    /// as the query is, and the queries are read along
     /// their positions.
     fn assemble(
         client: &Client,
