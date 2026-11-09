@@ -15,6 +15,10 @@ pub const PACKED_QUERIES_UNREAD: Refusal = Refusal::Declined {
 ///
 /// A decode step is either kind with one query a user.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one per launch, held by value as the launch's other operands are; both arms are tensors"
+)]
 pub enum AttentionQueries {
     /// Every user's `q` queries, `[b, h, q, d]`.
     Dense {

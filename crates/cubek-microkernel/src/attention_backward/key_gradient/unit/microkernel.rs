@@ -16,7 +16,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// queries; every tile is already windowed to it. The bias is where the masking lies, read at each
 /// score's own coordinates.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn unit_key_gradient_microkernel<EA: Float>(
     keys: &Region,
     key_gradient: &Tile,

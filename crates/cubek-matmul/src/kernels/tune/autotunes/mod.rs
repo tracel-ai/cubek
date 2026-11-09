@@ -29,12 +29,14 @@
 //!
 //! # The block-scaled autotune
 //!
-//! A third autotune, [`MatmulAutotune::BlockScaled`], is reached only by naming
-//! [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores). Its kernel
-//! multiplies two packed inputs as they are stored on the device's block-scaled instruction of
-//! their format: NVFP4's 4-bit by 4-bit, or any other the device has. Autotune never sends a
-//! product there: a packed product under a policy goes where every other packed product goes. The
-//! autotune races only that kernel's settings, which all give the same numbers.
+//! A third autotune, [`MatmulAutotune::BlockScaled`], multiplies two packed inputs as they are
+//! stored on the device's block-scaled instruction of their format: NVFP4's 4-bit by 4-bit, or any
+//! other the device has. Naming
+//! [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores) reaches it at
+//! any rows; autotune sends a product there past the few-rows bound, where both inputs already
+//! arrive in a format that instruction reads, so taking it rounds nothing. A decode's rows stay on
+//! the few-rows autotune, bound by the weight's bytes either way. The autotune races only that
+//! kernel's settings, which all give the same numbers.
 //!
 //! The line is [`FLOAT_FEW_ROWS`] for a float product and [`QUANTIZED_FEW_ROWS`] for a packed
 //! one, each a **rule** rather than a measurement: a staged kernel can be competitive on

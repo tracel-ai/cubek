@@ -34,8 +34,27 @@ pub fn measured_autotune(
     }
     match Inputs::of(problem, hw) {
         Inputs::Float => Some(MatmulAutotune::new(problem)),
-        Inputs::Streamed => Some(MatmulAutotune::packed(problem)),
+        Inputs::Streamed => Some(packed_autotune(problem, hw)),
         Inputs::Unread => None,
+    }
+}
+
+/// The autotune a product of streamed packed inputs measures on: the block-scaled one past the
+/// few-rows bound where the device's block-scaled instruction reads both inputs as stored
+/// ([`block_scaled_tensor_cores_serve`]), the one its rows go to otherwise
+/// ([`MatmulAutotune::packed`]).
+///
+/// Two packed inputs that instruction reads are already in its format, so taking it rounds
+/// nothing the product was not given: the choice is the kernel's alone, and past a decode's rows
+/// the instruction's four-bit steps contract four times the `K` a decoded stage does from the same
+/// bytes. At a decode's rows the product is bound by the weight's bytes, which the few-rows
+/// candidates read as well, so they keep it.
+fn packed_autotune(problem: &MatmulProblem, hw: &Hardware) -> MatmulAutotune {
+    match MatmulAutotune::packed(problem) {
+        MatmulAutotune::ManyRows if block_scaled_tensor_cores_serve(problem, hw) => {
+            MatmulAutotune::BlockScaled
+        }
+        rows => rows,
     }
 }
 
@@ -46,8 +65,9 @@ pub fn measured_autotune(
 /// routines, and never measures. A `Specific` names its kernel.
 ///
 /// Float inputs are read by the kernel the strategy chooses. Packed inputs under schemes the
-/// kernels stream are read as they are stored by the plane shuffle at one row and by the kernel a
-/// pin names; elsewhere they are decoded first
+/// kernels stream are read as they are stored by the plane shuffle at one row, by the kernel a
+/// pin names, and by autotune's candidates, past a decode's rows on the block-scaled tensor cores
+/// where those read both inputs ([`packed_autotune`]); elsewhere they are decoded first
 /// and read by the kernel the strategy chooses for float inputs. Where a packed input's scheme is
 /// one no kernel here reads, the framework dequantizes the packed inputs first. Which input is
 /// packed never matters.
@@ -149,7 +169,7 @@ fn packed_plan(
     // What every narrow candidate counts, which is not the trailing extent.
     let single_row = problem.streamed_rows == Some(1);
     match strategy {
-        Autotune => Ok(MatmulAutotune::packed(problem).plan(groups)),
+        Autotune => Ok(packed_autotune(problem, hw).plan(groups)),
         // The packed plane routine with the heuristic's own fallback behind it, since it can still
         // decline a contraction its steps do not close, which no rule here sees.
         Heuristic(H::Tile) if single_row => Ok(Box::new(InOrder::new(vec![

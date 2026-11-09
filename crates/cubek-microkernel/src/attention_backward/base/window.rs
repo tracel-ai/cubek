@@ -33,7 +33,7 @@ impl ScoreWindows {
         #[comptime] axes: Vec<Axis>,
         #[comptime] holder: ScoreHolder,
     ) -> ComptimeOption<ScoreWindows> {
-        match comptime!(holder) {
+        match holder {
             ScoreHolder::Window => {
                 ComptimeOption::new_Some(ScoreWindows::open::<EA, ES>(walk, axes))
             }
@@ -84,7 +84,7 @@ impl ScoreWindows {
         #[comptime] holder: ScoreHolder,
         #[comptime] score: PlaneFragmentMicrokernel,
     ) -> ComptimeOption<Tile> {
-        match comptime!(holder) {
+        match holder {
             ScoreHolder::Fragments => ComptimeOption::new_Some(Tile::scratch::<ES>(
                 walk,
                 comptime!(vec![S, Q]),
