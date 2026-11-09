@@ -181,6 +181,11 @@ impl ConvTensors {
         })
     }
 
+    /// The client these tensors live on.
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
     /// The problem these tensors state.
     pub fn problem(&self) -> ConvProblem {
         let (input, rhs, out) = (&self.input.shape, &self.rhs.shape, &self.out.shape);

@@ -2,11 +2,12 @@ use super::{B, ConvOperation, OH, OW, RH, RW};
 use cubecl::tile::layout::PhysicalAxisMap;
 use cubecl::tile::layout::Scale;
 use cubecl::tile::{Axis, Projection};
+use serde::{Deserialize, Serialize};
 
 /// Where each output position reads its input: `position = out * stride + tap * dilation -
 /// padding` along each spatial dimension. The data backward reads the gradient the other way,
 /// `position = out - tap * dilation + padding`, at stride 1. The one home of those formulas.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ConvWindow {
     pub stride: [usize; 2],
     pub dilation: [usize; 2],

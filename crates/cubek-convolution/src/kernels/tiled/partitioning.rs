@@ -314,6 +314,11 @@ impl ConvPartitioning {
         self.block.bytes(elements, self.ring)
     }
 
+    /// Stages one cube walks over the whole contraction.
+    pub fn stages(&self) -> usize {
+        self.contracted.div_ceil(self.block.depth)
+    }
+
     /// The ring the launch holds.
     pub fn ring(&self) -> StageRing {
         self.ring
@@ -327,8 +332,7 @@ impl ConvPartitioning {
     /// What one cube moves and computes: the cube's box of the output read over the whole
     /// contraction and written once, the cells its edge cuts short counted as spent.
     pub fn staging(&self, elements: &MatmulOperands<ElemType>) -> CubeStaging {
-        let ConvBlock { columns, depth, .. } = self.block;
-        let (rows, columns) = (self.block.positions() as u64, columns as u64);
+        let (rows, columns) = (self.block.positions() as u64, self.block.columns as u64);
         let contracted = self.contracted as u64;
         let size = |operand| elements.get(operand).size();
         let stream = |bytes: u64, run: usize| GlobalStream {
@@ -351,7 +355,7 @@ impl ConvPartitioning {
                 rows * columns * size(MatmulOperand::Out) as u64,
                 self.out_run * size(MatmulOperand::Out),
             )],
-            stages: self.contracted.div_ceil(depth) as u64,
+            stages: self.stages() as u64,
             stages_in_flight: self.ring.stages_in_flight.get() as u32,
             drain_atomics: 0,
         }

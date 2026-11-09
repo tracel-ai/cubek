@@ -16,6 +16,7 @@ mod partitioning;
 mod problem;
 mod routines;
 mod tensors;
+mod tune;
 mod window;
 
 pub use binding::*;
@@ -26,4 +27,5 @@ pub use partitioning::*;
 pub use problem::*;
 pub use routines::*;
 pub use tensors::*;
+pub use tune::*;
 pub use window::*;

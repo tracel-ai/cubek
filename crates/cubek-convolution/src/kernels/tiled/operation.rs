@@ -4,6 +4,7 @@ use cubecl::tile::Axis;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::{Shape, Strides};
 use cubek_microkernel::matmul::{MatmulAxes, MatmulOperands};
+use serde::{Deserialize, Serialize};
 
 /// What a cmma fragment load over a step of taps and channels is declined with.
 pub const CMMA_STEP_ACROSS_TAPS: Refusal = Refusal::Declined {
@@ -18,7 +19,7 @@ pub const CONV_PERMUTED_TILED: Refusal = Refusal::Declined {
 
 /// What a launch computes. Every operation contracts the same seven-axis space through the same
 /// gathered input; only the roles of the axes move.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ConvOperation {
     /// `out[b, oh, ow, co]` from the input and the weight, contracted over the taps and the
     /// channels.
