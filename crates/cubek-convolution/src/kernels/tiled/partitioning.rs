@@ -103,7 +103,7 @@ impl ConvTiles {
             instruction: (m, n, k),
             fragments: (plane.settings.along_m.get(), plane.settings.along_n.get()),
             planes: settings.planes,
-            across: settings.planes_across.max(1),
+            across: settings.planes_across.get(),
             step,
             stage_steps: settings.stage_steps,
             ring: settings.ring,

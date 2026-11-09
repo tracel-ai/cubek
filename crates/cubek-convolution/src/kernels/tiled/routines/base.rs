@@ -1,5 +1,6 @@
 use super::CubeStagedConvRoutine;
 use crate::kernels::tiled::{ConvProblem, ConvRoutine, ConvTensors};
+use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::plane::{
     PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
@@ -68,7 +69,7 @@ pub struct ConvSettings {
     pub planes: (usize, usize),
     /// Planes a cube holds along the across axis (OH in a forward), each a row group of its own
     /// over the one stage of the rhs the cube's planes share.
-    pub planes_across: usize,
+    pub planes_across: NonZeroUsize,
     /// Instruction steps of the contraction one stage holds, capped by what the problem has.
     pub stage_steps: usize,
     /// Stages a cube holds at once: one fills then contracts, two fill the next while contracting.
@@ -83,7 +84,7 @@ impl ConvSettings {
             instruction: PlaneFragmentTransport::Cmma,
             fragments,
             planes,
-            planes_across: 1,
+            planes_across: NonZeroUsize::MIN,
             stage_steps: 4,
             ring: StageRing::SINGLE,
             lines,
@@ -101,9 +102,13 @@ impl ConvSettings {
 
     /// These settings with `planes` planes along the across axis, a cube then covering that many
     /// of its positions with each weight stage.
+    ///
+    /// # Panics
+    ///
+    /// On a count of zero.
     pub const fn across(self, planes: usize) -> Self {
         Self {
-            planes_across: planes,
+            planes_across: NonZeroUsize::new(planes).expect("a cube holds a plane across"),
             ..self
         }
     }
@@ -187,7 +192,7 @@ impl core::fmt::Display for ConvSettings {
             self.stage_steps
         )?;
         write!(f, "{}", self.ring)?;
-        if self.planes_across > 1 {
+        if self.planes_across.get() > 1 {
             write!(f, " across={}", self.planes_across)?;
         }
         match self.lines {
