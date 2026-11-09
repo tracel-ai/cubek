@@ -1330,3 +1330,182 @@ fn a_weight_backward_on_the_unit_routine_is_refused_by_name() {
     };
     assert!(message.contains("weight backward"), "{message}");
 }
+
+/// Where the weight gradient's buffer holds its cells.
+#[derive(Clone, Copy, Debug)]
+enum ProbeOut {
+    /// `[co, kh, kw, ci]` one after another, the layout of the weight.
+    Weight,
+    /// `[kh, kw, ci, co]` one after another, so the routine's output view is dense.
+    ViewDense,
+}
+
+/// The unit routine with the weight backward let through, which is declined where it is served.
+fn unit_weight_probe() -> Strategy {
+    Strategy::Tile {
+        routine: ConvRoutineKind::UnitRegistersWeightBackwardProbe,
+        settings: None,
+    }
+}
+
+/// The cells of the weight gradient of `problem` through the unit routine that differ from the
+/// host's, as `(co, rh, rw, ci, got, want)`, over an output that starts at `fill`.
+fn probe_weight_grad(
+    problem: &Conv2dProblem,
+    fill: f32,
+    layout: ProbeOut,
+) -> Vec<(usize, usize, usize, usize, f32, f32)> {
+    let client = client();
+    let element = problem.element.elem_type();
+    let [batch, channels, h, w] = problem.input_shape;
+    let [filters, _, kh, kw] = problem.weight_shape;
+    let [oh, ow] = problem.out_extent();
+    let (input_shape, grad_shape) = ([batch, h, w, channels], [batch, oh, ow, filters]);
+    let (input_values, grad_values) = (
+        small_integers(input_shape.iter().product(), 1),
+        small_integers(grad_shape.iter().product(), 2),
+    );
+    let expected = naive_weight_grad(
+        (&input_values, input_shape),
+        (&grad_values, grad_shape),
+        [kh, kw],
+        &problem.args,
+    );
+    let cells = filters * kh * kw * channels;
+    let strides = match layout {
+        ProbeOut::Weight => [kh * kw * channels, kw * channels, channels, 1],
+        ProbeOut::ViewDense => [1, kw * channels * filters, channels * filters, filters],
+    };
+    let storage = TestInput::builder(client.clone(), [cells])
+        .dtype(element)
+        .custom(vec![fill; cells])
+        .generate_without_host_data();
+    let weight_grad = TensorHandle::new(
+        storage.handle,
+        vec![filters, kh, kw, channels],
+        Strides::new(&strides),
+        element,
+    );
+    let inputs = ConvolutionInputs::BackwardWeight {
+        input: InputBinding::new(
+            bound(&client, input_shape, input_values, Binding::Dense, element),
+            element,
+        ),
+        out_grad: InputBinding::new(
+            bound(&client, grad_shape, grad_values, Binding::Dense, element),
+            element,
+        ),
+        weight_grad: weight_grad.clone().binding(),
+    };
+    let outcome = launch_and_capture_outcome(&client, &[&weight_grad.handle], |c| {
+        match launch_ref::<2>(
+            &unit_weight_probe(),
+            c,
+            inputs,
+            problem.args.clone(),
+            dtypes_of(element),
+        ) {
+            Ok(()) => ExecutionOutcome::Executed,
+            Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
+        }
+    });
+    if let ExecutionOutcome::CompileError(e) = outcome {
+        panic!("the probe launch was refused: {e}");
+    }
+    let actual = HostData::from_tensor_handle(&client, weight_grad, HostDataType::F32);
+    let mut wrong = Vec::new();
+    for o in 0..filters {
+        for ry in 0..kh {
+            for rx in 0..kw {
+                for i in 0..channels {
+                    let want = expected[((o * kh + ry) * kw + rx) * channels + i];
+                    let got = actual.get_f32(&[o, ry, rx, i]);
+                    if (got - want).abs() > GRAD_EPS {
+                        wrong.push((o, ry, rx, i, got, want));
+                    }
+                }
+            }
+        }
+    }
+    wrong
+}
+
+/// A panic naming each probe that differs, with every wrong cell as `[co, rh, rw, ci] got/want`.
+fn enforce_probes(probes: &[(String, Vec<(usize, usize, usize, usize, f32, f32)>)]) {
+    let report: Vec<String> = probes
+        .iter()
+        .filter(|(_, wrong)| !wrong.is_empty())
+        .map(|(label, wrong)| {
+            let cells: Vec<String> = wrong
+                .iter()
+                .map(|(o, y, x, i, got, want)| format!("[{o},{y},{x},{i}] {got}/{want}"))
+                .collect();
+            format!("{label}: {} wrong: {}", wrong.len(), cells.join(" "))
+        })
+        .collect();
+    assert!(report.is_empty(), "\n{}", report.join("\n"));
+}
+
+/// E1: one channel each way and a 1x1 tap, from an output at 0 and at 100. Wrong at 0 as well
+/// points at the contraction or the roles; right at 0 only, at the seed read or the commit.
+#[test]
+fn cpu_wgrad_probe_e1_single_cell_seed_0_vs_100() {
+    let problem = conv_f32(1, (1, 1), [3, 3], [1, 1], ([1, 1], [0, 0], [1, 1]));
+    let probes: Vec<_> = [0.0, 100.0]
+        .into_iter()
+        .map(|fill| {
+            (
+                format!("seed {fill}"),
+                probe_weight_grad(&problem, fill, ProbeOut::Weight),
+            )
+        })
+        .collect();
+    enforce_probes(&probes);
+}
+
+/// E2: two input channels and one output channel, then the reverse. Cells that hold the other
+/// channel's value show a swap of the rows and the columns.
+#[test]
+fn cpu_wgrad_probe_e2_channel_roles_ci2_co1_and_ci1_co2() {
+    let probes: Vec<_> = [(2, 1), (1, 2)]
+        .into_iter()
+        .map(|(ci, co)| {
+            let problem = conv_f32(1, (ci, co), [3, 3], [1, 1], ([1, 1], [0, 0], [1, 1]));
+            (
+                format!("ci {ci} co {co}"),
+                probe_weight_grad(&problem, 0.0, ProbeOut::Weight),
+            )
+        })
+        .collect();
+    enforce_probes(&probes);
+}
+
+/// E3: two channels each way over a buffer in the weight's layout and over one whose output view
+/// is dense. Right in `view dense` and wrong in `weight` blames the strided, permuted output.
+#[test]
+fn cpu_wgrad_probe_e3_output_view_dense_vs_permuted() {
+    let problem = conv_f32(1, (2, 2), [3, 3], [1, 1], ([1, 1], [0, 0], [1, 1]));
+    let probes: Vec<_> = [ProbeOut::Weight, ProbeOut::ViewDense]
+        .into_iter()
+        .map(|layout| {
+            (
+                format!("{layout:?}"),
+                probe_weight_grad(&problem, 0.0, layout),
+            )
+        })
+        .collect();
+    enforce_probes(&probes);
+}
+
+/// E4: a 3x3 filter over a 5x5 input, one channel each way. The wrong cells name their taps: only
+/// those off the origin implicate a gather moved by a batch coordinate.
+#[test]
+fn cpu_wgrad_probe_e4_taps_3x3_filter_one_channel() {
+    let problem = conv_f32(1, (1, 1), [5, 5], [3, 3], ([1, 1], [0, 0], [1, 1]));
+    let wrong = probe_weight_grad(&problem, 0.0, ProbeOut::Weight);
+    let taps: Vec<_> = (0..3)
+        .flat_map(|y| (0..3).map(move |x| (y, x)))
+        .filter(|&(y, x)| wrong.iter().any(|&(_, ry, rx, ..)| (ry, rx) == (y, x)))
+        .collect();
+    enforce_probes(&[(format!("taps wrong (rh, rw): {taps:?}"), wrong)]);
+}
