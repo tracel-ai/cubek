@@ -23,6 +23,8 @@ pub mod gated_delta;
 pub mod interpolate;
 #[cfg(feature = "matmul")]
 pub mod matmul;
+#[cfg(feature = "random")]
+pub mod random;
 #[cfg(feature = "reduce")]
 pub mod reduce;
 #[cfg(feature = "rms-norm")]

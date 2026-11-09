@@ -26,10 +26,11 @@ full = ["extended", "benchmarks"]
 benchmarks = ["dep:cubek-test-utils", "cubecl/test-runtime"]
 
 [dependencies]
+cubek-microkernel = { workspace = true, features = ["random"] }
 cubek-std = { workspace = true }
 cubek-test-utils = { workspace = true, optional = true }
 
-cubecl = { workspace = true }
+cubecl = { workspace = true, features = ["tile"] }
 cubecl-common = { workspace = true }
 cubecl-environment = { workspace = true }
 
