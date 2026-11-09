@@ -2,7 +2,7 @@ use crate::definition::Transform;
 use cubecl::tile::{Axis, layout::PhysicalAxisMap};
 
 /// A source coordinate `(output * scale + offset) / divisor`, in lowest terms.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Rational {
     pub scale: usize,
     pub offset: isize,

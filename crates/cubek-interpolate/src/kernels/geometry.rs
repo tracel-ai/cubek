@@ -1,5 +1,5 @@
 use super::coordinate::gcd;
-use crate::definition::InterpolateBlueprint;
+use crate::kernels::CubeInterpolateRoutineSettings;
 use cubek_std::selector::divisor_at_most;
 
 /// How the output is spread over cubes, over a cube's planes, and over a plane's units.
@@ -9,8 +9,8 @@ use cubek_std::selector::divisor_at_most;
 /// `unit_channels * channel_block` adjacent elements at a time. Units ride the output columns only
 /// for whatever width the channel axis cannot absorb.
 ///
-/// The blueprint states everything but the unit split, which is derived here because
-/// [`interpolate_space`](super::space::interpolate_space) requires
+/// The settings state everything but the unit split, which is derived here because
+/// [`InterpolateSpace::levels`](super::space::InterpolateSpace::levels) requires
 /// `unit_cols * unit_channels == units` exactly and most stated combinations would not hold it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TileGeometry {
@@ -26,18 +26,19 @@ pub struct TileGeometry {
 }
 
 impl TileGeometry {
-    /// Build a geometry from a resolved blueprint, solving the unit split around it.
+    /// The geometry `settings` state over `channels` on planes of `units`, the unit split solved
+    /// around them.
     ///
-    /// The blueprint's channel block is the unit's channel run, `None` to solve it with the rest
+    /// The settings' channel block is the unit's channel run, `None` to solve it with the rest
     /// of the split.
-    pub fn from_blueprint(blueprint: InterpolateBlueprint, channels: usize, units: usize) -> Self {
+    pub fn new(settings: &CubeInterpolateRoutineSettings, channels: usize, units: usize) -> Self {
         let (unit_cols, unit_channels, channel_block) =
-            unit_split(channels, units, blueprint.channel_block);
+            unit_split(channels, units, settings.channel_block);
         Self {
-            planes_per_cube: blueprint.planes_per_cube,
-            rows_per_plane: blueprint.rows_per_plane,
+            planes_per_cube: settings.planes,
+            rows_per_plane: settings.rows_per_plane,
             unit_cols,
-            cols_per_unit: blueprint.cols_per_unit,
+            cols_per_unit: settings.cols_per_unit,
             unit_channels,
             channel_block,
         }
@@ -91,7 +92,11 @@ fn unit_split(channels: usize, units: usize, block: Option<usize>) -> (usize, us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::InputStage;
+
+    /// The settings these tests state: `planes` a cube of `rows` rows, `cols` columns a unit.
+    fn settings(planes: usize, rows: usize, cols: usize) -> CubeInterpolateRoutineSettings {
+        CubeInterpolateRoutineSettings::new(planes, rows, cols)
+    }
 
     /// The split covers the plane exactly, which is what `interpolate_space` asserts.
     #[test]
@@ -122,8 +127,7 @@ mod tests {
     #[test]
     fn a_plane_of_one_unit_covers_every_channel() {
         for channels in [2, 3, 16] {
-            let blueprint = InterpolateBlueprint::new(InputStage::InPlace, 4, 8, 8);
-            let geometry = TileGeometry::from_blueprint(blueprint, channels, 1);
+            let geometry = TileGeometry::new(&settings(4, 8, 8), channels, 1);
             assert_eq!(geometry.unit_cols, 1);
             assert_eq!(geometry.unit_channels, 1);
             assert_eq!(geometry.channels_per_cube(), channels);
@@ -159,11 +163,10 @@ mod tests {
         assert_eq!(unit_cols * unit_channels, 32);
     }
 
-    /// The blueprint's choices reach the geometry untouched.
+    /// The settings reach the geometry untouched.
     #[test]
-    fn the_blueprint_states_every_tuning_choice() {
-        let blueprint = InterpolateBlueprint::new(InputStage::InPlace, 2, 4, 8);
-        let geometry = TileGeometry::from_blueprint(blueprint, 3, 32);
+    fn the_settings_state_every_tuning_choice() {
+        let geometry = TileGeometry::new(&settings(2, 4, 8), 3, 32);
         assert_eq!(geometry.planes_per_cube, 2);
         assert_eq!(geometry.rows_per_plane, 4);
         assert_eq!(geometry.cols_per_unit, 8);

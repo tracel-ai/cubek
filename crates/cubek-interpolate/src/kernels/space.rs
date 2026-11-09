@@ -1,10 +1,9 @@
-use super::geometry::TileGeometry;
-use cubecl::client::Client;
+use super::{coordinate::Rational, geometry::TileGeometry};
 use cubecl::tile::{
-    Axis, Level, Levels, Partitioning, Projection, RegisterBlock, Space,
+    Axis, Level, Levels, Partitioning, Projection, Space,
     layout::{Compaction, PhysicalAxisMap},
 };
-use cubecl::{CubeCount, CubeDim};
+use cubek_microkernel::interpolate::InterpolateWorkItem;
 
 pub const BATCH: Axis = Axis(0);
 pub const OUTPUT_H: Axis = Axis(1);
@@ -27,17 +26,7 @@ const LABELS: [(Axis, &str); 6] = [
     (CHANNEL, "c"),
 ];
 
-/// The register block the leaf runs under, which the device decides.
-pub fn register_block(client: &Client) -> RegisterBlock {
-    match client.properties().hardware.num_cpu_cores {
-        Some(_) => RegisterBlock::new(256).split_edge(),
-        None => RegisterBlock::new(64).component_fanout(),
-    }
-}
-
-/// The space one launch runs over, in the terms the kernel builds it from. The kernel's
-/// comptime argument, so the space the launch sizes its grid from is the space the kernel
-/// walks.
+/// The space one launch runs over, in the terms its partitioning is built from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct InterpolateSpace {
     pub batch: usize,
@@ -106,27 +95,19 @@ impl InterpolateSpace {
     pub fn partitioning(&self) -> Partitioning {
         Partitioning::new(self.space(), self.levels())
     }
+}
 
-    /// The grid this launch runs on: a cube per box of the output and per batch, the geometry's
-    /// planes in each.
-    pub fn grid(&self) -> (CubeCount, CubeDim) {
-        let geometry = self.geometry;
-        (
-            CubeCount::Static(
-                self.width.div_ceil(geometry.cols_per_cube()) as u32,
-                self.height.div_ceil(geometry.rows_per_cube()) as u32,
-                self.batch as u32,
-            ),
-            CubeDim::new_2d(self.plane_size as u32, geometry.planes_per_cube as u32),
-        )
+/// What one unit of `partitioning` is handed: its leaf's output positions, each its channel run.
+pub fn work_item(partitioning: &Partitioning) -> InterpolateWorkItem {
+    let leaf = partitioning.leaf();
+    let channels = leaf.extent(CHANNEL);
+    InterpolateWorkItem {
+        channels,
+        outputs: leaf.extent(OUTPUT_H) * leaf.extent(OUTPUT_W) * channels,
     }
 }
 
-pub fn input_projection(
-    row: super::coordinate::Rational,
-    col: super::coordinate::Rational,
-    radius: usize,
-) -> Projection {
+pub fn input_projection(row: Rational, col: Rational, radius: usize) -> Projection {
     Projection::new(
         &[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W, CHANNEL],
         &[
@@ -140,8 +121,8 @@ pub fn input_projection(
 
 /// The number of bytes the gathered input would require if staged into shared memory.
 pub fn stage_window_bytes(
-    row: super::coordinate::Rational,
-    col: super::coordinate::Rational,
+    row: Rational,
+    col: Rational,
     taps: usize,
     radius: usize,
     geometry: TileGeometry,
@@ -167,7 +148,7 @@ pub fn stage_window_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{InputStage, definition::InterpolateBlueprint};
+    use crate::kernels::CubeInterpolateRoutineSettings;
 
     /// A bicubic resize to a `128x128` map on a 32-unit plane, four planes of two rows each and
     /// four output columns a unit. The channel count is what the caller varies: it is the axis
@@ -180,8 +161,8 @@ mod tests {
             channels,
             plane_size: 32,
             taps: 4,
-            geometry: TileGeometry::from_blueprint(
-                InterpolateBlueprint::new(InputStage::InPlace, 4, 2, 4),
+            geometry: TileGeometry::new(
+                &CubeInterpolateRoutineSettings::new(4, 2, 4),
                 channels,
                 32,
             ),
