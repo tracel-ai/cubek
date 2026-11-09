@@ -78,10 +78,10 @@ pub enum MatmulKernel {
     #[serde(alias = "PlaneFold")]
     PlaneShuffle,
     /// Two packed inputs multiplied on the GPU's block-scaled tensor cores, both read as they are
-    /// stored: NVFP4, MXFP4, or any pair of formats the device has an instruction for. The inputs
-    /// a caller rounded to a format are its choice of what the product computes, so no policy runs
-    /// it. Named here for a benchmark or a test; two packed inputs a block-scaled instruction of
-    /// the GPU takes, only.
+    /// stored: NVFP4, MXFP4, or any pair of formats the device has an instruction for, at every
+    /// row count. Autotune reaches the same kernels past a decode's rows (`MatmulAutotune::
+    /// BlockScaled`); named, they serve a benchmark or a test at any rows. Two packed inputs a
+    /// block-scaled instruction of the GPU takes, only.
     // A strategy written down under the pin's earlier name still reads as this one.
     #[serde(alias = "Nvfp4TensorCores")]
     BlockScaledTensorCores,
