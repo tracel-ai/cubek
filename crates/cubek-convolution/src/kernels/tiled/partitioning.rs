@@ -2,9 +2,11 @@ use super::{ConvAlong, ConvProblem, ConvRoles, ConvSettings, OH, OW, RH, RW};
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::space::PlaneOrder;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{Axis, Levels, Partitioning, Space, StageStorage};
 use cubek_microkernel::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentMicrokernel};
+use cubek_microkernel::matmul::unit::UnitRegistersMicrokernel;
 use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, StageRing};
 
@@ -251,6 +253,60 @@ impl ConvPartitioning {
             },
             block,
             planes: tiles.planes.m.get() * tiles.planes.n.get() * tiles.across.get(),
+            contracted,
+        }
+    }
+
+    /// A plane of the launch for every box of the output, its units taking `blocks_per_plane` of
+    /// them along the columns in turns, each walking every contracted cell from global memory in
+    /// `microkernel`'s steps. Nothing is staged: the box a unit owns is what it reads for.
+    pub fn units(
+        problem: &ConvProblem,
+        microkernel: &UnitRegistersMicrokernel,
+        blocks_per_plane: usize,
+        order: PlaneOrder,
+    ) -> Self {
+        let roles = problem.operation.roles();
+        let axes = roles.axes();
+        let levels = microkernel
+            .tiling_over(&roles.contracted)
+            .units_distributed(axes.n, blocks_per_plane)
+            .launch_planes(
+                &[axes.m, axes.n, roles.across(), roles.batch()],
+                order.clone(),
+            )
+            .build();
+        let (rows, columns) = (microkernel.rows, microkernel.settings.columns.get());
+        let depth = microkernel.settings.depth.get();
+        let contracted = roles
+            .contracted
+            .iter()
+            .map(|&axis| match axis == axes.k {
+                true => problem.extent(axis).next_multiple_of(depth),
+                false => problem.extent(axis),
+            })
+            .product();
+        let along = |axis: Axis| match axes.dim(axis) {
+            Some(MatmulDim::K) => depth,
+            Some(MatmulDim::N) => columns,
+            _ => 1,
+        };
+        Self {
+            partitioning: Partitioning::new(problem.space(), levels),
+            runs: MatmulOperands {
+                lhs: along(roles.inner.lhs),
+                rhs: along(roles.inner.rhs),
+                out: 1,
+            },
+            ring: StageRing::SINGLE,
+            block: ConvBlock {
+                rows,
+                across: 1,
+                columns,
+                depth,
+            },
+            out_run: along(roles.inner.out),
+            planes: order.planes_per_cube(),
             contracted,
         }
     }

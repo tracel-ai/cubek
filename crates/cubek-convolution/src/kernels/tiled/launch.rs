@@ -31,6 +31,18 @@ pub trait ConvRoutine<M: Microkernel>:
         self.launch_prepared(&problem, tensors, prepared)
     }
 
+    /// The convolution `tensors` state, launched at the first of the routine's own settings that
+    /// prepares it on `hw`.
+    ///
+    /// # Errors
+    ///
+    /// Why the last setting declines it where none serves.
+    fn launch_first_served(&self, hw: &Hardware, tensors: ConvTensors) -> Result<(), Refusal> {
+        let problem = tensors.problem();
+        let prepared = self.prepare_first_served(hw, &problem)?;
+        self.launch_prepared(&problem, tensors, prepared)
+    }
+
     /// The convolution `tensors` state of `problem`, launched as `prepared` places it.
     ///
     /// # Errors

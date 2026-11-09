@@ -59,6 +59,23 @@ impl ConvProblem {
         }
     }
 
+    /// [`work_item`](Self::work_item) with the rhs's layout read off the roles: a register block
+    /// reads a rhs whose buffer runs along the contracted axis down it.
+    pub fn registers_work_item(&self) -> MatmulWorkItem {
+        let roles = self.operation.roles();
+        let rhs = match roles.inner.rhs == roles.axes().k {
+            true => MatmulLayout::Col,
+            false => MatmulLayout::Row,
+        };
+        MatmulWorkItem {
+            layouts: MatmulOperands {
+                rhs,
+                ..MatmulOperands::all(MatmulLayout::Row)
+            },
+            ..self.work_item()
+        }
+    }
+
     /// The seven axes of the contraction, in the order the operation lists them.
     pub fn space(&self) -> Space {
         Space::new(
