@@ -46,7 +46,10 @@ pub struct KvSource {
 )]
 pub enum AttentionCache {
     /// Float keys `[·, kv, s, d]` and values `[·, kv, s, dv]`.
-    Float { key: PlainTensor, value: PlainTensor },
+    Float {
+        key: PlainTensor,
+        value: PlainTensor,
+    },
     /// A packed cache, decoded as it is read.
     Packed(PackedAttentionCache),
 }
@@ -182,7 +185,8 @@ mod tests {
         };
         let bits = KvBitWidths { key: 4, value: 4 };
         let packed = PackedAttentionCache::new(operand(), operand(), bits, None);
-        let paged_packed = KvSource::new(AttentionCache::Packed(packed)).paged(tensor(&[1, 2], u32));
+        let paged_packed =
+            KvSource::new(AttentionCache::Packed(packed)).paged(tensor(&[1, 2], u32));
         assert_eq!(attention(dense(), paged_packed), Some(PAGED_PACKED_UNREAD));
     }
 }
