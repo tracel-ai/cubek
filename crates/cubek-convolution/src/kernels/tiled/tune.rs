@@ -525,4 +525,46 @@ mod tests {
         let key = key(5, [58, 58]);
         assert_eq!(ConvTuneKey::from(&ConvProblem::from(&key)), key);
     }
+
+    /// A view starting at an odd element narrows the key's width, and the launch the key's problem
+    /// prepares is the one the real problem prepares, so the candidate tuned is the one run.
+    #[test]
+    fn a_key_holds_the_width_a_view_start_leaves() {
+        let hw = nvidia();
+        let aligned = ConvProblem::dense(8, [58, 58], (64, 64), [3, 3], 1, F16);
+        let mut shifted = aligned.clone();
+        shifted.start_bytes.lhs = 2;
+        let (aligned_key, shifted_key) = (ConvTuneKey::from(&aligned), ConvTuneKey::from(&shifted));
+        assert_ne!(aligned_key, shifted_key);
+        for (problem, key) in [(&aligned, &aligned_key), (&shifted, &shifted_key)] {
+            for settings in ConvCandidate::list(&hw) {
+                let prepared = settings.prepared.prepare(
+                    &CubeStagedConvRoutine,
+                    &hw,
+                    problem,
+                    &settings.settings,
+                );
+                let real = prepared
+                    .ok()
+                    .map(|(blueprint, grid)| (blueprint, grid.launch.cube_dim));
+                assert_eq!(real, settings.blueprint(key), "{}", settings.settings);
+            }
+        }
+    }
+
+    /// The list and the set raced over it come out the same every time they are built.
+    #[test]
+    fn the_list_and_its_set_are_built_in_one_order() {
+        let hw = nvidia();
+        let names = |list: &[ConvCandidate]| {
+            list.iter()
+                .map(|candidate| candidate.settings.to_string())
+                .collect::<Vec<_>>()
+        };
+        let (first, second) = (ConvCandidate::list(&hw), ConvCandidate::list(&hw));
+        assert_eq!(names(&first), names(&second));
+        let checksum =
+            |list: Vec<ConvCandidate>| candidates(list.into(), hw.clone()).compute_checksum();
+        assert_eq!(checksum(first), checksum(second));
+    }
 }
