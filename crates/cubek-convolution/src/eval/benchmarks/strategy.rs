@@ -117,5 +117,13 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
                 settings: Some(CubeStagedConvRoutine::GRID_1X2_ON_2X2.mma()),
             },
         ),
+        CatalogEntry::new(
+            "cube_staged_mma_grid_1x2_on_2x2_double",
+            "Cube staged / Mma, lines, 1x2 on 2x2 planes, two stages in flight",
+            Strategy::Tile {
+                routine: ConvRoutineKind::CubeStaged,
+                settings: Some(CubeStagedConvRoutine::GRID_1X2_ON_2X2.mma().double_ring()),
+            },
+        ),
     ]
 }

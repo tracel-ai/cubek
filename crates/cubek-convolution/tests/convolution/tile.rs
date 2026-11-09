@@ -670,6 +670,17 @@ fn weight_grad_cube_staged_mma_grid_1x2_on_2x2() {
     );
 }
 
+/// The same setting with two stages in flight, at stride 2.
+#[test]
+fn weight_grad_cube_staged_mma_grid_1x2_on_2x2_double() {
+    check_weight_grad(
+        "cube_staged_mma_grid_1x2_on_2x2_double",
+        &conv(2, (64, 32), [12, 15], [3, 3], ([2, 2], [1, 1], [1, 1])),
+        Binding::Dense,
+        Binding::Dense,
+    );
+}
+
 /// A map one to three positions wide makes a step of two axes.
 macro_rules! weight_grad_mma_tests {
     ($($stem:ident: $problem:expr;)*) => {
