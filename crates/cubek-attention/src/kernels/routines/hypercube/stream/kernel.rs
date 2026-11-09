@@ -17,7 +17,6 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 /// so every run but the last holds the same steps whatever the keys. A cube whose run is empty
 /// touches no box and leaves at once.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
