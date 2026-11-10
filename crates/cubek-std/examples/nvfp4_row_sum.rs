@@ -17,13 +17,20 @@
 //!   in. Both drop the scales on this cubecl (their error column says so): timed, not trusted.
 //! - `dot`: the DSL's one-row product against a row of ones, the spelling its gemv takes.
 //!
+//! Under each row, the same one-row product written by hand, one plane a row as the DSL launches
+//! it: what `dot` would reach if the DSL's codegen were the hand kernel's, its reread of the lhs
+//! for every row included.
+//!
 //! ```sh
 //! cargo run --release -p cubek-std --example nvfp4_row_sum --features cubecl/hip
 //! ```
 //!
 //! `NVFP4_DEBUG=1` runs one small shape and prints the reduce's sums against their parts;
 //! `NVFP4_ROUNDS`, `NVFP4_PLANES`, `NVFP4_ROWS` and `NVFP4_CUBES_PER_PROCESSOR` (0 for a cube a
-//! group of rows) set the rounds and the raw kernel's launch.
+//! group of rows) set the rounds and the raw kernel's launch. `NVFP4_SHAPE` keeps one shape, and
+//! `NVFP4_DSL_LEAF_BLOCKS` deepens the DSL's leaf along `K` (four blocks by default), so its walk
+//! takes fewer steps. `CUBECL_DEBUG_PLIRON=<dir>` dumps every kernel's LLVM IR (`amdgpu.ll`) and
+//! ISA (`amdgpu.s`).
 
 #![allow(clippy::needless_range_loop)]
 
@@ -191,7 +198,9 @@ fn dsl_launch(
         .and_then(|v| v.parse().ok())
         .unwrap_or(BLOCK);
     let space = Space::new(&[(N, rows), (C, 1), (KB, k / BLOCK), (KI, BLOCK)]);
-    let levels = Levels::leaf(&[(N, 1), (C, 1), (KB, SCALES_PER_WORD), (KI, BLOCK)])
+    // `NVFP4_DSL_LEAF_BLOCKS` deepens a unit's leaf along `K`, so a walk takes fewer steps.
+    let leaf_blocks = env_usize("NVFP4_DSL_LEAF_BLOCKS", SCALES_PER_WORD);
+    let levels = Levels::leaf(&[(N, 1), (C, 1), (KB, leaf_blocks), (KI, BLOCK)])
         .units(&[(KB, plane)])
         .walk_every(&[KB])
         .launch_planes(
@@ -411,6 +420,73 @@ fn raw_rows<V: Size>(
         if lane == 0 {
             out[first_row + r] = total * lift;
         }
+    }
+}
+
+/// The eight values of `word` against the eight of `x` they meet, `x` the values `8w` to `8w + 7`
+/// as two lines: codes `j` and `j + 4` are one placed `f16` pair, so pair `j` meets `x[j]` and
+/// `x[j + 4]`.
+#[cube]
+fn word_dot(word: u32, lo: Vector<f32, Const<4>>, hi: Vector<f32, Const<4>>) -> f32 {
+    let mut sum = 0.0f32;
+    #[unroll]
+    for j in 0..4u32 {
+        let codes = word >> (4 * j);
+        let bits = ((codes & 0x0007_0007) << 9) | ((codes & 0x0008_0008) << 12);
+        let pair = Vector::<f32, Const<2>>::cast_from(Vector::<f16, Const<2>>::reinterpret(bits));
+        sum += pair.extract(0usize) * lo.extract(j as usize)
+            + pair.extract(1usize) * hi.extract(j as usize);
+    }
+    sum
+}
+
+/// The raw kernel as a one-row product against `x`, one plane a row as the DSL's launch has it:
+/// every line of words read beside the eight lines of `x` its values meet. What the DSL's `dot`
+/// spelling moves, written by hand: it says how much of that spelling's cost is the lhs it reads
+/// again for every row.
+#[cube(launch_unchecked)]
+fn raw_row_dot<V: Size>(
+    words: &Tensor<Vector<u32, V>>,
+    scales: &Tensor<u32>,
+    global: &Tensor<f32>,
+    x: &Tensor<Vector<f32, Const<4>>>,
+    out: &mut Tensor<f32>,
+    #[comptime] lines: usize,
+) {
+    let plane_dim = PLANE_DIM as usize;
+    let lane = UNIT_POS_PLANE as usize;
+    let row = CUBE_POS * (CUBE_DIM as usize / plane_dim) + UNIT_POS as usize / plane_dim;
+    let row_lines = lines * plane_dim;
+    let line_base = row * row_lines;
+    let scale_base = row * (row_lines / 2);
+
+    let mut sum = 0.0f32;
+    #[unroll]
+    for i in 0..lines {
+        let line = i * plane_dim + lane;
+        let words = words[line_base + line];
+        let pair = scales[scale_base + line / 2] >> (16 * (line % 2) as u32);
+        let scale_bits = ((pair & 0x7F) | ((pair & 0x7F00) << 8)) << 7;
+        let scale =
+            Vector::<f32, Const<2>>::cast_from(Vector::<f16, Const<2>>::reinterpret(scale_bits));
+        let mut blocks = Array::<f32>::new(2usize);
+        #[unroll]
+        for b in 0..2usize {
+            let mut block = 0.0f32;
+            #[unroll]
+            for w in 0..2usize {
+                let word = 2 * b + w;
+                let at = line * 8 + word * 2;
+                block += word_dot(words.extract(word), x[at], x[at + 1]);
+            }
+            blocks[b] = block;
+        }
+        sum += blocks[0] * scale.extract(0usize) + blocks[1] * scale.extract(1usize);
+    }
+
+    let total = plane_sum(sum);
+    if lane == 0 {
+        out[row] = total * global[0] * f32::new(PLACED_LIFT);
     }
 }
 
@@ -770,7 +846,12 @@ fn main() {
         "red×s er",
         "dot err"
     );
+    // `NVFP4_SHAPE` keeps one shape by name: what a compiler dump of one shape's kernels runs.
+    let only = std::env::var("NVFP4_SHAPE").ok();
     for (name, rows, k) in shapes {
+        if only.as_deref().is_some_and(|only| only != name) {
+            continue;
+        }
         assert!(rows.is_multiple_of(PLANES_PER_CUBE));
         assert!(k.is_multiple_of(VALUES_PER_STEP * plane));
         let host = Host::new(rows, k);
@@ -981,7 +1062,29 @@ fn main() {
         let gbs = |t: Duration| bytes as f64 / t.as_secs_f64() / 1e9;
         // Rounds in turn, the best of each kernel kept: on an APU whatever else runs shares the
         // bus, so a kernel's best round is the one least disturbed.
-        let mut best = [Duration::MAX; 6];
+        let raw_dot = |d: &Device| -> Prepared {
+            let client = client.clone();
+            let args = [&d.words, &d.scales, &d.global, &d.ones, &d.out].map(line_arg);
+            Box::new(move || unsafe {
+                let [words, scales, global, x, out] = args;
+                raw_row_dot::launch_unchecked(
+                    &client,
+                    CubeCount::new_1d((rows / PLANES_PER_CUBE) as u32),
+                    CubeDim::new_2d(plane as u32, PLANES_PER_CUBE as u32),
+                    4,
+                    words,
+                    scales,
+                    global,
+                    x,
+                    out,
+                    lines,
+                )
+            })
+        };
+        raw_dot(&data[0])();
+        let raw_dot_err = worst_error(&read_f32(&client, &data[0].out), &host);
+
+        let mut best = [Duration::MAX; 7];
         for _ in 0..env_usize("NVFP4_ROUNDS", 5) {
             let times = [
                 time(&client, copies, |c| plain(&data[c])),
@@ -990,12 +1093,13 @@ fn main() {
                 time(&client, copies, |c| dsl(&data[c])),
                 time(&client, copies, |c| product(&data[c])),
                 time(&client, copies, |c| dot(&data[c])),
+                time(&client, copies, |c| raw_dot(&data[c])),
             ];
             for (best, time) in best.iter_mut().zip(times) {
                 *best = (*best).min(time);
             }
         }
-        let [t_plain, t_loads, t_raw, t_dsl, t_product, t_dot] = best;
+        let [t_plain, t_loads, t_raw, t_dsl, t_product, t_dot, t_raw_dot] = best;
         // The read ceiling at this shape's own footprint.
         let at_size = memory_bound(
             &client,
@@ -1025,6 +1129,12 @@ fn main() {
             dsl_err,
             product_err,
             dot_err,
+        );
+        println!(
+            "{:<8} raw one-row product against x, one plane a row: {:.1} GB/s, err {:.1e}",
+            "",
+            gbs(t_raw_dot),
+            raw_dot_err
         );
     }
 }
