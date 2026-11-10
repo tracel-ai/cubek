@@ -395,11 +395,11 @@ mod tests {
     use cubek_std::autotune::priority_of;
     use std::cmp::Reverse;
 
-    fn key(batch: usize, gathered: [usize; 2]) -> ConvTuneKey {
+    fn key(batch: usize, gathered: [usize; 2], channels_out: usize) -> ConvTuneKey {
         ConvTuneKey::from(&ConvProblem::dense(
             batch,
             gathered,
-            (64, 64),
+            (64, channels_out),
             [3, 3],
             1,
             F16,
@@ -426,14 +426,15 @@ mod tests {
         blueprint.partitioning.block().rows
     }
 
-    /// Every grid is wide enough to fill the device, so only the boxes' fit sets the band.
-    const WIDE: usize = 8192;
+    /// Every grid is wide enough to fill the device, so only the boxes' fit sets the band, and
+    /// stays within the 65535 cubes a device takes along z.
+    const WIDE: usize = 4096;
 
     /// Seven 8-row instructions cover a map 56 wide whole, and the lead's boxes overhang it
     /// little: both are raced in the top band.
     #[test]
     fn a_map_56_wide_races_the_56_row_candidate_and_the_lead_together() {
-        let (hw, key) = (cmma_8x32_only(), key(WIDE, [12, 58]));
+        let (hw, key) = (cmma_8x32_only(), key(WIDE, [12, 58], 128));
         let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
         let lead = ConvSettings::new(8, ConvAlong::new(2, 2), ConvAlong::new(2, 2));
         assert_eq!(
@@ -447,7 +448,7 @@ mod tests {
     /// weight stage: such a candidate is raced in the top band.
     #[test]
     fn a_map_7_by_7_races_an_8_row_candidate_with_an_across_split_in_the_top_band() {
-        let key = key(WIDE, [9, 9]);
+        let key = key(WIDE, [9, 9], 64);
         let top: Vec<_> = ranked(&cmma_8x32_only(), &key)
             .into_iter()
             .filter(|candidate| candidate.priority(&key) == CandidatePriority::FIRST)
@@ -469,13 +470,13 @@ mod tests {
         let hw = cmma_8x32_only();
         let settings = CubeStagedConvRoutine::F1X1_P1X1_T8_A7;
         let priority = |key| ConvCandidate::new(settings, &hw).priority(&key);
-        assert!(priority(key(1, [9, 9])) < priority(key(WIDE, [9, 9])));
+        assert!(priority(key(1, [9, 9], 64)) < priority(key(WIDE, [9, 9], 64)));
     }
 
     /// Boxes covering at least twice the map are raced after those that tile it.
     #[test]
     fn boxes_covering_twice_the_map_are_in_a_lower_band() {
-        let (hw, key) = (cmma_8x32_only(), key(WIDE, [12, 58]));
+        let (hw, key) = (cmma_8x32_only(), key(WIDE, [12, 58], 128));
         let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
         let overhanging = ConvSettings::new(8, ConvAlong::new(16, 1), ConvAlong::new(1, 2));
         assert!(priority(overhanging) < priority(CubeStagedConvRoutine::F7X1_P1X2_T8));
@@ -497,7 +498,7 @@ mod tests {
             launch(lead, &one_stage),
             launch(lead.double_ring(), &one_stage)
         );
-        let many = key(8, [58, 58]);
+        let many = key(8, [58, 58], 64);
         assert_ne!(launch(lead, &many), launch(lead.double_ring(), &many));
     }
 
@@ -522,7 +523,7 @@ mod tests {
     /// A key states the problem it describes: the key of that problem is the key.
     #[test]
     fn a_key_states_the_problem_it_describes() {
-        let key = key(5, [58, 58]);
+        let key = key(5, [58, 58], 64);
         assert_eq!(ConvTuneKey::from(&ConvProblem::from(&key)), key);
     }
 
