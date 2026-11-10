@@ -40,6 +40,12 @@
 //! four), `NVFP4_DSL_SCALE_WIDTH` (4, for words) and `NVFP4_DSL_CUBES_PER_PROCESSOR` (2; 0 for a
 //! plane a row). `CUBECL_DEBUG_PLIRON=<dir>` dumps every kernel's LLVM IR (`amdgpu.ll`) and ISA
 //! (`amdgpu.s`).
+//!
+//! `NVFP4_GEMV_ONLY=1` times only the persistent row sum against the split-K gemv
+//! ([`raw_gemv_split_k`]), a real `f16` lhs checked against an `f64` reference: the gemv's
+//! ceiling. `NVFP4_GEMV_LINES` (1), `NVFP4_GEMV_COLUMNS` (8) and `NVFP4_GEMV_CUBES_PER_PROCESSOR`
+//! (4) set its launch. On the Radeon 8060S it reads 98–101% of the row sum on Qwen3-8B's
+//! projections; three lines a lane (four planes for `K` = 12288) falls to 68%.
 
 #![allow(clippy::needless_range_loop)]
 
@@ -598,6 +604,101 @@ fn raw_loads_only<V: Size>(
     out[plane * plane_dim + lane] = word;
 }
 
+/// The decode-step gemv from first principles: `out[n] = Σ_k x[k] · w[n, k]`, `x` an `f16` row.
+///
+/// `K` is split across the cube's `planes` planes, and each lane owns `lines` 16-byte lines of
+/// every row, `PLANE_DIM` lines apart, so every load the plane issues is one run of 512 bytes. The
+/// lane's share of `x`, the same for every row, is read once and kept in registers for the
+/// cube's whole life. The cubes then walk the rows grid-stride, `columns` at a time: every load of
+/// the group is issued before any decode, each plane sums its share of a row, and the planes'
+/// partials meet in shared memory, one barrier a group. The partials are double-buffered, so the
+/// next group's writes never race this group's reads.
+#[cube(launch_unchecked)]
+fn raw_gemv_split_k(
+    words: &Tensor<Vector<u32, Const<4>>>,
+    scales: &Tensor<u32>,
+    global: &Tensor<f32>,
+    x: &Tensor<Vector<f16, Const<4>>>,
+    out: &mut Tensor<f32>,
+    #[comptime] lines: usize,
+    #[comptime] planes: usize,
+    #[comptime] columns: usize,
+) {
+    let plane_dim = PLANE_DIM as usize;
+    let lane = UNIT_POS_PLANE as usize;
+    let p = UNIT_POS as usize / plane_dim;
+    let row_lines = lines * plane_dim * planes;
+    let first_line = p * lines * plane_dim + lane;
+
+    // The lane's `x`: line `i` holds values `32 line` to `32 line + 31`, eight lines of four.
+    let mut xs = Array::<Vector<f32, Const<4>>>::new(lines * 8);
+    #[unroll]
+    for i in 0..lines {
+        let line = first_line + i * plane_dim;
+        #[unroll]
+        for q in 0..8usize {
+            xs[i * 8 + q] = Vector::<f32, Const<4>>::cast_from(x[line * 8 + q]);
+        }
+    }
+
+    let mut partials = Shared::<[f32]>::new_slice(2 * planes * columns);
+    let lift = global[0] * f32::new(PLACED_LIFT);
+    // A line's two scale bytes sit in the half of a word its parity picks: `row_lines` and the
+    // lane strides are even, so that parity is the lane's.
+    let half = (16 * (lane % 2)) as u32;
+    let groups = out.len() / columns;
+    let mut group = CUBE_POS;
+    let mut parity = 0usize;
+    while group < groups {
+        let first_row = group * columns;
+        let mut loaded = Array::<Vector<u32, Const<4>>>::new(columns * lines);
+        let mut scale_words = Array::<u32>::new(columns * lines);
+        #[unroll]
+        for c in 0..columns {
+            #[unroll]
+            for i in 0..lines {
+                let at = (first_row + c) * row_lines + first_line + i * plane_dim;
+                loaded[c * lines + i] = words[at];
+                scale_words[c * lines + i] = scales[at / 2];
+            }
+        }
+        #[unroll]
+        for c in 0..columns {
+            let mut sum = 0.0f32;
+            #[unroll]
+            for i in 0..lines {
+                let line_words = loaded[c * lines + i];
+                let pair = scale_words[c * lines + i] >> half;
+                let scale_bits = ((pair & 0x7F) | ((pair & 0x7F00) << 8)) << 7;
+                let scale = Vector::<f32, Const<2>>::cast_from(
+                    Vector::<f16, Const<2>>::reinterpret(scale_bits),
+                );
+                let first = word_dot(line_words.extract(0usize), xs[i * 8], xs[i * 8 + 1])
+                    + word_dot(line_words.extract(1usize), xs[i * 8 + 2], xs[i * 8 + 3]);
+                let second = word_dot(line_words.extract(2usize), xs[i * 8 + 4], xs[i * 8 + 5])
+                    + word_dot(line_words.extract(3usize), xs[i * 8 + 6], xs[i * 8 + 7]);
+                sum += first * scale.extract(0usize) + second * scale.extract(1usize);
+            }
+            let total = plane_sum(sum);
+            if lane == 0 {
+                partials[(parity * planes + p) * columns + c] = total;
+            }
+        }
+        sync_cube();
+        let unit = UNIT_POS as usize;
+        if unit < columns {
+            let mut total = 0.0f32;
+            #[unroll]
+            for q in 0..planes {
+                total += partials[(parity * planes + q) * columns + unit];
+            }
+            out[first_row + unit] = total * lift;
+        }
+        parity = 1 - parity;
+        group += CUBE_COUNT;
+    }
+}
+
 /// The units [`plain_read`] launches on `client`'s device.
 fn plain_units(client: &Client) -> usize {
     let processors = client
@@ -660,6 +761,8 @@ struct Device {
     plain_out: TensorHandle,
     /// A row of `k` ones, the contraction's lhs.
     ones: TensorHandle,
+    /// [`Host::x`] as `f16`, the gemv's lhs.
+    x16: TensorHandle,
 }
 
 /// The operands on the host and what each row sums to.
@@ -668,6 +771,10 @@ struct Host {
     scale_words: Vec<u32>,
     global: f32,
     expected: Vec<f64>,
+    /// The gemv's lhs, every value exact in `f16`.
+    x: Vec<f32>,
+    /// What each row of the gemv against [`Host::x`] comes to.
+    expected_gemv: Vec<f64>,
 }
 
 const E2M1: [f64; 8] = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0];
@@ -734,11 +841,39 @@ impl Host {
                 sum * global as f64
             })
             .collect();
+        // Eighths from -2 to 2, never all one sign or one magnitude, so a misplaced `x` shows.
+        let x: Vec<f32> = (0..k)
+            .map(|i| {
+                let v = 0.25 + ((i * 37) % 16) as f32 / 8.0;
+                if i % 5 == 0 { -v } else { v }
+            })
+            .collect();
+        let expected_gemv = (0..rows)
+            .map(|n| {
+                let sum: f64 = (0..blocks)
+                    .map(|b| {
+                        let block: f64 = (0..BLOCK)
+                            .map(|i| {
+                                let at = b * BLOCK + i;
+                                let code = codes[n * k + at];
+                                let magnitude = E2M1[(code & 7) as usize];
+                                let value = if code & 8 != 0 { -magnitude } else { magnitude };
+                                value * x[at] as f64
+                            })
+                            .sum();
+                        block * ue4m3(scales[n * blocks + b])
+                    })
+                    .sum();
+                sum * global as f64
+            })
+            .collect();
         Host {
             words,
             scale_words,
             global,
             expected,
+            x,
+            expected_gemv,
         }
     }
 
@@ -767,6 +902,17 @@ impl Host {
             ones: tensor(
                 &(0..k).flat_map(|_| 1f32.to_le_bytes()).collect::<Vec<u8>>(),
                 F32,
+            ),
+            x16: TensorHandle::from_metadata(
+                client.create_from_slice(
+                    &self
+                        .x
+                        .iter()
+                        .flat_map(|&v| f16::from_f32(v).to_le_bytes())
+                        .collect::<Vec<u8>>(),
+                ),
+                Metadata::new(Shape::new([k]), vec![1]),
+                ElemType::Float(FloatKind::F16),
             ),
         }
     }
@@ -826,8 +972,13 @@ fn read_f32(client: &Client, handle: &TensorHandle) -> Vec<f32> {
 
 /// The largest error against the reference, relative to the row's magnitude.
 fn worst_error(got: &[f32], host: &Host) -> f64 {
+    worst_error_against(got, &host.expected)
+}
+
+/// The largest error against `expected`, relative to the row's magnitude.
+fn worst_error_against(got: &[f32], expected: &[f64]) -> f64 {
     got.iter()
-        .zip(&host.expected)
+        .zip(expected)
         .map(|(&got, &want)| (got as f64 - want).abs() / want.abs().max(1.0))
         .fold(0.0, f64::max)
 }
@@ -975,6 +1126,71 @@ fn main() {
                 )
             })
         };
+        // The split-K gemv: `NVFP4_GEMV_LINES` lines a lane, `NVFP4_GEMV_COLUMNS` rows a group,
+        // `NVFP4_GEMV_CUBES_PER_PROCESSOR` cubes a processor.
+        let gemv_lines = env_usize("NVFP4_GEMV_LINES", 1);
+        let gemv_columns = env_usize("NVFP4_GEMV_COLUMNS", 8);
+        let gemv_planes = k / (gemv_lines * VALUES_PER_LINE * plane);
+        assert_eq!(gemv_planes * gemv_lines * VALUES_PER_LINE * plane, k);
+        assert!(rows.is_multiple_of(gemv_columns));
+        let gemv_cubes = {
+            let processors = props.hardware.num_streaming_multiprocessors.unwrap_or(32);
+            let per = env_usize("NVFP4_GEMV_CUBES_PER_PROCESSOR", 4) as u32;
+            CubeCount::new_1d((per * processors).min((rows / gemv_columns) as u32))
+        };
+        let gemv = |d: &Device| -> Prepared {
+            let (client, cube_count) = (client.clone(), gemv_cubes.clone());
+            let args = [&d.words, &d.scales, &d.global, &d.x16, &d.out].map(line_arg);
+            Box::new(move || unsafe {
+                let [words, scales, global, x, out] = args;
+                raw_gemv_split_k::launch_unchecked(
+                    &client,
+                    cube_count,
+                    CubeDim::new_2d(plane as u32, gemv_planes as u32),
+                    words,
+                    scales,
+                    global,
+                    x,
+                    out,
+                    gemv_lines,
+                    gemv_planes,
+                    gemv_columns,
+                )
+            })
+        };
+        if std::env::var("NVFP4_GEMV_ONLY").is_ok() {
+            gemv(&data[0])();
+            let gemv_err =
+                worst_error_against(&read_f32(&client, &data[0].out), &host.expected_gemv);
+            raw(&data[0])();
+            let raw_err = worst_error(&read_f32(&client, &data[0].out), &host);
+            let mut best = [Duration::MAX; 2];
+            for _ in 0..env_usize("NVFP4_ROUNDS", 5) {
+                let times = [
+                    time(&client, copies, |c| raw(&data[c])),
+                    time(&client, copies, |c| gemv(&data[c])),
+                ];
+                for (best, time) in best.iter_mut().zip(times) {
+                    *best = (*best).min(time);
+                }
+            }
+            let gbs = |t: Duration| bytes as f64 / t.as_secs_f64() / 1e9;
+            println!(
+                "{:<8} row sum {:>6.1} GB/s (err {:.1e})   split-K gemv {:>6.1} GB/s = {:>5.1}% \
+                 (err {:.1e}; {} planes, {} lines, {} columns, {:?} cubes)",
+                name,
+                gbs(best[0]),
+                raw_err,
+                gbs(best[1]),
+                100.0 * best[0].as_secs_f64() / best[1].as_secs_f64(),
+                gemv_err,
+                gemv_planes,
+                gemv_lines,
+                gemv_columns,
+                gemv_cubes,
+            );
+            continue;
+        }
         let loads = |d: &Device| -> Prepared {
             let (client, cube_count) = (client.clone(), cube_count.clone());
             let args = [&d.words, &d.scales, &d.scratch].map(line_arg);
