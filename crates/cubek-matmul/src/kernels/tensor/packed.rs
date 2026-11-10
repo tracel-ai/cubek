@@ -5,9 +5,9 @@
 
 use super::PlainTensor;
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, IntKind, UIntKind};
+use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
 use cubecl::prelude::{TensorBinding, TensorMapSwizzle};
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal, TmaCoordinates, TmaLanding, TmaTerm};
 use cubecl::tile::{
     Axis, Launcher, Projection, TileTensorLaunch,
@@ -260,6 +260,15 @@ impl PackedTensor {
         self.operand
     }
 
+    /// This matrix read a scale block at a time ([`Operand::by_block`]), its block scales bound
+    /// one to a read. The same bytes; `None` where its operand reads no block whole.
+    pub fn by_block(&self) -> Option<Self> {
+        Some(Self {
+            operand: self.operand.by_block()?,
+            ..self.clone()
+        })
+    }
+
     /// How it is packed: its reads and scales, and its scheme.
     pub fn packing(&self) -> Packing {
         Packing {
@@ -395,10 +404,12 @@ impl PackedTensor {
                     .collect(),
                 launcher
                     .arg(
+                        // Strides in stored words, each the scheme's values: a read may take
+                        // several ([`Operand::by_block`]).
                         self.per_slab(self.words.rows_unpacked(
                             rows,
                             self.extent(lined),
-                            operand.read(lined),
+                            self.scheme.num_quants(),
                         )),
                         WORD,
                     )
@@ -440,6 +451,25 @@ impl PackedTensor {
                 .gathered(Self::over_whole_matrix(&words_axes, tiled_along))
         });
         match scales {
+            // A read taking its one scale alone ([`Operand::by_block`]), its scales `ue4m3` in
+            // rows: each a byte of its own, bound as the `e4m3` byte it is with its sign clear, so
+            // a unit loads the byte it uses rather than the word around it.
+            BlockScales::Fields if operand.reads_scales_alone() && self.ue4m3_in_rows() => {
+                let block_scales = launcher
+                    .arg(
+                        self.per_slab(self.block_scales.rows(rows, blocks)),
+                        ElemType::Float(FloatKind::E4M3),
+                    )
+                    .gathered(
+                        self.stack_dim()
+                            .dim(scale_rows)
+                            .dim(self.dim(lined))
+                            .build()
+                            .scales_per(blocks_axis),
+                    )
+                    .vectorize(1);
+                self.under_scale_bytes(words, block_scales, global)
+            }
             BlockScales::Fields => {
                 let scales_axes = tile_order::scales_axes(across);
                 // In the tiles tile order stores them in beside the words, where it does, stated
@@ -639,6 +669,35 @@ impl PackedTensor {
                 .build()?
                 .arg(),
         );
+        if let (Some(global), Some(field)) = (global, self.scheme.tensor_scale()) {
+            tile = tile.scales(global.packed(Field::of_scale(field)).build()?.arg());
+        }
+        Ok(tile)
+    }
+
+    /// Whether its block scales are `ue4m3` stored in rows, a byte a block: what
+    /// [`under_scale_bytes`](Self::under_scale_bytes) reads a byte at a time.
+    fn ue4m3_in_rows(&self) -> bool {
+        self.operand.tile_order().is_none()
+            && self
+                .scheme
+                .block_scale()
+                .is_some_and(|block| block.dtype == ScaleDtype::UE4M3)
+    }
+
+    /// `words` under `block_scales`, bound a byte a scale as plain `e4m3` elements, under
+    /// `global`, the per-tensor scale packed as the scheme's field for it.
+    fn under_scale_bytes(
+        &self,
+        words: Arg<'_, Labelled>,
+        block_scales: Arg<'_, Labelled>,
+        global: Option<Arg<'_, Labelled>>,
+    ) -> Result<TileTensorLaunch, Refusal> {
+        let mut tile = words
+            .packed(self.scheme.value)
+            .build()?
+            .arg()
+            .scales(block_scales.build()?.arg());
         if let (Some(global), Some(field)) = (global, self.scheme.tensor_scale()) {
             tile = tile.scales(global.packed(Field::of_scale(field)).build()?.arg());
         }

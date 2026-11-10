@@ -44,6 +44,9 @@ pub struct CubeShuffleMicrokernel {
     pub planes_along_k: NonZeroUsize,
     /// How its planes add their partial sums into one.
     pub meet: CubeMeet,
+    /// Whether it reads a packed rhs a scale block at a time
+    /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)).
+    pub by_block: bool,
 }
 
 /// The plane microkernel a cube shuffle's planes run.
@@ -90,6 +93,11 @@ pub struct CubeShuffleMicrokernelSettings {
     pub plane: CubeShufflePlaneSettings,
     /// Planes sharing one run of columns, each on its own slice of every step of `K`.
     pub planes_along_k: NonZeroUsize,
+    /// Whether its software planes read a packed rhs a scale block at a time, each unit one
+    /// block of `K` and its one scale a step, rather than the word of scales the rhs is stored in
+    /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)): the plane's units
+    /// side by side then read one run of a column a load.
+    pub by_block: bool,
 }
 
 /// The settings of the plane microkernel a cube shuffle's planes run.
@@ -124,13 +132,37 @@ impl CubeShuffleMicrokernelSettings {
         Self {
             plane,
             planes_along_k: NonZeroUsize::new(planes_along_k).unwrap(),
+            by_block: false,
         }
     }
+
+    /// These settings reading a packed rhs a scale block at a time
+    /// ([`by_block`](Self::by_block)).
+    pub const fn by_block(self) -> Self {
+        Self {
+            by_block: true,
+            ..self
+        }
+    }
+
+    /// The decode-step split of `K`: a packed rhs read a block at a time, a unit eight columns,
+    /// every plane of the cube one turn of `K`, up to thirty-two planes. On a Radeon 8060S a
+    /// hand-written kernel of this shape reads NVFP4 Qwen3-8B projections at one row as fast as a
+    /// row sum that reads no lhs.
+    pub const SPLIT_K: Self = Self::new(
+        CubeShufflePlaneSettings::Shuffle(PlaneShuffleMicrokernelSettings::stepping(8, None)),
+        32,
+    )
+    .by_block();
 }
 
 impl core::fmt::Display for CubeShuffleMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} planes_along_k={}", self.plane, self.planes_along_k)
+        write!(f, "{} planes_along_k={}", self.plane, self.planes_along_k)?;
+        match self.by_block {
+            true => write!(f, " by_block"),
+            false => Ok(()),
+        }
     }
 }
 
@@ -234,11 +266,17 @@ impl CubeShuffleMicrokernel {
         item: &MatmulWorkItem,
         settings: &PlaneShuffleMicrokernelSettings,
         target: usize,
+        by_block: bool,
     ) -> impl Iterator<Item = Self> {
         let col_weight = item.layouts.rhs == MatmulLayout::Col;
         let meet = CubeMeet::of(hw);
-        let planes = PlaneShuffleMicrokernel::admits(item)
-            .is_ok()
+        // Reading by block is planned on an rhs its routine re-read so: planned on one read as
+        // stored, it would bind otherwise than it plans.
+        let planned = !by_block
+            || item
+                .blocks
+                .is_some_and(|space| space.operand(MatmulOperand::Rhs).reads_scales_alone());
+        let planes = (planned && PlaneShuffleMicrokernel::admits(item).is_ok())
             .then(|| PlaneShuffleMicrokernel::candidates(hw, item, settings));
         planes.into_iter().flatten().filter_map(move |plane| {
             let planes = match plane.blocks {
@@ -251,6 +289,7 @@ impl CubeShuffleMicrokernel {
                     plane: CubeShufflePlane::Shuffle(plane),
                     planes_along_k,
                     meet,
+                    by_block,
                 })
         })
     }
@@ -273,6 +312,7 @@ impl CubeShuffleMicrokernel {
                 plane: CubeShufflePlane::Fragment(plane),
                 planes_along_k: NonZeroUsize::new(target.min(windows))?,
                 meet,
+                by_block: false,
             })
         })
     }
@@ -422,9 +462,16 @@ impl Microkernel for CubeShuffleMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let target = settings.planes_along_k.get();
         let (shuffle, fragment) = match &settings.plane {
-            CubeShufflePlaneSettings::Shuffle(plane) => {
-                (Some(Self::shuffle_cubes(hw, item, plane, target)), None)
-            }
+            CubeShufflePlaneSettings::Shuffle(plane) => (
+                Some(Self::shuffle_cubes(
+                    hw,
+                    item,
+                    plane,
+                    target,
+                    settings.by_block,
+                )),
+                None,
+            ),
             CubeShufflePlaneSettings::Fragment(plane) => {
                 (None, Some(Self::fragment_cubes(hw, item, plane, target)))
             }
@@ -481,7 +528,11 @@ impl Microkernel for CubeShuffleMicrokernel {
 /// Its planes' microkernel, and how many share a run.
 impl core::fmt::Display for CubeShuffleMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} planes_along_k={}", self.plane, self.planes_along_k)
+        write!(f, "{} planes_along_k={}", self.plane, self.planes_along_k)?;
+        match self.by_block {
+            true => write!(f, " by_block"),
+            false => Ok(()),
+        }
     }
 }
 
@@ -502,6 +553,10 @@ impl MatmulMicrokernel for CubeShuffleMicrokernel {
             CubeShufflePlane::Shuffle(plane) => plane.orders,
             CubeShufflePlane::Fragment(_) => MatmulOperands::all(BindingOrder::Stated),
         }
+    }
+
+    fn reads_rhs_by_block(&self) -> bool {
+        self.by_block
     }
 }
 

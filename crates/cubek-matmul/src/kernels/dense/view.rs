@@ -122,6 +122,32 @@ impl<'a> MatmulView<'a> {
     /// each cube the walk's steps over the count rounded up, so where the count does not divide the
     /// steps the trailing cubes' runs come up short or empty; an empty one sums nothing and skips
     /// its drain.
+    /// The problem partitioned with `inside` a cube's box, `cubes` cubes cutting `axes` and
+    /// sharing its boxes as one flat index (the tile DSL's [`Levels::shared_by`]): each cube walks
+    /// a run of whole boxes, as a persistent kernel's do, so what a cube holds across boxes, an
+    /// lhs every box reads alike, it reads once. Its kernel walks the runs
+    /// (`Walk::portion_of`). The cubes cut whole boxes only, so the axes are the output's.
+    ///
+    /// # Panics
+    ///
+    /// On batches to distribute, whose boxes no run walks.
+    pub fn persistent_partitioning(
+        &self,
+        inside: Levels,
+        axes: &[Axis],
+        cubes: NonZeroUsize,
+    ) -> MatmulPartitioning {
+        let distributed_batch_axes = self.distributed_batch_axes();
+        assert!(
+            distributed_batch_axes.is_empty(),
+            "persistent_partitioning: a run of boxes walks one axis, not batches beside it"
+        );
+        let levels = inside.cubes(axes).shared_by(cubes.get()).build();
+        let partitioning = Partitioning::new(self.space(), levels);
+        let cube = self.one_slab(partitioning.box_of(ComputeScope::Cube));
+        MatmulPartitioning::new(partitioning, cube, distributed_batch_axes, self.rows_kind)
+    }
+
     pub fn partitioning(
         &self,
         inside: Levels,
