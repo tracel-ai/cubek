@@ -134,6 +134,12 @@ mod tests {
                 lead(CubeShuffleAttentionRoutine, client, queries, kv, scoring)
             }),
             ("autotune", &|client, queries, kv, scoring| {
+                // Every routine that reads packed queries runs on planes of one committed width:
+                // where the device has none (a CPU runner), the plan has no candidate to run.
+                if let Err(refusal) = Hardware::from_client(client).plane_dim() {
+                    eprintln!("declined on this device: {refusal:?}");
+                    return None;
+                }
                 let inputs = AttentionTuneInputs::attention(client, queries, kv, None, scoring)
                     .expect("the case's tensors are verified");
                 let device = cubecl::test_device();
