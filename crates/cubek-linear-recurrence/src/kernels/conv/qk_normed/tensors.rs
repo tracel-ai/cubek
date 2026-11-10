@@ -3,7 +3,7 @@
 use crate::kernels::conv::{
     CausalConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvProblem,
 };
-use crate::kernels::refusals::QK_NORMED_CONV_NOTHING_TO_CONVOLVE;
+use crate::kernels::refusals::CONV_NOTHING_TO_CONVOLVE;
 use core::num::NonZeroUsize;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
@@ -213,7 +213,7 @@ impl QkNormedConvTensors {
     ///
     /// # Errors
     ///
-    /// [`QkNormedConvProblem::admit_element`]'s refusal, [`QK_NORMED_CONV_NOTHING_TO_CONVOLVE`]
+    /// [`QkNormedConvProblem::admit_element`]'s refusal, [`CONV_NOTHING_TO_CONVOLVE`]
     /// for no row or position, and [`ELEMENT_NOT_ON_DEVICE`].
     ///
     /// # Panics
@@ -322,7 +322,7 @@ impl QkNormedConvTensors {
         let qkv_shape = qkv.shape().to_vec();
         let rows = qkv_shape[0];
         if rows == 0 {
-            return Err(QK_NORMED_CONV_NOTHING_TO_CONVOLVE);
+            return Err(CONV_NOTHING_TO_CONVOLVE);
         }
         assert!(
             qkv_shape.last() == Some(&conv_dim)
@@ -375,7 +375,7 @@ impl QkNormedConvTensors {
         );
         let positions = stream_positions.saturating_sub(taps.saturating_sub(1));
         if batch == 0 || positions == 0 {
-            return Err(QK_NORMED_CONV_NOTHING_TO_CONVOLVE);
+            return Err(CONV_NOTHING_TO_CONVOLVE);
         }
         let qkv = qkv.viewed(Metadata::new(
             vec![batch, stream_positions, conv_dim],

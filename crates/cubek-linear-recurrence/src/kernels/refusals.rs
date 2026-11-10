@@ -65,24 +65,24 @@ pub const QK_NORMED_CONV_HEADS_EMPTY: Refusal = Refusal::Declined {
 };
 
 /// What admission declines a problem with that holds no row, or no position to convolve.
-pub const QK_NORMED_CONV_NOTHING_TO_CONVOLVE: Refusal = Refusal::Declined {
-    why: "the q|k|v conv needs a row and a position to convolve",
+pub const CONV_NOTHING_TO_CONVOLVE: Refusal = Refusal::Declined {
+    why: "the conv needs a row and a position to convolve",
 };
 
 /// What admission declines a filter or a window with that cannot be read back: fewer than two
 /// taps, or a window of fewer columns than the taps read back.
-pub const QK_NORMED_CONV_TAPS_PAST_WINDOW: Refusal = Refusal::Declined {
-    why: "the q|k|v conv needs two taps or more and a window of a column fewer than its taps or more",
+pub const CONV_TAPS_PAST_WINDOW: Refusal = Refusal::Declined {
+    why: "the conv needs two taps or more and a window of a column fewer than its taps or more",
 };
 
 /// What admission declines a device with that binds fewer buffers to a kernel than a conv's
 /// launch does.
-pub const QK_NORMED_CONV_BINDINGS_PAST_DEVICE: Refusal = Refusal::Declined {
-    why: "the q|k|v conv binds more buffers than the device binds to one kernel",
+pub const CONV_BINDINGS_PAST_DEVICE: Refusal = Refusal::Declined {
+    why: "the conv binds more buffers than the device binds to one kernel",
 };
 
 /// What admission declines an element with that is not `f16` or `f32`: a packed or integer element
 /// is not a float the conv reads, and no other float is verified.
-pub const QK_NORMED_CONV_ELEMENT_UNSUPPORTED: Refusal = Refusal::Declined {
-    why: "the q|k|v conv reads f16 or f32 activations",
+pub const CONV_ELEMENT_UNSUPPORTED: Refusal = Refusal::Declined {
+    why: "the conv reads f16 or f32 activations",
 };

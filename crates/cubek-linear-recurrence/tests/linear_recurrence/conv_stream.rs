@@ -13,7 +13,7 @@ use cubecl::ir::ElemType;
 use cubek_linear_recurrence::kernels::conv::{
     CausalConvPastInputs, CubeQkNormedConvRoutine, QkNormedConvInputs,
 };
-use cubek_linear_recurrence::kernels::refusals::QK_NORMED_CONV_NOTHING_TO_CONVOLVE;
+use cubek_linear_recurrence::kernels::refusals::CONV_NOTHING_TO_CONVOLVE;
 use cubek_std::Hardware;
 
 /// A stream's shape.
@@ -170,7 +170,7 @@ fn a_stream_with_no_position_is_declined() {
     let inputs = case.inputs(&client, &stream, &filters, StreamLayout::default(), F32);
     assert_eq!(
         CubeQkNormedConvRoutine.launch_on(&hw, inputs).err(),
-        Some(QK_NORMED_CONV_NOTHING_TO_CONVOLVE)
+        Some(CONV_NOTHING_TO_CONVOLVE)
     );
 }
 

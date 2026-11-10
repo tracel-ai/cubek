@@ -2,9 +2,8 @@
 
 use crate::kernels::conv::CubeQkNormedConvRoutine;
 use crate::kernels::refusals::{
-    QK_NORMED_CONV_BINDINGS_PAST_DEVICE, QK_NORMED_CONV_ELEMENT_UNSUPPORTED,
-    QK_NORMED_CONV_HEADS_EMPTY, QK_NORMED_CONV_NOTHING_TO_CONVOLVE,
-    QK_NORMED_CONV_STREAM_BINDING_BUFFERS, QK_NORMED_CONV_TAPS_PAST_WINDOW,
+    CONV_BINDINGS_PAST_DEVICE, CONV_ELEMENT_UNSUPPORTED, CONV_NOTHING_TO_CONVOLVE,
+    CONV_TAPS_PAST_WINDOW, QK_NORMED_CONV_HEADS_EMPTY, QK_NORMED_CONV_STREAM_BINDING_BUFFERS,
     QK_NORMED_CONV_WINDOW_BINDING_BUFFERS,
 };
 use core::num::NonZeroUsize;
@@ -103,12 +102,12 @@ impl QkNormedConvProblem {
     ///
     /// # Errors
     ///
-    /// [`QK_NORMED_CONV_ELEMENT_UNSUPPORTED`] for any but `f16` and `f32`.
+    /// [`CONV_ELEMENT_UNSUPPORTED`] for any but `f16` and `f32`.
     pub fn admit_element(element: ElemType) -> Result<(), Refusal> {
         if ELEMENTS.contains(&element) {
             Ok(())
         } else {
-            Err(QK_NORMED_CONV_ELEMENT_UNSUPPORTED)
+            Err(CONV_ELEMENT_UNSUPPORTED)
         }
     }
 
@@ -130,7 +129,7 @@ impl QkNormedConvProblem {
             return Err(QK_NORMED_CONV_HEADS_EMPTY);
         }
         if self.batch == 0 || self.past == (CausalConvPast::Stream { positions: 0 }) {
-            return Err(QK_NORMED_CONV_NOTHING_TO_CONVOLVE);
+            return Err(CONV_NOTHING_TO_CONVOLVE);
         }
         Self::admit_element(self.element)?;
         let window_short = match self.past {
@@ -138,10 +137,10 @@ impl QkNormedConvProblem {
             CausalConvPast::Stream { .. } => false,
         };
         if self.taps < 2 || window_short {
-            return Err(QK_NORMED_CONV_TAPS_PAST_WINDOW);
+            return Err(CONV_TAPS_PAST_WINDOW);
         }
         if self.past.binding_buffers() > hw.properties.hardware.max_bindings {
-            return Err(QK_NORMED_CONV_BINDINGS_PAST_DEVICE);
+            return Err(CONV_BINDINGS_PAST_DEVICE);
         }
         Ok(())
     }
@@ -334,7 +333,7 @@ mod tests {
         let problem = conv(heads(), 4, 3);
         assert_eq!(
             problem.admit(&devices::wgpu_no_subgroups()),
-            Err(QK_NORMED_CONV_BINDINGS_PAST_DEVICE)
+            Err(CONV_BINDINGS_PAST_DEVICE)
         );
         let mut hw = devices::h100();
         devices::topology(&mut hw).max_bindings = problem.past.binding_buffers();
@@ -352,10 +351,7 @@ mod tests {
             ElemType::UInt(UIntKind::U32),
             ElemType::Float(FloatKind::BF16),
         ] {
-            assert_eq!(
-                dense(element).admit(&hw),
-                Err(QK_NORMED_CONV_ELEMENT_UNSUPPORTED)
-            );
+            assert_eq!(dense(element).admit(&hw), Err(CONV_ELEMENT_UNSUPPORTED));
         }
     }
 
@@ -363,10 +359,7 @@ mod tests {
     #[test]
     fn a_window_shorter_than_the_taps_read_back_is_declined() {
         let hw = devices::h100();
-        assert_eq!(
-            conv(heads(), 4, 2).admit(&hw),
-            Err(QK_NORMED_CONV_TAPS_PAST_WINDOW)
-        );
+        assert_eq!(conv(heads(), 4, 2).admit(&hw), Err(CONV_TAPS_PAST_WINDOW));
         assert_eq!(conv(heads(), 4, 3).admit(&hw), Ok(()));
     }
 
@@ -380,7 +373,7 @@ mod tests {
         };
         assert_eq!(
             stream(0).admit(&devices::h100()),
-            Err(QK_NORMED_CONV_NOTHING_TO_CONVOLVE)
+            Err(CONV_NOTHING_TO_CONVOLVE)
         );
         assert_eq!(stream(8).admit(&devices::wgpu_no_subgroups()), Ok(()));
     }
