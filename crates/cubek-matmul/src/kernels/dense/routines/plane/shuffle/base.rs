@@ -33,6 +33,11 @@ pub struct PlaneShuffleMatmulRoutineSettings {
     pub microkernel: PlaneShuffleMicrokernelSettings,
     /// Planes one cube holds, side by side along `n`.
     pub planes: NonZeroUsize,
+    /// Against a packed rhs, the most planes the launch holds a compute unit of the device: its
+    /// planes then walk the runs of columns, a whole launch apart, rather than each taking one.
+    /// A plane for every run where `None`. A device that does not say how many compute units it
+    /// has declines it, as does a float rhs, whose planes are laid along `M` and `N` both.
+    pub planes_per_worker: Option<NonZeroUsize>,
 }
 
 impl PlaneShuffleMatmulRoutineSettings {
@@ -42,6 +47,7 @@ impl PlaneShuffleMatmulRoutineSettings {
     pub const DEFAULT: Self = Self {
         microkernel: PlaneShuffleMicrokernelSettings::DEFAULT,
         planes: NonZeroUsize::new(4).unwrap(),
+        planes_per_worker: None,
     };
 
     /// One step a unit, four planes a cube: the lead against a packed rhs, whose decode the
@@ -49,6 +55,16 @@ impl PlaneShuffleMatmulRoutineSettings {
     pub const PACKED: Self = Self {
         microkernel: PlaneShuffleMicrokernelSettings::stepping(1, None),
         planes: NonZeroUsize::new(4).unwrap(),
+        planes_per_worker: None,
+    };
+
+    /// [`PACKED`](Self::PACKED) on a launch of 32 planes a compute unit, its planes walking the
+    /// runs of columns: on a Radeon 8060S, an NVFP4 decode against Qwen3-8B's projections read
+    /// 3% (gate/up) to 20% (o) faster than a plane a run, flat from 24 to 32 planes a unit and
+    /// slower past 40, where a launch of a plane a run spends a short kernel starting planes.
+    pub const PACKED_PERSISTENT: Self = Self {
+        planes_per_worker: Some(NonZeroUsize::new(32).unwrap()),
+        ..Self::PACKED
     };
 }
 
@@ -58,13 +74,37 @@ impl core::fmt::Display for PlaneShuffleMatmulRoutineSettings {
             f,
             "plane-shuffle-matmul {} planes={}",
             self.microkernel, self.planes
-        )
+        )?;
+        match self.planes_per_worker {
+            Some(per) => write!(f, " planes_per_worker={per}"),
+            None => Ok(()),
+        }
     }
 }
 
 pub type PlaneShuffleMatmulRoutineBlueprint = MatmulBlueprint<PlaneShuffleMicrokernel>;
 
 impl PlaneShuffleMatmulRoutine {
+    /// What a float rhs declines a capped launch with.
+    pub const PERSISTENT_FLOAT: Refusal = Refusal::Declined {
+        why: "a plane shuffle's launch is capped only against a packed rhs, whose planes walk one \
+              axis of columns",
+    };
+
+    /// What a batched product, whose planes are handed batches beside columns, declines a capped
+    /// launch with.
+    pub const PERSISTENT_BATCHED: Refusal = Refusal::Declined {
+        why: "a plane shuffle's capped launch walks one axis of columns, not batches beside them",
+    };
+
+    /// What a device that does not say how many compute units it has declines a capped launch
+    /// with: uncapped, it would be [`PACKED`](PlaneShuffleMatmulRoutineSettings::PACKED) again,
+    /// raced twice under two names.
+    pub const PERSISTENT_UNSIZED: Refusal = Refusal::Declined {
+        why: "a plane shuffle's launch is capped at planes a compute unit, and the device does \
+              not say how many compute units it has",
+    };
+
     /// Steps of `K` a unit holds at once: its plane shuffles stage nothing in shared memory, and
     /// load a step once the last is summed.
     const STAGES_IN_FLIGHT: u32 = 1;
@@ -81,9 +121,11 @@ impl PlaneShuffleMatmulRoutine {
         let on = |microkernel, planes| PlaneShuffleMatmulRoutineSettings {
             microkernel,
             planes: NonZeroUsize::new(planes).unwrap(),
+            planes_per_worker: None,
         };
         vec![
             PlaneShuffleMatmulRoutineSettings::PACKED,
+            PlaneShuffleMatmulRoutineSettings::PACKED_PERSISTENT,
             on(Block::stepping(1, None), 1),
             on(Block::stepping(2, None), 4),
             on(Block::stepping(2, Some(2)), 1),
@@ -177,8 +219,11 @@ impl PlaneShuffleMatmulRoutine {
         let (blocks, inside) = blocked(K);
         let step_k = (leaf.extent(blocks) * leaf.extent(inside) * microkernel.units_along_k) as u64;
         // The columns of a cube's box, over both axes `N` is split into: the planes its order
-        // groups.
-        let columns = blueprint.partitioning.columns();
+        // groups. A capped launch's cube walks several boxes, a launch apart.
+        let box_columns = blueprint.partitioning.columns();
+        let boxes = (problem.n as u64).div_ceil(box_columns.max(1));
+        let walks = grid.cubes().map_or(1, |cubes| boxes.div_ceil(cubes.max(1)));
+        let columns = box_columns * walks;
         let groups = columns / microkernel.columns() as u64;
         let size = |operand: MatmulOperand| item.elements.get(operand).size() as u64;
         let rhs = packing.bytes(k as usize * columns as usize) as u64;
@@ -196,9 +241,9 @@ impl PlaneShuffleMatmulRoutine {
             ],
             writes: vec![GlobalStream {
                 bytes: rows * columns * size(MatmulOperand::Out),
-                run_bytes: (columns * size(MatmulOperand::Out)) as usize,
+                run_bytes: (box_columns * size(MatmulOperand::Out)) as usize,
             }],
-            stages: k.div_ceil(step_k),
+            stages: k.div_ceil(step_k) * walks,
             stages_in_flight: 1,
             drain_atomics: 0,
         });
@@ -213,6 +258,9 @@ impl PlaneShuffleMatmulRoutine {
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Refusal> {
         problem.check_plain()?;
+        if settings.planes_per_worker.is_some() {
+            return Err(Self::PERSISTENT_FLOAT);
+        }
         let view = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?;
         let microkernel =
             PlaneShuffleMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
@@ -243,12 +291,19 @@ impl PlaneShuffleMatmulRoutine {
             columns,
             planes,
         } = PlaneShufflePackedPlacement::new(hw, problem, settings)?;
-        let partitioning = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?
-            .plane_partitioning(
-                microkernel.tiling(),
-                &[columns],
-                PlaneOrder::new(&[(columns, planes)], CubeOrder::RowMajor),
-            );
+        let view = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?;
+        if settings.planes_per_worker.is_some() && !view.distributed_batch_axes().is_empty() {
+            return Err(Self::PERSISTENT_BATCHED);
+        }
+        let order = PlaneOrder::new(&[(columns, planes)], CubeOrder::RowMajor);
+        let order = match (settings.planes_per_worker, hw.workers()) {
+            (Some(per), Some(workers)) => {
+                order.capped((per.get() * workers as usize).div_ceil(planes))
+            }
+            (Some(_), None) => return Err(Self::PERSISTENT_UNSIZED),
+            (None, _) => order,
+        };
+        let partitioning = view.plane_partitioning(microkernel.tiling(), &[columns], order);
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
             shared_memory: 0,
@@ -331,6 +386,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
         let on = |microkernel, planes| Self::Settings {
             microkernel,
             planes: NonZeroUsize::new(planes).unwrap(),
+            planes_per_worker: None,
         };
         vec![
             on(Block::DEFAULT, 4),
@@ -738,14 +794,66 @@ mod tests {
                         .prepare(&hw, problem, &settings)
                         .expect("a committed width places the projection");
                     let cubes = grid.cubes().expect("a static grid");
+                    let boxes = problem.n as u64 / blueprint.partitioning.columns();
                     assert_eq!(
-                        blueprint.partitioning.columns() * cubes,
+                        blueprint.partitioning.columns() * boxes,
                         problem.n as u64,
                         "{settings} on {hw:?}"
                     );
+                    // A capped launch holds at most its cap, never more cubes than boxes; an
+                    // uncapped one a cube a box.
+                    let cap = settings
+                        .planes_per_worker
+                        .zip(hw.workers())
+                        .map(|(per, workers)| {
+                            (per.get() * workers as usize).div_ceil(settings.planes.get()) as u64
+                        });
+                    match cap {
+                        Some(cap) => assert_eq!(cubes, cap.min(boxes), "{settings} on {hw:?}"),
+                        None => assert_eq!(cubes, boxes, "{settings} on {hw:?}"),
+                    }
                 }
             }
         }
+    }
+
+    /// A capped launch on a device that does not say how many compute units it has, as no wgpu
+    /// adapter does, declines rather than run as the uncapped lead under a second name.
+    #[test]
+    fn a_device_of_no_compute_unit_count_declines_a_capped_launch() {
+        let mut hw = devices::strix_halo();
+        devices::topology(&mut hw).num_streaming_multiprocessors = None;
+        assert_eq!(hw.workers(), None);
+        assert_eq!(
+            PlaneShuffleMatmulRoutine
+                .prepare(
+                    &hw,
+                    &packed_projection(1),
+                    &PlaneShuffleMatmulRoutineSettings::PACKED_PERSISTENT
+                )
+                .err(),
+            Some(PlaneShuffleMatmulRoutine::PERSISTENT_UNSIZED)
+        );
+    }
+
+    /// A capped launch walks a packed rhs's one axis of columns: a float rhs, whose planes are
+    /// laid along `M` and `N` both, declines it.
+    #[test]
+    fn a_float_rhs_declines_a_capped_launch() {
+        let settings = PlaneShuffleMatmulRoutineSettings {
+            planes_per_worker: NonZeroUsize::new(32),
+            ..PlaneShuffleMatmulRoutineSettings::DEFAULT
+        };
+        assert_eq!(
+            PlaneShuffleMatmulRoutine
+                .prepare(
+                    &devices::strix_halo(),
+                    &projection(1, MatmulLayout::Col),
+                    &settings
+                )
+                .err(),
+            Some(PlaneShuffleMatmulRoutine::PERSISTENT_FLOAT)
+        );
     }
 
     /// A product of no rows, or of more than a work item holds, is declined before anything is

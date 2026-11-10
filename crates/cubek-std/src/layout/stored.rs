@@ -7,7 +7,7 @@
 
 use crate::layout::tile_order::{TileOrder, scales_axes, values_axes};
 use crate::matmul_axes::{K, blocked};
-use cubecl::quant::scheme::{QuantScheme, QuantStore};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Space, kind::Field};
 
@@ -239,6 +239,29 @@ impl Operand {
             scale_read: MicroTile::along(axis, scales_per_word),
             tiles: None,
         })
+    }
+
+    /// This operand read a scale block at a time: one read the whole block, its scale read alone.
+    /// `None` in tile order, without scales, across several axes, or where a block is no whole
+    /// number of reads. Whether its scales can be read one apiece is the scheme's
+    /// ([`Packing::by_block`]).
+    fn by_block(self) -> Option<Self> {
+        let axis = self.scaled_along()?;
+        let block = self.scale?.extent(axis);
+        let lined = self.tiles.is_none()
+            && self.read.axis() == Some(axis)
+            && block.is_multiple_of(self.read.extent(axis));
+        lined.then(|| Operand {
+            read: MicroTile::along(axis, block),
+            scale_read: MicroTile::along(axis, 1),
+            ..self
+        })
+    }
+
+    /// Whether one read takes a single scale on its own, not a word of them.
+    fn reads_scales_alone(&self) -> bool {
+        self.scaled_along()
+            .is_some_and(|axis| self.scale_read.extent(axis) == 1)
     }
 
     /// The axis a scheme's own block shape implies.
@@ -611,6 +634,33 @@ pub struct Packing {
 }
 
 impl Packing {
+    /// This packing read a scale block at a time: a unit loads one block of values and its one
+    /// scale, so a plane's units side by side read one run of the row a load. Only `ue4m3` block
+    /// scales in rows are read so, each a byte a unit loads alone; any other scale's word is read
+    /// whole. `None` where the scheme or the operand reads no block whole.
+    pub fn by_block(&self) -> Option<Packing> {
+        Some(Packing {
+            operand: self.operand.by_block()?,
+            scheme: self.scheme,
+        })
+        .filter(Packing::scales_are_bytes)
+    }
+
+    /// Whether its reads take each `ue4m3` scale byte alone, as [`by_block`](Self::by_block)
+    /// reads them: what binds its block scales a byte apiece.
+    pub fn reads_scale_bytes(&self) -> bool {
+        self.operand.reads_scales_alone() && self.scales_are_bytes()
+    }
+
+    /// Whether its block scales are `ue4m3` bytes in rows.
+    fn scales_are_bytes(&self) -> bool {
+        self.operand.tile_order().is_none()
+            && self
+                .scheme
+                .block_scale()
+                .is_some_and(|block| block.dtype == ScaleDtype::UE4M3)
+    }
+
     /// Bytes the words of a matrix of `values` values hold, packed.
     pub fn values_bytes(&self, values: usize) -> usize {
         values * self.scheme.size_bits_stored() / self.scheme.num_quants() / 8
