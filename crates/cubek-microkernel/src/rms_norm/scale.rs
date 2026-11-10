@@ -2,7 +2,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The factor a row is scaled by, `1 / sqrt(sum / dim + epsilon)` for a row whose squares sum to
 /// `sum`: the epsilon a call passes, the dim its kernel is compiled for.
-#[derive(CubeType)]
+#[derive(CubeType, CubeLaunch)]
 pub struct RmsNormScale {
     epsilon: f32,
     #[cube(comptime)]

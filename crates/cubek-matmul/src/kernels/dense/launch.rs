@@ -12,7 +12,7 @@ use crate::kernels::{
     MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors,
 };
 use cubecl::tile::{
-    Geometry, TileTensorLaunch,
+    Geometry, Launcher, TileTensorLaunch,
     kind::Write,
     launch::{Buffered, DestinationLaunch, SinkLaunch, Unbound},
 };
@@ -232,6 +232,17 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, S
             grid,
             binding,
         }
+    }
+
+    /// The launcher holding the partitioning the kernel walks, for planning a destination around
+    /// it and handing it to the kernel.
+    pub fn launcher(&self) -> &Launcher {
+        &self.binding.launcher
+    }
+
+    /// The output's spec, geometry and vector size the launch settled on.
+    pub fn out(&self) -> &Unbound {
+        &self.binding.out
     }
 }
 
