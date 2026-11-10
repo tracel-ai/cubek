@@ -359,10 +359,44 @@ pub fn empty(
     packed: Option<Field>,
     storage: StoragePartitioning,
 ) -> Result<TensorHandle, MatmulSetupError> {
-    let refused = |why: String| MatmulSetupError::InvalidConfig(Box::new(format!("empty: {why}")));
-    let layout = StoredLayout::new(shape, axes, dtype, packed, &storage, refused)?;
-    let handle = client.empty(layout.word_count * dtype.size());
-    Ok(TensorHandle::from_metadata(handle, layout.values, dtype))
+    let stored = StoredStatement::new(shape, axes, dtype, packed, storage)?;
+    let handle = client.empty(stored.elements * dtype.size());
+    Ok(TensorHandle::from_metadata(handle, stored.values, dtype))
+}
+
+/// How a tensor lies stored as a [`StoragePartitioning`] states, as [`empty`] allocates it: what
+/// a caller placing it in a buffer it shares with other parts takes, as a packed tensor keeps its
+/// words, scales and per-tensor scale in one.
+#[derive(Debug, Clone)]
+pub struct StoredStatement {
+    /// Its metadata, stated in values as [`tile`]'s result is.
+    pub values: Metadata,
+    /// The elements of its `dtype` its buffer holds.
+    pub elements: usize,
+}
+
+impl StoredStatement {
+    /// A tensor of `shape` stored as `storage` states, `packed` and the units as [`empty`]'s.
+    ///
+    /// # Errors
+    ///
+    /// As [`empty`].
+    #[allow(clippy::result_large_err)]
+    pub fn new(
+        shape: &[usize],
+        axes: &[Axis],
+        dtype: ElemType,
+        packed: Option<Field>,
+        storage: StoragePartitioning,
+    ) -> Result<Self, MatmulSetupError> {
+        let refused =
+            |why: String| MatmulSetupError::InvalidConfig(Box::new(format!("stored: {why}")));
+        let layout = StoredLayout::new(shape, axes, dtype, packed, &storage, refused)?;
+        Ok(Self {
+            values: layout.values,
+            elements: layout.word_count,
+        })
+    }
 }
 
 /// Store a tensor as `storage` states, its trailing dims named by `axes` (the dims ahead stay
