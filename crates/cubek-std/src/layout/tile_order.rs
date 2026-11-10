@@ -637,6 +637,19 @@ pub fn matrix_scales(kernel: &Metadata) -> Metadata {
     assemble(&[kb.as_slice(), rows.as_slice()])
 }
 
+/// The same tiled matrix stated with its two dims swapped: an `[m, k]` input's statement of the
+/// `[k, m]` one tile order reads ([`matrix_values`]), and back. Nothing moves: both are the
+/// same fragments, each dim's coarsest first.
+///
+/// # Panics
+///
+/// When `matrix` is not a statement of two logical dims.
+pub fn swapped(matrix: &Metadata) -> Metadata {
+    let [first, second] = fragments_of::<2>(matrix)
+        .unwrap_or_else(|rank| panic!("a matrix states two dims, not {rank}"));
+    assemble(&[second.as_slice(), first.as_slice()])
+}
+
 /// A tiled matrix's `[k, rows]` fragments, coarsest first; `None` for one in rows.
 fn matrix_fragments(matrix: &Metadata) -> Option<[Fragments; 2]> {
     if !matrix.is_tiled() {
@@ -782,6 +795,33 @@ mod tests {
             let matrix = matrix_values(&order.kernel_values_read(k, (N, n), words_per_load));
             assert_eq!(
                 TileOrder::of_matrix(&nvfp4_scheme(), &matrix),
+                Some(order),
+                "{words_per_load} words a load"
+            );
+        }
+    }
+
+    /// An activation states its matrix `[m, k]`, the swap of the `[k, m]` tile order reads: every
+    /// value stays where it is stored, and swapped back the matrix reads as the order it was laid
+    /// in.
+    #[test]
+    fn an_activation_states_its_matrix_swapped_and_reads_back_as_laid() {
+        use crate::matmul_axes::M;
+
+        let (k, m) = (256, 64);
+        for (order, words_per_load) in reads() {
+            let matrix = matrix_values(&order.kernel_values_read(k, (M, m), words_per_load));
+            let activation = swapped(&matrix);
+            let extents: Vec<usize> = fragments(&activation)
+                .iter()
+                .map(|dim| dim.iter().map(|&(extent, _)| extent).product())
+                .collect();
+            assert_eq!(extents, [m, k]);
+            for (row, at) in [(0, 0), (5, 17), (63, 255)] {
+                assert_eq!(offset(&activation, &[row, at]), offset(&matrix, &[at, row]));
+            }
+            assert_eq!(
+                TileOrder::of_matrix(&nvfp4_scheme(), &swapped(&activation)),
                 Some(order),
                 "{words_per_load} words a load"
             );

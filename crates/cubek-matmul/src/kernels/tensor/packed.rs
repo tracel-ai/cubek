@@ -243,12 +243,12 @@ impl PackedTensor {
     /// its scales a read at a time beside them. The operand keeps the order.
     ///
     /// The tile order stores a matrix over `K` and the axis it lies across
-    /// ([`values_axes`](tile_order::values_axes)), so only one over `K` then another axis is read
-    /// from it.
+    /// ([`values_axes`](tile_order::values_axes)): a weight states it `[k, n]`, an activation
+    /// `[m, k]`, which is read swapped ([`swapped`](tile_order::swapped)).
     ///
     /// # Errors
     ///
-    /// [`STORED_TILES_UNREAD`]: a matrix over other axes, values in rows or at another block than
+    /// [`STORED_TILES_UNREAD`]: a matrix not over `K` and one other axis, values in rows or at another block than
     /// this matrix's, or in tiles no read takes whole.
     pub fn read_in_tiles(
         hw: &Hardware,
@@ -256,11 +256,14 @@ impl PackedTensor {
         operand: Operand,
         matrix: &Metadata,
     ) -> Result<Operand, Refusal> {
-        let [(K, k), (across, _)] = sized else {
-            return Err(STORED_TILES_UNREAD);
+        // Tile order reads a matrix stated `[k, rows]`; an `[m, k]` input states it swapped.
+        let (k, across, matrix) = match sized {
+            [(K, k), (across, _)] => (k, across, matrix.clone()),
+            [(across, _), (K, k)] => (k, across, tile_order::swapped(matrix)),
+            _ => return Err(STORED_TILES_UNREAD),
         };
         let block = operand.grouping(K, k).ok_or(STORED_TILES_UNREAD)?;
-        let order = TileOrder::of_operand(&operand, matrix).ok_or(STORED_TILES_UNREAD)?;
+        let order = TileOrder::of_operand(&operand, &matrix).ok_or(STORED_TILES_UNREAD)?;
         if order.block() != block {
             return Err(STORED_TILES_UNREAD);
         }
