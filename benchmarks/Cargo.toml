@@ -52,7 +52,9 @@ cubek-fft = {workspace = true, default-features = true, features = ["benchmarks"
 cubek-linear-recurrence = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-interpolate = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-matmul = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-microkernel = { workspace = true, default-features = true }
 cubek-pool = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-rms-norm = { workspace = true, default-features = true }
 cubek-random = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-reduce = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-std = { workspace = true, default-features = true, features = ["benchmarks"] }
@@ -144,3 +146,7 @@ name = "quantized_matmul"
 [[bench]]
 harness = false
 name = "random"
+
+[[bench]]
+harness = false
+name = "deferred_norm"
