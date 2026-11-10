@@ -845,7 +845,7 @@ impl PackedTensor {
                 PhysicalAxisMap::of(scale_axes[1]).over(per_word),
             ],
         );
-        TileTensorLaunch::tensor_map_folded_through(
+        TileTensorLaunch::tensor_map_with_coordinates_through(
             map,
             projection,
             &[rows_across as u32, blocks as u32],
