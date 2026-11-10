@@ -71,10 +71,19 @@ impl<'a> CubeStagedPlacement<'a> {
         let item = view.work_item();
         CubeStagedMicrokernel::admits(&item)?;
         let by_units = fill.delivery == CubeStagedDelivery::Copy;
-        let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
-            .find(|candidate| {
+        let candidates: Vec<_> = CubeStagedMicrokernel::candidates(hw, &item, settings)
+            .filter(|candidate| {
                 by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
             })
+            .collect();
+        // A stage the TMA engine lands holds no padding, so its planes take the first instruction
+        // that reads its rows swizzled, where the device offers one for the product.
+        let landed = fill.delivery == CubeStagedDelivery::Tma;
+        let microkernel = candidates
+            .iter()
+            .find(|candidate| landed && candidate.plane.instruction.reads_a_landed_stage_swizzled())
+            .or(candidates.first())
+            .copied()
             .ok_or(Refusal::Declined {
                 why: CubeStagedMicrokernel::decline(settings),
             })?;

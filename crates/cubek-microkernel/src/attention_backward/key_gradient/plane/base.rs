@@ -306,7 +306,6 @@ impl Microkernel for PlaneKeyGradientMicrokernel {
         let grid = PlaneFragmentMicrokernelSettings {
             along_m: settings.seq_kv,
             along_n: settings.seq_q,
-            transport: settings.transport,
             ..PlaneFragmentMicrokernelSettings::DEFAULT
         };
         let (score_item, gradient_item) = (item.score(S), item.score_gradient(S));

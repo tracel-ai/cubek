@@ -1,10 +1,10 @@
-use crate::matmul::plane::{PlaneFragmentStepSum, PlaneFragmentTransport};
+use crate::matmul::plane::PlaneFragmentStepSum;
 use core::num::NonZeroUsize;
 
 /// The steps a plane holds along `m` and `n`, and how many steps of `K` it walks per stage, each
 /// step the fewest calls of the instruction every load fills whole
-/// ([`MatmulStep`](crate::matmul::MatmulStep)). The instruction itself is a candidate, not a
-/// setting.
+/// ([`MatmulStep`](crate::matmul::MatmulStep)). The instruction is not a setting: the tile layer
+/// picks it for the product ([`Contraction::instruction`](cubecl::tile::Contraction::instruction)).
 ///
 /// A warpgroup MMA holds one instruction a plane group, `along_n` times its form's granularity
 /// wide: there `along_m` is one, and the steps along `n` size the instruction rather than a grid of
@@ -18,8 +18,9 @@ pub struct PlaneFragmentMicrokernelSettings {
     /// narrow one; a matrix instruction's step is always its own. Wide unless a caller opts in
     /// ([`PlaneFragmentStepSum`]).
     pub step_sum: PlaneFragmentStepSum,
-    /// Which transport a matrix instruction is reached through first.
-    pub transport: PlaneFragmentTransport,
+    /// Whether the plane is one of a warpgroup's, which issue the warpgroup MMA together: a
+    /// routine of its own, whose stages only the TMA engine lands.
+    pub warpgroup: bool,
     /// How deep along `K` each of its fragments is ([`PlaneFragmentDepth`]).
     pub fragment_depth: PlaneFragmentDepth,
     /// The axis the instruction's rows, and its accumulator's, lie along
@@ -57,8 +58,7 @@ pub enum PlaneFragmentDepth {
 impl PlaneFragmentMicrokernelSettings {
     pub const DEFAULT: Self = Self::grid(4, 4, 1);
 
-    /// `along_m` by `along_n` steps a plane, `depth` steps of `K` a stage, wide steps reached
-    /// through cubecl's fragment operations.
+    /// `along_m` by `along_n` steps a plane, `depth` steps of `K` a stage, wide steps.
     ///
     /// # Panics
     ///
@@ -69,30 +69,33 @@ impl PlaneFragmentMicrokernelSettings {
             along_n: NonZeroUsize::new(along_n).unwrap(),
             depth: NonZeroUsize::new(depth).unwrap(),
             step_sum: PlaneFragmentStepSum::Wide,
-            transport: PlaneFragmentTransport::Cmma,
+            warpgroup: false,
             fragment_depth: PlaneFragmentDepth::Instruction,
             rows_along: PlaneFragmentRowsAlong::M,
         }
     }
 
     /// `along_n` fragments a plane along `n` and one along `m`, each a window `depth` steps of `K`
-    /// deep, reached through the tile DSL's transport: the grid a plane holds against a packed
-    /// rhs it reads straight from memory, decoding it as each fragment loads.
+    /// deep: the grid a plane holds against a packed rhs it reads straight from memory, decoding
+    /// it as each fragment loads, which only the instruction contracting fragments a stage deep
+    /// does ([`PlaneFragmentDepth::Stage`]).
     ///
     /// # Panics
     ///
     /// On a count of zero.
     pub const fn windowed(along_n: usize, depth: usize) -> Self {
         Self {
-            transport: PlaneFragmentTransport::Mma,
             fragment_depth: PlaneFragmentDepth::Stage,
             ..Self::grid(1, along_n, depth)
         }
     }
 
-    /// This grid reaching its matrix instruction through `transport`.
-    pub const fn through(self, transport: PlaneFragmentTransport) -> Self {
-        Self { transport, ..self }
+    /// This grid on a warpgroup's planes, contracting through the warpgroup MMA.
+    pub const fn on_warpgroup(self) -> Self {
+        Self {
+            warpgroup: true,
+            ..self
+        }
     }
 
     /// This grid with its instruction's rows along `rows_along`.
@@ -104,10 +107,8 @@ impl PlaneFragmentMicrokernelSettings {
 impl core::fmt::Display for PlaneFragmentMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "steps={}x{}x{}", self.along_m, self.along_n, self.depth)?;
-        match self.transport {
-            PlaneFragmentTransport::Cmma => {}
-            PlaneFragmentTransport::Mma => write!(f, " transport=mma")?,
-            PlaneFragmentTransport::Wgmma => write!(f, " transport=wgmma")?,
+        if self.warpgroup {
+            write!(f, " warpgroup")?;
         }
         if self.fragment_depth == PlaneFragmentDepth::Stage {
             write!(f, " fragments_through_stage")?;

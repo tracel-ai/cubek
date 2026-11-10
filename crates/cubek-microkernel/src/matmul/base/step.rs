@@ -1,7 +1,7 @@
 use crate::matmul::{MatmulOperand, MatmulOperands};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::{Axis, Space};
+use cubecl::tile::{Axis, Contraction, Input, Space, SumRole};
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::{Hardware, Instructions, TMA_ROW_BYTES, block_scaled_mma};
@@ -115,7 +115,8 @@ impl MatmulStep {
 
     /// The step a load stores `input` in on `hw`: `input` read as `operand`, its values `values`,
     /// against the other input at `contracted`, the element the product is contracted at, under
-    /// the largest instruction `hw` offers to contract it, its stages filled by the TMA engine
+    /// the instruction the tile layer picks to contract it, its sum written out
+    /// ([`Contraction::instruction`]), its stages filled by the TMA engine
     /// where `hw` has one. The decode routines take no instruction, and their step is a whole
     /// number of times inside this one, so one stored tile serves both.
     ///
@@ -143,15 +144,14 @@ impl MatmulStep {
         });
         let shape = match block_scaled {
             Some(shape) => Some(shape),
-            None => hw
-                .properties
-                .features
-                .matmul
-                .cmma
-                .iter()
-                .copied()
-                .for_triple(contracted, contracted, f32)
-                .largest(),
+            None => Contraction {
+                lhs: Input::plain(contracted),
+                rhs: Input::plain(contracted),
+                sum: f32,
+                role: SumRole::Drained,
+            }
+            .instruction(&hw.properties, &hw.target)
+            .map(|fragment| fragment.shape),
         }?;
         let operands = MatmulOperands::all(Operand::plain()).with(input, operand);
         let elements = MatmulOperands::all(contracted).with(input, values);

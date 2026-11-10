@@ -19,11 +19,11 @@ mod base {
     use cubek_microkernel::matmul::cube::{
         CubeStagedAsyncCopyRefusal, CubeStagedDelivery, CubeStagedFillingRefusal,
         CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedStore,
-        CubeStagedTmaRefusal, CubeStagedTmaStoreRefusal, MatmulPlaneLayout,
+        CubeStagedTmaRefusal, CubeStagedTmaStoreRefusal,
     };
     use cubek_microkernel::matmul::plane::{
         PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-        PlaneFragmentStepSum, PlaneFragmentTransport,
+        PlaneFragmentStepSum,
     };
     use cubek_microkernel::matmul::{
         MatmulDestination, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead,
@@ -358,8 +358,8 @@ mod base {
         (blueprint.microkernel.plane.instruction, grid.planes().width)
     }
 
-    /// The vendor's transport, then the tile DSL's for the same shape, then the software
-    /// instruction.
+    /// The tile layer's pick, the vendor's transport for a sum written out, then the tile DSL's
+    /// for the same shape, then the software instruction.
     #[test]
     fn the_candidates_are_the_matrix_instructions_then_the_software_one() {
         let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
@@ -382,31 +382,84 @@ mod base {
         );
     }
 
-    /// A setting asking for the tile DSL's transport first reaches the shape through it before the
-    /// vendor's, and still ends in the software instruction.
+    /// No two settings the cube staged routines list build the same kernel: on a device offering
+    /// its `f16` instruction to both transports, no two settings that prepare a product prepare
+    /// the same blueprint, so a race times each kernel once. The instruction is the tile layer's,
+    /// so a setting that named a transport would repeat another setting's kernel.
     #[test]
-    fn a_transport_setting_orders_the_two_transports() {
-        let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
-        let item = MatmulView::new(&problem(), CubeStagedMatmulRoutine::ROWS_KIND)
-            .expect(MatmulView::PREPARED)
-            .work_item();
-        let settings = PlaneFragmentMicrokernelSettings {
-            transport: PlaneFragmentTransport::Mma,
-            ..PlaneFragmentMicrokernelSettings::DEFAULT
+    fn no_two_settings_build_the_same_kernel() {
+        let eight = MmaConfig {
+            m: 8,
+            n: 8,
+            k: 8,
+            ..SHAPE
         };
-        let instructions: Vec<_> = PlaneFragmentMicrokernel::candidates(&hw, &item, &settings)
-            .map(|candidate| candidate.instruction)
-            .collect();
-        assert_eq!(
-            instructions,
-            [
-                PlaneFragmentInstruction::mma(SHAPE),
-                PlaneFragmentInstruction::Cmma { shape: SHAPE },
-                PlaneFragmentInstruction::Registers {
-                    step_sum: PlaneFragmentStepSum::Wide,
-                },
-            ]
-        );
+        let narrow = MmaConfig { n: 8, ..SHAPE };
+        let devices = [
+            (
+                "strix_halo",
+                devices::offering_mma(offering(devices::strix_halo()), [narrow]),
+            ),
+            (
+                "h100",
+                devices::offering_mma(offering(devices::h100()), [narrow]),
+            ),
+            (
+                "m2_pro",
+                devices::offering_mma(devices::offering_cmma(devices::m2_pro(), [eight]), [eight]),
+            ),
+        ];
+        for (device, hw) in devices {
+            for problem in [
+                MatmulRoutineProblem::dense(1024, 1024, 1024, F16),
+                col_rhs(),
+            ] {
+                let mut prepared = Vec::new();
+                prepared.extend(prepared_by(
+                    &hw,
+                    &problem,
+                    CubeStagedMatmulRoutine,
+                    CubeStagedMatmulRoutine.settings(&hw),
+                ));
+                prepared.extend(prepared_by(
+                    &hw,
+                    &problem,
+                    CubeStagedAsyncCopyMatmulRoutine,
+                    CubeStagedAsyncCopyMatmulRoutine.settings(&hw),
+                ));
+                prepared.extend(prepared_by(
+                    &hw,
+                    &problem,
+                    CubeStagedTmaMatmulRoutine,
+                    CubeStagedTmaMatmulRoutine.settings(&hw),
+                ));
+                prepared.extend(prepared_by(
+                    &hw,
+                    &problem,
+                    CubeStagedTmaFillerMatmulRoutine,
+                    CubeStagedTmaFillerMatmulRoutine.settings(&hw),
+                ));
+                prepared.extend(prepared_by(
+                    &hw,
+                    &problem,
+                    CubeStagedTmaStoredMatmulRoutine,
+                    CubeStagedTmaStoredMatmulRoutine.settings(&hw),
+                ));
+                let built: Vec<_> = prepared
+                    .into_iter()
+                    .filter_map(|(name, prepared)| Some((name, prepared.ok()?.0)))
+                    .collect();
+                assert!(!built.is_empty(), "{device}: no setting prepares");
+                for (position, (name, blueprint)) in built.iter().enumerate() {
+                    for (other, other_blueprint) in &built[position + 1..] {
+                        assert!(
+                            blueprint != other_blueprint,
+                            "{device}: {name} and {other} build the same kernel"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// A device offering its shape only under the tile DSL's transport runs it there.
@@ -451,8 +504,7 @@ mod base {
             CubeStagedMatmulRoutine
                 .settings(&hw)
                 .iter()
-                .all(|settings| settings.microkernel.plane.transport
-                    != PlaneFragmentTransport::Wgmma)
+                .all(|settings| !settings.microkernel.plane.warpgroup)
         );
         for (problem, col) in [(problem(), false), (col_rhs(), true)] {
             let prepared = CubeStagedWgmmaMatmulRoutine.prepare(&hw, &problem, &wgmma[0]);
@@ -672,35 +724,6 @@ mod base {
                 }
             }
         }
-    }
-
-    /// The tile DSL's multi-row box on the `16×16×16` instruction: four planes stacked along `m`,
-    /// each holding two rows of eight fragments, so one plane owns `32 × 128` and the cube's box is
-    /// `128 × 128`, walked two instruction steps of `K` a stage, the cubes in strips along `m`.
-    #[test]
-    fn the_multi_row_box_stacks_its_planes_along_m() {
-        let hw = offering(devices::strix_halo());
-        let problem = MatmulRoutineProblem::dense(1024, 1024, 256, F16);
-        let multi_row = CubeStagedMatmulRoutine
-            .settings(&hw)
-            .into_iter()
-            .find(|settings| settings.microkernel.planes == MatmulPlaneLayout::new(4, 1))
-            .expect("the list holds a multi-row box");
-        let (blueprint, grid) = CubeStagedMatmulRoutine
-            .prepare(&hw, &problem, &multi_row)
-            .expect("the routine runs here");
-        let (cube, stage) = (
-            blueprint.partitioning.cube_space().space,
-            blueprint.partitioning.stage(),
-        );
-        assert_eq!((cube.extent(M), cube.extent(N)), (128, 128));
-        assert_eq!(stage.extent(K), 32);
-        assert_eq!(blueprint.microkernel.plane.tile_extent(M), 32);
-        assert_eq!(grid.planes().count, 4);
-        assert_eq!(
-            blueprint.partitioning.cube_order(),
-            CubeOrder::SwizzleRow(4)
-        );
     }
 
     /// A second stage in flight holds a second stage of shared memory, and the blueprint carries

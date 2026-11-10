@@ -1,7 +1,6 @@
 use crate::matmul::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
     PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong, PlaneFragmentStepSum,
-    PlaneFragmentTransport,
 };
 use crate::matmul::{
     MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,
@@ -12,7 +11,9 @@ use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::QuantValue;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Instruction, Levels, Scratch, Space, StageStorage};
+use cubecl::tile::{
+    Axis, Contraction, Input, Instruction, Levels, Scratch, Space, StageStorage, SumRole,
+};
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::{K, M, N, blocked};
@@ -165,9 +166,7 @@ impl PlaneFragmentMicrokernel {
         // stage's, holds the settings' fragments along `M`, each against the rhs fragment
         // decoded once a step.
         let rows_fit = settings.along_m == NonZeroUsize::MIN || item.rows == MatmulRows::Tiled;
-        let windowed = rows_fit
-            && settings.transport == PlaneFragmentTransport::Mma
-            && settings.fragment_depth == PlaneFragmentDepth::Stage;
+        let windowed = rows_fit && settings.fragment_depth == PlaneFragmentDepth::Stage;
         let offered = windowed
             && runs_whole
             && blocks_whole
@@ -193,9 +192,12 @@ impl PlaneFragmentMicrokernel {
             })
     }
 
-    /// The planes against a float rhs: every matrix instruction this device offers for the
-    /// item's elements, through the transport the settings ask for first, then the software
-    /// instruction ([`candidates`](Microkernel::candidates)).
+    /// The planes against a float rhs: first the matrix instruction the tile layer picks for the
+    /// product, its sum written out ([`Contraction::instruction`]); then every other matrix
+    /// instruction this device offers for the item's elements, through cubecl's fragment
+    /// operations, then through the tile DSL's own transport, each the one that contracts the
+    /// most per call first; then the software instruction ([`candidates`](Microkernel::candidates)).
+    /// The warpgroup MMA alone where the settings put the plane on a warpgroup.
     fn float_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -218,22 +220,29 @@ impl PlaneFragmentMicrokernel {
             .deepest()
             .largest_first()
             .map(PlaneFragmentInstruction::mma);
+        let picked = Contraction {
+            lhs: Input::plain(lhs),
+            rhs: Input::plain(rhs),
+            sum,
+            role: SumRole::Drained,
+        }
+        .instruction(&hw.properties, &hw.target)
+        .and_then(PlaneFragmentInstruction::picked);
         let settings = *settings;
         let software = PlaneFragmentInstruction::Registers {
             step_sum: settings.step_sum.serving(item),
         };
-        let instructions: Vec<_> = match settings.transport {
-            PlaneFragmentTransport::Cmma => cmma
-                .chain(mma)
-                .filter(|_| committed)
-                .chain([software])
-                .collect(),
-            PlaneFragmentTransport::Mma => mma
-                .chain(cmma)
-                .filter(|_| committed)
-                .chain([software])
-                .collect(),
-            PlaneFragmentTransport::Wgmma => Self::wgmma(hw, item, &settings).into_iter().collect(),
+        let instructions: Vec<_> = match settings.warpgroup {
+            false => {
+                let others = cmma.chain(mma).filter(move |other| Some(*other) != picked);
+                picked
+                    .into_iter()
+                    .chain(others)
+                    .filter(|_| committed)
+                    .chain([software])
+                    .collect()
+            }
+            true => Self::wgmma(hw, item, &settings).into_iter().collect(),
         };
         let deep = settings.fragment_depth == PlaneFragmentDepth::Stage;
         let step = MatmulStep::new(hw, MatmulOperands::all(Operand::plain()), item.elements);
@@ -719,12 +728,12 @@ impl Microkernel for PlaneFragmentMicrokernel {
         }
     }
 
-    /// Every matrix instruction this device offers for these elements and this sum through cubecl's
-    /// fragment operations, then through the tile DSL's own transport, each the one that contracts
-    /// the most per call first; then the software instruction, which every device runs. A matrix
-    /// instruction spreads its fragment across the plane, so it is offered only where the device
-    /// commits to one plane width. Where the settings ask for the warpgroup MMA, that alone, where
-    /// it runs. Against a packed rhs, the planes that decode it as they load, at the grids
+    /// The matrix instruction the tile layer picks for these elements and this sum, then every
+    /// other one this device offers through cubecl's fragment operations, then through the tile
+    /// DSL's own transport, each the one that contracts the most per call first; then the software
+    /// instruction, which every device runs. A matrix instruction spreads its fragment across the
+    /// plane, so it is offered only where the device commits to one plane width. Where the
+    /// settings put the plane on a warpgroup, the warpgroup MMA alone, where it runs. Against a packed rhs, the planes that decode it as they load, at the grids
     /// [`windowed`](PlaneFragmentMicrokernelSettings::windowed) names, narrowed until their columns
     /// close `n`.
     fn candidates(
@@ -924,8 +933,7 @@ mod tests {
             step_sum: PlaneFragmentStepSum::Wide,
         };
         let stage_deep = PlaneFragmentMicrokernelSettings::windowed(2, 4);
-        let instruction_deep =
-            PlaneFragmentMicrokernelSettings::grid(2, 2, 1).through(PlaneFragmentTransport::Mma);
+        let instruction_deep = PlaneFragmentMicrokernelSettings::grid(2, 2, 1);
         let (m, n) = (PlaneFragmentRowsAlong::M, PlaneFragmentRowsAlong::N);
 
         assert!(plane(mma, stage_deep, n).lays_its_rows());
@@ -964,15 +972,12 @@ mod tests {
         );
     }
 
-    /// The tile layer's choice of instruction for a sum written out
-    /// ([`Contraction::instruction`](cubecl::tile::Contraction::instruction)) is the one this
-    /// microkernel picks at its default settings, on every mocked device and float element: the
-    /// two agree before the microkernel hands the choice over.
+    /// A plane at its default settings contracts through the instruction the tile layer picks for
+    /// a sum written out ([`Contraction::instruction`]), on every mocked device and float element,
+    /// and through the software instruction where the tile layer picks none.
     #[test]
     fn the_tile_picks_the_instruction_this_microkernel_picks() {
-        use cubecl::cmma::MatrixLayout;
-        use cubecl::ir::TargetProperties;
-        use cubecl::tile::{Contraction, Fragment, Input, SumRole};
+        use cubecl::tile::Fragment;
         use cubek_std::devices;
 
         let f32 = ElemType::Float(FloatKind::F32);
@@ -987,15 +992,6 @@ mod tests {
             ("cpu_12", devices::cpu_12()),
         ];
         for (name, hw) in devices {
-            let mut target = TargetProperties::default();
-            target.mma.register_layout_a = match hw.accumulator_as_a {
-                true => target.mma.register_layout_acc,
-                false => match target.mma.register_layout_acc {
-                    MatrixLayout::RowMajor => MatrixLayout::ColMajor,
-                    _ => MatrixLayout::RowMajor,
-                },
-            };
-            target.mma.register_duplication_a = target.mma.register_duplication_acc;
             for kind in [FloatKind::F16, FloatKind::BF16, FloatKind::F32] {
                 let input = ElemType::Float(kind);
                 let item = MatmulWorkItem {
@@ -1039,7 +1035,7 @@ mod tests {
                     role: SumRole::Drained,
                 };
                 let tile = contraction
-                    .instruction(&hw.properties, &target)
+                    .instruction(&hw.properties, &hw.target)
                     .map(|Fragment { instruction, shape }| (instruction, shape));
                 assert_eq!(tile, today, "{name}, {kind:?}");
             }

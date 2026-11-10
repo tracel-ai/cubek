@@ -289,7 +289,6 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
         let grid = PlaneFragmentMicrokernelSettings {
             along_m: settings.seq_q,
             along_n: settings.seq_kv,
-            transport: settings.transport,
             ..PlaneFragmentMicrokernelSettings::DEFAULT
         };
         let (score_item, gradient_item) = (item.score(Q), item.score_gradient(Q));

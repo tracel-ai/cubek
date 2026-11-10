@@ -6,7 +6,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::ops::matmul::MmaIo;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{
-    Axis, BlockScaledOperands, Instruction, MmaOperands, RegisterBlock, StageStorage,
+    Axis, BlockScaledOperands, Fragment, Instruction, MmaOperands, RegisterBlock, StageStorage,
 };
 use cubecl::wgmma::WARPGROUP_UNITS;
 use cubek_std::layout::BindingOrder;
@@ -246,6 +246,14 @@ impl PlaneFragmentInstruction {
             .collect()
     }
 
+    /// Whether the instruction reads a stage one TMA box lands, which holds no padding, on
+    /// distinct banks: the manual `mma` and the warpgroup MMA read its rows swizzled
+    /// ([`landed_stage_storage`](Self::landed_stage_storage)); `cmma` reads them in order, a
+    /// fragment's rows on the banks they share.
+    pub fn reads_a_landed_stage_swizzled(self) -> bool {
+        matches!(self, Self::Mma { .. } | Self::Wgmma { .. })
+    }
+
     /// How a stage the instruction reads holds its cells where one TMA box lands each operand's
     /// stage whole, `depth` of `K` deep: in tiles of a matrix instruction along `m` and `n`, each
     /// the whole stage deep along `K`, so the tiles stack whole rows one after another as a box
@@ -324,6 +332,23 @@ impl PlaneFragmentInstruction {
         }
     }
 
+    /// The instruction the tile layer picked for a product ([`Contraction::instruction`]): a
+    /// matrix instruction through either transport; `None` for one a plane does not run.
+    ///
+    /// [`Contraction::instruction`]: cubecl::tile::Contraction::instruction
+    pub fn picked(fragment: Fragment) -> Option<Self> {
+        match fragment.instruction {
+            Instruction::Cmma => Some(Self::Cmma {
+                shape: fragment.shape,
+            }),
+            Instruction::Mma { operands, .. } => Some(Self::Mma {
+                shape: fragment.shape,
+                operands,
+            }),
+            _ => None,
+        }
+    }
+
     /// The device's block-scaled instruction `instruction`, through the manual-mma transport.
     pub fn block_scaled_mma(instruction: BlockScaledMma) -> Self {
         Self::Mma {
@@ -349,23 +374,16 @@ impl PlaneFragmentInstruction {
     }
 }
 
-/// Which transport a plane reaches the device's matrix instruction through first, where the device
-/// offers one under both: the other follows it, and the software instruction follows both.
-///
-/// A setting rather than a candidate's order, an exception to candidates being searched and never
-/// tuned: the two emit the same instruction, so the hardware does not settle which is faster.
-/// Each transport loads the fragments its own way, and which way a layout of the rhs favours
-/// is a measurement.
+/// Which transport an attention's planes reach the device's matrix instruction through: its score
+/// holder in disguise, a fragment of registers through `mma` or a window of shared memory through
+/// `cmma`. A matmul's plane takes the instruction the tile layer picks for its product, and lists
+/// both transports, so an attention picks its own from them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlaneFragmentTransport {
-    /// The vendor's fragment API first ([`PlaneFragmentInstruction::Cmma`]).
+    /// The vendor's fragment API ([`PlaneFragmentInstruction::Cmma`]).
     Cmma,
-    /// The tile DSL's own transport first ([`PlaneFragmentInstruction::Mma`]).
+    /// The tile DSL's own transport ([`PlaneFragmentInstruction::Mma`]).
     Mma,
-    /// The warpgroup MMA alone ([`PlaneFragmentInstruction::Wgmma`]), where it runs, and nothing
-    /// where it does not: a setting that asks for it is laid out for it, a plane group's one
-    /// accumulator a row of `columns` granules, which no other instruction is measured at.
-    Wgmma,
 }
 
 /// The element one instruction step of the software instruction contracts in.

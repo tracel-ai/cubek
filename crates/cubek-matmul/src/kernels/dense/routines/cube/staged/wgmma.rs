@@ -13,7 +13,7 @@ use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedStore,
 };
-use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
+use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_std::Hardware;
 use cubek_std::microkernel::KernelEstimate;
 use cubek_std::microkernel::StageRing;
@@ -74,7 +74,7 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
                 MatmulPlaneLayout::new(2, 1),
             )
             .ringed(StageRing::DOUBLE)
-            .through(PlaneFragmentTransport::Wgmma),
+            .on_warpgroup(),
             cube_order: CubeOrder::RowMajor,
         }]
     }

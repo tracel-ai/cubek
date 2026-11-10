@@ -140,7 +140,6 @@ impl PlaneFragmentAttentionMicrokernel {
         let unsized_grid = PlaneFragmentMicrokernelSettings {
             along_m: settings.seq_q,
             along_n: settings.seq_kv,
-            transport: settings.transport,
             ..PlaneFragmentMicrokernelSettings::DEFAULT
         };
         let value_item = Self::value_item(item);
@@ -234,8 +233,7 @@ impl PlaneFragmentAttentionMicrokernel {
     }
 
     /// Whether `score` comes after another of the settings' preference: one through the other
-    /// transport, or a cmma one of the other shape. The shared microkernel already lists the
-    /// settings' transport first.
+    /// transport, or a cmma one of the other shape.
     fn deferred(
         settings: PlaneFragmentAttentionMicrokernelSettings,
         score: PlaneFragmentInstruction,
@@ -248,10 +246,9 @@ impl PlaneFragmentAttentionMicrokernel {
             PlaneFragmentInstruction::Mma { .. } => {
                 (settings.transport != PlaneFragmentTransport::Mma, false)
             }
-            PlaneFragmentInstruction::Wgmma { .. } => {
-                (settings.transport != PlaneFragmentTransport::Wgmma, false)
+            PlaneFragmentInstruction::Wgmma { .. } | PlaneFragmentInstruction::Registers { .. } => {
+                (true, false)
             }
-            PlaneFragmentInstruction::Registers { .. } => (true, false),
         }
     }
 
