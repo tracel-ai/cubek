@@ -6,7 +6,7 @@ use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Axis;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::ops::matmul::LhsLine;
+use cubecl::tile::ops::matmul::LhsVectorAxis;
 use cubecl::tile::space::PlaneOrder;
 use cubek_matmul::kernels::{UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings};
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
@@ -93,10 +93,13 @@ impl UnitRegistersConvRoutine {
     /// # Errors
     ///
     /// The leaf's refusal, where it cannot serve the lines as they are.
-    pub fn check_lhs_line(problem: &ConvProblem, width: usize) -> Result<LhsLine, Refusal> {
+    pub fn check_lhs_vector_axis(
+        problem: &ConvProblem,
+        width: usize,
+    ) -> Result<LhsVectorAxis, Refusal> {
         let roles = problem.operation.roles();
         let space = problem.space();
-        LhsLine::of(
+        LhsVectorAxis::of(
             &space.subspace(&roles.lhs),
             &space.subspace(&roles.rhs),
             &space.subspace(&roles.free),
@@ -250,7 +253,7 @@ impl Routine for UnitRegistersConvRoutine {
             plane_width,
         )?;
         Self::check_lines(problem, &blueprint.widths)?;
-        Self::check_lhs_line(problem, blueprint.widths.lhs)?;
+        Self::check_lhs_vector_axis(problem, blueprint.widths.lhs)?;
         Ok((blueprint, grid))
     }
 }

@@ -5,7 +5,7 @@ use super::*;
 use crate::kernels::tiled::routines::test_support::{F32, nvidia};
 use crate::kernels::tiled::{ConvOperation, ConvProblem, CubeStagedConvRoutine};
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::ops::matmul::LhsLine;
+use cubecl::tile::ops::matmul::LhsVectorAxis;
 use cubek_std::devices;
 use cubek_std::routine::Routine;
 
@@ -92,12 +92,12 @@ fn an_input_line_not_dividing_the_rows_is_refused_by_name() {
         ..ConvProblem::dense(1, [9, 9], (10, 16), [3, 3], 1, F32)
     };
     assert!(matches!(
-        UnitRegistersConvRoutine::check_lhs_line(&problem, 4),
-        Err(Refusal::GatherLhsLine { .. })
+        UnitRegistersConvRoutine::check_lhs_vector_axis(&problem, 4),
+        Err(Refusal::GatherLhsVector { .. })
     ));
     assert_eq!(
-        UnitRegistersConvRoutine::check_lhs_line(&problem, 2),
-        Ok(LhsLine::Rows)
+        UnitRegistersConvRoutine::check_lhs_vector_axis(&problem, 2),
+        Ok(LhsVectorAxis::Rows)
     );
 }
 
