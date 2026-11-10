@@ -107,11 +107,14 @@ impl MGroupedSettings<PlaneShuffleMatmulRoutineSettings> {
     }
 
     /// The plane shuffle's settings worth racing against a packed stack: the dense routine's
-    /// own for a packed rhs, over chunks of the most rows it holds.
+    /// own for a packed rhs, over chunks of the most rows it holds. Not its capped launch
+    /// ([`PACKED_PERSISTENT`](PlaneShuffleMatmulRoutineSettings::PACKED_PERSISTENT)): an indexed
+    /// launch hands its cubes the chunks beside the columns, which a capped launch declines.
     pub fn plane_shuffle_packed() -> Vec<Self> {
         PlaneShuffleMatmulRoutine
             .packed_settings()
             .into_iter()
+            .filter(|routine| routine.planes_per_worker.is_none())
             .map(|routine| Self {
                 routine,
                 ..Self::PLANE_SHUFFLE
