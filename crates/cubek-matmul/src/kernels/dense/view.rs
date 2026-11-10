@@ -355,7 +355,7 @@ impl<'a> MatmulView<'a> {
     }
 
     /// The batch axes the cubes are handed one of.
-    fn distributed_batch_axes(&self) -> Vec<Axis> {
+    pub(crate) fn distributed_batch_axes(&self) -> Vec<Axis> {
         self.distributed_batches()
             .into_iter()
             .map(|(axis, _)| axis)
