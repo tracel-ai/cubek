@@ -3,12 +3,13 @@
 
 use std::sync::Arc;
 
+use cubecl::cmma::MatrixLayout;
 use cubecl::features::{
     AtomicUsage, Features, MmaConfig, Plane, ScaledMmaConfig, Tma, WgmmaConfig,
 };
 use cubecl::ir::{
     DeviceIdentity, DeviceProperties, ElemType, FloatKind, HardwareProperties,
-    MemoryDeviceProperties, OpaqueType, Type,
+    MemoryDeviceProperties, OpaqueType, TargetProperties, Type,
 };
 use cubecl::profile::TimingMethod;
 
@@ -106,10 +107,7 @@ pub fn h100() -> Hardware {
     device.features.types.opaque.insert(OpaqueType::Barrier);
     f32_atomic_add(&mut device);
     shared_f32_atomic_add(&mut device);
-    Hardware {
-        accumulator_as_a: true,
-        ..hardware(device)
-    }
+    accumulator_as_a(hardware(device))
 }
 
 /// The RTX PRO 6000 (Blackwell, `sm_120`), as cubecl's CUDA runtime reports it: 188 SMs, 99 KiB
@@ -133,10 +131,7 @@ pub fn rtx_pro_6000() -> Hardware {
     device.features.types.opaque.insert(OpaqueType::Barrier);
     f32_atomic_add(&mut device);
     shared_f32_atomic_add(&mut device);
-    Hardware {
-        accumulator_as_a: true,
-        ..hardware(device)
-    }
+    accumulator_as_a(hardware(device))
 }
 
 /// A 12-core CPU runtime, as cubecl's `CpuRuntime` reports it: single-unit planes with no
@@ -298,11 +293,21 @@ fn device(hardware: HardwareProperties) -> DeviceProperties {
     )
 }
 
-fn hardware(device: DeviceProperties) -> Hardware {
-    Hardware {
-        properties: Arc::new(device),
-        accumulator_as_a: false,
-    }
+/// `device` compiling for a target whose `mma` lays `A` otherwise than its accumulator, as RDNA's
+/// does ([`Hardware::accumulator_as_a`]): what a test asks of a device it states no target for.
+pub(crate) fn hardware(device: DeviceProperties) -> Hardware {
+    let mut target = TargetProperties::default();
+    target.mma.register_layout_a = MatrixLayout::ColMajor;
+    Hardware::new(Arc::new(device), &target)
+}
+
+/// `hw` compiling for a target whose `mma` accumulator lies where its `A` does, as CUDA's and
+/// Metal's do ([`Hardware::accumulator_as_a`]).
+pub fn accumulator_as_a(hw: Hardware) -> Hardware {
+    let mut target = (*hw.target).clone();
+    target.mma.register_layout_a = target.mma.register_layout_acc;
+    target.mma.register_duplication_a = target.mma.register_duplication_acc;
+    Hardware::new(hw.properties, &target)
 }
 
 fn f32_atomic_add(device: &mut DeviceProperties) {
