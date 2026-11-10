@@ -1699,9 +1699,10 @@ mod base {
         }
     }
 
-    /// NVFP4 laid block by block keeps its scales in tiles across its rows, which the block-scaled
-    /// instruction's scale words are not bound from: every setting that would take them as words
-    /// declines it, rather than read another row's scales.
+    /// NVFP4 laid block by block keeps its scales in tiles across its rows, which the units copying
+    /// the block-scaled instruction's scale words do not bind them from: every setting that would
+    /// have them copy words declines it, rather than read another row's scales. Only the TMA engine
+    /// lands words in tiles, and it lands no tile laid block by block.
     #[test]
     fn scale_words_are_declined_over_scales_in_tiles() {
         use crate::kernels::MATMUL_SCALE_WORDS_IN_TILES;
@@ -1728,10 +1729,14 @@ mod base {
         let problem =
             MatmulRoutineProblem::packed(128, 256, 512, ElemType::Float(FloatKind::F16), inputs);
         assert_eq!(
-            problem.check_block_scales(BlockScales::Words),
+            problem.check_block_scales(BlockScales::Words, false),
             Err(MATMUL_SCALE_WORDS_IN_TILES)
         );
-        assert_eq!(problem.check_block_scales(BlockScales::Fields), Ok(()));
+        assert_eq!(problem.check_block_scales(BlockScales::Words, true), Ok(()));
+        assert_eq!(
+            problem.check_block_scales(BlockScales::Fields, false),
+            Ok(())
+        );
         let refusals: Vec<_> = block_scaled_prepared(&hw, &problem)
             .into_iter()
             .map(|(_, prepared)| prepared)

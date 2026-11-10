@@ -336,32 +336,78 @@ impl TileOrder {
     }
 
     /// How the block scales of a matrix `across` an axis are stored beside its values, over
-    /// [`scales_axes`], read `rows_a_read` rows a read: a word's
-    /// [`SCALES_PER_WORD`](Self::SCALES_PER_WORD) blocks of one row along `KB`, the tile's rows'
-    /// words side by side, then the tile's further words down `k`, the tiles ordered as the
-    /// values' are. A row's scales of a tile's blocks are one word, so a read of `rows_a_read`
-    /// rows is that many words; the rows a load of values spans ([`rows_a_load`](Self::rows_a_load))
-    /// make it the read that serves one load of values. Every read stores the same bytes.
+    /// [`scales_axes`], read `rows_a_read` rows a read: in tiles of their own, a word holding
+    /// [`SCALES_PER_WORD`](Self::SCALES_PER_WORD) blocks of one row along `KB`, the tiles ordered
+    /// as the values' are. Block by block, the tile's rows' words side by side, then the tile's
+    /// further words down `k`: a row's scales of a tile's blocks are one word, so a read of
+    /// `rows_a_read` rows is that many words, and the rows a load of values spans
+    /// ([`rows_a_load`](Self::rows_a_load)) make it the read that serves one load of values. Row by
+    /// row, each row's words one run and the tile's rows one after another: a tile's scales are
+    /// one dense run, which a TMA box lands as the rows of scales a stage holds
+    /// ([`scale_words_in_tiles`](Self::scale_words_in_tiles)). Every read stores the same bytes.
     ///
-    /// `None` for tiles laid row by row, whose scales stay in the rows they are packed in
-    /// ([`TileWords::RowByRow`]).
+    /// `None` where a tile's `k` is not whole words of block scales, or the tile is one row: its
+    /// scales stay in the rows they are packed in.
     pub fn scales_storage(self, across: Axis, rows_a_read: usize) -> Option<StoragePartitioning> {
-        if self.words == TileWords::RowByRow {
+        if !self.scales_in_tiles() {
             return None;
         }
         let (tile_k, tile_rows) = self.tile;
-        let rows = blocked(across).1;
-        let pieces = [
-            (rows, tile_rows),
-            (KB, tile_k / (self.block * Self::SCALES_PER_WORD)),
-        ];
+        let scale_word = self.block * Self::SCALES_PER_WORD;
+        let rows = (blocked(across).1, tile_rows);
+        let words = (KB, tile_k / scale_word);
+        let pieces = match self.words {
+            TileWords::BlockByBlock => [rows, words],
+            TileWords::RowByRow => [words, rows],
+        };
         let storage = stored_in_levels(
             (KB, Self::SCALES_PER_WORD),
             &pieces,
             rows_a_read,
-            &[KB, rows],
+            &[KB, blocked(across).1],
         );
         Some(self.strips(storage, u8::BITS as usize))
+    }
+
+    /// Whether its block scales lie in tiles of their own ([`scales_storage`](Self::scales_storage))
+    /// rather than in the rows they are packed in.
+    pub fn scales_in_tiles(self) -> bool {
+        let (tile_k, tile_rows) = self.tile;
+        tile_k.is_multiple_of(self.block * Self::SCALES_PER_WORD) && tile_rows > 1
+    }
+
+    /// The block scales of a matrix `k` deep and `rows` across, laid row by row in tiles
+    /// ([`scales_storage`](Self::scales_storage)), as the `u32` words a descriptor reads: the
+    /// strips of rows, the tiles along `k` in a strip, a tile's words, its rows' runs one after
+    /// another. A box of whole strips one tile deep lands the rows of scales a stage of one tile
+    /// along `k` holds, each row's words one run. Counted in words.
+    ///
+    /// # Panics
+    ///
+    /// On an order laid block by block, whose tiles hold their rows' words side by side, or whose
+    /// scales are not in tiles.
+    pub fn scale_words_in_tiles(self, k: usize, rows: usize) -> Metadata {
+        assert!(
+            self.words == TileWords::RowByRow && self.scales_in_tiles(),
+            "TileOrder::scale_words_in_tiles: scales in tiles laid row by row, not {self:?}"
+        );
+        let (tile_k, tile_rows) = self.tile;
+        let tile_words = tile_rows * tile_k / (self.block * Self::SCALES_PER_WORD);
+        let k_tiles = k / tile_k;
+        let strip = match self.stagger {
+            Some(stagger) => {
+                let bytes = stagger
+                    .over(u8::BITS as usize)
+                    .expect("a byte divides a transaction")
+                    .pitch(k_tiles * tile_words * size_of::<u32>());
+                bytes / size_of::<u32>()
+            }
+            None => k_tiles * tile_words,
+        };
+        Metadata::new(
+            Shape::from(vec![rows / tile_rows, k_tiles, tile_words]),
+            Strides::from(vec![strip, tile_words, 1]),
+        )
     }
 
     /// The kernel's statement of the block scales of a matrix `k` deep and `across` an axis of some
@@ -867,6 +913,43 @@ mod tests {
         }
     }
 
+    /// Scales laid row by row in tiles lie where a descriptor over their words reads them: each
+    /// row's word of each tile, as the kernel states the scales and as
+    /// [`scale_words_in_tiles`](TileOrder::scale_words_in_tiles) states them, at the same byte,
+    /// strips staggered or not.
+    #[test]
+    fn scales_laid_row_by_row_lie_where_a_descriptor_reads_them() {
+        let (k, n) = (5120, 64);
+        for stagger in [None, Some(transaction())] {
+            let laid = nvfp4(TileWords::RowByRow, (128, 8));
+            let order = match stagger {
+                Some(stagger) => laid.staggered(stagger).for_matrix(k, n),
+                None => laid,
+            };
+            let kernel = order
+                .kernel_scales_read(k, (N, n), 1)
+                .expect("a tile of 128 is whole words of scales");
+            let words = order.scale_words_in_tiles(k, n);
+            let (shape, strides) = (words.shape(), words.strides());
+            let words_per_row = 128 / (BLOCK * TileOrder::SCALES_PER_WORD);
+            for ni in 0..n {
+                for w in 0..k / (BLOCK * TileOrder::SCALES_PER_WORD) {
+                    let (strip, row) = (ni / 8, ni % 8);
+                    let (tile, in_row) = (w / words_per_row, w % words_per_row);
+                    let in_tile = row * words_per_row + in_row;
+                    assert!(strip < shape[0] && tile < shape[1] && in_tile < shape[2]);
+                    let at = strip * strides[0] + tile * strides[1] + in_tile * strides[2];
+                    let scale = offset(&kernel, &[ni, w * TileOrder::SCALES_PER_WORD]);
+                    assert_eq!(
+                        at * TileOrder::SCALES_PER_WORD,
+                        scale,
+                        "{stagger:?}: row {ni}, word {w}"
+                    );
+                }
+            }
+        }
+    }
+
     /// A 128-byte memory transaction, over bytes.
     fn transaction() -> Stagger {
         Stagger::new(1024, 8).expect("a byte divides a transaction")
@@ -936,7 +1019,8 @@ mod tests {
     /// Block by block, every scale lies at an address of its own, inside the matrix's scales, at
     /// every tile and load width; and where a load holds four words, the scales of four
     /// neighbouring rows' blocks of one word lie side by side, a read of them those a load of
-    /// values spans. Row by row, the scales are no tiles at all: they stay in rows.
+    /// values spans. Row by row, a tile's rows' runs lie one after another instead
+    /// ([`scales_laid_row_by_row_lie_where_a_descriptor_reads_them`]).
     #[test]
     fn a_load_of_scales_holds_neighbouring_rows() {
         let (k, n) = (256, 48);
@@ -944,11 +1028,6 @@ mod tests {
         for (tile, words_per_load) in WIDE_TILES.iter().flat_map(|&tile| LOADS.map(|w| (tile, w))) {
             let order = nvfp4(TileWords::BlockByBlock, tile);
             let rows_a_read = order.rows_a_load(N, words_per_load);
-            assert!(
-                nvfp4(TileWords::RowByRow, tile)
-                    .kernel_scales_read(k, (N, n), rows_a_read)
-                    .is_none()
-            );
             let scales = order
                 .kernel_scales_read(k, (N, n), rows_a_read)
                 .expect("block by block, the scales are in tiles");

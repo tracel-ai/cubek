@@ -88,6 +88,10 @@ pub enum CubeStagedTmaRefusal {
     /// shorter than the swizzle the stage's rows take: the engine pads each tile's row to the
     /// swizzle's span, so the box lands twice its bytes, past the stage.
     TileRowsUnderSwizzle,
+    /// The rhs keeps its block scales in tiles of their own, which a box lands one tile deep as
+    /// the rows of scales a stage holds; a stage deeper than one tile would land them a tile
+    /// after another, each row's words apart.
+    ScalesDeeperThanATile,
 }
 
 /// Why the copy engine cannot fill a cube microkernel's stages.
@@ -331,6 +335,13 @@ impl CubeStagedTmaRefusal {
             Some(Self::Unlanded(MatmulOperand::Rhs))
         } else if rhs_swizzle.is_ok_and(pads_tile_rows) {
             Some(Self::TileRowsUnderSwizzle)
+        } else if blocks
+            .packings
+            .rhs
+            .and_then(|packing| packing.operand.tile_order())
+            .is_some_and(|order| order.scales_in_tiles() && depth > order.tile().0)
+        {
+            Some(Self::ScalesDeeperThanATile)
         } else if [&lhs, &rhs]
             .into_iter()
             .any(|space| Delivery::Tma.moves(space).is_err())
@@ -420,6 +431,9 @@ impl From<CubeStagedTmaRefusal> for Refusal {
             }
             CubeStagedTmaRefusal::TileRowsUnderSwizzle => {
                 "a stage is deeper than one rhs tile whose rows are shorter than the stage's swizzle, which the engine pads"
+            }
+            CubeStagedTmaRefusal::ScalesDeeperThanATile => {
+                "a stage is deeper than one rhs tile, and the rhs's block scales lie in tiles a box lands one tile deep"
             }
         };
         Refusal::Declined { why }

@@ -1017,10 +1017,16 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                     .expect(ADMITTED_PLAN_RUNS)
                     .arg()
             }
+            // A launch the TMA engine fills binds its packed inputs again through descriptors
+            // (`tma_packed_operands`), scales and all, so the launcher states their scales as a
+            // reader of fields takes them, which reads them where they lie, in tiles or in rows.
             StoredTensor::Packed(tensor) => tensor.bind(
                 &launcher,
                 width,
-                blueprint.microkernel.block_scales(),
+                match blueprint.microkernel.fills_by_tma() {
+                    true => BlockScales::Fields,
+                    false => blueprint.microkernel.block_scales(),
+                },
                 blueprint.microkernel.words_delivery(),
             ),
         };
