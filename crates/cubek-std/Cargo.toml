@@ -41,3 +41,4 @@ serde = { workspace = true }
 [dev-dependencies]
 cubek-test-utils = { workspace = true }
 tempfile = "3"
+half = { workspace = true }
