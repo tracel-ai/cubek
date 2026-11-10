@@ -7,6 +7,7 @@ mod indexed;
 mod integers;
 mod packed;
 mod packed_activation;
+mod split_k;
 mod storage;
 
 #[cfg(feature = "benchmarks")]
