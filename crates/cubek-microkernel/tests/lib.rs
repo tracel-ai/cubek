@@ -4,6 +4,8 @@
 
 #[cfg(feature = "attention")]
 mod attention;
+#[cfg(feature = "attention-backward")]
+mod attention_backward;
 #[cfg(feature = "interpolate")]
 mod interpolate;
 #[cfg(feature = "linear-recurrence")]
