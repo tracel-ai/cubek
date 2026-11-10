@@ -11,6 +11,8 @@ mod row_pass;
 mod settings;
 mod shape;
 mod state_access;
+mod step;
+mod walk;
 
 pub use additive::*;
 pub use delta::*;
@@ -22,3 +24,5 @@ pub use row_pass::*;
 pub use settings::*;
 pub use shape::*;
 pub use state_access::*;
+pub use step::*;
+pub use walk::*;

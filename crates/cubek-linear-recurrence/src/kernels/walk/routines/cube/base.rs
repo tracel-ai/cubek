@@ -5,15 +5,12 @@ use crate::kernels::walk::{
     RECURRENCE_WALK_ELEMENT, RecurrenceWalkBlueprint, RecurrenceWalkProblem, settled_width,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::Levels;
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::linear_recurrence::walk::cube::{
     CubeWalkMicrokernel, CubeWalkMicrokernelSettings, HeldStateShape, MAX_HELD_LINES_PER_UNIT,
 };
 use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, UpdateRule};
-use cubek_microkernel::linear_recurrence::{
-    HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RATE, RecurrenceWalkPartitioning, VALUE_FEATURE,
-};
+use cubek_microkernel::linear_recurrence::{RecurrenceWalkPartitioning, VALUE_FEATURE};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate};
 use cubek_std::routine::{CubeResources, Grid};
@@ -121,20 +118,10 @@ where
     )?;
     let shape = microkernel.shape();
     let runs = settings.runs_of(hw, &shape, problem);
-    let mut unit_axes = vec![
-        (POSITION, 1),
-        (RATE, 2),
-        (KEY_HEAD, 1),
-        (HEAD_IN_GROUP, 1),
-        (KEY_FEATURE, shape.rows()),
-        (VALUE_FEATURE, shape.columns()),
-    ];
-    unit_axes.extend(problem.state.kept_axis());
-    let unit = Levels::leaf(&unit_axes);
     let partitioning = RecurrenceWalkPartitioning::new(
         problem.space(),
-        unit.walk_every(&[POSITION])
-            .units(&[(KEY_FEATURE, shape.units())])
+        microkernel
+            .tiling(problem.state.kept_axis())
             .planes(&[(VALUE_FEATURE, runs)]),
     );
     let blueprint = RecurrenceWalkBlueprint::new(microkernel, partitioning, width, runs);
@@ -200,6 +187,7 @@ mod tests {
     use crate::kernels::walk::{
         CubeAdditiveWalkRoutine, CubeDeltaWalkRoutine, RecurrenceWalkStateLayout,
     };
+    use cubek_microkernel::linear_recurrence::KEY_FEATURE;
     use cubek_microkernel::linear_recurrence::RecurrenceHeads;
     use cubek_microkernel::linear_recurrence::walk::UpdateRule;
     use cubek_microkernel::linear_recurrence::walk::cube::{

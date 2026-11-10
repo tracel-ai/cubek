@@ -2,7 +2,5 @@
 //! reads, with one sum a position.
 
 mod base;
-mod microkernel;
 
 pub use base::*;
-pub use microkernel::*;

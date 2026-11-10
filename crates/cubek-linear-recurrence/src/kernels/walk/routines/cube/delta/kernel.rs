@@ -2,7 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::{Partitioning, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::linear_recurrence::walk::cube::{
-    CubeDeltaWalkMicrokernel, StateAccess, cube_delta_walk_microkernel,
+    CubeDeltaWalkMicrokernel, CubeWalkMicrokernel, StateAccess, cube_walk_microkernel,
 };
 
 /// Every cube, walking its runs of value columns through every position over `state`. The states
@@ -40,15 +40,17 @@ pub fn cube_delta_walk_kernel<E: Float, N: Size>(
             &lengths.clone().map(|lengths| lengths.at(&cube)),
             first_kept,
         );
-        cube_delta_walk_microkernel::<E, N>(
+        cube_walk_microkernel::<E, N>(
             &cube,
             &query.at(&cube),
             &key.at(&cube),
             &value.at(&cube),
             &rates.at(&cube),
+            &ComptimeOption::new_None(),
             &access,
             &out.at(&cube),
-            microkernel,
+            comptime!(microkernel.shape()),
+            comptime!(CubeDeltaWalkMicrokernel::RULE),
             runs,
         );
     }

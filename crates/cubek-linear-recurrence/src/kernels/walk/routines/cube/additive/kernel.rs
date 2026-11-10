@@ -2,7 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::{Partitioning, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::linear_recurrence::walk::cube::{
-    CubeAdditiveWalkMicrokernel, StateAccess, cube_additive_walk_microkernel,
+    CubeAdditiveWalkMicrokernel, CubeWalkMicrokernel, StateAccess, cube_walk_microkernel,
 };
 
 /// Every cube, walking its runs of value columns through every position over `state`, and adding
@@ -43,16 +43,17 @@ pub fn cube_additive_walk_kernel<E: Float, N: Size>(
             &lengths.clone().map(|lengths| lengths.at(&cube)),
             first_kept,
         );
-        cube_additive_walk_microkernel::<E, N>(
+        cube_walk_microkernel::<E, N>(
             &cube,
             &query.at(&cube),
             &key.at(&cube),
             &value.at(&cube),
             &rates.at(&cube),
-            &skip.at(&cube),
+            &ComptimeOption::new_Some(skip.at(&cube)),
             &access,
             &out.at(&cube),
-            microkernel,
+            comptime!(microkernel.shape()),
+            comptime!(CubeAdditiveWalkMicrokernel::RULE),
             runs,
         );
     }
