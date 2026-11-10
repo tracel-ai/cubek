@@ -752,10 +752,27 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// # Panics
     ///
-    /// On tensors read for every row whole, and on a sink, which no descriptor addresses: the
-    /// store that chose the engine refused both.
+    /// On float tensors read for every row whole, on a sink, which no descriptor addresses, and on
+    /// a packed product whose blocks cut its rows or columns: the store that chose the engine
+    /// refused all three.
     pub fn tma_output(&self, stage: &MatmulStage) -> TileTensorLaunch {
-        self.assert_tiled();
+        // A packed product states its output over the block-split space, its rows and columns
+        // one block each where the store took it (`CubeStagedTmaStoreRefusal::BlockSplit`): the
+        // positions inside them, which the descriptor's rows and columns are.
+        let output: [Axis; 2] = match self.read(|view| view.blocks()) {
+            None => {
+                self.assert_tiled();
+                [M, N]
+            }
+            Some(blocks) => match blocks.restated_dims(M, N, 1).as_slice() {
+                [(rows, ..), (columns, ..)] => [*rows, *columns],
+                dims => panic!(
+                    "tma_output: the store refuses an output its blocks state in {dims:?}, more \
+                     than a descriptor's rows and columns"
+                ),
+            },
+        };
+        let axes = stage.axes();
         let out = self
             .out
             .addressed()
@@ -764,13 +781,13 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             out.binding.clone(),
             1,
             MatrixLayout::RowMajor,
-            (stage.extent(M), stage.extent(N)),
+            (stage.extent(axes.m), stage.extent(axes.n)),
             out.elem,
             TensorMapSwizzle::None,
         );
         TileTensorLaunch::tensor_map(
             map,
-            &[M, N],
+            &output,
             TmaBox {
                 rows: self.rows() as u32,
                 cols: self.problem().n as u32,
