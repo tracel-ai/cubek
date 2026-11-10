@@ -972,7 +972,7 @@ mod tests {
     fn the_tile_picks_the_instruction_this_microkernel_picks() {
         use cubecl::cmma::MatrixLayout;
         use cubecl::ir::TargetProperties;
-        use cubecl::tile::{Contraction, Fragment, SumRole};
+        use cubecl::tile::{Contraction, Fragment, Input, SumRole};
         use cubek_std::devices;
 
         let f32 = ElemType::Float(FloatKind::F32);
@@ -1033,8 +1033,8 @@ mod tests {
                     Ok(other) => panic!("{name}: a float default picks no {other:?}"),
                 };
                 let contraction = Contraction {
-                    lhs: input,
-                    rhs: input,
+                    lhs: Input::plain(input),
+                    rhs: Input::plain(input),
                     sum: f32,
                     role: SumRole::Drained,
                 };
