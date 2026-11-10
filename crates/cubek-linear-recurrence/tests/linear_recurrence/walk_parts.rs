@@ -9,7 +9,7 @@ use cubecl::bytes::Bytes;
 use cubecl::tile::{Partitioning, Region, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_linear_recurrence::kernels::walk::{
-    CubeDeltaWalkRoutine, CubeWalkRoutineSettings, RecurrenceWalkTensors,
+    CubeWalkRoutine, CubeWalkRoutineSettings, RecurrenceWalkTensors,
 };
 use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use cubek_microkernel::linear_recurrence::walk::cube::{
@@ -323,7 +323,7 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
         ] {
             let o = case.operands();
             let tensors = RecurrenceWalkTensors::new(case.inputs(&client, &o, F32)).unwrap();
-            let prepared = CubeDeltaWalkRoutine.prepare(&hw, tensors.problem(), &settings);
+            let prepared = CubeWalkRoutine::DELTA.prepare(&hw, tensors.problem(), &settings);
             let (blueprint, grid) = match prepared {
                 Ok(prepared) => prepared,
                 Err(why) => {

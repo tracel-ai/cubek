@@ -16,9 +16,9 @@ use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::metadata::Metadata;
 use cubek_linear_recurrence::kernels::walk::{
-    CubeAdditiveWalkRoutine, CubeDeltaWalkRoutine, CubeWalkRoutineSettings, RecurrenceWalkInputs,
-    RecurrenceWalkOutputs, RecurrenceWalkProblem, RecurrenceWalkRoutine, RecurrenceWalkStateInputs,
-    RecurrenceWalkTensors, UpdateRuleInputs, launch_tuned,
+    CubeWalkRoutine, CubeWalkRoutineSettings, RecurrenceWalkInputs, RecurrenceWalkOutputs,
+    RecurrenceWalkProblem, RecurrenceWalkRoutine, RecurrenceWalkStateInputs, RecurrenceWalkTensors,
+    UpdateRuleInputs, launch_tuned,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
@@ -444,8 +444,8 @@ pub fn walk_or_skip(
 ) -> Option<RecurrenceWalkOutputs> {
     let problem = problem_of(&inputs);
     let launched = match problem.rule {
-        UpdateRule::Delta => CubeDeltaWalkRoutine.launch_on(hw, inputs, settings),
-        UpdateRule::Additive => CubeAdditiveWalkRoutine.launch_on(hw, inputs, settings),
+        UpdateRule::Delta => CubeWalkRoutine::DELTA.launch_on(hw, inputs, settings),
+        UpdateRule::Additive => CubeWalkRoutine::ADDITIVE.launch_on(hw, inputs, settings),
     };
     match launched {
         Ok(walked) => Some(walked),

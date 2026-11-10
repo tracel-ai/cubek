@@ -1,8 +1,6 @@
 //! The cube scope: a cube's runs of a head's value columns, each walked through every position by
 //! its units, whose partial sums meet in shared memory.
 
-mod additive;
-mod delta;
 mod held_state;
 mod meet;
 mod microkernel;
@@ -14,8 +12,6 @@ mod state_access;
 mod step;
 mod walk;
 
-pub use additive::*;
-pub use delta::*;
 pub use held_state::*;
 pub use meet::*;
 pub use microkernel::*;

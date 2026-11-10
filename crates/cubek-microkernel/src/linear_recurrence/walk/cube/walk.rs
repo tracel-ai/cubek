@@ -1,7 +1,7 @@
 use super::held_state::HeldState;
 use super::meet::UnitMeet;
+use super::microkernel::CubeWalkMicrokernel;
 use super::partials::Partials;
-use super::shape::HeldStateShape;
 use super::state_access::StateAccess;
 use super::step::{PositionReads, additive_step, delta_step};
 use crate::linear_recurrence::walk::UpdateRule;
@@ -9,11 +9,11 @@ use crate::linear_recurrence::{KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// One cube's runs of value columns, `shape.units()` units each, walked through every position
-/// under `rule`, the read of each position rounded to `E` where it is written. Under the additive
-/// rule `skip` holds the head's skip, which adds its multiple of the value to the read. The state
-/// after each position from `state.first_kept` on is written to the next of the states `state`
-/// keeps.
+/// One cube's runs of value columns, `microkernel.shape.units()` units each, walked through every
+/// position under the microkernel's rule, the read of each position rounded to `E` where it is
+/// written. Under the additive rule `skip` holds the head's skip, which adds its multiple of the
+/// value to the read. The state after each position from `state.first_kept` on is written to the
+/// next of the states `state` keeps.
 ///
 /// Every operand is windowed to the cube's box: its sequence, its head, its runs of columns and
 /// every key row; the queries and keys to the key head the head is grouped under. Each unit then
@@ -30,10 +30,10 @@ pub fn cube_walk_microkernel<E: Float, N: Size>(
     skip: &ComptimeOption<Tile>,
     state: &StateAccess,
     out: &Tile,
-    #[comptime] shape: HeldStateShape,
-    #[comptime] rule: UpdateRule,
+    #[comptime] microkernel: CubeWalkMicrokernel,
     #[comptime] runs: usize,
 ) {
+    let (shape, rule) = comptime!((microkernel.shape, microkernel.rule));
     let width = N::value();
     let parts = comptime!(shape.columns() / width);
     let mut write = Array::<Vector<f32, N>>::new(parts);

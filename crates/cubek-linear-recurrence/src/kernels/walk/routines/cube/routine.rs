@@ -1,23 +1,21 @@
-use super::super::base::{self as shared, CubeWalkRoutineSettings};
-use super::kernel::cube_delta_walk_kernel;
+use super::base::{self as shared, CubeWalkRoutineSettings};
+use super::kernel::cube_walk_kernel;
 use crate::kernels::walk::{
     RecurrenceWalkBinding, RecurrenceWalkBlueprint, RecurrenceWalkProblem, RecurrenceWalkRoutine,
-    RecurrenceWalkTensors,
+    RecurrenceWalkTensors, UpdateRuleBinding,
 };
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::linear_recurrence::RecurrenceWalkPartitioning;
-use cubek_microkernel::linear_recurrence::walk::cube::{
-    CubeDeltaWalkMicrokernel, CubeWalkMicrokernel,
-};
+use cubek_microkernel::linear_recurrence::walk::cube::CubeWalkMicrokernel;
 use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, UpdateRule};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{Grid, Routine};
 
-/// The delta walk with every run of a head's value columns held by a few units, a cube holding
-/// several runs of one head side by side. It reads no plane feature; it needs units, shared memory
-/// and 8 bindings, 9 in a store's slots: this kind's floor. It declines a problem of the additive
-/// rule.
+/// The walk of one update rule with every run of a head's value columns held by a few units, a
+/// cube holding several runs of one head side by side. It reads no plane feature; it needs units,
+/// shared memory and the bindings of its rule: 8, 9 in a store's slots, for the delta rule, one
+/// more for the additive rule's skip. It declines a problem of the other rule.
 ///
 /// A unit owns a tile of the run's key rows: the partitioning's leaf holds `rows` of them and its
 /// units level cuts `KEY_FEATURE` into one leaf for each of a run's `units` units, a power of two.
@@ -26,17 +24,31 @@ use cubek_std::routine::{Grid, Routine};
 /// no such units hold within `MAX_HELD_LINES_PER_UNIT` lines each is declined.
 ///
 /// Every run of a cube reads the same queries and keys, those of its head's key head, a position
-/// at a time, so the cube's runs share those reads through the device's caches.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CubeDeltaWalkRoutine;
+/// at a time, so the cube's runs share those reads through the device's caches. Both rules place
+/// their cubes alike, so the rule is a field: a rule that needs another placement is its own
+/// routine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CubeWalkRoutine {
+    rule: UpdateRule,
+}
 
-pub type CubeDeltaWalkRoutineBlueprint = RecurrenceWalkBlueprint<CubeDeltaWalkMicrokernel>;
+pub type CubeWalkRoutineBlueprint = RecurrenceWalkBlueprint<CubeWalkMicrokernel>;
 
-impl Routine for CubeDeltaWalkRoutine {
+impl CubeWalkRoutine {
+    pub const DELTA: Self = Self::new(UpdateRule::Delta);
+    pub const ADDITIVE: Self = Self::new(UpdateRule::Additive);
+
+    /// The routine walking `rule`.
+    pub const fn new(rule: UpdateRule) -> Self {
+        Self { rule }
+    }
+}
+
+impl Routine for CubeWalkRoutine {
     type Problem = RecurrenceWalkProblem;
-    type Microkernel = CubeDeltaWalkMicrokernel;
+    type Microkernel = CubeWalkMicrokernel;
     type Settings = CubeWalkRoutineSettings;
-    type Blueprint = CubeDeltaWalkRoutineBlueprint;
+    type Blueprint = CubeWalkRoutineBlueprint;
     type Partitioning = RecurrenceWalkPartitioning;
 
     fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
@@ -46,7 +58,7 @@ impl Routine for CubeDeltaWalkRoutine {
     /// Nothing of its own: it walks cubes and runs, and its microkernel makes every access.
     fn vectorize(
         &self,
-        microkernel: &CubeDeltaWalkMicrokernel,
+        microkernel: &CubeWalkMicrokernel,
         _: &RecurrenceWalkPartitioning,
         vectorization: &mut Vectorization<RecurrenceWalkOperand>,
     ) {
@@ -56,7 +68,7 @@ impl Routine for CubeDeltaWalkRoutine {
     fn estimate(
         &self,
         problem: &RecurrenceWalkProblem,
-        blueprint: &CubeDeltaWalkRoutineBlueprint,
+        blueprint: &CubeWalkRoutineBlueprint,
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
@@ -69,26 +81,38 @@ impl Routine for CubeDeltaWalkRoutine {
         problem: &RecurrenceWalkProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        shared::prepare(hw, problem, settings)
+        shared::prepare(self.rule, hw, problem, settings)
     }
 }
 
-impl RecurrenceWalkRoutine<CubeDeltaWalkMicrokernel> for CubeDeltaWalkRoutine {
-    const NAME: &'static str = "cube-delta-walk";
-    const RULE: UpdateRule = CubeDeltaWalkMicrokernel::RULE;
+impl RecurrenceWalkRoutine<CubeWalkMicrokernel> for CubeWalkRoutine {
+    fn name(&self) -> &'static str {
+        match self.rule {
+            UpdateRule::Delta => "cube-delta-walk",
+            UpdateRule::Additive => "cube-additive-walk",
+        }
+    }
+
+    fn rule(&self) -> UpdateRule {
+        self.rule
+    }
 
     fn dispatch(
         &self,
         tensors: &RecurrenceWalkTensors,
         binding: RecurrenceWalkBinding,
-        blueprint: CubeDeltaWalkRoutineBlueprint,
+        blueprint: CubeWalkRoutineBlueprint,
         grid: Grid,
     ) {
+        let skip = match binding.update {
+            UpdateRuleBinding::Delta => None,
+            UpdateRuleBinding::Additive { skip } => Some(skip),
+        };
         // SAFETY: every operand is bound through the launcher, and the kernel indexes no buffer but
         // through its tiles, which mask what the units overhang. Its shared memory is indexed by
         // its runs' and units' own positions, within the slots it declares.
         unsafe {
-            cube_delta_walk_kernel::launch_unchecked(
+            cube_walk_kernel::launch_unchecked(
                 tensors.client(),
                 grid.launch.cube_count,
                 grid.launch.cube_dim,
@@ -99,6 +123,7 @@ impl RecurrenceWalkRoutine<CubeDeltaWalkMicrokernel> for CubeDeltaWalkRoutine {
                 binding.rates,
                 binding.state,
                 binding.out,
+                skip.into(),
                 binding.kept.into(),
                 binding.lengths.into(),
                 tensors.problem().first_kept(),

@@ -76,7 +76,7 @@ where
     /// round, and may never be launched.
     fn prepared(&self, key: &RecurrenceWalkKey) -> Option<(RecurrenceWalkBlueprint<M>, Grid)> {
         self.routine
-            .prepare(&self.hw, &key.problem(R::RULE), &self.settings)
+            .prepare(&self.hw, &key.problem(self.routine.rule()), &self.settings)
             .ok()
     }
 
@@ -100,7 +100,7 @@ where
         >,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} {}", R::NAME, self.settings)
+        write!(f, "{} {}", self.routine.name(), self.settings)
     }
 }
 

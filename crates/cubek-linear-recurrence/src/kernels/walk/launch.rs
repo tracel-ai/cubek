@@ -15,10 +15,10 @@ pub trait RecurrenceWalkRoutine<M>:
     Routine<Problem = RecurrenceWalkProblem, Microkernel = M, Blueprint = RecurrenceWalkBlueprint<M>>
 {
     /// What the routine's candidates and floor are named after in a tuning table.
-    const NAME: &'static str;
+    fn name(&self) -> &'static str;
 
     /// The update rule the routine walks.
-    const RULE: UpdateRule;
+    fn rule(&self) -> UpdateRule;
 
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`.
     fn dispatch(

@@ -1,7 +1,7 @@
 use super::{RecurrenceWalkSpec, RecurrenceWalkStrategy};
 use crate::kernels::walk::{
-    CubeAdditiveWalkRoutine, CubeDeltaWalkRoutine, RecurrenceWalkInputs, RecurrenceWalkRoutine,
-    RecurrenceWalkStateInputs, RecurrenceWalkStateLayout, UpdateRuleInputs, launch_tuned, serves,
+    CubeWalkRoutine, RecurrenceWalkInputs, RecurrenceWalkRoutine, RecurrenceWalkStateInputs,
+    RecurrenceWalkStateLayout, UpdateRuleInputs, launch_tuned, serves,
 };
 use core::num::NonZeroUsize;
 use cubecl::benchmark::{Benchmark, ProfileDuration, TimingMethod};
@@ -190,8 +190,8 @@ impl Benchmark for RecurrenceWalkBench {
             RecurrenceWalkStrategy::CubeLead => {
                 let hw = Hardware::from_client(&self.client);
                 match rule {
-                    UpdateRule::Delta => CubeDeltaWalkRoutine.launch_lead_on(&hw, inputs),
-                    UpdateRule::Additive => CubeAdditiveWalkRoutine.launch_lead_on(&hw, inputs),
+                    UpdateRule::Delta => CubeWalkRoutine::DELTA.launch_lead_on(&hw, inputs),
+                    UpdateRule::Additive => CubeWalkRoutine::ADDITIVE.launch_lead_on(&hw, inputs),
                 }
                 .map(|_| ())
                 .map_err(|why| format!("the lead does not serve this problem: {why:?}"))

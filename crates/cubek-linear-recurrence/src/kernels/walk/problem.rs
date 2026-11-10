@@ -5,9 +5,7 @@ use crate::kernels::refusals::{
     RECURRENCE_WALK_ELEMENT_UNVERIFIED, RECURRENCE_WALK_HEADS_EMPTY,
     RECURRENCE_WALK_RULE_NOT_SERVED,
 };
-use crate::kernels::walk::{
-    CubeAdditiveWalkRoutine, CubeDeltaWalkRoutine, CubeWalkRoutineSettings,
-};
+use crate::kernels::walk::{CubeWalkRoutine, CubeWalkRoutineSettings};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
@@ -16,7 +14,7 @@ use cubecl::tile::{Axis, Space};
 use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_microkernel::linear_recurrence::walk::{
-    RecurrenceWalkOperand, RecurrenceWalkOperandMap, UpdateRule,
+    RecurrenceWalkItem, RecurrenceWalkOperand, RecurrenceWalkOperandMap, UpdateRule,
 };
 use cubek_microkernel::linear_recurrence::{
     BATCH, HEAD_IN_GROUP, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, RATE, RecurrenceHeads,
@@ -263,9 +261,16 @@ impl RecurrenceWalkProblem {
     /// What the floor declines, [`admit_launch`](Self::admit_launch)'s among them.
     pub fn admit(&self, hw: &Hardware) -> Result<(), Refusal> {
         let floor = &CubeWalkRoutineSettings::FLOOR;
-        match self.rule {
-            UpdateRule::Delta => CubeDeltaWalkRoutine.prepare(hw, self, floor).map(|_| ()),
-            UpdateRule::Additive => CubeAdditiveWalkRoutine.prepare(hw, self, floor).map(|_| ()),
+        CubeWalkRoutine::new(self.rule)
+            .prepare(hw, self, floor)
+            .map(|_| ())
+    }
+
+    /// What a walk microkernel is chosen for: the heads and the rule.
+    pub fn item(&self) -> RecurrenceWalkItem {
+        RecurrenceWalkItem {
+            heads: self.heads,
+            rule: self.rule,
         }
     }
 
@@ -408,7 +413,7 @@ pub(crate) mod fixtures {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubek_microkernel::linear_recurrence::walk::cube::CubeDeltaWalkMicrokernel;
+    use cubek_microkernel::linear_recurrence::walk::cube::CubeWalkMicrokernel;
     use cubek_std::devices;
     use cubek_std::microkernel::Microkernel;
 
@@ -636,7 +641,7 @@ mod tests {
         assert_eq!(
             walk(wide).admit(&hw),
             Err(Refusal::Declined {
-                why: CubeDeltaWalkMicrokernel::DECLINE
+                why: CubeWalkMicrokernel::DECLINE
             })
         );
         assert_eq!(walk(sixteen_heads()).admit(&hw), Ok(()));

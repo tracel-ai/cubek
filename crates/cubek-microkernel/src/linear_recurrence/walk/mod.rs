@@ -15,8 +15,10 @@
 //! once and written once, however long the walk.
 
 pub mod cube;
+mod item;
 mod operand;
 mod rule;
 
+pub use item::*;
 pub use operand::*;
 pub use rule::*;

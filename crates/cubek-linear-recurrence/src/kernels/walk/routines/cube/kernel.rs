@@ -2,28 +2,28 @@ use cubecl::ir::ElemType;
 use cubecl::tile::{Partitioning, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::linear_recurrence::walk::cube::{
-    CubeAdditiveWalkMicrokernel, CubeWalkMicrokernel, StateAccess, cube_walk_microkernel,
+    CubeWalkMicrokernel, StateAccess, cube_walk_microkernel,
 };
 
-/// Every cube, walking its runs of value columns through every position over `state`, and adding
-/// each value head's `skip` times the value to what a position reads. The states from position
-/// `first_kept` on go to `kept` where the launch binds it and back to `state` otherwise;
-/// `lengths`, where bound, says which rows start from zeros.
+/// Every cube, walking its runs of value columns through every position over `state`, and, where
+/// the rule binds a `skip`, adding each value head's skip times the value to what a position reads.
+/// The states from position `first_kept` on go to `kept` where the launch binds it and back to
+/// `state` otherwise; `lengths`, where bound, says which rows start from zeros.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
-pub fn cube_additive_walk_kernel<E: Float, N: Size>(
+pub fn cube_walk_kernel<E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
     rates: &TileTensor<'_>,
-    skip: &TileTensor<'_>,
     state: &TileTensor<'_>,
     out: &TileTensor<'_>,
+    skip: ComptimeOption<&TileTensor<'static>>,
     kept: ComptimeOption<&TileTensor<'static>>,
     lengths: ComptimeOption<&TileTensor<'static>>,
     first_kept: usize,
     partitioning: Partitioning,
-    #[comptime] microkernel: CubeAdditiveWalkMicrokernel,
+    #[comptime] microkernel: CubeWalkMicrokernel,
     #[comptime] runs: usize,
     #[define(E)] _element: ElemType,
 ) {
@@ -31,9 +31,9 @@ pub fn cube_additive_walk_kernel<E: Float, N: Size>(
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
     let rates = rates.tile(&partitioning);
-    let skip = skip.tile(&partitioning);
     let state = state.tile(&partitioning);
     let out = out.tile(&partitioning);
+    let skip: ComptimeOption<Tile> = skip.map(|skip| skip.tile(&partitioning));
     let kept: ComptimeOption<Tile> = kept.map(|kept| kept.tile(&partitioning));
     let lengths: ComptimeOption<Tile> = lengths.map(|lengths| lengths.tile(&partitioning));
     for cube in &partitioning {
@@ -49,11 +49,10 @@ pub fn cube_additive_walk_kernel<E: Float, N: Size>(
             &key.at(&cube),
             &value.at(&cube),
             &rates.at(&cube),
-            &ComptimeOption::new_Some(skip.at(&cube)),
+            &skip.clone().map(|skip| skip.at(&cube)),
             &access,
             &out.at(&cube),
-            comptime!(microkernel.shape()),
-            comptime!(CubeAdditiveWalkMicrokernel::RULE),
+            microkernel,
             runs,
         );
     }

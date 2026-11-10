@@ -1,5 +1,5 @@
-//! What the cube routines of every update rule share: how a cube is placed over a problem and how
-//! the launch is estimated. A routine of one rule is a microkernel's rule and these.
+//! How the cube routine places a cube over a problem and estimates the launch, whatever the update
+//! rule.
 
 use crate::kernels::walk::{
     RECURRENCE_WALK_ELEMENT, RecurrenceWalkBlueprint, RecurrenceWalkProblem, settled_width,
@@ -12,7 +12,7 @@ use cubek_microkernel::linear_recurrence::walk::cube::{
 use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, UpdateRule};
 use cubek_microkernel::linear_recurrence::{RecurrenceWalkPartitioning, VALUE_FEATURE};
 use cubek_std::Hardware;
-use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate};
+use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid};
 
 /// What a cube routine's launch is measured at: its microkernel's cells, and how many of its runs a
@@ -88,35 +88,28 @@ impl core::fmt::Display for CubeWalkRoutineSettings {
 ///
 /// [`RecurrenceWalkProblem::admit_rule`] for the rule `M` does not walk,
 /// [`RecurrenceWalkProblem::admit_launch`], then what the microkernel and the grid decline.
-pub(super) fn prepare<M>(
+pub(super) fn prepare(
+    rule: UpdateRule,
     hw: &Hardware,
     problem: &RecurrenceWalkProblem,
     settings: &CubeWalkRoutineSettings,
-) -> Result<(RecurrenceWalkBlueprint<M>, Grid), Refusal>
-where
-    M: CubeWalkMicrokernel,
-{
-    problem.admit_rule(M::RULE)?;
+) -> Result<(RecurrenceWalkBlueprint<CubeWalkMicrokernel>, Grid), Refusal> {
+    problem.admit_rule(rule)?;
     problem.admit_launch(hw)?;
     let heads = &problem.heads;
     // The width the operands bind at does not depend on the rows a unit holds, so it is settled
     // first, and the cells a unit holds are capped to the lines its registers bound at it.
     let mut vectorization = Vectorization::new();
-    RecurrenceWalkOperand::require(
-        heads.columns(),
-        heads.columns(),
-        M::RULE,
-        &mut vectorization,
-    );
+    RecurrenceWalkOperand::require(heads.columns(), heads.columns(), rule, &mut vectorization);
     let width = settled_width(hw, problem, vectorization);
-    let microkernel = M::best(
+    let microkernel = CubeWalkMicrokernel::best(
         hw,
-        heads,
+        &problem.item(),
         &settings
             .microkernel
             .capped_at(MAX_HELD_LINES_PER_UNIT * width),
     )?;
-    let shape = microkernel.shape();
+    let shape = microkernel.shape;
     let runs = settings.runs_of(hw, &shape, problem);
     let partitioning = RecurrenceWalkPartitioning::new(
         problem.space(),
@@ -136,16 +129,14 @@ where
 /// Each cube reads its head's queries and keys and its runs' values once a position, its runs'
 /// state once and its head's skip, if the rule has one, and writes their outputs and kept states
 /// once. Then its microkernel, for the work.
-pub(super) fn estimate<M>(
+pub(super) fn estimate(
     problem: &RecurrenceWalkProblem,
-    blueprint: &RecurrenceWalkBlueprint<M>,
+    blueprint: &RecurrenceWalkBlueprint<CubeWalkMicrokernel>,
     grid: &Grid,
     estimate: &mut KernelEstimate,
-) where
-    M: CubeWalkMicrokernel,
-{
+) {
     let input_bytes = RECURRENCE_WALK_ELEMENT.size();
-    let columns = blueprint.runs * blueprint.microkernel.shape().columns();
+    let columns = blueprint.runs * blueprint.microkernel.shape.columns();
     let positions = problem.positions;
     let key_features = problem.heads.key_features;
     let stream_at = |element_bytes: usize, elements: usize, run: usize| GlobalStream {
@@ -160,7 +151,7 @@ pub(super) fn estimate<M>(
         stream(2 * positions, 2),
         stream(state, columns),
     ];
-    if M::RULE == UpdateRule::Additive {
+    if blueprint.microkernel.rule == UpdateRule::Additive {
         reads.push(stream(1, 1));
     }
     estimate.staging = Some(CubeStaging {
@@ -176,7 +167,7 @@ pub(super) fn estimate<M>(
     });
     blueprint
         .microkernel
-        .estimate(&problem.heads, &(), grid.planes(), estimate);
+        .estimate(&problem.item(), &(), grid.planes(), estimate);
 }
 
 #[cfg(test)]
@@ -184,15 +175,10 @@ mod tests {
     use super::*;
     use crate::kernels::refusals::RECURRENCE_WALK_RULE_NOT_SERVED;
     use crate::kernels::walk::problem::fixtures::binding_enough;
-    use crate::kernels::walk::{
-        CubeAdditiveWalkRoutine, CubeDeltaWalkRoutine, RecurrenceWalkStateLayout,
-    };
+    use crate::kernels::walk::{CubeWalkRoutine, RecurrenceWalkStateLayout};
     use cubek_microkernel::linear_recurrence::KEY_FEATURE;
     use cubek_microkernel::linear_recurrence::RecurrenceHeads;
     use cubek_microkernel::linear_recurrence::walk::UpdateRule;
-    use cubek_microkernel::linear_recurrence::walk::cube::{
-        CubeAdditiveWalkMicrokernel, CubeDeltaWalkMicrokernel,
-    };
     use cubek_std::devices;
     use cubek_std::microkernel::Microkernel;
     use cubek_std::routine::{EstimatedProblem, Routine};
@@ -200,7 +186,7 @@ mod tests {
     /// The routine tests of one update rule's routine: its microkernel's refusals, the shapes its
     /// settings place, and its estimates.
     macro_rules! routine_tests {
-        ($name:ident, $routine:ident, $microkernel:ident, $rule:expr) => {
+        ($name:ident, $routine:expr, $rule:expr) => {
             mod $name {
                 use super::*;
                 fn walk(
@@ -281,7 +267,7 @@ mod tests {
                 fn the_floor_prepares_everything_a_cube_of_units_holds() {
                     let floor = CubeWalkRoutineSettings::FLOOR;
                     let declined = Refusal::Declined {
-                        why: $microkernel::DECLINE,
+                        why: CubeWalkMicrokernel::DECLINE,
                     };
                     for hw in fleet() {
                         let cpu = hw.properties.hardware.max_units_per_cube < 256;
@@ -400,7 +386,7 @@ mod tests {
                 fn a_head_whose_units_would_overrun_unmasked_is_declined() {
                     let hw = devices::h100();
                     let declined = Refusal::Declined {
-                        why: $microkernel::DECLINE,
+                        why: CubeWalkMicrokernel::DECLINE,
                     };
                     for heads in [(2, 3, 12, 8), (2, 3, 40, 36), (2, 3, 100, 12)] {
                         let problem = walk(1, 7, heads, 1);
@@ -542,16 +528,6 @@ mod tests {
         };
     }
 
-    routine_tests!(
-        delta,
-        CubeDeltaWalkRoutine,
-        CubeDeltaWalkMicrokernel,
-        UpdateRule::Delta
-    );
-    routine_tests!(
-        additive,
-        CubeAdditiveWalkRoutine,
-        CubeAdditiveWalkMicrokernel,
-        UpdateRule::Additive
-    );
+    routine_tests!(delta, CubeWalkRoutine::DELTA, UpdateRule::Delta);
+    routine_tests!(additive, CubeWalkRoutine::ADDITIVE, UpdateRule::Additive);
 }

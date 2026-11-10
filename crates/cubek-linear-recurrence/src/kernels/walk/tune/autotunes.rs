@@ -10,9 +10,9 @@ use crate::kernels::refusals::admit_on_device;
 use crate::kernels::walk::tune::RecurrenceWalkCandidate;
 use crate::kernels::walk::tune::key::RecurrenceWalkKey;
 use crate::kernels::walk::{
-    CubeAdditiveWalkRoutine, CubeDeltaWalkRoutine, CubeWalkRoutineSettings,
-    RECURRENCE_WALK_ELEMENT, RecurrenceWalkInputs, RecurrenceWalkOutputs, RecurrenceWalkProblem,
-    RecurrenceWalkRoutine, RecurrenceWalkStateInputs, RecurrenceWalkStateKind,
+    CubeWalkRoutine, CubeWalkRoutineSettings, RECURRENCE_WALK_ELEMENT, RecurrenceWalkInputs,
+    RecurrenceWalkOutputs, RecurrenceWalkProblem, RecurrenceWalkRoutine, RecurrenceWalkStateInputs,
+    RecurrenceWalkStateKind,
 };
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
@@ -41,11 +41,17 @@ pub fn launch_tuned(
     match inputs.update.rule() {
         UpdateRule::Delta => {
             static TUNER: LocalTuner<RecurrenceWalkKey, CubeTuneId> = local_tuner!("delta-walk");
-            race(&TUNER, CubeDeltaWalkRoutine, device, inputs, microkernel)
+            race(&TUNER, CubeWalkRoutine::DELTA, device, inputs, microkernel)
         }
         UpdateRule::Additive => {
             static TUNER: LocalTuner<RecurrenceWalkKey, CubeTuneId> = local_tuner!("additive-walk");
-            race(&TUNER, CubeAdditiveWalkRoutine, device, inputs, microkernel)
+            race(
+                &TUNER,
+                CubeWalkRoutine::ADDITIVE,
+                device,
+                inputs,
+                microkernel,
+            )
         }
     }
 }
@@ -88,7 +94,7 @@ where
             // The floor, which every admitted problem prepares: taking `microkernel` out of the
             // table stops the family being measured, not being served.
             .floor(Tunable::new(
-                &format!("{}-floor", R::NAME),
+                &format!("{}-floor", routine.name()),
                 move |inputs: RecurrenceWalkInputs| floor.run(inputs),
             ))
             .finish()
