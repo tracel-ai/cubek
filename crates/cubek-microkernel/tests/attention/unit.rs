@@ -25,7 +25,7 @@ impl AttentionSettings for UnitAttentionMicrokernelSettings {
 }
 
 /// Every unit attention microkernel the test device runs, at each of its settings, over one and
-/// three steps of keys, for `f16` and `f32` inputs summed in `f32`.
+/// three steps of keys, for `f16` and `f32` inputs summed in `f32` and written as read.
 #[test]
 fn unit_attention_matches_the_cpu() {
     let attention = Attention::<UnitAttentionMicrokernelSettings>::new(Hardware::from_client(

@@ -126,8 +126,8 @@ impl<S: AttentionSettings> Attention<S> {
         }
     }
 
-    /// Every setting the device lists, for `f16` and `f32` inputs summed in `f32`, one step of
-    /// keys and three.
+    /// Every setting the device lists, for `f16` and `f32` inputs summed in `f32` and written in
+    /// their own element, one step of keys and three.
     pub(crate) fn every_setting(&self) -> Vec<AttentionCase<S>> {
         S::Microkernel::settings(&self.hw)
             .into_iter()
@@ -136,7 +136,7 @@ impl<S: AttentionSettings> Attention<S> {
                     let elements = AttentionElements {
                         input,
                         sum: F32,
-                        out: F32,
+                        out: input,
                     };
                     [1, 3].map(|steps| AttentionCase {
                         elements,

@@ -25,7 +25,7 @@ impl AttentionSettings for PlaneFragmentAttentionMicrokernelSettings {
 }
 
 /// Every plane fragment attention microkernel the test device runs, at each of its settings, over
-/// one and three stages of keys, for `f16` and `f32` inputs summed in `f32`.
+/// one and three stages of keys, for `f16` and `f32` inputs summed in `f32` and written as read.
 #[test]
 fn plane_fragment_attention_matches_the_cpu() {
     let attention = Attention::<PlaneFragmentAttentionMicrokernelSettings>::new(
