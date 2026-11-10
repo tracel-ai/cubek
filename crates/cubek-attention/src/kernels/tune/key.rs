@@ -93,6 +93,10 @@ pub struct AttentionKey {
     /// Whether a mask tensor narrows the keys each query sees: its read is a cost per score
     /// the unmasked launch does not pay.
     masked: bool,
+    /// Whether every sequence's queries lie end to end, each read through its run: the routines
+    /// that merge split keys outside the tiles decline them, so a winner measured on one does not
+    /// serve the other.
+    packed_queries: bool,
 }
 
 impl AttentionKey {
@@ -178,6 +182,11 @@ impl AttentionKey {
     pub fn page_size(&self) -> Option<usize> {
         self.page_size
     }
+
+    /// Whether every sequence's queries lie end to end.
+    pub fn packed_queries(&self) -> bool {
+        self.packed_queries
+    }
 }
 
 /// The problem a tuning **key** describes, at its bucket's extents
@@ -233,6 +242,7 @@ impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
                 Some(page_size) => AttentionCacheLayout::Pages { page_size },
                 None => AttentionCacheLayout::Sequences,
             },
+            packed_queries: key.packed_queries(),
         })
     }
 }

@@ -95,7 +95,14 @@ impl AttentionPartitioning {
             QueryOrder::InOrder => cubes,
             QueryOrder::LastFirst => cubes.reversed(Q),
         };
-        let levels = cubes.batches(&[B, KV]).build();
+        let levels = match cubes_along_keys.get() {
+            // Each sequence and key head is a level of its own: a run of the sequence's queries
+            // is placed there, and the cubes below cut it in boxes.
+            1 => cubes.cubes(&[B, KV]),
+            // Cubes sharing a box hold the grid's `Z` for their keys: the sequences ride it too.
+            _ => cubes.batches(&[B, KV]),
+        }
+        .build();
         let keys = space.extent(S);
         let partitioning = Partitioning::new(space, levels);
         // Where cubes share a box, the cube level's own tile is one step of `S`, or one page,

@@ -119,6 +119,7 @@ mod tests {
                 ScoreScale::standard(128),
                 None,
                 false,
+                false,
             );
             AttentionRoutineProblem::try_from(&key).expect("an even group")
         })

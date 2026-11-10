@@ -44,15 +44,25 @@ impl Routine for PlaneRandomRoutine {
     type Blueprint = PlaneRandomRoutineBlueprint;
     type Partitioning = Partitioning;
 
-    /// Eight planes a cube by default, then four and sixteen.
+    /// Eight planes a cube by default, then four and sixteen, of those a cube of the device
+    /// holds; the fullest cube it holds where it holds none of them, as a CPU runtime of few
+    /// cores, where a plane is one unit.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+        let fit = hw.full_cube_planes();
+        let held: Vec<usize> = [8, 4, 16]
+            .into_iter()
+            .filter(|&planes| planes <= fit)
+            .collect();
+        let counts = if held.is_empty() { vec![fit] } else { held };
         PlaneRandomMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
-                [8, 4, 16].map(|planes| PlaneRandomRoutineSettings {
-                    microkernel,
-                    planes,
-                })
+                counts
+                    .iter()
+                    .map(move |&planes| PlaneRandomRoutineSettings {
+                        microkernel,
+                        planes,
+                    })
             })
             .collect()
     }
