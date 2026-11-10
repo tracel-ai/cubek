@@ -39,7 +39,9 @@ pub struct CubeShuffleMatmulRoutineSettings {
     pub microkernel: CubeShuffleMicrokernelSettings,
     /// Cubes a compute unit the launch is capped at against a packed rhs, each cube walking a
     /// run of the boxes of columns ([`MatmulView::persistent_partitioning`]) rather than taking
-    /// one: its lhs, the same from box to box, is read once a cube. A cube a box where `None`.
+    /// one: its lhs, the same from box to box, is read once a cube. A cube a box where `None`, and
+    /// where the device does not say how many compute units it has: the microkernel then runs
+    /// uncapped, which unlike the plane shuffle's capped launch is no other setting's kernel.
     pub cubes_per_worker: Option<NonZeroUsize>,
 }
 
@@ -193,7 +195,12 @@ impl CubeShuffleMatmulRoutine {
         let leaf = blueprint.partitioning.leaf();
         let planes = microkernel.planes_along_k.get() as u64;
         let step_k = microkernel.plane.step_depth(&leaf) as u64 * planes;
-        let columns = problem.n as u64 / grid.cubes().expect("a static grid").max(1);
+        let cubes = grid.cubes().expect("a static grid").max(1);
+        // A cube's columns, averaged over the launch: a capped launch's cube walks a run of boxes,
+        // `walks` of them, one after the other, each down the whole of `K`.
+        let columns = problem.n as u64 / cubes;
+        let box_columns = blueprint.partitioning.columns().max(1);
+        let walks = (problem.n as u64).div_ceil(box_columns).div_ceil(cubes);
         let groups = columns / microkernel.plane.columns() as u64;
         let size = |operand: MatmulOperand| item.elements.get(operand).size() as u64;
         let rhs = packing.bytes(k as usize * columns as usize) as u64;
@@ -211,9 +218,9 @@ impl CubeShuffleMatmulRoutine {
             ],
             writes: vec![GlobalStream {
                 bytes: rows * columns * size(MatmulOperand::Out),
-                run_bytes: (columns * size(MatmulOperand::Out)) as usize,
+                run_bytes: (box_columns * size(MatmulOperand::Out)) as usize,
             }],
-            stages: k.div_ceil(step_k),
+            stages: k.div_ceil(step_k) * walks,
             stages_in_flight: 1,
             drain_atomics: match microkernel.meet {
                 CubeMeet::Atomic => planes * rows * columns,

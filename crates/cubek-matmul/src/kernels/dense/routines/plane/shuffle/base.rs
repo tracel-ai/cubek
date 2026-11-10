@@ -35,8 +35,8 @@ pub struct PlaneShuffleMatmulRoutineSettings {
     pub planes: NonZeroUsize,
     /// Against a packed rhs, the most planes the launch holds a compute unit of the device: its
     /// planes then walk the runs of columns, a whole launch apart, rather than each taking one.
-    /// A plane for every run where `None`, and wherever the device does not say how many compute
-    /// units it has. A float rhs declines it: its planes are laid along `M` and `N` both.
+    /// A plane for every run where `None`. A device that does not say how many compute units it
+    /// has declines it, as does a float rhs, whose planes are laid along `M` and `N` both.
     pub planes_per_worker: Option<NonZeroUsize>,
 }
 
@@ -95,6 +95,14 @@ impl PlaneShuffleMatmulRoutine {
     /// launch with.
     pub const PERSISTENT_BATCHED: Refusal = Refusal::Declined {
         why: "a plane shuffle's capped launch walks one axis of columns, not batches beside them",
+    };
+
+    /// What a device that does not say how many compute units it has declines a capped launch
+    /// with: uncapped, it would be [`PACKED`](PlaneShuffleMatmulRoutineSettings::PACKED) again,
+    /// raced twice under two names.
+    pub const PERSISTENT_UNSIZED: Refusal = Refusal::Declined {
+        why: "a plane shuffle's launch is capped at planes a compute unit, and the device does \
+              not say how many compute units it has",
     };
 
     /// Steps of `K` a unit holds at once: its plane shuffles stage nothing in shared memory, and
@@ -292,7 +300,8 @@ impl PlaneShuffleMatmulRoutine {
             (Some(per), Some(workers)) => {
                 order.capped((per.get() * workers as usize).div_ceil(planes))
             }
-            _ => order,
+            (Some(_), None) => return Err(Self::PERSISTENT_UNSIZED),
+            (None, _) => order,
         };
         let partitioning = view.plane_partitioning(microkernel.tiling(), &[columns], order);
         let cube = CubeResources {
@@ -806,6 +815,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A capped launch on a device that does not say how many compute units it has, as no wgpu
+    /// adapter does, declines rather than run as the uncapped lead under a second name.
+    #[test]
+    fn a_device_of_no_compute_unit_count_declines_a_capped_launch() {
+        let mut hw = devices::strix_halo();
+        devices::topology(&mut hw).num_streaming_multiprocessors = None;
+        assert_eq!(hw.workers(), None);
+        assert_eq!(
+            PlaneShuffleMatmulRoutine
+                .prepare(
+                    &hw,
+                    &packed_projection(1),
+                    &PlaneShuffleMatmulRoutineSettings::PACKED_PERSISTENT
+                )
+                .err(),
+            Some(PlaneShuffleMatmulRoutine::PERSISTENT_UNSIZED)
+        );
     }
 
     /// A capped launch walks a packed rhs's one axis of columns: a float rhs, whose planes are
