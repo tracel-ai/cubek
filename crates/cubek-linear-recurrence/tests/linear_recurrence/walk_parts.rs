@@ -13,7 +13,7 @@ use cubek_linear_recurrence::kernels::walk::{
 };
 use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use cubek_microkernel::linear_recurrence::walk::cube::{
-    CubeWalkMicrokernelSettings, HeldState, HeldStateShape, Partials, RowRead, RowUpdate, UnitMeet,
+    CubeWalkMicrokernelSettings, HeldState, HeldStateShape, Partials, RowRead, RowUpdate, UnitSum,
 };
 use cubek_microkernel::linear_recurrence::{KEY_FEATURE, POSITION, RecurrenceHeads, VALUE_FEATURE};
 use cubek_std::Hardware;
@@ -40,7 +40,7 @@ fn partials_probe<N: Size>(
     let parts = comptime!(columns / width);
     let units = shape.units();
     let (unit, run) = (UNIT_POS_X as usize, UNIT_POS_Y as usize);
-    let mut meet = UnitMeet::<N>::new(run, unit, runs, shape);
+    let mut unit_sum = UnitSum::<N>::new(run, unit, runs, shape);
     let mut partials = Partials::<N>::new(shape);
     for position in 0..positions as usize {
         let base = ((position * runs + run) * units + unit) * (sums_a_position * columns);
@@ -61,7 +61,7 @@ fn partials_probe<N: Size>(
                 }
                 partials.add(part, line);
             }
-            meet.sum(&mut partials);
+            unit_sum.sum(&mut partials);
             #[unroll]
             for part in 0..parts {
                 #[unroll]
@@ -180,7 +180,7 @@ fn held_state_part<N: Size>(
     for run in cube {
         for unit in run.walk() {
             let slot = unit.coord(KEY_FEATURE);
-            let _meet = UnitMeet::<N>::new(run.coord(VALUE_FEATURE), slot, runs, shape);
+            let _unit_sum = UnitSum::<N>::new(run.coord(VALUE_FEATURE), slot, runs, shape);
             let mut partials = Partials::<N>::new(shape);
             let mut held = HeldState::<N>::load(&state.at(&unit), false, shape);
             let origin = unit.origin(VALUE_FEATURE);

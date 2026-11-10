@@ -1,9 +1,9 @@
 use super::held_state::HeldState;
-use super::meet::UnitMeet;
 use super::microkernel::CubeWalkMicrokernel;
 use super::partials::Partials;
 use super::state_access::StateAccess;
 use super::step::{PositionReads, additive_step, delta_step};
+use super::unit_sum::UnitSum;
 use crate::linear_recurrence::walk::UpdateRule;
 use crate::linear_recurrence::{KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
@@ -43,7 +43,7 @@ pub fn cube_walk_microkernel<E: Float, N: Size>(
     for run in cube {
         for unit in run.walk() {
             let slot = unit.coord(KEY_FEATURE);
-            let mut meet = UnitMeet::<N>::new(run.coord(VALUE_FEATURE), slot, runs, shape);
+            let mut unit_sum = UnitSum::<N>::new(run.coord(VALUE_FEATURE), slot, runs, shape);
             let mut partials = Partials::<N>::new(shape);
             let mut held = HeldState::<N>::load(&state.read.at(&unit), state.fresh, shape);
 
@@ -51,12 +51,17 @@ pub fn cube_walk_microkernel<E: Float, N: Size>(
                 let at = PositionReads::<N>::new(&step, key, query, value, rates);
 
                 match rule {
-                    UpdateRule::Delta => {
-                        delta_step::<N>(&mut held, &mut meet, &mut partials, &mut write, &at, parts)
-                    }
+                    UpdateRule::Delta => delta_step::<N>(
+                        &mut held,
+                        &mut unit_sum,
+                        &mut partials,
+                        &mut write,
+                        &at,
+                        parts,
+                    ),
                     UpdateRule::Additive => additive_step::<N>(
                         &mut held,
-                        &mut meet,
+                        &mut unit_sum,
                         &mut partials,
                         &mut write,
                         &at,

@@ -38,7 +38,7 @@ impl<N: Size> Partials<N> {
     }
 
     /// The partial for the columns of line `part`: the sum over the run's units once
-    /// [`UnitMeet::sum`](super::UnitMeet::sum) has met.
+    /// [`UnitSum::sum`](super::UnitSum::sum) has met.
     pub fn get(&self, part: usize) -> Vector<f32, N> {
         self.own[part]
     }

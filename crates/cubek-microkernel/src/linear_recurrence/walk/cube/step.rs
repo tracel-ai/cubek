@@ -1,7 +1,7 @@
 use super::held_state::HeldState;
-use super::meet::UnitMeet;
 use super::partials::Partials;
 use super::row_pass::{RowRead, RowUpdate};
+use super::unit_sum::UnitSum;
 use crate::linear_recurrence::walk::{DECAY_RATE, STRENGTH_RATE};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
@@ -41,7 +41,7 @@ impl<N: Size> PositionReads<N> {
 #[cube]
 pub fn delta_step<N: Size>(
     held: &mut HeldState<N>,
-    meet: &mut UnitMeet<N>,
+    unit_sum: &mut UnitSum<N>,
     partials: &mut Partials<N>,
     write: &mut Array<Vector<f32, N>>,
     at: &PositionReads<N>,
@@ -57,7 +57,7 @@ pub fn delta_step<N: Size>(
         RowUpdate::Decay,
         RowRead::Keys,
     );
-    meet.sum(partials);
+    unit_sum.sum(partials);
 
     #[unroll]
     for part in 0..parts {
@@ -73,7 +73,7 @@ pub fn delta_step<N: Size>(
         RowUpdate::Write,
         RowRead::Queries,
     );
-    meet.sum(partials);
+    unit_sum.sum(partials);
 }
 
 /// One position of the additive rule: the value, scaled by the strength, written along the key of
@@ -81,7 +81,7 @@ pub fn delta_step<N: Size>(
 #[cube]
 pub fn additive_step<N: Size>(
     held: &mut HeldState<N>,
-    meet: &mut UnitMeet<N>,
+    unit_sum: &mut UnitSum<N>,
     partials: &mut Partials<N>,
     write: &mut Array<Vector<f32, N>>,
     at: &PositionReads<N>,
@@ -102,5 +102,5 @@ pub fn additive_step<N: Size>(
         RowUpdate::DecayWrite,
         RowRead::Queries,
     );
-    meet.sum(partials);
+    unit_sum.sum(partials);
 }

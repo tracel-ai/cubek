@@ -6,10 +6,10 @@ use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 ///
 /// A sum writes every unit's lines to one of two slices of the shared memory, meets at one barrier,
 /// and has each unit add every unit's lines in unit order. Consecutive sums use the two slices in
-/// turn, which `UnitMeet` alone picks, so a unit still reading one sum is never overwritten by the
+/// turn, which `UnitSum` alone picks, so a unit still reading one sum is never overwritten by the
 /// next.
 #[derive(CubeType)]
-pub struct UnitMeet<N: Size> {
+pub struct UnitSum<N: Size> {
     shared: Shared<[Vector<f32, N>]>,
     run: usize,
     unit: usize,
@@ -21,7 +21,7 @@ pub struct UnitMeet<N: Size> {
 }
 
 #[cube]
-impl<N: Size> UnitMeet<N> {
+impl<N: Size> UnitSum<N> {
     /// Room for the units of `runs` runs; this unit is unit `unit` of run `run`.
     pub fn new(
         run: usize,
@@ -31,7 +31,7 @@ impl<N: Size> UnitMeet<N> {
     ) -> Self {
         let width = N::value();
         let parts = comptime!(shape.columns() / width);
-        UnitMeet::<N> {
+        UnitSum::<N> {
             shared: Shared::<[Vector<f32, N>]>::new_slice(2 * runs * shape.units() * parts),
             run,
             unit,
