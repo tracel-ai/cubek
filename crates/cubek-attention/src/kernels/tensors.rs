@@ -2,8 +2,8 @@
 
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
-    AttentionRoutineProblem, AttentionScoring, INDEXED_KEYS_UNREAD, KvSource, PAGED_PACKED_UNREAD,
-    PackedAttentionCache, QueryAxis,
+    AttentionRoutineProblem, AttentionScoring, KvSource, PAGED_PACKED_UNREAD, PackedAttentionCache,
+    QueryAxis,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
@@ -102,7 +102,8 @@ impl AttentionTensors {
     /// Attention of `queries` over `kv`, each query scoring the keys as `scoring` says; the output
     /// `[b, q, h, dv]` allocated, `dv` the values' head dim. Every way of stating an attention
     /// comes through here: [`new`](Self::new), [`paged`](Self::paged) and
-    /// [`packed`](Self::packed) are this call on one kind of source.
+    /// [`packed`](Self::packed) are this call on one kind of source. A source listing blocks of
+    /// keys is read as pages of one block each ([`KvSource::read_as_block_pages`]).
     ///
     /// Where the keys carry a QJL fix-up, the query is followed along its head dim by its
     /// projection, `d` twice the cache's head dim: the keys' lines run as far, their second half
@@ -111,8 +112,8 @@ impl AttentionTensors {
     /// # Errors
     ///
     /// [`ATTENTION_ELEMENT_UNVERIFIED`], [`PACKED_WIDTH_UNREAD`] and [`ATTENTION_GROUP_UNEVEN`]:
-    /// what the routines decline whatever the device; [`INDEXED_KEYS_UNREAD`] and
-    /// [`PAGED_PACKED_UNREAD`]: sources no routine reads; and
+    /// what the routines decline whatever the device; [`PAGED_PACKED_UNREAD`] and what
+    /// [`KvSource::read_as_block_pages`] declines: sources no routine reads; and
     /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run.
     ///
     /// # Panics
@@ -151,9 +152,7 @@ impl AttentionTensors {
                 (sequences, lengths, Some((ends, longest)))
             }
         };
-        if kv.indices.is_some() {
-            return Err(INDEXED_KEYS_UNREAD);
-        }
+        let kv = kv.read_as_block_pages(client, scoring.visibility)?;
         match (&kv.cache, &kv.pages) {
             (AttentionCache::Float { key, value }, pages) => {
                 Self::admit_float(client, &query, key, value, pages.as_ref())?

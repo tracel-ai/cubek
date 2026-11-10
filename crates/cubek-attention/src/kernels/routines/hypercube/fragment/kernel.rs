@@ -63,8 +63,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
 
     // The query and the output span no key: their box is the first step's.
     let _ = cube_staged_attention_partial_microkernel::<EA, ES>(
-        partitioning.walk(),
-        &run,
+        &partitioning,
         &o.at(&first_step),
         &q.at(&first_step),
         &k,

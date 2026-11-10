@@ -549,4 +549,78 @@ mod tests {
         assert_eq!(tile(&simdgroup, &float, F16), Some((8, 8)));
         assert_eq!(tile(&none, &float, F16), None);
     }
+
+    /// The tile layer's step of a product ([`Contraction::step`](cubecl::tile::Contraction::step))
+    /// is this one under the instruction the tile picks, on every mocked device, for plain inputs
+    /// and for an rhs or an lhs stored packed (NVFP4 and MXFP4 in rows, NVFP4 in tile order, `q4`
+    /// along `k` or `n`): the two agree before the routines hand the step over.
+    #[test]
+    fn the_tile_cuts_the_step_this_one_is() {
+        use cubecl::ir::TargetProperties;
+        use cubecl::tile::{Contraction, Input, SumRole};
+
+        let devices = [
+            ("strix_halo", devices::strix_halo()),
+            ("rdna_range", devices::rdna_range()),
+            ("cdna_wave64", devices::cdna_wave64()),
+            ("m2_pro", devices::m2_pro()),
+            ("h100", devices::h100()),
+            ("rtx_pro_6000", devices::rtx_pro_6000()),
+        ];
+        let packed = [
+            ("plain", Operand::plain()),
+            ("nvfp4 rows", Operand::packed(K, 8, K, 16, 4)),
+            ("mxfp4 rows", Operand::packed(K, 8, K, 32, 4)),
+            ("nvfp4 tile order", tile_order()),
+            ("q4 along k", in_rows(QuantValue::Q4S, K)),
+            ("q4 along n", in_rows(QuantValue::Q4S, N)),
+        ];
+        let target = TargetProperties::default();
+        for (device, hw) in devices {
+            for element in [F16, ElemType::Float(FloatKind::BF16)] {
+                for (name, operand) in packed {
+                    for packed_lhs in [false, true] {
+                        let operands = match packed_lhs {
+                            false => against(&operand),
+                            true => MatmulOperands {
+                                lhs: operand.renamed(N, M),
+                                ..MatmulOperands::all(Operand::plain())
+                            },
+                        };
+                        let contraction = Contraction {
+                            lhs: Input {
+                                element,
+                                reads: operands.lhs.reads(),
+                            },
+                            rhs: Input {
+                                element,
+                                reads: operands.rhs.reads(),
+                            },
+                            sum: F32,
+                            role: SumRole::Drained,
+                        };
+                        let Some(fragment) = contraction.instruction(&hw.properties, &target)
+                        else {
+                            continue;
+                        };
+                        let shape = fragment.shape;
+                        let today = MatmulStep::new(&hw, operands, MatmulOperands::all(element))
+                            .under(Space::new(&[
+                                (M, shape.m as usize),
+                                (N, shape.n as usize),
+                                (K, shape.k as usize),
+                            ]));
+                        let tile = contraction
+                            .step(&hw.properties, &target, [M, N, K])
+                            .expect("an instruction gives a step");
+                        assert_eq!(
+                            [M, N, K].map(|axis| tile.extent(axis)),
+                            [M, N, K].map(|axis| today.along(axis)),
+                            "{device}, {element:?}, {name}, packed lhs: {packed_lhs}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
