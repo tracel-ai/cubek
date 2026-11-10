@@ -241,6 +241,30 @@ impl Operand {
         })
     }
 
+    /// This operand read a scale block at a time: one read the whole block, its scale read alone.
+    /// A unit then steps one block along `K` and loads no scale it does not use, so a plane's
+    /// units side by side read one run of the row a load. `None` in tile order, without scales,
+    /// across several axes, or where a block is no whole number of reads.
+    pub fn by_block(self) -> Option<Self> {
+        let axis = self.scaled_along()?;
+        let block = self.scale?.extent(axis);
+        let lined = self.tiles.is_none()
+            && self.read.axis() == Some(axis)
+            && block.is_multiple_of(self.read.extent(axis));
+        lined.then(|| Operand {
+            read: MicroTile::along(axis, block),
+            scale_read: MicroTile::along(axis, 1),
+            ..self
+        })
+    }
+
+    /// Whether one read takes a single scale on its own, not a word of them
+    /// ([`by_block`](Self::by_block)).
+    pub fn reads_scales_alone(&self) -> bool {
+        self.scaled_along()
+            .is_some_and(|axis| self.scale_read.extent(axis) == 1)
+    }
+
     /// The axis a scheme's own block shape implies.
     ///
     /// For the two callers holding no tensor — a tuning row, and the rule asked
