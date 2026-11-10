@@ -963,4 +963,86 @@ mod tests {
             [(MatmulDim::M, 8), (MatmulDim::N, 16), (MatmulDim::K, 16)]
         );
     }
+
+    /// The tile layer's choice of instruction for a sum written out
+    /// ([`Contraction::instruction`](cubecl::tile::Contraction::instruction)) is the one this
+    /// microkernel picks at its default settings, on every mocked device and float element: the
+    /// two agree before the microkernel hands the choice over.
+    #[test]
+    fn the_tile_picks_the_instruction_this_microkernel_picks() {
+        use cubecl::cmma::MatrixLayout;
+        use cubecl::ir::TargetProperties;
+        use cubecl::tile::{Contraction, Fragment, SumRole};
+        use cubek_std::devices;
+
+        let f32 = ElemType::Float(FloatKind::F32);
+        let devices = [
+            ("strix_halo", devices::strix_halo()),
+            ("wgpu_no_subgroups", devices::wgpu_no_subgroups()),
+            ("rdna_range", devices::rdna_range()),
+            ("cdna_wave64", devices::cdna_wave64()),
+            ("m2_pro", devices::m2_pro()),
+            ("h100", devices::h100()),
+            ("rtx_pro_6000", devices::rtx_pro_6000()),
+            ("cpu_12", devices::cpu_12()),
+        ];
+        for (name, hw) in devices {
+            let mut target = TargetProperties::default();
+            target.mma.register_layout_a = match hw.accumulator_as_a {
+                true => target.mma.register_layout_acc,
+                false => match target.mma.register_layout_acc {
+                    MatrixLayout::RowMajor => MatrixLayout::ColMajor,
+                    _ => MatrixLayout::RowMajor,
+                },
+            };
+            target.mma.register_duplication_a = target.mma.register_duplication_acc;
+            for kind in [FloatKind::F16, FloatKind::BF16, FloatKind::F32] {
+                let input = ElemType::Float(kind);
+                let item = MatmulWorkItem {
+                    elements: MatmulOperands {
+                        lhs: input,
+                        rhs: input,
+                        out: input,
+                    },
+                    sum: f32,
+                    layouts: MatmulOperands::all(MatmulLayout::Row),
+                    blocks: None,
+                    rows: MatmulRows::Tiled,
+                    destination: MatmulDestination::Buffer,
+                    axes: MatmulAxes::MNK,
+                    reading: MatmulReading::AsStored,
+                };
+                let today = PlaneFragmentMicrokernel::best(
+                    &hw,
+                    &item,
+                    &PlaneFragmentMicrokernelSettings::DEFAULT,
+                )
+                .map(|microkernel| microkernel.instruction);
+                let today = match today {
+                    Ok(PlaneFragmentInstruction::Cmma { shape }) => {
+                        Some((Instruction::Cmma, shape))
+                    }
+                    Ok(PlaneFragmentInstruction::Mma { shape, operands }) => Some((
+                        Instruction::Mma {
+                            io: Default::default(),
+                            operands,
+                        },
+                        shape,
+                    )),
+                    Ok(PlaneFragmentInstruction::Registers { .. }) | Err(_) => None,
+                    Ok(other) => panic!("{name}: a float default picks no {other:?}"),
+                };
+                let contraction = Contraction {
+                    lhs: input,
+                    rhs: input,
+                    sum: f32,
+                    role: SumRole::Drained,
+                };
+                let tile = contraction
+                    .instruction(&hw.properties, &target)
+                    .map(|Fragment { instruction, shape }| (instruction, shape));
+                assert_eq!(tile, today, "{name}, {kind:?}");
+            }
+        }
+    }
 }
