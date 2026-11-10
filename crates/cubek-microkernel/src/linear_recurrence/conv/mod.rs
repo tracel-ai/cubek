@@ -6,6 +6,6 @@
 //! channel: over a ring, the write of its newest value overwrites the column the oldest tap reads.
 
 pub mod cube;
-mod operand;
+mod qk_normed_operand;
 
-pub use operand::*;
+pub use qk_normed_operand::*;

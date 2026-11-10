@@ -7,13 +7,6 @@
 //! reads its own context columns and writes nothing back. The microkernel is
 //! [`cubek_microkernel::linear_recurrence::conv`]'s.
 
-mod blueprint;
-mod kernel;
-mod problem;
-mod routine;
-mod tensors;
+mod qk_normed;
 
-pub use blueprint::*;
-pub use problem::*;
-pub use routine::*;
-pub use tensors::*;
+pub use qk_normed::*;

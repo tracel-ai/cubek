@@ -1,6 +1,6 @@
 use super::base::CubeQkNormedConvMicrokernel;
-use super::past_taps::PastTaps;
 use super::tiles::QkNormedConvTiles;
+use crate::linear_recurrence::conv::cube::past_taps::PastTaps;
 use crate::linear_recurrence::{CHANNEL, HEAD_CHANNEL};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};

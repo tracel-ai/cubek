@@ -1,4 +1,4 @@
-use super::tiles::QkNormedConvTiles;
+use super::qk_normed::QkNormedConvTiles;
 use crate::linear_recurrence::{POSITION, RING_COLUMN, STREAM_POSITION, walked};
 use cubecl::tile::{Axis, Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
