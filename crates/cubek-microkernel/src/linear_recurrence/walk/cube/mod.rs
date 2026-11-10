@@ -4,6 +4,7 @@
 mod additive;
 mod delta;
 mod held_state;
+mod meet;
 mod microkernel;
 mod partials;
 mod row_pass;
@@ -14,6 +15,7 @@ mod state_access;
 pub use additive::*;
 pub use delta::*;
 pub use held_state::*;
+pub use meet::*;
 pub use microkernel::*;
 pub use partials::*;
 pub use row_pass::*;
