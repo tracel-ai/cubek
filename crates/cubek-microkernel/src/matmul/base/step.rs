@@ -557,7 +557,7 @@ mod tests {
     #[test]
     fn the_tile_cuts_the_step_this_one_is() {
         use cubecl::ir::TargetProperties;
-        use cubecl::tile::{Contraction, Input, PackedReads, SumRole};
+        use cubecl::tile::{Contraction, Input, SumRole};
 
         let devices = [
             ("strix_halo", devices::strix_halo()),
@@ -575,17 +575,6 @@ mod tests {
             ("q4 along k", in_rows(QuantValue::Q4S, K)),
             ("q4 along n", in_rows(QuantValue::Q4S, N)),
         ];
-        // What one read of `operand`, spanning `axes`, brings, as the tile layer states it.
-        let reads = |operand: &Operand, axes: [Axis; 2]| {
-            let over = |space: Space| axes.map(|axis| match space.contains(axis) {
-                true => (axis, space.extent(axis)),
-                false => (axis, 1),
-            });
-            operand.scaled_along().map(|_| PackedReads {
-                values: over(operand.read_space()),
-                scales: operand.scale_read_space().map(over),
-            })
-        };
         let target = TargetProperties::default();
         for (device, hw) in devices {
             for element in [F16, ElemType::Float(FloatKind::BF16)] {
@@ -601,11 +590,11 @@ mod tests {
                         let contraction = Contraction {
                             lhs: Input {
                                 element,
-                                packing: reads(&operands.lhs, [M, K]),
+                                reads: operands.lhs.reads(),
                             },
                             rhs: Input {
                                 element,
-                                packing: reads(&operands.rhs, [K, N]),
+                                reads: operands.rhs.reads(),
                             },
                             sum: F32,
                             role: SumRole::Drained,
