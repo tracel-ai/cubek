@@ -14,12 +14,20 @@
 //! - `loads`: the raw kernel's loads, one plane a row, nothing decoded.
 //! - `raw`: the raw kernel, its planes walking rows grid-stride.
 //! - `reduce`, `red×s`: the DSL's `reduce_axis`, the scales attached to the words or multiplied
-//!   in. Both drop the scales on this cubecl (their error column says so): timed, not trusted.
+//!   in, its planes walking the rows grid-stride as the raw kernel's do.
 //! - `dot`: the DSL's one-row product against a row of ones, the spelling its gemv takes.
 //!
 //! Under each row, the same one-row product written by hand, one plane a row as the DSL launches
-//! it: what `dot` would reach if the DSL's codegen were the hand kernel's, its reread of the lhs
-//! for every row included.
+//! it, then again in the access pattern of a DSL leaf four blocks deep: what `dot` would reach if
+//! the DSL's codegen were the hand kernel's, its reread of the lhs for every row included.
+//!
+//! The DSL kernels need the cubecl of branch `perf/tile-nvfp4-reduce-gap` (on top of this
+//! workspace's pin): a reduction that applies its scales, leaves that keep their loads in flight,
+//! and `PlaneOrder::capped`. Their spelling, read off the AMDGPU ISA: every walk unrolled
+//! (`Walk::unrolled`), a leaf one scale block deep so every load the plane issues is one run, the
+//! block scales bound a byte a block (a `ue4m3` byte is an `e4m3` one with its sign clear) so a
+//! leaf need not span a word of them, a one-wide accumulator cell so each run is scaled once, and,
+//! for the reductions, two cubes a processor.
 //!
 //! ```sh
 //! cargo run --release -p cubek-std --example nvfp4_row_sum --features cubecl/hip
@@ -27,10 +35,11 @@
 //!
 //! `NVFP4_DEBUG=1` runs one small shape and prints the reduce's sums against their parts;
 //! `NVFP4_ROUNDS`, `NVFP4_PLANES`, `NVFP4_ROWS` and `NVFP4_CUBES_PER_PROCESSOR` (0 for a cube a
-//! group of rows) set the rounds and the raw kernel's launch. `NVFP4_SHAPE` keeps one shape, and
-//! `NVFP4_DSL_LEAF_BLOCKS` deepens the DSL's leaf along `K` (four blocks by default), so its walk
-//! takes fewer steps. `CUBECL_DEBUG_PLIRON=<dir>` dumps every kernel's LLVM IR (`amdgpu.ll`) and
-//! ISA (`amdgpu.s`).
+//! group of rows) set the rounds and the raw kernel's launch. `NVFP4_SHAPE` keeps one shape.
+//! The DSL's spelling: `NVFP4_DSL_LEAF_BLOCKS` (1), `NVFP4_DSL_SCALE_BYTES` (1; 0 binds words of
+//! four), `NVFP4_DSL_SCALE_WIDTH` (4, for words) and `NVFP4_DSL_CUBES_PER_PROCESSOR` (2; 0 for a
+//! plane a row). `CUBECL_DEBUG_PLIRON=<dir>` dumps every kernel's LLVM IR (`amdgpu.ll`) and ISA
+//! (`amdgpu.s`).
 
 #![allow(clippy::needless_range_loop)]
 
@@ -85,7 +94,7 @@ const PLACED_LIFT: f64 = (1u32 << 22) as f64;
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// The instruction the DSL contraction runs: registers, a lane's partials kept to the drain.
 const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(16).partials(),
+    config: RegisterBlock::new(16),
 };
 
 const WORD: ElemType = ElemType::UInt(UIntKind::U32);
@@ -105,7 +114,7 @@ fn dsl_row_sum(w: &TileTensor<'_>, out: &TileTensor<'_>, partitioning: Partition
         let (o, w) = (out.at(&plane), w.at(&plane));
         let mut sum = o.block_reducer::<f32>(&w, REGISTER_BLOCK, Monoid::Sum);
         sum.init::<f32>(0.0f32);
-        for step in plane.walk_within(&w) {
+        for step in plane.walk_within(&w).unrolled() {
             for unit in step {
                 let mut unit_sum = sum.at(&unit);
                 unit_sum.reduce_axis_accumulate(&w.at(&unit), Monoid::Sum);
@@ -134,7 +143,7 @@ fn dsl_row_sum_product(
         let (o, w) = (out.at(&plane), w.at(&plane));
         let mut sum = o.block_reducer::<f32>(&w, REGISTER_BLOCK, Monoid::Sum);
         sum.init::<f32>(0.0f32);
-        for step in plane.walk_within(&w) {
+        for step in plane.walk_within(&w).unrolled() {
             for unit in step {
                 let mut unit_sum = sum.at(&unit);
                 unit_sum.reduce_axis_accumulate(&w.at(&unit), Monoid::Sum);
@@ -162,7 +171,7 @@ fn dsl_row_dot(
         let (b, b_factor) = b.factor(c.space(), INSTRUCTION);
         let mut sum = c.accumulator::<f32>(&a, &b, INSTRUCTION, Semiring::SUM_PROD);
         sum.zero();
-        for step in plane.walk_within(&b) {
+        for step in plane.walk_within(&b).unrolled() {
             for unit in step {
                 let mut unit_sum = sum.at(&unit);
                 unit_sum.mma(&a.at(&unit), &b.at(&unit));
@@ -198,16 +207,34 @@ fn dsl_launch(
         .and_then(|v| v.parse().ok())
         .unwrap_or(BLOCK);
     let space = Space::new(&[(N, rows), (C, 1), (KB, k / BLOCK), (KI, BLOCK)]);
-    // `NVFP4_DSL_LEAF_BLOCKS` deepens a unit's leaf along `K`, so a walk takes fewer steps.
-    let leaf_blocks = env_usize("NVFP4_DSL_LEAF_BLOCKS", SCALES_PER_WORD);
+    // A unit's leaf, in blocks of sixteen along `K`: one, so every load the plane issues is one
+    // run of the row, its units side by side. Deeper leaves span a word of scales, which the
+    // scales bound as words need, and read four lines a unit a quarter-used.
+    let leaf_blocks = env_usize("NVFP4_DSL_LEAF_BLOCKS", 1);
     let levels = Levels::leaf(&[(N, 1), (C, 1), (KB, leaf_blocks), (KI, BLOCK)])
         .units(&[(KB, plane)])
-        .walk_every(&[KB])
-        .launch_planes(
-            &[N],
-            PlaneOrder::new(&[(N, PLANES_PER_CUBE)], CubeOrder::RowMajor),
-        )
-        .build();
+        .walk_every(&[KB]);
+    // `NVFP4_DSL_CUBES_PER_PROCESSOR` caps the launch at that many cubes a processor, its planes
+    // walking the rows grid-stride; 0 launches a plane a row.
+    let order = PlaneOrder::new(&[(N, PLANES_PER_CUBE)], CubeOrder::RowMajor);
+    // The reductions only: a capped one-row product hoists its row-invariant lhs out of the row
+    // walk, more registers than a long `K` has, and spills.
+    let cap = match spelling {
+        Spelling::Contract => 0,
+        Spelling::Reduce | Spelling::ReduceProduct => env_usize("NVFP4_DSL_CUBES_PER_PROCESSOR", 2),
+    };
+    let order = match cap {
+        0 => order,
+        per => {
+            let processors = client
+                .properties()
+                .hardware
+                .num_streaming_multiprocessors
+                .unwrap_or(32) as usize;
+            order.capped(per * processors)
+        }
+    };
+    let levels = levels.launch_planes(&[N], order).build();
     let launcher = Launcher::new(
         client,
         Partitioning::new(space.clone(), levels),
@@ -238,17 +265,24 @@ fn dsl_launch(
     let mut scales = data.scales.clone().binding();
     scales.shape = [rows, blocks].into();
     scales.strides = [blocks, 1].into();
-    let scales = launcher
-        .arg(scales, WORD)
-        .gathered(Projection::new(
-            &[N, KB],
-            &[PhysicalAxisMap::of(N), PhysicalAxisMap::of(KB)],
-        ))
-        .vectorize(SCALES_PER_WORD)
-        .packed(Field::of_scale(ScaleDtype::UE4M3))
-        .build()
-        .expect("the block scales")
-        .arg();
+    let scale_projection =
+        Projection::new(&[N, KB], &[PhysicalAxisMap::of(N), PhysicalAxisMap::of(KB)]);
+    let scales = match env_usize("NVFP4_DSL_SCALE_BYTES", 1) {
+        // Each scale its own element: a `ue4m3` byte is an `e4m3` one with its sign clear, so it
+        // reads as one, a byte a block, and a unit's leaf need not span a word of them.
+        1 => launcher
+            .arg(scales, ElemType::Float(FloatKind::E4M3))
+            .gathered(scale_projection)
+            .vectorize(1),
+        _ => launcher
+            .arg(scales, WORD)
+            .gathered(scale_projection)
+            .vectorize(env_usize("NVFP4_DSL_SCALE_WIDTH", SCALES_PER_WORD))
+            .packed(Field::of_scale(ScaleDtype::UE4M3)),
+    }
+    .build()
+    .expect("the block scales")
+    .arg();
 
     // The per-tensor scale: one word over every axis the words carry but the position in a block.
     let mut global = data.global.clone().binding();
@@ -484,6 +518,46 @@ fn raw_row_dot<V: Size>(
         sum += blocks[0] * scale.extract(0usize) + blocks[1] * scale.extract(1usize);
     }
 
+    let total = plane_sum(sum);
+    if lane == 0 {
+        out[row] = total * global[0] * f32::new(PLACED_LIFT);
+    }
+}
+
+/// [`raw_row_dot`] with the DSL's access pattern: each unit takes a run of 64 values a step (one
+/// word of scales), read as four 8-byte loads of 16 values, the units side by side. Every load
+/// the plane issues spans `32 · P` bytes and uses a quarter of them.
+#[cube(launch_unchecked)]
+fn raw_row_dot_blocked(
+    words: &Tensor<Vector<u32, Const<2>>>,
+    scales: &Tensor<u32>,
+    global: &Tensor<f32>,
+    x: &Tensor<Vector<f32, Const<4>>>,
+    out: &mut Tensor<f32>,
+    #[comptime] steps: usize,
+) {
+    let plane_dim = PLANE_DIM as usize;
+    let lane = UNIT_POS_PLANE as usize;
+    let row = CUBE_POS * (CUBE_DIM as usize / plane_dim) + UNIT_POS as usize / plane_dim;
+    let row_runs = steps * plane_dim;
+    let mut sum = 0.0f32;
+    #[unroll]
+    for s in 0..steps {
+        let run = row * row_runs + s * plane_dim + lane;
+        let scale_word = scales[run];
+        let in_row = s * plane_dim + lane;
+        #[unroll]
+        for b in 0..4usize {
+            let pair_words = words[run * 4 + b];
+            let byte = (scale_word >> (8 * b as u32)) & 0x7F;
+            let scale =
+                f32::cast_from(Vector::<f16, Const<2>>::reinterpret(byte << 7).extract(0usize));
+            let at = (in_row * 4 + b) * 4;
+            let block = word_dot(pair_words.extract(0usize), x[at], x[at + 1])
+                + word_dot(pair_words.extract(1usize), x[at + 2], x[at + 3]);
+            sum += block * scale;
+        }
+    }
     let total = plane_sum(sum);
     if lane == 0 {
         out[row] = total * global[0] * f32::new(PLACED_LIFT);
@@ -1083,8 +1157,29 @@ fn main() {
         };
         raw_dot(&data[0])();
         let raw_dot_err = worst_error(&read_f32(&client, &data[0].out), &host);
+        let raw_dot_blocked = |d: &Device| -> Prepared {
+            let client = client.clone();
+            let args = [&d.words, &d.scales, &d.global, &d.ones, &d.out].map(line_arg);
+            let steps = k / VALUES_PER_STEP / plane;
+            Box::new(move || unsafe {
+                let [words, scales, global, x, out] = args;
+                raw_row_dot_blocked::launch_unchecked(
+                    &client,
+                    CubeCount::new_1d((rows / PLANES_PER_CUBE) as u32),
+                    CubeDim::new_2d(plane as u32, PLANES_PER_CUBE as u32),
+                    words,
+                    scales,
+                    global,
+                    x,
+                    out,
+                    steps,
+                )
+            })
+        };
+        raw_dot_blocked(&data[0])();
+        let raw_dot_blocked_err = worst_error(&read_f32(&client, &data[0].out), &host);
 
-        let mut best = [Duration::MAX; 7];
+        let mut best = [Duration::MAX; 8];
         for _ in 0..env_usize("NVFP4_ROUNDS", 5) {
             let times = [
                 time(&client, copies, |c| plain(&data[c])),
@@ -1094,12 +1189,22 @@ fn main() {
                 time(&client, copies, |c| product(&data[c])),
                 time(&client, copies, |c| dot(&data[c])),
                 time(&client, copies, |c| raw_dot(&data[c])),
+                time(&client, copies, |c| raw_dot_blocked(&data[c])),
             ];
             for (best, time) in best.iter_mut().zip(times) {
                 *best = (*best).min(time);
             }
         }
-        let [t_plain, t_loads, t_raw, t_dsl, t_product, t_dot, t_raw_dot] = best;
+        let [
+            t_plain,
+            t_loads,
+            t_raw,
+            t_dsl,
+            t_product,
+            t_dot,
+            t_raw_dot,
+            t_raw_dot_blocked,
+        ] = best;
         // The read ceiling at this shape's own footprint.
         let at_size = memory_bound(
             &client,
@@ -1135,6 +1240,13 @@ fn main() {
             "",
             gbs(t_raw_dot),
             raw_dot_err
+        );
+        println!(
+            "{:<8} the same, the DSL's access pattern (64 values a unit, 8-byte loads): {:.1} GB/s, \
+             err {:.1e}",
+            "",
+            gbs(t_raw_dot_blocked),
+            raw_dot_blocked_err
         );
     }
 }
