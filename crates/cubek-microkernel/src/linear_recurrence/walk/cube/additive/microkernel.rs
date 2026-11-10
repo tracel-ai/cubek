@@ -1,5 +1,7 @@
 use super::base::CubeAdditiveWalkMicrokernel;
-use crate::linear_recurrence::walk::cube::{HeldState, StateAccess, UnitPartials};
+use crate::linear_recurrence::walk::cube::{
+    HeldState, RowRead, RowUpdate, StateAccess, UnitPartials,
+};
 use crate::linear_recurrence::walk::{DECAY_RATE, STRENGTH_RATE};
 use crate::linear_recurrence::{KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
@@ -54,7 +56,15 @@ pub fn cube_additive_walk_microkernel<E: Float, N: Size>(
                 }
 
                 let at = step.coord(POSITION);
-                held.decay_write_and_answer(&keys, &queries, factor, &write, &mut partials);
+                held.pass(
+                    &keys,
+                    &queries,
+                    factor,
+                    &write,
+                    &mut partials,
+                    RowUpdate::DecayWrite,
+                    RowRead::Queries,
+                );
                 partials.sum();
 
                 if slot == 0 {

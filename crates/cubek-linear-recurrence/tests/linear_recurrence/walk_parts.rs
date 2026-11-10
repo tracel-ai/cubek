@@ -13,7 +13,7 @@ use cubek_linear_recurrence::kernels::walk::{
 };
 use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use cubek_microkernel::linear_recurrence::walk::cube::{
-    CubeWalkMicrokernelSettings, HeldState, HeldStateShape, UnitPartials,
+    CubeWalkMicrokernelSettings, HeldState, HeldStateShape, RowRead, RowUpdate, UnitPartials,
 };
 use cubek_microkernel::linear_recurrence::{KEY_FEATURE, POSITION, RecurrenceHeads, VALUE_FEATURE};
 use cubek_std::Hardware;
@@ -187,7 +187,15 @@ fn held_state_part<N: Size>(
                 let position = step.coord(POSITION);
                 let (keys, queries) = (key.at(&step), query.at(&step));
                 let base = (origin / columns * units + slot) * comptime!(3 * columns);
-                held.decay_and_recall(&keys, PROBE_DECAY, &mut partials);
+                held.pass(
+                    &keys,
+                    &queries,
+                    PROBE_DECAY,
+                    &write,
+                    &mut partials,
+                    RowUpdate::Decay,
+                    RowRead::Keys,
+                );
                 if position == 0 {
                     #[unroll]
                     for part in 0..parts {
@@ -209,7 +217,15 @@ fn held_state_part<N: Size>(
                     }
                     write[part] = line;
                 }
-                held.write_and_answer(&keys, &queries, &write, &mut partials);
+                held.pass(
+                    &keys,
+                    &queries,
+                    PROBE_DECAY,
+                    &write,
+                    &mut partials,
+                    RowUpdate::Write,
+                    RowRead::Queries,
+                );
                 if position == 0 {
                     #[unroll]
                     for part in 0..parts {
@@ -220,12 +236,14 @@ fn held_state_part<N: Size>(
                         }
                     }
                     let mut fused = HeldState::<N>::load(&state.at(&unit), false, shape);
-                    fused.decay_write_and_answer(
+                    fused.pass(
                         &keys,
                         &queries,
                         PROBE_DECAY,
                         &write,
                         &mut partials,
+                        RowUpdate::DecayWrite,
+                        RowRead::Queries,
                     );
                     #[unroll]
                     for part in 0..parts {

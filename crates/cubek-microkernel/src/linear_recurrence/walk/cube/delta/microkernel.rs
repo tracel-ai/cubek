@@ -1,5 +1,7 @@
 use super::base::CubeDeltaWalkMicrokernel;
-use crate::linear_recurrence::walk::cube::{HeldState, StateAccess, UnitPartials};
+use crate::linear_recurrence::walk::cube::{
+    HeldState, RowRead, RowUpdate, StateAccess, UnitPartials,
+};
 use crate::linear_recurrence::walk::{DECAY_RATE, STRENGTH_RATE};
 use crate::linear_recurrence::{KEY_FEATURE, POSITION, VALUE_FEATURE};
 use cubecl::tile::{Region, Tile};
@@ -50,7 +52,15 @@ pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
                 let strength_all =
                     Vector::<f32, N>::cast_from(rate.read(STRENGTH_RATE).extract(0usize));
 
-                held.decay_and_recall(&keys, factor, &mut partials);
+                held.pass(
+                    &keys,
+                    &queries,
+                    factor,
+                    &write,
+                    &mut partials,
+                    RowUpdate::Decay,
+                    RowRead::Keys,
+                );
                 partials.sum();
 
                 #[unroll]
@@ -58,7 +68,15 @@ pub fn cube_delta_walk_microkernel<E: Float, N: Size>(
                     write[part] = (values.read(part) - partials.get(part)) * strength_all;
                 }
 
-                held.write_and_answer(&keys, &queries, &write, &mut partials);
+                held.pass(
+                    &keys,
+                    &queries,
+                    factor,
+                    &write,
+                    &mut partials,
+                    RowUpdate::Write,
+                    RowRead::Queries,
+                );
                 partials.sum();
 
                 if slot == 0 {
