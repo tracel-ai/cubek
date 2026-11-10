@@ -1,54 +1,27 @@
-//! The matmul microkernels on one work item: `out = lhs · rhs` over a problem one tile wide.
+//! The plane matmul microkernels on one work item.
 
 use crate::matmul::plane::{
-    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, plane_fragment_microkernel,
-    plane_fragment_partial,
+    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
+    PlaneShuffleMicrokernelSettings, plane_fragment_microkernel, plane_fragment_partial,
+    plane_shuffle_microkernel,
 };
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead,
-    MatmulReading, MatmulRows, MatmulStage, MatmulWorkItem,
+    MatmulAxes, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
+    MatmulStage,
 };
 use cubecl::prelude::*;
-use cubecl::tile::kind::Boundary;
-use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
-use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubecl::tile::{
-    Launcher, Partitioning, Region, Scratch, Semiring, Space, StageStorage, Stages, Tile, TileSpec,
-    TileTensor, TileTensorLaunch,
+    Instruction, Launcher, Partitioning, Region, Scratch, Semiring, Space, StageStorage, Stages,
+    Tile, TileTensor,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{Microkernel, StageRing};
 
-/// The elements of a float product: what both inputs are stored in, what it sums in and what it
-/// writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MatmulElements {
-    pub input: ElemType,
-    pub sum: ElemType,
-    pub out: ElemType,
-}
-
-impl MatmulElements {
-    /// A float product of row-major inputs into a buffer, its tiles cut by the launch.
-    pub fn work_item(&self) -> MatmulWorkItem {
-        MatmulWorkItem {
-            elements: MatmulOperands {
-                lhs: self.input,
-                rhs: self.input,
-                out: self.out,
-            },
-            sum: self.sum,
-            layouts: MatmulOperands::all(MatmulLayout::Row),
-            blocks: None,
-            rows: MatmulRows::Tiled,
-            destination: MatmulDestination::Buffer,
-            axes: MatmulAxes::MNK,
-            reading: MatmulReading::AsStored,
-        }
-    }
-}
+use super::{MatmulElements, MatmulLaunch, OneCube};
 
 /// One plane fragment microkernel ready to launch on one work item: the microkernel the device
 /// picks at `settings`, and the problem one plane's tile wide, `steps` stages deep.
@@ -107,13 +80,18 @@ impl PlaneFragmentLaunch {
             plane_width,
         })
     }
+}
 
-    /// `out = lhs · rhs`, `lhs` row-major `m × k`, `rhs` row-major `k × n` and `out` `m × n`.
-    ///
-    /// # Errors
-    ///
-    /// Why the tile DSL cannot bind the launch.
-    pub fn launch(
+impl MatmulLaunch for PlaneFragmentLaunch {
+    fn elements(&self) -> MatmulElements {
+        self.elements
+    }
+
+    fn shape(&self) -> [usize; 3] {
+        self.shape
+    }
+
+    fn launch(
         &self,
         client: &Client,
         lhs: TensorArg,
@@ -138,19 +116,8 @@ impl PlaneFragmentLaunch {
             cube_dim: partitioning.cube_dim(self.plane_width),
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
-        let MatmulElements {
-            input,
-            sum,
-            out: out_element,
-        } = self.elements;
-        let bound = |arg, element, axes: &[_]| {
-            TileTensorLaunch::new(
-                arg,
-                element,
-                1,
-                TileSpec::direct(axes).boundary(BoundaryPolicy::Every(Boundary::Zero)),
-            )
-        };
+        let MatmulElements { input, sum, .. } = self.elements;
+        let [lhs, rhs, out] = self.elements.bound([lhs, rhs, out], self.rhs_layout());
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles.
         unsafe {
@@ -158,9 +125,9 @@ impl PlaneFragmentLaunch {
                 client,
                 launcher.cube_count(),
                 launcher.cube_dim(),
-                bound(lhs, input, &[M, K]),
-                bound(rhs, input, &[K, N]),
-                bound(out, out_element, &[M, N]),
+                lhs,
+                rhs,
+                out,
                 launcher.partitioning_arg(),
                 self.microkernel,
                 self.stage.clone(),
@@ -253,4 +220,106 @@ fn plane_fragment_staged_microkernel<EL: Numeric>(
             );
         });
     });
+}
+
+/// One plane shuffle microkernel ready to launch on one plane's box, every row held whole: the
+/// microkernel the device picks at `settings`, `steps` of its reads of `K` deep.
+#[derive(Debug, Clone)]
+pub struct PlaneShuffleLaunch {
+    pub microkernel: PlaneShuffleMicrokernel,
+    pub elements: MatmulElements,
+    one_cube: OneCube,
+}
+
+impl PlaneShuffleLaunch {
+    /// A plane shuffle reads a row rhs.
+    const RHS: MatmulLayout = MatmulLayout::Row;
+
+    /// The plane shuffle microkernel `hw` runs at `settings` over `rows` rows held whole.
+    ///
+    /// # Errors
+    ///
+    /// Why the device runs none.
+    pub fn new(
+        hw: &Hardware,
+        elements: MatmulElements,
+        settings: &PlaneShuffleMicrokernelSettings,
+        rows: usize,
+        steps: usize,
+    ) -> Result<Self, Refusal> {
+        let item = elements.work_item_of(MatmulRows::Whole(rows), Self::RHS);
+        let microkernel = PlaneShuffleMicrokernel::best(hw, &item, settings)?;
+        let levels = microkernel
+            .tiling()
+            .launch_planes(&[M, N], PlaneOrder::new(&[(N, 1)], CubeOrder::RowMajor))
+            .build();
+        Ok(Self {
+            microkernel,
+            elements,
+            one_cube: OneCube::new(levels, ComputeScope::Plane, steps),
+        })
+    }
+}
+
+impl MatmulLaunch for PlaneShuffleLaunch {
+    fn elements(&self) -> MatmulElements {
+        self.elements
+    }
+
+    fn shape(&self) -> [usize; 3] {
+        self.one_cube.shape
+    }
+
+    fn launch(
+        &self,
+        client: &Client,
+        lhs: TensorArg,
+        rhs: TensorArg,
+        out: TensorArg,
+    ) -> Result<(), Refusal> {
+        let launcher = self
+            .one_cube
+            .launcher(client, self.microkernel.plane_width() as u32)?;
+        let [lhs, rhs, out] = self.elements.bound([lhs, rhs, out], self.rhs_layout());
+        // SAFETY: every operand is bound through the launcher at the problem's own extents, and
+        // the kernel indexes no buffer but through its tiles; it holds no shared memory.
+        unsafe {
+            plane_shuffle_kernel::launch_unchecked(
+                client,
+                launcher.cube_count(),
+                launcher.cube_dim(),
+                lhs,
+                rhs,
+                out,
+                launcher.partitioning_arg(),
+                self.microkernel.tile_instruction(),
+                [self.elements.sum, self.elements.out],
+            );
+        }
+        Ok(())
+    }
+}
+
+/// The one plane walking `K` through its own reads, summing in registers and draining into `out`.
+#[cube(launch_unchecked)]
+fn plane_shuffle_kernel<EA: Numeric, E: Numeric>(
+    lhs: &TileTensor<'_>,
+    rhs: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] instruction: Instruction,
+    #[define(EA, E)] _elements: [ElemType; 2],
+) {
+    let a = lhs.tile(&partitioning);
+    let b = rhs.tile(&partitioning);
+    let c = out.tile(&partitioning);
+    for plane in &partitioning {
+        let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
+        let mut sum = c.accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
+        sum.zero();
+        for k_step in plane.walk_within(&b) {
+            plane_shuffle_microkernel(&k_step, &sum, &a, &b, MatmulOperands::AS_BOUND);
+        }
+        sum.drained_into(&c);
+    }
 }
