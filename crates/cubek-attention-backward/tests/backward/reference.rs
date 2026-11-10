@@ -59,17 +59,14 @@ impl Case {
     }
 }
 
-/// A case's inputs on the device, at `element`, and every tensor of both passes on the host.
+/// A case's inputs on the device, at `element`, and the gradients the backward pass must find,
+/// from a forward computed on the host.
 pub struct Reference {
     pub tensors: AttentionBackwardTensors,
     /// The forward's inputs on the device, `[query, key, value]`, and the loss's gradient against
     /// its output.
     pub inputs: [TensorHandle; 3],
     pub out_gradient: TensorHandle,
-    /// The forward's output, `[b, h, q, dv]`.
-    pub out: Vec<f64>,
-    /// `[b, h, q]`.
-    pub logsumexp: Vec<f64>,
     /// `[b, h, q, d]`.
     pub query_gradient: Vec<f64>,
     /// `[b, kv, s, d]`.
@@ -80,7 +77,8 @@ pub struct Reference {
 
 impl Reference {
     /// `case`'s inputs on `client` at `element`, the forward's output and logsumexp computed on the
-    /// host from the values the device holds, and the gradients the backward pass must find.
+    /// host from the values the device holds and bound beside them, and the gradients the backward
+    /// pass must find.
     pub fn new(client: &Client, case: Case, element: ElemType) -> Self {
         let Case {
             batch,
@@ -203,8 +201,6 @@ impl Reference {
             tensors,
             inputs: [query, key, value],
             out_gradient,
-            out,
-            logsumexp,
             query_gradient,
             key_gradient,
             value_gradient,

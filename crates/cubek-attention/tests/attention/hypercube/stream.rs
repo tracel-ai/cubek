@@ -1,0 +1,21 @@
+//! The stream of plane fragments: every box's keys on one line its cubes share in runs, a run
+//! holding a box whole writing it, and the runs sharing one leaving partials the last merges.
+
+use cubek_attention::kernels::HypercubeStreamFragmentAttentionRoutine;
+use cubek_test_utils::ScopeUnderTest;
+
+use crate::attention::{Forward, PROMPT_WIDE, PROMPTS};
+
+/// The routine's lead on every prompt case.
+#[test]
+fn the_hypercube_stream_routine_matches_the_host() {
+    let forward = Forward::new(HypercubeStreamFragmentAttentionRoutine);
+    forward.check(forward.at_its_lead(&PROMPTS));
+}
+
+/// Every setting the routine lists at a model's head dim.
+#[test]
+fn every_hypercube_stream_setting_matches_the_host_at_a_head_dim_of_128() {
+    let forward = Forward::new(HypercubeStreamFragmentAttentionRoutine);
+    forward.check(forward.at_every_setting(&[PROMPT_WIDE]));
+}
