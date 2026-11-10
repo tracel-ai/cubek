@@ -89,7 +89,9 @@ impl AttentionTuneInputs {
     }
 
     /// Attention of `queries` over the float keys and values `kv` states, the output allocated
-    /// ([`AttentionTensors::attention`]); otherwise as [`new`](Self::new).
+    /// ([`AttentionTensors::attention`]); otherwise as [`new`](Self::new). A source listing blocks
+    /// of keys is keyed and measured as the pages of one block each that the routines read
+    /// ([`KvSource::read_as_block_pages`]).
     ///
     /// # Errors
     ///
@@ -102,6 +104,7 @@ impl AttentionTuneInputs {
         arrivals: Option<PlainTensor>,
         scoring: AttentionScoring,
     ) -> Result<Self, Refusal> {
+        let kv = kv.read_as_block_pages(client, scoring.visibility)?;
         let AttentionCache::Float { key, value } = kv.cache.clone() else {
             return Err(ATTENTION_PACKED_UNREAD);
         };
@@ -481,6 +484,7 @@ mod tests {
     mod keys {
         use super::*;
         use crate::kernels::{AttentionScoring, AttentionVisibility, QueryPlacement};
+        use core::num::NonZeroUsize;
         use cubecl::ir::{ElemType, FloatKind};
         use cubek_test_utils::client;
 
@@ -553,6 +557,31 @@ mod tests {
                 assert_eq!(paged.page_size(), Some(16));
                 assert_eq!(key(65536, Some(16)), paged, "{queries} queries");
             }
+        }
+
+        /// A source listing blocks of keys is keyed as the pages of one block each the routines
+        /// read, not as the cache it lists them from.
+        #[test]
+        fn listed_blocks_are_keyed_as_the_pages_read() {
+            let client = client();
+            let (heads, kv_heads, head_dim) = HEADS;
+            let zeros = |shape: [usize; 4]| {
+                PlainTensor::zeros(&client, &shape, row_major_contiguous_strides(shape), F16)
+            };
+            let block = NonZeroUsize::new(4).expect("a block holds a position");
+            let kv = KvSource::new(AttentionCache::Float {
+                key: zeros([1, kv_heads, 32, head_dim]),
+                value: zeros([1, kv_heads, 32, head_dim]),
+            })
+            .indexed(PlainTensor::of_u32s(&client, &[1, 3], &[5, 0, 6]), block);
+            let queries = AttentionQueries::Dense {
+                query: zeros([1, heads, 1, head_dim]),
+                lengths: PlainTensor::of_u32s(&client, &[1], &[12]),
+            };
+            let scoring = AttentionScoring::standard(AttentionVisibility::Attended, head_dim);
+            let inputs = AttentionTuneInputs::attention(&client, queries, kv, None, scoring)
+                .expect("listed blocks within a page, attended whole");
+            assert_eq!(inputs.one_query_key().page_size(), Some(4));
         }
 
         /// Buffers that are the call's own keys hold the problem's extent: a decode over 300 keys
