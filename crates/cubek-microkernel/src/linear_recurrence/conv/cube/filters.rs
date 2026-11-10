@@ -9,25 +9,27 @@ fn sigmoid(x: f32) -> f32 {
     1.0f32 / (1.0f32 + (-x).exp())
 }
 
-/// The depthwise filters of every channel.
+/// The depthwise filters of every channel and, where there is one, each channel's bias.
 #[derive(CubeType)]
 pub struct CausalFilters {
     filters: Tile,
+    bias: ComptimeOption<Tile>,
     #[cube(comptime)]
     taps: usize,
 }
 
 #[cube]
 impl CausalFilters {
-    pub fn new(filters: &Tile, #[comptime] taps: usize) -> Self {
+    pub fn new(filters: &Tile, bias: &ComptimeOption<Tile>, #[comptime] taps: usize) -> Self {
         CausalFilters {
             filters: filters.clone(),
+            bias: bias.clone(),
             taps,
         }
     }
 
     /// The `line`-th line of the convolved channels: the newest value and the taps behind it times
-    /// the filters, then the silu.
+    /// the filters, plus the bias, then the silu.
     pub fn convolved_line<E: Float, N: Size>(
         &self,
         past: &PastTaps,
@@ -42,6 +44,11 @@ impl CausalFilters {
             let behind = Self::widened(past.behind::<E, N>(column, line));
             sums += behind * self.weights::<E, N>(first, column);
         }
+        #[comptime]
+        match &self.bias {
+            ComptimeOption::Some(bias) => sums += Self::biases::<E, N>(bias, first),
+            ComptimeOption::None => {}
+        }
         Self::activated::<E, N>(sums)
     }
 
@@ -55,6 +62,18 @@ impl CausalFilters {
             weights.insert(lane, f32::cast_from(weight));
         }
         weights
+    }
+
+    fn biases<E: Float, N: Size>(bias: &Tile, first: usize) -> Vector<f32, N> {
+        let width = N::value();
+        let mut biases = Vector::<f32, N>::cast_from(0.0f32);
+        #[unroll]
+        for lane in 0..width {
+            let channel = bias.within(CHANNEL, first + lane, first + lane + 1);
+            let value = channel.flat::<E, Const<1>>().read(0usize).extract(0usize);
+            biases.insert(lane, f32::cast_from(value));
+        }
+        biases
     }
 
     fn widened<E: Float, N: Size>(line: Vector<E, N>) -> Vector<f32, N> {

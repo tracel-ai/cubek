@@ -97,9 +97,11 @@ pub struct HostOutputs {
 }
 
 /// The channels convolved and rounded as the kernel rounds them: the newest tap of `channel` reads
-/// `newest(channel)`, tap `j` reads `past(j, channel)` or nothing where none is held.
+/// `newest(channel)`, tap `j` reads `past(j, channel)` or nothing where none is held, and `bias`
+/// joins the sum before its first rounding.
 pub fn convolve_channels(
     filters: &[f32],
+    bias: Option<&[f32]>,
     taps: usize,
     newest: impl Fn(usize) -> f32,
     past: impl Fn(usize, usize) -> Option<f32>,
@@ -113,6 +115,7 @@ pub fn convolve_channels(
             for j in 0..taps - 1 {
                 sum += past(j, channel).map_or(0.0, |x| x as f64 * tap(j));
             }
+            sum += bias.map_or(0.0, |bias| bias[channel] as f64);
             let mixed = round(sum);
             round(mixed / (1.0 + (-mixed).exp()))
         })
@@ -187,6 +190,7 @@ impl ConvCase {
         let (slot, positions) = self.rows[row];
         convolve_channels(
             &o.filters,
+            None,
             self.taps,
             |channel| o.qkv[row * conv_dim + channel],
             |j, channel| {

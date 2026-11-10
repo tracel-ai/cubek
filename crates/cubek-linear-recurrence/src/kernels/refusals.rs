@@ -54,6 +54,20 @@ pub const RECURRENCE_WALK_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
 /// slot table and one for the metadata buffer some runtimes bind beside them.
 pub const QK_NORMED_CONV_BINDING_BUFFERS: u32 = 8 + 1;
 
+/// The buffers a causal conv needs a device to bind: one for each of its 6 operands, one for the
+/// slot table and one for the metadata buffer some runtimes bind beside them.
+pub const CAUSAL_CONV_BINDING_BUFFERS: u32 = 7 + 1;
+
+/// What admission declines a problem with when it describes no channel to convolve.
+pub const CAUSAL_CONV_CHANNELS_EMPTY: Refusal = Refusal::Declined {
+    why: "the causal conv needs a channel",
+};
+
+/// What admission declines an output element with that is neither `f32` nor the activations'.
+pub const CAUSAL_CONV_OUTPUT_UNSUPPORTED: Refusal = Refusal::Declined {
+    why: "the causal conv writes f32 or the activations' element",
+};
+
 /// What admission declines a problem with when it describes no head: a conv needs a key head, a
 /// value head, a key feature and a value feature.
 pub const QK_NORMED_CONV_HEADS_EMPTY: Refusal = Refusal::Declined {

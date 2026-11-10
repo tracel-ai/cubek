@@ -1,3 +1,4 @@
+mod causal_conv;
 mod conv;
 mod conv_prompt;
 mod harness;

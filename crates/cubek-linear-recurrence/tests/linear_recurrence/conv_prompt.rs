@@ -133,6 +133,7 @@ impl PromptCase {
         let at = |position: usize, channel: usize| sequence[position * conv_dim + channel];
         let convolved = convolve_channels(
             filters,
+            None,
             taps,
             |channel| at(position, channel),
             |j, channel| (position + j + 1 >= taps).then(|| at(position + j + 1 - taps, channel)),
