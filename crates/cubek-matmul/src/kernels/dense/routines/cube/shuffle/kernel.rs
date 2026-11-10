@@ -8,7 +8,6 @@ use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 /// the scales it carries, none where it is plain. `O` is how the output is reached: a buffer, or a
 /// sink. A `persistent` launch's cubes each walk a run of the boxes rather than take one.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destination>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
