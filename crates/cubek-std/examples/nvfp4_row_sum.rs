@@ -44,8 +44,12 @@
 //! `NVFP4_GEMV_ONLY=1` times only the persistent row sum against the split-K gemv
 //! ([`raw_gemv_split_k`]), a real `f16` lhs checked against an `f64` reference: the gemv's
 //! ceiling. `NVFP4_GEMV_LINES` (1), `NVFP4_GEMV_COLUMNS` (8) and `NVFP4_GEMV_CUBES_PER_PROCESSOR`
-//! (4) set its launch. On the Radeon 8060S it reads 98–101% of the row sum on Qwen3-8B's
-//! projections; three lines a lane (four planes for `K` = 12288) falls to 68%.
+//! (4) set its launch, `NVFP4_GEMV_BLOCKS=1` reads a block a lane (8-byte loads) and
+//! `NVFP4_GEMV_CUBES_PER_PROCESSOR=0` launches a cube a group. On the Radeon 8060S it reads 98–101%
+//! of the row sum on Qwen3-8B's projections, at 16-byte lines and at 8-byte blocks alike; three
+//! lines a lane (four planes for `K` = 12288) falls to 68%. Beside it, [`dsl_gemv_split_k`] states
+//! the block-a-lane kernel in the tile DSL (`NVFP4_DSL_GEMV_ROWS`, 8, rows a box;
+//! `NVFP4_DSL_GEMV_CUBES_PER_PROCESSOR`, 4): 95–100% of the row sum.
 
 #![allow(clippy::needless_range_loop)]
 
@@ -185,6 +189,150 @@ fn dsl_row_dot(
         }
         c.dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
     }
+}
+
+/// [`raw_gemv_split_k_blocks`] in the tile DSL, as cubek's cube shuffle states a cube: `K` dealt
+/// to the cube's planes in runs ([`Levels::planes_across`]), each plane summing its slice of a box
+/// of rows in registers, the planes meeting in slots of shared memory
+/// (`Tile::smem_slots_accumulation`). The cubes take runs of the boxes ([`Levels::shared_by`]),
+/// whole boxes each, so a cube's lhs is the same from box to box.
+#[cube(launch_unchecked)]
+fn dsl_gemv_split_k(
+    x: &TileTensor<'_>,
+    w: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] planes: usize,
+) {
+    let a = x.tile(&partitioning);
+    let b = w.tile(&partitioning);
+    let c = out.tile(&partitioning);
+    let portion = partitioning.walk().portion_of(1usize);
+    for i in 0..portion.touched() {
+        let cube = portion.region(i);
+        let mut c = c.at(&cube);
+        let (a, a_factor) = a.at(&cube).factor(c.space(), INSTRUCTION);
+        let (b, b_factor) = b.at(&cube).factor(c.space(), INSTRUCTION);
+        let accumulator = c.smem_slots_accumulation::<f32>(planes);
+        let mut sum = c.accumulator::<f32>(&a, &b, INSTRUCTION, Semiring::SUM_PROD);
+        sum.zero();
+        let steps = cube.walk();
+        // A plane's place along `K`'s blocks, which is its slot among the writers.
+        let writer = steps.position(KB);
+        for step in steps {
+            for unit in step {
+                let mut unit_sum = sum.at(&unit);
+                unit_sum.mma(&a.at(&unit), &b.at(&unit));
+            }
+        }
+        accumulator.drain(&sum.scaled(&a_factor).scaled(&b_factor), writer);
+        c.copy_from(&accumulator.source);
+    }
+}
+
+/// [`dsl_gemv_split_k`]'s launch: a leaf of `rows_per_box` rows by one block, the plane's units
+/// along `K`'s blocks, as many planes a cube as split the rest of `K`, `cubes` cubes sharing the
+/// boxes. The words as the DSL kernels above bind them, the scales a byte a block, the lhs the
+/// `f16` row [`raw_gemv_split_k`] reads.
+fn dsl_gemv_launch(
+    client: &Client,
+    data: &Device,
+    rows: usize,
+    k: usize,
+    rows_per_box: usize,
+    cubes: usize,
+) -> (Launcher, usize, [TileTensorLaunch; 3]) {
+    let plane = client.properties().hardware.plane_size_max as usize;
+    let planes = k / (BLOCK * plane);
+    let space = Space::new(&[(N, rows), (C, 1), (KB, k / BLOCK), (KI, BLOCK)]);
+    let levels = Levels::leaf(&[(N, rows_per_box), (C, 1), (KB, 1), (KI, BLOCK)])
+        .units(&[(KB, plane)])
+        .planes_across(KB, planes)
+        .cubes(&[N])
+        .shared_by(cubes)
+        .build();
+    let launcher = Launcher::new(
+        client,
+        Partitioning::new(space.clone(), levels),
+        &space,
+        Grid::FromLevels,
+    )
+    .expect("the launch");
+
+    let mut words = data.words.clone().binding();
+    words.shape = [rows, k].into();
+    words.strides = [k, 1].into();
+    let blocks = k / BLOCK;
+    let mut scales = data.scales.clone().binding();
+    scales.shape = [rows, blocks].into();
+    scales.strides = [blocks, 1].into();
+    let scales = launcher
+        .arg(scales, ElemType::Float(FloatKind::E4M3))
+        .gathered(Projection::new(
+            &[N, KB],
+            &[PhysicalAxisMap::of(N), PhysicalAxisMap::of(KB)],
+        ))
+        .vectorize(1)
+        .build()
+        .expect("the block scales")
+        .arg();
+    let mut global = data.global.clone().binding();
+    global.shape = [1, 1].into();
+    global.strides = [1, 1].into();
+    let global = launcher
+        .arg(global, WORD)
+        .gathered(Projection::new(
+            &[N, KB],
+            &[PhysicalAxisMap::broadcast(), PhysicalAxisMap::broadcast()],
+        ))
+        .packed(Field::of_scale(ScaleDtype::F32))
+        .build()
+        .expect("the per-tensor scale")
+        .arg();
+    let w = launcher
+        .arg(words, WORD)
+        .gathered(Projection::new(
+            &[N, KB, KI],
+            &[
+                PhysicalAxisMap::of(N),
+                PhysicalAxisMap::disjoint(&[(KB, BLOCK), (KI, 1)]),
+            ],
+        ))
+        .vectorize(BLOCK)
+        .packed(QuantValue::E2M1)
+        .build()
+        .expect("the words")
+        .arg()
+        .scales(scales)
+        .scales(global);
+
+    let mut x = data.x16.clone().binding();
+    x.shape = [1, k].into();
+    x.strides = [k, 1].into();
+    let x = launcher
+        .arg(x, ElemType::Float(FloatKind::F16))
+        .gathered(Projection::new(
+            &[C, KB, KI],
+            &[
+                PhysicalAxisMap::of(C),
+                PhysicalAxisMap::disjoint(&[(KB, BLOCK), (KI, 1)]),
+            ],
+        ))
+        .vectorize(env_usize("NVFP4_DSL_GEMV_X_LINE", BLOCK))
+        .build()
+        .expect("the lhs")
+        .arg();
+
+    let mut out = data.out.clone().binding();
+    out.shape = [1, rows].into();
+    out.strides = [rows, 1].into();
+    let out = launcher
+        .arg(out, F32)
+        .axes(&[C, N])
+        .build()
+        .expect("the output")
+        .arg();
+    (launcher, planes, [x, w, out])
 }
 
 /// How the DSL kernel states the sum.
@@ -699,6 +847,77 @@ fn raw_gemv_split_k(
     }
 }
 
+/// [`raw_gemv_split_k`] one scale block a lane a row: an 8-byte load of sixteen values and the
+/// one scale byte over them, what a tile leaf one block deep reads. Every load the plane issues is
+/// still one run, of 256 bytes, and `K` takes twice the planes.
+#[cube(launch_unchecked)]
+fn raw_gemv_split_k_blocks(
+    words: &Tensor<Vector<u32, Const<2>>>,
+    scales: &Tensor<u32>,
+    global: &Tensor<f32>,
+    x: &Tensor<Vector<f16, Const<4>>>,
+    out: &mut Tensor<f32>,
+    #[comptime] planes: usize,
+    #[comptime] columns: usize,
+) {
+    let plane_dim = PLANE_DIM as usize;
+    let lane = UNIT_POS_PLANE as usize;
+    let p = UNIT_POS as usize / plane_dim;
+    let row_blocks = plane_dim * planes;
+    let block = p * plane_dim + lane;
+
+    let mut xs = Array::<Vector<f32, Const<4>>>::new(4usize);
+    #[unroll]
+    for q in 0..4usize {
+        xs[q] = Vector::<f32, Const<4>>::cast_from(x[block * 4 + q]);
+    }
+
+    let mut partials = Shared::<[f32]>::new_slice(2 * planes * columns);
+    let lift = global[0] * f32::new(PLACED_LIFT);
+    // The block's scale byte: `row_blocks` and the lane stride are multiples of four, so its place
+    // in its word is the lane's.
+    let byte = (8 * (lane % 4)) as u32;
+    let groups = out.len() / columns;
+    let mut group = CUBE_POS;
+    let mut parity = 0usize;
+    while group < groups {
+        let first_row = group * columns;
+        let mut loaded = Array::<Vector<u32, Const<2>>>::new(columns);
+        let mut scale_words = Array::<u32>::new(columns);
+        #[unroll]
+        for c in 0..columns {
+            let at = (first_row + c) * row_blocks + block;
+            loaded[c] = words[at];
+            scale_words[c] = scales[at / 4];
+        }
+        #[unroll]
+        for c in 0..columns {
+            let bits = ((scale_words[c] >> byte) & 0x7F) << 7;
+            let scale = f32::cast_from(Vector::<f16, Const<2>>::reinterpret(bits).extract(0usize));
+            let pair = loaded[c];
+            let sum = (word_dot(pair.extract(0usize), xs[0], xs[1])
+                + word_dot(pair.extract(1usize), xs[2], xs[3]))
+                * scale;
+            let total = plane_sum(sum);
+            if lane == 0 {
+                partials[(parity * planes + p) * columns + c] = total;
+            }
+        }
+        sync_cube();
+        let unit = UNIT_POS as usize;
+        if unit < columns {
+            let mut total = 0.0f32;
+            #[unroll]
+            for q in 0..planes {
+                total += partials[(parity * planes + q) * columns + unit];
+            }
+            out[first_row + unit] = total * lift;
+        }
+        parity = 1 - parity;
+        group += CUBE_COUNT;
+    }
+}
+
 /// The units [`plain_read`] launches on `client`'s device.
 fn plain_units(client: &Client) -> usize {
     let processors = client
@@ -1127,48 +1346,112 @@ fn main() {
             })
         };
         // The split-K gemv: `NVFP4_GEMV_LINES` lines a lane, `NVFP4_GEMV_COLUMNS` rows a group,
-        // `NVFP4_GEMV_CUBES_PER_PROCESSOR` cubes a processor.
+        // `NVFP4_GEMV_CUBES_PER_PROCESSOR` cubes a processor (0: a cube a group);
+        // `NVFP4_GEMV_BLOCKS=1` for a block a lane, 8-byte loads.
+        let gemv_blocks = env_usize("NVFP4_GEMV_BLOCKS", 0) == 1;
         let gemv_lines = env_usize("NVFP4_GEMV_LINES", 1);
         let gemv_columns = env_usize("NVFP4_GEMV_COLUMNS", 8);
-        let gemv_planes = k / (gemv_lines * VALUES_PER_LINE * plane);
-        assert_eq!(gemv_planes * gemv_lines * VALUES_PER_LINE * plane, k);
+        let lane_values = match gemv_blocks {
+            true => BLOCK,
+            false => gemv_lines * VALUES_PER_LINE,
+        };
+        let gemv_planes = k / (lane_values * plane);
+        assert_eq!(gemv_planes * lane_values * plane, k);
         assert!(rows.is_multiple_of(gemv_columns));
         let gemv_cubes = {
             let processors = props.hardware.num_streaming_multiprocessors.unwrap_or(32);
-            let per = env_usize("NVFP4_GEMV_CUBES_PER_PROCESSOR", 4) as u32;
-            CubeCount::new_1d((per * processors).min((rows / gemv_columns) as u32))
+            let groups = (rows / gemv_columns) as u32;
+            match env_usize("NVFP4_GEMV_CUBES_PER_PROCESSOR", 4) as u32 {
+                0 => CubeCount::new_1d(groups),
+                per => CubeCount::new_1d((per * processors).min(groups)),
+            }
         };
         let gemv = |d: &Device| -> Prepared {
             let (client, cube_count) = (client.clone(), gemv_cubes.clone());
             let args = [&d.words, &d.scales, &d.global, &d.x16, &d.out].map(line_arg);
+            let cube_dim = CubeDim::new_2d(plane as u32, gemv_planes as u32);
             Box::new(move || unsafe {
                 let [words, scales, global, x, out] = args;
-                raw_gemv_split_k::launch_unchecked(
+                match gemv_blocks {
+                    true => raw_gemv_split_k_blocks::launch_unchecked(
+                        &client,
+                        cube_count,
+                        cube_dim,
+                        words,
+                        scales,
+                        global,
+                        x,
+                        out,
+                        gemv_planes,
+                        gemv_columns,
+                    ),
+                    false => raw_gemv_split_k::launch_unchecked(
+                        &client,
+                        cube_count,
+                        cube_dim,
+                        words,
+                        scales,
+                        global,
+                        x,
+                        out,
+                        gemv_lines,
+                        gemv_planes,
+                        gemv_columns,
+                    ),
+                }
+            })
+        };
+        let dsl_gemv = |d: &Device| -> Prepared {
+            let client = client.clone();
+            let processors = props.hardware.num_streaming_multiprocessors.unwrap_or(32) as usize;
+            let rows_per_box = env_usize("NVFP4_DSL_GEMV_ROWS", 8);
+            let cubes = (env_usize("NVFP4_DSL_GEMV_CUBES_PER_PROCESSOR", 4) * processors)
+                .min(rows / rows_per_box);
+            let (launcher, planes, [x, w, out]) =
+                dsl_gemv_launch(&client, d, rows, k, rows_per_box, cubes);
+            Box::new(move || unsafe {
+                dsl_gemv_split_k::launch_unchecked(
                     &client,
-                    cube_count,
-                    CubeDim::new_2d(plane as u32, gemv_planes as u32),
-                    words,
-                    scales,
-                    global,
+                    launcher.cube_count(),
+                    launcher.cube_dim(),
                     x,
+                    w,
                     out,
-                    gemv_lines,
-                    gemv_planes,
-                    gemv_columns,
+                    launcher.partitioning_arg(),
+                    planes,
                 )
             })
         };
         if std::env::var("NVFP4_GEMV_ONLY").is_ok() {
+            dsl_gemv(&data[0])();
+            let dsl_gemv_err =
+                worst_error_against(&read_f32(&client, &data[0].out), &host.expected_gemv);
+            if std::env::var("NVFP4_DEBUG").is_ok() {
+                let got = read_f32(&client, &data[0].out);
+                let (launcher, planes, _) = dsl_gemv_launch(&client, &data[0], rows, k, 8, 2);
+                println!(
+                    "dsl gemv: cubes {:?}, cube dim {:?}, {planes} planes",
+                    launcher.cube_count(),
+                    launcher.cube_dim()
+                );
+                for row in 0..rows.min(16) {
+                    println!(
+                        "  row {row}: got {} want {}",
+                        got[row], host.expected_gemv[row]
+                    );
+                }
+            }
             gemv(&data[0])();
             let gemv_err =
                 worst_error_against(&read_f32(&client, &data[0].out), &host.expected_gemv);
             raw(&data[0])();
             let raw_err = worst_error(&read_f32(&client, &data[0].out), &host);
-            let mut best = [Duration::MAX; 2];
+            let mut best = [Duration::MAX; 3];
             for _ in 0..env_usize("NVFP4_ROUNDS", 5) {
                 let times = [
                     time(&client, copies, |c| raw(&data[c])),
                     time(&client, copies, |c| gemv(&data[c])),
+                    time(&client, copies, |c| dsl_gemv(&data[c])),
                 ];
                 for (best, time) in best.iter_mut().zip(times) {
                     *best = (*best).min(time);
@@ -1188,6 +1471,15 @@ fn main() {
                 gemv_lines,
                 gemv_columns,
                 gemv_cubes,
+            );
+            println!(
+                "{:<8} DSL split-K gemv {:>6.1} GB/s = {:>5.1}% of the row sum, {:>5.1}% of the hand \
+                 gemv (err {:.1e})",
+                "",
+                gbs(best[2]),
+                100.0 * best[0].as_secs_f64() / best[2].as_secs_f64(),
+                100.0 * best[1].as_secs_f64() / best[2].as_secs_f64(),
+                dsl_gemv_err,
             );
             continue;
         }
