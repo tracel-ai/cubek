@@ -6,10 +6,10 @@ use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 ///
 /// A sum writes every unit's lines to one of two slices of the shared memory, meets at one barrier,
 /// and has each unit add every unit's lines in unit order. Consecutive sums use the two slices in
-/// turn, which `UnitPartials` alone picks, so a unit still reading one sum is never overwritten by
+/// turn, which `Partials` alone picks, so a unit still reading one sum is never overwritten by
 /// the next.
 #[derive(CubeType)]
-pub struct UnitPartials<N: Size> {
+pub struct Partials<N: Size> {
     shared: Shared<[Vector<f32, N>]>,
     own: Array<Vector<f32, N>>,
     run: usize,
@@ -22,7 +22,7 @@ pub struct UnitPartials<N: Size> {
 }
 
 #[cube]
-impl<N: Size> UnitPartials<N> {
+impl<N: Size> Partials<N> {
     /// Room for the units of `runs` runs, holding nothing yet; this unit is unit `unit` of run
     /// `run`.
     pub fn new(
@@ -33,7 +33,7 @@ impl<N: Size> UnitPartials<N> {
     ) -> Self {
         let width = N::value();
         let parts = comptime!(shape.columns() / width);
-        UnitPartials::<N> {
+        Partials::<N> {
             shared: Shared::<[Vector<f32, N>]>::new_slice(2 * runs * shape.units() * parts),
             own: Array::<Vector<f32, N>>::new(parts),
             run,

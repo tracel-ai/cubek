@@ -1,6 +1,6 @@
+use super::partials::Partials;
 use super::row_pass::{RowRead, RowUpdate};
 use super::shape::HeldStateShape;
-use super::unit_partials::UnitPartials;
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
@@ -53,7 +53,7 @@ impl<N: Size> HeldState<N> {
         queries: &Tile,
         factor: f32,
         write: &Array<Vector<f32, N>>,
-        partials: &mut UnitPartials<N>,
+        partials: &mut Partials<N>,
         #[comptime] update: RowUpdate,
         #[comptime] read: RowRead,
     ) {

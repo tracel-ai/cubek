@@ -13,7 +13,7 @@ use cubek_linear_recurrence::kernels::walk::{
 };
 use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use cubek_microkernel::linear_recurrence::walk::cube::{
-    CubeWalkMicrokernelSettings, HeldState, HeldStateShape, RowRead, RowUpdate, UnitPartials,
+    CubeWalkMicrokernelSettings, HeldState, HeldStateShape, Partials, RowRead, RowUpdate,
 };
 use cubek_microkernel::linear_recurrence::{KEY_FEATURE, POSITION, RecurrenceHeads, VALUE_FEATURE};
 use cubek_std::Hardware;
@@ -28,7 +28,7 @@ fn partial_of(unit: usize, run: usize, position: usize, sum: usize, column: usiz
 /// sums at each of `positions`, and leaves what it holds in `dump`: the first sum's columns, then
 /// the second's.
 #[cube(launch_unchecked)]
-fn unit_partials_probe<N: Size>(
+fn partials_probe<N: Size>(
     dump: &mut [f32],
     #[comptime] shape: HeldStateShape,
     #[comptime] runs: usize,
@@ -40,7 +40,7 @@ fn unit_partials_probe<N: Size>(
     let parts = comptime!(columns / width);
     let units = comptime!(shape.units());
     let (unit, run) = (UNIT_POS_X as usize, UNIT_POS_Y as usize);
-    let mut partials = UnitPartials::<N>::new(run, unit, runs, shape);
+    let mut partials = Partials::<N>::new(run, unit, runs, shape);
     for position in 0..positions as usize {
         let base = ((position * runs + run) * units + unit) * comptime!(sums_a_position * columns);
         #[unroll]
@@ -77,7 +77,7 @@ fn unit_partials_probe<N: Size>(
 /// one sum and in two a position over many positions: each unit holds the sum of its run's
 /// partials, and a sum never reads another's.
 #[test]
-fn unit_partials_sum_like_the_host() {
+fn partials_sum_like_the_host() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
     let hardware = hw.properties.hardware.clone();
@@ -107,7 +107,7 @@ fn unit_partials_sum_like_the_host() {
                 let dump = client.create(Bytes::from_elems(vec![f32::NAN; len]));
                 // SAFETY: each unit writes its own `stride` floats of `dump`, within `len`.
                 unsafe {
-                    unit_partials_probe::launch_unchecked(
+                    partials_probe::launch_unchecked(
                         &client,
                         CubeCount::Static(1, 1, 1),
                         CubeDim::new_2d(units as u32, runs as u32),
@@ -180,7 +180,7 @@ fn held_state_part<N: Size>(
     for run in cube {
         for unit in run.walk() {
             let slot = unit.coord(KEY_FEATURE);
-            let mut partials = UnitPartials::<N>::new(run.coord(VALUE_FEATURE), slot, runs, shape);
+            let mut partials = Partials::<N>::new(run.coord(VALUE_FEATURE), slot, runs, shape);
             let mut held = HeldState::<N>::load(&state.at(&unit), false, shape);
             let origin = unit.origin(VALUE_FEATURE);
             for step in unit.walk() {
