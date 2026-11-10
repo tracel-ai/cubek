@@ -1,69 +1,102 @@
 //! The past a causal conv's taps run over, which every conv of the family reads the same way.
 
-use super::reads::bound;
-use crate::kernels::refusals::{
-    CONV_NOTHING_TO_CONVOLVE, QK_NORMED_CONV_STREAM_BINDING_BUFFERS,
-    QK_NORMED_CONV_WINDOW_BINDING_BUFFERS,
-};
+use crate::kernels::refusals::{CONV_NOTHING_TO_CONVOLVE, CONV_TAPS_PAST_RING};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::{Indexing, Launcher, TileSpec, TileTensorLaunch};
+use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperand;
-use cubek_microkernel::linear_recurrence::{BATCH, CHANNEL, RING_COLUMN, STORE_SLOT};
+use cubek_microkernel::linear_recurrence::conv::cube::PastKind;
+use cubek_microkernel::linear_recurrence::{
+    BATCH, CHANNEL, POSITION, RING_COLUMN, STORE_SLOT, STREAM_POSITION,
+};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
+
+use super::reads::bound;
+
+/// A store of `slots` rings of `columns` columns, one ring a sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RingStore {
+    pub slots: NonZeroUsize,
+    pub columns: usize,
+}
 
 /// Where a conv reads the past values its taps run over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CausalConvPast {
-    /// A store of `slots` windows of `columns` ring columns. A row reads the columns its
-    /// convolved positions fill and writes its newest values as the ring's next column.
-    Window { slots: NonZeroUsize, columns: usize },
-    /// The stream of `positions` positions of each sequence, `taps - 1` context columns before
-    /// them: tap `j` of position `t` is the stream's value `t + j`, and nothing is written back.
-    /// A caller that goes on with a window seeds it from the stream's tail: a row that has
-    /// convolved `P` positions reads tap `j` at ring column `(P + j - (taps - 1)) % columns`.
-    Stream { positions: usize },
+    /// One position of each row. A row reads the columns its convolved positions fill and writes
+    /// its newest values as the ring's next column.
+    Window { ring: RingStore },
+    /// `positions` positions of each row: tap `j` of position `t` is the prompt's value
+    /// `t + j - (taps - 1)` where that is not before the prompt, and the row's ring through its
+    /// length otherwise. The last `taps - 1` valid positions of each row are then written to its
+    /// ring as its next columns. The caller advances the row's length by its valid positions.
+    Prompt { ring: RingStore, positions: usize },
 }
 
 impl CausalConvPast {
-    /// The buffers a conv over this past binds, the metadata buffer included.
-    pub fn binding_buffers(&self) -> u32 {
+    /// Where the microkernel reads the past from.
+    pub fn kind(&self) -> PastKind {
         match self {
-            Self::Window { .. } => QK_NORMED_CONV_WINDOW_BINDING_BUFFERS,
-            Self::Stream { .. } => QK_NORMED_CONV_STREAM_BINDING_BUFFERS,
+            Self::Window { .. } => PastKind::Window,
+            Self::Prompt { .. } => PastKind::Prompt,
         }
     }
 
-    /// The ring length the kernel is told; over a stream it is zero and unread.
-    pub fn columns(&self) -> usize {
+    /// The store of rings.
+    pub fn ring(&self) -> RingStore {
         match self {
-            Self::Window { columns, .. } => *columns,
-            Self::Stream { .. } => 0,
+            Self::Window { ring } | Self::Prompt { ring, .. } => *ring,
         }
     }
 
-    /// The operands of the conv this past binds, which a line of channels runs along.
-    pub fn channels(&self) -> &'static [QkNormedConvOperand] {
+    /// The positions a row convolves: one over a window.
+    pub fn positions(&self) -> usize {
         match self {
-            Self::Window { .. } => &QkNormedConvOperand::WINDOW_CHANNELS,
-            Self::Stream { .. } => &QkNormedConvOperand::STREAM_CHANNELS,
+            Self::Window { .. } => 1,
+            Self::Prompt { positions, .. } => *positions,
         }
     }
 
-    /// The columns of a stream of `taps` taps: its context columns and its positions. Zero over a
-    /// window, which has no stream.
-    pub fn stream_len(&self, taps: usize) -> usize {
-        match self {
-            Self::Window { .. } => 0,
-            Self::Stream { positions } => (positions + taps).saturating_sub(1),
+    /// Whether the past holds a position to convolve.
+    ///
+    /// # Errors
+    ///
+    /// [`CONV_NOTHING_TO_CONVOLVE`] for a prompt of no position, and [`CONV_TAPS_PAST_RING`] for
+    /// fewer than two `taps` or a ring of fewer columns than the taps read back.
+    pub(crate) fn admit(&self, taps: usize) -> Result<(), Refusal> {
+        if self.positions() == 0 {
+            return Err(CONV_NOTHING_TO_CONVOLVE);
         }
+        if taps < 2 || self.ring().columns + 1 < taps {
+            return Err(CONV_TAPS_PAST_RING);
+        }
+        Ok(())
+    }
+
+    /// The axes the past's operands carry: the store, and the prompt's positions.
+    pub(crate) fn ring_axes(&self) -> Vec<(Axis, usize)> {
+        let ring = self.ring();
+        let mut axes = vec![(STORE_SLOT, ring.slots.get()), (RING_COLUMN, ring.columns)];
+        if let Self::Prompt { positions, .. } = self {
+            axes.push((STREAM_POSITION, *positions));
+        }
+        axes
+    }
+
+    /// The axes of the past, and of the positions a cube convolves.
+    pub(crate) fn axes(&self) -> Vec<(Axis, usize)> {
+        let mut axes = self.ring_axes();
+        if let Self::Prompt { positions, .. } = self {
+            axes.push((POSITION, *positions));
+        }
+        axes
     }
 }
 
-/// The past a conv's taps run over, as tensors.
+/// The past a conv's taps run over, as tensors: the ring store, and the tables that place each row
+/// in it.
 // Built once a call and consumed by it, so the larger variant costs one copy of a few handles.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
@@ -78,59 +111,72 @@ pub enum CausalConvPastInputs {
         slots: PlainTensor,
         lengths: PlainTensor,
     },
-    /// The stream's own context columns.
-    Stream,
+    /// The same store and tables of a prompt `[rows, positions, channels]`, and the positions of
+    /// each row that are real (`valid`, `[rows]`, `u32`, at most the prompt's): the rest is right
+    /// padding, which the ring takes nothing from and whose outputs are unspecified. `lengths` is
+    /// the fill before the prompt.
+    Prompt {
+        ring: PlainTensor,
+        slots: PlainTensor,
+        lengths: PlainTensor,
+        valid: PlainTensor,
+    },
+}
+
+/// The past's operands bound under one launcher.
+pub(crate) struct BoundPast {
+    pub ring: TileTensorLaunch,
+    pub lengths: TileTensorLaunch,
 }
 
 impl CausalConvPastInputs {
-    /// The store, which only a window has.
-    pub(crate) fn ring(&self) -> Option<&PlainTensor> {
+    /// The store.
+    pub(crate) fn ring(&self) -> &PlainTensor {
         match self {
-            Self::Window { ring, .. } => Some(ring),
-            Self::Stream => None,
+            Self::Window { ring, .. } | Self::Prompt { ring, .. } => ring,
         }
     }
 
-    /// The positions each row has convolved, which only a window has.
-    pub(crate) fn lengths(&self) -> Option<&PlainTensor> {
+    /// The positions each row has convolved.
+    pub(crate) fn lengths(&self) -> &PlainTensor {
         match self {
-            Self::Window { lengths, .. } => Some(lengths),
-            Self::Stream => None,
+            Self::Window { lengths, .. } | Self::Prompt { lengths, .. } => lengths,
+        }
+    }
+
+    /// The slot table.
+    pub(crate) fn slots(&self) -> &PlainTensor {
+        match self {
+            Self::Window { slots, .. } | Self::Prompt { slots, .. } => slots,
         }
     }
 
     /// The store and the lengths bound under `launcher`, `width` values a line, the ring placed at
     /// the slot its table names.
-    pub(crate) fn bind(
-        &self,
-        launcher: &Launcher,
-        width: usize,
-    ) -> (Option<TileTensorLaunch>, Option<TileTensorLaunch>) {
-        match self {
-            Self::Window {
-                ring,
-                slots,
-                lengths,
-            } => {
-                let entries = TileTensorLaunch::new(
-                    slots.binding.clone().into_tensor_arg(),
-                    slots.elem,
-                    1,
-                    TileSpec::direct(&[BATCH]),
-                );
-                let ring = bound(launcher, ring, &[STORE_SLOT, RING_COLUMN, CHANNEL], width)
-                    .indexed(entries, Indexing::Coordinate(STORE_SLOT))
-                    .expect(ADMITTED_PLAN_RUNS);
-                let lengths = bound(launcher, lengths, &[BATCH], 1);
-                (Some(ring), Some(lengths))
-            }
-            Self::Stream => (None, None),
+    pub(crate) fn bind(&self, launcher: &Launcher, width: usize) -> BoundPast {
+        let entries = TileTensorLaunch::new(
+            self.slots().binding.clone().into_tensor_arg(),
+            self.slots().elem,
+            1,
+            TileSpec::direct(&[BATCH]),
+        );
+        let ring = bound(
+            launcher,
+            self.ring(),
+            &[STORE_SLOT, RING_COLUMN, CHANNEL],
+            width,
+        )
+        .indexed(entries, Indexing::Coordinate(STORE_SLOT))
+        .expect(ADMITTED_PLAN_RUNS);
+        BoundPast {
+            ring,
+            lengths: bound(launcher, self.lengths(), &[BATCH], 1),
         }
     }
 
-    /// Views `input` of `channels` channels as the kernel reads it, and the store likewise, with
-    /// the past they state: a window's `[rows, channels]` or a stream's
-    /// `[batch, positions + taps - 1, channels]`.
+    /// Views the store as the kernel reads it and returns `input` of `channels` channels viewed
+    /// likewise, with the past they state: a window's `[rows, channels]` or a prompt's
+    /// `[rows, positions, channels]`.
     ///
     /// # Errors
     ///
@@ -144,63 +190,69 @@ impl CausalConvPastInputs {
         &mut self,
         input: PlainTensor,
         channels: usize,
-        taps: usize,
     ) -> Result<(PlainTensor, CausalConvPast), Refusal> {
-        match self {
-            Self::Window {
-                ring,
-                slots,
-                lengths,
-            } => {
-                let shape = input.shape().to_vec();
-                let rows = shape[0];
-                if rows == 0 {
-                    return Err(CONV_NOTHING_TO_CONVOLVE);
-                }
+        let shape = input.shape().to_vec();
+        let rows = shape[0];
+        let strides = &input.binding.strides;
+        let (positions, extents, input_strides) = match self {
+            Self::Window { .. } => {
                 assert!(
                     shape.last() == Some(&channels)
                         && shape[1..shape.len() - 1].iter().all(|&e| e == 1),
-                    "the stream is [rows, channels]"
+                    "the input over a window is [rows, channels]"
                 );
-                let input = input.viewed(Metadata::new(
-                    vec![rows, channels],
-                    vec![input.binding.strides[0], 1],
-                ));
-                let [slots_in_store, columns, ring_channels] = ring.shape().dims::<3>();
-                assert_eq!(
-                    ring_channels, channels,
-                    "the ring holds every channel a column"
-                );
-                *ring = ring.clone().viewed(Metadata::new(
-                    vec![slots_in_store, columns, channels],
-                    vec![ring.binding.strides[0], ring.binding.strides[1], 1],
-                ));
-                for table in [&*slots, &*lengths] {
-                    assert_eq!(table.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
-                    assert_eq!(table.shape().dims::<1>(), [rows]);
-                }
-                let past = CausalConvPast::Window {
-                    slots: NonZeroUsize::new(slots_in_store).expect("a store holds a slot"),
-                    columns,
-                };
-                Ok((input, past))
+                (1, vec![rows, channels], vec![strides[0], 1])
             }
-            Self::Stream => {
-                let [batch, stream_positions, stream_channels] = input.shape().dims::<3>();
+            Self::Prompt { .. } => {
+                let [_, positions, prompt_channels] = input.shape().dims::<3>();
                 assert_eq!(
-                    stream_channels, channels,
-                    "the stream holds every channel a position"
+                    prompt_channels, channels,
+                    "the prompt holds every channel a position"
                 );
-                let positions = stream_positions.saturating_sub(taps.saturating_sub(1));
-                if batch == 0 || positions == 0 {
-                    return Err(CONV_NOTHING_TO_CONVOLVE);
-                }
-                let input = input.viewed(Metadata::new(
-                    vec![batch, stream_positions, channels],
-                    vec![input.binding.strides[0], input.binding.strides[1], 1],
-                ));
-                Ok((input, CausalConvPast::Stream { positions }))
+                (
+                    positions,
+                    vec![rows, positions, channels],
+                    vec![strides[0], strides[1], 1],
+                )
             }
+        };
+        if rows == 0 || positions == 0 {
+            return Err(CONV_NOTHING_TO_CONVOLVE);
         }
+        let input = input.viewed(Metadata::new(extents, input_strides));
+        let ring = self.ring();
+        let [slots_in_store, columns, ring_channels] = ring.shape().dims::<3>();
+        assert_eq!(
+            ring_channels, channels,
+            "the ring holds every channel a column"
+        );
+        let strides = ring.binding.strides.clone();
+        let viewed = ring.clone().viewed(Metadata::new(
+            vec![slots_in_store, columns, channels],
+            vec![strides[0], strides[1], 1],
+        ));
+        for table in [self.slots(), self.lengths()] {
+            assert_eq!(table.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
+            assert_eq!(table.shape().dims::<1>(), [rows]);
+        }
+        let ring = RingStore {
+            slots: NonZeroUsize::new(slots_in_store).expect("a store holds a slot"),
+            columns,
+        };
+        let past = match self {
+            Self::Window { ring: store, .. } => {
+                *store = viewed;
+                CausalConvPast::Window { ring }
+            }
+            Self::Prompt {
+                ring: store, valid, ..
+            } => {
+                assert_eq!(valid.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
+                assert_eq!(valid.shape().dims::<1>(), [rows]);
+                *store = viewed;
+                CausalConvPast::Prompt { ring, positions }
+            }
+        };
+        Ok((input, past))
     }
 }

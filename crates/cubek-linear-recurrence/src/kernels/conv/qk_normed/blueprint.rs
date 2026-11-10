@@ -81,7 +81,7 @@ impl QkNormedConvBlueprint {
         };
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
-        for &operand in problem.past.channels() {
+        for operand in QkNormedConvOperand::CHANNELS {
             vectorization.require(VectorRequirement::Aligned {
                 operand,
                 alignment: problem.alignments.get(operand),

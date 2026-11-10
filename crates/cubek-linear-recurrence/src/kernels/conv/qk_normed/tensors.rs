@@ -8,7 +8,6 @@ use crate::kernels::conv::{
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Launcher, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
@@ -22,9 +21,9 @@ use cubek_std::routine::Grid;
 
 /// The inputs of a conv: the `q|k|v` stream, the filters `[conv_dim, taps]` (a unit dim between
 /// allowed) and the past, all in one element. Over a window the stream holds the newest values
-/// `[rows, conv_dim]`; over a stream, every sequence's `[batch, positions + taps - 1, conv_dim]`,
-/// context columns first. They are read where they lie, the innermost axis contiguous; a padded row
-/// or an off-line start narrows the conv's lines.
+/// `[rows, conv_dim]`; over a prompt, every row's `[rows, positions, conv_dim]`. They are read
+/// where they lie, the innermost axis contiguous; a padded row or an off-line start narrows the
+/// conv's lines.
 #[derive(Clone)]
 pub struct QkNormedConvInputs {
     /// The client every operand lives on.
@@ -52,7 +51,7 @@ impl core::fmt::Debug for QkNormedConvInputs {
 
 /// What a conv leaves in `f32`, in the walk's shapes: the queries and keys `[rows, 1, key_heads,
 /// key_features]` and the values `[rows, 1, value_heads, value_features]` of a window conv, or
-/// `[batch, positions, ..]` of a stream conv.
+/// `[batch, positions, ..]` of a prompt conv.
 #[derive(Clone)]
 pub struct QkNormedConvOutputs {
     pub query: TensorHandle,
@@ -61,8 +60,8 @@ pub struct QkNormedConvOutputs {
 }
 
 impl QkNormedConvOutputs {
-    /// The outputs over `batch` rows or sequences, and the same buffers as the kernel binds them,
-    /// without the unit position dim of a window conv.
+    /// The outputs over `batch` rows, and the same buffers as the kernel binds them, without the
+    /// unit position dim of a window conv.
     ///
     /// # Errors
     ///
@@ -75,7 +74,7 @@ impl QkNormedConvOutputs {
     ) -> Result<(Self, [PlainTensor; 3]), Refusal> {
         let (lead, bound) = match *past {
             CausalConvPast::Window { .. } => (vec![batch, 1], vec![batch]),
-            CausalConvPast::Stream { positions } => {
+            CausalConvPast::Prompt { positions, .. } => {
                 (vec![batch, positions], vec![batch, positions])
             }
         };
@@ -133,7 +132,6 @@ impl QkNormedConvTensors {
     ///
     /// # Errors
     ///
-    /// [`CausalConvReads::admit_element`]'s refusal,
     /// [`CONV_NOTHING_TO_CONVOLVE`](crate::kernels::refusals::CONV_NOTHING_TO_CONVOLVE) for no row
     /// or position, and [`ELEMENT_NOT_ON_DEVICE`].
     ///
@@ -153,13 +151,11 @@ impl QkNormedConvTensors {
         let reads = CausalConvReads::new(client, qkv, filters, past, heads.conv_dim())?;
         let (outputs, [query, key, value]) =
             QkNormedConvOutputs::allocate(&reads.client, &heads, reads.batch, &reads.shape)?;
-        let ring = reads.past.ring();
-        let lengths = reads.past.lengths();
         let alignments = QkNormedConvOperandMap {
             qkv: reads.input.elem_alignment(),
             filters: reads.filters.elem_alignment(),
-            ring: ring.map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
-            lengths: lengths.map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
+            ring: reads.past.ring().elem_alignment(),
+            lengths: reads.past.lengths().elem_alignment(),
             query: query.elem_alignment(),
             key: key.elem_alignment(),
             value: value.elem_alignment(),
@@ -167,8 +163,8 @@ impl QkNormedConvTensors {
         let start_bytes = QkNormedConvOperandMap {
             qkv: reads.input.start_bytes(),
             filters: reads.filters.start_bytes(),
-            ring: ring.map_or(0, PlainTensor::start_bytes),
-            lengths: lengths.map_or(0, PlainTensor::start_bytes),
+            ring: reads.past.ring().start_bytes(),
+            lengths: reads.past.lengths().start_bytes(),
             query: query.start_bytes(),
             key: key.start_bytes(),
             value: value.start_bytes(),
@@ -198,6 +194,11 @@ impl QkNormedConvTensors {
         &self.reads.client
     }
 
+    /// The operands every conv reads.
+    pub(crate) fn reads(&self) -> &CausalConvReads {
+        &self.reads
+    }
+
     /// The problem the tensors state.
     pub fn problem(&self) -> &QkNormedConvProblem {
         &self.problem
@@ -213,7 +214,7 @@ impl QkNormedConvTensors {
         self.outputs
     }
 
-    /// Every operand bound as `blueprint` states it, on `grid`, a window placed at the slot its
+    /// Every operand bound as `blueprint` states it, on `grid`, a ring placed at the slot its
     /// table names.
     pub(crate) fn bind(
         &self,
@@ -227,7 +228,7 @@ impl QkNormedConvTensors {
                 &[BATCH, KEY_HEAD, KEY_FEATURE],
                 &[BATCH, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
             ),
-            CausalConvPast::Stream { .. } => (
+            CausalConvPast::Prompt { .. } => (
                 &[BATCH, POSITION, KEY_HEAD, KEY_FEATURE],
                 &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
             ),

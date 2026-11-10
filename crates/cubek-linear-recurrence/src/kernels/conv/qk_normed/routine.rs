@@ -1,5 +1,6 @@
 use super::kernel::cube_qk_normed_conv_kernel;
 use crate::kernels::conv::reads::CausalConvReads;
+use crate::kernels::conv::ring_write_back::RingWriteBackLaunch;
 use crate::kernels::conv::{
     CausalConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
     QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors,
@@ -15,7 +16,7 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{Grid, PreparedLaunches, Routine};
 
-/// The conv with a key head of a row, or of a position of a sequence, in each cube, its units
+/// The conv with a key head of a row, or of a position of a prompt, in each cube, its units
 /// dealing the head's channels a line at a time. It reads no plane feature, so it is the floor
 /// every device runs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -34,7 +35,7 @@ impl CubeQkNormedConvRoutine {
     ) -> Result<QkNormedConvOutputs, Refusal> {
         let tensors = QkNormedConvTensors::new(inputs)?;
         let (blueprint, grid) = self.prepare_first_served(hw, tensors.problem())?;
-        Ok(self.launch(tensors, blueprint, grid))
+        self.launch(hw, tensors, blueprint, grid)
     }
 
     /// [`launch_on`](Self::launch_on), preparing a problem once however often it is launched.
@@ -51,15 +52,24 @@ impl CubeQkNormedConvRoutine {
         let tensors = QkNormedConvTensors::new(inputs)?;
         let (blueprint, grid) =
             prepared.prepare(self, hw, tensors.problem(), &QkNormedConvSettings)?;
-        Ok(self.launch(tensors, blueprint, grid))
+        self.launch(hw, tensors, blueprint, grid)
     }
 
     fn launch(
         &self,
+        hw: &Hardware,
         tensors: QkNormedConvTensors,
         blueprint: QkNormedConvBlueprint,
         grid: Grid,
-    ) -> QkNormedConvOutputs {
+    ) -> Result<QkNormedConvOutputs, Refusal> {
+        let problem = tensors.problem();
+        let columns = problem.past.ring().columns;
+        let write_back = RingWriteBackLaunch::prepare(
+            hw,
+            tensors.reads(),
+            blueprint.width,
+            blueprint.microkernel.units,
+        )?;
         let binding = tensors.bind(&blueprint, &grid);
         // SAFETY: every operand is bound through the launcher and indexed only through its tile,
         // whose reads past an edge are masked. A unit writes only the ring channels it reads, and
@@ -67,24 +77,27 @@ impl CubeQkNormedConvRoutine {
         unsafe {
             cube_qk_normed_conv_kernel::launch_unchecked(
                 tensors.client(),
-                grid.launch.cube_count,
+                grid.launch.cube_count.clone(),
                 grid.launch.cube_dim,
                 blueprint.width,
                 binding.reads.input,
                 binding.reads.filters,
-                binding.reads.ring.into(),
-                binding.reads.lengths.into(),
+                binding.reads.past.ring,
+                binding.reads.past.lengths,
                 binding.query,
                 binding.key,
                 binding.value,
-                tensors.problem().past.columns(),
+                columns,
                 tensors.epsilon(),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel,
-                tensors.problem().element,
+                problem.element,
             );
         }
-        tensors.into_outputs()
+        if let Some(write_back) = write_back {
+            write_back.launch(tensors.reads());
+        }
+        Ok(tensors.into_outputs())
     }
 }
 
@@ -147,7 +160,7 @@ impl Routine for CubeQkNormedConvRoutine {
                 ],
                 vec![stream(channels, heads.key_features, size), outputs],
             ),
-            CausalConvPast::Stream { .. } => (
+            CausalConvPast::Prompt { .. } => (
                 vec![
                     stream(channels * problem.taps, heads.key_features, size),
                     filters,
@@ -181,8 +194,8 @@ impl Routine for CubeQkNormedConvRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::conv::CausalConvPast;
     use crate::kernels::conv::fixtures::{binding_enough, fleet};
+    use crate::kernels::conv::{CausalConvPast, RingStore};
     use core::num::NonZeroUsize;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::linear_recurrence::HEAD_CHANNEL;
@@ -191,6 +204,13 @@ mod tests {
     use cubek_std::routine::EstimatedProblem;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
+
+    fn ring(rows: usize, taps: usize) -> RingStore {
+        RingStore {
+            slots: NonZeroUsize::new(rows + 3).unwrap(),
+            columns: taps + 1,
+        }
+    }
 
     fn conv(rows: usize, heads: [usize; 4], taps: usize) -> QkNormedConvProblem {
         let [key_heads, heads_per_group, key_features, value_features] = heads;
@@ -201,13 +221,12 @@ mod tests {
             value_features,
         };
         let past = CausalConvPast::Window {
-            slots: NonZeroUsize::new(rows + 3).unwrap(),
-            columns: taps + 1,
+            ring: ring(rows, taps),
         };
         QkNormedConvProblem::dense(rows, heads, taps, past, F16)
     }
 
-    fn stream(
+    fn prompt(
         batch: usize,
         positions: usize,
         heads: [usize; 4],
@@ -220,7 +239,10 @@ mod tests {
             key_features,
             value_features,
         };
-        let past = CausalConvPast::Stream { positions };
+        let past = CausalConvPast::Prompt {
+            ring: ring(batch, taps),
+            positions,
+        };
         QkNormedConvProblem::dense(batch, heads, taps, past, F16)
     }
 
@@ -231,11 +253,11 @@ mod tests {
             conv(3, [3, 3, 37, 53], 4),
             conv(2, [2, 2, 12, 8], 2),
             conv(5, [1, 2, 16, 37], 3),
-            stream(1, 512, [16, 1, 128, 128], 4),
-            stream(1, 512, [16, 3, 128, 128], 4),
-            stream(2, 67, [3, 3, 37, 53], 4),
-            stream(3, 1, [2, 2, 12, 8], 2),
-            stream(1, 9, [1, 2, 16, 37], 3),
+            prompt(1, 512, [16, 1, 128, 128], 4),
+            prompt(1, 512, [16, 3, 128, 128], 4),
+            prompt(2, 67, [3, 3, 37, 53], 4),
+            prompt(3, 1, [2, 2, 12, 8], 2),
+            prompt(1, 9, [1, 2, 16, 37], 3),
         ]
     }
 
@@ -261,11 +283,7 @@ mod tests {
                     Some(lines)
                 );
                 assert!(blueprint.microkernel.units <= lines);
-                let positions = match problem.past {
-                    CausalConvPast::Window { .. } => 1,
-                    CausalConvPast::Stream { positions } => positions,
-                };
-                let cubes = problem.batch * positions * problem.heads.key_heads;
+                let cubes = problem.batch * problem.past.positions() * problem.heads.key_heads;
                 assert_eq!(grid.cubes(), Some(cubes as u64));
                 let mut estimate = KernelEstimate::from(&grid);
                 CubeQkNormedConvRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
@@ -276,13 +294,13 @@ mod tests {
         }
     }
 
-    /// The positions of a stream ride the grid, so admission declines what a device's cube count
+    /// The positions of a prompt ride the grid, so admission declines what a device's cube count
     /// cannot hold.
     #[test]
     fn admission_follows_the_grid_a_device_holds() {
         let hw = binding_enough(devices::wgpu_no_subgroups());
         assert_eq!(hw.properties.hardware.max_cube_count.0, 65535);
-        assert!(stream(1, 65535, [1, 1, 16, 16], 4).admit(&hw).is_ok());
-        assert!(stream(1, 70000, [1, 1, 16, 16], 4).admit(&hw).is_err());
+        assert!(prompt(1, 65535, [1, 1, 16, 16], 4).admit(&hw).is_ok());
+        assert!(prompt(1, 70000, [1, 1, 16, 16], 4).admit(&hw).is_err());
     }
 }

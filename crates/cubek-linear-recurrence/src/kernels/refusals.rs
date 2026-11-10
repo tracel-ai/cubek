@@ -50,13 +50,9 @@ pub const RECURRENCE_WALK_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
     why: "the walk reads f32 inputs and writes f32, f16 or bf16 outputs",
 };
 
-/// The buffers a conv over a window needs a device to bind: one for each of its 7 operands, the
-/// slot table among them, and one for the metadata buffer some runtimes bind beside them.
-pub const QK_NORMED_CONV_WINDOW_BINDING_BUFFERS: u32 = 8 + 1;
-
-/// The buffers a conv over a stream needs a device to bind: one for each of its 5 operands, and one
-/// for the metadata buffer some runtimes bind beside them.
-pub const QK_NORMED_CONV_STREAM_BINDING_BUFFERS: u32 = 5 + 1;
+/// The buffers a q,k,v conv needs a device to bind: one for each of its 7 operands, one for the
+/// slot table and one for the metadata buffer some runtimes bind beside them.
+pub const QK_NORMED_CONV_BINDING_BUFFERS: u32 = 8 + 1;
 
 /// What admission declines a problem with when it describes no head: a conv needs a key head, a
 /// value head, a key feature and a value feature.
@@ -69,10 +65,10 @@ pub const CONV_NOTHING_TO_CONVOLVE: Refusal = Refusal::Declined {
     why: "the conv needs a row and a position to convolve",
 };
 
-/// What admission declines a filter or a window with that cannot be read back: fewer than two
-/// taps, or a window of fewer columns than the taps read back.
-pub const CONV_TAPS_PAST_WINDOW: Refusal = Refusal::Declined {
-    why: "the conv needs two taps or more and a window of a column fewer than its taps or more",
+/// What admission declines a filter or a ring with that cannot be read back: fewer than two
+/// taps, or a ring of fewer columns than the taps read back.
+pub const CONV_TAPS_PAST_RING: Refusal = Refusal::Declined {
+    why: "the conv needs two taps or more and a ring of a column fewer than its taps or more",
 };
 
 /// What admission declines a device with that binds fewer buffers to a kernel than a conv's

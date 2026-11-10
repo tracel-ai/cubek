@@ -1,6 +1,7 @@
 mod conv;
-mod conv_stream;
+mod conv_prompt;
 mod harness;
+mod ring;
 mod store_index;
 mod walk;
 mod walk_parts;

@@ -5,15 +5,14 @@ use cubek_microkernel::linear_recurrence::conv::cube::{
     CubeQkNormedConvMicrokernel, PastTiles, QkNormedConvTiles, cube_qk_normed_conv_microkernel,
 };
 
-/// Every cube convolves one key head of one row, or of one position of a sequence, and normalizes
-/// its queries and keys. `ring` and `lengths` are bound over a window alone, and `columns` is the
-/// ring's length there.
+/// Every cube convolves one key head of one row, or of one position of a prompt, and normalizes
+/// its queries and keys. `columns` is the ring's length.
 #[cube(launch_unchecked)]
 pub fn cube_qk_normed_conv_kernel<E: Float, N: Size>(
     qkv: &TileTensor<'_>,
     filters: &TileTensor<'_>,
-    ring: ComptimeOption<&TileTensor<'static>>,
-    lengths: ComptimeOption<&TileTensor<'static>>,
+    ring: &TileTensor<'_>,
+    lengths: &TileTensor<'_>,
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
@@ -26,8 +25,8 @@ pub fn cube_qk_normed_conv_kernel<E: Float, N: Size>(
     let tiles = QkNormedConvTiles {
         past: PastTiles {
             input: qkv.tile(&partitioning),
-            ring: ring.map(|ring| ring.tile(&partitioning)),
-            lengths: lengths.map(|lengths| lengths.tile(&partitioning)),
+            ring: ring.tile(&partitioning),
+            lengths: lengths.tile(&partitioning),
             columns,
         },
         filters: filters.tile(&partitioning),

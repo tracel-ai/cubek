@@ -1,5 +1,5 @@
-//! The cube scope: a cube holds one key head of one row, or of one position of a stream, its units
-//! dealing the head's channels between them.
+//! The cube scope of the q,k,v conv: a cube holds one key head of one row, or of one position of a
+//! prompt, its units dealing the head's channels between them.
 
 mod base;
 mod convolved_head;

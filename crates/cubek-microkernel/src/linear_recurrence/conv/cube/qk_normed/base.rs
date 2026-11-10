@@ -1,5 +1,6 @@
 use crate::linear_recurrence::RecurrenceHeads;
 use crate::linear_recurrence::conv::QkNormedConvOperand;
+use crate::linear_recurrence::conv::cube::PastKind;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
@@ -9,13 +10,13 @@ use cubek_std::microkernel::{
 /// The units a cube deals a key head's channels between, at most.
 const MOST_UNITS: usize = 64;
 
-/// What a conv is: the heads whose channels it mixes, the filter's taps and the operands its case
-/// reads along their channels.
+/// What a conv is: the heads whose channels it mixes, the filter's taps and where its past is read
+/// from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QkNormedConvWorkItem {
     pub heads: RecurrenceHeads,
     pub taps: usize,
-    pub channels: &'static [QkNormedConvOperand],
+    pub past: PastKind,
 }
 
 impl QkNormedConvWorkItem {
@@ -54,7 +55,7 @@ pub struct CubeQkNormedConvMicrokernel {
     pub units: usize,
     pub taps: usize,
     pub heads: RecurrenceHeads,
-    pub channels: &'static [QkNormedConvOperand],
+    pub past: PastKind,
 }
 
 impl CubeQkNormedConvMicrokernel {
@@ -92,14 +93,13 @@ impl Microkernel for CubeQkNormedConvMicrokernel {
                 units,
                 taps: item.taps,
                 heads: item.heads,
-                channels: item.channels,
+                past: item.past,
             })
             .into_iter()
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<QkNormedConvOperand>) {
         QkNormedConvOperand::require(
-            self.channels,
             self.heads.key_features,
             self.heads.value_features,
             vectorization,

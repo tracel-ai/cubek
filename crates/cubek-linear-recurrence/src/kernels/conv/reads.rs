@@ -1,5 +1,6 @@
 //! The operands every conv reads, and how they bind them.
 
+use crate::kernels::conv::past::BoundPast;
 use crate::kernels::conv::{CausalConvPast, CausalConvPastInputs};
 use crate::kernels::refusals::CONV_ELEMENT_UNSUPPORTED;
 use cubecl::client::Client;
@@ -27,6 +28,7 @@ pub(crate) struct CausalConvReads {
     pub past: CausalConvPastInputs,
     pub shape: CausalConvPast,
     pub batch: usize,
+    pub channels: usize,
     pub taps: usize,
     pub element: ElemType,
 }
@@ -35,10 +37,7 @@ pub(crate) struct CausalConvReads {
 pub(crate) struct BoundReads {
     pub input: TileTensorLaunch,
     pub filters: TileTensorLaunch,
-    /// Over a window, the row's store placed by the slot table.
-    pub ring: Option<TileTensorLaunch>,
-    /// Over a window, the positions each row has convolved.
-    pub lengths: Option<TileTensorLaunch>,
+    pub past: BoundPast,
 }
 
 impl CausalConvReads {
@@ -59,7 +58,6 @@ impl CausalConvReads {
     ///
     /// # Errors
     ///
-    /// [`Self::admit_element`]'s refusal,
     /// [`CONV_NOTHING_TO_CONVOLVE`](crate::kernels::refusals::CONV_NOTHING_TO_CONVOLVE) for no row
     /// or position, and [`ELEMENT_NOT_ON_DEVICE`].
     ///
@@ -75,11 +73,7 @@ impl CausalConvReads {
         channels: usize,
     ) -> Result<Self, Refusal> {
         let element = input.elem;
-        Self::admit_element(element)?;
-        for tensor in [Some(&input), Some(&filters), past.ring()]
-            .into_iter()
-            .flatten()
-        {
+        for tensor in [&input, &filters, past.ring()] {
             assert_eq!(tensor.elem, element, "the conv's operands share an element");
             assert!(
                 tensor.binding.strides.last() == Some(&1),
@@ -103,7 +97,7 @@ impl CausalConvReads {
             vec![filters.binding.strides[0], 1],
         ));
         let mut past = past;
-        let (input, shape) = past.shaped(input, channels, taps)?;
+        let (input, shape) = past.shaped(input, channels)?;
         Ok(Self {
             client,
             batch: input.shape()[0],
@@ -111,24 +105,23 @@ impl CausalConvReads {
             filters,
             past,
             shape,
+            channels,
             taps,
             element,
         })
     }
 
-    /// The reads bound under `launcher`, `width` values a line, a window placed at the slot its
+    /// The reads bound under `launcher`, `width` values a line, the ring placed at the slot its
     /// table names.
     pub(crate) fn bind(&self, launcher: &Launcher, width: usize) -> BoundReads {
         let input_axes: &'static [Axis] = match self.shape {
             CausalConvPast::Window { .. } => &[BATCH, CHANNEL],
-            CausalConvPast::Stream { .. } => &[BATCH, STREAM_POSITION, CHANNEL],
+            CausalConvPast::Prompt { .. } => &[BATCH, STREAM_POSITION, CHANNEL],
         };
-        let (ring, lengths) = self.past.bind(launcher, width);
         BoundReads {
             input: bound(launcher, &self.input, input_axes, width),
             filters: bound(launcher, &self.filters, &[CHANNEL, TAP], 1),
-            ring,
-            lengths,
+            past: self.past.bind(launcher, width),
         }
     }
 }

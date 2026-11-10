@@ -57,9 +57,10 @@ impl<N: Size> ConvolvedHead<N> {
         channels: &HeadChannels,
     ) {
         let width = N::value();
-        let read_columns = comptime!(self.microkernel.taps - 1);
-        let past = PastTaps::new(cube, &tiles.past, read_columns);
-        let filters = CausalFilters::new(&tiles.filters, self.microkernel.taps);
+        let microkernel = comptime!(self.microkernel);
+        let read_columns = comptime!(microkernel.taps - 1);
+        let past = PastTaps::new(cube, &tiles.past, microkernel.past, read_columns);
+        let filters = CausalFilters::new(&tiles.filters, microkernel.taps);
         let mut values = tiles.value.flat_mut::<f32, N>();
         for share in cube {
             let part = share.coord(HEAD_CHANNEL);

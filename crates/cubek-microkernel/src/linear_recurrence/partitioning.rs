@@ -27,12 +27,19 @@ pub const TAP: Axis = Axis(9);
 pub const RING_COLUMN: Axis = Axis(10);
 /// A channel of one key head, head local: no operand binds it, only the units level cuts it.
 pub const HEAD_CHANNEL: Axis = Axis(11);
-/// A position of a stream the conv reads by tap: its context columns first, so a stream is
-/// `taps - 1` positions longer than the positions it convolves, and no level cuts it.
+/// A position of a prompt that later positions read by tap: no level cuts it.
 pub const STREAM_POSITION: Axis = Axis(12);
 /// The two rates of a position and value head, the log of its decay at 0 and its strength at 1: no
 /// level cuts it.
 pub const RATE: Axis = Axis(13);
+/// A box of channel lines one cube works on: no operand binds it, only the cube level cuts it.
+pub const CHANNEL_BOX: Axis = Axis(14);
+/// A line of channels inside a cube's box, box local: no operand binds it, only the units level
+/// cuts it.
+pub const LINE_IN_BOX: Axis = Axis(15);
+/// One of the last `taps - 1` positions of a prompt, which the write back copies into the ring: no
+/// operand binds it, only the cube level cuts it.
+pub const RING_POSITION: Axis = Axis(16);
 
 /// How the walk places its microkernel's runs over a problem: a cube for every box of value
 /// columns of one head of one sequence, and inside the cube's box the levels the routine and its
@@ -89,19 +96,18 @@ pub struct CausalConvPartitioning {
 
 impl CausalConvPartitioning {
     /// `space` partitioned with `inside` a cube's box: the boxes `cube_axis` counts ride the grid's
-    /// `x`, or its `y` behind the positions, and rows come one a cube.
+    /// `x`, or its `y` behind the positions the space has, and rows come one a cube.
     pub fn new(space: Space, inside: Levels, cube_axis: Axis) -> Self {
-        let cubes: &[Axis] = if space.contains(POSITION) {
-            &[POSITION, cube_axis]
-        } else {
-            &[cube_axis]
-        };
+        let positions = [POSITION, RING_POSITION]
+            .into_iter()
+            .find(|axis| space.contains(*axis));
+        let cubes: Vec<Axis> = positions.into_iter().chain([cube_axis]).collect();
         Self {
-            partitioning: Partitioning::new(space, inside.cubes(cubes).batches(&[BATCH]).build()),
+            partitioning: Partitioning::new(space, inside.cubes(&cubes).batches(&[BATCH]).build()),
         }
     }
 
-    /// The partitioning a kernel compiles against: rows, positions, slots, ring and stream left to
+    /// The partitioning a kernel compiles against: rows, positions, slots, ring and prompt left to
     /// the launch.
     pub fn kernel(&self) -> Partitioning {
         let space = self.partitioning.space();

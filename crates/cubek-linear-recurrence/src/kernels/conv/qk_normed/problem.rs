@@ -3,7 +3,7 @@
 use crate::kernels::conv::reads::CausalConvReads;
 use crate::kernels::conv::{CausalConvPast, CubeQkNormedConvRoutine};
 use crate::kernels::refusals::{
-    CONV_BINDINGS_PAST_DEVICE, CONV_NOTHING_TO_CONVOLVE, CONV_TAPS_PAST_WINDOW,
+    CONV_BINDINGS_PAST_DEVICE, CONV_NOTHING_TO_CONVOLVE, QK_NORMED_CONV_BINDING_BUFFERS,
     QK_NORMED_CONV_HEADS_EMPTY,
 };
 use cubecl::ir::{ElemType, FloatKind};
@@ -15,8 +15,8 @@ use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperandMap;
 use cubek_microkernel::linear_recurrence::conv::cube::QkNormedConvWorkItem;
 use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, HEAD_CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RING_COLUMN,
-    RecurrenceHeads, STORE_SLOT, STREAM_POSITION, TAP, VALUE_FEATURE,
+    BATCH, CHANNEL, HEAD_CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceHeads,
+    TAP, VALUE_FEATURE,
 };
 use cubek_std::Hardware;
 use cubek_std::routine::{EstimatedProblem, Routine};
@@ -24,7 +24,7 @@ use cubek_std::routine::{EstimatedProblem, Routine};
 /// The element the queries, keys and values are written at: `f32`, as the walk reads them.
 pub const QK_NORMED_CONV_OUTPUT_ELEMENT: ElemType = ElemType::Float(FloatKind::F32);
 
-/// The conv over `batch` rows of one position each, or sequences of positions: the `q|k|v` stream
+/// The conv over `batch` rows of one position each, or prompts of positions: the `q|k|v` stream
 /// of `heads` and a filter of `taps`, in activations of `element`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QkNormedConvProblem {
@@ -32,7 +32,7 @@ pub struct QkNormedConvProblem {
     pub heads: RecurrenceHeads,
     /// Taps of the filter, the newest the row's own value.
     pub taps: usize,
-    /// The element of the stream, the filters and the ring.
+    /// The element of the input, the filters and the ring.
     pub element: ElemType,
     /// Where the past the taps read lives.
     pub past: CausalConvPast,
@@ -60,18 +60,12 @@ impl QkNormedConvProblem {
         if self.work_item().is_empty() {
             return Err(QK_NORMED_CONV_HEADS_EMPTY);
         }
-        if self.batch == 0 || self.past == (CausalConvPast::Stream { positions: 0 }) {
+        if self.batch == 0 {
             return Err(CONV_NOTHING_TO_CONVOLVE);
         }
         CausalConvReads::admit_element(self.element)?;
-        let window_short = match self.past {
-            CausalConvPast::Window { columns, .. } => columns + 1 < self.taps,
-            CausalConvPast::Stream { .. } => false,
-        };
-        if self.taps < 2 || window_short {
-            return Err(CONV_TAPS_PAST_WINDOW);
-        }
-        if self.past.binding_buffers() > hw.properties.hardware.max_bindings {
+        self.past.admit(self.taps)?;
+        if QK_NORMED_CONV_BINDING_BUFFERS > hw.properties.hardware.max_bindings {
             return Err(CONV_BINDINGS_PAST_DEVICE);
         }
         Ok(())
@@ -81,7 +75,7 @@ impl QkNormedConvProblem {
         QkNormedConvWorkItem {
             heads: self.heads,
             taps: self.taps,
-            channels: self.past.channels(),
+            past: self.past.kind(),
         }
     }
 
@@ -98,15 +92,7 @@ impl QkNormedConvProblem {
             (HEAD_CHANNEL, heads.channels_per_key_head()),
             (TAP, self.taps),
         ];
-        match self.past {
-            CausalConvPast::Window { slots, columns } => {
-                axes.extend([(STORE_SLOT, slots.get()), (RING_COLUMN, columns)]);
-            }
-            CausalConvPast::Stream { positions } => axes.extend([
-                (POSITION, positions),
-                (STREAM_POSITION, self.past.stream_len(self.taps)),
-            ]),
-        }
+        axes.extend(self.past.axes());
         Space::new(&axes)
     }
 
@@ -123,7 +109,7 @@ impl QkNormedConvProblem {
             (HEAD_CHANNEL, width),
             (TAP, self.taps),
         ];
-        if let CausalConvPast::Stream { .. } = self.past {
+        if let CausalConvPast::Prompt { .. } = self.past {
             axes.insert(0, (POSITION, 1));
         }
         axes
@@ -146,30 +132,27 @@ impl QkNormedConvProblem {
             value_features,
         } = heads;
         let conv_dim = heads.conv_dim();
-        let alignments = match past {
-            CausalConvPast::Window { slots, columns } => {
-                let keyed = rows(&[batch, key_heads, key_features]);
-                QkNormedConvOperandMap {
-                    qkv: rows(&[batch, conv_dim]),
-                    filters: rows(&[conv_dim, taps]),
-                    ring: rows(&[slots.get(), columns, conv_dim]),
-                    lengths: rows(&[batch]),
-                    query: keyed,
-                    key: keyed,
-                    value: rows(&[batch, key_heads, heads_per_group, value_features]),
-                }
-            }
-            CausalConvPast::Stream { positions } => {
-                let keyed = rows(&[batch, positions, key_heads, key_features]);
-                QkNormedConvOperandMap {
-                    qkv: rows(&[batch, past.stream_len(taps), conv_dim]),
-                    filters: rows(&[conv_dim, taps]),
-                    query: keyed,
-                    key: keyed,
-                    value: rows(&[batch, positions, key_heads, heads_per_group, value_features]),
-                    ..QkNormedConvOperandMap::splat(ElemAlignment::ONE)
-                }
-            }
+        let positions = past.positions();
+        let (input, keyed, valued) = match past {
+            CausalConvPast::Window { .. } => (
+                rows(&[batch, conv_dim]),
+                rows(&[batch, key_heads, key_features]),
+                rows(&[batch, key_heads, heads_per_group, value_features]),
+            ),
+            CausalConvPast::Prompt { .. } => (
+                rows(&[batch, positions, conv_dim]),
+                rows(&[batch, positions, key_heads, key_features]),
+                rows(&[batch, positions, key_heads, heads_per_group, value_features]),
+            ),
+        };
+        let alignments = QkNormedConvOperandMap {
+            qkv: input,
+            filters: rows(&[conv_dim, taps]),
+            ring: rows(&[past.ring().slots.get(), past.ring().columns, conv_dim]),
+            lengths: rows(&[batch]),
+            query: keyed,
+            key: keyed,
+            value: valued,
         };
         Self {
             batch,
@@ -189,17 +172,12 @@ impl EstimatedProblem for QkNormedConvProblem {
         let conv_dim = self.heads.conv_dim();
         let size = self.element.size();
         let filters = conv_dim * self.taps * size;
-        let (positions, read, written) = match self.past {
-            CausalConvPast::Window { .. } => {
-                let channels = self.batch * conv_dim;
-                (1, channels * self.taps * size, channels * size)
-            }
-            CausalConvPast::Stream { positions } => {
-                let stream = self.batch * self.past.stream_len(self.taps) * conv_dim * size;
-                (positions, stream, 0)
-            }
-        };
+        let positions = self.past.positions();
         let channels = self.batch * positions * conv_dim;
+        let (read, written) = match self.past {
+            CausalConvPast::Window { .. } => (channels * self.taps * size, channels * size),
+            CausalConvPast::Prompt { .. } => (channels * size, 0),
+        };
         Work {
             compute_ops: self.work_item().operations(channels),
             bytes: read + filters + written + channels * QK_NORMED_CONV_OUTPUT_ELEMENT.size(),
@@ -234,7 +212,8 @@ pub(crate) mod fixtures {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::refusals::CONV_ELEMENT_UNSUPPORTED;
+    use crate::kernels::conv::RingStore;
+    use crate::kernels::refusals::{CONV_ELEMENT_UNSUPPORTED, CONV_TAPS_PAST_RING};
     use core::num::NonZeroUsize;
     use cubek_std::devices;
 
@@ -249,10 +228,16 @@ mod tests {
         }
     }
 
-    fn window(slots: usize, columns: usize) -> CausalConvPast {
-        CausalConvPast::Window {
+    fn ring(slots: usize, columns: usize) -> RingStore {
+        RingStore {
             slots: NonZeroUsize::new(slots).unwrap(),
             columns,
+        }
+    }
+
+    fn window(slots: usize, columns: usize) -> CausalConvPast {
+        CausalConvPast::Window {
+            ring: ring(slots, columns),
         }
     }
 
@@ -270,20 +255,23 @@ mod tests {
             Err(CONV_BINDINGS_PAST_DEVICE)
         );
         let mut hw = devices::h100();
-        devices::topology(&mut hw).max_bindings = problem.past.binding_buffers();
+        devices::topology(&mut hw).max_bindings = QK_NORMED_CONV_BINDING_BUFFERS;
         assert_eq!(problem.admit(&hw), Ok(()));
     }
 
-    /// A packed or integer element, and a float the conv is not verified at, are declined.
+    /// The floats the conv is verified at are admitted, and a packed or integer element is
+    /// declined.
     #[test]
     fn elements_the_conv_is_not_verified_at_are_declined() {
         use cubecl::ir::UIntKind;
         let hw = devices::h100();
         let dense = |element| QkNormedConvProblem::dense(1, heads(), 4, window(2, 3), element);
-        assert_eq!(dense(F16).admit(&hw), Ok(()));
+        for element in [F16, ElemType::Float(FloatKind::F32)] {
+            assert_eq!(dense(element).admit(&hw), Ok(()));
+        }
         for element in [
-            ElemType::UInt(UIntKind::U32),
             ElemType::Float(FloatKind::BF16),
+            ElemType::UInt(UIntKind::U32),
         ] {
             assert_eq!(dense(element).admit(&hw), Err(CONV_ELEMENT_UNSUPPORTED));
         }
@@ -293,22 +281,29 @@ mod tests {
     #[test]
     fn a_window_shorter_than_the_taps_read_back_is_declined() {
         let hw = devices::h100();
-        assert_eq!(conv(heads(), 4, 2).admit(&hw), Err(CONV_TAPS_PAST_WINDOW));
+        assert_eq!(conv(heads(), 4, 2).admit(&hw), Err(CONV_TAPS_PAST_RING));
         assert_eq!(conv(heads(), 4, 3).admit(&hw), Ok(()));
     }
 
-    /// A stream with no position is declined by name; one with positions binds fewer buffers than
-    /// a window, so the devices that decline a window admit it.
+    /// A prompt with no position is declined by name; one with positions binds as many buffers as
+    /// a window, so the devices that decline a window decline it.
     #[test]
-    fn a_stream_is_declined_without_positions_and_binds_less_than_a_window() {
-        let stream = |positions| {
-            let past = CausalConvPast::Stream { positions };
+    fn a_prompt_is_declined_without_positions_and_binds_as_a_window_does() {
+        let prompt = |positions| {
+            let past = CausalConvPast::Prompt {
+                ring: ring(2, 3),
+                positions,
+            };
             QkNormedConvProblem::dense(1, heads(), 4, past, F16)
         };
         assert_eq!(
-            stream(0).admit(&devices::h100()),
+            prompt(0).admit(&devices::h100()),
             Err(CONV_NOTHING_TO_CONVOLVE)
         );
-        assert_eq!(stream(8).admit(&devices::wgpu_no_subgroups()), Ok(()));
+        assert_eq!(
+            prompt(8).admit(&devices::wgpu_no_subgroups()),
+            Err(CONV_BINDINGS_PAST_DEVICE)
+        );
+        assert_eq!(prompt(8).admit(&devices::h100()), Ok(()));
     }
 }
