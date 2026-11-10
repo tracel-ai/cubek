@@ -63,7 +63,7 @@ impl<N: Size> ConvolvedHead<N> {
     ) {
         let microkernel = comptime!(self.microkernel);
         let width = N::value();
-        let read_columns = comptime!(microkernel.taps - 1);
+        let read_columns = microkernel.taps - 1;
         let past = PastTaps::new(cube, &*tiles, read_columns);
         let mut values = tiles.value.flat_mut::<f32, N>();
         for share in cube {
@@ -141,7 +141,7 @@ impl<N: Size> ConvolvedHead<N> {
             heads.heads_per_group,
             heads.value_features
         ));
-        let key_dim = comptime!(heads.key_dim());
+        let key_dim = heads.key_dim();
         if local < key_features {
             head * key_features + local
         } else if local < 2 * key_features {

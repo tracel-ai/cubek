@@ -9,7 +9,6 @@ use cubek_microkernel::linear_recurrence::conv::cube::{
 /// its queries and keys. `window` and `lengths` are bound over a window alone, and `columns` is the
 /// ring's length there.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_qk_normed_conv_kernel<E: Float, N: Size>(
     qkv: &TileTensor<'_>,
     filters: &TileTensor<'_>,

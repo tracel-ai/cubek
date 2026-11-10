@@ -11,7 +11,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// The slots lie as [`SlotBox`] states; `out` is the attention's output,
 /// `[b, kv, g, q, dv]` at its own strides, and `logsumexp` `[b, kv, g, q]` at its own.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
     // Read only, taken as the kernel holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut Tensor<Vector<EA, N>>,
@@ -86,7 +85,6 @@ pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
 /// them. `out`, and `logsumexp` where the caller asks for each row's, are windowed to the group's
 /// rows. A row whose every slot saw nothing writes zeros, and the minimum value as its logsumexp.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
     // Read only, taken as the cube holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut [Vector<EA, N>],
@@ -156,7 +154,6 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
 /// `out`, and `logsumexp` where the caller asks for each row's, are windowed to the plane's rows.
 /// A row whose every slot saw nothing writes zeros, and the minimum value as its logsumexp.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
     // Read only, taken as the kernel holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut [Vector<EA, N>],
@@ -222,7 +219,6 @@ pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
 /// of a value, plus `l`, of `out`, its merged max and sum at that slot of `max` and `sum`. What a
 /// merge across cubes reads is one slot a cube, whatever its planes.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn plane_merge_rows_partial_microkernel<EA: Float, N: Size>(
     // Read only, taken as the cube holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut [Vector<EA, N>],

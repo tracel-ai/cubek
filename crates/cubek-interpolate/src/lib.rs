@@ -1,20 +1,20 @@
 pub mod definition;
 #[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
 pub mod eval;
-mod kernel;
+pub mod kernels;
+mod legacy;
 pub mod tune_key;
 
-pub use definition::{InputStage, InterpolateBlueprint, InterpolateStrategy};
+pub use kernels::{InterpolateKernel, InterpolateStrategy};
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},
-    kernel::{
-        interpolate_bilinear_backward_launch, interpolate_launch,
-        interpolate_nearest_backward_launch,
-    },
+    kernels::{InterpolateTensors, select},
+    legacy::{interpolate_bilinear_backward_launch, interpolate_nearest_backward_launch},
 };
 use core::result::Result;
 use cubecl::{client::Client, prelude::TensorBinding, prelude::*};
+use cubek_std::Hardware;
 
 /// Interpolate operation
 ///
@@ -22,9 +22,9 @@ use cubecl::{client::Client, prelude::TensorBinding, prelude::*};
 ///
 /// Expects input in NHWC layout.
 ///
-/// The strategy states what the launch optimizes for; the device and the problem decide the rest,
-/// so a caller that has measured nothing still gets a geometry built for the hardware it runs on.
-/// [`InterpolateStrategy::Forced`] pins every choice for one that has.
+/// The strategy names the routine; the device and the problem decide its settings, so a caller
+/// that has measured nothing still gets a geometry built for the hardware it runs on.
+/// [`InterpolateStrategy::Specific`] pins every choice for one that has.
 pub fn interpolate(
     client: &Client,
     input: TensorBinding,
@@ -38,7 +38,22 @@ pub fn interpolate(
     validate_shape(&output.shape)?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
-    interpolate_launch(client, input, output, options, dtype, strategy)
+    let hw = Hardware::from_client(client);
+    let tensors = InterpolateTensors::new(client, input, output, options, dtype);
+    let mut refused = None;
+    for kernel in select(
+        strategy,
+        &hw.properties.hardware,
+        &tensors.problem().forward,
+    ) {
+        match kernel.launch(&hw, &tensors) {
+            Ok(()) => return Ok(()),
+            Err(why) => refused = Some(why),
+        }
+    }
+    Err(refused
+        .expect("the selector lists a kernel for every strategy")
+        .into())
 }
 
 /// Backward interpolate operation

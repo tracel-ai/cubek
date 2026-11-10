@@ -138,7 +138,7 @@ impl VisibleKeys {
             }
         }
 
-        if comptime!(hides) {
+        if hides {
             seen = 0;
         }
 

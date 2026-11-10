@@ -60,7 +60,7 @@ pub fn read_mapped<Acc: Numeric, N: Size>(
     line: Vector<Acc, N>,
     #[comptime] map: ReadMap,
 ) -> Vector<Acc, N> {
-    match comptime!(map) {
+    match map {
         ReadMap::AsRead => line,
         ReadMap::Abs => line.abs(),
         ReadMap::NonZero => select_many(
@@ -75,7 +75,7 @@ pub fn read_mapped<Acc: Numeric, N: Size>(
 /// consecutive values; across rows, the line's own position, each lane in its own row.
 #[cube]
 fn lane_indices<N: Size>(line_index: usize, #[comptime] layout: ReduceLayout) -> Vector<u32, N> {
-    match comptime!(layout) {
+    match layout {
         ReduceLayout::Along => {
             let width = N::value();
             let mut indices = Vector::<u32, N>::new((line_index * width) as u32);
@@ -144,7 +144,7 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
         ));
 
         let monoid = operation.monoid();
-        match comptime!(layout) {
+        match layout {
             ReduceLayout::Along => {
                 let mut total = Monoid::reduce::<Acc, N>(acc, N::value(), monoid);
                 if operation.divides_by_count() {
@@ -234,7 +234,7 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
         #[comptime] writes: ReduceWrites,
     ) {
         let monoid = operation.monoid();
-        match comptime!(layout) {
+        match layout {
             ReduceLayout::Along => {
                 // The lanes hold one row: reduce them, lane by lane, as one-lane carriers.
                 let mut best = OneIndexed::<Acc>::identity(monoid);
@@ -270,7 +270,7 @@ fn write_line<Out: Numeric, Idx: Numeric, Acc: Numeric, W: Size>(
     #[comptime] writes: ReduceWrites,
 ) {
     let mut lines = out.flat_mut::<Out, W>();
-    match comptime!(writes) {
+    match writes {
         ReduceWrites::Values => lines.write(at, Vector::cast_from(value)),
         ReduceWrites::Indices => lines.write(at, Vector::cast_from(index)),
         ReduceWrites::Both => {
@@ -375,7 +375,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         let lanes = N::value();
         let lanes_share_a_row = comptime!(matches!(layout, ReduceLayout::Along) && lanes > 1);
 
-        match comptime!(lanes_share_a_row) {
+        match lanes_share_a_row {
             true => {
                 let mut best = TopK::<Acc, Const<1>, K>::identity(monoid);
                 #[unroll]
@@ -502,7 +502,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
         let lanes = N::value();
         let lanes_share_a_row = comptime!(matches!(layout, ReduceLayout::Along) && lanes > 1);
 
-        match comptime!(lanes_share_a_row) {
+        match lanes_share_a_row {
             true => {
                 let mut best = TopValues::<Acc, Const<1>, K>::identity(monoid);
                 #[unroll]

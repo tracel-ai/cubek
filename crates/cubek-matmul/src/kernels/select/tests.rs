@@ -252,35 +252,46 @@ fn an_unread_scheme_on_either_input_is_dequantized_by_the_framework() {
     assert!(burn(&with_packed_lhs(quantized(8, q4()), per_tensor())));
 }
 
-/// Autotune never sends two NVFP4 inputs to the 4-bit tensor cores, whatever the device: the
-/// few-rows autotune at the decode rows, the many-rows autotune past them, on a GPU with the 4-bit
-/// instruction as on one without. Only its pin runs the block-scaled autotune.
+/// Autotune sends two NVFP4 inputs to the 4-bit tensor cores past a decode's rows on a GPU with the
+/// 4-bit instruction, and keeps a decode's rows on the few-rows autotune; on a GPU without it the
+/// rows decide alone. One packed input never reaches the block-scaled autotune: the other would be
+/// rounded to the instruction's format.
 #[test]
-fn autotune_never_names_the_4_bit_kernel() {
-    for hw in [block_scaled(), devices::h100()] {
+fn autotune_names_the_4_bit_kernel_past_a_decode_on_two_nvfp4_inputs() {
+    let nvfp4 = |rows| with_packed_lhs(quantized(rows, nvfp4_along_k()), nvfp4_lhs());
+    for (hw, many_rows) in [
+        (block_scaled(), MatmulAutotune::BlockScaled),
+        (devices::h100(), MatmulAutotune::ManyRows),
+    ] {
         for (rows, autotune) in [
             (1, MatmulAutotune::FewRows),
             (QUANTIZED_FEW_ROWS, MatmulAutotune::FewRows),
-            (QUANTIZED_FEW_ROWS + 1, MatmulAutotune::ManyRows),
-            (2048, MatmulAutotune::ManyRows),
+            (QUANTIZED_FEW_ROWS + 1, many_rows),
+            (2048, many_rows),
         ] {
             assert_eq!(
-                select(
-                    Autotune,
-                    &with_packed_lhs(quantized(rows, nvfp4_along_k()), nvfp4_lhs()),
-                    &hw
-                ),
+                select(Autotune, &nvfp4(rows), &hw),
                 Ok(fastest(autotune)),
+                "{rows} rows on {hw:?}"
+            );
+            assert_eq!(
+                measured_autotune(Autotune, &nvfp4(rows), &hw),
+                Some(autotune),
                 "{rows} rows on {hw:?}"
             );
         }
     }
+    assert_eq!(
+        select(Autotune, &quantized(2048, nvfp4_along_k()), &block_scaled()),
+        Ok(fastest(MatmulAutotune::ManyRows))
+    );
 }
 
 /// Named, the 4-bit tensor-core kernel runs two NVFP4 inputs whose words run down `k`, on a GPU
 /// with the 4-bit instruction, at any row count, and nothing else: it refuses a float input,
-/// another scheme, and a GPU without the instruction. No policy names it: a policy picks by rule
-/// and never measures, and this kernel's settings are chosen by measuring.
+/// another scheme, and a GPU without the instruction. No rule names it: a rule never measures, and
+/// this kernel's settings are chosen by measuring. Autotune's own reach is
+/// [`autotune_names_the_4_bit_kernel_past_a_decode_on_two_nvfp4_inputs`].
 #[test]
 fn the_named_block_scaled_kernel_serves_two_nvfp4_inputs_only_on_a_gpu_with_the_instruction() {
     let named = Specific(K::BlockScaledTensorCores);
@@ -307,7 +318,7 @@ fn the_named_block_scaled_kernel_serves_two_nvfp4_inputs_only_on_a_gpu_with_the_
         }
         for strategy in MatmulOpStrategy::all()
             .into_iter()
-            .filter(MatmulOpStrategy::is_policy)
+            .filter(|strategy| strategy.is_policy() && *strategy != Autotune)
         {
             assert_ne!(
                 select(strategy, &nvfp4, &block_scaled()),

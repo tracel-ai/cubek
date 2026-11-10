@@ -34,7 +34,6 @@ pub(crate) fn plane_fragment_partial<EL: Numeric>(
 /// attention's score and value, each walks its own axes and holds the other's. Each leaf reads
 /// its window of each operand as `reads` says.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_fragment_microkernel(
     plane: &Region,
     sum: &Tile,

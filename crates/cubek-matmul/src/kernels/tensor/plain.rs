@@ -456,7 +456,7 @@ impl PlainTensor {
     /// # Panics
     ///
     /// On an innermost stride other than 1: a row is a contiguous line.
-    fn row_step(&self) -> Option<usize> {
+    pub(crate) fn row_step(&self) -> Option<usize> {
         let strides = &self.binding.strides;
         let rank = strides.len();
         assert_eq!(

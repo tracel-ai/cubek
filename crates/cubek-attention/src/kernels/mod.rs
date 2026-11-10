@@ -10,10 +10,12 @@ pub mod select;
 
 mod binding;
 mod blueprint;
+mod kv_source;
 mod launch;
 mod packed;
 mod partitioning;
 mod problem;
+mod queries;
 mod routines;
 mod scoring;
 mod tensors;
@@ -21,10 +23,12 @@ pub mod tune;
 
 pub use binding::*;
 pub use blueprint::*;
+pub use kv_source::*;
 pub use launch::*;
 pub use packed::*;
 pub use partitioning::*;
 pub use problem::*;
+pub use queries::*;
 pub use routines::*;
 pub use scoring::*;
 pub use tensors::*;
