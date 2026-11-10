@@ -7,7 +7,7 @@ use super::conv::{
     ConvCase, EPSILON, HostOutputs, admit, case, compare_outputs, conv_or_skip, convolve_channels,
     table, view, wave,
 };
-use super::harness::{F32, activation_elements, served};
+use super::harness::{F32, elements, served};
 use super::ring::{PromptLayout, RingCase};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
@@ -151,7 +151,7 @@ fn the_prompt_conv_matches_the_reference() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
     let layouts = [PromptLayout::default(), PromptLayout { pad: 3, start: 1 }];
-    for elem in activation_elements(&client) {
+    for elem in elements(&client) {
         for layout in layouts {
             for case in cases() {
                 let values = case.values(elem);
@@ -258,7 +258,7 @@ fn decode_step(
 fn right_padded_rows_seed_the_ring_for_a_decode_step() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    for elem in activation_elements(&client) {
+    for elem in elements(&client) {
         let case = prompt_case(
             9,
             (3, 2, 20, 12),
@@ -333,7 +333,7 @@ fn handed_on(prompt: usize, steps: usize, columns: usize, elem: ElemType) {
 #[test]
 fn a_prompt_handed_on_to_decode_matches_the_reference() {
     let client = cubecl::test_device().client();
-    for elem in activation_elements(&client) {
+    for elem in elements(&client) {
         handed_on(9, 4, 3, elem);
         handed_on(2, 5, 4, elem);
     }

@@ -25,13 +25,6 @@ pub fn elements(client: &Client) -> Vec<ElemType> {
         .collect()
 }
 
-/// The elements of `elements` the conv is verified at: bf16 they decline by name.
-pub fn activation_elements(client: &Client) -> Vec<ElemType> {
-    let mut elements = elements(client);
-    elements.retain(|elem| *elem != BF16);
-    elements
-}
-
 /// `value` rounded to what `elem` holds.
 pub fn round_to(value: f32, elem: ElemType) -> f32 {
     match elem {

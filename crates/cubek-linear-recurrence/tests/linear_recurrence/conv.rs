@@ -2,7 +2,7 @@
 //! wherever the conv must not read, and the reference rounds to the activations' element where the
 //! kernel does.
 
-use super::harness::{F16, F32, activation_elements, read, round_to, served, upload};
+use super::harness::{BF16, F16, F32, elements, read, round_to, served, upload};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::server::Handle;
@@ -391,7 +391,8 @@ pub fn tolerance(elem: ElemType) -> f64 {
     match elem {
         F32 => 2e-4,
         F16 => 6e-3,
-        _ => 5e-2,
+        BF16 => 2e-2,
+        _ => unreachable!("the convs are verified at f16, bf16 and f32"),
     }
 }
 
@@ -505,7 +506,7 @@ fn layouts() -> Vec<ConvLayout> {
 fn the_conv_matches_the_reference() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    for elem in activation_elements(&client) {
+    for elem in elements(&client) {
         for layout in layouts() {
             for case in cases() {
                 let operands = case.operands(elem);

@@ -266,15 +266,17 @@ mod tests {
         use cubecl::ir::UIntKind;
         let hw = devices::h100();
         let dense = |element| QkNormedConvProblem::dense(1, heads(), 4, window(2, 3), element);
-        for element in [F16, ElemType::Float(FloatKind::F32)] {
+        for element in [
+            F16,
+            ElemType::Float(FloatKind::BF16),
+            ElemType::Float(FloatKind::F32),
+        ] {
             assert_eq!(dense(element).admit(&hw), Ok(()));
         }
-        for element in [
-            ElemType::Float(FloatKind::BF16),
-            ElemType::UInt(UIntKind::U32),
-        ] {
-            assert_eq!(dense(element).admit(&hw), Err(CONV_ELEMENT_UNSUPPORTED));
-        }
+        assert_eq!(
+            dense(ElemType::UInt(UIntKind::U32)).admit(&hw),
+            Err(CONV_ELEMENT_UNSUPPORTED)
+        );
     }
 
     /// A window shorter than the columns read back is declined by name.

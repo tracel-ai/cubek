@@ -91,8 +91,8 @@ pub const CONV_BINDINGS_PAST_DEVICE: Refusal = Refusal::Declined {
     why: "the conv binds more buffers than the device binds to one kernel",
 };
 
-/// What admission declines an element with that is not `f16` or `f32`: a packed or integer element
-/// is not a float the conv reads, and no other float is verified.
+/// What admission declines an element with that is not `f16`, `bf16` or `f32`: a packed or integer
+/// element is not a float the conv reads, and no other float is verified.
 pub const CONV_ELEMENT_UNSUPPORTED: Refusal = Refusal::Declined {
-    why: "the conv reads f16 or f32 activations",
+    why: "the conv reads f16, bf16 or f32 activations",
 };

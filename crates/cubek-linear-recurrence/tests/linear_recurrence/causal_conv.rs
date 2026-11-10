@@ -4,7 +4,7 @@
 //! conv must not read.
 
 use super::conv::{compare, convolve_channels, tolerance, view, wave};
-use super::harness::{F16, F32, activation_elements, read, served};
+use super::harness::{F16, F32, elements, read, served};
 use super::ring::{PromptLayout, RingCase};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
@@ -221,7 +221,7 @@ fn the_causal_conv_matches_the_reference() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
     let layouts = [PromptLayout::default(), PromptLayout { pad: 3, start: 1 }];
-    for elem in activation_elements(&client) {
+    for elem in elements(&client) {
         for layout in layouts {
             for biased in [false, true] {
                 for output in [elem, F32] {
@@ -280,7 +280,7 @@ fn a_row_with_no_history_reads_zeros() {
 fn the_ring_wraps_over_several_steps() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    for elem in activation_elements(&client) {
+    for elem in elements(&client) {
         let (channels, taps, columns, steps) = (60, 4, 3, 8);
         let full = window_case(channels, taps, columns, &[(0, steps)]);
         let o = full.operands(elem);
@@ -334,7 +334,7 @@ fn a_prompt_then_a_window_step_equals_a_longer_prompt() {
         output: F32,
     };
     let (channels, taps, columns, length) = (96, 4, 3, 11);
-    for elem in activation_elements(&client) {
+    for elem in elements(&client) {
         let longer = prompt_case(length + 1, channels, taps, columns, &[(0, 0, length + 1)]);
         let o = longer.operands(elem);
         let layout = PromptLayout::default();
@@ -384,7 +384,7 @@ fn right_padded_rows_seed_the_ring_for_a_window_step() {
         biased: true,
         output: F32,
     };
-    for elem in activation_elements(&client) {
+    for elem in elements(&client) {
         let rows = [(1, 0, 9), (0, 0, 5), (2, 2, 2), (3, 7, 0)];
         let case = prompt_case(9, 64, 4, 3, &rows);
         let o = case.operands(elem);

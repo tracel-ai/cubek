@@ -237,9 +237,16 @@ mod tests {
         let dense = |element, output| {
             CausalConvProblem::dense(1, 64, 4, window(3), element, output).admit(&hw)
         };
-        assert_eq!(dense(F16, F16), Ok(()));
-        assert_eq!(dense(F16, F32), Ok(()));
-        assert_eq!(dense(F32, F32), Ok(()));
+        let bf16 = ElemType::Float(FloatKind::BF16);
+        for (element, output) in [
+            (F16, F16),
+            (F16, F32),
+            (bf16, bf16),
+            (bf16, F32),
+            (F32, F32),
+        ] {
+            assert_eq!(dense(element, output), Ok(()));
+        }
         assert_eq!(dense(F32, F16), Err(CAUSAL_CONV_OUTPUT_UNSUPPORTED));
         assert_eq!(
             dense(ElemType::UInt(UIntKind::U32), F32),

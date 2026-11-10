@@ -13,8 +13,9 @@ use cubek_microkernel::linear_recurrence::{BATCH, CHANNEL, STREAM_POSITION, TAP}
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// The activation elements the convs are verified at.
-const ELEMENTS: [ElemType; 2] = [
+const ELEMENTS: [ElemType; 3] = [
     ElemType::Float(FloatKind::F16),
+    ElemType::Float(FloatKind::BF16),
     ElemType::Float(FloatKind::F32),
 ];
 
@@ -45,7 +46,7 @@ impl CausalConvReads {
     ///
     /// # Errors
     ///
-    /// [`CONV_ELEMENT_UNSUPPORTED`] for any but `f16` and `f32`.
+    /// [`CONV_ELEMENT_UNSUPPORTED`] for any but `f16`, `bf16` and `f32`.
     pub(crate) fn admit_element(element: ElemType) -> Result<(), Refusal> {
         if ELEMENTS.contains(&element) {
             Ok(())
