@@ -1,7 +1,7 @@
 //! How a conv reads its operands and binds them.
 
 use crate::kernels::conv::{
-    GatedDeltaConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvProblem,
+    CausalConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvProblem,
 };
 use crate::kernels::refusals::QK_NORMED_CONV_NOTHING_TO_CONVOLVE;
 use core::num::NonZeroUsize;
@@ -33,7 +33,7 @@ pub struct QkNormedConvInputs {
     pub client: Client,
     pub qkv: PlainTensor,
     pub filters: PlainTensor,
-    pub past: GatedDeltaConvPastInputs,
+    pub past: CausalConvPastInputs,
     /// The heads whose channels the stream holds.
     pub heads: RecurrenceHeads,
     /// Added to the sum of squares of a head's queries and of its keys before the square root.
@@ -44,7 +44,7 @@ pub struct QkNormedConvInputs {
 // Built once a call and consumed by it, so the larger variant costs one copy of a few handles.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
-pub enum GatedDeltaConvPastInputs {
+pub enum CausalConvPastInputs {
     /// A window store `[slots, columns, conv_dim]`, its slots and columns at any stride. Each row
     /// has the slot it lies in (`slots`, `[rows]`, `u32`) and the positions it has convolved
     /// (`lengths`, `[rows]`, `u32`); a row with none uses nothing of its slot. Two rows may share
@@ -92,11 +92,11 @@ impl QkNormedConvOutputs {
         client: &Client,
         heads: &RecurrenceHeads,
         batch: usize,
-        past: &GatedDeltaConvPast,
+        past: &CausalConvPast,
     ) -> Result<(Self, [PlainTensor; 3]), Refusal> {
         let (lead, bound) = match *past {
-            GatedDeltaConvPast::Window { .. } => (vec![batch, 1], vec![batch]),
-            GatedDeltaConvPast::Stream { positions } => {
+            CausalConvPast::Window { .. } => (vec![batch, 1], vec![batch]),
+            CausalConvPast::Stream { positions } => {
                 (vec![batch, positions], vec![batch, positions])
             }
         };
@@ -137,7 +137,7 @@ pub struct QkNormedConvTensors {
     query: PlainTensor,
     key: PlainTensor,
     value: PlainTensor,
-    past: GatedDeltaConvPastInputs,
+    past: CausalConvPastInputs,
     outputs: QkNormedConvOutputs,
     epsilon: f32,
     problem: QkNormedConvProblem,
@@ -157,7 +157,7 @@ pub(crate) struct QkNormedConvBinding {
     pub lengths: Option<TileTensorLaunch>,
 }
 
-impl GatedDeltaConvPastInputs {
+impl CausalConvPastInputs {
     /// The store, which only a window has.
     fn window(&self) -> Option<&PlainTensor> {
         match self {
@@ -259,12 +259,12 @@ impl QkNormedConvTensors {
             vec![filters.binding.strides[0], 1],
         ));
         let (qkv, viewed, past) = match past {
-            GatedDeltaConvPastInputs::Window {
+            CausalConvPastInputs::Window {
                 window,
                 slots,
                 lengths,
             } => Self::shape_window(qkv, conv_dim, window, slots, lengths)?,
-            GatedDeltaConvPastInputs::Stream => Self::shape_stream(qkv, conv_dim, taps)?,
+            CausalConvPastInputs::Stream => Self::shape_stream(qkv, conv_dim, taps)?,
         };
         let batch = qkv.shape()[0];
         let (outputs, [query, key, value]) =
@@ -318,7 +318,7 @@ impl QkNormedConvTensors {
         window: PlainTensor,
         slots: PlainTensor,
         lengths: PlainTensor,
-    ) -> Result<(PlainTensor, GatedDeltaConvPastInputs, GatedDeltaConvPast), Refusal> {
+    ) -> Result<(PlainTensor, CausalConvPastInputs, CausalConvPast), Refusal> {
         let qkv_shape = qkv.shape().to_vec();
         let rows = qkv_shape[0];
         if rows == 0 {
@@ -346,13 +346,13 @@ impl QkNormedConvTensors {
             assert_eq!(table.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
             assert_eq!(table.shape().dims::<1>(), [rows]);
         }
-        let past = GatedDeltaConvPast::Window {
+        let past = CausalConvPast::Window {
             slots: NonZeroUsize::new(slots_in_store).expect("a store holds a slot"),
             columns,
         };
         Ok((
             qkv,
-            GatedDeltaConvPastInputs::Window {
+            CausalConvPastInputs::Window {
                 window,
                 slots,
                 lengths,
@@ -367,7 +367,7 @@ impl QkNormedConvTensors {
         qkv: PlainTensor,
         conv_dim: usize,
         taps: usize,
-    ) -> Result<(PlainTensor, GatedDeltaConvPastInputs, GatedDeltaConvPast), Refusal> {
+    ) -> Result<(PlainTensor, CausalConvPastInputs, CausalConvPast), Refusal> {
         let [batch, stream_positions, channels] = qkv.shape().dims::<3>();
         assert_eq!(
             channels, conv_dim,
@@ -383,8 +383,8 @@ impl QkNormedConvTensors {
         ));
         Ok((
             qkv,
-            GatedDeltaConvPastInputs::Stream,
-            GatedDeltaConvPast::Stream { positions },
+            CausalConvPastInputs::Stream,
+            CausalConvPast::Stream { positions },
         ))
     }
 
@@ -421,12 +421,12 @@ impl QkNormedConvTensors {
             Self::bound(&launcher, tensor, axes, width)
         };
         let (qkv, keyed, valued): (&[Axis], &[Axis], &[Axis]) = match self.past {
-            GatedDeltaConvPastInputs::Window { .. } => (
+            CausalConvPastInputs::Window { .. } => (
                 &[BATCH, CHANNEL],
                 &[BATCH, KEY_HEAD, KEY_FEATURE],
                 &[BATCH, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
             ),
-            GatedDeltaConvPastInputs::Stream => (
+            CausalConvPastInputs::Stream => (
                 &[BATCH, STREAM_POSITION, CHANNEL],
                 &[BATCH, POSITION, KEY_HEAD, KEY_FEATURE],
                 &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],

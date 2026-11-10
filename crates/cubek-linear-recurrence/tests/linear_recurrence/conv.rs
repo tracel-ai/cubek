@@ -10,7 +10,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::metadata::Metadata;
 use cubek_linear_recurrence::kernels::conv::{
-    CubeQkNormedConvRoutine, GatedDeltaConvPastInputs, QkNormedConvInputs, QkNormedConvOutputs,
+    CausalConvPastInputs, CubeQkNormedConvRoutine, QkNormedConvInputs, QkNormedConvOutputs,
     QkNormedConvTensors,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
@@ -308,7 +308,7 @@ pub fn table(client: &Client, entries: Vec<u32>) -> PlainTensor {
 
 /// The slot and lengths tables of `inputs`, which a case over a window holds.
 pub fn tables_of(inputs: &mut QkNormedConvInputs) -> (&mut PlainTensor, &mut PlainTensor) {
-    let GatedDeltaConvPastInputs::Window { slots, lengths, .. } = &mut inputs.past else {
+    let CausalConvPastInputs::Window { slots, lengths, .. } = &mut inputs.past else {
         panic!("the inputs are over a window");
     };
     (slots, lengths)
@@ -362,7 +362,7 @@ impl ConvCase {
             client: client.clone(),
             qkv,
             filters,
-            past: GatedDeltaConvPastInputs::Window {
+            past: CausalConvPastInputs::Window {
                 window,
                 slots: table(client, self.rows.iter().map(|&(s, _)| s as u32).collect()),
                 lengths: table(client, self.rows.iter().map(|&(_, p)| p as u32).collect()),

@@ -34,7 +34,7 @@ const ELEMENTS: [ElemType; 2] = [
 
 /// Where a conv reads the past values its taps run over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GatedDeltaConvPast {
+pub enum CausalConvPast {
     /// A store of `slots` windows of `columns` ring columns. A row reads the columns its
     /// convolved positions fill and writes its newest values as the ring's next column.
     Window { slots: NonZeroUsize, columns: usize },
@@ -45,7 +45,7 @@ pub enum GatedDeltaConvPast {
     Stream { positions: usize },
 }
 
-impl GatedDeltaConvPast {
+impl CausalConvPast {
     /// The buffers a conv over this past binds, the metadata buffer included.
     pub fn binding_buffers(&self) -> u32 {
         match self {
@@ -91,7 +91,7 @@ pub struct QkNormedConvProblem {
     /// The element of the stream, the filters and the window.
     pub element: ElemType,
     /// Where the past the taps read lives.
-    pub past: GatedDeltaConvPast,
+    pub past: CausalConvPast,
     /// The alignment of each operand's buffer in elements.
     pub alignments: QkNormedConvOperandMap<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's start. Both narrow the conv's lines.
@@ -129,13 +129,13 @@ impl QkNormedConvProblem {
         if self.work_item().is_empty() {
             return Err(QK_NORMED_CONV_HEADS_EMPTY);
         }
-        if self.batch == 0 || self.past == (GatedDeltaConvPast::Stream { positions: 0 }) {
+        if self.batch == 0 || self.past == (CausalConvPast::Stream { positions: 0 }) {
             return Err(QK_NORMED_CONV_NOTHING_TO_CONVOLVE);
         }
         Self::admit_element(self.element)?;
         let window_short = match self.past {
-            GatedDeltaConvPast::Window { columns, .. } => columns + 1 < self.taps,
-            GatedDeltaConvPast::Stream { .. } => false,
+            CausalConvPast::Window { columns, .. } => columns + 1 < self.taps,
+            CausalConvPast::Stream { .. } => false,
         };
         if self.taps < 2 || window_short {
             return Err(QK_NORMED_CONV_TAPS_PAST_WINDOW);
@@ -168,10 +168,10 @@ impl QkNormedConvProblem {
             (TAP, self.taps),
         ];
         match self.past {
-            GatedDeltaConvPast::Window { slots, columns } => {
+            CausalConvPast::Window { slots, columns } => {
                 axes.extend([(STORE_SLOT, slots.get()), (RING_COLUMN, columns)]);
             }
-            GatedDeltaConvPast::Stream { positions } => axes.extend([
+            CausalConvPast::Stream { positions } => axes.extend([
                 (POSITION, positions),
                 (STREAM_POSITION, self.past.stream_len(self.taps)),
             ]),
@@ -192,7 +192,7 @@ impl QkNormedConvProblem {
             (HEAD_CHANNEL, width),
             (TAP, self.taps),
         ];
-        if let GatedDeltaConvPast::Stream { .. } = self.past {
+        if let CausalConvPast::Stream { .. } = self.past {
             axes.insert(0, (POSITION, 1));
         }
         axes
@@ -203,7 +203,7 @@ impl QkNormedConvProblem {
         batch: usize,
         heads: RecurrenceHeads,
         taps: usize,
-        past: GatedDeltaConvPast,
+        past: CausalConvPast,
         element: ElemType,
     ) -> Self {
         let rows =
@@ -216,7 +216,7 @@ impl QkNormedConvProblem {
         } = heads;
         let conv_dim = heads.conv_dim();
         let alignments = match past {
-            GatedDeltaConvPast::Window { slots, columns } => {
+            CausalConvPast::Window { slots, columns } => {
                 let keyed = rows(&[batch, key_heads, key_features]);
                 QkNormedConvOperandMap {
                     qkv: rows(&[batch, conv_dim]),
@@ -228,7 +228,7 @@ impl QkNormedConvProblem {
                     value: rows(&[batch, key_heads, heads_per_group, value_features]),
                 }
             }
-            GatedDeltaConvPast::Stream { positions } => {
+            CausalConvPast::Stream { positions } => {
                 let keyed = rows(&[batch, positions, key_heads, key_features]);
                 QkNormedConvOperandMap {
                     qkv: rows(&[batch, past.stream_len(taps), conv_dim]),
@@ -259,11 +259,11 @@ impl EstimatedProblem for QkNormedConvProblem {
         let size = self.element.size();
         let filters = conv_dim * self.taps * size;
         let (positions, read, written) = match self.past {
-            GatedDeltaConvPast::Window { .. } => {
+            CausalConvPast::Window { .. } => {
                 let channels = self.batch * conv_dim;
                 (1, channels * self.taps * size, channels * size)
             }
-            GatedDeltaConvPast::Stream { positions } => {
+            CausalConvPast::Stream { positions } => {
                 let stream = self.batch * self.past.stream_len(self.taps) * conv_dim * size;
                 (positions, stream, 0)
             }
@@ -316,8 +316,8 @@ mod tests {
         }
     }
 
-    fn window(slots: usize, columns: usize) -> GatedDeltaConvPast {
-        GatedDeltaConvPast::Window {
+    fn window(slots: usize, columns: usize) -> CausalConvPast {
+        CausalConvPast::Window {
             slots: NonZeroUsize::new(slots).unwrap(),
             columns,
         }
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn a_stream_is_declined_without_positions_and_binds_less_than_a_window() {
         let stream = |positions| {
-            let past = GatedDeltaConvPast::Stream { positions };
+            let past = CausalConvPast::Stream { positions };
             QkNormedConvProblem::dense(1, heads(), 4, past, F16)
         };
         assert_eq!(

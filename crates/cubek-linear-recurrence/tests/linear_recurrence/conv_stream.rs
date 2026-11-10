@@ -11,7 +11,7 @@ use super::harness::{F32, activation_elements, served};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubek_linear_recurrence::kernels::conv::{
-    CubeQkNormedConvRoutine, GatedDeltaConvPastInputs, QkNormedConvInputs,
+    CausalConvPastInputs, CubeQkNormedConvRoutine, QkNormedConvInputs,
 };
 use cubek_linear_recurrence::kernels::refusals::QK_NORMED_CONV_NOTHING_TO_CONVOLVE;
 use cubek_std::Hardware;
@@ -106,7 +106,7 @@ impl StreamCase {
             client: client.clone(),
             qkv,
             filters,
-            past: GatedDeltaConvPastInputs::Stream,
+            past: CausalConvPastInputs::Stream,
             heads: self.conv.heads,
             epsilon: EPSILON,
         }
@@ -239,7 +239,7 @@ fn handed_on(prompt: usize, steps: usize, columns: usize, elem: ElemType) {
             client: client.clone(),
             qkv,
             filters: filters_view.clone(),
-            past: GatedDeltaConvPastInputs::Window {
+            past: CausalConvPastInputs::Window {
                 window: store.clone(),
                 slots: table(&client, vec![0]),
                 lengths: table(&client, vec![position as u32]),

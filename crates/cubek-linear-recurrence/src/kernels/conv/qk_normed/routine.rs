@@ -1,6 +1,6 @@
 use super::kernel::cube_qk_normed_conv_kernel;
 use crate::kernels::conv::{
-    GatedDeltaConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
+    CausalConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
     QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors,
 };
 use crate::kernels::refusals::admit_on_device;
@@ -138,7 +138,7 @@ impl Routine for CubeQkNormedConvRoutine {
         let outputs = stream(channels, heads.key_features, output_size);
         let filters = stream(channels * problem.taps, problem.taps, size);
         let (reads, writes) = match problem.past {
-            GatedDeltaConvPast::Window { .. } => (
+            CausalConvPast::Window { .. } => (
                 vec![
                     stream(channels, heads.key_features, size),
                     filters,
@@ -146,7 +146,7 @@ impl Routine for CubeQkNormedConvRoutine {
                 ],
                 vec![stream(channels, heads.key_features, size), outputs],
             ),
-            GatedDeltaConvPast::Stream { .. } => (
+            CausalConvPast::Stream { .. } => (
                 vec![
                     stream(channels * problem.taps, heads.key_features, size),
                     filters,
@@ -180,7 +180,7 @@ impl Routine for CubeQkNormedConvRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::conv::GatedDeltaConvPast;
+    use crate::kernels::conv::CausalConvPast;
     use crate::kernels::conv::fixtures::{binding_enough, fleet};
     use core::num::NonZeroUsize;
     use cubecl::ir::{ElemType, FloatKind};
@@ -199,7 +199,7 @@ mod tests {
             key_features,
             value_features,
         };
-        let past = GatedDeltaConvPast::Window {
+        let past = CausalConvPast::Window {
             slots: NonZeroUsize::new(rows + 3).unwrap(),
             columns: taps + 1,
         };
@@ -219,7 +219,7 @@ mod tests {
             key_features,
             value_features,
         };
-        let past = GatedDeltaConvPast::Stream { positions };
+        let past = CausalConvPast::Stream { positions };
         QkNormedConvProblem::dense(batch, heads, taps, past, F16)
     }
 
@@ -261,8 +261,8 @@ mod tests {
                 );
                 assert!(blueprint.microkernel.units <= lines);
                 let positions = match problem.past {
-                    GatedDeltaConvPast::Window { .. } => 1,
-                    GatedDeltaConvPast::Stream { positions } => positions,
+                    CausalConvPast::Window { .. } => 1,
+                    CausalConvPast::Stream { positions } => positions,
                 };
                 let cubes = problem.batch * positions * problem.heads.key_heads;
                 assert_eq!(grid.cubes(), Some(cubes as u64));
