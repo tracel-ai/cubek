@@ -43,9 +43,5 @@ serde = { workspace = true }
 cubek-test-utils = { workspace = true }
 
 [[test]]
-name = "testing"
+name = "lib"
 required-features = ["testing"]
-
-[[test]]
-name = "reduce"
-required-features = ["testing", "reduce"]

@@ -7,7 +7,10 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 
-use crate::test_tensor::{cast::copy_casted, strides::physical_extent};
+use crate::test_tensor::{
+    cast::copy_casted,
+    strides::{StridedLayout, physical_extent},
+};
 
 #[derive(Debug, Clone)]
 pub struct HostData {
@@ -58,6 +61,21 @@ pub enum HostDataVec {
 }
 
 impl HostDataVec {
+    /// How many values it holds.
+    pub fn len(&self) -> usize {
+        match self {
+            HostDataVec::F32(items) => items.len(),
+            HostDataVec::F64(items) => items.len(),
+            HostDataVec::I32(items) => items.len(),
+            HostDataVec::Bool(items) => items.len(),
+        }
+    }
+
+    /// Whether it holds no value.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn get_f32(&self, i: usize) -> f32 {
         match self {
             HostDataVec::F32(items) => items[i],
@@ -122,6 +140,25 @@ impl HostDataVec {
 }
 
 impl HostData {
+    /// `data` laid row-major over `shape`: what a reference computes on the host.
+    ///
+    /// # Panics
+    ///
+    /// When `data` does not hold one value per index of `shape`.
+    pub fn row_major(data: HostDataVec, shape: Shape) -> Self {
+        assert_eq!(
+            data.len(),
+            shape.iter().product::<usize>(),
+            "{shape:?} takes one value per index"
+        );
+        let strides = StridedLayout::RowMajor.compute_strides(&shape);
+        Self {
+            data,
+            shape,
+            strides,
+        }
+    }
+
     pub fn from_tensor_handle(
         client: &Client,
         mut tensor_handle: TensorHandle,
