@@ -1,10 +1,16 @@
 //! What every gradient microkernel of attention's backward launched alone shares: one batch, one
 //! key head of `group` query heads, every key attended, and every operand as a launch argument.
 
-use crate::attention_backward::AttentionBackwardWorkItem;
+use crate::attention::{B, D, DV, G, KV, Q, S};
+use crate::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
 use core::fmt::Debug;
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::{
+    Axis, Launcher, Level, Partitioning, Space, StageStorage, TileSpec, TileTensorLaunch,
+};
+use cubek_std::Hardware;
+use cubek_std::microkernel::{StageRing, StagedOperand};
 
 /// Every operand of attention's backward as a launch argument, each laid out as
 /// [`AttentionBackwardOperand::axes`](crate::attention_backward::AttentionBackwardOperand::axes)
@@ -55,4 +61,93 @@ pub trait AttentionBackwardLaunch: Debug {
         args: AttentionBackwardOperandArgs,
         scale: f32,
     ) -> Result<(), Refusal>;
+}
+
+/// A launch over one sequence of `seq` queries and keys of one head.
+pub(crate) struct OneSequence {
+    pub item: AttentionBackwardWorkItem,
+    pub seq: [usize; 2],
+}
+
+impl OneSequence {
+    /// The launcher of `levels` over the sequence, its planes `plane_width` units wide.
+    ///
+    /// # Errors
+    ///
+    /// Why the tile DSL cannot place it.
+    pub(crate) fn launcher(
+        &self,
+        client: &Client,
+        levels: Vec<Level>,
+        plane_width: u32,
+    ) -> Result<Launcher, Refusal> {
+        let [queries, keys] = self.seq;
+        let space = Space::new(&[
+            (B, 1),
+            (KV, 1),
+            (G, self.item.group),
+            (Q, queries),
+            (S, keys),
+            (D, self.item.head_dim),
+            (DV, self.item.val_dim),
+        ]);
+        let partitioning = Partitioning::new(space.clone(), levels);
+        let grid = Grid::Stated {
+            cube_count: partitioning.cube_count(),
+            cube_dim: partitioning.cube_dim(plane_width),
+        };
+        Launcher::new(client, partitioning, &space, grid)
+    }
+
+    /// `arg` bound along `operand`'s axes, one element a line.
+    /// The single stage ring of a walk along `walked`, `extent` of it a stage, the operands it
+    /// stages a row of each spanning `D` and `DV`, filled by one plane of `plane_width`.
+    ///
+    /// # Errors
+    ///
+    /// Where the stage and the microkernel's `window_bytes` pass the device's shared memory.
+    pub(crate) fn ring(
+        &self,
+        hw: &Hardware,
+        walked: Axis,
+        extent: usize,
+        window_bytes: usize,
+        plane_width: u32,
+    ) -> Result<StageRing, Refusal> {
+        let operand = |row: Axis, width: usize| {
+            StagedOperand::new(
+                self.item.element,
+                Space::new(&[(walked, extent), (row, width)]),
+                row,
+            )
+        };
+        let stage = [
+            operand(D, self.item.head_dim),
+            operand(DV, self.item.val_dim),
+        ];
+        let ring = StageRing::SINGLE.resolve(hw, &stage, plane_width as usize);
+        let stage_bytes = stage
+            .iter()
+            .map(|operand| operand.bytes(hw, &StageStorage::Strided))
+            .sum();
+        if ring.bytes(stage_bytes) + window_bytes > hw.properties.hardware.max_shared_memory_size {
+            return Err(Refusal::Declined {
+                why: "the walk's stage holds more shared memory than the device has",
+            });
+        }
+        Ok(ring)
+    }
+
+    pub(crate) fn bound(
+        &self,
+        arg: TensorArg,
+        operand: AttentionBackwardOperand,
+    ) -> TileTensorLaunch {
+        use AttentionBackwardOperand as Operand;
+        let element = match operand {
+            Operand::Logsumexp | Operand::Delta => self.item.sum,
+            _ => self.item.element,
+        };
+        TileTensorLaunch::new(arg, element, 1, TileSpec::direct(operand.axes()))
+    }
 }

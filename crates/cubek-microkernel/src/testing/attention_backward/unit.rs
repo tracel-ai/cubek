@@ -2,7 +2,7 @@
 //! every key into their gradient, or one unit's keys walked over every query into theirs and their
 //! values'. The cube's only unit runs it.
 
-use crate::attention::{AttentionVisibility, B, D, DV, G, KV, Q, S, VisibleKeys};
+use crate::attention::{AttentionVisibility, B, G, KV, Q, S, VisibleKeys};
 use crate::attention_backward::key_gradient::unit::{
     UnitKeyGradientMicrokernel, UnitKeyGradientMicrokernelSettings, unit_key_gradient_microkernel,
 };
@@ -12,62 +12,22 @@ use crate::attention_backward::query_gradient::unit::{
 };
 use crate::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::UnitCube;
-use cubecl::tile::{Launcher, Level, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch};
+use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
-use super::{AttentionBackwardLaunch, AttentionBackwardOperandArgs, AttentionBackwardWrites};
+use super::{
+    AttentionBackwardLaunch, AttentionBackwardOperandArgs, AttentionBackwardWrites, OneSequence,
+};
 
 /// The one unit a launch here holds.
 const ONE_UNIT: UnitCube = UnitCube {
     plane_width: 1,
     planes: 1,
 };
-
-/// A launch over one sequence of `seq` queries and keys, its levels' one cube a unit.
-struct OneUnitLaunch {
-    item: AttentionBackwardWorkItem,
-    seq: [usize; 2],
-}
-
-impl OneUnitLaunch {
-    /// The launcher of `levels` over the sequence.
-    ///
-    /// # Errors
-    ///
-    /// Why the tile DSL cannot place it.
-    fn launcher(&self, client: &Client, levels: Vec<Level>) -> Result<Launcher, Refusal> {
-        let [queries, keys] = self.seq;
-        let space = Space::new(&[
-            (B, 1),
-            (KV, 1),
-            (G, self.item.group),
-            (Q, queries),
-            (S, keys),
-            (D, self.item.head_dim),
-            (DV, self.item.val_dim),
-        ]);
-        let partitioning = Partitioning::new(space.clone(), levels);
-        let grid = Grid::Stated {
-            cube_count: partitioning.cube_count(),
-            cube_dim: partitioning.cube_dim(1),
-        };
-        Launcher::new(client, partitioning, &space, grid)
-    }
-
-    /// `arg` bound along `operand`'s axes, one element a line.
-    fn bound(&self, arg: TensorArg, operand: AttentionBackwardOperand) -> TileTensorLaunch {
-        use AttentionBackwardOperand as Operand;
-        let element = match operand {
-            Operand::Logsumexp | Operand::Delta => self.item.sum,
-            _ => self.item.element,
-        };
-        TileTensorLaunch::new(arg, element, 1, TileSpec::direct(operand.axes()))
-    }
-}
 
 /// One unit query gradient microkernel ready to launch on one unit's queries over `steps` of its
 /// steps of keys.
@@ -117,7 +77,7 @@ impl AttentionBackwardLaunch for UnitQueryGradientLaunch {
         scale: f32,
     ) -> Result<(), Refusal> {
         use AttentionBackwardOperand as Operand;
-        let one_unit = OneUnitLaunch {
+        let sequence = OneSequence {
             item: self.item,
             seq: self.seq,
         };
@@ -126,9 +86,9 @@ impl AttentionBackwardLaunch for UnitQueryGradientLaunch {
             .tiling()
             .launch_units(&[Q, G, B, KV], ONE_UNIT)
             .build();
-        let launcher = one_unit.launcher(client, levels)?;
+        let launcher = sequence.launcher(client, levels, 1)?;
         let [queries, keys] = self.seq;
-        let bound = |arg, operand| one_unit.bound(arg, operand);
+        let bound = |arg, operand| sequence.bound(arg, operand);
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles.
         unsafe {
@@ -204,7 +164,7 @@ impl AttentionBackwardLaunch for UnitKeyGradientLaunch {
         scale: f32,
     ) -> Result<(), Refusal> {
         use AttentionBackwardOperand as Operand;
-        let one_unit = OneUnitLaunch {
+        let sequence = OneSequence {
             item: self.item,
             seq: self.seq,
         };
@@ -213,9 +173,9 @@ impl AttentionBackwardLaunch for UnitKeyGradientLaunch {
             .tiling()
             .launch_units(&[S, B, KV], ONE_UNIT)
             .build();
-        let launcher = one_unit.launcher(client, levels)?;
+        let launcher = sequence.launcher(client, levels, 1)?;
         let [queries, keys] = self.seq;
-        let bound = |arg, operand| one_unit.bound(arg, operand);
+        let bound = |arg, operand| sequence.bound(arg, operand);
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles.
         unsafe {
