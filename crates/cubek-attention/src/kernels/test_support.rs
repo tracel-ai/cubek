@@ -45,6 +45,7 @@ pub(crate) fn qwen(queries: usize, keys: usize) -> AttentionRoutineProblem {
         ScoreScale::standard(128),
         None,
         false,
+        false,
     );
     AttentionRoutineProblem::try_from(&key).expect("an even group")
 }

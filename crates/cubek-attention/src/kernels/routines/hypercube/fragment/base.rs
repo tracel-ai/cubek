@@ -3,7 +3,7 @@ use crate::kernels::routines::hypercube::merge::HypercubeSecondLaunch;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
     AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
-    HypercubeMerge, QueryOrder,
+    HypercubeMerge, PACKED_QUERIES_UNREAD, QueryOrder,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
@@ -129,6 +129,9 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
         if let AttentionCacheLayout::Packed(_) = problem.cache {
             return Err(ATTENTION_PACKED_UNREAD);
         }
+        if problem.packed_queries {
+            return Err(PACKED_QUERIES_UNREAD);
+        }
         let item = problem.work_item();
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
         microkernel
@@ -203,10 +206,10 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 tensors.client(),
                 grid.launch.cube_count,
                 grid.launch.cube_dim,
-                binding.query.arg(),
+                binding.query,
                 key,
                 value,
-                binding.out.arg(),
+                binding.out,
                 slots.out.clone().binding().into_tensor_arg(),
                 slots.max.clone().binding().into_tensor_arg(),
                 slots.sum.clone().binding().into_tensor_arg(),

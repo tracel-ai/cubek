@@ -7,9 +7,9 @@ use cubecl::tile::{Launcher, TileTensorLaunch};
 /// `Launcher` is not.
 pub struct AttentionBinding {
     pub launcher: Launcher,
-    pub query: Bound,
+    pub query: TileTensorLaunch,
     pub cache: AttentionCacheBinding,
-    pub out: Bound,
+    pub out: TileTensorLaunch,
     /// Each query's logsumexp, where the tensors ask for it.
     pub logsumexp: Option<Bound>,
     /// Which keys each query does not see, over `[B, KV, G, Q, S]`, where the tensors carry a
@@ -17,6 +17,8 @@ pub struct AttentionBinding {
     pub mask: Option<Bound>,
     /// The attended length of each sequence.
     pub lengths: TensorArg,
+    /// Where every sequence's queries lie end to end, their cumulative counts, one a sequence.
+    pub query_ends: Option<TensorArg>,
 }
 
 /// How a launch's keys and values are bound.
