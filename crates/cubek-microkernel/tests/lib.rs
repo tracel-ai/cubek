@@ -4,11 +4,19 @@
 
 #[cfg(feature = "attention")]
 mod attention;
+#[cfg(feature = "interpolate")]
+mod interpolate;
+#[cfg(feature = "linear-recurrence")]
+mod linear_recurrence;
 #[cfg(feature = "matmul")]
 mod matmul;
+#[cfg(feature = "pool")]
+mod pool;
 #[cfg(feature = "random")]
 mod random;
 #[cfg(feature = "reduce")]
 mod reduce;
+#[cfg(feature = "rms-norm")]
+mod rms_norm;
 #[cfg(feature = "swiglu")]
 mod swiglu;

@@ -7,9 +7,21 @@
 
 #[cfg(feature = "attention")]
 pub mod attention;
+#[cfg(feature = "interpolate")]
+pub mod interpolate;
+#[cfg(feature = "linear-recurrence")]
+pub mod linear_recurrence;
 #[cfg(feature = "matmul")]
 pub mod matmul;
+#[cfg(feature = "pool")]
+pub mod pool;
 #[cfg(feature = "random")]
 pub mod random;
 #[cfg(feature = "reduce")]
 pub mod reduce;
+#[cfg(feature = "rms-norm")]
+pub mod rms_norm;
+#[cfg(feature = "swiglu")]
+pub mod swiglu;
+#[cfg(any(feature = "pool", feature = "interpolate"))]
+mod window;

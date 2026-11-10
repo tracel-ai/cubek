@@ -41,6 +41,7 @@ serde = { workspace = true }
 
 [dev-dependencies]
 cubek-test-utils = { workspace = true }
+half = { workspace = true }
 
 [[test]]
 name = "lib"
