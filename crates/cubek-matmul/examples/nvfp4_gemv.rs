@@ -9,8 +9,8 @@
 //! cargo run --release -p cubek-matmul --example nvfp4_gemv --features cubecl/hip
 //! ```
 //!
-//! `NVFP4_ROUNDS` sets the rounds, `NVFP4_SHAPE` keeps one shape, `NVFP4_ONLY` keeps the settings
-//! whose name contains it.
+//! `NVFP4_M` sets the rows (1), `NVFP4_ROUNDS` the rounds (3), `NVFP4_SHAPE` keeps one shape,
+//! `NVFP4_ONLY` keeps the settings whose name contains it.
 
 use std::time::Duration;
 

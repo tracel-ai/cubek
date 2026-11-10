@@ -4,7 +4,6 @@ use crate::kernels::{
     MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::quant::scheme::ScaleDtype;
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
@@ -99,16 +98,14 @@ impl CubeShuffleMatmulRoutine {
     }
 
     /// A setting reading the rhs a block at a time against one that reads none so
-    /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)): one not in rows,
-    /// or whose block scales are not `ue4m3`, the only ones bound a byte apiece. A word of any
-    /// other scale's fields is served whole, which a read of one scale cuts.
+    /// ([`Packing::by_block`]): one not in rows, or whose block scales are not `ue4m3`.
     pub const BY_BLOCK_UNREAD: Refusal = Refusal::Declined {
         why: "a cube shuffle reading the rhs a block at a time needs a packed rhs in rows under \
               ue4m3 block scales whose blocks are whole reads",
     };
 
-    /// `problem` with its packed rhs read a block at a time, where its scales are `ue4m3` bytes
-    /// in rows ([`BY_BLOCK_UNREAD`](Self::BY_BLOCK_UNREAD) where not).
+    /// `problem` with its packed rhs read a block at a time ([`Packing::by_block`];
+    /// [`BY_BLOCK_UNREAD`](Self::BY_BLOCK_UNREAD) where it reads none so).
     pub fn rhs_by_block(problem: &MatmulRoutineProblem) -> Result<MatmulRoutineProblem, Refusal> {
         let mut by_block = problem.clone();
         let rhs = by_block
@@ -116,15 +113,7 @@ impl CubeShuffleMatmulRoutine {
             .rhs
             .as_mut()
             .ok_or(Self::BY_BLOCK_UNREAD)?;
-        let bytes = rhs
-            .scheme
-            .block_scale()
-            .is_some_and(|block| block.dtype == ScaleDtype::UE4M3);
-        rhs.operand = rhs
-            .operand
-            .by_block()
-            .filter(|_| bytes)
-            .ok_or(Self::BY_BLOCK_UNREAD)?;
+        *rhs = rhs.by_block().ok_or(Self::BY_BLOCK_UNREAD)?;
         Ok(by_block)
     }
 

@@ -274,7 +274,8 @@ impl CubeShuffleMicrokernel {
         let planned = !by_block
             || item
                 .blocks
-                .is_some_and(|space| space.operand(MatmulOperand::Rhs).reads_scales_alone());
+                .and_then(|space| space.packings.rhs)
+                .is_some_and(|packing| packing.reads_scale_bytes());
         let planes = (planned && PlaneShuffleMicrokernel::admits(item).is_ok())
             .then(|| PlaneShuffleMicrokernel::candidates(hw, item, settings));
         planes.into_iter().flatten().filter_map(move |plane| {

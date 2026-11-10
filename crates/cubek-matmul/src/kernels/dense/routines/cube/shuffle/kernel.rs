@@ -8,6 +8,7 @@ use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 /// the scales it carries, none where it is plain. `O` is how the output is reached: a buffer, or a
 /// sink. A `persistent` launch's cubes each walk a run of the boxes rather than take one.
 #[cube(launch_unchecked)]
+#[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destination>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
@@ -25,37 +26,25 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
     let b = rhs.tile(&partitioning);
     let c = O::tile::<E, VO>(out, &partitioning);
 
-    if persistent {
-        // Its run of the boxes, whole boxes each: the cube level shares them as one index.
-        let portion = partitioning.walk().portion_of(1usize);
-        for i in 0..portion.touched() {
-            let cube = portion.region(i);
-            cube_shuffle_microkernel::<EA>(
-                &cube,
-                &c.at(&cube),
-                &a.at(&cube),
-                &b.at(&cube),
-                instruction,
-                meet,
-                split,
-                planes,
-                reads,
-            );
-        }
+    // A persistent cube's run of the boxes, whole boxes each, the cube level sharing them as one
+    // index; every other cube's one box.
+    let cubes = if persistent {
+        partitioning.walk().portion_of(1usize).regions()
     } else {
-        for cube in &partitioning {
-            cube_shuffle_microkernel::<EA>(
-                &cube,
-                &c.at(&cube),
-                &a.at(&cube),
-                &b.at(&cube),
-                instruction,
-                meet,
-                split,
-                planes,
-                reads,
-            );
-        }
+        partitioning.walk()
+    };
+    for cube in cubes {
+        cube_shuffle_microkernel::<EA>(
+            &cube,
+            &c.at(&cube),
+            &a.at(&cube),
+            &b.at(&cube),
+            instruction,
+            meet,
+            split,
+            planes,
+            reads,
+        );
     }
     O::finish::<E>(out);
 }
