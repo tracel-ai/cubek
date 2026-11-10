@@ -18,5 +18,7 @@ mod random;
 mod reduce;
 #[cfg(feature = "rms-norm")]
 mod rms_norm;
+#[cfg(feature = "attention")]
+mod split_keys_merge;
 #[cfg(feature = "swiglu")]
 mod swiglu;

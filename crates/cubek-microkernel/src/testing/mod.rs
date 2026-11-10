@@ -21,6 +21,8 @@ pub mod random;
 pub mod reduce;
 #[cfg(feature = "rms-norm")]
 pub mod rms_norm;
+#[cfg(feature = "attention")]
+pub mod split_keys_merge;
 #[cfg(feature = "swiglu")]
 pub mod swiglu;
 #[cfg(any(feature = "pool", feature = "interpolate"))]
