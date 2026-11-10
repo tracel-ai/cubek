@@ -7,6 +7,9 @@
 //! reads its own context columns and writes nothing back. The microkernel is
 //! [`cubek_microkernel::linear_recurrence::conv`]'s.
 
+mod past;
 mod qk_normed;
+mod reads;
 
+pub use past::*;
 pub use qk_normed::*;

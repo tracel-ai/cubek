@@ -3,6 +3,7 @@
 
 mod base;
 mod convolved_head;
+mod head_channels;
 mod microkernel;
 mod qk_scale;
 mod tiles;

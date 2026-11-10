@@ -1,11 +1,12 @@
 use super::kernel::cube_qk_normed_conv_kernel;
+use crate::kernels::conv::reads::CausalConvReads;
 use crate::kernels::conv::{
     CausalConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
     QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors,
 };
 use crate::kernels::refusals::admit_on_device;
 use cubecl::tile::launch::{Refusal, Vectorization};
-use cubek_microkernel::linear_recurrence::QkNormedConvPartitioning;
+use cubek_microkernel::linear_recurrence::CausalConvPartitioning;
 use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperand;
 use cubek_microkernel::linear_recurrence::conv::cube::{
     CubeQkNormedConvMicrokernel, QkNormedConvSettings,
@@ -61,7 +62,7 @@ impl CubeQkNormedConvRoutine {
     ) -> QkNormedConvOutputs {
         let binding = tensors.bind(&blueprint, &grid);
         // SAFETY: every operand is bound through the launcher and indexed only through its tile,
-        // whose reads past an edge are masked. A unit writes only the window channels it reads, and
+        // whose reads past an edge are masked. A unit writes only the ring channels it reads, and
         // a cube only its own position and key head of the outputs.
         unsafe {
             cube_qk_normed_conv_kernel::launch_unchecked(
@@ -69,10 +70,10 @@ impl CubeQkNormedConvRoutine {
                 grid.launch.cube_count,
                 grid.launch.cube_dim,
                 blueprint.width,
-                binding.qkv,
-                binding.filters,
-                binding.window.into(),
-                binding.lengths.into(),
+                binding.reads.input,
+                binding.reads.filters,
+                binding.reads.ring.into(),
+                binding.reads.lengths.into(),
                 binding.query,
                 binding.key,
                 binding.value,
@@ -95,7 +96,7 @@ impl CubeQkNormedConvRoutine {
 /// device lacks the activations' element or `f32`, or what [`QkNormedConvProblem::admit`]
 /// declines.
 pub fn serves(hw: &Hardware, problem: &QkNormedConvProblem) -> Result<(), Refusal> {
-    QkNormedConvProblem::admit_element(problem.element)?;
+    CausalConvReads::admit_element(problem.element)?;
     admit_on_device(hw, [problem.element, QK_NORMED_CONV_OUTPUT_ELEMENT])?;
     problem.admit(hw)
 }
@@ -105,7 +106,7 @@ impl Routine for CubeQkNormedConvRoutine {
     type Microkernel = CubeQkNormedConvMicrokernel;
     type Settings = QkNormedConvSettings;
     type Blueprint = QkNormedConvBlueprint;
-    type Partitioning = QkNormedConvPartitioning;
+    type Partitioning = CausalConvPartitioning;
 
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         CubeQkNormedConvMicrokernel::settings(hw)
@@ -114,7 +115,7 @@ impl Routine for CubeQkNormedConvRoutine {
     fn vectorize(
         &self,
         microkernel: &CubeQkNormedConvMicrokernel,
-        _: &QkNormedConvPartitioning,
+        _: &CausalConvPartitioning,
         vectorization: &mut Vectorization<QkNormedConvOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);

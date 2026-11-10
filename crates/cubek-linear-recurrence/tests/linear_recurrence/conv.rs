@@ -363,7 +363,7 @@ impl ConvCase {
             qkv,
             filters,
             past: CausalConvPastInputs::Window {
-                window,
+                ring: window,
                 slots: table(client, self.rows.iter().map(|&(s, _)| s as u32).collect()),
                 lengths: table(client, self.rows.iter().map(|&(_, p)| p as u32).collect()),
             },

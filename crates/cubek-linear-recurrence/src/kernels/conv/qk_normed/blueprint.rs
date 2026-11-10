@@ -9,7 +9,7 @@ use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperand;
 use cubek_microkernel::linear_recurrence::conv::cube::{
     CubeQkNormedConvMicrokernel, QkNormedConvSettings,
 };
-use cubek_microkernel::linear_recurrence::{HEAD_CHANNEL, QkNormedConvPartitioning};
+use cubek_microkernel::linear_recurrence::{CausalConvPartitioning, HEAD_CHANNEL, KEY_HEAD};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_std::routine::{CubeResources, Grid};
@@ -19,7 +19,7 @@ use cubek_std::routine::{CubeResources, Grid};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QkNormedConvBlueprint {
     pub microkernel: CubeQkNormedConvMicrokernel,
-    pub partitioning: QkNormedConvPartitioning,
+    pub partitioning: CausalConvPartitioning,
     pub width: usize,
 }
 
@@ -39,9 +39,10 @@ impl QkNormedConvBlueprint {
             units: provisional.units.min(lines),
             ..provisional
         };
-        let partitioning = QkNormedConvPartitioning::new(
+        let partitioning = CausalConvPartitioning::new(
             problem.space(),
             Levels::leaf(&problem.leaf(width)).units_distributed(HEAD_CHANNEL, lines),
+            KEY_HEAD,
         );
         let cube = CubeResources {
             plane_width: microkernel.units as u32,

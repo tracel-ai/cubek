@@ -1,20 +1,19 @@
 //! The problem a conv routine computes.
 
-use crate::kernels::conv::CubeQkNormedConvRoutine;
+use crate::kernels::conv::reads::CausalConvReads;
+use crate::kernels::conv::{CausalConvPast, CubeQkNormedConvRoutine};
 use crate::kernels::refusals::{
-    CONV_BINDINGS_PAST_DEVICE, CONV_ELEMENT_UNSUPPORTED, CONV_NOTHING_TO_CONVOLVE,
-    CONV_TAPS_PAST_WINDOW, QK_NORMED_CONV_HEADS_EMPTY, QK_NORMED_CONV_STREAM_BINDING_BUFFERS,
-    QK_NORMED_CONV_WINDOW_BINDING_BUFFERS,
+    CONV_BINDINGS_PAST_DEVICE, CONV_NOTHING_TO_CONVOLVE, CONV_TAPS_PAST_WINDOW,
+    QK_NORMED_CONV_HEADS_EMPTY,
 };
-use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Space};
 use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
+use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperandMap;
 use cubek_microkernel::linear_recurrence::conv::cube::QkNormedConvWorkItem;
-use cubek_microkernel::linear_recurrence::conv::{QkNormedConvOperand, QkNormedConvOperandMap};
 use cubek_microkernel::linear_recurrence::{
     BATCH, CHANNEL, HEAD_CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RING_COLUMN,
     RecurrenceHeads, STORE_SLOT, STREAM_POSITION, TAP, VALUE_FEATURE,
@@ -25,60 +24,6 @@ use cubek_std::routine::{EstimatedProblem, Routine};
 /// The element the queries, keys and values are written at: `f32`, as the walk reads them.
 pub const QK_NORMED_CONV_OUTPUT_ELEMENT: ElemType = ElemType::Float(FloatKind::F32);
 
-/// The activation elements the conv is verified at.
-const ELEMENTS: [ElemType; 2] = [
-    ElemType::Float(FloatKind::F16),
-    ElemType::Float(FloatKind::F32),
-];
-
-/// Where a conv reads the past values its taps run over.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CausalConvPast {
-    /// A store of `slots` windows of `columns` ring columns. A row reads the columns its
-    /// convolved positions fill and writes its newest values as the ring's next column.
-    Window { slots: NonZeroUsize, columns: usize },
-    /// The stream of `positions` positions of each sequence, `taps - 1` context columns before
-    /// them: tap `j` of position `t` is the stream's value `t + j`, and nothing is written back.
-    /// A caller that goes on with a window seeds it from the stream's tail: a row that has
-    /// convolved `P` positions reads tap `j` at ring column `(P + j - (taps - 1)) % columns`.
-    Stream { positions: usize },
-}
-
-impl CausalConvPast {
-    /// The buffers a conv over this past binds, the metadata buffer included.
-    pub fn binding_buffers(&self) -> u32 {
-        match self {
-            Self::Window { .. } => QK_NORMED_CONV_WINDOW_BINDING_BUFFERS,
-            Self::Stream { .. } => QK_NORMED_CONV_STREAM_BINDING_BUFFERS,
-        }
-    }
-
-    /// The ring length the kernel is told; over a stream it is zero and unread.
-    pub fn columns(&self) -> usize {
-        match self {
-            Self::Window { columns, .. } => *columns,
-            Self::Stream { .. } => 0,
-        }
-    }
-
-    /// The operands of the conv this past binds, which a line of channels runs along.
-    pub fn channels(&self) -> &'static [QkNormedConvOperand] {
-        match self {
-            Self::Window { .. } => &QkNormedConvOperand::WINDOW_CHANNELS,
-            Self::Stream { .. } => &QkNormedConvOperand::STREAM_CHANNELS,
-        }
-    }
-
-    /// The columns of a stream of `taps` taps: its context columns and its positions. Zero over a
-    /// window, which has no stream.
-    pub fn stream_len(&self, taps: usize) -> usize {
-        match self {
-            Self::Window { .. } => 0,
-            Self::Stream { positions } => (positions + taps).saturating_sub(1),
-        }
-    }
-}
-
 /// The conv over `batch` rows of one position each, or sequences of positions: the `q|k|v` stream
 /// of `heads` and a filter of `taps`, in activations of `element`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,7 +32,7 @@ pub struct QkNormedConvProblem {
     pub heads: RecurrenceHeads,
     /// Taps of the filter, the newest the row's own value.
     pub taps: usize,
-    /// The element of the stream, the filters and the window.
+    /// The element of the stream, the filters and the ring.
     pub element: ElemType,
     /// Where the past the taps read lives.
     pub past: CausalConvPast,
@@ -98,19 +43,6 @@ pub struct QkNormedConvProblem {
 }
 
 impl QkNormedConvProblem {
-    /// Whether the conv reads and writes activations of `element`.
-    ///
-    /// # Errors
-    ///
-    /// [`CONV_ELEMENT_UNSUPPORTED`] for any but `f16` and `f32`.
-    pub fn admit_element(element: ElemType) -> Result<(), Refusal> {
-        if ELEMENTS.contains(&element) {
-            Ok(())
-        } else {
-            Err(CONV_ELEMENT_UNSUPPORTED)
-        }
-    }
-
     /// Whether a device launches the conv at all: the routine preparing.
     ///
     /// # Errors
@@ -131,7 +63,7 @@ impl QkNormedConvProblem {
         if self.batch == 0 || self.past == (CausalConvPast::Stream { positions: 0 }) {
             return Err(CONV_NOTHING_TO_CONVOLVE);
         }
-        Self::admit_element(self.element)?;
+        CausalConvReads::admit_element(self.element)?;
         let window_short = match self.past {
             CausalConvPast::Window { columns, .. } => columns + 1 < self.taps,
             CausalConvPast::Stream { .. } => false,
@@ -220,7 +152,7 @@ impl QkNormedConvProblem {
                 QkNormedConvOperandMap {
                     qkv: rows(&[batch, conv_dim]),
                     filters: rows(&[conv_dim, taps]),
-                    window: rows(&[slots.get(), columns, conv_dim]),
+                    ring: rows(&[slots.get(), columns, conv_dim]),
                     lengths: rows(&[batch]),
                     query: keyed,
                     key: keyed,
@@ -302,6 +234,8 @@ pub(crate) mod fixtures {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::refusals::CONV_ELEMENT_UNSUPPORTED;
+    use core::num::NonZeroUsize;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

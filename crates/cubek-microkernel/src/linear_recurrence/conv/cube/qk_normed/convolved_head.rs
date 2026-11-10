@@ -1,15 +1,10 @@
 use super::base::CubeQkNormedConvMicrokernel;
+use super::head_channels::HeadChannels;
 use super::tiles::QkNormedConvTiles;
-use crate::linear_recurrence::conv::cube::past_taps::PastTaps;
-use crate::linear_recurrence::{CHANNEL, HEAD_CHANNEL};
-use cubecl::tile::{Region, Tile};
+use crate::linear_recurrence::HEAD_CHANNEL;
+use crate::linear_recurrence::conv::cube::{CausalFilters, PastTaps};
+use cubecl::tile::Region;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
-
-/// The logistic function.
-#[cube]
-fn sigmoid(x: f32) -> f32 {
-    1.0f32 / (1.0f32 + (-x).exp())
-}
 
 /// A key head's convolved queries then keys in shared memory, and each line's sum of squares.
 #[derive(CubeType)]
@@ -59,26 +54,19 @@ impl<N: Size> ConvolvedHead<N> {
         &mut self,
         cube: &Region,
         tiles: &mut QkNormedConvTiles,
-        head: usize,
+        channels: &HeadChannels,
     ) {
-        let microkernel = comptime!(self.microkernel);
         let width = N::value();
-        let read_columns = microkernel.taps - 1;
-        let past = PastTaps::new(cube, &*tiles, read_columns);
+        let read_columns = comptime!(self.microkernel.taps - 1);
+        let past = PastTaps::new(cube, &tiles.past, read_columns);
+        let filters = CausalFilters::new(&tiles.filters, self.microkernel.taps);
         let mut values = tiles.value.flat_mut::<f32, N>();
         for share in cube {
             let part = share.coord(HEAD_CHANNEL);
-            let first = self.first_channel(part * width, head);
+            let first = channels.first(part * width);
             let line = first / width;
             let newest = past.newest::<E, N>(line);
-            let mut sums =
-                Self::widened(newest) * Self::weights::<E>(&tiles.filters, first, read_columns);
-            #[unroll]
-            for column in 0..read_columns {
-                let behind = Self::widened(past.behind::<E, N>(column, line));
-                sums += behind * Self::weights::<E>(&tiles.filters, first, column);
-            }
-            let convolved = Self::activated::<E>(sums);
+            let convolved = filters.convolved_line::<E, N>(&past, newest, line);
             past.advance::<E, N>(line, newest);
             if self.holds_query_or_key(part) {
                 self.keep(part, convolved);
@@ -108,58 +96,5 @@ impl<N: Size> ConvolvedHead<N> {
             squares += x * x;
         }
         self.squares[part] = squares;
-    }
-
-    fn weights<E: Float>(filters: &Tile, first: usize, tap: usize) -> Vector<f32, N> {
-        let width = N::value();
-        let mut weights = Vector::<f32, N>::cast_from(0.0f32);
-        #[unroll]
-        for lane in 0..width {
-            let row = filters.within(CHANNEL, first + lane, first + lane + 1);
-            let weight = row.flat::<E, Const<1>>().read(tap).extract(0usize);
-            weights.insert(lane, f32::cast_from(weight));
-        }
-        weights
-    }
-
-    fn widened<E: Float>(line: Vector<E, N>) -> Vector<f32, N> {
-        let width = N::value();
-        let mut widened = Vector::<f32, N>::cast_from(0.0f32);
-        #[unroll]
-        for lane in 0..width {
-            widened.insert(lane, f32::cast_from(line.extract(lane)));
-        }
-        widened
-    }
-
-    /// The stream channel of the head's channel `local`: the queries, keys and values come from
-    /// three ranges of the stream that no one window of its tile spans.
-    fn first_channel(&self, local: usize, head: usize) -> usize {
-        let heads = comptime!(self.microkernel.heads);
-        let (key_features, heads_per_group, value_features) = comptime!((
-            heads.key_features,
-            heads.heads_per_group,
-            heads.value_features
-        ));
-        let key_dim = heads.key_dim();
-        if local < key_features {
-            head * key_features + local
-        } else if local < 2 * key_features {
-            key_dim + head * key_features + (local - key_features)
-        } else {
-            2 * key_dim + head * heads_per_group * value_features + (local - 2 * key_features)
-        }
-    }
-
-    /// The silu of `sums`, rounded to `E` before and after as composed ops hold them.
-    fn activated<E: Float>(sums: Vector<f32, N>) -> Vector<f32, N> {
-        let width = N::value();
-        let mut convolved = Vector::<f32, N>::cast_from(0.0f32);
-        #[unroll]
-        for lane in 0..width {
-            let mixed = f32::cast_from(E::cast_from(sums.extract(lane)));
-            convolved.insert(lane, f32::cast_from(E::cast_from(mixed * sigmoid(mixed))));
-        }
-        convolved
     }
 }

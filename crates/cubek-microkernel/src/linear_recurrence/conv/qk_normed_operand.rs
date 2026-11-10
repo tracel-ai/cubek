@@ -9,7 +9,7 @@ pub enum QkNormedConvOperand {
     /// `[channel, tap]`: the filter of every channel, its newest tap last.
     Filters,
     /// `[store_slot, ring_column, channel]`: the past values of every channel, a ring a slot.
-    Window,
+    Ring,
     /// `[batch]`: the positions each row has convolved already.
     Lengths,
     /// `[batch, key_head, key_feature]`: the queries, normalized and scaled.
@@ -23,7 +23,7 @@ pub enum QkNormedConvOperand {
 impl QkNormedConvOperand {
     /// The operands a line of channels runs along over a window.
     pub const WINDOW_CHANNELS: [Self; 5] =
-        [Self::Qkv, Self::Window, Self::Query, Self::Key, Self::Value];
+        [Self::Qkv, Self::Ring, Self::Query, Self::Key, Self::Value];
 
     /// The operands a line of channels runs along over a stream, which has no window.
     pub const STREAM_CHANNELS: [Self; 4] = [Self::Qkv, Self::Query, Self::Key, Self::Value];
@@ -57,7 +57,7 @@ impl QkNormedConvOperand {
 pub struct QkNormedConvOperandMap<T> {
     pub qkv: T,
     pub filters: T,
-    pub window: T,
+    pub ring: T,
     pub lengths: T,
     pub query: T,
     pub key: T,
@@ -70,7 +70,7 @@ impl<T: Copy> QkNormedConvOperandMap<T> {
         Self {
             qkv: value,
             filters: value,
-            window: value,
+            ring: value,
             lengths: value,
             query: value,
             key: value,
@@ -83,7 +83,7 @@ impl<T: Copy> QkNormedConvOperandMap<T> {
         match operand {
             QkNormedConvOperand::Qkv => self.qkv,
             QkNormedConvOperand::Filters => self.filters,
-            QkNormedConvOperand::Window => self.window,
+            QkNormedConvOperand::Ring => self.ring,
             QkNormedConvOperand::Lengths => self.lengths,
             QkNormedConvOperand::Query => self.query,
             QkNormedConvOperand::Key => self.key,

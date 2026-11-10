@@ -1,35 +1,26 @@
+use crate::linear_recurrence::conv::cube::PastTiles;
 use cubecl::tile::{Region, Tile};
-use cubecl::{self as cubecl, CubeType, cube, prelude::*};
+use cubecl::{self as cubecl, CubeType, cube};
 
-/// Every operand of the conv as a tile. The window and the lengths are absent over a stream.
+/// Every operand of the conv as a tile.
 #[derive(CubeType)]
 pub struct QkNormedConvTiles {
-    /// The row's newest values over a window, the sequence's whole stream, its context columns
-    /// first, over a stream.
-    pub qkv: Tile,
+    pub past: PastTiles,
     pub filters: Tile,
-    /// The window store, placed at the row's slot.
-    pub window: ComptimeOption<Tile>,
-    pub lengths: ComptimeOption<Tile>,
     pub query: Tile,
     pub key: Tile,
     pub value: Tile,
-    /// The ring's columns, the one extent of the window no tile carries.
-    pub columns: usize,
 }
 
 #[cube]
 impl QkNormedConvTiles {
     pub fn at(&self, region: &Region) -> QkNormedConvTiles {
         QkNormedConvTiles {
-            qkv: self.qkv.at(region),
+            past: self.past.at(region),
             filters: self.filters.at(region),
-            window: self.window.clone().map(|window| window.at(region)),
-            lengths: self.lengths.clone().map(|lengths| lengths.at(region)),
             query: self.query.at(region),
             key: self.key.at(region),
             value: self.value.at(region),
-            columns: self.columns,
         }
     }
 }

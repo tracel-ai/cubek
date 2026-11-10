@@ -1,26 +1,24 @@
 //! How a conv reads its operands and binds them.
 
+use crate::kernels::conv::reads::{BoundReads, CausalConvReads, bound};
 use crate::kernels::conv::{
-    CausalConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvProblem,
+    CausalConvPast, CausalConvPastInputs, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint,
+    QkNormedConvProblem,
 };
-use crate::kernels::refusals::CONV_NOTHING_TO_CONVOLVE;
-use core::num::NonZeroUsize;
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
+use cubecl::tile::{Axis, Launcher, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperandMap;
 use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RING_COLUMN, RecurrenceHeads,
-    STORE_SLOT, STREAM_POSITION, TAP, VALUE_FEATURE,
+    BATCH, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceHeads, VALUE_FEATURE,
 };
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
+use cubek_std::routine::Grid;
 
 /// The inputs of a conv: the `q|k|v` stream, the filters `[conv_dim, taps]` (a unit dim between
 /// allowed) and the past, all in one element. Over a window the stream holds the newest values
@@ -38,25 +36,6 @@ pub struct QkNormedConvInputs {
     pub heads: RecurrenceHeads,
     /// Added to the sum of squares of a head's queries and of its keys before the square root.
     pub epsilon: f32,
-}
-
-/// The past a conv's taps run over.
-// Built once a call and consumed by it, so the larger variant costs one copy of a few handles.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone)]
-pub enum CausalConvPastInputs {
-    /// A window store `[slots, columns, conv_dim]`, its slots and columns at any stride. Each row
-    /// has the slot it lies in (`slots`, `[rows]`, `u32`) and the positions it has convolved
-    /// (`lengths`, `[rows]`, `u32`); a row with none uses nothing of its slot. Two rows may share
-    /// a slot only if it is never read again, and a slot past the store's last reads and writes
-    /// the last.
-    Window {
-        window: PlainTensor,
-        slots: PlainTensor,
-        lengths: PlainTensor,
-    },
-    /// The stream's own context columns.
-    Stream,
 }
 
 impl core::fmt::Debug for QkNormedConvInputs {
@@ -131,13 +110,10 @@ impl QkNormedConvOutputs {
 /// problem they state.
 #[derive(Clone)]
 pub struct QkNormedConvTensors {
-    client: Client,
-    qkv: PlainTensor,
-    filters: PlainTensor,
+    reads: CausalConvReads,
     query: PlainTensor,
     key: PlainTensor,
     value: PlainTensor,
-    past: CausalConvPastInputs,
     outputs: QkNormedConvOutputs,
     epsilon: f32,
     problem: QkNormedConvProblem,
@@ -146,66 +122,10 @@ pub struct QkNormedConvTensors {
 /// The operands of a launch bound under one launcher. Not `Debug`: cubek's `Launcher` is not.
 pub(crate) struct QkNormedConvBinding {
     pub launcher: Launcher,
-    pub qkv: TileTensorLaunch,
-    pub filters: TileTensorLaunch,
+    pub reads: BoundReads,
     pub query: TileTensorLaunch,
     pub key: TileTensorLaunch,
     pub value: TileTensorLaunch,
-    /// Over a window, the row's store placed by the slot table.
-    pub window: Option<TileTensorLaunch>,
-    /// Over a window, the positions each row has convolved.
-    pub lengths: Option<TileTensorLaunch>,
-}
-
-impl CausalConvPastInputs {
-    /// The store, which only a window has.
-    fn window(&self) -> Option<&PlainTensor> {
-        match self {
-            Self::Window { window, .. } => Some(window),
-            Self::Stream => None,
-        }
-    }
-
-    /// The positions each row has convolved, which only a window has.
-    fn lengths(&self) -> Option<&PlainTensor> {
-        match self {
-            Self::Window { lengths, .. } => Some(lengths),
-            Self::Stream => None,
-        }
-    }
-
-    /// The window and the lengths bound under `launcher`, `width` values a line.
-    fn bind(
-        &self,
-        launcher: &Launcher,
-        width: usize,
-    ) -> (Option<TileTensorLaunch>, Option<TileTensorLaunch>) {
-        match self {
-            Self::Window {
-                window,
-                slots,
-                lengths,
-            } => {
-                let entries = TileTensorLaunch::new(
-                    slots.binding.clone().into_tensor_arg(),
-                    slots.elem,
-                    1,
-                    TileSpec::direct(&[BATCH]),
-                );
-                let window = QkNormedConvTensors::bound(
-                    launcher,
-                    window,
-                    &[STORE_SLOT, RING_COLUMN, CHANNEL],
-                    width,
-                )
-                .indexed(entries, Indexing::Coordinate(STORE_SLOT))
-                .expect(ADMITTED_PLAN_RUNS);
-                let lengths = QkNormedConvTensors::bound(launcher, lengths, &[BATCH], 1);
-                (Some(window), Some(lengths))
-            }
-            Self::Stream => (None, None),
-        }
-    }
 }
 
 impl QkNormedConvTensors {
@@ -213,8 +133,9 @@ impl QkNormedConvTensors {
     ///
     /// # Errors
     ///
-    /// [`QkNormedConvProblem::admit_element`]'s refusal, [`CONV_NOTHING_TO_CONVOLVE`]
-    /// for no row or position, and [`ELEMENT_NOT_ON_DEVICE`].
+    /// [`CausalConvReads::admit_element`]'s refusal,
+    /// [`CONV_NOTHING_TO_CONVOLVE`](crate::kernels::refusals::CONV_NOTHING_TO_CONVOLVE) for no row
+    /// or position, and [`ELEMENT_NOT_ON_DEVICE`].
     ///
     /// # Panics
     ///
@@ -229,168 +150,52 @@ impl QkNormedConvTensors {
             heads,
             epsilon,
         } = inputs;
-        let element = qkv.elem;
-        QkNormedConvProblem::admit_element(element)?;
-        for tensor in [Some(&qkv), Some(&filters), past.window()]
-            .into_iter()
-            .flatten()
-        {
-            assert_eq!(tensor.elem, element, "the conv's operands share an element");
-            assert!(
-                tensor.binding.strides.last() == Some(&1),
-                "the innermost axis of an operand of the conv is contiguous"
-            );
-        }
-        if !qkv.runs_on(&client) {
-            return Err(ELEMENT_NOT_ON_DEVICE);
-        }
-        let conv_dim = heads.conv_dim();
-        let filter_shape = filters.shape().to_vec();
-        assert!(
-            filter_shape[0] == conv_dim
-                && filter_shape[1..filter_shape.len() - 1]
-                    .iter()
-                    .all(|&e| e == 1),
-            "the filters are [conv_dim, taps]"
-        );
-        let taps = *filter_shape.last().expect("filters have a tap axis");
-        let filters = filters.viewed(Metadata::new(
-            vec![conv_dim, taps],
-            vec![filters.binding.strides[0], 1],
-        ));
-        let (qkv, viewed, past) = match past {
-            CausalConvPastInputs::Window {
-                window,
-                slots,
-                lengths,
-            } => Self::shape_window(qkv, conv_dim, window, slots, lengths)?,
-            CausalConvPastInputs::Stream => Self::shape_stream(qkv, conv_dim, taps)?,
-        };
-        let batch = qkv.shape()[0];
+        let reads = CausalConvReads::new(client, qkv, filters, past, heads.conv_dim())?;
         let (outputs, [query, key, value]) =
-            QkNormedConvOutputs::allocate(&client, &heads, batch, &past)?;
+            QkNormedConvOutputs::allocate(&reads.client, &heads, reads.batch, &reads.shape)?;
+        let ring = reads.past.ring();
+        let lengths = reads.past.lengths();
         let alignments = QkNormedConvOperandMap {
-            qkv: qkv.elem_alignment(),
-            filters: filters.elem_alignment(),
-            window: (viewed.window()).map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
-            lengths: (viewed.lengths()).map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
+            qkv: reads.input.elem_alignment(),
+            filters: reads.filters.elem_alignment(),
+            ring: ring.map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
+            lengths: lengths.map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
             query: query.elem_alignment(),
             key: key.elem_alignment(),
             value: value.elem_alignment(),
         };
         let start_bytes = QkNormedConvOperandMap {
-            qkv: qkv.start_bytes(),
-            filters: filters.start_bytes(),
-            window: viewed.window().map_or(0, PlainTensor::start_bytes),
-            lengths: viewed.lengths().map_or(0, PlainTensor::start_bytes),
+            qkv: reads.input.start_bytes(),
+            filters: reads.filters.start_bytes(),
+            ring: ring.map_or(0, PlainTensor::start_bytes),
+            lengths: lengths.map_or(0, PlainTensor::start_bytes),
             query: query.start_bytes(),
             key: key.start_bytes(),
             value: value.start_bytes(),
         };
         let problem = QkNormedConvProblem {
-            batch,
+            batch: reads.batch,
             heads,
-            taps,
-            element,
-            past,
+            taps: reads.taps,
+            element: reads.element,
+            past: reads.shape,
             alignments,
             start_bytes,
         };
         Ok(Self {
-            client,
-            qkv,
-            filters,
+            reads,
             query,
             key,
             value,
-            past: viewed,
             outputs,
             epsilon,
             problem,
         })
     }
 
-    /// The inputs over a window: the stream `[rows, conv_dim]`, the store and its tables, viewed,
-    /// and the past they state.
-    fn shape_window(
-        qkv: PlainTensor,
-        conv_dim: usize,
-        window: PlainTensor,
-        slots: PlainTensor,
-        lengths: PlainTensor,
-    ) -> Result<(PlainTensor, CausalConvPastInputs, CausalConvPast), Refusal> {
-        let qkv_shape = qkv.shape().to_vec();
-        let rows = qkv_shape[0];
-        if rows == 0 {
-            return Err(CONV_NOTHING_TO_CONVOLVE);
-        }
-        assert!(
-            qkv_shape.last() == Some(&conv_dim)
-                && qkv_shape[1..qkv_shape.len() - 1].iter().all(|&e| e == 1),
-            "the stream is [rows, conv_dim]"
-        );
-        let qkv = qkv.viewed(Metadata::new(
-            vec![rows, conv_dim],
-            vec![qkv.binding.strides[0], 1],
-        ));
-        let [slots_in_store, columns, window_channels] = window.shape().dims::<3>();
-        assert_eq!(
-            window_channels, conv_dim,
-            "the window holds every channel a column"
-        );
-        let window = window.viewed(Metadata::new(
-            vec![slots_in_store, columns, conv_dim],
-            vec![window.binding.strides[0], window.binding.strides[1], 1],
-        ));
-        for table in [&slots, &lengths] {
-            assert_eq!(table.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
-            assert_eq!(table.shape().dims::<1>(), [rows]);
-        }
-        let past = CausalConvPast::Window {
-            slots: NonZeroUsize::new(slots_in_store).expect("a store holds a slot"),
-            columns,
-        };
-        Ok((
-            qkv,
-            CausalConvPastInputs::Window {
-                window,
-                slots,
-                lengths,
-            },
-            past,
-        ))
-    }
-
-    /// The inputs over a stream `[batch, positions + taps - 1, conv_dim]`, viewed, and the past
-    /// they state.
-    fn shape_stream(
-        qkv: PlainTensor,
-        conv_dim: usize,
-        taps: usize,
-    ) -> Result<(PlainTensor, CausalConvPastInputs, CausalConvPast), Refusal> {
-        let [batch, stream_positions, channels] = qkv.shape().dims::<3>();
-        assert_eq!(
-            channels, conv_dim,
-            "the stream holds every channel a position"
-        );
-        let positions = stream_positions.saturating_sub(taps.saturating_sub(1));
-        if batch == 0 || positions == 0 {
-            return Err(CONV_NOTHING_TO_CONVOLVE);
-        }
-        let qkv = qkv.viewed(Metadata::new(
-            vec![batch, stream_positions, conv_dim],
-            vec![qkv.binding.strides[0], qkv.binding.strides[1], 1],
-        ));
-        Ok((
-            qkv,
-            CausalConvPastInputs::Stream,
-            CausalConvPast::Stream { positions },
-        ))
-    }
-
     /// The client the operands live on, which a launch submits to.
     pub(crate) fn client(&self) -> &Client {
-        &self.client
+        &self.reads.client
     }
 
     /// The problem the tensors state.
@@ -415,49 +220,24 @@ impl QkNormedConvTensors {
         blueprint: &QkNormedConvBlueprint,
         grid: &Grid,
     ) -> QkNormedConvBinding {
-        let launcher = blueprint.launcher(&self.client, grid);
+        let launcher = blueprint.launcher(&self.reads.client, grid);
         let width = blueprint.width;
-        let bind = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
-            Self::bound(&launcher, tensor, axes, width)
-        };
-        let (qkv, keyed, valued): (&[Axis], &[Axis], &[Axis]) = match self.past {
-            CausalConvPastInputs::Window { .. } => (
-                &[BATCH, CHANNEL],
+        let (keyed, valued): (&[Axis], &[Axis]) = match self.problem.past {
+            CausalConvPast::Window { .. } => (
                 &[BATCH, KEY_HEAD, KEY_FEATURE],
                 &[BATCH, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
             ),
-            CausalConvPastInputs::Stream => (
-                &[BATCH, STREAM_POSITION, CHANNEL],
+            CausalConvPast::Stream { .. } => (
                 &[BATCH, POSITION, KEY_HEAD, KEY_FEATURE],
                 &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
             ),
         };
-        let (window, lengths) = self.past.bind(&launcher, width);
         QkNormedConvBinding {
-            qkv: bind(&self.qkv, qkv, width),
-            filters: bind(&self.filters, &[CHANNEL, TAP], 1),
-            query: bind(&self.query, keyed, width),
-            key: bind(&self.key, keyed, width),
-            value: bind(&self.value, valued, width),
-            window,
-            lengths,
+            reads: self.reads.bind(&launcher, width),
+            query: bound(&launcher, &self.query, keyed, width),
+            key: bound(&launcher, &self.key, keyed, width),
+            value: bound(&launcher, &self.value, valued, width),
             launcher,
         }
-    }
-
-    /// `tensor` bound under `launcher` along `axes`, `width` values a line.
-    fn bound(
-        launcher: &Launcher,
-        tensor: &PlainTensor,
-        axes: &'static [Axis],
-        width: usize,
-    ) -> TileTensorLaunch {
-        launcher
-            .arg(tensor.binding.clone(), tensor.elem)
-            .axes(axes)
-            .vectorize(width)
-            .build()
-            .expect(ADMITTED_PLAN_RUNS)
-            .arg()
     }
 }

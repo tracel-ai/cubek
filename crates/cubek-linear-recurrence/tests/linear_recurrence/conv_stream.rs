@@ -240,7 +240,7 @@ fn handed_on(prompt: usize, steps: usize, columns: usize, elem: ElemType) {
             qkv,
             filters: filters_view.clone(),
             past: CausalConvPastInputs::Window {
-                window: store.clone(),
+                ring: store.clone(),
                 slots: table(&client, vec![0]),
                 lengths: table(&client, vec![position as u32]),
             },

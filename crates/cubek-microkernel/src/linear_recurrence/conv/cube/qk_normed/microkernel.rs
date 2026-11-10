@@ -1,5 +1,6 @@
 use super::base::CubeQkNormedConvMicrokernel;
 use super::convolved_head::ConvolvedHead;
+use super::head_channels::HeadChannels;
 use super::qk_scale::QkScale;
 use super::tiles::QkNormedConvTiles;
 use crate::linear_recurrence::KEY_HEAD;
@@ -18,7 +19,8 @@ pub fn cube_qk_normed_conv_microkernel<E: Float, N: Size>(
     #[comptime] microkernel: CubeQkNormedConvMicrokernel,
 ) {
     let mut convolved = ConvolvedHead::<N>::new(microkernel);
-    convolved.convolve::<E>(cube, tiles, cube.coord(KEY_HEAD));
+    let channels = HeadChannels::new(cube.coord(KEY_HEAD), microkernel.heads);
+    convolved.convolve::<E>(cube, tiles, &channels);
     sync_cube();
     let key_features = microkernel.heads.key_features;
     QkScale::of::<N>(&convolved, epsilon, key_features).write::<N>(
