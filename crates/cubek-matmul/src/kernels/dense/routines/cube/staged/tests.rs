@@ -30,6 +30,7 @@ mod base {
         MatmulStoredTile,
     };
     use cubek_std::layout::stored::{Operand, Packing};
+    use cubek_std::layout::tile_order::{TileOrder, TileWords};
     use cubek_std::layout::{BindingOrder, tile_order};
     use cubek_std::matmul_axes::{K, M, N};
     use cubek_std::microkernel::{Microkernel, StageLayout, StageRing};
@@ -2053,11 +2054,91 @@ mod base {
             if let Err(refusal) = CubeStagedTmaMatmulRoutine.prepare(&hw, &problem, &two_tiles) {
                 assert_eq!(
                     refusal,
-                    CubeStagedTmaRefusal::TileRowsUnderSwizzle.into(),
+                    CubeStagedTmaRefusal::TileRowsUnderSwizzle(MatmulOperand::Rhs).into(),
                     "{two_tiles}"
                 );
             } else {
                 panic!("{two_tiles} lands a stage two tiles deep by TMA");
+            }
+        }
+    }
+
+    /// A W4A4 product whose activation is in tile order too, as a prompt's quantizer writes it,
+    /// lands by TMA on a GPU with `sm_120`'s block-scaled instruction: both inputs' words through
+    /// descriptors over their tiles and both inputs' scales landed beside them, so no unit copies
+    /// any. A stage two tiles deep is refused for the activation, the first input whose tiles'
+    /// 64-byte rows the 128-byte swizzle would pad.
+    #[test]
+    fn a_w4a4_product_with_both_inputs_in_tile_order_lands_by_tma() {
+        use crate::kernels::select::packed::nvfp4_scheme;
+
+        let hw = devices::offering_nvfp4(devices::rtx_pro_6000());
+        let order = TileOrder::laid(&tile_order::nvfp4_scheme(), TileWords::RowByRow, (128, 8))
+            .expect("NVFP4 lays a 128 x 8 tile");
+        // Each input read in tile order across its rows' axis, as a reader reads it off the
+        // matrix, under its scheme as stated over its own axes: the activation packed down its
+        // last, the weight down its first.
+        let packing = |scheme: cubecl::quant::scheme::QuantScheme,
+                       axes: [cubecl::tile::Axis; 2],
+                       across| Packing {
+            operand: Operand::of_scheme(&scheme, K, axes)
+                .and_then(|operand| {
+                    operand.in_tile_order(
+                        order,
+                        across,
+                        hw.load_values(ElemType::UInt(cubecl::ir::UIntKind::U32)),
+                    )
+                })
+                .expect("NVFP4 reads in tile order"),
+            scheme,
+        };
+        let tile = Some(MatmulStoredTile {
+            rows: 8,
+            columns: 128,
+        });
+        let problem = MatmulRoutineProblem {
+            stored_tiles: MatmulOperands {
+                lhs: tile,
+                rhs: tile,
+                out: None,
+            },
+            ..MatmulRoutineProblem::packed(
+                512,
+                5120,
+                5120,
+                ElemType::Float(FloatKind::F16),
+                MatmulOperands {
+                    lhs: Some(packing(nvfp4_scheme(), [M, K], M)),
+                    rhs: Some(packing(tile_order::nvfp4_scheme(), [K, N], N)),
+                    out: None,
+                },
+            )
+        };
+        let by_tma = CubeStagedTmaStoredMatmulRoutine.block_scaled_settings(&hw);
+        let landed: Vec<_> = by_tma
+            .iter()
+            .filter(|settings| {
+                CubeStagedTmaStoredMatmulRoutine
+                    .prepare(&hw, &problem, settings)
+                    .is_ok()
+            })
+            .collect();
+        assert!(
+            landed.iter().any(|settings| settings.filling_planes > 0),
+            "the box beside filling planes does not land a W4A4 product in tile order by TMA"
+        );
+        const TWO: NonZeroUsize = NonZeroUsize::new(2).unwrap();
+        for settings in landed {
+            let mut two_tiles = *settings;
+            two_tiles.microkernel.plane.depth =
+                two_tiles.microkernel.plane.depth.saturating_mul(TWO);
+            match CubeStagedTmaStoredMatmulRoutine.prepare(&hw, &problem, &two_tiles) {
+                Err(refusal) => assert_eq!(
+                    refusal,
+                    CubeStagedTmaRefusal::TileRowsUnderSwizzle(MatmulOperand::Lhs).into(),
+                    "{two_tiles}"
+                ),
+                Ok(_) => panic!("{two_tiles} lands a stage two tiles deep by TMA"),
             }
         }
     }

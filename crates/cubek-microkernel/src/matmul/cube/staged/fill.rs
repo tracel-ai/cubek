@@ -7,7 +7,7 @@ use crate::matmul::{
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::stage::Prefetch;
-use cubecl::tile::{Axis, Scratch, StageStorage};
+use cubecl::tile::{Axis, Scratch, Space, StageStorage};
 use cubek_std::launch::tma::swizzle_span_bytes;
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::StageRing;
@@ -84,14 +84,14 @@ pub enum CubeStagedTmaRefusal {
     /// A block-split product's stage holds a packed operand decoded, which the fill writes value
     /// by value: the engine lands the words only as they are stored.
     Decoded,
-    /// A block-split product's stage is deeper than one of the rhs's stored tiles, whose rows are
-    /// shorter than the swizzle the stage's rows take: the engine pads each tile's row to the
+    /// A block-split product's stage is deeper than one of an input's stored tiles, whose rows
+    /// are shorter than the swizzle the stage's rows take: the engine pads each tile's row to the
     /// swizzle's span, so the box lands twice its bytes, past the stage.
-    TileRowsUnderSwizzle,
-    /// The rhs keeps its block scales in tiles of their own, which a box lands one tile deep as
+    TileRowsUnderSwizzle(MatmulOperand),
+    /// An input keeps its block scales in tiles of their own, which a box lands one tile deep as
     /// the rows of scales a stage holds; a stage deeper than one tile would land them a tile
     /// after another, each row's words apart.
-    ScalesDeeperThanATile,
+    ScalesDeeperThanATile(MatmulOperand),
 }
 
 /// Why the copy engine cannot fill a cube microkernel's stages.
@@ -253,10 +253,12 @@ impl CubeStagedTmaRefusal {
     /// Why a stage of a product in the block-split space `blocks`, over buffers as `buffers`
     /// states them, held as `storage`, is not one the engine lands for `microkernel`; `None`
     /// where it is. A float lhs lands through a descriptor over the matrix its blocks split, a
-    /// stage's rows its blocks of `K` side by side, and a packed one's words through one over its
-    /// rows; the packed rhs's words through one over the tiles they are stored in, a stage of
-    /// whole tiles along its lines, at most one tile deep, or whole tiles deep where a tile's rows
-    /// fill the swizzle's span; each packed input's scales are copied beside them by the units.
+    /// stage's rows its blocks of `K` side by side. A packed input's words land through one over
+    /// the tiles they are stored in, a stage of whole tiles along its lines, at most one tile
+    /// deep, or whole tiles deep where a tile's rows fill the swizzle's span, its scales kept in
+    /// tiles of their own landed beside them; a packed lhs may lie in rows instead, its words
+    /// through a descriptor over its rows and its scales copied beside them by the units. The rhs
+    /// is always in tiles.
     fn of_blocks(
         item: &MatmulWorkItem,
         blocks: &MatmulBlocks,
@@ -266,58 +268,75 @@ impl CubeStagedTmaRefusal {
         microkernel: &PlaneFragmentMicrokernel,
     ) -> Option<Self> {
         let axes = stage.axes();
-        let landed = |operand: MatmulOperand, rows: Axis| {
-            stage.landed_space(operand, microkernel.orders, &[rows, KB, KI])
+        let rows_of = |operand: MatmulOperand| -> Axis {
+            match operand {
+                MatmulOperand::Lhs => axes.m,
+                _ => axes.n,
+            }
         };
-        let (lhs, rhs) = (
-            landed(MatmulOperand::Lhs, axes.m),
-            landed(MatmulOperand::Rhs, axes.n),
-        );
+        let landed = |operand: MatmulOperand| {
+            stage.landed_space(operand, microkernel.orders, &[rows_of(operand), KB, KI])
+        };
+        let (lhs, rhs) = (landed(MatmulOperand::Lhs), landed(MatmulOperand::Rhs));
         let bits = |operand: MatmulOperand| item.elements.get(operand).size_bits();
         let depth = rhs.extent(KB) * rhs.extent(KI);
-        // A stage's depth in packed words is whole 16-byte lines.
-        let words_bytes = depth * bits(MatmulOperand::Rhs) / 8;
-        let rhs_tiles = buffers.stored_tiles.rhs.is_some_and(|tile| {
-            rhs.extent(axes.n).is_multiple_of(tile.rows)
-                && (tile.columns.is_multiple_of(depth) || depth.is_multiple_of(tile.columns))
-                && words_bytes.is_multiple_of(TMA_ALIGNMENT_BYTES)
-        });
-        // A packed lhs lands in the words it is packed in, as the rhs does, and is dense rows of
-        // words, which its buffer facts leave out: its rows are whole lines where `k` packs into
-        // them. A float one lands a value a cell, aligned as its buffer states.
-        let (lhs_cell, lhs_rows_aligned) = if blocks.packings.lhs.is_some() {
-            (
-                u32::BITS as usize / bits(MatmulOperand::Lhs),
-                (blocks.k * bits(MatmulOperand::Lhs) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES),
-            )
-        } else {
-            (
-                1,
-                buffers
-                    .alignments
-                    .lhs
-                    .admits(TMA_ALIGNMENT_BYTES * 8 / bits(MatmulOperand::Lhs)),
-            )
+        // A packed input lands in the words it is packed in, a float one a value a cell.
+        let cell = |operand: MatmulOperand| match blocks.packings.get(operand) {
+            Some(_) => u32::BITS as usize / bits(operand),
+            None => 1,
         };
-        let rhs_swizzle = storage.tma_swizzle(
-            &rhs,
-            u32::BITS as usize / bits(MatmulOperand::Rhs),
-            bits(MatmulOperand::Rhs),
-        );
-        // A box deeper than one stored tile lands each tile's row as one row of the box, which
-        // the engine pads to the swizzle's span where the row is shorter.
-        let pads_tile_rows = |swizzle| {
-            buffers.stored_tiles.rhs.is_some_and(|tile| {
-                let row_bytes = tile.columns * bits(MatmulOperand::Rhs) / 8;
-                depth > tile.columns
-                    && swizzle_span_bytes(swizzle).is_some_and(|span| row_bytes < span)
+        let swizzle = |operand: MatmulOperand, space: &Space| {
+            storage.tma_swizzle(space, cell(operand), bits(operand))
+        };
+        // A stage of whole stored tiles along its rows, and a depth dividing a tile's or whole
+        // tiles of it, each a stage's run of whole 16-byte lines of words.
+        let lands_tiles = |operand: MatmulOperand, space: &Space| {
+            let words_bytes = depth * bits(operand) / 8;
+            buffers.stored_tiles.get(operand).is_some_and(|tile| {
+                space.extent(rows_of(operand)).is_multiple_of(tile.rows)
+                    && (tile.columns.is_multiple_of(depth) || depth.is_multiple_of(tile.columns))
+                    && words_bytes.is_multiple_of(TMA_ALIGNMENT_BYTES)
             })
         };
+        // A box deeper than one stored tile lands each tile's row as one row of the box, which
+        // the engine pads to the swizzle's span where the row is shorter.
+        let pads_tile_rows = |operand: MatmulOperand, space: &Space| {
+            let swizzle = swizzle(operand, space);
+            buffers.stored_tiles.get(operand).is_some_and(|tile| {
+                let row_bytes = tile.columns * bits(operand) / 8;
+                depth > tile.columns
+                    && swizzle.is_ok_and(|swizzle| {
+                        swizzle_span_bytes(swizzle).is_some_and(|span| row_bytes < span)
+                    })
+            })
+        };
+        let scales_deeper_than_a_tile = |operand: MatmulOperand| {
+            blocks
+                .packings
+                .get(operand)
+                .and_then(|packing| packing.operand.tile_order())
+                .is_some_and(|order| order.scales_in_tiles() && depth > order.tile().0)
+        };
+        // A packed lhs in rows is dense rows of words, which its buffer facts leave out: its rows
+        // are whole lines where `k` packs into them. A float one is aligned as its buffer states.
+        let lhs_in_tiles = buffers.stored_tiles.lhs.is_some();
+        let lhs_rows_aligned = match blocks.packings.lhs {
+            Some(_) => (blocks.k * bits(MatmulOperand::Lhs) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES),
+            None => buffers
+                .alignments
+                .lhs
+                .admits(TMA_ALIGNMENT_BYTES * 8 / bits(MatmulOperand::Lhs)),
+        };
+        let inputs = [(MatmulOperand::Lhs, &lhs), (MatmulOperand::Rhs, &rhs)];
         if microkernel.k_stated != PlaneFragmentKStatement::Blocks {
             Some(Self::Decoded)
-        } else if blocks.packings.rhs.is_none() || !rhs_tiles {
+        } else if blocks.packings.rhs.is_none() || !lands_tiles(MatmulOperand::Rhs, &rhs) {
             Some(Self::StoredInTiles(MatmulOperand::Rhs))
-        } else if !lhs_rows_aligned {
+        } else if lhs_in_tiles
+            && (blocks.packings.lhs.is_none() || !lands_tiles(MatmulOperand::Lhs, &lhs))
+        {
+            Some(Self::StoredInTiles(MatmulOperand::Lhs))
+        } else if !lhs_in_tiles && !lhs_rows_aligned {
             Some(Self::Misaligned(MatmulOperand::Lhs))
         } else if let Some(operand) = MatmulOperand::INPUTS.into_iter().find(|&operand| {
             !buffers
@@ -326,22 +345,21 @@ impl CubeStagedTmaRefusal {
                 .is_multiple_of(TMA_ALIGNMENT_BYTES as u64)
         }) {
             Some(Self::UnalignedStart(operand))
-        } else if storage
-            .tma_swizzle(&lhs, lhs_cell, bits(MatmulOperand::Lhs))
-            .is_err()
+        } else if let Some((operand, _)) = inputs
+            .into_iter()
+            .find(|(operand, space)| swizzle(*operand, space).is_err())
         {
-            Some(Self::Unlanded(MatmulOperand::Lhs))
-        } else if rhs_swizzle.is_err() {
-            Some(Self::Unlanded(MatmulOperand::Rhs))
-        } else if rhs_swizzle.is_ok_and(pads_tile_rows) {
-            Some(Self::TileRowsUnderSwizzle)
-        } else if blocks
-            .packings
-            .rhs
-            .and_then(|packing| packing.operand.tile_order())
-            .is_some_and(|order| order.scales_in_tiles() && depth > order.tile().0)
+            Some(Self::Unlanded(operand))
+        } else if let Some((operand, _)) = inputs
+            .into_iter()
+            .find(|(operand, space)| pads_tile_rows(*operand, space))
         {
-            Some(Self::ScalesDeeperThanATile)
+            Some(Self::TileRowsUnderSwizzle(operand))
+        } else if let Some(operand) = MatmulOperand::INPUTS
+            .into_iter()
+            .find(|&operand| scales_deeper_than_a_tile(operand))
+        {
+            Some(Self::ScalesDeeperThanATile(operand))
         } else if [&lhs, &rhs]
             .into_iter()
             .any(|space| Delivery::Tma.moves(space).is_err())
@@ -429,11 +447,11 @@ impl From<CubeStagedTmaRefusal> for Refusal {
             CubeStagedTmaRefusal::Decoded => {
                 "the stage holds a packed operand decoded, and the TMA engine lands words as stored"
             }
-            CubeStagedTmaRefusal::TileRowsUnderSwizzle => {
-                "a stage is deeper than one rhs tile whose rows are shorter than the stage's swizzle, which the engine pads"
+            CubeStagedTmaRefusal::TileRowsUnderSwizzle(_) => {
+                "a stage is deeper than one of an input's tiles whose rows are shorter than the stage's swizzle, which the engine pads"
             }
-            CubeStagedTmaRefusal::ScalesDeeperThanATile => {
-                "a stage is deeper than one rhs tile, and the rhs's block scales lie in tiles a box lands one tile deep"
+            CubeStagedTmaRefusal::ScalesDeeperThanATile(_) => {
+                "a stage is deeper than one of an input's tiles, and its block scales lie in tiles a box lands one tile deep"
             }
         };
         Refusal::Declined { why }
