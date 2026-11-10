@@ -163,7 +163,7 @@ impl AttentionTuneInputs {
     /// it keeps the call's extents.
     pub(super) fn many_queries_key(&self) -> AttentionKey {
         let (queries, keys) = match self.attended {
-            AttendedKeys::Lengths => (AttentionKey::CHUNK_QUERIES, AttentionKey::CACHE_PREFIX),
+            AttendedKeys::Lengths => (AttentionKey::CHUNK_QUERIES, AttentionKey::CHUNK_PREFIX),
             AttendedKeys::Every => (self.query.shape()[2], self.keys()),
         };
         self.key_of(queries, keys)
@@ -460,13 +460,13 @@ mod tests {
                 };
                 // The shortest cache a call fits: as long as the prompt itself.
                 let shortest = key(queries.max(64), None);
-                let queries_keyed = match queries {
-                    1 => 1,
-                    _ => AttentionKey::CHUNK_QUERIES,
+                let keyed = match queries {
+                    1 => (1, AttentionKey::CACHE_PREFIX),
+                    _ => (AttentionKey::CHUNK_QUERIES, AttentionKey::CHUNK_PREFIX),
                 };
                 assert_eq!(
                     (shortest.seq_q(), shortest.seq_kv()),
-                    (queries_keyed, AttentionKey::CACHE_PREFIX),
+                    keyed,
                     "{queries} queries"
                 );
                 for positions in [4096, 65536] {

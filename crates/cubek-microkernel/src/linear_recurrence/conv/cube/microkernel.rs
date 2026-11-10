@@ -20,7 +20,7 @@ pub fn cube_qk_normed_conv_microkernel<E: Float, N: Size>(
     let mut convolved = ConvolvedHead::<N>::new(microkernel);
     convolved.convolve::<E>(cube, tiles, cube.coord(KEY_HEAD));
     sync_cube();
-    let key_features = comptime!(microkernel.heads.key_features);
+    let key_features = microkernel.heads.key_features;
     QkScale::of::<N>(&convolved, epsilon, key_features).write::<N>(
         cube,
         &convolved,

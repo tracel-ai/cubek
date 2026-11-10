@@ -4,6 +4,7 @@
 use super::indexed::upload;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
+use cubecl::prelude::Scalar;
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Axis;
@@ -11,13 +12,19 @@ use cubecl::zspace::Shape;
 use cubecl_common::{e4m3, ue8m0};
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
+use cubek_matmul::kernels::{CubeShuffleMatmulRoutine, MatmulRoutine, PlaneShuffleMatmulRoutine};
 use cubek_microkernel::matmul::MatmulOperand;
+use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::{K, N};
 use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
+use half::bf16;
 
 /// The per-tensor scale a two-level format is built under.
 const GLOBAL_SCALE: f32 = 2.;
+
+/// Loose enough for a `bf16` output.
+const BF16_TOLERANCE: f32 = 1e-2;
 
 /// Block scales with one or two mantissa bits, which the quantizer and a `ue4m3` byte hold exactly;
 /// a `ue8m0` byte holds only the first.
@@ -289,4 +296,106 @@ fn a_packed_tensor_binds_its_parts_not_the_buffer_they_share() {
     );
 
     assert_eq!(StoredTensor::Packed(packed).bytes(), total);
+}
+
+/// A packed matrix seen through a transposed view, as a framework hands a tied embedding to the
+/// vocabulary head: `[n, k]` packed along `k`, bound as `[k, n]` under swapped strides, its words
+/// running along the view's first axis. [`PackedTensor::of_quantized`] reads it as the matrix it
+/// views, and the routines a decode step races answer its product. It refused the view once, its
+/// words not row-major under it, and the framework dequantized the whole head on every step.
+#[test]
+fn a_transposed_packed_matrix_is_read_as_the_matrix_it_views() {
+    let (m, n, k) = (4, 96, 512);
+    let client = cubek_test_utils::client();
+    let hw = Hardware::from_client(&client);
+    let weight = PackedSlabs::new(
+        &client,
+        PackedSlabsSpec {
+            format: PackedFormat::Nvfp4,
+            operand: MatmulOperand::Rhs,
+            slabs: 1,
+            rows: n,
+            k,
+            seed: 3,
+        },
+    );
+    let matrix = weight.matrix();
+    // The view's scheme, as a framework's transpose restates it: blocks and words along its
+    // first axis.
+    let mut scheme = matrix.scheme();
+    scheme.swap_block_dims(2, 0, 1);
+    scheme.store = QuantStore::PackedU32(1);
+    let mut values = matrix.words().transposed().binding;
+    values.shape[0] = k;
+    let mut scales = matrix.scales().cloned();
+    let block_scales = scales.next().expect("block scales").transposed();
+    let rhs =
+        PackedTensor::of_quantized(&client, values, scheme, block_scales, scales.next(), [K, N])
+            .expect("a transposed view of a packed matrix reads as stored");
+
+    let lhs: Vec<bf16> = (0..m * k)
+        .map(|i| bf16::from_f32(((i * 7919 % 2003) as f32 / 1001.5) - 1.))
+        .collect();
+    let expected: Vec<f32> = (0..m * n)
+        .map(|at| {
+            let (row, column) = (at / n, at % n);
+            (0..k)
+                .map(|kk| lhs[row * k + kk].to_f32() * weight.cell(0, kk, column))
+                .sum()
+        })
+        .collect();
+    let mut ran = Vec::new();
+    let mut wrong = Vec::new();
+    let mut race = |launch: &dyn Fn(StoredTensor, PlainTensor) -> Option<String>| {
+        let (out, bound) = PlainTensor::empty_contiguous(
+            &client,
+            Shape::from(vec![m, n]),
+            bf16::elem_type_native(),
+        );
+        let Some(settings) = launch(StoredTensor::Packed(rhs.clone()), bound) else {
+            return;
+        };
+        let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+        let off = expected
+            .iter()
+            .enumerate()
+            .filter(|&(at, &want)| {
+                (got.get_f32(&[at / n, at % n]) - want).abs() > BF16_TOLERANCE * (1. + want.abs())
+            })
+            .count();
+        if off > 0 {
+            wrong.push(format!("{settings}: {off} wrong"));
+        }
+        ran.push(settings);
+    };
+    macro_rules! raced {
+        ($routine:expr, $settings:expr) => {
+            for settings in $settings {
+                race(&|rhs, out| {
+                    $routine
+                        .launch_into(
+                            &hw,
+                            &client,
+                            StoredTensor::Plain(upload(&client, &[m, k], &lhs)),
+                            rhs,
+                            out,
+                            &settings,
+                        )
+                        .ok()
+                        .map(|_| settings.to_string())
+                });
+            }
+        };
+    }
+    raced!(
+        PlaneShuffleMatmulRoutine,
+        PlaneShuffleMatmulRoutine.packed_settings()
+    );
+    raced!(
+        CubeShuffleMatmulRoutine,
+        CubeShuffleMatmulRoutine.packed_settings(&hw)
+    );
+
+    assert!(!ran.is_empty(), "no shuffle setting prepares a packed rhs");
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }

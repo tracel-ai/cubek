@@ -19,7 +19,6 @@ use cubek_std::microkernel::StageRing;
 /// queries share the cube, which its own grids are placed under. The dot product is written
 /// before the walk, for the keys' walk to read.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_fragment_query_gradient_microkernel<EA: Float, ES: Float>(
     queries: &Region,
     query_gradient: &Tile,

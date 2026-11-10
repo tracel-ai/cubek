@@ -8,7 +8,6 @@ use cubek_microkernel::row_store::OwnerLines;
 
 /// Every plane of the launch, running its row.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_rms_norm_kernel<E: Float, N: Size, O: Destination>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,
@@ -32,4 +31,5 @@ pub fn plane_rms_norm_kernel<E: Float, N: Size, O: Destination>(
             microkernel,
         );
     }
+    O::finish::<E>(out);
 }

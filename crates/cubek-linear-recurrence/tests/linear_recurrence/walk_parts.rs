@@ -36,14 +36,14 @@ fn partials_probe<N: Size>(
     positions: u32,
 ) {
     let width = N::value();
-    let columns = comptime!(shape.columns());
+    let columns = shape.columns();
     let parts = comptime!(columns / width);
-    let units = comptime!(shape.units());
+    let units = shape.units();
     let (unit, run) = (UNIT_POS_X as usize, UNIT_POS_Y as usize);
     let mut meet = UnitMeet::<N>::new(run, unit, runs, shape);
     let mut partials = Partials::<N>::new(shape);
     for position in 0..positions as usize {
-        let base = ((position * runs + run) * units + unit) * comptime!(sums_a_position * columns);
+        let base = ((position * runs + run) * units + unit) * (sums_a_position * columns);
         #[unroll]
         for sum in 0..sums_a_position {
             partials.clear();
@@ -161,7 +161,6 @@ fn probe_delta(column: usize) -> f64 {
 /// position in `dump`, write a fixed delta, and keep the states; a second load of the state then
 /// decays and writes that delta in one pass, and leaves its answer.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 fn held_state_part<N: Size>(
     cube: &Region,
     query: &Tile,
@@ -174,9 +173,9 @@ fn held_state_part<N: Size>(
     #[comptime] runs: usize,
 ) {
     let width = N::value();
-    let columns = comptime!(shape.columns());
+    let columns = shape.columns();
     let parts = comptime!(columns / width);
-    let units = comptime!(shape.units());
+    let units = shape.units();
     let mut write = Array::<Vector<f32, N>>::new(parts);
     for run in cube {
         for unit in run.walk() {
@@ -188,7 +187,7 @@ fn held_state_part<N: Size>(
             for step in unit.walk() {
                 let position = step.coord(POSITION);
                 let (keys, queries) = (key.at(&step), query.at(&step));
-                let base = (origin / columns * units + slot) * comptime!(3 * columns);
+                let base = (origin / columns * units + slot) * (3 * columns);
                 held.pass(
                     &keys,
                     &queries,
@@ -265,7 +264,6 @@ fn held_state_part<N: Size>(
 }
 
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn held_state_probe<N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,

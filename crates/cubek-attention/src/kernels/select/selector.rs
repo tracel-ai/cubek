@@ -17,9 +17,13 @@ use cubek_std::plan::{InOrder, Then};
 const ONE_POSITION_RULE: AttentionKernel =
     AttentionKernel::Hypercube(HypercubeAttentionKernel::LastArrivalShuffle);
 
+/// The kernel that reads a packed cache as it lies at many query positions, staging each step of
+/// keys decoded once for every query of its cube.
+const MANY_POSITIONS_PACKED: AttentionKernel = AttentionKernel::Cube(CubeAttentionKernel::Fragment);
+
 /// A pin of a kernel that reads no packed cache, over a packed cache.
 const PACKED_PIN_UNREAD: Refusal = Refusal::Declined {
-    why: "of the microkernel attention routines, only the hypercube shuffles read a packed cache",
+    why: "of the microkernel attention routines, only the hypercube shuffles and the staged cube read a packed cache",
 };
 
 /// How a call of `queries` positions over a `cache` runs under `strategy`: the plan its launch
@@ -30,9 +34,10 @@ const PACKED_PIN_UNREAD: Refusal = Refusal::Declined {
 /// arrival at one position, and the cube fragment routine elsewhere, then what each kernel's scope
 /// names where it declines, down to the unit routine. A pin runs its kernel alone.
 ///
-/// A packed cache is decoded inline at one position under every policy, by the hypercube shuffle
-/// by rule, and rebuilt as floats first elsewhere. Of the pins, only the two hypercube shuffles'
-/// read one.
+/// A packed cache is read as it lies under every policy: at one position by the hypercube shuffle
+/// by rule, at many by the staged cube, which decodes each step of keys into its stage once for
+/// every query of the cube. Where either declines, the cache is rebuilt as floats first. Of the
+/// pins, the two hypercube shuffles' and the staged cube's read one.
 ///
 /// # Errors
 ///
@@ -56,7 +61,10 @@ pub fn select(
             Choice::Rule(ONE_POSITION_RULE).plan(queries, CacheRead::Packed, groups),
             rebuilt(Choice::Rule(AttentionKernel::Unit).plan(queries, CacheRead::Float, groups)),
         ]))),
-        (KvKind::Packed, _) => Ok(rebuilt(float())),
+        (KvKind::Packed, _) => Ok(Box::new(InOrder::new(vec![
+            Box::new(KernelLead::new(MANY_POSITIONS_PACKED, CacheRead::Packed)),
+            rebuilt(float()),
+        ]))),
     }
 }
 
@@ -128,8 +136,8 @@ mod tests {
 
     /// The tile ceiling: over a float cache the hypercube by rule at one query position and the
     /// cube elsewhere; over a packed one the hypercube decoding inline at one position, the unit
-    /// routine after it, and the cache rebuilt before the cube elsewhere. Nothing measured
-    /// anywhere.
+    /// routine after it, and elsewhere the staged cube decoding into its stage, the cache rebuilt
+    /// before the cube after it. Nothing measured anywhere.
     #[test]
     fn the_tile_ceiling_rules() {
         let tile = Heuristic(H::Tile);
@@ -145,7 +153,7 @@ mod tests {
         assert_eq!(plan(tile, One, KvKind::Packed), Ok(packed_by_rule()));
         assert_eq!(
             plan(tile, Many, KvKind::Packed),
-            Ok(rebuilt(rule(CUBE_FRAGMENT, FLOAT)))
+            Ok(packed_many(rule(CUBE_FRAGMENT, FLOAT)))
         );
     }
 
@@ -171,8 +179,8 @@ mod tests {
     }
 
     /// `Autotune` measures every float call, on the autotune of its query positions; a packed call
-    /// of one position has one kernel and nothing to race, and a packed call of many is rebuilt
-    /// and measured as a float one.
+    /// of one position has one kernel and nothing to race, and a packed call of many is read by
+    /// the staged cube, or rebuilt and measured as a float one where it declines.
     #[test]
     fn autotune_measures_every_float_call() {
         assert_eq!(
@@ -186,7 +194,7 @@ mod tests {
         assert_eq!(plan(Autotune, One, KvKind::Packed), Ok(packed_by_rule()));
         assert_eq!(
             plan(Autotune, Many, KvKind::Packed),
-            Ok(rebuilt("fastest(prefill)".into()))
+            Ok(packed_many("fastest(prefill)".into()))
         );
     }
 
@@ -206,7 +214,7 @@ mod tests {
     }
 
     /// A routine's pin runs that routine at any query length over a float cache; over a packed
-    /// one only the two hypercube shuffles' run.
+    /// one only the two hypercube shuffles' and the staged cube's run.
     #[test]
     fn a_routine_pin_runs_its_routine() {
         for kernel in AttentionKernel::all() {
@@ -218,7 +226,7 @@ mod tests {
             }
             let packed = plan(Specific(kernel), One, KvKind::Packed);
             match kernel {
-                LAST_ARRIVAL_SHUFFLE | SECOND_LAUNCH_SHUFFLE => {
+                LAST_ARRIVAL_SHUFFLE | SECOND_LAUNCH_SHUFFLE | CUBE_FRAGMENT => {
                     assert_eq!(packed, Ok(lead(kernel, PACKED)))
                 }
                 _ => assert!(packed.is_err(), "{kernel:?}"),
@@ -258,6 +266,16 @@ mod tests {
     /// The packed cache rebuilt as floats, then `plan` over it.
     fn rebuilt(plan: String) -> String {
         format!("rebuilt({plan})")
+    }
+
+    /// What a packed cache of many query positions reads: the staged cube as the cache lies, then
+    /// `float` over the cache rebuilt.
+    fn packed_many(float: String) -> String {
+        format!(
+            "in-order[{}, {}]",
+            lead(CUBE_FRAGMENT, PACKED),
+            rebuilt(float)
+        )
     }
 
     /// What a packed cache of one query position reads under every policy: the hypercube shuffle

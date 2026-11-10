@@ -1,10 +1,12 @@
 //! Validation of the forward kernel.
 
+use cubecl::tile::launch::Refusal;
 use cubek_interpolate::{
-    InputStage, InterpolateBlueprint, InterpolateStrategy,
+    InterpolateKernel, InterpolateStrategy,
     definition::{InterpolateError, InterpolateMode, InterpolateOptions, NearestMode},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
     interpolate,
+    kernels::{CubeInterpolateRoutineSettings, select},
 };
 use cubek_test_utils::{HostData, TestInput};
 
@@ -15,33 +17,51 @@ const TOLERANCE: f32 = 0.0001;
 
 /// The geometry these tests validate against: the shape the plane-derived split produced
 /// before every choice became the caller's.
-const BASELINE: InterpolateBlueprint = InterpolateBlueprint::new(InputStage::InPlace, 4, 2, 1);
+const BASELINE: InterpolateKernel = cube(4, 2, 1);
+
+/// The in-place routine at `planes` a cube of `rows` rows, `cols` columns a unit.
+const fn cube(planes: usize, rows: usize, cols: usize) -> InterpolateKernel {
+    InterpolateKernel::Cube(CubeInterpolateRoutineSettings::new(planes, rows, cols))
+}
+
+/// The staged routine at `planes` a cube of `rows` rows, `cols` columns a unit.
+const fn staged(planes: usize, rows: usize, cols: usize) -> InterpolateKernel {
+    InterpolateKernel::CubeStaged(CubeInterpolateRoutineSettings::new(planes, rows, cols))
+}
+
+/// `kernel` with the unit's channel run pinned at `block`.
+fn with_channel_block(kernel: InterpolateKernel, block: usize) -> InterpolateKernel {
+    match kernel {
+        InterpolateKernel::Cube(settings) => {
+            InterpolateKernel::Cube(settings.with_channel_block(block))
+        }
+        InterpolateKernel::CubeStaged(settings) => {
+            InterpolateKernel::CubeStaged(settings.with_channel_block(block))
+        }
+    }
+}
 
 fn kernel_output(options: InterpolateOptions) {
     kernel_output_with(options, BASELINE);
 }
 
-fn kernel_output_with(options: InterpolateOptions, blueprint: InterpolateBlueprint) {
-    kernel_output_shaped(options, blueprint, 4);
+fn kernel_output_with(options: InterpolateOptions, kernel: InterpolateKernel) {
+    kernel_output_shaped(options, kernel, 4);
 }
 
-fn kernel_output_shaped(
-    options: InterpolateOptions,
-    blueprint: InterpolateBlueprint,
-    channels: usize,
-) {
-    kernel_output_on(options, blueprint, [2, 8, 9, channels], [13, 15]);
+fn kernel_output_shaped(options: InterpolateOptions, kernel: InterpolateKernel, channels: usize) {
+    kernel_output_on(options, kernel, [2, 8, 9, channels], [13, 15]);
 }
 
 fn kernel_output_on(
     options: InterpolateOptions,
-    blueprint: InterpolateBlueprint,
+    kernel: InterpolateKernel,
     input_shape: [usize; 4],
     output_size: [usize; 2],
 ) {
     kernel_output_using(
         options,
-        InterpolateStrategy::Forced(blueprint),
+        InterpolateStrategy::Specific(kernel),
         input_shape,
         output_size,
     );
@@ -83,67 +103,60 @@ fn kernel_run(
     (result, actual, expected)
 }
 
-/// The intents the selector resolves against this device. Whatever geometry it picks here has to
-/// land on the reference, or a build that states nothing runs a kernel nothing validates.
+/// The routines at the settings the selector picks on this device. Whatever geometry it picks
+/// here has to land on the reference, or a build that states nothing runs a kernel nothing
+/// validates.
 #[test]
-fn test_interpolate_kernel_inferred_strategies() {
+fn test_interpolate_kernel_selected_strategies() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
-    for strategy in [
-        InterpolateStrategy::MaximizeThroughput,
-        InterpolateStrategy::MinimizeLatency,
-    ] {
+    for strategy in [InterpolateStrategy::Cube, InterpolateStrategy::CubeStaged] {
         kernel_output_using(options, strategy, [2, 8, 9, 4], [13, 15]);
     }
 }
 
-/// A staged window no device holds, which a steep downsample reaches: the intent reads in place
-/// instead and still lands on the reference, while the same geometry stated outright is refused.
+/// A staged window no device holds, which a steep downsample reaches: the staged strategy reads
+/// in place instead and still lands on the reference, while the staged routine named outright is
+/// refused.
 ///
 /// The refusal is half the test. An autotune key buckets the extents this window is sized from, so
-/// an intent that refused here would abort on a problem the tuner cached under a shape that fit.
+/// a strategy that refused here would abort on a problem the tuner cached under a shape that fit.
 #[test]
-fn test_interpolate_kernel_intent_falls_back_when_the_stage_cannot_fit() {
+fn test_interpolate_kernel_staged_strategy_reads_in_place_when_the_stage_cannot_fit() {
     let options = InterpolateOptions::new(InterpolateMode::Lanczos3).with_align_corners(false);
     let input_shape = [1, 64, 64, 64];
     let output_size = [2, 2];
 
     let client = cubecl::test_device().client();
     let problem = make_problem(input_shape, output_size, options);
-    let blueprint =
-        InterpolateStrategy::MinimizeLatency.blueprint(&client.properties().hardware, &problem);
 
-    // A CPU has no shared-memory residence, so the inferred intents deliberately collapse to the
-    // always-launchable in-place blueprint. The overflow fallback is a GPU-only path.
-    if client.properties().hardware.num_cpu_cores.is_some() {
-        assert_eq!(blueprint.input_residence, InputStage::InPlace);
-        kernel_output_using(
+    // A CPU has no shared memory to stage in, so the staged routine declines there and the
+    // in-place one runs. The overflow is a GPU-only path.
+    if client.properties().hardware.num_cpu_cores.is_none() {
+        let staged = select(
+            InterpolateStrategy::CubeStaged,
+            &client.properties().hardware,
+            &problem,
+        )[0];
+        let (refused, ..) = kernel_run(
             options,
-            InterpolateStrategy::MinimizeLatency,
+            InterpolateStrategy::Specific(staged),
             input_shape,
             output_size,
         );
-        return;
+        assert!(
+            matches!(
+                refused,
+                Err(InterpolateError::Refused(
+                    Refusal::SharedMemoryPastDevice { .. }
+                ))
+            ),
+            "the stage fits after all, so this shape no longer exercises the fallback: {refused:?}"
+        );
     }
-
-    assert_eq!(blueprint.input_residence, InputStage::Smem);
-
-    let (refused, ..) = kernel_run(
-        options,
-        InterpolateStrategy::Forced(blueprint),
-        input_shape,
-        output_size,
-    );
-    assert!(
-        matches!(
-            refused,
-            Err(InterpolateError::SharedMemoryLimitExceeded { .. })
-        ),
-        "the stage fits after all, so this shape no longer exercises the fallback: {refused:?}"
-    );
 
     kernel_output_using(
         options,
-        InterpolateStrategy::MinimizeLatency,
+        InterpolateStrategy::CubeStaged,
         input_shape,
         output_size,
     );
@@ -152,27 +165,24 @@ fn test_interpolate_kernel_intent_falls_back_when_the_stage_cannot_fit() {
 #[test]
 fn test_interpolate_kernel_staging_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
-    for blueprint in [
-        InterpolateBlueprint::new(InputStage::Smem, 4, 2, 1),
-        InterpolateBlueprint::new(InputStage::InPlace, 4, 2, 1),
-    ] {
-        kernel_output_with(options, blueprint);
+    for kernel in [staged(4, 2, 1), cube(4, 2, 1)] {
+        kernel_output_with(options, kernel);
     }
 }
 
 #[test]
 fn test_interpolate_kernel_geometry_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
-    for blueprint in [
-        InterpolateBlueprint::new(InputStage::InPlace, 1, 1, 1),
-        InterpolateBlueprint::new(InputStage::Smem, 1, 1, 1),
-        InterpolateBlueprint::new(InputStage::InPlace, 1, 2, 1),
-        InterpolateBlueprint::new(InputStage::InPlace, 4, 2, 2),
-        InterpolateBlueprint::new(InputStage::InPlace, 4, 4, 1),
-        InterpolateBlueprint::new(InputStage::InPlace, 2, 2, 1),
-        InterpolateBlueprint::new(InputStage::InPlace, 2, 4, 2),
+    for kernel in [
+        cube(1, 1, 1),
+        staged(1, 1, 1),
+        cube(1, 2, 1),
+        cube(4, 2, 2),
+        cube(4, 4, 1),
+        cube(2, 2, 1),
+        cube(2, 4, 2),
     ] {
-        kernel_output_with(options, blueprint);
+        kernel_output_with(options, kernel);
     }
 }
 
@@ -182,12 +192,9 @@ fn test_interpolate_kernel_geometry_configurations() {
 #[test]
 fn test_interpolate_kernel_channel_block_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
-    for residence in [InputStage::InPlace, InputStage::Smem] {
+    for kernel in [cube(4, 2, 1), staged(4, 2, 1)] {
         for block in [1, 2, 4] {
-            kernel_output_with(
-                options,
-                InterpolateBlueprint::new(residence, 4, 2, 1).with_channel_block(block),
-            );
+            kernel_output_with(options, with_channel_block(kernel, block));
         }
     }
 }
@@ -205,7 +212,7 @@ fn test_interpolate_kernel_padded_channel_stage() {
         for block in [channels, 4] {
             kernel_output_shaped(
                 options,
-                InterpolateBlueprint::new(InputStage::Smem, 4, 2, 1).with_channel_block(block),
+                with_channel_block(staged(4, 2, 1), block),
                 channels,
             );
         }
@@ -224,7 +231,7 @@ fn test_interpolate_kernel_padded_channel_stage_every_mode() {
     ] {
         kernel_output_shaped(
             InterpolateOptions::new(mode).with_align_corners(false),
-            InterpolateBlueprint::new(InputStage::Smem, 4, 2, 1).with_channel_block(4),
+            with_channel_block(staged(4, 2, 1), 4),
             3,
         );
     }
@@ -235,11 +242,7 @@ fn test_interpolate_kernel_padded_channel_stage_every_mode() {
 #[test]
 fn test_interpolate_kernel_padded_channel_stage_multi_block() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
-    kernel_output_shaped(
-        options,
-        InterpolateBlueprint::new(InputStage::Smem, 4, 2, 1).with_channel_block(4),
-        6,
-    );
+    kernel_output_shaped(options, with_channel_block(staged(4, 2, 1), 4), 6);
 }
 
 /// Every filter under both coordinate transforms.

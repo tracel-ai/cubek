@@ -31,7 +31,6 @@ pub fn plane_delta_kernel<EA: Float>(
 /// values', and its share of the query's gradient added into `query_gradient`, which every cube
 /// that sees those queries adds into.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -75,7 +74,6 @@ pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
 /// its heads' part of the keys' and values' gradients into `key_gradient` and `value_gradient`,
 /// which every cube of the key head's group adds into.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_key_gradient_sum_kernel<ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -118,7 +116,6 @@ pub fn hypercube_key_gradient_sum_kernel<ES: Float>(
 /// Every cube's walk of its keys, the gradients written into `key_gradient` and
 /// `value_gradient`, and its share of the query's added into `query_gradient`.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 fn hypercube_key_gradient_walks<EA: Float, ES: Float>(
     q: &Tile,
     k: &Tile,
