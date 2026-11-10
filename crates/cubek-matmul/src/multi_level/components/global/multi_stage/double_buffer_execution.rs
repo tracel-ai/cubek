@@ -64,7 +64,6 @@ pub fn read_first<S: SyncStrategy, LJ: JobExecutor<S>, RJ: JobExecutor<S>>(
 /// Execute on the current stage while loading the next stage
 ///
 /// If there is specialization, will add a runtime if to determine the role of the plane
-#[allow(clippy::too_many_arguments)]
 pub fn execute_current_and_read_next<
     MP: MatmulTypes,
     SP: StagePartitioner,
@@ -86,7 +85,7 @@ pub fn execute_current_and_read_next<
     #[comptime] stage_to_load: StageBuffer,
     #[comptime] config: G,
 ) {
-    let partition_size_k = comptime!(config.stage_config().shared().partition_size.k());
+    let partition_size_k = config.stage_config().shared().partition_size.k();
     match specializer.kind.comptime() {
         SpecializerKind::Specialized {
             main_flow_loading_side,
@@ -163,7 +162,6 @@ pub fn execute_current_and_read_next<
 /// Execute on the last stage, then write results
 ///
 /// If there is specialization, will add a runtime if to determine the role of the plane
-#[allow(clippy::too_many_arguments)]
 pub fn execute_last_and_write_results<
     'a,
     MP: MatmulTypes,
@@ -181,7 +179,7 @@ pub fn execute_last_and_write_results<
     partition_scheduler: &PartitionScheduler,
     #[comptime] config: G,
 ) {
-    let partition_size_k = comptime!(config.stage_config().shared().partition_size.k());
+    let partition_size_k = config.stage_config().shared().partition_size.k();
     let mut out_stage = GW::stage(&*out_writer);
 
     match specializer.kind.comptime() {

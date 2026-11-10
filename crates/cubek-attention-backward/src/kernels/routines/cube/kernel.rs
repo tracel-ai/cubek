@@ -14,7 +14,6 @@ use cubek_std::microkernel::StageRing;
 /// Every cube of the launch running its queries through stages it fills for all its planes: their
 /// dot product of the output with its gradient, and their gradient, over the keys they see.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_staged_query_gradient_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -41,6 +40,7 @@ pub fn cube_staged_query_gradient_kernel<EA: Float, ES: Float>(
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let d_q = query_gradient.tile(&partitioning);
+
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.bias::<EA>(&partitioning);
 
@@ -69,7 +69,6 @@ pub fn cube_staged_query_gradient_kernel<EA: Float, ES: Float>(
 /// Every cube of the launch running its keys through stages it fills for all its planes: their
 /// gradient and their values', over every query of the group's heads that sees them.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_staged_key_gradient_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -111,7 +110,6 @@ pub fn cube_staged_key_gradient_kernel<EA: Float, ES: Float>(
 /// its heads' part of the keys' and values' gradients into `key_gradient` and `value_gradient`,
 /// which every cube of the key head's group adds into.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_staged_key_gradient_sum_kernel<ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -152,7 +150,6 @@ pub fn cube_staged_key_gradient_sum_kernel<ES: Float>(
 /// Every cube's walk of its keys, the gradients written into `key_gradient` and
 /// `value_gradient`.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 fn cube_staged_key_gradient_walks<EA: Float, ES: Float>(
     q: &Tile,
     k: &Tile,

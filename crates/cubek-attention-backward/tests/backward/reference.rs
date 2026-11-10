@@ -36,7 +36,7 @@ impl Case {
     /// Whether query `i` of head `h` in sequence `b` sees key `j`: the queries sit among the
     /// keys as the visibility places them, the last positions or the first, and the mask hides
     /// what it hides.
-    fn sees(&self, b: usize, h: usize, i: usize, j: usize) -> bool {
+    pub fn sees(&self, b: usize, h: usize, i: usize, j: usize) -> bool {
         let (queries, keys) = (self.seq_q, self.seq_kv);
         let queries_end = match self.visibility.queries() {
             Some(QueryPlacement::First) => queries,

@@ -149,11 +149,29 @@ impl HypercubeAttentionMicrokernelSettings {
                 ..cube
             },
         });
+        // The cube routine's fastest box on a long prompt: one by eight over four heads and two
+        // planes along their queries, its stages on two slots the copy engine fills, the query
+        // landed as the keys are.
+        let wide = Self {
+            cube: CubeAttentionMicrokernelSettings {
+                plane: CubeAttentionPlaneSettings::Fragment(
+                    PlaneFragmentAttentionMicrokernelSettings::fragments(1, 8),
+                ),
+                heads: count(4),
+                planes_along_queries: count(2),
+                ring: StageRing::DOUBLE,
+                layout: StageLayout::SwizzledBlocks,
+                delivery: CubeStagedDelivery::AsyncCopy,
+                query_as_keys: true,
+                ..cube
+            },
+        };
         [lead]
             .into_iter()
             .chain(swizzled)
             .chain([split])
             .chain(copied)
+            .chain([wide])
             .collect()
     }
 }
@@ -173,6 +191,7 @@ impl core::fmt::Display for HypercubeAttentionMicrokernelSettings {
                 write!(f, " {name}={count}")?;
             }
         }
-        write!(f, "{}{}", cube.ring, cube.layout)
+        write!(f, "{}{}", cube.ring, cube.layout)?;
+        cube.fmt_delivery(f)
     }
 }

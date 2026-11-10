@@ -44,6 +44,7 @@ jobs:
 
   publish-cubek-reduce:
     needs:
+      - publish-cubek-microkernel
       - publish-cubek-test-utils
       - publish-cubek-std
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v12
@@ -118,7 +119,7 @@ jobs:
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
 
-  publish-cubek-gated-delta:
+  publish-cubek-linear-recurrence:
     needs:
       - publish-cubek-matmul
       - publish-cubek-microkernel
@@ -126,7 +127,7 @@ jobs:
       - publish-cubek-std
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v12
     with:
-      crate: cubek-gated-delta
+      crate: cubek-linear-recurrence
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
@@ -141,7 +142,7 @@ jobs:
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
-  
+
   publish-cubek-interpolate:
     needs:
       - publish-cubek-test-utils
@@ -152,7 +153,7 @@ jobs:
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
-  
+
   publish-cubek-pool:
     needs:
       - publish-cubek-test-utils
@@ -173,8 +174,36 @@ jobs:
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
 
+  publish-cubek-rms-norm:
+    needs:
+      - publish-cubek-matmul
+      - publish-cubek-microkernel
+      - publish-cubek-std
+      - publish-cubek-test-utils
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v12
+    with:
+      crate: cubek-rms-norm
+      dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+
+  publish-cubek-swiglu:
+    needs:
+      - publish-cubek-matmul
+      - publish-cubek-microkernel
+      - publish-cubek-std
+      - publish-cubek-test-utils
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v12
+    with:
+      crate: cubek-swiglu
+      dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+
   publish-cubek:
     needs:
+      - publish-cubek-rms-norm
+      - publish-cubek-swiglu
       - publish-cubek-microkernel
       - publish-cubek-attention-backward
       - publish-cubek-random
@@ -184,7 +213,7 @@ jobs:
       - publish-cubek-attention
       - publish-cubek-convolution
       - publish-cubek-fft
-      - publish-cubek-gated-delta
+      - publish-cubek-linear-recurrence
       - publish-cubek-interpolate
       - publish-cubek-pool
       - publish-cubek-test-utils

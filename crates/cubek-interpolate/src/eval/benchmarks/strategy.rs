@@ -1,7 +1,7 @@
-use crate::InputStage;
 use cubek_test_utils::CatalogEntry;
 
-use crate::{InterpolateBlueprint, InterpolateStrategy};
+use crate::kernels::CubeInterpolateRoutineSettings;
+use crate::{InterpolateKernel, InterpolateStrategy};
 
 /// How much of the tile geometry space one run sweeps.
 ///
@@ -44,9 +44,8 @@ impl BenchTier {
 /// The two do not want the same sweep. `c > 1` is a unit's column run, which vectorizes a CPU's
 /// inner loop and is worth 1.32x there; on a GPU the channel axis already fills the units, and
 /// dropping every `c > 1` geometry costs 0.6% on CUDA and nothing on wgpu. Deep row runs split the
-/// same way. A staged input is refused outright on CPU by
-/// [`bench`](super::bench), so a CPU catalogue that offered it would spend half its entries
-/// producing the same error.
+/// same way. The staged routine declines on CPU, so a CPU catalogue that offered it would spend
+/// half its entries producing the same error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BenchTarget {
     Gpu,
@@ -54,11 +53,11 @@ pub enum BenchTarget {
 }
 
 impl BenchTarget {
-    /// The residences worth launching on this device.
-    fn residences(self) -> &'static [InputStage] {
+    /// The routines worth launching on this device.
+    fn routines(self) -> &'static [fn(CubeInterpolateRoutineSettings) -> InterpolateKernel] {
         match self {
-            BenchTarget::Gpu => &[InputStage::Smem, InputStage::InPlace],
-            BenchTarget::Cpu => &[InputStage::InPlace],
+            BenchTarget::Gpu => &[InterpolateKernel::CubeStaged, InterpolateKernel::Cube],
+            BenchTarget::Cpu => &[InterpolateKernel::Cube],
         }
     }
 
@@ -129,36 +128,37 @@ fn powers_of_two(max: usize) -> impl Iterator<Item = usize> {
 }
 
 fn kernel_entry(
-    residence: InputStage,
+    routine: fn(CubeInterpolateRoutineSettings) -> InterpolateKernel,
     (planes, rows, cols): (usize, usize, usize),
 ) -> CatalogEntry<InterpolateStrategy> {
-    let (tag, label) = match residence {
-        InputStage::Smem => ("smem", "staged"),
-        _ => ("in_place", "in-place"),
+    let kernel = routine(CubeInterpolateRoutineSettings::new(planes, rows, cols));
+    let tag = match kernel {
+        InterpolateKernel::Cube(_) => "cube",
+        InterpolateKernel::CubeStaged(_) => "cube_staged",
     };
     CatalogEntry::new(
         format!("{tag}_p{planes}_r{rows}_c{cols}"),
-        format!("{label} (p={planes}, r={rows}, c={cols})"),
-        InterpolateStrategy::Forced(InterpolateBlueprint::new(residence, planes, rows, cols)),
+        format!("{tag} (p={planes}, r={rows}, c={cols})"),
+        InterpolateStrategy::Specific(kernel),
     )
 }
 
-/// The intents the selector resolves, which is what an autotuner sweeps.
+/// The routines at the settings the selector picks, which is what an autotuner sweeps.
 ///
 /// They lead every tier so a recorded sweep says where the geometry the device picked for itself
-/// ranks against the ones it did not pick, rather than measuring the box alone. A CPU resolves
-/// both intents to one blueprint, so offering both there would time the same launch twice.
-fn inferred_entries(target: BenchTarget) -> Vec<CatalogEntry<InterpolateStrategy>> {
+/// ranks against the ones it did not pick, rather than measuring the box alone. A CPU runs both
+/// strategies as one kernel, so offering both there would time the same launch twice.
+fn selected_entries(target: BenchTarget) -> Vec<CatalogEntry<InterpolateStrategy>> {
     let mut entries = vec![CatalogEntry::new(
-        "maximize_throughput".to_string(),
-        "selected (maximize throughput)".to_string(),
-        InterpolateStrategy::MaximizeThroughput,
+        "cube".to_string(),
+        "selected (cube)".to_string(),
+        InterpolateStrategy::Cube,
     )];
     if target == BenchTarget::Gpu {
         entries.push(CatalogEntry::new(
-            "minimize_latency".to_string(),
-            "selected (minimize latency)".to_string(),
-            InterpolateStrategy::MinimizeLatency,
+            "cube_staged".to_string(),
+            "selected (cube staged)".to_string(),
+            InterpolateStrategy::CubeStaged,
         ));
     }
     entries
@@ -169,10 +169,10 @@ pub fn strategies_at(
     tier: BenchTier,
     target: BenchTarget,
 ) -> Vec<CatalogEntry<InterpolateStrategy>> {
-    let mut entries = inferred_entries(target);
-    for &residence in target.residences() {
+    let mut entries = selected_entries(target);
+    for &routine in target.routines() {
         for geometry in target.geometries(tier) {
-            entries.push(kernel_entry(residence, geometry));
+            entries.push(kernel_entry(routine, geometry));
         }
     }
     entries
@@ -293,27 +293,31 @@ mod tests {
         }
     }
 
-    /// A staged input is refused on CPU, so offering it would spend half the catalogue on one
-    /// error message. The inferred entries are not checked here because they hold an intent rather
-    /// than a residence: `InterpolateStrategy::blueprint` is what keeps those off shared memory.
+    /// The staged routine declines on CPU, so offering it would spend half the catalogue on one
+    /// refusal.
     #[test]
     fn the_cpu_geometries_stage_nothing() {
         for tier in TIERS {
             for entry in strategies_at(tier, BenchTarget::Cpu) {
-                if let InterpolateStrategy::Forced(blueprint) = entry.value {
-                    assert_ne!(blueprint.input_residence, InputStage::Smem, "{}", entry.id);
-                }
+                assert!(
+                    !matches!(
+                        entry.value,
+                        InterpolateStrategy::Specific(InterpolateKernel::CubeStaged(_))
+                    ),
+                    "{}",
+                    entry.id
+                );
             }
         }
     }
 
     /// Every tier measures the selector's own choices, not just the box around them.
     #[test]
-    fn every_tier_measures_the_inferred_intents() {
+    fn every_tier_measures_the_selected_strategies() {
         for tier in TIERS {
             for target in TARGETS {
                 let entries = strategies_at(tier, target);
-                for intent in inferred_entries(target) {
+                for intent in selected_entries(target) {
                     assert!(
                         entries.iter().any(|entry| entry.value == intent.value),
                         "{tier:?}/{target:?} is missing {}",

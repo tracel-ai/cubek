@@ -52,4 +52,5 @@ pub fn cube_staged_matmul_kernel<
             storage.clone(),
         );
     }
+    O::finish::<E>(out);
 }

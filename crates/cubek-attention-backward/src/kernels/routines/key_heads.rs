@@ -76,6 +76,7 @@ pub fn cast_key_gradient_kernel(
         if plane.origin(G) == 0 {
             let mut d_k = d_k.at(&plane);
             d_k.copy_cast_from(&key_sum.at(&plane));
+
             let mut d_v = d_v.at(&plane);
             d_v.copy_cast_from(&value_sum.at(&plane));
         }

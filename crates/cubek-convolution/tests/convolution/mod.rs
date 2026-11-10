@@ -13,6 +13,7 @@ pub mod full;
 pub mod im2col;
 #[cfg(feature = "benchmarks")]
 pub mod tile;
+mod split;
 pub mod unit;
 
 pub mod launcher_strategy;

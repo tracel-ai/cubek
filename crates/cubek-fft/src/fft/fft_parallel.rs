@@ -33,7 +33,7 @@ pub(crate) fn fft_butterfly_parallel<F: Float>(
     #[comptime] threads_per_cube: usize,
     #[comptime] fft_mode: FftMode,
 ) {
-    let num_butterflies = comptime![n_fft / 2];
+    let num_butterflies = n_fft / 2;
     let sign = F::new(comptime!(f64::from(fft_mode.sign())));
     let two_pi = F::new(2.0 * PI);
 

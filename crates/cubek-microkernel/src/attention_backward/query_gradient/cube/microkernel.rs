@@ -14,7 +14,6 @@ use cubek_std::microkernel::StageRing;
 /// a stage at a time for all its planes, holding as many stages as `ring` says, met on
 /// `sync_cube`. Every tile is windowed to `cube`.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
     cube: &Region,
     query_gradient: &Tile,
@@ -39,16 +38,18 @@ pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
     let walk = cube.walk().range(0, steps);
     let sum =
         PlaneQueryGradientMicrokernel::open_sum::<EA>(query_gradient, bias, key, microkernel.plane);
+
     // The query and the output's gradient span no key: staged once for every plane, before the
     // walk.
     let storage = comptime!(stage_storage(
         microkernel.plane.holder(),
         microkernel.plane.score
     ));
-    let mut staged_query = query.stage_for(&walk, comptime!(storage.clone()), None);
+    let mut staged_query = query.stage_for(&walk, storage.clone(), None);
     staged_query.copy_from(query);
-    let mut staged_out_gradient = out_gradient.stage_for(&walk, comptime!(storage.clone()), None);
+    let mut staged_out_gradient = out_gradient.stage_for(&walk, storage.clone(), None);
     staged_out_gradient.copy_from(out_gradient);
+
     let windows = ScoreWindows::held_or_open::<EA, ES>(
         &walk,
         comptime!(vec![G, Q, S]),
@@ -62,7 +63,7 @@ pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
         &walk,
         key,
         value,
-        comptime!(storage.clone()),
+        storage.clone(),
         ring.stages_in_flight.get(),
         None,
     );

@@ -7,14 +7,12 @@ use cubek_microkernel::matmul::hypercube::{
 
 /// Every cube running its run of the line: for each tile the run touches, its part of the tile's
 /// `K`, a stage at a time into one sum, handed on to the output by the tile's last arrival
-/// ([`LastArrival`](cubecl::tile::launch::LastArrival)). A cube whose run is empty touches no tile
-/// and leaves at once.
+/// ([`LastArrival`](cubecl::tile::launch::LastArrival)). A cube whose run is empty touches no tile.
 #[allow(
     clippy::extra_unused_type_parameters,
     reason = "each element is defined from its operand at launch, which the kernel is compiled for"
 )]
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_last_arrival_matmul_kernel<
     EA: Numeric,
     EL: Numeric,
@@ -44,6 +42,7 @@ pub fn hypercube_last_arrival_matmul_kernel<
     for i in 0..portion.touched() {
         let tile = portion.region(i);
         let (from, steps) = portion.steps(i);
+
         let merge = slots.last_arrival::<VO>(&partitioning, &portion, i, arrivals);
         hypercube_staged_last_arrival_microkernel::<EA, EL>(
             tile.over(&stages).range(from, steps),
@@ -55,4 +54,5 @@ pub fn hypercube_last_arrival_matmul_kernel<
             storage.clone(),
         );
     }
+    O::finish::<E>(out);
 }

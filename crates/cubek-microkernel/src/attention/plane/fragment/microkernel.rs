@@ -141,6 +141,7 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
             Tile::scratch::<EA>(walk, comptime!(vec![G, Q]), StageStorage::Strided).at(plane);
         let mut sum =
             Tile::scratch::<EA>(walk, comptime!(vec![G, Q]), StageStorage::Strided).at(plane);
+
         self.softmax
             .store_rows(&self.score.at(plane).scores(), &mut max, &mut sum);
 
@@ -150,6 +151,7 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
         let value = comptime!(rows_window.space().extent(DV));
         let read = rows_window.flat::<EA, Const<1>>();
         let (max, sum) = (max.flat::<EA, Const<1>>(), sum.flat::<EA, Const<1>>());
+
         #[unroll]
         for r in 0..comptime!(self.microkernel.seq_q()) {
             if r < rows {
@@ -313,10 +315,11 @@ impl StageScore {
 
         // Each operand's fragments, walked over its own box and paired by position: the query's
         // rows by steps of the head dim, the keys' by the same steps, the scores' rows by keys.
-        let [(_, m), (_, n), (_, k)] = comptime!(microkernel.score.instruction.shape());
+        let [(_, m), (_, n), (_, k)] = microkernel.score.instruction.shape();
         let rows = microkernel.score.settings.along_m.get();
         let columns = microkernel.score.settings.along_n.get();
         let depth = microkernel.score.settings.depth.get();
+
         let query_fragments = query.over(&comptime!(Level::every(&[(Q, m), (D, k)])));
         let key_fragments = key.over(&comptime!(Level::every(&[(S, n), (D, k)])));
         let score_fragments = score_window.over(&comptime!(Level::every(&[(Q, m), (S, n)])));
@@ -393,6 +396,7 @@ impl StageScore {
 
         let mut logits = logits.clone();
         logits.reset();
+
         plane_fragment_microkernel(
             stage,
             &logits,
@@ -407,16 +411,23 @@ impl StageScore {
         let correction = softmax.step(&logits, bias, scale);
         sum.along(DV).mul(&correction);
 
-        plane_fragment_microkernel(
-            stage,
-            &sum.clone(),
-            &wide,
-            &logits.cast::<E>(),
-            value,
-            microkernel.value.tile_instruction(),
-            comptime!(Some(D)),
-            MatmulOperands::AS_BOUND,
-        );
+        // The value spans no head dim: it takes the head dim's first step, and below it each step
+        // of the keys, a run of the score's fragments one call of its instruction reads as its `A`.
+        let probabilities = logits.cast::<E>();
+        for head in stage.walk().routed(D, 0usize).unrolled() {
+            for keys in head.walk().unrolled() {
+                plane_fragment_microkernel(
+                    &keys,
+                    &sum.clone(),
+                    &wide,
+                    &probabilities,
+                    value,
+                    microkernel.value.tile_instruction(),
+                    comptime!(None),
+                    MatmulOperands::AS_BOUND,
+                );
+            }
+        }
     }
 }
 
@@ -427,7 +438,6 @@ impl StageScore {
 /// windowed to `rows`; `planes` is how many planes along the queries share the cube, which a score
 /// read through windows is placed under.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
     rows: &Region,
     out: &Tile,
@@ -449,6 +459,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
     // The query spans no key: staged once, before the walk, as the plane's own copy.
     let mut staged_query = query.stage_for(&walk, StageStorage::Strided, decoded);
     staged_query.copy_from(query);
+
     sync_plane();
 
     let score = StageScore::open::<EA, ES>(&walk, &staged_query, microkernel);
@@ -456,6 +467,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
 
     let in_flight = ring.stages_in_flight.get();
     let mut stages = Stages::smem(&walk, key, value, StageStorage::Strided, in_flight, decoded);
+
     stages.walk(walk, ring.prefetch, |slot, stage| {
         let bias_stage = bias.at(stage);
         slot.consume(|key, value| {

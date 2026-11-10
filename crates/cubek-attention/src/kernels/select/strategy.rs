@@ -146,14 +146,15 @@ impl AttentionKernelHeuristic {
 }
 
 impl AttentionKernel {
-    /// Whether this kernel reads a packed cache as it lies: the hypercube shuffles, either merge.
+    /// Whether this kernel reads a packed cache as it lies: the hypercube shuffles, either merge,
+    /// and the staged cube.
     pub(crate) fn reads_packed(self) -> bool {
         matches!(
             self,
             AttentionKernel::Hypercube(
                 HypercubeAttentionKernel::LastArrivalShuffle
                     | HypercubeAttentionKernel::SecondLaunchShuffle
-            )
+            ) | AttentionKernel::Cube(CubeAttentionKernel::Fragment)
         )
     }
 

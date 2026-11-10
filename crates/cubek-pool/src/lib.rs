@@ -1,23 +1,29 @@
 use core::result::Result;
 
+use cubek_std::Hardware;
+use cubek_std::routine::Routine;
+
 use cubecl::{client::Client, prelude::TensorBinding, prelude::*};
 
 #[cfg(feature = "benchmarks")]
 pub mod eval;
 
 pub mod definition;
-mod kernel;
+pub mod kernels;
+mod legacy;
 
 use crate::definition::{PoolError, PoolMode};
-use crate::kernel::{
+use crate::kernels::{CubeMaxPoolRoutine, PoolTensors, launch_pool_routine};
+use crate::legacy::{
     backward::{
         adaptive_avg_pool2d_backward_launch, adaptive_avg_pool3d_backward_launch,
         avg_pool2d_backward_launch, max_pool2d_with_indices_backward_launch,
     },
     forward::{
         adaptive_avg_pool2d_launch, adaptive_avg_pool3d_launch, avg_pool2d_launch,
-        max_pool2d_launch, max_pool2d_with_indices_launch,
+        max_pool2d_with_indices_launch,
     },
+    validate_dilation,
 };
 
 /// Pool2d public wrapper
@@ -26,7 +32,10 @@ use crate::kernel::{
 /// [`definition::AvgPoolOptions::with_dilation`]. Windows with no sampled input taps return zero
 /// when padding is excluded. Ceil-mode taps beyond the explicit padding are not counted.
 ///
-/// Returns [`PoolError::InvalidDilation`] if an average-pooling dilation is zero.
+/// A max keeps a NaN in its window, and a window with no input tap holds the max's identity.
+///
+/// Returns [`PoolError::InvalidDilation`] if a max or average pooling dilation is zero, and
+/// [`PoolError::Refused`] where the max routine cannot run the problem on this device.
 pub fn pool2d(
     client: &Client,
     input: TensorBinding,
@@ -37,13 +46,26 @@ pub fn pool2d(
     validate_rank(input.shape.len(), output.shape.len(), 4)?;
     validate_batch_channel_consistency(&input.shape, &output.shape)?;
 
-    match mode {
-        PoolMode::Max(max_options) => max_pool2d_launch(client, input, output, max_options, dtype),
-        PoolMode::Avg(avg_options) => avg_pool2d_launch(client, input, output, avg_options, dtype),
-        PoolMode::AdaptiveAvg(adaptive_avg_options) => {
-            adaptive_avg_pool2d_launch(client, input, output, adaptive_avg_options, dtype)
+    let options = match mode {
+        PoolMode::Max(max_options) => {
+            validate_dilation(&max_options.dilation)?;
+            max_options
         }
+        PoolMode::Avg(avg_options) => {
+            return avg_pool2d_launch(client, input, output, avg_options, dtype);
+        }
+        PoolMode::AdaptiveAvg(adaptive_avg_options) => {
+            return adaptive_avg_pool2d_launch(client, input, output, adaptive_avg_options, dtype);
+        }
+    };
+    if output.shape.iter().product::<usize>() == 0 {
+        return Ok(());
     }
+    let hw = Hardware::from_client(client);
+    let tensors = PoolTensors::new(client, input, output, options, dtype);
+    let routine = CubeMaxPoolRoutine;
+    let settings = routine.settings(&hw)[0];
+    Ok(launch_pool_routine(&routine, &hw, &tensors, &settings)?)
 }
 
 /// Pool3d public wrapper.

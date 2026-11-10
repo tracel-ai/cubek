@@ -125,6 +125,7 @@ impl VisibleKeys {
     /// which hide keys a count from the first does not say.
     pub fn seen_by_all(&self, region: &Region) -> usize {
         let hides = comptime!(self.visibility.window().is_some() || self.mask.is_some());
+
         let mut seen = self.attended as usize;
         if comptime!(self.visibility.is_causal()) {
             // Query `q` sees key `s` where `s + queries ≤ q + queries_end`: the region's first
@@ -137,7 +138,7 @@ impl VisibleKeys {
             }
         }
 
-        if comptime!(hides) {
+        if hides {
             seen = 0;
         }
 

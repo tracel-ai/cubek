@@ -40,7 +40,7 @@ fn run(strategy_id: &str, problem_id: &str) {
 /// The catalogue id of the baseline geometry. The catalogue also lists the selector's own intents,
 /// but these tests pin one geometry so a reference mismatch names a launch and not a choice the
 /// device made.
-const STRATEGY: &str = "in_place_p4_r2_c1";
+const STRATEGY: &str = "cube_p4_r2_c1";
 
 /// The id above has to name a real catalogue entry. Without this, a catalogue rename leaves every
 /// test in this file panicking on lookup rather than saying what moved, and it does so behind a

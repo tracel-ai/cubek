@@ -14,7 +14,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// `split`, then their units. Each plane's drain merges its units' partials across the plane,
 /// then adds into the accumulator. The units read each operand as `reads` says.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_microkernel<EA: Numeric>(
     cube: &Region,
     c: &Tile,
@@ -46,6 +45,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
             accumulator
                 .sink
                 .dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
+
             sync_cube();
 
             c.copy_from(&accumulator.source);

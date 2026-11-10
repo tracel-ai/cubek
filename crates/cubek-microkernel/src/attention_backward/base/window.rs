@@ -33,7 +33,7 @@ impl ScoreWindows {
         #[comptime] axes: Vec<Axis>,
         #[comptime] holder: ScoreHolder,
     ) -> ComptimeOption<ScoreWindows> {
-        match comptime!(holder) {
+        match holder {
             ScoreHolder::Window => {
                 ComptimeOption::new_Some(ScoreWindows::open::<EA, ES>(walk, axes))
             }
@@ -84,7 +84,7 @@ impl ScoreWindows {
         #[comptime] holder: ScoreHolder,
         #[comptime] score: PlaneFragmentMicrokernel,
     ) -> ComptimeOption<Tile> {
-        match comptime!(holder) {
+        match holder {
             ScoreHolder::Fragments => ComptimeOption::new_Some(Tile::scratch::<ES>(
                 walk,
                 comptime!(vec![S, Q]),
@@ -143,6 +143,7 @@ impl ScoreWindows {
         let instruction = product.tile_instruction();
         let mut sum = placed.accumulator::<EA>(lhs, rhs, instruction, Semiring::SUM_PROD);
         sum.zero();
+
         ScoreWindows::contract_fragments(&sum, lhs, rhs, product);
         ScoreWindows::store_cast(window, &sum, product);
     }
@@ -178,9 +179,9 @@ impl ScoreWindows {
         // Each operand re-placed on the product's own steps, so a step loads each operand's
         // fragments once, for the whole grid, and the tile library pairs neighbours where it can.
         let levels = comptime!(Self::product_levels(product));
-        let mut sum = sum.with_levels(0usize, comptime!(levels.clone()));
+        let mut sum = sum.with_levels(0usize, levels.clone());
         sum.mma(
-            &lhs.with_levels(0usize, comptime!(levels.clone())),
+            &lhs.with_levels(0usize, levels.clone()),
             &rhs.with_levels(0usize, levels),
         );
     }

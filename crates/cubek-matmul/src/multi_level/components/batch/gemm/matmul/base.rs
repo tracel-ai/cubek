@@ -69,11 +69,11 @@ pub fn matmul_entry<
         &vector_sizes
     ));
 
-    if comptime!(config.is_err()) {
+    if config.is_err() {
         push_validation_error(config.err().unwrap().to_string());
         comptime!(return);
     }
-    let config = comptime!(config.unwrap());
+    let config = config.unwrap();
 
     let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
         inputs,
@@ -127,7 +127,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
         let size!(N) = vector_size;
 
         let check_bounds = config.check_bounds;
-        let variant = comptime!(config.variant);
+        let variant = config.variant;
 
         let lhs_view = lhs.view(MatLayout::new(lhs_batch, (m, k)));
         let rhs_view = rhs.view(MatLayout::new(rhs_batch, (k, n)));
@@ -142,13 +142,13 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
         // `vector_size` cells for the axis it walks in a block.
         let vs_u32 = comptime!(vector_size as u32);
 
-        let (m_id, n_id) = match comptime!(config.planes_split) {
+        let (m_id, n_id) = match config.planes_split {
             PlanesSplit::M => {
                 // OuterN splits M (and only OuterN uses split_M in v1).
                 // Plane covers one M-row at `block_id`; cube_n indexes
                 // NR-blocks along N → `n_pos_base = cube_n * vs`.
                 let block_id = cube_m * config.num_planes + UNIT_POS_Y;
-                match comptime!(variant) {
+                match variant {
                     Variant::OuterN => (block_id, cube_n * vs_u32),
                     Variant::OuterM => (block_id * vs_u32, cube_n),
                     Variant::Dot => (block_id, cube_n),
@@ -159,7 +159,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
                 // N-col at `block_id`; cube_m indexes MR-blocks along M.
                 // Dot: 1×1 per plane.
                 let block_id = cube_n * config.num_planes + UNIT_POS_Y;
-                match comptime!(variant) {
+                match variant {
                     Variant::OuterN => (cube_m, block_id * vs_u32),
                     Variant::OuterM => (cube_m * vs_u32, block_id),
                     Variant::Dot => (cube_m, block_id),
@@ -167,7 +167,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
             }
         };
 
-        match comptime!(variant) {
+        match variant {
             Variant::Dot => {
                 execute_dot::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
                     lhs_view,

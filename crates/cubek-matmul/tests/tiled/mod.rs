@@ -2,6 +2,7 @@
 
 mod cmma;
 mod elements;
+mod finish;
 mod indexed;
 mod integers;
 mod packed;

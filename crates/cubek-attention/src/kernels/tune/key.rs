@@ -51,7 +51,7 @@ use serde::{Deserialize, Serialize};
 /// - **Queries over a cache**: a prompt, or a chunk of one prefilled in chunks, attended against
 ///   what the chunks before it filled. That is where a long prompt spends its attention, every
 ///   chunk after the first, so the key stands for
-///   [`CHUNK_QUERIES`](Self::CHUNK_QUERIES) queries over [`CACHE_PREFIX`](Self::CACHE_PREFIX)
+///   [`CHUNK_QUERIES`](Self::CHUNK_QUERIES) queries over [`CHUNK_PREFIX`](Self::CHUNK_PREFIX)
 ///   keys, at their buckets' extents, whatever the call brought.
 /// - **A decode step over a cache**: one query over [`CACHE_PREFIX`](Self::CACHE_PREFIX) keys,
 ///   whatever the cache holds or the step attends. The attended count is a device tensor, so that
@@ -101,10 +101,20 @@ impl AttentionKey {
     /// here all the same, so its chunks run what this chunk elected.
     pub const CHUNK_QUERIES: usize = 512;
 
-    /// The attended prefix every key over a cache stands for, a chunk's and a decode step's alike:
-    /// three chunks into its prompt, deep enough that the walk outweighs the launch. A cache of
-    /// any capacity, attended to any length, is keyed here.
+    /// The attended prefix a decode step over a cache stands for: three chunks into its prompt,
+    /// deep enough that the walk outweighs the launch. A cache of any capacity, attended to any
+    /// length, is keyed here.
     pub const CACHE_PREFIX: usize = 4 * Self::CHUNK_QUERIES;
+
+    /// The attended prefix a chunk of many queries over a cache stands for: sixteen chunks into
+    /// its prompt. A chunk's work grows with the prefix it attends, so a long prompt spends its
+    /// attention on its deep chunks, and the routines rank differently there than near the
+    /// start: on an RTX PRO 6000, 512 queries of 32/8 heads over 2048 keys run fastest on a cube a
+    /// box (84 µs, against 86 µs split four ways along the keys), over 8192 keys split four ways
+    /// (254 µs against 285), and the split's lead grows deeper (922 against 1085 µs at 32768
+    /// keys, 3600 against 4288 µs at 131072). Keyed at the shallow prefix, every chunk of a long
+    /// prompt ran the shallow winner.
+    pub const CHUNK_PREFIX: usize = 16 * Self::CHUNK_QUERIES;
 
     /// Whether the queries are the tail of a longer attended prefix rather
     /// than the whole of it: a chunk, or a decode step.

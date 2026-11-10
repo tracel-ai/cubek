@@ -112,8 +112,8 @@ mod tests {
             operation: ReduceOperation::ArgMax,
             input: F32,
             accumulator: F32,
-            reduced: 151_936,
             layout: ReduceLayout::Along,
+            with_indices: false,
         }
     }
 

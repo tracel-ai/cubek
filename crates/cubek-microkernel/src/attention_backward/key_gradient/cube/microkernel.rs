@@ -19,7 +19,6 @@ use cubek_std::microkernel::StageRing;
 /// at a time for all its planes, holding as many stages as `ring` says, met on `sync_cube`. Every
 /// tile is windowed to `cube`.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
     cube: &Region,
     key_gradient: &Tile,
@@ -48,6 +47,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
         comptime!(vec![S, Q]),
         plane_microkernel.holder(),
     );
+
     #[comptime]
     let left = match query_gradient {
         ComptimeOption::Some(_) => ScoreWindows::share_window::<ES>(
@@ -57,6 +57,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
         ),
         ComptimeOption::None => ComptimeOption::<Tile>::new_None(),
     };
+
     let sums = KeyGradientSums::open::<EA>(
         key_gradient,
         value_gradient,
@@ -71,26 +72,29 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
         plane_microkernel.holder(),
         plane_microkernel.score
     ));
-    let mut staged_key = key.stage_for(&shape, comptime!(storage.clone()), None);
+    let mut staged_key = key.stage_for(&shape, storage.clone(), None);
     staged_key.copy_from(key);
-    let mut staged_value = value.stage_for(&shape, comptime!(storage.clone()), None);
+    let mut staged_value = value.stage_for(&shape, storage.clone(), None);
     staged_value.copy_from(value);
+
     sync_cube();
 
     // A runtime loop over the heads: one ring of stages, filled from each head's queries in turn.
     for g in 0..heads.total() {
         let head = heads.region(g);
         let queries = head.walk();
+
         // The queries from `first_step` to the head's last: a range takes its count of steps, so
         // the steps before the first are not walked past the end. A key past every query takes
         // none.
         let first = first_step.min(queries.total());
         let steps = queries.total() - first;
+
         let mut stages = Stages::smem(
             &queries,
             &query.at(&head),
             &out_gradient.at(&head),
-            comptime!(storage.clone()),
+            storage.clone(),
             ring.stages_in_flight.get(),
             None,
         );
@@ -158,6 +162,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
                 match (query_gradient, &left) {
                     (ComptimeOption::Some(share), ComptimeOption::Some(left)) => {
                         sync_cube();
+
                         for plane in stage {
                             share.add_rows::<EA>(
                                 stage,
@@ -169,6 +174,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
                                 microkernel.seq_q(),
                             );
                         }
+
                         sync_cube();
                     }
                     (ComptimeOption::Some(_), ComptimeOption::None) | (ComptimeOption::None, _) => {

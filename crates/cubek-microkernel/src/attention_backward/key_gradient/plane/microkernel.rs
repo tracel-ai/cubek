@@ -19,7 +19,6 @@ use cubek_std::microkernel::StageRing;
 /// own, met on `sync_plane`. Every tile is windowed to `keys`; `planes` is how many planes along
 /// the keys share the cube, which its own grids are placed under.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
     keys: &Region,
     key_gradient: &Tile,
@@ -47,6 +46,7 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
     // a score held in fragments needs none.
     let windows =
         ScoreWindows::held_or_open::<EA, ES>(&shape, comptime!(vec![S, Q]), microkernel.holder());
+
     let sums = KeyGradientSums::open::<EA>(
         key_gradient,
         value_gradient,
@@ -61,17 +61,20 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
     staged_key.copy_from(key);
     let mut staged_value = value.stage_for(&shape, StageStorage::Strided, None);
     staged_value.copy_from(value);
+
     sync_plane();
 
     // A runtime loop over the heads: one ring of stages, filled from each head's queries in turn.
     for g in 0..heads.total() {
         let head = heads.region(g);
         let queries = head.walk();
+
         // The queries from `first_step` to the head's last: a range takes its count of steps, so
         // the steps before the first are not walked past the end. A key past every query takes
         // none.
         let first = first_step.min(queries.total());
         let steps = queries.total() - first;
+
         let mut stages = Stages::smem(
             &queries,
             &query.at(&head),
@@ -137,6 +140,7 @@ impl KeyGradientSums {
             )
             .with_scratch(microkernel.sum_scratch());
         key.zero();
+
         let mut value = value_gradient
             .accumulator::<EA>(
                 scores,
@@ -146,6 +150,7 @@ impl KeyGradientSums {
             )
             .with_scratch(microkernel.sum_scratch());
         value.zero();
+
         KeyGradientSums { key, value }
     }
 
@@ -257,6 +262,7 @@ impl PlaneKeyGradientMicrokernel {
         let (scores, gradients) = (&windows.scores, &windows.gradients);
         let mut cast = windows.cast.clone();
         let wide = ComptimeOption::<Tile>::new_None();
+
         ScoreWindows::contract_into::<EA>(scores, key, query, microkernel.score, score_levels);
 
         // The scores' cells were stored in the fragments' layout; the softmax reads them along the
@@ -264,6 +270,7 @@ impl PlaneKeyGradientMicrokernel {
         sync_plane();
 
         scores.along(Q).probabilities::<EA>(scale, bias, logsumexp);
+
         sync_plane();
 
         cast.copy_cast_from(scores);
@@ -299,6 +306,7 @@ impl PlaneKeyGradientMicrokernel {
         gradients
             .along(Q)
             .softmax_gradient::<EA>(&scores.along(Q), delta);
+
         sync_plane();
 
         cast.copy_cast_from(gradients);
@@ -344,14 +352,17 @@ impl PlaneKeyGradientMicrokernel {
             (S, microkernel.seq_kv()),
             (Q, microkernel.seq_q())
         ]));
+
         let scores = ScoreWindows::contract_held::<EA>(
             key,
             query,
-            comptime!(space.clone()),
+            space.clone(),
             microkernel.score,
             score_levels,
         );
+
         scores.along(Q).probabilities::<EA>(scale, bias, logsumexp);
+
         ScoreWindows::contract_fragments(
             &sums.value,
             &scores.cast::<ES>(),
@@ -366,9 +377,11 @@ impl PlaneKeyGradientMicrokernel {
             microkernel.score_gradient,
             score_gradient_levels,
         );
+
         gradients
             .along(Q)
             .softmax_gradient::<EA>(&scores.along(Q), delta);
+
         ScoreWindows::contract_fragments(
             &sums.key,
             &gradients.cast::<ES>(),

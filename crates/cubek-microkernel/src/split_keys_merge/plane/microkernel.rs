@@ -11,7 +11,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// The slots lie as [`SlotBox`] states; `out` is the attention's output,
 /// `[b, kv, g, q, dv]` at its own strides, and `logsumexp` `[b, kv, g, q]` at its own.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
     // Read only, taken as the kernel holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut Tensor<Vector<EA, N>>,
@@ -27,6 +26,7 @@ pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
     let width = slot_out.vector_size();
     let lines = comptime!(val_dim / width);
     let elements = lines.div_ceil(units);
+
     let lane = UNIT_POS_PLANE as usize;
 
     #[unroll]
@@ -56,11 +56,13 @@ pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
             }
 
             let merged = row.normalized();
+
             let row_start = slot_box.batch * out.stride(0)
                 + slot_box.kv * out.stride(1)
                 + slot_box.head * out.stride(2)
                 + (slot_box.first_query + r) * out.stride(3);
             let element_stride = out.stride(4);
+
             #[unroll]
             for e in 0..elements {
                 let line = lane + e * units;
@@ -83,7 +85,6 @@ pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
 /// them. `out`, and `logsumexp` where the caller asks for each row's, are windowed to the group's
 /// rows. A row whose every slot saw nothing writes zeros, and the minimum value as its logsumexp.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
     // Read only, taken as the cube holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut [Vector<EA, N>],
@@ -103,7 +104,9 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
     } = slots;
     let width = N::value();
     let lines_of_value = comptime!(val_dim / width);
+
     let lane = UNIT_POS_PLANE as usize;
+
     let mut out = out.clone();
     let mut lines = out.flat_mut::<E, N>();
 
@@ -133,6 +136,7 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
             }
 
             let merged = row.normalized();
+
             #[unroll]
             for e in 0..lines_of_value.div_ceil(units) {
                 let line = lane + e * units;
@@ -150,7 +154,6 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
 /// `out`, and `logsumexp` where the caller asks for each row's, are windowed to the plane's rows.
 /// A row whose every slot saw nothing writes zeros, and the minimum value as its logsumexp.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
     // Read only, taken as the kernel holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut [Vector<EA, N>],
@@ -167,7 +170,9 @@ pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
     let SlotShape { units, val_dim, .. } = slots;
     let width = N::value();
     let lines_of_value = comptime!(val_dim / width);
+
     let lane = UNIT_POS_PLANE as usize;
+
     let mut out = out.clone();
     let mut lines = out.flat_mut::<E, N>();
 
@@ -197,6 +202,7 @@ pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
             }
 
             let merged = row.normalized();
+
             #[unroll]
             for e in 0..lines_of_value.div_ceil(units) {
                 let line = lane + e * units;
@@ -213,7 +219,6 @@ pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
 /// of a value, plus `l`, of `out`, its merged max and sum at that slot of `max` and `sum`. What a
 /// merge across cubes reads is one slot a cube, whatever its planes.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn plane_merge_rows_partial_microkernel<EA: Float, N: Size>(
     // Read only, taken as the cube holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut [Vector<EA, N>],
@@ -237,6 +242,7 @@ pub(crate) fn plane_merge_rows_partial_microkernel<EA: Float, N: Size>(
     } = slots;
     let width = N::value();
     let lines_of_value = comptime!(val_dim / width);
+
     let lane = UNIT_POS_PLANE as usize;
 
     #[unroll]

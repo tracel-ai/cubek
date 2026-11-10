@@ -14,7 +14,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// then the rows are normalized and drained into `out`, and each row's logsumexp written where the
 /// caller asks for it.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn unit_attention_microkernel<EA: Float>(
     rows: &Region,
     out: &Tile,
@@ -30,6 +29,7 @@ pub fn unit_attention_microkernel<EA: Float>(
     let value_instruction = microkernel.value.tile_instruction();
     let mut sum = out.accumulator::<EA>(bias, value, value_instruction, Semiring::SUM_PROD);
     sum.zero();
+
     let mut softmax = OnlineSoftmax::<EA>::along(bias, S);
 
     for step in rows.walk().range(0, steps) {
@@ -64,7 +64,6 @@ pub fn unit_attention_microkernel<EA: Float>(
 /// whole head dim, which holds the step's keys whole for the value too; `sum`, `query`, `key`,
 /// `value` and `bias` are windowed to it, wherever the keys and values lie.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn unit_attention_step<EA: Float>(
     step: &Region,
     sum: &mut Tile,
@@ -79,6 +78,7 @@ pub(crate) fn unit_attention_step<EA: Float>(
     let score_instruction = microkernel.score.tile_instruction();
     let mut score = bias.accumulator::<EA>(query, key, score_instruction, Semiring::SUM_PROD);
     score.zero();
+
     for depth in step.walk() {
         unit_registers_microkernel(&depth, &score, query, key);
     }

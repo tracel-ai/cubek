@@ -13,7 +13,6 @@ use cubek_std::microkernel::StageRing;
 /// Every plane of the launch running its queries through stages of its own: their dot product of
 /// the output with its gradient, and their gradient, over the keys they see.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_fragment_query_gradient_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -41,6 +40,7 @@ pub fn plane_fragment_query_gradient_kernel<EA: Float, ES: Float>(
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let d_q = query_gradient.tile(&partitioning);
+
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.bias::<EA>(&partitioning);
 
@@ -70,7 +70,6 @@ pub fn plane_fragment_query_gradient_kernel<EA: Float, ES: Float>(
 /// Every plane of the launch running its keys through stages of its own: their gradient and
 /// their values', over every query of the group's heads that sees them.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_fragment_key_gradient_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -101,6 +100,7 @@ pub fn plane_fragment_key_gradient_kernel<EA: Float, ES: Float>(
         key_gradient.tile(&partitioning),
         value_gradient.tile(&partitioning),
     );
+
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
 

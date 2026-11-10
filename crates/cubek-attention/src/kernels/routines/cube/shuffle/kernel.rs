@@ -11,7 +11,6 @@ use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 /// keys where they lie, over the keys its rows see, and writing each row's logsumexp where the
 /// launch binds one.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -29,6 +28,7 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+
     let q = query.tile(&partitioning);
     let k = TileStepReads::<E> {
         tile: key.tile(&partitioning),
@@ -38,6 +38,7 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
         tile: value.tile(&partitioning),
         element: PhantomData,
     };
+
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
 

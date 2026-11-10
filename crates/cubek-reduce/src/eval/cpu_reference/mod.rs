@@ -41,8 +41,8 @@ use cubek_test_utils::{
 };
 
 use crate::{
-    ReduceDtypes, ReduceStrategy, ReduceWithIndicesDtypes,
-    components::instructions::ReduceOperationConfig, reduce, reduce_with_indices,
+    ReduceDtypes, ReduceError, ReduceStrategy, ReduceWithIndicesDtypes,
+    components::instructions::ReduceOperationConfig, kernels, reduce, reduce_with_indices,
 };
 
 /// The bits a comparison runs on: the kernel launch and the CPU reference each
@@ -124,6 +124,63 @@ pub fn comparison_epsilon(config: ReduceOperationConfig) -> f32 {
     }
 }
 
+/// Which entry the suite and the benchmarks launch: today's kernels, or the tile routines
+/// ([`kernels`]) when `CUBEK_REDUCE_ON_TILES` is set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReduceEntry {
+    Kernels,
+    Tiles,
+}
+
+impl ReduceEntry {
+    /// The entry `CUBEK_REDUCE_ON_TILES` names.
+    pub fn from_env() -> Self {
+        match std::env::var_os("CUBEK_REDUCE_ON_TILES") {
+            Some(_) => ReduceEntry::Tiles,
+            None => ReduceEntry::Kernels,
+        }
+    }
+
+    /// [`reduce`], or its tile counterpart.
+    #[allow(clippy::type_complexity)]
+    pub fn reduce(
+        self,
+    ) -> fn(
+        &Client,
+        TensorBinding,
+        TensorBinding,
+        usize,
+        ReduceStrategy,
+        ReduceOperationConfig,
+        ReduceDtypes,
+    ) -> Result<(), ReduceError> {
+        match self {
+            ReduceEntry::Kernels => reduce,
+            ReduceEntry::Tiles => kernels::reduce_on_tiles,
+        }
+    }
+
+    /// [`reduce_with_indices`], or its tile counterpart.
+    #[allow(clippy::type_complexity)]
+    pub fn reduce_with_indices(
+        self,
+    ) -> fn(
+        &Client,
+        TensorBinding,
+        TensorBinding,
+        TensorBinding,
+        usize,
+        ReduceStrategy,
+        ReduceOperationConfig,
+        ReduceWithIndicesDtypes,
+    ) -> Result<(), ReduceError> {
+        match self {
+            ReduceEntry::Kernels => reduce_with_indices,
+            ReduceEntry::Tiles => kernels::reduce_with_indices_on_tiles,
+        }
+    }
+}
+
 /// Run `strategy` on `input` and return its output as a [`HostData`].
 pub fn strategy_result(
     client: Client,
@@ -154,7 +211,7 @@ pub fn strategy_result(
     };
 
     let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-        reduce(
+        ReduceEntry::from_env().reduce()(
             c,
             input_handle.clone().binding(),
             output_handle.clone().binding(),
@@ -219,7 +276,7 @@ pub fn strategy_result_with_indices(
         &client,
         &[&values_handle.handle, &indices_handle.handle],
         |c| {
-            reduce_with_indices(
+            ReduceEntry::from_env().reduce_with_indices()(
                 c,
                 input_handle.clone().binding(),
                 values_handle.clone().binding(),

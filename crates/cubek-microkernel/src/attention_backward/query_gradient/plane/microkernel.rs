@@ -19,7 +19,6 @@ use cubek_std::microkernel::StageRing;
 /// queries share the cube, which its own grids are placed under. The dot product is written
 /// before the walk, for the keys' walk to read.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_fragment_query_gradient_microkernel<EA: Float, ES: Float>(
     queries: &Region,
     query_gradient: &Tile,
@@ -40,6 +39,7 @@ pub fn plane_fragment_query_gradient_microkernel<EA: Float, ES: Float>(
     // A tile's clone is a handle to the same cells: the dot product lands in `delta`.
     let mut delta = delta.clone();
     delta.dot::<EA>(out_gradient, out);
+
     let walk = queries.walk().range(0, steps);
     let sum = PlaneQueryGradientMicrokernel::open_sum::<EA>(query_gradient, bias, key, microkernel);
 
@@ -48,6 +48,7 @@ pub fn plane_fragment_query_gradient_microkernel<EA: Float, ES: Float>(
     staged_query.copy_from(query);
     let mut staged_out_gradient = out_gradient.stage_for(&walk, StageStorage::Strided, None);
     staged_out_gradient.copy_from(out_gradient);
+
     let windows =
         ScoreWindows::held_or_open::<EA, ES>(&walk, comptime!(vec![G, Q, S]), microkernel.holder());
 
@@ -189,12 +190,14 @@ impl PlaneQueryGradientMicrokernel {
     ) {
         let (scores, gradients) = (&windows.scores, &windows.gradients);
         let wide = ComptimeOption::<Tile>::new_None();
+
         ScoreWindows::contract_into::<EA>(scores, query, key, microkernel.score, score_levels);
 
         // The scores' cells were stored in the fragments' layout; the softmax reads them by rows.
         sync_plane();
 
         scores.along(S).probabilities::<EA>(scale, bias, logsumexp);
+
         ScoreWindows::contract_into::<EA>(
             gradients,
             out_gradient,
@@ -209,6 +212,7 @@ impl PlaneQueryGradientMicrokernel {
         gradients
             .along(S)
             .softmax_gradient::<EA>(&scores.along(S), delta);
+
         sync_plane();
 
         let mut cast = windows.cast.clone();
@@ -256,14 +260,17 @@ impl PlaneQueryGradientMicrokernel {
             (Q, microkernel.seq_q()),
             (S, microkernel.seq_kv())
         ]));
+
         let scores = ScoreWindows::contract_held::<EA>(
             query,
             key,
-            comptime!(space.clone()),
+            space.clone(),
             microkernel.score,
             score_levels,
         );
+
         scores.along(S).probabilities::<EA>(scale, bias, logsumexp);
+
         let gradients = ScoreWindows::contract_held::<EA>(
             out_gradient,
             value,
@@ -271,9 +278,11 @@ impl PlaneQueryGradientMicrokernel {
             microkernel.score_gradient,
             score_gradient_levels,
         );
+
         gradients
             .along(S)
             .softmax_gradient::<EA>(&scores.along(S), delta);
+
         ScoreWindows::contract_fragments(
             sum,
             &gradients.cast::<ES>(),

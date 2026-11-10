@@ -114,7 +114,6 @@ pub fn load_partition_from_stage<
 }
 
 #[cube]
-#[allow(clippy::too_many_arguments)]
 /// Write a partition accumulator back to an output stage, emitting
 /// `Begin` / `TileStored` / `Finish` events.
 pub fn write_partition_to_stage<

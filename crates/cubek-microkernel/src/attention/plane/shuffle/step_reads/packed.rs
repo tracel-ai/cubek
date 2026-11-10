@@ -44,6 +44,7 @@ impl<N: Size> StepReads<N> for PackedStepReads {
 
         let (read, fixup) = (window.decoded::<f32, N>(), fixup.decoded::<f32, N>());
         let half = comptime!(if qjl { lines / 2 } else { lines });
+
         let first_key = step.origin(S);
         let (teams, keys_in_flight) = comptime!((walk.teams, walk.keys_in_flight));
         let units_per_key = comptime!(walk.units_per_key);

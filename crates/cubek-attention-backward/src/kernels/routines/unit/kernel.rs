@@ -12,7 +12,6 @@ use cubek_microkernel::attention_backward::query_gradient::unit::{
 /// Every unit of the launch running its queries: their dot product of the output with its
 /// gradient, and their gradient, over the keys they see.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn unit_query_gradient_kernel<EA: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -38,6 +37,7 @@ pub fn unit_query_gradient_kernel<EA: Float>(
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let d_q = query_gradient.tile(&partitioning);
+
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.bias::<EA>(&partitioning);
 
@@ -65,7 +65,6 @@ pub fn unit_query_gradient_kernel<EA: Float>(
 /// Every unit of the launch running its keys: their gradient and their values', over every query
 /// of the group's heads that sees them.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn unit_key_gradient_kernel<EA: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -94,6 +93,7 @@ pub fn unit_key_gradient_kernel<EA: Float>(
         key_gradient.tile(&partitioning),
         value_gradient.tile(&partitioning),
     );
+
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
 

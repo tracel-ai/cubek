@@ -22,7 +22,7 @@ impl CubeStore {
     /// The store of `out`, the cube's window of the output, its lines `N` elements of `E` wide,
     /// written as `form` says.
     pub fn new<E: Float, N: Size>(out: Tile, #[comptime] form: CubeStage) -> CubeStore {
-        let stage = match comptime!(form.clone()) {
+        let stage = match form.clone() {
             CubeStage::Direct => out.clone(),
             CubeStage::Encoded { cube_box } => {
                 Tile::smem::<E>(cube_box, N::value(), StageStorage::Strided, 0usize)
@@ -89,6 +89,8 @@ impl Destination for Encoded {
     fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
         arg.tile(partitioning)
     }
+
+    fn finish<E: Numeric>(_arg: &Self::Arg<E>) {}
 }
 
 impl DestinationLaunch for Encoded {
