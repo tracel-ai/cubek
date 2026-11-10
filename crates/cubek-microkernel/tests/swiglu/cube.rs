@@ -1,6 +1,7 @@
 //! The cube SwiGLU microkernel alone: each cube's group of units shares one row's run.
 
 use cubek_microkernel::swiglu::cube::CubeSwigluMicrokernel;
+use cubek_microkernel::testing::RowBatch;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::ScopeUnderTest;
@@ -19,8 +20,7 @@ fn a_cube_gates_every_row_like_the_host() {
             [F16, F32].into_iter().flat_map(move |element| {
                 [(1, 1024), (3, 1000), (2, 70)].map(|(rows, dim)| SwigluCase {
                     element,
-                    rows,
-                    dim,
+                    batch: RowBatch { rows, dim },
                     settings,
                 })
             })

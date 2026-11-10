@@ -5,7 +5,7 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
-use cubek_microkernel::testing::pool::{PoolLaunch, WindowAxis};
+use cubek_microkernel::testing::pool::{Channels, PoolLaunch, WindowAxis};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
@@ -80,13 +80,13 @@ impl Pool {
     ///
     /// Why the device runs no max pool microkernel at `case`.
     fn launch_at(&self, case: &PoolCase) -> Result<PoolLaunch, Refusal> {
-        let channels = case.channel_block * self.hw.dispatch_plane_size() as usize * case.walks;
+        let per_unit = case.channel_block;
+        let count = per_unit * self.hw.dispatch_plane_size() as usize * case.walks;
         PoolLaunch::new(
             &self.hw,
             case.windows,
             case.input,
-            channels,
-            case.channel_block,
+            Channels { count, per_unit },
         )
     }
 }

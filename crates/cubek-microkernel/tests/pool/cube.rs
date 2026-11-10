@@ -14,9 +14,48 @@ use crate::pool::{F16, F32, Pool, PoolCase};
 fn a_cube_max_pools_every_window_like_the_host() {
     let hw = Hardware::from_client(&cubecl::test_device().client());
     let windows = [
-        [WindowAxis::new(2, 2, 1, 0), WindowAxis::new(2, 2, 1, 0)],
-        [WindowAxis::new(3, 2, 1, 1), WindowAxis::new(3, 1, 1, 1)],
-        [WindowAxis::new(2, 1, 2, 0), WindowAxis::new(3, 2, 2, 2)],
+        [
+            WindowAxis {
+                taps: 2,
+                stride: 2,
+                dilation: 1,
+                padding: 0,
+            },
+            WindowAxis {
+                taps: 2,
+                stride: 2,
+                dilation: 1,
+                padding: 0,
+            },
+        ],
+        [
+            WindowAxis {
+                taps: 3,
+                stride: 2,
+                dilation: 1,
+                padding: 1,
+            },
+            WindowAxis {
+                taps: 3,
+                stride: 1,
+                dilation: 1,
+                padding: 1,
+            },
+        ],
+        [
+            WindowAxis {
+                taps: 2,
+                stride: 1,
+                dilation: 2,
+                padding: 0,
+            },
+            WindowAxis {
+                taps: 3,
+                stride: 2,
+                dilation: 2,
+                padding: 2,
+            },
+        ],
     ];
     let cases: Vec<_> = [F16, F32]
         .into_iter()

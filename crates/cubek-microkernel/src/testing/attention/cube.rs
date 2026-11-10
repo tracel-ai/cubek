@@ -72,9 +72,7 @@ impl CubeAttentionLaunch {
         if settings.planes_along_keys.get() > 1 {
             microkernel.plane.merges_rows()?;
         }
-        if microkernel.shared_memory(hw, &item, &storage)
-            > hw.properties.hardware.max_shared_memory_size
-        {
+        if microkernel.shared_memory(hw, &item, &storage) > hw.shared_memory_budget() {
             return Err(Refusal::Declined {
                 why: "the cube's stages hold more shared memory than the device has",
             });

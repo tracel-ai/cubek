@@ -4,6 +4,7 @@ use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
+use cubek_microkernel::split_keys_merge::SlotShape;
 use cubek_microkernel::testing::split_keys_merge::PlaneMergeLaunch;
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, TestInput, Written};
@@ -34,7 +35,14 @@ impl ScopeUnderTest for PlaneMerge {
             splits,
             val_dim,
         } = *case;
-        let launch = PlaneMergeLaunch::new(&self.hw, queries, val_dim, splits);
+        let launch = PlaneMergeLaunch {
+            slots: SlotShape {
+                units: self.hw.dispatch_plane_size() as usize,
+                val_dim,
+                splits,
+            },
+            queries,
+        };
         let slots = HostSlots::new(queries, splits, val_dim);
         let tensor = |values: Vec<f32>, shape, element| {
             TestInput::builder(client.clone(), shape)

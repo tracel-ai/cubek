@@ -6,9 +6,9 @@ use crate::split_keys_merge::plane::plane_split_keys_merge_microkernel;
 use crate::split_keys_merge::{SlotBox, SlotShape};
 use cubecl::prelude::*;
 use cubecl::{self as cubecl, cube};
-use cubek_std::Hardware;
 
-/// A plane merge ready to launch over `queries` queries of one head.
+/// A plane merge ready to launch over `queries` queries of one head, its slots laid out as
+/// `slots` says, a plane `slots.units` wide merging each.
 #[derive(Debug, Clone, Copy)]
 pub struct PlaneMergeLaunch {
     pub slots: SlotShape,
@@ -16,19 +16,6 @@ pub struct PlaneMergeLaunch {
 }
 
 impl PlaneMergeLaunch {
-    /// The merge of `splits` slots of `val_dim` elements for `queries` queries, a plane of the
-    /// device's width merging each.
-    pub fn new(hw: &Hardware, queries: usize, val_dim: usize, splits: usize) -> Self {
-        Self {
-            slots: SlotShape {
-                units: hw.dispatch_plane_size() as usize,
-                val_dim,
-                splits,
-            },
-            queries,
-        }
-    }
-
     /// `out` `[1, 1, 1, queries, val_dim]` of `out_element` and `logsumexp` `[1, 1, 1, queries]`
     /// merged from `slot_out` `[1, 1, 1, queries, splits, val_dim]` and `slot_max` and `slot_sum`
     /// `[1, 1, 1, queries, splits]`, all of `sum`, all row-major.

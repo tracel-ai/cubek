@@ -26,6 +26,13 @@ use cubek_std::microkernel::Microkernel;
 /// The element the conv writes its queries, keys and values in.
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 
+/// One sequence's stream: filters of `taps` over `positions` positions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConvStream {
+    pub taps: usize,
+    pub positions: usize,
+}
+
 /// A conv microkernel ready to launch over one sequence's stream.
 #[derive(Debug, Clone, Copy)]
 pub struct ConvLaunch {
@@ -36,18 +43,14 @@ pub struct ConvLaunch {
 }
 
 impl ConvLaunch {
-    /// The conv microkernel `hw` runs over `heads` with filters of `taps`, a stream `positions`
-    /// long, its units capped at the head's channels, one a unit.
+    /// The conv microkernel `hw` runs over `heads` and `stream`, its units capped at the head's
+    /// channels, one a unit.
     ///
     /// # Errors
     ///
     /// Why the device runs none.
-    pub fn new(
-        hw: &Hardware,
-        heads: RecurrenceHeads,
-        taps: usize,
-        positions: usize,
-    ) -> Result<Self, Refusal> {
+    pub fn new(hw: &Hardware, heads: RecurrenceHeads, stream: ConvStream) -> Result<Self, Refusal> {
+        let ConvStream { taps, positions } = stream;
         let item = QkNormedConvWorkItem {
             heads,
             taps,

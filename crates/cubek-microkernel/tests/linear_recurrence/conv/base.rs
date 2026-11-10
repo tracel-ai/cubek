@@ -8,7 +8,7 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
-use cubek_microkernel::testing::linear_recurrence::conv::ConvLaunch;
+use cubek_microkernel::testing::linear_recurrence::conv::{ConvLaunch, ConvStream};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 use half::f16;
@@ -101,13 +101,12 @@ pub(crate) struct Conv {
     pub hw: Hardware,
 }
 
-/// A stream of `element` over `heads`, `positions` long, convolved with filters of `taps`.
+/// A stream of `element` over `heads`, convolved as `stream` says.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ConvCase {
     pub element: ElemType,
     pub heads: RecurrenceHeads,
-    pub taps: usize,
-    pub positions: usize,
+    pub stream: ConvStream,
 }
 
 impl Conv {
@@ -115,7 +114,7 @@ impl Conv {
     ///
     /// Why the device runs no conv microkernel at `case`.
     fn launch_at(&self, case: &ConvCase) -> Result<ConvLaunch, Refusal> {
-        ConvLaunch::new(&self.hw, case.heads, case.taps, case.positions)
+        ConvLaunch::new(&self.hw, case.heads, case.stream)
     }
 }
 
@@ -130,7 +129,7 @@ impl ScopeUnderTest for Conv {
             key_features: kd,
             value_features: vd,
         } = case.heads;
-        let (t, conv_dim) = (case.positions, case.heads.conv_dim());
+        let (t, conv_dim) = (case.stream.positions, case.heads.conv_dim());
         let host = HostConv::new(launch, case.element);
         let tensor = |values: Vec<f32>, shape, element| {
             TestInput::builder(client.clone(), shape)
@@ -143,7 +142,11 @@ impl ScopeUnderTest for Conv {
             shape![1, launch.stream_len(), conv_dim],
             case.element,
         );
-        let filters = tensor(host.filters, shape![conv_dim, case.taps], case.element);
+        let filters = tensor(
+            host.filters,
+            shape![conv_dim, case.stream.taps],
+            case.element,
+        );
         let keyed = || {
             tensor(
                 vec![-7.0; t * key_heads * kd],

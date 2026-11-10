@@ -2,6 +2,7 @@
 //! channels at one position, the head's queries and keys normed through shared memory.
 
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
+use cubek_microkernel::testing::linear_recurrence::conv::ConvStream;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 
@@ -33,8 +34,7 @@ fn a_cube_convolves_every_head_like_the_host() {
                 [(2, 1), (4, 5)].map(|(taps, positions)| ConvCase {
                     element,
                     heads,
-                    taps,
-                    positions,
+                    stream: ConvStream { taps, positions },
                 })
             })
         })

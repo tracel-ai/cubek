@@ -13,7 +13,7 @@ use cubecl::{self as cubecl, cube};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
-pub use super::window::{WindowAxis, WindowedLaunch};
+pub use super::window::{Channels, WindowAxis, WindowedLaunch};
 
 /// A max pool microkernel ready to launch.
 #[derive(Debug, Clone, Copy)]
@@ -25,19 +25,18 @@ pub struct PoolLaunch {
 impl PoolLaunch {
     /// # Errors
     ///
-    /// Why the device runs no max pool microkernel, or why `channels` do not walk in whole blocks
-    /// of the plane.
+    /// Why the device runs no max pool microkernel, or why the `channels` do not walk in whole
+    /// blocks of the plane.
     pub fn new(
         hw: &Hardware,
         windows: [WindowAxis; 2],
         input: [usize; 2],
-        channels: usize,
-        channel_block: usize,
+        channels: Channels,
     ) -> Result<Self, Refusal> {
-        let windowed = WindowedLaunch::new(hw, windows, input, channels, channel_block)?;
+        let windowed = WindowedLaunch::new(hw, windows, input, channels)?;
         let item = PoolWorkItem {
-            channels: channel_block,
-            outputs: channel_block,
+            channels: channels.per_unit,
+            outputs: channels.per_unit,
         };
         let microkernel = CubeMaxPoolMicrokernel::best(hw, &item, &CubeMaxPoolMicrokernelSettings)?;
         Ok(Self {
@@ -79,6 +78,10 @@ impl PoolLaunch {
 }
 
 /// Every cube walking its channels, a block at a time.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
 #[cube(launch_unchecked)]
 fn cube_max_pool_kernel<E: Numeric>(
     input: &TileTensor<'_>,

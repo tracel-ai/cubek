@@ -92,6 +92,10 @@ impl MatmulLaunch for UnitRegistersLaunch {
 }
 
 /// Every unit summing its block, walked within the rhs, and draining it into `out`.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
 #[cube(launch_unchecked)]
 fn unit_registers_kernel<EA: Numeric, E: Numeric>(
     lhs: &TileTensor<'_>,

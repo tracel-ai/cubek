@@ -28,16 +28,6 @@ pub struct WindowAxis {
 }
 
 impl WindowAxis {
-    /// A window of `taps`, stepping `stride`, its taps `dilation` apart, padded by `padding`.
-    pub const fn new(taps: usize, stride: usize, dilation: usize, padding: usize) -> Self {
-        Self {
-            taps,
-            stride,
-            dilation,
-            padding,
-        }
-    }
-
     /// Output positions over an input `input` long.
     pub fn outputs(&self, input: usize) -> usize {
         (input + 2 * self.padding - self.dilation * (self.taps - 1) - 1) / self.stride + 1
@@ -48,6 +38,13 @@ impl WindowAxis {
         PhysicalAxisMap::affine(&[(output, self.stride), (tap, self.dilation)])
             .shifted(-(self.padding as isize))
     }
+}
+
+/// The channels of an input, and how many of them one unit takes at each step of the walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Channels {
+    pub count: usize,
+    pub per_unit: usize,
 }
 
 /// A launch over an NHWC input `[1, input[0], input[1], channels]` gathered under `windows`: a
@@ -68,14 +65,17 @@ pub struct WindowedLaunch {
 impl WindowedLaunch {
     /// # Errors
     ///
-    /// Why `channels` do not walk in whole blocks of the plane.
+    /// Why the `channels` do not walk in whole blocks of the plane.
     pub(crate) fn new(
         hw: &Hardware,
         windows: [WindowAxis; 2],
         input: [usize; 2],
-        channels: usize,
-        channel_block: usize,
+        channels: Channels,
     ) -> Result<Self, Refusal> {
+        let Channels {
+            count: channels,
+            per_unit: channel_block,
+        } = channels;
         let plane_width = hw.dispatch_plane_size() as usize;
         if !channels.is_multiple_of(plane_width * channel_block) {
             return Err(Refusal::Declined {

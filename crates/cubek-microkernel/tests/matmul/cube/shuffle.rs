@@ -2,14 +2,14 @@
 
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::cube::{CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings};
-use cubek_microkernel::testing::matmul::{CubeShuffleLaunch, MatmulElements};
+use cubek_microkernel::testing::matmul::{CubeShuffleLaunch, MatmulElements, WholeRows};
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 
 use crate::matmul::{Matmul, MatmulSettings};
 
-/// The rows the product holds whole: a decode step's few.
-const ROWS: usize = 4;
+/// The rows the product holds whole.
+const ROWS: WholeRows = WholeRows(4);
 
 impl MatmulSettings for CubeShuffleMicrokernelSettings {
     type Microkernel = CubeShuffleMicrokernel;

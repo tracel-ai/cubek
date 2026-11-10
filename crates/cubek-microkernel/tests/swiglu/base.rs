@@ -6,6 +6,7 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
 use cubek_microkernel::swiglu::cube::CubeSwigluMicrokernelSettings;
+use cubek_microkernel::testing::RowBatch;
 use cubek_microkernel::testing::swiglu::SwigluLaunch;
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
@@ -17,22 +18,22 @@ pub(crate) const F32: ElemType = ElemType::Float(FloatKind::F32);
 /// writes.
 struct HostSwiglu {
     input: Vec<f32>,
-    rows: usize,
-    dim: usize,
+    batch: RowBatch,
 }
 
 impl HostSwiglu {
-    fn new(rows: usize, dim: usize) -> Self {
+    fn new(batch: RowBatch) -> Self {
+        let RowBatch { rows, dim } = batch;
         let input = (0..rows * 2 * dim)
             .map(|i| ((i * 37) % 65) as f32 / 8.0 - 4.0)
             .collect();
-        Self { input, rows, dim }
+        Self { input, batch }
     }
 
     /// `silu(gate) · up`, `[rows, dim]`.
     fn out(&self) -> HostData {
-        let dim = self.dim;
-        let out = (0..self.rows * dim)
+        let RowBatch { rows, dim } = self.batch;
+        let out = (0..rows * dim)
             .map(|idx| {
                 let (r, d) = (idx / dim, idx % dim);
                 let gate = self.input[r * 2 * dim + d];
@@ -40,7 +41,7 @@ impl HostSwiglu {
                 gate / (1.0 + (-gate).exp()) * up
             })
             .collect();
-        HostData::row_major(HostDataVec::F32(out), shape![self.rows, dim])
+        HostData::row_major(HostDataVec::F32(out), shape![rows, dim])
     }
 }
 
@@ -53,8 +54,7 @@ pub(crate) struct Swiglu {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SwigluCase {
     pub element: ElemType,
-    pub rows: usize,
-    pub dim: usize,
+    pub batch: RowBatch,
     pub settings: CubeSwigluMicrokernelSettings,
 }
 
@@ -63,7 +63,7 @@ impl Swiglu {
     ///
     /// Why the device runs no SwiGLU microkernel at `case`.
     fn launch_at(&self, case: &SwigluCase) -> Result<SwigluLaunch, Refusal> {
-        SwigluLaunch::new(&self.hw, case.element, case.rows, case.dim, &case.settings)
+        SwigluLaunch::new(&self.hw, case.element, case.batch, &case.settings)
     }
 }
 
@@ -72,14 +72,14 @@ impl ScopeUnderTest for Swiglu {
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
         let launch = self.launch_at(case)?;
-        let host = HostSwiglu::new(case.rows, case.dim);
-        let input = TestInput::builder(client.clone(), shape![case.rows, 2, case.dim])
+        let host = HostSwiglu::new(case.batch);
+        let input = TestInput::builder(client.clone(), shape![case.batch.rows, 2, case.batch.dim])
             .dtype(case.element)
             .custom(host.input)
             .generate_without_host_data();
-        let out = TestInput::builder(client.clone(), shape![case.rows, case.dim])
+        let out = TestInput::builder(client.clone(), shape![case.batch.rows, case.batch.dim])
             .dtype(case.element)
-            .custom(vec![-7.0; case.rows * case.dim])
+            .custom(vec![-7.0; case.batch.rows * case.batch.dim])
             .generate_without_host_data();
         launch.launch(
             client,
@@ -94,7 +94,7 @@ impl ScopeUnderTest for Swiglu {
     }
 
     fn reference(&self, case: &Self::Case) -> Vec<HostData> {
-        vec![HostSwiglu::new(case.rows, case.dim).out()]
+        vec![HostSwiglu::new(case.batch).out()]
     }
 
     /// The output's own rounding: `f16` keeps ten bits.

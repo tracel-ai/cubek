@@ -5,6 +5,7 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
+use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
 use cubek_microkernel::attention_backward::delta::plane::{
     PlaneDeltaMicrokernel, PlaneDeltaMicrokernelSettings,
 };
@@ -34,7 +35,14 @@ impl PlaneDelta {
     ///
     /// Why the device runs no plane delta microkernel at `case`.
     fn launch_at(&self, case: &PlaneDeltaCase) -> Result<PlaneDeltaLaunch, Refusal> {
-        PlaneDeltaLaunch::new(&self.hw, case.element, F32, case.val_dim, &case.settings)
+        let item = AttentionBackwardWorkItem {
+            element: case.element,
+            sum: F32,
+            group: 1,
+            head_dim: case.val_dim,
+            val_dim: case.val_dim,
+        };
+        PlaneDeltaLaunch::new(&self.hw, item, &case.settings)
     }
 
     /// Every query's output and its gradient, eighths exact in `f16`.

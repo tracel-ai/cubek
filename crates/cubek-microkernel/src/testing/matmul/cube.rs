@@ -16,7 +16,7 @@ use cubek_std::Hardware;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::Microkernel;
 
-use super::{MatmulElements, MatmulLaunch, OneCube};
+use super::{MatmulElements, MatmulLaunch, OneCube, WholeRows};
 
 /// One cube shuffle microkernel ready to launch on one cube's box, every row held whole, `steps`
 /// of the cube's step of `K` deep.
@@ -24,7 +24,7 @@ use super::{MatmulElements, MatmulLaunch, OneCube};
 pub struct CubeShuffleLaunch {
     pub microkernel: CubeShuffleMicrokernel,
     pub elements: MatmulElements,
-    rows: usize,
+    rows: WholeRows,
     one_cube: OneCube,
 }
 
@@ -32,7 +32,7 @@ impl CubeShuffleLaunch {
     /// A cube shuffle sums a float rhs laid in columns, a decode step's weight.
     const RHS: MatmulLayout = MatmulLayout::Col;
 
-    /// The cube shuffle microkernel `hw` runs at `settings` over `rows` rows held whole.
+    /// The cube shuffle microkernel `hw` runs at `settings` over `rows`.
     ///
     /// # Errors
     ///
@@ -41,10 +41,10 @@ impl CubeShuffleLaunch {
         hw: &Hardware,
         elements: MatmulElements,
         settings: &CubeShuffleMicrokernelSettings,
-        rows: usize,
+        rows: WholeRows,
         steps: usize,
     ) -> Result<Self, Refusal> {
-        let item = elements.work_item_of(MatmulRows::Whole(rows), Self::RHS);
+        let item = elements.work_item_of(MatmulRows::Whole(rows.0), Self::RHS);
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, settings)?;
         let levels = microkernel.tiling().cubes(&[M, N]).build();
         Ok(Self {
@@ -100,7 +100,7 @@ impl MatmulLaunch for CubeShuffleLaunch {
                 microkernel.plane.reads(
                     &self
                         .elements
-                        .work_item_of(MatmulRows::Whole(self.rows), Self::RHS),
+                        .work_item_of(MatmulRows::Whole(self.rows.0), Self::RHS),
                 ),
                 [self.elements.sum, self.elements.out],
             );
@@ -110,6 +110,10 @@ impl MatmulLaunch for CubeShuffleLaunch {
 }
 
 /// The one cube's planes taking `K` in turns and meeting in one accumulator.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 fn cube_shuffle_kernel<EA: Numeric, E: Numeric>(
@@ -179,7 +183,7 @@ impl CubeStagedLaunch {
             steps,
         );
         let resolved = microkernel.resolve(hw, &contracted, &placed.cube_space())?;
-        if resolved.shared_memory > hw.properties.hardware.max_shared_memory_size {
+        if resolved.shared_memory > hw.shared_memory_budget() {
             return Err(Refusal::Declined {
                 why: "the cube's stages hold more shared memory than the device has",
             });

@@ -8,7 +8,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
 use cubek_microkernel::random::plane::PlaneRandomMicrokernelSettings;
 use cubek_microkernel::random::{Bernoulli, DistributionArgs, Normal, SeedsLaunch, Uniform};
-use cubek_microkernel::testing::random::{RandomLaunch, RandomMicrokernel};
+use cubek_microkernel::testing::random::{RandomLaunch, RandomMicrokernel, UnitRun};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
@@ -158,7 +158,13 @@ impl Random {
     /// Why the device runs no such microkernel.
     fn launch_at(&self, case: &RandomCase) -> Result<RandomLaunch, Refusal> {
         match case.scope {
-            RandomScope::Unit { lines } => RandomLaunch::unit(&self.hw, lines, case.width),
+            RandomScope::Unit { lines } => RandomLaunch::unit(
+                &self.hw,
+                UnitRun {
+                    lines,
+                    width: case.width,
+                },
+            ),
             RandomScope::Plane(settings) => RandomLaunch::plane(&self.hw, &settings, case.width),
         }
     }

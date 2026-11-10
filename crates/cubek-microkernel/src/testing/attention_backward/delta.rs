@@ -23,26 +23,16 @@ pub struct PlaneDeltaLaunch {
 }
 
 impl PlaneDeltaLaunch {
-    /// The plane delta microkernel `hw` runs at `settings` over outputs of `element`, `val_dim`
-    /// wide, summed in `sum`.
+    /// The plane delta microkernel `hw` runs at `settings` over `item`'s outputs.
     ///
     /// # Errors
     ///
     /// Why the device runs none.
     pub fn new(
         hw: &Hardware,
-        element: ElemType,
-        sum: ElemType,
-        val_dim: usize,
+        item: AttentionBackwardWorkItem,
         settings: &PlaneDeltaMicrokernelSettings,
     ) -> Result<Self, Refusal> {
-        let item = AttentionBackwardWorkItem {
-            element,
-            sum,
-            group: 1,
-            head_dim: val_dim,
-            val_dim,
-        };
         let microkernel = PlaneDeltaMicrokernel::best(hw, &item, settings)?;
         Ok(Self {
             microkernel,

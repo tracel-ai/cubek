@@ -21,7 +21,7 @@ use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{Microkernel, StageRing};
 
-use super::{MatmulElements, MatmulLaunch, OneCube};
+use super::{MatmulElements, MatmulLaunch, OneCube, WholeRows};
 
 /// One plane fragment microkernel ready to launch on one work item: the microkernel the device
 /// picks at `settings`, and the problem one plane's tile wide, `steps` stages deep.
@@ -235,7 +235,7 @@ impl PlaneShuffleLaunch {
     /// A plane shuffle reads a row rhs.
     const RHS: MatmulLayout = MatmulLayout::Row;
 
-    /// The plane shuffle microkernel `hw` runs at `settings` over `rows` rows held whole.
+    /// The plane shuffle microkernel `hw` runs at `settings` over `rows`.
     ///
     /// # Errors
     ///
@@ -244,10 +244,10 @@ impl PlaneShuffleLaunch {
         hw: &Hardware,
         elements: MatmulElements,
         settings: &PlaneShuffleMicrokernelSettings,
-        rows: usize,
+        rows: WholeRows,
         steps: usize,
     ) -> Result<Self, Refusal> {
-        let item = elements.work_item_of(MatmulRows::Whole(rows), Self::RHS);
+        let item = elements.work_item_of(MatmulRows::Whole(rows.0), Self::RHS);
         let microkernel = PlaneShuffleMicrokernel::best(hw, &item, settings)?;
         let levels = microkernel
             .tiling()
@@ -301,6 +301,10 @@ impl MatmulLaunch for PlaneShuffleLaunch {
 }
 
 /// The one plane walking `K` through its own reads, summing in registers and draining into `out`.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
 #[cube(launch_unchecked)]
 fn plane_shuffle_kernel<EA: Numeric, E: Numeric>(
     lhs: &TileTensor<'_>,

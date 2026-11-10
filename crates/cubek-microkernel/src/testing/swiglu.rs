@@ -14,6 +14,8 @@ use cubecl::{self as cubecl, cube};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
+use super::RowBatch;
+
 /// A SwiGLU microkernel ready to launch over `rows` fused rows.
 #[derive(Debug, Clone, Copy)]
 pub struct SwigluLaunch {
@@ -23,8 +25,8 @@ pub struct SwigluLaunch {
 }
 
 impl SwigluLaunch {
-    /// The cube SwiGLU microkernel `hw` runs at `settings` over `rows` rows of `element`, each
-    /// half `dim` wide.
+    /// The cube SwiGLU microkernel `hw` runs at `settings` over `batch`'s rows of `element`, each
+    /// half its `dim` wide.
     ///
     /// # Errors
     ///
@@ -32,10 +34,10 @@ impl SwigluLaunch {
     pub fn new(
         hw: &Hardware,
         element: ElemType,
-        rows: usize,
-        dim: usize,
+        batch: RowBatch,
         settings: &CubeSwigluMicrokernelSettings,
     ) -> Result<Self, Refusal> {
+        let RowBatch { rows, dim } = batch;
         let item = SwigluWorkItem {
             element,
             dim,

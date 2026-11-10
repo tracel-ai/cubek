@@ -5,6 +5,7 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
+use cubek_microkernel::testing::RowBatch;
 use cubek_microkernel::testing::rms_norm::{RmsNormLaunch, RmsNormSettings};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
@@ -23,25 +24,24 @@ pub(crate) const SHAPES: [(usize, usize); 3] = [(1, 1024), (3, 1000), (2, 70)];
 struct HostRmsNorm {
     input: Vec<f32>,
     weight: Vec<f32>,
-    rows: usize,
-    dim: usize,
+    batch: RowBatch,
 }
 
 impl HostRmsNorm {
-    fn new(rows: usize, dim: usize) -> Self {
+    fn new(batch: RowBatch) -> Self {
+        let RowBatch { rows, dim } = batch;
         Self {
             input: (0..rows * dim)
                 .map(|i| ((i * 37) % 65) as f32 / 8.0 - 4.0)
                 .collect(),
             weight: (0..dim).map(|i| ((i * 11) % 17) as f32 / 8.0).collect(),
-            rows,
-            dim,
+            batch,
         }
     }
 
     /// Every row normalized and scaled, `[1, rows, dim]`.
     fn out(&self) -> HostData {
-        let dim = self.dim;
+        let RowBatch { rows, dim } = self.batch;
         let out = self
             .input
             .chunks(dim)
@@ -53,7 +53,7 @@ impl HostRmsNorm {
                     .map(move |(x, w)| x * factor * w)
             })
             .collect();
-        HostData::row_major(HostDataVec::F32(out), shape![1, self.rows, dim])
+        HostData::row_major(HostDataVec::F32(out), shape![1, rows, dim])
     }
 }
 
@@ -66,8 +66,7 @@ pub(crate) struct RmsNorm {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RmsNormCase {
     pub element: ElemType,
-    pub rows: usize,
-    pub dim: usize,
+    pub batch: RowBatch,
     pub settings: RmsNormSettings,
 }
 
@@ -80,8 +79,7 @@ impl RmsNormCase {
                 [F16, F32].into_iter().flat_map(move |element| {
                     SHAPES.map(|(rows, dim)| Self {
                         element,
-                        rows,
-                        dim,
+                        batch: RowBatch { rows, dim },
                         settings,
                     })
                 })
@@ -95,7 +93,7 @@ impl RmsNorm {
     ///
     /// Why the device runs no RMS norm microkernel at `case`.
     fn launch_at(&self, case: &RmsNormCase) -> Result<RmsNormLaunch, Refusal> {
-        RmsNormLaunch::new(&self.hw, case.element, case.rows, case.dim, &case.settings)
+        RmsNormLaunch::new(&self.hw, case.element, case.batch, &case.settings)
     }
 }
 
@@ -104,18 +102,18 @@ impl ScopeUnderTest for RmsNorm {
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
         let launch = self.launch_at(case)?;
-        let host = HostRmsNorm::new(case.rows, case.dim);
+        let host = HostRmsNorm::new(case.batch);
         let tensor = |values: Vec<f32>, shape| {
             TestInput::builder(client.clone(), shape)
                 .dtype(case.element)
                 .custom(values)
                 .generate_without_host_data()
         };
-        let input = tensor(host.input, shape![1, case.rows, case.dim]);
-        let weight = tensor(host.weight, shape![case.dim]);
+        let input = tensor(host.input, shape![1, case.batch.rows, case.batch.dim]);
+        let weight = tensor(host.weight, shape![case.batch.dim]);
         let out = tensor(
-            vec![-7.0; case.rows * case.dim],
-            shape![1, case.rows, case.dim],
+            vec![-7.0; case.batch.rows * case.batch.dim],
+            shape![1, case.batch.rows, case.batch.dim],
         );
         launch.launch(
             client,
@@ -132,7 +130,7 @@ impl ScopeUnderTest for RmsNorm {
     }
 
     fn reference(&self, case: &Self::Case) -> Vec<HostData> {
-        vec![HostRmsNorm::new(case.rows, case.dim).out()]
+        vec![HostRmsNorm::new(case.batch).out()]
     }
 
     /// The output's own rounding: `f16` keeps ten bits.

@@ -20,6 +20,8 @@ use cubecl::{self as cubecl, cube};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
+use super::RowBatch;
+
 /// Which RMS norm microkernel normalizes the rows, at the settings it is picked at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RmsNormSettings {
@@ -45,7 +47,7 @@ pub struct RmsNormLaunch {
 }
 
 impl RmsNormLaunch {
-    /// The RMS norm microkernel `hw` runs at `settings` over `rows` rows of `dim` `element`s.
+    /// The RMS norm microkernel `hw` runs at `settings` over `batch`'s rows of `element`.
     ///
     /// # Errors
     ///
@@ -53,10 +55,10 @@ impl RmsNormLaunch {
     pub fn new(
         hw: &Hardware,
         element: ElemType,
-        rows: usize,
-        dim: usize,
+        batch: RowBatch,
         settings: &RmsNormSettings,
     ) -> Result<Self, Refusal> {
+        let RowBatch { rows, dim } = batch;
         let item = RmsNormWorkItem {
             element,
             dim,

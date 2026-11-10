@@ -30,6 +30,13 @@ pub enum RandomMicrokernel {
     Plane(PlaneRandomMicrokernel),
 }
 
+/// One unit's run: `lines` lines, each `width` values wide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnitRun {
+    pub lines: usize,
+    pub width: usize,
+}
+
 /// A random microkernel ready to launch on one work item of `values` values, `width` a line.
 #[derive(Debug, Clone, Copy)]
 pub struct RandomLaunch {
@@ -41,12 +48,13 @@ pub struct RandomLaunch {
 }
 
 impl RandomLaunch {
-    /// One unit's run of `lines` lines `width` values wide.
+    /// One unit's `run`.
     ///
     /// # Errors
     ///
     /// Why the device runs no unit random microkernel.
-    pub fn unit(hw: &Hardware, lines: usize, width: usize) -> Result<Self, Refusal> {
+    pub fn unit(hw: &Hardware, run: UnitRun) -> Result<Self, Refusal> {
+        let UnitRun { lines, width } = run;
         let microkernel = UnitRandomMicrokernel::best(hw, &(), &UnitRandomMicrokernelSettings)?;
         Ok(Self {
             microkernel: RandomMicrokernel::Unit(microkernel),

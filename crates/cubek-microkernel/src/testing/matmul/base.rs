@@ -53,6 +53,10 @@ impl MatmulElements {
     }
 }
 
+/// The rows a product holds whole, every one beside each step of the rhs: a decode step's few.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WholeRows(pub usize);
+
 /// A matmul microkernel ready to launch alone on one cube's box.
 pub trait MatmulLaunch: Debug {
     /// The elements of the product.

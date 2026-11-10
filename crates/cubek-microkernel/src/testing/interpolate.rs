@@ -17,7 +17,7 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
 use super::window::{BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W};
-pub use super::window::{WindowAxis, WindowedLaunch};
+pub use super::window::{Channels, WindowAxis, WindowedLaunch};
 
 /// An interpolate microkernel ready to launch.
 #[derive(Debug, Clone, Copy)]
@@ -29,19 +29,18 @@ pub struct InterpolateLaunch {
 impl InterpolateLaunch {
     /// # Errors
     ///
-    /// Why the device runs no interpolate microkernel, or why `channels` do not walk in whole
+    /// Why the device runs no interpolate microkernel, or why the `channels` do not walk in whole
     /// blocks of the plane.
     pub fn new(
         hw: &Hardware,
         windows: [WindowAxis; 2],
         input: [usize; 2],
-        channels: usize,
-        channel_block: usize,
+        channels: Channels,
     ) -> Result<Self, Refusal> {
-        let windowed = WindowedLaunch::new(hw, windows, input, channels, channel_block)?;
+        let windowed = WindowedLaunch::new(hw, windows, input, channels)?;
         let item = InterpolateWorkItem {
-            channels: channel_block,
-            outputs: channel_block,
+            channels: channels.per_unit,
+            outputs: channels.per_unit,
         };
         let microkernel =
             CubeInterpolateMicrokernel::best(hw, &item, &CubeInterpolateMicrokernelSettings)?;
@@ -93,6 +92,10 @@ impl InterpolateLaunch {
 }
 
 /// Every cube walking its channels, a block at a time.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
 #[cube(launch_unchecked)]
 fn cube_interpolate_kernel<E: Float>(
     input: &TileTensor<'_>,
