@@ -134,7 +134,7 @@ impl RmsNormInputs {
         let dim = *shape.last().expect("a tensor has a last dimension");
         let weight = RmsNormWeight::new(call.weight.clone().into_dense_at(client, read_bytes), dim);
         let cut = |tensor: PlainTensor| match tensor.as_batched_rows(dim) {
-            Some(rows) if rows.start_bytes().is_multiple_of(read_bytes.max(1)) => rows,
+            Some(rows) if reads_whole(&rows, dim, read_bytes) => rows,
             _ => dense_entries(client, tensor, dim, read_bytes),
         };
         let input = cut(input);
@@ -545,6 +545,25 @@ impl<Out> RmsNormBinding<Out> {
             out: f(self.out),
         }
     }
+}
+
+/// Whether the `[entries, rows, dim]` rows lie where a dense row's widest read can be issued: the
+/// view starts on a read of the device, and each entry starts on the widest read that divides a
+/// row. A start or a pitch that narrows the binding would be refused by every routine, which sizes
+/// its registers at the dense width.
+fn reads_whole(rows: &PlainTensor, dim: usize, read_bytes: u64) -> bool {
+    let size = rows.elem.size() as u64;
+    let row_bytes = dim as u64 * size;
+    let power_of_two_divisor = if row_bytes == 0 {
+        0
+    } else {
+        1 << row_bytes.trailing_zeros()
+    };
+    let read = read_bytes.min(power_of_two_divisor).max(1);
+    let entry_bytes = rows.binding.strides[0] as u64 * size;
+    let entries = rows.binding.shape[0];
+    rows.start_bytes().is_multiple_of(read_bytes.max(1))
+        && (entries == 1 || entry_bytes.is_multiple_of(read))
 }
 
 /// `tensor` copied into dense rows starting on a read, as `[1, rows, dim]`.

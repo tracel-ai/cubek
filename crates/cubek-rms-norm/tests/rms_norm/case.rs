@@ -30,6 +30,19 @@ pub struct Case {
     pub rows: usize,
     pub dim: usize,
     pub weight_a_row: bool,
+    pub group_size: Option<usize>,
+    pub slices: Option<Slices>,
+    /// What the input's values are multiplied by.
+    pub magnitude: f32,
+}
+
+/// The input and the gate as views of wider buffers whose rows are `pitch` elements apart, each
+/// starting that many elements in.
+#[derive(Debug, Clone, Copy)]
+pub struct Slices {
+    pub pitch: usize,
+    pub input_start: usize,
+    pub gate_start: usize,
 }
 
 impl Case {
@@ -38,11 +51,35 @@ impl Case {
             rows,
             dim,
             weight_a_row: false,
+            group_size: None,
+            slices: None,
+            magnitude: 1.0,
+        }
+    }
+
+    fn grouped(self, group_size: usize) -> Self {
+        Self {
+            group_size: Some(group_size),
+            ..self
+        }
+    }
+
+    fn sliced(self, pitch: usize, input_start: usize, gate_start: usize) -> Self {
+        let slices = Slices {
+            pitch,
+            input_start,
+            gate_start,
+        };
+        Self {
+            slices: Some(slices),
+            ..self
         }
     }
 
     pub fn input(&self) -> Vec<f32> {
-        (0..self.rows * self.dim).map(|i| wobble(i, 1)).collect()
+        (0..self.rows * self.dim)
+            .map(|i| wobble(i, 1) * self.magnitude)
+            .collect()
     }
 
     pub fn gate(&self) -> Vec<f32> {
@@ -61,7 +98,7 @@ impl Case {
             values.into_iter().map(|x| round_to(x, element)).collect()
         };
         let (input, gate, weight) = (held(self.input()), held(self.gate()), held(self.weight()));
-        let group = self.dim;
+        let group = self.group_size.unwrap_or(self.dim);
         let mut out = Vec::with_capacity(input.len());
         for row in 0..self.rows {
             let weights = if self.weight_a_row { row } else { 0 } * self.dim;
@@ -126,6 +163,8 @@ fn runs(orders: &[Option<GateOrder>], pairs: &[(ElemType, ElemType)]) -> Vec<Run
 pub fn blocks() -> Vec<Block> {
     let mut a_row = Case::new(6, 128);
     a_row.weight_a_row = true;
+    let mut large = Case::new(4, 1024).grouped(256);
+    large.magnitude = 25_000.0;
     let orders = [
         None,
         Some(GateOrder::GateThenNorm),
@@ -160,7 +199,7 @@ pub fn blocks() -> Vec<Block> {
                     (BF16, F32),
                 ],
             ),
-            cases: vec![Case::new(16, 128)],
+            cases: vec![Case::new(16, 128), Case::new(5, 8192).grouped(1024)],
         },
         // Edge cases, under the orders and elements that stress them.
         Block {
@@ -180,6 +219,20 @@ pub fn blocks() -> Vec<Block> {
             cases: vec![
                 // No rows: nothing to launch.
                 Case::new(0, 128),
+                // One group, a decode row in groups, a group size that narrows the width, and no
+                // rows in groups.
+                Case::new(1, 4096).grouped(4096),
+                Case::new(1, 8192).grouped(1024),
+                Case::new(2, 333).grouped(111),
+                Case::new(0, 256).grouped(128),
+                // A gated product that leaves `f16`'s range, held in `f32`.
+                large,
+                // The input and the gate as slices of a projection three channels wide: aligned,
+                // and at an offset and pitch no wide read divides, which take the dense fallback.
+                Case::new(5, 1024).grouped(128).sliced(3 * 1024, 1024, 2048),
+                Case::new(5, 1024)
+                    .grouped(128)
+                    .sliced(3 * 1024 + 3, 1, 1024 + 2),
             ],
         },
     ]

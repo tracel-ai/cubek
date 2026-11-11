@@ -1,16 +1,20 @@
 //! Runs a routine over the blocks of runs and cases, against the reference.
 
-use super::case::{Case, EPSILON, F16, F32, Run, blocks};
+use super::case::{BF16, Case, EPSILON, F16, F32, Run, Slices, blocks};
 use cubecl::client::Client;
 use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
+use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
-use cubecl::zspace::Shape;
+use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_rms_norm::kernels::{RmsNormCall, RmsNormGate, RmsNormRoutine, RmsNormRoutineCandidate};
+use cubek_microkernel::rms_norm::GateOrder;
+use cubek_rms_norm::kernels::{
+    RmsNormCall, RmsNormGate, RmsNormRoutine, RmsNormRoutineCandidate, RmsNormTensors,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Declines {
@@ -95,25 +99,107 @@ fn reference(case: &Case, run: &Run) -> Vec<f64> {
 /// The norm `run` states of `case`, its operands uploaded.
 fn call(client: &Client, case: &Case, run: &Run) -> RmsNormCall {
     let (element, weight) = (run.element, case.weight());
-    let shape = [case.rows, case.dim];
-    RmsNormCall {
+    let operand = |values: Vec<f32>, start: fn(Slices) -> usize| match case.slices {
+        Some(slices) => view(
+            client,
+            &values,
+            &[case.rows, case.dim],
+            (slices.pitch, start(slices)),
+            element,
+        ),
+        None => view(
+            client,
+            &values,
+            &[case.rows, case.dim],
+            (case.dim, 0),
+            element,
+        ),
+    };
+    let call = RmsNormCall {
         client: client.clone(),
-        input: tensor(client, case.input(), &shape, element),
-        weight: tensor(client, weight.clone(), &[weight.len()], element),
+        input: operand(case.input(), |slices| slices.input_start),
+        weight: view(client, &weight, &[weight.len()], (weight.len(), 0), element),
         epsilon: EPSILON,
         output_element: run.output_element,
-        gate: run.order.map(|order| RmsNormGate {
-            tensor: tensor(client, case.gate(), &shape, element),
-            order,
-        }),
+        gate: None,
+    };
+    let call = match case.group_size {
+        Some(group_size) => call.grouped(group_size),
+        None => call,
+    };
+    match run.order {
+        Some(order) => call.gated(operand(case.gate(), |slices| slices.gate_start), order),
+        None => call,
     }
 }
 
-/// `values` uploaded as `element`, row-major in `shape`.
-fn tensor(client: &Client, values: Vec<f32>, shape: &[usize], element: ElemType) -> PlainTensor {
-    let handle = TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
-        .dtype(element)
-        .custom(values)
-        .generate_without_host_data();
-    PlainTensor::of_handle(handle)
+/// A value no case holds, which a read from the wrong place would show.
+const POISON: f32 = 123.0;
+
+/// `values` as `element` holds them, in rows `pitch` elements apart, starting `start` elements
+/// into a buffer that is `POISON` elsewhere.
+fn view(
+    client: &Client,
+    values: &[f32],
+    shape: &[usize],
+    (pitch, start): (usize, usize),
+    element: ElemType,
+) -> PlainTensor {
+    let dim = shape[shape.len() - 1];
+    let rows = values.len() / dim;
+    let mut buffer = vec![POISON; start + rows * pitch];
+    for row in 0..rows {
+        let at = start + row * pitch;
+        buffer[at..at + dim].copy_from_slice(&values[row * dim..(row + 1) * dim]);
+    }
+    let bytes: Vec<u8> = match element {
+        F16 => buffer
+            .iter()
+            .flat_map(|&x| half::f16::from_f32(x).to_le_bytes())
+            .collect(),
+        BF16 => buffer
+            .iter()
+            .flat_map(|&x| half::bf16::from_f32(x).to_le_bytes())
+            .collect(),
+        _ => buffer.iter().flat_map(|x| x.to_le_bytes()).collect(),
+    };
+    let handle = client
+        .create_from_slice(&bytes)
+        .offset_start((start * element.size()) as u64);
+    let strides = if shape.len() == 1 {
+        vec![1]
+    } else {
+        vec![pitch, 1]
+    };
+    PlainTensor::of_handle(TensorHandle::from_metadata(
+        handle,
+        Metadata::new(shape.to_vec(), strides),
+        element,
+    ))
+}
+
+/// A gate that is an aligned slice of a wider projection, beside a dense input, is read where it
+/// lies: its view keeps a start past its buffer's own.
+pub fn assert_gate_slice_is_read_in_place() {
+    let client = cubecl::test_device().client();
+    if !runs_on(&client, F16) {
+        return;
+    }
+    let (rows, dim) = (5, 1024);
+    let case = Case::new(rows, dim);
+    let weight = case.weight();
+    let call = RmsNormCall {
+        client: client.clone(),
+        input: view(&client, &case.input(), &[rows, dim], (dim, 0), F16),
+        weight: view(&client, &weight, &[dim], (dim, 0), F16),
+        epsilon: EPSILON,
+        output_element: F16,
+        gate: Some(RmsNormGate {
+            tensor: view(&client, &case.gate(), &[rows, dim], (3 * dim, dim), F16),
+            order: GateOrder::GateThenNorm,
+        }),
+    }
+    .grouped(128);
+    let tensors = RmsNormTensors::new(&call).expect("the device runs the norm");
+    assert_ne!(tensors.problem().start_bytes.gate, 0, "the gate was copied");
 }

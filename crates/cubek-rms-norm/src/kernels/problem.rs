@@ -46,6 +46,12 @@ pub struct RmsNormRoutineProblem {
 }
 
 impl RmsNormRoutineProblem {
+    /// Whether no row is computed: a grouped call over no tokens has rows in its entries but no
+    /// entry.
+    pub fn is_empty(&self) -> bool {
+        self.batch * self.rows == 0
+    }
+
     /// What every microkernel of this problem is handed.
     pub fn work_item(&self) -> RmsNormWorkItem {
         RmsNormWorkItem {
@@ -153,6 +159,21 @@ impl RmsNormRoutineProblem {
         }
         Ok(())
     }
+
+    /// Whether `hw` runs this problem's elements and its output's store: an output written at
+    /// `f32` goes into a plain buffer only.
+    ///
+    /// # Errors
+    ///
+    /// As [`admit_elements`](Self::admit_elements), and [`RMS_NORM_OUTPUT_UNSUPPORTED`] for an
+    /// `f32` output into a packed store.
+    pub fn admit(&self, hw: &Hardware) -> Result<(), Refusal> {
+        Self::admit_elements(hw, self.element, self.output_element)?;
+        match self.store == RowStore::Plain || self.output_element == self.element {
+            true => Ok(()),
+            false => Err(RMS_NORM_OUTPUT_UNSUPPORTED),
+        }
+    }
 }
 
 /// The rows one cube owns whole, and the run of a row each of its planes touches contiguously.
@@ -178,7 +199,7 @@ impl EstimatedProblem for RmsNormRoutineProblem {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use cubecl::ir::UIntKind;
     use cubek_std::devices;
@@ -186,7 +207,7 @@ mod tests {
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
     /// A device running `f16` and `f32`.
-    fn running(mut hw: Hardware) -> Hardware {
+    pub(crate) fn running(mut hw: Hardware) -> Hardware {
         for element in [F16, F32] {
             *devices::features(&mut hw)
                 .types
