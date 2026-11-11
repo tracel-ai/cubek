@@ -110,6 +110,7 @@ impl AttentionLaunch for CubeAttentionLaunch {
         logsumexp: Option<TensorBinding>,
         lengths: TensorArg,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         let [queries, keys] = self.seq;
         let item = &self.item;
@@ -193,6 +194,7 @@ impl AttentionLaunch for CubeAttentionLaunch {
                     launcher.partitioning_arg(),
                     microkernel,
                     self.storage.clone(),
+                    visibility,
                     served.kernel_elements(),
                 ),
                 CubeAttentionPlane::Shuffle(_) => cube_unstaged_attention_kernel::launch_unchecked(
@@ -213,6 +215,7 @@ impl AttentionLaunch for CubeAttentionLaunch {
                     launcher.partitioning_arg(),
                     microkernel,
                     item.val_dim,
+                    visibility,
                     item.kernel_elements(),
                 ),
             }
@@ -236,6 +239,7 @@ fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     partitioning: Partitioning,
     #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] storage: StageStorage,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
@@ -252,7 +256,7 @@ fn cube_staged_attention_kernel<EA: Float, ES: Float>(
                 &cube,
                 queries,
                 &mask,
-                AttentionVisibility::Attended,
+                visibility,
             );
             let k = key.within(S, 0, visible.attended as usize);
             let v = value.within(S, 0, visible.attended as usize);
@@ -290,6 +294,7 @@ fn cube_unstaged_attention_kernel<EA: Float, E: Float, N: Size>(
     partitioning: Partitioning,
     #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] value_dim: usize,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
@@ -312,7 +317,7 @@ fn cube_unstaged_attention_kernel<EA: Float, E: Float, N: Size>(
                 &cube,
                 queries,
                 &mask,
-                AttentionVisibility::Attended,
+                visibility,
             );
             let steps = visible.steps(
                 &cube,

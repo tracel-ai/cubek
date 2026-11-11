@@ -1,14 +1,17 @@
 //! What every attention microkernel computes alone: `softmax(scale · q · kᵀ) · v` over one batch
-//! and one head, every key attended, all row-major, and each query's `ln Σ exp(scale · q · kᵀ)`.
+//! and one head, each query over the keys a visibility lets it see, all row-major, and each
+//! query's `ln Σ exp(scale · q · kᵀ)` over the same keys.
 
 use crate::launch::Lines;
 use crate::launch::attention::{AttentionElements, AttentionLaunch};
 use core::fmt::Debug;
 use core::marker::PhantomData;
+use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
+use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
@@ -17,6 +20,25 @@ use crate::matmul::{F16, F32};
 
 /// The rows of the query and key, and of the value.
 pub(crate) const DIMS: [usize; 2] = [64, 64];
+
+/// The visibilities that hide keys from a query: causal with the queries the first positions and
+/// the last, a sliding window of five, and the seven most recent keys. Five and seven divide no
+/// step, so a window's edge falls inside one.
+pub(crate) const HIDING: [AttentionVisibility; 4] = [
+    AttentionVisibility::Causal {
+        queries: QueryPlacement::First,
+    },
+    AttentionVisibility::Causal {
+        queries: QueryPlacement::Last,
+    },
+    AttentionVisibility::Windowed {
+        window: NonZeroUsize::new(5).unwrap(),
+        queries: QueryPlacement::Last,
+    },
+    AttentionVisibility::Recent {
+        window: NonZeroUsize::new(7).unwrap(),
+    },
+];
 
 /// An attention on the host: its query, keys and values, small values so the scores stay in a
 /// range `f16` holds and the softmax spreads, and what it writes.
@@ -55,16 +77,45 @@ impl HostAttention {
         1.0 / (self.dims[0] as f32).sqrt()
     }
 
-    /// The output over `[B, KV, G, Q, DV]`, and the logsumexp over `[B, KV, G, Q]`.
-    pub(crate) fn out(&self) -> [HostData; 2] {
+    /// Whether `query` sees `key` under `visibility`, every key attended: the rule
+    /// [`VisibleKeys`](cubek_microkernel::attention::VisibleKeys) states, the queries' end the
+    /// keys' where they are the last positions and their own count where they are the first.
+    pub(crate) fn sees(&self, visibility: AttentionVisibility, query: usize, key: usize) -> bool {
+        let [queries, keys] = self.seq;
+        let queries_end = match visibility.queries() {
+            Some(QueryPlacement::First) => queries,
+            Some(QueryPlacement::Last) | None => keys,
+        };
+        let before_own = key + queries <= query + queries_end;
+        match visibility {
+            AttentionVisibility::Attended => true,
+            AttentionVisibility::Causal { .. } => before_own,
+            AttentionVisibility::Windowed { window, .. } => {
+                before_own && key + queries + window.get() > query + queries_end
+            }
+            AttentionVisibility::Recent { window } => key + window.get() >= keys,
+        }
+    }
+
+    /// Whether some query sees no key under `visibility`: its output is no attention's.
+    pub(crate) fn hides_every_key_from_a_query(&self, visibility: AttentionVisibility) -> bool {
+        let [queries, keys] = self.seq;
+        (0..queries).any(|query| (0..keys).all(|key| !self.sees(visibility, query, key)))
+    }
+
+    /// The output over `[B, KV, G, Q, DV]`, and the logsumexp over `[B, KV, G, Q]`, each query
+    /// over the keys it sees under `visibility`.
+    pub(crate) fn out(&self, visibility: AttentionVisibility) -> [HostData; 2] {
         let [queries, keys] = self.seq;
         let [head, val] = self.dims;
         let scale = self.scale();
         let mut out = vec![0.0; queries * val];
         let mut logsumexp = vec![0.0; queries];
         for i in 0..queries {
-            let scores: Vec<f32> = (0..keys)
-                .map(|j| {
+            let seen: Vec<usize> = (0..keys).filter(|&j| self.sees(visibility, i, j)).collect();
+            let scores: Vec<f32> = seen
+                .iter()
+                .map(|&j| {
                     scale
                         * (0..head)
                             .map(|d| self.query[i * head + d] * self.key[j * head + d])
@@ -76,8 +127,10 @@ impl HostAttention {
             let total: f32 = weights.iter().sum();
             logsumexp[i] = max + total.ln();
             for d in 0..val {
-                out[i * val + d] = (0..keys)
-                    .map(|j| weights[j] * self.value[j * val + d])
+                out[i * val + d] = seen
+                    .iter()
+                    .zip(&weights)
+                    .map(|(&j, weight)| weight * self.value[j * val + d])
                     .sum::<f32>()
                     / total;
             }
@@ -107,12 +160,13 @@ pub(crate) trait AttentionSettings: Debug + Copy {
 }
 
 /// An attention of `elements` at `settings`, `steps` of the microkernel's step of keys long, its
-/// operands bound as `lines` says.
+/// operands bound as `lines` says, each query seeing the keys `visibility` lets it.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AttentionCase<S> {
     pub elements: AttentionElements,
     pub settings: S,
     pub lines: Lines,
+    pub visibility: AttentionVisibility,
     pub steps: usize,
 }
 
@@ -130,14 +184,15 @@ impl<S: AttentionSettings> Attention<S> {
         }
     }
 
-    /// Every setting the device lists, for `f16` and `f32` inputs summed in `f32` and written in
+    /// Every setting the device lists: for `f16` and `f32` inputs summed in `f32` and written in
     /// their own element, one step of keys and three, the operands one value a line and as wide
-    /// as a routine binds them.
+    /// as a routine binds them, every key attended; then, at each setting, `f32` over three steps
+    /// under each visibility that hides keys ([`HIDING`]).
     pub(crate) fn every_setting(&self) -> Vec<AttentionCase<S>> {
         S::Microkernel::settings(&self.hw)
             .into_iter()
             .flat_map(|settings| {
-                [F16, F32].into_iter().flat_map(move |input| {
+                let attended = [F16, F32].into_iter().flat_map(move |input| {
                     let elements = AttentionElements {
                         input,
                         sum: F32,
@@ -148,10 +203,23 @@ impl<S: AttentionSettings> Attention<S> {
                             elements,
                             settings,
                             lines,
+                            visibility: AttentionVisibility::Attended,
                             steps,
                         })
                     })
-                })
+                });
+                let hiding = HIDING.map(|visibility| AttentionCase {
+                    elements: AttentionElements {
+                        input: F32,
+                        sum: F32,
+                        out: F32,
+                    },
+                    settings,
+                    lines: Lines::One,
+                    visibility,
+                    steps: 3,
+                });
+                attended.chain(hiding)
             })
             .collect()
     }
@@ -167,6 +235,11 @@ impl<S: AttentionSettings> ScopeUnderTest for Attention<S> {
         let [queries, keys] = launch.seq();
         let [head, val] = DIMS;
         let attention = HostAttention::new(launch.seq(), DIMS);
+        if attention.hides_every_key_from_a_query(case.visibility) {
+            return Err(Refusal::Declined {
+                why: "a query sees no key, so no attention defines its output",
+            });
+        }
         let item = launch.item();
         let input = item.elements.query;
         let tensor = |data: Vec<f32>, shape, element| {
@@ -192,6 +265,7 @@ impl<S: AttentionSettings> ScopeUnderTest for Attention<S> {
             Some(logsumexp.clone().binding()),
             lengths.binding().into_tensor_arg(),
             scale,
+            case.visibility,
         )?;
         Ok(vec![
             Written {
@@ -212,7 +286,9 @@ impl<S: AttentionSettings> ScopeUnderTest for Attention<S> {
             .settings
             .launch(&self.hw, case.elements, case.lines, case.steps)
             .unwrap_or_else(|why| panic!("{case:?} launched: {why:?}"));
-        HostAttention::new(launch.seq(), DIMS).out().into()
+        HostAttention::new(launch.seq(), DIMS)
+            .out(case.visibility)
+            .into()
     }
 
     /// `f16` inputs, and a softmax the device's `exp` takes.

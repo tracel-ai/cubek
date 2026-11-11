@@ -149,6 +149,7 @@ impl AttentionLaunch for HypercubeAttentionLaunch {
         logsumexp: Option<TensorBinding>,
         lengths: TensorArg,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         let [queries, keys] = self.seq;
         let item = &self.item;
@@ -174,7 +175,7 @@ impl AttentionLaunch for HypercubeAttentionLaunch {
             )
             .into_arg(),
         };
-        self.dispatch(client, scratch, scale, &arrivals)?;
+        self.dispatch(client, scratch, scale, visibility, &arrivals)?;
         let given = AttentionBindings {
             query,
             key,
@@ -183,7 +184,7 @@ impl AttentionLaunch for HypercubeAttentionLaunch {
             logsumexp,
             lengths,
         };
-        self.dispatch(client, given, scale, &arrivals)
+        self.dispatch(client, given, scale, visibility, &arrivals)
     }
 }
 
@@ -199,13 +200,14 @@ struct AttentionBindings {
 }
 
 impl HypercubeAttentionLaunch {
-    /// The kernel on `bindings`, the boxes counting in at `arrivals`, the slots holding NaN until
-    /// a cube stores its partial.
+    /// The kernel on `bindings`, each query seeing the keys `visibility` says, the boxes counting
+    /// in at `arrivals`, the slots holding NaN until a cube stores its partial.
     fn dispatch(
         &self,
         client: &Client,
         bindings: AttentionBindings,
         scale: f32,
+        visibility: AttentionVisibility,
         arrivals: &TensorHandle,
     ) -> Result<(), Refusal> {
         let AttentionBindings {
@@ -307,6 +309,7 @@ impl HypercubeAttentionLaunch {
                 launcher.partitioning_arg(),
                 microkernel,
                 merge,
+                visibility,
                 item.kernel_elements(),
             );
         }
@@ -333,6 +336,7 @@ fn hypercube_attention_kernel<EA: Float, E: Float, N: Size>(
     partitioning: Partitioning,
     #[comptime] microkernel: HypercubeAttentionMicrokernel,
     #[comptime] merge: HypercubeMergeShape,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let key = TileStepReads::<E> {
@@ -353,7 +357,7 @@ fn hypercube_attention_kernel<EA: Float, E: Float, N: Size>(
         &first_step,
         queries,
         &ComptimeOption::new_None(),
-        AttentionVisibility::Attended,
+        visibility,
     );
     let steps = visible.steps(
         &first_step,

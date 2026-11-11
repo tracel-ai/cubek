@@ -88,6 +88,7 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
         logsumexp: Option<TensorBinding>,
         lengths: TensorArg,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         let [queries, keys] = self.seq;
         let item = &self.item;
@@ -164,6 +165,7 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
                 launcher.partitioning_arg(),
                 self.microkernel,
                 self.ring,
+                visibility,
                 served.kernel_elements(),
             );
         }
@@ -187,6 +189,7 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
     #[comptime] ring: StageRing,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
@@ -203,7 +206,7 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
             &plane,
             queries,
             &mask,
-            AttentionVisibility::Attended,
+            visibility,
         );
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);

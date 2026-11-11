@@ -1,13 +1,14 @@
-//! What every attention microkernel launched alone shares: one batch, one head, every key
-//! attended, no mask; `out = softmax(scale · query · keyᵀ) · value` and each query's logsumexp;
-//! the operands bound one value a line or as wide as a routine binds them.
+//! What every attention microkernel launched alone shares: one batch, one head, each query seeing
+//! the attended keys a visibility lets it, no mask; `out = softmax(scale · query · keyᵀ) · value`
+//! and each query's logsumexp; the operands bound one value a line or as wide as a routine binds
+//! them.
 
 use core::fmt::Debug;
 use cubecl::prelude::*;
 use cubecl::tile::Space;
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::attention::{
-    AttentionOperand, AttentionOperands, AttentionReading, AttentionWorkItem,
+    AttentionOperand, AttentionOperands, AttentionReading, AttentionVisibility, AttentionWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
@@ -92,8 +93,9 @@ pub trait AttentionLaunch: Debug {
     /// `out = softmax(scale · query · keyᵀ) · value`, `query` `[1, 1, 1, queries, head_dim]`,
     /// `key` `[1, 1, keys, head_dim]`, `value` `[1, 1, keys, val_dim]` and `out`
     /// `[1, 1, 1, queries, val_dim]`, all row-major (`[B, KV, G, Q, _]` and `[B, KV, S, _]`);
-    /// `lengths` holds the one sequence's attended keys, as `u32`. Where `logsumexp` is given,
-    /// `[1, 1, 1, queries]` in the sum's element, each query's `ln Σ exp(score)` lands there.
+    /// `lengths` holds the one sequence's attended keys, as `u32`, of which each query sees those
+    /// `visibility` says. Where `logsumexp` is given, `[1, 1, 1, queries]` in the sum's element,
+    /// each query's `ln Σ exp(score)` over the keys it sees lands there.
     ///
     /// # Errors
     ///
@@ -109,5 +111,6 @@ pub trait AttentionLaunch: Debug {
         logsumexp: Option<TensorBinding>,
         lengths: TensorArg,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal>;
 }

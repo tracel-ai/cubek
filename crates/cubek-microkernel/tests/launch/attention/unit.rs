@@ -76,6 +76,7 @@ impl AttentionLaunch for UnitAttentionLaunch {
         logsumexp: Option<TensorBinding>,
         lengths: TensorArg,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         let [queries, keys] = self.seq;
         let item = &self.item;
@@ -145,6 +146,7 @@ impl AttentionLaunch for UnitAttentionLaunch {
                 scale,
                 launcher.partitioning_arg(),
                 self.microkernel,
+                visibility,
                 item.sum,
             );
         }
@@ -166,6 +168,7 @@ fn unit_attention_kernel<EA: Float>(
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitAttentionMicrokernel,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA)] _sum: ElemType,
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
@@ -181,7 +184,7 @@ fn unit_attention_kernel<EA: Float>(
             &unit,
             queries,
             &mask,
-            AttentionVisibility::Attended,
+            visibility,
         );
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
