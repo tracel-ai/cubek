@@ -7,8 +7,9 @@ use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's rows, a group of `microkernel.units` units each: `out = input · scale · weight`,
 /// each unit of a group its lines of the group's row. `input`, `gate` where the norm is gated and
-/// `weight` are windowed to the cube's rows, `groups` of them, and `out` is the cube's window of the output, which its groups
-/// write through one store, straight or staged and encoded as `stage` says.
+/// `weight` are windowed to the cube's rows, `groups` of them, and `out` is the cube's window of
+/// the output, which its groups write through one store, straight or staged and encoded as `stage`
+/// says.
 ///
 /// A group sums its units' partials as `microkernel.sum` says ([`GroupSum`]). Where it sums through
 /// shared memory, each group has its own run of slots, and the cube meets again once every unit

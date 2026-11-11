@@ -39,8 +39,8 @@ impl HeldRowShape {
 }
 
 /// One unit's share of an owner's row, in registers between the row's two passes: read once,
-/// squared into the unit's partial in `f32` as it lands — an `f16` square-sum overflows at a
-/// magnitude of about 256 — then scaled and written out of the registers, held as `H`.
+/// squared into the unit's partial in `f32` as it lands, then scaled and written out of the
+/// registers, held as `H`. An `f16` square-sum would overflow at a magnitude of about 256.
 ///
 /// Unit `unit` holds lines `unit + i · units` of the row its reader reads ([`HeldRowShape`]).
 #[derive(CubeType)]
@@ -87,8 +87,8 @@ impl<H: Float, N: Size> HeldRow<H, N> {
     }
 
     /// Unit `unit`'s lines written into `out` at `W`, each scaled by `factor` and multiplied by its
-    /// line of `weight`, of element `E`, in `f32`, and gated where the gate comes last, then rounded
-    /// once. `out` and `weight` are the owner's run, and a line past it is not written.
+    /// line of `weight`, of element `E`, in `f32`, and gated where the gate comes last, then
+    /// rounded once. `out` and `weight` are the owner's run, and a line past it is not written.
     pub fn write<E: Float, W: Float>(
         &self,
         reader: &RowReader,

@@ -580,8 +580,9 @@ pub fn launch_into_tuned(
 }
 
 /// The routine, at its setting, that the autotune found fastest for the norm `call` states on
-/// `call`'s client's `device`, or `None` where no round has settled the key, or the floor named apart won
-/// it: what a fused tail runs the norm on, so it inherits the kernel the unfused round chose.
+/// `call`'s client's `device`, or `None` where no round has settled the key, or the floor named
+/// apart won it: what a fused tail runs the norm on, so it inherits the kernel the unfused round
+/// chose.
 pub fn fastest_rms_norm_routine(
     device: &Device,
     call: &RmsNormCall,

@@ -8,9 +8,10 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// One cube's row: each of `cube`'s planes, a run of the row each, sums its run across its
 /// lanes, its first lane leaves the sum in the plane's slot, and once every plane has, each unit
 /// adds the slots and writes its lines of the run scaled. The cube meets again once every unit has
-/// read the slots, so a cube walking a next row cannot overwrite them first. `input`, `gate` where the norm is gated, and
-/// `weight` are windowed to the cube's row, and `out` is the cube's window of the output, which its planes write their runs
-/// through, straight or staged and encoded as `stage` says.
+/// read the slots, so a cube walking a next row cannot overwrite them first. `input`, `gate` where
+/// the norm is gated, and `weight` are windowed to the cube's row, and `out` is the cube's window
+/// of the output, which its planes write their runs through, straight or staged and encoded as
+/// `stage` says.
 #[cube]
 pub fn cube_rms_norm_microkernel<E: Float, H: Float, W: Float, N: Size>(
     cube: &Region,

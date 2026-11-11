@@ -278,8 +278,8 @@ impl RmsNormTensors {
     /// # Panics
     ///
     /// Operands on different devices or of different elements, a gate not shaped as the input, a
-    /// weight that is not whole rows of
-    /// the normalized dim, or a weight a row whose rows do not divide the input's: no norm at all.
+    /// weight that is not whole rows of the normalized dim, or a weight a row whose rows do not
+    /// divide the input's: no norm at all.
     pub fn new(call: &RmsNormCall) -> Result<Self, Refusal> {
         let (client, operands) = (&call.client, RmsNormInputs::new(call)?);
         let (handle, tensor) = PlainTensor::empty_contiguous(
@@ -365,9 +365,9 @@ impl RmsNormTensors<PackedRows> {
     ///
     /// # Errors
     ///
-    /// As [`RmsNormTensors::new`], with [`RMS_NORM_OUTPUT_UNSUPPORTED`] for an `output_element` other
-    /// than the input's; [`RMS_NORM_ROWS_IN_ENTRIES`]; and what
-    /// [`PackedRows::new`] declines of `out`.
+    /// As [`RmsNormTensors::new`], with [`RMS_NORM_OUTPUT_UNSUPPORTED`] for an `output_element`
+    /// other than the input's; [`RMS_NORM_ROWS_IN_ENTRIES`]; and what [`PackedRows::new`]
+    /// declines of `out`.
     ///
     /// # Panics
     ///

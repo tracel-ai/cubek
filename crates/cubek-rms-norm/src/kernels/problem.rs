@@ -18,7 +18,7 @@ use cubek_std::routine::EstimatedProblem;
 /// or `f32`, or at `f32` into anything but a buffer: a packed, tiled or sink output holds the
 /// input's element.
 pub const RMS_NORM_OUTPUT_UNSUPPORTED: Refusal = Refusal::Declined {
-    why: "the RMS norm writes a buffer at f32 or the input's element, and any other output at the input's",
+    why: "the RMS norm writes a buffer at f32 or the input's element, else the input's",
 };
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -137,9 +137,9 @@ impl RmsNormRoutineProblem {
     ///
     /// # Errors
     ///
-    /// [`RMS_NORM_ELEMENT_UNVERIFIED`] for rows that are not floats, [`RMS_NORM_OUTPUT_UNSUPPORTED`]
-    /// for an output other than `f32` and the rows' element, [`ELEMENT_NOT_ON_DEVICE`] for an
-    /// element the device does not run.
+    /// [`RMS_NORM_ELEMENT_UNVERIFIED`] for rows that are not floats,
+    /// [`RMS_NORM_OUTPUT_UNSUPPORTED`] for an output other than `f32` and the rows' element,
+    /// [`ELEMENT_NOT_ON_DEVICE`] for an element the device does not run.
     pub fn admit_elements(
         hw: &Hardware,
         element: ElemType,
