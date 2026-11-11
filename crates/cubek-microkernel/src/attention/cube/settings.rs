@@ -1,10 +1,10 @@
 use crate::attention::cube::CubeAttentionPlaneSettings;
 use crate::attention::plane::{
-    InstructionShape, PlaneFragmentAttentionMicrokernelSettings,
-    PlaneShuffleAttentionMicrokernelSettings,
+    PlaneFragmentAttentionMicrokernelSettings, PlaneShuffleAttentionMicrokernelSettings,
+    ScoreHolder,
 };
 use crate::matmul::cube::CubeStagedDelivery;
-use crate::matmul::plane::{PlaneFragmentDepth, PlaneFragmentTransport};
+use crate::matmul::plane::PlaneFragmentDepth;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 use cubek_std::microkernel::{StageLayout, StageRing};
@@ -112,8 +112,7 @@ impl CubeAttentionMicrokernelSettings {
 
     /// A star off `lead`: each larger box of fragments, each count of heads, two and four planes
     /// along a head's queries, each other ring of stages and layout of a stage, the whole grid
-    /// bounced at once, a rectangular cmma instruction read through the windows, and one head a
-    /// cube with eight and sixteen fragments along its keys, or with two, four and eight planes
+    /// bounced at once, and one head a cube with eight and sixteen fragments along its keys, or with two, four and eight planes
     /// along them, so a step reaches the hundreds of keys, with the default's others; then the
     /// larger boxes again in swizzled tiles, which a plane keeping its score in fragments reads
     /// without bank conflicts and a cmma plane declines, the one-by-eight box among them also on
@@ -151,7 +150,7 @@ impl CubeAttentionMicrokernelSettings {
         let along_keys = [2, 4, 8].map(|planes| Self {
             plane: CubeAttentionPlaneSettings::Fragment(
                 PlaneFragmentAttentionMicrokernelSettings {
-                    transport: PlaneFragmentTransport::Cmma,
+                    score: ScoreHolder::Window,
                     ..plane
                 },
             ),
@@ -176,18 +175,6 @@ impl CubeAttentionMicrokernelSettings {
             plane: CubeAttentionPlaneSettings::Fragment(
                 PlaneFragmentAttentionMicrokernelSettings {
                     scratch: Scratch::WholeGrid,
-                    ..plane
-                },
-            ),
-            ..lead
-        };
-        // A rectangular cmma instruction, read through the windows: the only one a device offers
-        // for some elements, as tf32 for f32 operands on NVIDIA.
-        let rectangular = Self {
-            plane: CubeAttentionPlaneSettings::Fragment(
-                PlaneFragmentAttentionMicrokernelSettings {
-                    transport: PlaneFragmentTransport::Cmma,
-                    shape: InstructionShape::Rectangular,
                     ..plane
                 },
             ),
@@ -337,7 +324,7 @@ impl CubeAttentionMicrokernelSettings {
             .chain(split)
             .chain(rings)
             .chain(layouts)
-            .chain([whole, rectangular])
+            .chain([whole])
             .chain(along_keys)
             .chain(swizzled)
             .chain([swizzled_split, four_planes_split, whole_head])

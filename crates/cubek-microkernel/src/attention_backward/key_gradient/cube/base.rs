@@ -1,9 +1,9 @@
+use crate::attention::plane::ScoreHolder;
 use crate::attention::{G, Q, S};
 use crate::attention_backward::key_gradient::plane::{
     PlaneKeyGradientMicrokernel, PlaneKeyGradientMicrokernelSettings,
 };
 use crate::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
-use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Axis, Level, Levels, Partitioning};
@@ -33,7 +33,7 @@ pub struct CubeKeyGradientMicrokernelSettings {
 impl CubeKeyGradientMicrokernelSettings {
     /// Whether its planes keep their score in fragments, on the manual `mma`.
     pub fn holds_its_score(&self) -> bool {
-        self.plane.transport == PlaneFragmentTransport::Mma
+        self.plane.score == ScoreHolder::Fragments
     }
 
     /// The plane microkernel's default, two planes along the keys.

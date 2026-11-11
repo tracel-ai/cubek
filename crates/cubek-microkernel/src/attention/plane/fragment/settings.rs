@@ -1,9 +1,13 @@
-use crate::matmul::plane::{PlaneFragmentDepth, PlaneFragmentInstruction, PlaneFragmentTransport};
+use crate::matmul::plane::PlaneFragmentDepth;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 
-/// The instructions a plane's box holds along the queries and along a stage of keys, and how
-/// much of its output a correction bounces through shared memory at once.
+/// The box a plane holds along the queries and along a stage of keys, in units of the device's
+/// matrix unit for the operands
+/// ([`matrix_unit`](crate::matmul::plane::PlaneFragmentMicrokernel::matrix_unit)), how much of its
+/// output a correction bounces through shared memory at once, and where it keeps the score. The
+/// instruction is not a setting: the tile layer picks it where the score is held, and it cuts the
+/// same box whichever it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentAttentionMicrokernelSettings {
     pub seq_q: NonZeroUsize,
@@ -11,32 +15,28 @@ pub struct PlaneFragmentAttentionMicrokernelSettings {
     /// One fragment at a time, three `sync_plane` each, or the whole grid at once, three a stage
     /// for a window as large as the plane's output.
     pub scratch: Scratch,
-    /// Which transport a matrix instruction is reached through first: the tile DSL's own keeps the
-    /// score in its fragments ([`ScoreHolder::Fragments`](super::ScoreHolder::Fragments)), cubecl's
-    /// reads it through the plane's windows.
-    pub transport: PlaneFragmentTransport,
-    /// The shape of cmma instruction tried first, where the plane reads the score through its
-    /// windows; the other where the device offers none.
-    pub shape: InstructionShape,
+    /// Where the plane keeps the score between its two multiplications.
+    pub score: ScoreHolder,
     /// How deep along the head dim the score's fragments are: one instruction step, the head dim
     /// walked a step at a time, or the whole head dim, contracted in one call. Only a score kept
-    /// in its fragments, on the manual `mma`, takes the whole head dim; any other declines it.
+    /// in its fragments takes the whole head dim; any other declines it.
     pub score_depth: PlaneFragmentDepth,
 }
 
-/// A matrix instruction's shape: as long as it is wide and deep, or any other.
+/// Where a plane keeps a stage's score between its two multiplications. The tile layer picks the
+/// instruction from it: a score opened in windows takes the accumulator's pick, one kept in its
+/// fragments the pick for a sum contracted again where it lies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InstructionShape {
-    Square,
-    Rectangular,
-}
-
-impl InstructionShape {
-    /// Whether `instruction` is of this shape.
-    pub fn holds(self, instruction: PlaneFragmentInstruction) -> bool {
-        let [(_, m), (_, n), (_, k)] = instruction.shape();
-        (m == n && n == k) == (self == Self::Square)
-    }
+pub enum ScoreHolder {
+    /// The plane's windows of shared memory: the score drained into one, the softmax read there,
+    /// the probabilities cast into the other and loaded again as fragments. What a cmma fragment,
+    /// whose cells lie where the instruction keeps them, is read through.
+    Window,
+    /// The score's own manual-mma fragments: the softmax reads them where the plane's units hold
+    /// them, and the value contracts them, cast, in the same registers. Each unit keeps the state
+    /// of the rows it holds cells of, so the plane's state merges with no other holder's. Only a
+    /// device whose instruction lays its `A` as it lays its accumulator keeps it so.
+    Fragments,
 }
 
 impl PlaneFragmentAttentionMicrokernelSettings {
@@ -44,8 +44,7 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         seq_q: NonZeroUsize::new(2).unwrap(),
         seq_kv: NonZeroUsize::new(2).unwrap(),
         scratch: Scratch::OneTile,
-        transport: PlaneFragmentTransport::Mma,
-        shape: InstructionShape::Square,
+        score: ScoreHolder::Fragments,
         score_depth: PlaneFragmentDepth::Instruction,
     };
 
@@ -55,7 +54,10 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         ..Self::DEFAULT
     };
 
-    /// The default with `rows` fragments of rows and `keys` of keys.
+    /// The default reading the score through its windows.
+    pub const THROUGH_WINDOWS: Self = Self::DEFAULT.held_in(ScoreHolder::Window);
+
+    /// The default with `rows` units of rows and `keys` of keys.
     ///
     /// # Panics
     ///
@@ -68,14 +70,9 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         }
     }
 
-    /// The default reading the score through the windows of the vendor's transport, on an
-    /// instruction of `shape`.
-    pub const fn through_windows(shape: InstructionShape) -> Self {
-        Self {
-            transport: PlaneFragmentTransport::Cmma,
-            shape,
-            ..Self::DEFAULT
-        }
+    /// These settings keeping the score in `score`.
+    pub const fn held_in(self, score: ScoreHolder) -> Self {
+        Self { score, ..self }
     }
 }
 
@@ -86,13 +83,9 @@ impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
             Scratch::WholeGrid => write!(f, " scratch=whole")?,
             Scratch::OneTile | Scratch::None => {}
         }
-        match self.transport {
-            PlaneFragmentTransport::Mma => {}
-            PlaneFragmentTransport::Cmma => write!(f, " transport=cmma")?,
-        }
-        match self.shape {
-            InstructionShape::Square => {}
-            InstructionShape::Rectangular => write!(f, " shape=rectangular")?,
+        match self.score {
+            ScoreHolder::Fragments => {}
+            ScoreHolder::Window => write!(f, " score=window")?,
         }
         match self.score_depth {
             PlaneFragmentDepth::Instruction => Ok(()),
