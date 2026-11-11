@@ -42,7 +42,7 @@ impl QkNormedConvBlueprint {
         let partitioning = CausalConvPartitioning::new(
             problem.space(),
             Levels::leaf(&problem.leaf(width)).units_distributed(HEAD_CHANNEL, lines),
-            KEY_HEAD,
+            &problem.past.cube_axes(KEY_HEAD),
         );
         let cube = CubeResources {
             plane_width: microkernel.units as u32,

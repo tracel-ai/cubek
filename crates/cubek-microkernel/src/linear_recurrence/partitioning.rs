@@ -88,22 +88,18 @@ impl RecurrenceWalkPartitioning {
 }
 
 /// How a conv places its microkernel's work: a cube for every box of channels of every row, and
-/// of every position when the space has positions.
+/// of every position the routine puts on the grid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CausalConvPartitioning {
     partitioning: Partitioning,
 }
 
 impl CausalConvPartitioning {
-    /// `space` partitioned with `inside` a cube's box: the boxes `cube_axis` counts ride the grid's
-    /// `x`, or its `y` behind the positions the space has, and rows come one a cube.
-    pub fn new(space: Space, inside: Levels, cube_axis: Axis) -> Self {
-        let positions = [POSITION, RING_POSITION]
-            .into_iter()
-            .find(|axis| space.contains(*axis));
-        let cubes: Vec<Axis> = positions.into_iter().chain([cube_axis]).collect();
+    /// `space` partitioned with `inside` a cube's box: the `cubes` axes ride the grid, the first
+    /// on its `x`, and rows come one a cube.
+    pub fn new(space: Space, inside: Levels, cubes: &[Axis]) -> Self {
         Self {
-            partitioning: Partitioning::new(space, inside.cubes(&cubes).batches(&[BATCH]).build()),
+            partitioning: Partitioning::new(space, inside.cubes(cubes).batches(&[BATCH]).build()),
         }
     }
 

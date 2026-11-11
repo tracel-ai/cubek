@@ -55,7 +55,7 @@ impl RingWriteBackLaunch {
         let partitioning = CausalConvPartitioning::new(
             Space::new(&axes),
             Levels::leaf(&leaf).units_distributed(LINE_IN_BOX, units),
-            CHANNEL_BOX,
+            &[RING_POSITION, CHANNEL_BOX],
         );
         let cube = CubeResources {
             plane_width: units as u32,

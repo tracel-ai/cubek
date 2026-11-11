@@ -129,6 +129,14 @@ impl CausalConvPast {
         }
     }
 
+    /// The grid's axes, a prompt's positions ahead of the `boxes` of channels.
+    pub(crate) fn cube_axes(&self, boxes: Axis) -> Vec<Axis> {
+        match self {
+            Self::Window { .. } => vec![boxes],
+            Self::Prompt { .. } => vec![POSITION, boxes],
+        }
+    }
+
     /// The axes the past's operands carry: the store, and the prompt's positions.
     pub(crate) fn past_axes(&self) -> Vec<(Axis, usize)> {
         let ring = self.ring();
