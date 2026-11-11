@@ -19,11 +19,11 @@ pub const VALUE_FEATURE: Axis = Axis(6);
 /// A slot of a store that holds many sequences' states, which a table places each sequence at: no
 /// level cuts it.
 pub const STORE_SLOT: Axis = Axis(7);
-/// A channel of the `q|k|v` stream the conv mixes.
+/// A channel of the stream the conv mixes.
 pub const CHANNEL: Axis = Axis(8);
 /// A tap of the conv's filter.
 pub const TAP: Axis = Axis(9);
-/// A column of a window store's ring, the conv's past values of every channel.
+/// A column of a store's ring, the conv's past values of every channel.
 pub const RING_COLUMN: Axis = Axis(10);
 /// A channel of one key head, head local: no operand binds it, only the units level cuts it.
 pub const HEAD_CHANNEL: Axis = Axis(11);

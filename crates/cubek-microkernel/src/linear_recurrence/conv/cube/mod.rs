@@ -1,6 +1,6 @@
-//! The cube scope: a cube holds one key head of one row, or of one position of a prompt, its units
-//! dealing the head's channels between them. What every conv shares is here: the past their taps
-//! read, and the filters and the silu that make a line of channels.
+//! The cube scope: a cube's units deal a row's, or a prompt position's, channels between them.
+//! What every conv shares is here: the past their taps read, and the filters and the silu that make
+//! a line of channels.
 
 mod box_lines;
 mod filters;
