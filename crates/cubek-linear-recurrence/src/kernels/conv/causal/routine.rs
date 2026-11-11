@@ -20,6 +20,9 @@ use cubek_std::routine::{Grid, PreparedLaunches, Routine};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeCausalConvRoutine;
 
+/// The blueprint of [`CubeCausalConvRoutine`].
+pub type CubeCausalConvRoutineBlueprint = CausalConvBlueprint<CubeCausalConvMicrokernel>;
+
 impl CubeCausalConvRoutine {
     /// The causal conv of `inputs`, launched on their client's device, prepared for `hw`.
     ///
@@ -57,7 +60,7 @@ impl CubeCausalConvRoutine {
         &self,
         hw: &Hardware,
         tensors: CausalConvTensors,
-        blueprint: CausalConvBlueprint,
+        blueprint: CubeCausalConvRoutineBlueprint,
         grid: Grid,
     ) -> Result<CausalConvOutputs, Refusal> {
         let problem = tensors.problem();
@@ -110,7 +113,7 @@ impl Routine for CubeCausalConvRoutine {
     type Problem = CausalConvProblem;
     type Microkernel = CubeCausalConvMicrokernel;
     type Settings = CausalConvSettings;
-    type Blueprint = CausalConvBlueprint;
+    type Blueprint = CubeCausalConvRoutineBlueprint;
     type Partitioning = CausalConvPartitioning;
 
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
@@ -129,7 +132,7 @@ impl Routine for CubeCausalConvRoutine {
     fn estimate(
         &self,
         problem: &CausalConvProblem,
-        blueprint: &CausalConvBlueprint,
+        blueprint: &CubeCausalConvRoutineBlueprint,
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {

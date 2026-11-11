@@ -184,7 +184,11 @@ impl CausalConvTensors {
 
     /// Every operand bound as `blueprint` states it, on `grid`, a ring placed at the slot its
     /// table names.
-    pub(crate) fn bind(&self, blueprint: &CausalConvBlueprint, grid: &Grid) -> CausalConvBinding {
+    pub(crate) fn bind<M>(
+        &self,
+        blueprint: &CausalConvBlueprint<M>,
+        grid: &Grid,
+    ) -> CausalConvBinding {
         let launcher = blueprint.launcher(self.reads.client(), grid);
         let width = blueprint.width;
         let axes: &'static [Axis] = match self.problem.past {

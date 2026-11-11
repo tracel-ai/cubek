@@ -1,7 +1,7 @@
 use super::base;
 use super::kernel::cube_qk_normed_conv_kernel;
 use crate::kernels::conv::{
-    ConvStreams, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
+    CausalConvBlueprint, ConvStreams, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvInputs,
     QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors, admit_element,
 };
 use crate::kernels::refusals::admit_on_device;
@@ -20,6 +20,9 @@ use cubek_std::routine::{Grid, PreparedLaunches, Routine};
 /// every device runs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeQkNormedConvRoutine;
+
+/// The blueprint of [`CubeQkNormedConvRoutine`].
+pub type CubeQkNormedConvRoutineBlueprint = CausalConvBlueprint<CubeQkNormedConvMicrokernel>;
 
 impl CubeQkNormedConvRoutine {
     /// The conv of `inputs`, launched on their client's device, prepared for `hw`.
@@ -58,7 +61,7 @@ impl CubeQkNormedConvRoutine {
         &self,
         hw: &Hardware,
         tensors: QkNormedConvTensors,
-        blueprint: QkNormedConvBlueprint,
+        blueprint: CubeQkNormedConvRoutineBlueprint,
         grid: Grid,
     ) -> Result<QkNormedConvOutputs, Refusal> {
         let problem = tensors.problem();
@@ -111,7 +114,7 @@ impl Routine for CubeQkNormedConvRoutine {
     type Problem = QkNormedConvProblem;
     type Microkernel = CubeQkNormedConvMicrokernel;
     type Settings = QkNormedConvSettings;
-    type Blueprint = QkNormedConvBlueprint;
+    type Blueprint = CubeQkNormedConvRoutineBlueprint;
     type Partitioning = CausalConvPartitioning;
 
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
@@ -130,7 +133,7 @@ impl Routine for CubeQkNormedConvRoutine {
     fn estimate(
         &self,
         problem: &QkNormedConvProblem,
-        blueprint: &QkNormedConvBlueprint,
+        blueprint: &CubeQkNormedConvRoutineBlueprint,
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {

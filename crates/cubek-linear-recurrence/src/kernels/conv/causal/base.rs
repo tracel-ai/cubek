@@ -13,12 +13,13 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_std::routine::{CubeResources, Grid};
 
-/// The launch of `problem` on `hw`: no cube holds more units than the channels have lines.
+/// The launch of `problem` on `hw`: no cube holds more units than the channels have lines, and the
+/// write back of a prompt is checked against the device too.
 pub(super) fn prepare(
     hw: &Hardware,
     problem: &CausalConvProblem,
     settings: &CausalConvSettings,
-) -> Result<(CausalConvBlueprint, Grid), Refusal> {
+) -> Result<(CausalConvBlueprint<CubeCausalConvMicrokernel>, Grid), Refusal> {
     problem.admit_launch(hw)?;
     let item = problem.work_item();
     let provisional = CubeCausalConvMicrokernel::best(hw, &item, settings)?;
@@ -44,17 +45,12 @@ pub(super) fn prepare(
         taps: problem.taps,
     };
     let write_back = RingWriteBack::prepare(hw, &problem.past, extent, width)?;
-    let blueprint = CausalConvBlueprint {
-        microkernel,
-        partitioning,
-        width,
-        write_back,
-    };
+    let blueprint = CausalConvBlueprint::new(microkernel, partitioning, width, write_back);
     Ok((blueprint, grid))
 }
 
-/// The widest width the device, the microkernel's accesses and every operand's alignment and
-/// view start admit.
+/// The widest width the device, the microkernel's accesses and every operand's alignment and view
+/// start admit.
 fn settled_width(
     hw: &Hardware,
     problem: &CausalConvProblem,

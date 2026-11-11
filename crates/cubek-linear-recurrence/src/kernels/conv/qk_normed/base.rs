@@ -1,7 +1,7 @@
 //! How the q,k,v conv places a launch and settles the width its channels bind at.
 
 use crate::kernels::conv::{
-    ConvExtent, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvProblem,
+    CausalConvBlueprint, ConvExtent, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem,
     RingWriteBack,
 };
 use cubecl::tile::Levels;
@@ -22,7 +22,7 @@ pub(super) fn prepare(
     hw: &Hardware,
     problem: &QkNormedConvProblem,
     settings: &QkNormedConvSettings,
-) -> Result<(QkNormedConvBlueprint, Grid), Refusal> {
+) -> Result<(CausalConvBlueprint<CubeQkNormedConvMicrokernel>, Grid), Refusal> {
     problem.admit_launch(hw)?;
     let item = problem.work_item();
     let provisional = CubeQkNormedConvMicrokernel::best(hw, &item, settings)?;
@@ -48,17 +48,12 @@ pub(super) fn prepare(
         taps: problem.taps,
     };
     let write_back = RingWriteBack::prepare(hw, &problem.past, extent, width)?;
-    let blueprint = QkNormedConvBlueprint {
-        microkernel,
-        partitioning,
-        width,
-        write_back,
-    };
+    let blueprint = CausalConvBlueprint::new(microkernel, partitioning, width, write_back);
     Ok((blueprint, grid))
 }
 
-/// The widest width the device, the microkernel's accesses and every operand's alignment and
-/// view start admit.
+/// The widest width the device, the microkernel's accesses and every operand's alignment and view
+/// start admit.
 fn settled_width(
     hw: &Hardware,
     problem: &QkNormedConvProblem,

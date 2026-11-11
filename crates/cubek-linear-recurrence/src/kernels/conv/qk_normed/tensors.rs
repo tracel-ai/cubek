@@ -2,7 +2,7 @@
 
 use crate::kernels::conv::reads::{BoundReads, CausalConvReads, bound};
 use crate::kernels::conv::{
-    CausalConvPast, CausalConvPastInputs, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint,
+    CausalConvBlueprint, CausalConvPast, CausalConvPastInputs, QK_NORMED_CONV_OUTPUT_ELEMENT,
     QkNormedConvProblem,
 };
 use cubecl::client::Client;
@@ -212,9 +212,9 @@ impl QkNormedConvTensors {
 
     /// Every operand bound as `blueprint` states it, on `grid`, a ring placed at the slot its
     /// table names.
-    pub(crate) fn bind(
+    pub(crate) fn bind<M>(
         &self,
-        blueprint: &QkNormedConvBlueprint,
+        blueprint: &CausalConvBlueprint<M>,
         grid: &Grid,
     ) -> QkNormedConvBinding {
         let launcher = blueprint.launcher(self.reads.client(), grid);

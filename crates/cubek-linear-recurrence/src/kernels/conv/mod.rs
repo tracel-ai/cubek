@@ -9,6 +9,7 @@
 //! valid positions to the ring once every position has read it. The microkernels are
 //! [`cubek_microkernel::linear_recurrence::conv`]'s.
 
+mod blueprint;
 mod causal;
 #[cfg(test)]
 mod fixtures;
@@ -17,6 +18,7 @@ mod qk_normed;
 mod reads;
 mod ring_write_back;
 
+pub use blueprint::*;
 pub use causal::*;
 pub(crate) use past::admit_element;
 pub use past::*;
