@@ -2,7 +2,7 @@ use super::kernel::hypercube_stream_fragment_attention_kernel;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
     AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
-    HypercubeMerge,
+    HypercubeMerge, PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
@@ -189,6 +189,9 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
         if let AttentionCacheLayout::Packed(_) = problem.cache {
             return Err(ATTENTION_PACKED_UNREAD);
         }
+        if problem.packed_queries {
+            return Err(PACKED_QUERIES_UNREAD);
+        }
         HypercubeMerge::LastArrival.admits(hw)?;
         let item = problem.work_item();
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
@@ -268,10 +271,10 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 tensors.client(),
                 grid.launch.cube_count,
                 grid.launch.cube_dim,
-                binding.query.arg(),
+                binding.query,
                 key,
                 value,
-                binding.out.arg(),
+                binding.out,
                 binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
                 slots.out.binding().into_tensor_arg(),
                 slots.max.binding().into_tensor_arg(),

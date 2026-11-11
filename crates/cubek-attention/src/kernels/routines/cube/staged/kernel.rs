@@ -17,6 +17,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     logsumexp: ComptimeOption<&TileTensor<'static>>,
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
+    query_ends: ComptimeOption<&Tensor<u32>>,
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
@@ -34,25 +35,27 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
 
-    for cube in &partitioning {
-        let visible = VisibleKeys::new(len, &cube, queries, &mask, visibility);
-        let k = key.within(S, 0, visible.attended as usize);
-        let v = value.within(S, 0, visible.attended as usize);
-        let bias = visible.step_bias::<EA>(&partitioning, &cube);
-        let steps = visible.steps(&cube, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
+    for sequence in &partitioning {
+        for cube in sequence {
+            let visible = VisibleKeys::new(len, &query_ends, &cube, queries, &mask, visibility);
+            let k = key.within(S, 0, visible.attended as usize);
+            let v = value.within(S, 0, visible.attended as usize);
+            let bias = visible.step_bias::<EA>(&partitioning, &cube);
+            let steps = visible.steps(&cube, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
 
-        cube_staged_attention_microkernel::<EA, ES>(
-            &cube,
-            &o.at(&cube),
-            &lse.clone().map(|lse| lse.at(&cube)),
-            &q.at(&cube),
-            &k.at(&cube),
-            &v.at(&cube),
-            &bias.at(&cube),
-            steps,
-            EA::cast_from(scale),
-            microkernel,
-            storage.clone(),
-        );
+            cube_staged_attention_microkernel::<EA, ES>(
+                &cube,
+                &o.at(&cube),
+                &lse.clone().map(|lse| lse.at(&cube)),
+                &q.at(&cube),
+                &k.at(&cube),
+                &v.at(&cube),
+                &bias.at(&cube),
+                steps,
+                EA::cast_from(scale),
+                microkernel,
+                storage.clone(),
+            );
+        }
     }
 }
