@@ -7,7 +7,30 @@
 
 #[cfg(feature = "attention")]
 pub mod attention;
+#[cfg(feature = "attention-backward")]
+pub mod attention_backward;
+#[cfg(feature = "interpolate")]
+pub mod interpolate;
+#[cfg(feature = "linear-recurrence")]
+pub mod linear_recurrence;
 #[cfg(feature = "matmul")]
 pub mod matmul;
+#[cfg(feature = "pool")]
+pub mod pool;
+#[cfg(feature = "random")]
+pub mod random;
 #[cfg(feature = "reduce")]
 pub mod reduce;
+#[cfg(feature = "rms-norm")]
+pub mod rms_norm;
+#[cfg(feature = "row-store")]
+mod row_batch;
+#[cfg(feature = "attention")]
+pub mod split_keys_merge;
+#[cfg(feature = "swiglu")]
+pub mod swiglu;
+#[cfg(any(feature = "pool", feature = "interpolate"))]
+mod window;
+
+#[cfg(feature = "row-store")]
+pub use row_batch::RowBatch;

@@ -1,30 +1,22 @@
-//! The attention microkernels on one work item: one batch, one head, every query one plane's
-//! rows, every key attended, no mask.
+//! The plane attention microkernels on one work item: every query one plane's rows.
 
-use crate::attention::plane::{
-    PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
-    plane_fragment_attention_microkernel,
-};
-use crate::attention::{
-    AttentionMicrokernel, AttentionOperands, AttentionReading, AttentionVisibility,
-    AttentionWorkItem, B, D, DV, G, KV, Q, S, VisibleKeys,
-};
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Launcher, Partitioning, Space, Tile, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::attention::plane::{
+    PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
+    plane_fragment_attention_microkernel,
+};
+use cubek_microkernel::attention::{
+    AttentionMicrokernel, AttentionOperands, AttentionVisibility, AttentionWorkItem, B, D, DV, G,
+    KV, Q, S, VisibleKeys,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{Microkernel, StageRing};
 
-/// The elements of a float attention: what the query, keys and values are stored in, what it
-/// sums in and what it writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AttentionElements {
-    pub input: ElemType,
-    pub sum: ElemType,
-    pub out: ElemType,
-}
+use super::{AttentionElements, AttentionLaunch};
 
 /// One plane fragment attention microkernel ready to launch on one work item: the microkernel the
 /// device picks at `settings`, over one plane's queries and `steps` stages of keys.
@@ -52,20 +44,7 @@ impl PlaneFragmentAttentionLaunch {
         settings: &PlaneFragmentAttentionMicrokernelSettings,
         steps: usize,
     ) -> Result<Self, Refusal> {
-        let item = AttentionWorkItem {
-            elements: AttentionOperands {
-                query: elements.input,
-                key: elements.input,
-                value: elements.input,
-                out: elements.out,
-            },
-            sum: elements.sum,
-            reading: AttentionReading::AsStored,
-            page_size: None,
-            group: 1,
-            head_dim,
-            val_dim,
-        };
+        let item = elements.work_item([head_dim, val_dim]);
         let microkernel = PlaneFragmentAttentionMicrokernel::best(hw, &item, settings)?;
         let plane_width = hw.plane_dim()?;
         let ring = StageRing::SINGLE.resolve(
@@ -83,18 +62,18 @@ impl PlaneFragmentAttentionLaunch {
             plane_width,
         })
     }
+}
 
-    /// `out = softmax(scale · query · keyᵀ) · value`, `query` `[1, 1, 1, queries, head_dim]`,
-    /// `key` `[1, 1, keys, head_dim]`, `value` `[1, 1, keys, val_dim]` and `out`
-    /// `[1, 1, 1, queries, val_dim]`, all row-major (`[B, KV, G, Q, _]` and `[B, KV, S, _]`);
-    /// `lengths` holds the one sequence's attended keys, as `u32`. Where `logsumexp` is given,
-    /// `[1, 1, 1, queries]` in the sum's element, each query's `ln Σ exp(score)` lands there.
-    ///
-    /// # Errors
-    ///
-    /// Why the tile DSL cannot bind the launch.
-    #[allow(clippy::too_many_arguments)]
-    pub fn launch(
+impl AttentionLaunch for PlaneFragmentAttentionLaunch {
+    fn item(&self) -> &AttentionWorkItem {
+        &self.item
+    }
+
+    fn seq(&self) -> [usize; 2] {
+        self.seq
+    }
+
+    fn launch(
         &self,
         client: &Client,
         query: TensorBinding,
