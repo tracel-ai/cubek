@@ -326,7 +326,7 @@ mod packed_lhs {
     use super::*;
     use crate::kernels::select::packed::nvfp4_scheme;
     use crate::kernels::{
-        CubeShuffleMatmulRoutine, CubeStagedMatmulRoutine, DequantizedMatmulRoutine,
+        CubeShuffleMatmulRoutine, CubeStagedMatmulRoutine, PlaneDequantizeMatmulRoutine,
         PlaneShuffleMatmulRoutine,
     };
     use cubecl::features::MmaConfig;
@@ -353,8 +353,9 @@ mod packed_lhs {
     }
 
     /// A packed `[m, k]` input against a float `[k, n]` one is declined by the routines that
-    /// stream the `[k, n]` input, and served by the routine that decodes every packed input
-    /// first: the default a product with nothing chosen falls back to.
+    /// stream the `[k, n]` input, and served by the decode of the packed input then a float
+    /// routine ([`Decoded`](crate::kernels::plan::Decoded)): the default a product with nothing
+    /// chosen falls back to.
     #[test]
     fn a_packed_lhs_is_decoded_where_the_streaming_routines_decline_it() {
         let hw = devices::offering_cmma(
@@ -391,16 +392,34 @@ mod packed_lhs {
                 );
             }
         }
-        let problem = packed_lhs(512);
-        let decoded = DequantizedMatmulRoutine {
-            dense: CubeStagedMatmulRoutine,
-        };
+        // The decode names a packed matrix's axes `K` and `N`: the `[m, k]` input's rows are its
+        // `N`, a product of one row.
+        let rows = 512;
+        let decode = MatmulRoutineProblem::packed(
+            1,
+            rows,
+            4096,
+            F16,
+            MatmulOperands {
+                rhs: packed_lhs(rows).packings.lhs,
+                ..MatmulOperands::all(None)
+            },
+        );
         assert!(
-            decoded
+            PlaneDequantizeMatmulRoutine
+                .prepare(&hw, &decode, &PlaneDequantizeMatmulRoutine::SETTINGS)
+                .is_ok(),
+            "the decode declines the packed lhs"
+        );
+        let dense = MatmulRoutineProblem::dense(rows, 2048, 4096, F16);
+        assert!(
+            CubeStagedMatmulRoutine
                 .settings(&hw)
                 .iter()
-                .any(|settings| decoded.prepare(&hw, &problem, settings).is_ok()),
-            "no setting decodes the packed lhs and runs the float product"
+                .any(|settings| CubeStagedMatmulRoutine
+                    .prepare(&hw, &dense, settings)
+                    .is_ok()),
+            "no setting of the float product runs on the decoded lhs"
         );
     }
 }
