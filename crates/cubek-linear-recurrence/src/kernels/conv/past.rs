@@ -18,7 +18,7 @@ use super::reads::bound;
 
 /// The extents a conv's taps run over: `batch` rows of `channels` channels, `taps` to a filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ConvExtent {
+pub(crate) struct ConvExtent {
     pub batch: usize,
     pub channels: usize,
     pub taps: usize,

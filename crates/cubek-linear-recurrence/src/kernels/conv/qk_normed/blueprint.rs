@@ -1,7 +1,7 @@
 //! A conv launch's compile-time decisions.
 
 use crate::kernels::conv::{
-    ConvExtent, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem, RingWriteBackLaunch,
+    QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem, RingWriteBackLaunch,
 };
 use cubecl::tile::Levels;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
@@ -53,12 +53,7 @@ impl QkNormedConvBlueprint {
             shared_memory: microkernel.shared_memory(),
         };
         let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
-        let extent = ConvExtent {
-            batch: problem.batch,
-            channels: item.heads.conv_dim(),
-            taps: problem.taps,
-        };
-        let write_back = RingWriteBackLaunch::prepare(hw, &problem.past, extent, width)?;
+        let write_back = RingWriteBackLaunch::prepare(hw, &problem.past, problem.extent(), width)?;
         let blueprint = Self {
             microkernel,
             partitioning,

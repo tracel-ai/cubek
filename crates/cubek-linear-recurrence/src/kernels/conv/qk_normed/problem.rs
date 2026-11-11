@@ -71,6 +71,15 @@ impl QkNormedConvProblem {
         Ok(())
     }
 
+    /// The extents the conv's taps run over.
+    pub(crate) fn extent(&self) -> ConvExtent {
+        ConvExtent {
+            batch: self.batch,
+            channels: self.heads.conv_dim(),
+            taps: self.taps,
+        }
+    }
+
     pub(crate) fn work_item(&self) -> QkNormedConvWorkItem {
         QkNormedConvWorkItem {
             heads: self.heads,
@@ -161,12 +170,7 @@ impl EstimatedProblem for QkNormedConvProblem {
     fn demand(&self) -> Work {
         let conv_dim = self.heads.conv_dim();
         let size = self.element.size();
-        let extent = ConvExtent {
-            batch: self.batch,
-            channels: conv_dim,
-            taps: self.taps,
-        };
-        let (read, written) = self.past.bytes(extent, size);
+        let (read, written) = self.past.bytes(self.extent(), size);
         let channels = self.batch * self.past.positions() * conv_dim;
         Work {
             compute_ops: self.work_item().operations(channels),
