@@ -23,7 +23,7 @@ const DECLINED: Refusal = Refusal::Declined {
 
 /// Transforms no longer than this are held to a tight tolerance: a backend's `sin` and `cos`
 /// drift only over long transforms.
-const SHORT: usize = 64;
+pub(crate) const SHORT: usize = 64;
 
 /// Along `dim` of `shape`, the axis transformed.
 #[derive(Debug, Clone)]
