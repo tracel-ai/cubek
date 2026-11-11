@@ -1,6 +1,7 @@
 //! What every attention microkernel computes alone: `softmax(scale · q · kᵀ) · v` over one batch
 //! and one head, every key attended, all row-major, and each query's `ln Σ exp(scale · q · kᵀ)`.
 
+use crate::launch::Lines;
 use crate::launch::attention::{AttentionElements, AttentionLaunch};
 use core::fmt::Debug;
 use core::marker::PhantomData;
@@ -100,15 +101,18 @@ pub(crate) trait AttentionSettings: Debug + Copy {
         &self,
         hw: &Hardware,
         elements: AttentionElements,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self::Launch, Refusal>;
 }
 
-/// An attention of `elements` at `settings`, `steps` of the microkernel's step of keys long.
+/// An attention of `elements` at `settings`, `steps` of the microkernel's step of keys long, its
+/// operands bound as `lines` says.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AttentionCase<S> {
     pub elements: AttentionElements,
     pub settings: S,
+    pub lines: Lines,
     pub steps: usize,
 }
 
@@ -127,7 +131,8 @@ impl<S: AttentionSettings> Attention<S> {
     }
 
     /// Every setting the device lists, for `f16` and `f32` inputs summed in `f32` and written in
-    /// their own element, one step of keys and three.
+    /// their own element, one step of keys and three, the operands one value a line and as wide
+    /// as a routine binds them.
     pub(crate) fn every_setting(&self) -> Vec<AttentionCase<S>> {
         S::Microkernel::settings(&self.hw)
             .into_iter()
@@ -138,10 +143,13 @@ impl<S: AttentionSettings> Attention<S> {
                         sum: F32,
                         out: input,
                     };
-                    [1, 3].map(|steps| AttentionCase {
-                        elements,
-                        settings,
-                        steps,
+                    Lines::EVERY.into_iter().flat_map(move |lines| {
+                        [1, 3].map(|steps| AttentionCase {
+                            elements,
+                            settings,
+                            lines,
+                            steps,
+                        })
                     })
                 })
             })
@@ -153,7 +161,9 @@ impl<S: AttentionSettings> ScopeUnderTest for Attention<S> {
     type Case = AttentionCase<S>;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
-        let launch = case.settings.launch(&self.hw, case.elements, case.steps)?;
+        let launch = case
+            .settings
+            .launch(&self.hw, case.elements, case.lines, case.steps)?;
         let [queries, keys] = launch.seq();
         let [head, val] = DIMS;
         let attention = HostAttention::new(launch.seq(), DIMS);
@@ -200,7 +210,7 @@ impl<S: AttentionSettings> ScopeUnderTest for Attention<S> {
     fn reference(&self, case: &Self::Case) -> Vec<HostData> {
         let launch = case
             .settings
-            .launch(&self.hw, case.elements, case.steps)
+            .launch(&self.hw, case.elements, case.lines, case.steps)
             .unwrap_or_else(|why| panic!("{case:?} launched: {why:?}"));
         HostAttention::new(launch.seq(), DIMS).out().into()
     }

@@ -1,5 +1,6 @@
 //! The plane fragment attention microkernel alone: one plane's queries over every key.
 
+use crate::launch::Lines;
 use crate::launch::attention::{AttentionElements, PlaneFragmentAttentionLaunch};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::plane::{
@@ -18,9 +19,10 @@ impl AttentionSettings for PlaneFragmentAttentionMicrokernelSettings {
         &self,
         hw: &Hardware,
         elements: AttentionElements,
+        lines: Lines,
         steps: usize,
     ) -> Result<PlaneFragmentAttentionLaunch, Refusal> {
-        PlaneFragmentAttentionLaunch::new(hw, elements, DIMS, self, steps)
+        PlaneFragmentAttentionLaunch::new(hw, elements, DIMS, self, lines, steps)
     }
 }
 

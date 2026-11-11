@@ -7,6 +7,7 @@ use core::num::NonZeroUsize;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Launcher, Partitioning, Space, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::attention::cube::{
@@ -17,8 +18,8 @@ use cubek_microkernel::attention::hypercube::{
 };
 use cubek_microkernel::attention::plane::TileStepReads;
 use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperands, AttentionVisibility, AttentionWorkItem, B, D, DV, G,
-    KV, Q, S, VisibleKeys,
+    AttentionMicrokernel, AttentionVisibility, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    VisibleKeys,
 };
 use cubek_microkernel::split_keys_merge::hypercube::{
     HypercubeMergeShape, hypercube_split_keys_merge_microkernel,
@@ -27,19 +28,21 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::TestInput;
 
-use super::{AttentionElements, AttentionLaunch};
+use super::{AttentionElements, AttentionLaunch, AttentionLines};
+use crate::launch::Lines;
 
 /// The cubes sharing the box's keys: three, so keys three steps long are cut into three runs whose
 /// partials the last arrival merges, and keys one step long leave two cubes nothing to walk.
 const CUBES: NonZeroUsize = NonZeroUsize::new(3).unwrap();
 
 /// One hypercube attention microkernel ready to launch on one box of queries, `steps` of its cube's
-/// steps of keys, the keys shared by [`CUBES`] cubes.
+/// steps of keys, the keys shared by [`CUBES`] cubes, its operands bound as `lines` says.
 #[derive(Debug, Clone)]
 pub struct HypercubeAttentionLaunch {
     pub microkernel: HypercubeAttentionMicrokernel,
     pub item: AttentionWorkItem,
     pub seq: [usize; 2],
+    lines: AttentionLines,
     plane_width: u32,
 }
 
@@ -57,6 +60,7 @@ impl HypercubeAttentionLaunch {
         elements: AttentionElements,
         dims: [usize; 2],
         settings: &HypercubeAttentionMicrokernelSettings,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self, Refusal> {
         if !hw.properties.features.device_memory_scope {
@@ -90,6 +94,7 @@ impl HypercubeAttentionLaunch {
             });
         }
         Ok(Self {
+            lines: AttentionLines::new(hw, lines, &item),
             seq: [
                 microkernel.cube.seq_q(),
                 microkernel.cube.region_keys() * steps,
@@ -98,6 +103,21 @@ impl HypercubeAttentionLaunch {
             item,
             plane_width: hw.plane_dim()?,
         })
+    }
+
+    /// The box one cube of `partitioning` covers: its queries, and the run of the keys it walks,
+    /// as long as the longest cube's, as the routine's partitioning states it.
+    fn cube_space(partitioning: &Partitioning) -> Space {
+        let step = partitioning.box_of(ComputeScope::Cube);
+        let keys = partitioning.space().extent(S);
+        let run = keys.div_ceil(step.extent(S)).max(1).div_ceil(CUBES.get()) * step.extent(S);
+        Space::new(
+            &step
+                .extents()
+                .into_iter()
+                .map(|(axis, extent)| (axis, if axis == S { run } else { extent }))
+                .collect::<Vec<_>>(),
+        )
     }
 
     /// The merge the last arrival runs: a slot for every cube, a box of the cube's queries.
@@ -220,27 +240,31 @@ impl HypercubeAttentionLaunch {
             .batches(&[B, KV])
             .build();
         let partitioning = Partitioning::new(space.clone(), levels);
+        let widths = self
+            .lines
+            .widths(&microkernel, &Self::cube_space(&partitioning));
         let grid = Grid::Stated {
             cube_count: partitioning.cube_count(),
             cube_dim: partitioning.cube_dim(self.plane_width),
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
-        let served = microkernel.cube.served(item);
-        let widths = AttentionOperands {
-            query: 1,
-            key: 1,
-            value: 1,
-            out: 1,
+        let served = microkernel.served(item);
+        let delivery = microkernel.delivery(&widths, item);
+        let bound = |tensor: TensorBinding, element, width, axes: &'static [_]| {
+            launcher.arg(tensor, element).axes(axes).vectorize(width)
         };
-        let delivery = AttentionMicrokernel::delivery(&microkernel.cube, &widths, item);
-        let bound = |tensor: TensorBinding, element, axes: &'static [_]| {
-            launcher.arg(tensor, element).axes(axes).vectorize(1)
-        };
-        let query = bound(query, served.elements.query, &[B, KV, G, Q, D]).build()?;
-        let key = bound(key, served.elements.key, &[B, KV, S, D])
+        let query = bound(
+            query,
+            served.elements.query,
+            widths.query,
+            &[B, KV, G, Q, D],
+        )
+        .delivery(microkernel.query_delivery(&widths, item))
+        .build()?;
+        let key = bound(key, served.elements.key, widths.key, &[B, KV, S, D])
             .delivery(delivery)
             .build()?;
-        let value = bound(value, served.elements.value, &[B, KV, S, DV])
+        let value = bound(value, served.elements.value, widths.value, &[B, KV, S, DV])
             .delivery(delivery)
             .build()?;
         let merge = self.merge();
@@ -264,7 +288,8 @@ impl HypercubeAttentionLaunch {
                 client,
                 launcher.cube_count(),
                 launcher.cube_dim(),
-                1,
+                // The plane shuffle lines every operand alike.
+                widths.query,
                 query.arg(),
                 key.arg(),
                 value.arg(),

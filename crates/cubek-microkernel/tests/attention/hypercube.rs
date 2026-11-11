@@ -1,6 +1,7 @@
 //! The hypercube attention microkernel alone: cubes sharing one box of queries' keys, each walking
 //! its run into its slot, the last of them to arrive merging the slots.
 
+use crate::launch::Lines;
 use crate::launch::attention::{AttentionElements, HypercubeAttentionLaunch};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::cube::CubeAttentionPlaneSettings;
@@ -20,9 +21,10 @@ impl AttentionSettings for HypercubeAttentionMicrokernelSettings {
         &self,
         hw: &Hardware,
         elements: AttentionElements,
+        lines: Lines,
         steps: usize,
     ) -> Result<HypercubeAttentionLaunch, Refusal> {
-        HypercubeAttentionLaunch::new(hw, elements, DIMS, self, steps)
+        HypercubeAttentionLaunch::new(hw, elements, DIMS, self, lines, steps)
     }
 }
 
