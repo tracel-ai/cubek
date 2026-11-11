@@ -4,7 +4,7 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QkNormedConvOperand {
     /// `[batch, channel]`: the newest value of every channel of the `q|k|v` stream over a window,
-    /// or `[batch, stream_position, channel]` over a prompt.
+    /// or `[batch, prompt_position, channel]` over a prompt.
     Qkv,
     /// `[channel, tap]`: the filter of every channel, its newest tap last.
     Filters,
