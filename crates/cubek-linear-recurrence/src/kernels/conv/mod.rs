@@ -8,6 +8,8 @@
 //! valid positions to the ring once every position has read it. The microkernels are
 //! [`cubek_microkernel::linear_recurrence::conv`]'s.
 
+#[cfg(test)]
+mod fixtures;
 mod past;
 mod qk_normed;
 mod reads;
