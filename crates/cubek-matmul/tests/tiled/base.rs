@@ -7,6 +7,7 @@ use core::marker::PhantomData;
 
 use cubecl::bytes::Bytes;
 use cubecl::client::Client;
+use cubecl::ir::ElemType;
 use cubecl::prelude::{CubeElement, Scalar};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
@@ -17,7 +18,7 @@ use cubek_matmul::kernels::{
 };
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
-use cubek_test_utils::{HostData, ScopeUnderTest, Written};
+use cubek_test_utils::{HostData, ScopeUnderTest, TestInput, Written};
 
 use crate::matmul::{Declines, F16, F32, I32, Product};
 
@@ -42,6 +43,17 @@ pub(crate) trait RoutineProduct: Debug + Clone {
 
     /// What the routine writes, computed on the host.
     fn reference(&self) -> HostData;
+
+    /// An output of `shape` in `element` holding NaN, so a cell the routine never writes fails
+    /// the comparison: the tensor, and the same as the routine writes into it.
+    fn poisoned(client: &Client, shape: Shape, element: ElemType) -> (TensorHandle, PlainTensor) {
+        let cells = shape.num_elements();
+        let handle = TestInput::builder(client.clone(), shape)
+            .dtype(element)
+            .custom(vec![f32::NAN; cells])
+            .generate_without_host_data();
+        (handle.clone(), PlainTensor::of_handle(handle))
+    }
 
     /// The largest difference from the reference accepted.
     fn tolerance(&self) -> f32;

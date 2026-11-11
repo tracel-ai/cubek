@@ -5,7 +5,7 @@ use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 use cubecl::zspace::shape;
 use cubek_matmul::strategy::Strategy;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
 
 use crate::matmul::{Broadcast, ByStrategy, Declines, F16, F32, F64, Product};
 
@@ -35,6 +35,10 @@ fn auto_matches_the_host_on_medium_products() {
 #[test]
 fn auto_matches_the_host_in_f64() {
     if !f64::supported_uses(&cubecl::test_device().client()).contains(TypeUsage::Arithmetic) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "the device does no f64 arithmetic".to_string(),
+        ))
+        .enforce();
         return;
     }
     let auto = ByStrategy::new(Strategy::Auto, Declines::Never);

@@ -220,7 +220,7 @@ impl RoutineProduct for PackedProduct {
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel,
     {
-        let (out, bound) = PlainTensor::empty_contiguous(
+        let (out, bound) = Self::poisoned(
             client,
             Shape::from(vec![self.m, self.n]),
             bf16::elem_type_native(),

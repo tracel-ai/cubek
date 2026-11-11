@@ -21,7 +21,7 @@ fn a_transposed_packed_matrix_is_read_as_the_matrix_it_views() {
         .n(96)
         .k(512);
     let plane = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
-    plane.check(plane.at(
+    plane.check_some(plane.at(
         PlaneShuffleMatmulRoutine.packed_settings(),
         core::slice::from_ref(&head),
     ));

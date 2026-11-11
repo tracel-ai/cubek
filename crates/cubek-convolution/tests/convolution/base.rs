@@ -69,8 +69,10 @@ pub(crate) enum Values {
     /// Sixty-fourths in `[-0.52, 0.52]`: every element holds them exactly, and an `f32`
     /// accumulator sums their products exactly, so only the output's rounding differs.
     SixtyFourths,
-    /// Small integers on a short period: every partial sum stays under 2048, so even an `f16`
-    /// accumulator sums them exactly, and the routine must match the host exactly.
+    /// `-1`, `0` and `1` on periods of 7, 5, 11 and 13 (input, weight, output gradient, bias),
+    /// prime to every channel and tap count here, so no position or channel repeats another's
+    /// values; every partial sum stays under 2048, so even an `f16` accumulator sums them
+    /// exactly, and the routine must match the host exactly.
     Ramp,
 }
 
@@ -273,15 +275,15 @@ impl<const N: usize> Conv<N> {
     /// element holds them.
     fn host_values(&self, count: usize, role: Role) -> Vec<f32> {
         let (seed, period) = match role {
-            Role::Input => (3, 4),
-            Role::Weight => (23, 3),
-            Role::OutGrad => (41, 6),
-            Role::Bias => (53, 5),
+            Role::Input => (3, 7),
+            Role::Weight => (23, 5),
+            Role::OutGrad => (41, 11),
+            Role::Bias => (53, 13),
         };
         (0..count)
             .map(|i| match self.values {
                 Values::SixtyFourths => ((i * 17 + seed) % 67) as f32 / 64. - 33. / 64.,
-                Values::Ramp => (i % period) as f32 - 1.,
+                Values::Ramp => ((i % period) % 3) as f32 - 1.,
             })
             .map(|value| match self.element {
                 F16 => f16::from_f32(value).to_f32(),

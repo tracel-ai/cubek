@@ -16,5 +16,5 @@ fn every_cube_staged_setting_sums_each_group_s_run() {
         n: 64,
         ends: vec![37, 37, 100],
     };
-    staged.check(staged.at_every_setting(&[runs]));
+    staged.check_some(staged.at_every_setting(&[runs]));
 }

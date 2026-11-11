@@ -2,8 +2,6 @@
 //! stacked rhs its entry names, or over its run of `K`. An entry past the stack, or an empty run,
 //! answers zeros. Each product holds its own host reference.
 
-use std::sync::{Arc, OnceLock};
-
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
@@ -215,7 +213,7 @@ impl RoutineProduct for Routed {
             entries: upload(client, &[tokens, picks], &self.routes()),
         };
         let shape = Shape::from(vec![tokens, picks, 1, self.n]);
-        let (out, bound) = PlainTensor::empty_contiguous(client, shape, lhs.elem);
+        let (out, bound) = Self::poisoned(client, shape, lhs.elem);
         routine.launch_indexed_into(hw, client, lhs, stack, table, bound, settings)?;
         Ok(out)
     }
@@ -288,7 +286,7 @@ impl RoutineProduct for RunsOfK {
             entries: upload(client, &[self.ends.len()], &self.ends),
         };
         let shape = Shape::from(vec![self.ends.len(), m, n]);
-        let (out, bound) = PlainTensor::empty_contiguous(client, shape, lhs.elem);
+        let (out, bound) = Self::poisoned(client, shape, lhs.elem);
         routine.launch_indexed_into(
             hw,
             client,
@@ -373,7 +371,7 @@ impl RoutineProduct for Chunked {
             entries: upload(client, &[chunks], &self.slab_of_each()),
         };
         let shape = Shape::from(vec![chunks, rows, n]);
-        let (out, bound) = PlainTensor::empty_contiguous(client, shape, lhs.elem);
+        let (out, bound) = Self::poisoned(client, shape, lhs.elem);
         routine.launch_indexed_into(
             hw,
             client,
@@ -419,24 +417,12 @@ impl RoutineProduct for Chunked {
 
 /// Rows grouped by `sizes`, each group a slab of a packed stack: what a mixture of experts' tokens
 /// sorted by expert make. The second group is empty.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct GroupedRows {
     pub k: usize,
     pub n: usize,
     pub sizes: [usize; 4],
     pub format: PackedFormat,
-    /// The product on the host, computed once for every setting the rows are launched at.
-    reference: Arc<OnceLock<HostData>>,
-}
-
-impl core::fmt::Debug for GroupedRows {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "groups of {:?} rows, {}×{}, against {:?} slabs",
-            self.sizes, self.n, self.k, self.format
-        )
-    }
 }
 
 impl GroupedRows {
@@ -447,17 +433,12 @@ impl GroupedRows {
             n: 96,
             sizes: [5, 0, 11, 2],
             format,
-            reference: Arc::default(),
         }
     }
 
     /// The same rows, grouped by `sizes`.
     pub(crate) fn sized(self, sizes: [usize; 4]) -> Self {
-        Self {
-            sizes,
-            reference: Arc::default(),
-            ..self
-        }
+        Self { sizes, ..self }
     }
 
     pub(crate) fn rows(&self) -> usize {
@@ -495,27 +476,23 @@ impl GroupedRows {
 
     /// The product, `[rows, n]`, on the host.
     pub(crate) fn reference(&self) -> HostData {
-        self.reference
-            .get_or_init(|| {
-                let (k, n) = (self.k, self.n);
-                let lhs = Stack::Packed(self.format).activation_values(self.rows() * k, 3);
-                let stack = self.packed_slabs().dequantized();
-                let ends = self.ends();
-                let mut out = vec![0.; self.rows() * n];
-                for row in 0..self.rows() {
-                    let group = ends
-                        .iter()
-                        .position(|&end| row < end as usize)
-                        .expect("every row is in a group");
-                    for j in 0..n {
-                        out[row * n + j] = (0..k)
-                            .map(|kk| lhs[row * k + kk] * stack.cell(group, kk, j))
-                            .sum();
-                    }
-                }
-                HostData::row_major(HostDataVec::F32(out), Shape::from(vec![self.rows(), n]))
-            })
-            .clone()
+        let (k, n) = (self.k, self.n);
+        let lhs = Stack::Packed(self.format).activation_values(self.rows() * k, 3);
+        let stack = self.packed_slabs().dequantized();
+        let ends = self.ends();
+        let mut out = vec![0.; self.rows() * n];
+        for row in 0..self.rows() {
+            let group = ends
+                .iter()
+                .position(|&end| row < end as usize)
+                .expect("every row is in a group");
+            for j in 0..n {
+                out[row * n + j] = (0..k)
+                    .map(|kk| lhs[row * k + kk] * stack.cell(group, kk, j))
+                    .sum();
+            }
+        }
+        HostData::row_major(HostDataVec::F32(out), Shape::from(vec![self.rows(), n]))
     }
 
     pub(crate) fn tolerance(&self) -> f32 {

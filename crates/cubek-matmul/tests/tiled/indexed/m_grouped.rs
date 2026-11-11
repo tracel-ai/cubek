@@ -42,7 +42,7 @@ fn every_cube_staged_setting_reads_each_chunk_s_slab() {
         k: 96,
         n: 80,
     };
-    staged.check(staged.at_every_setting(&[chunked]));
+    staged.check_some(staged.at_every_setting(&[chunked]));
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn every_plane_shuffle_setting_reads_each_chunk_s_slab() {
         k: 96,
         n: 80,
     };
-    shuffle.check(shuffle.at_every_setting(&[chunked]));
+    shuffle.check_some(shuffle.at_every_setting(&[chunked]));
 }
 
 /// Rows grouped against a stack packed in each format, through the plane shuffle's packed
@@ -63,18 +63,34 @@ fn every_plane_shuffle_setting_reads_each_chunk_s_slab() {
 #[test]
 fn every_packed_plane_shuffle_setting_reads_each_group_s_packed_slab() {
     let grouped = ByGroupedRoutine::new(PlaneShuffleMatmulRoutine);
-    grouped.check(grouped.at(
+    grouped.check_some(grouped.at(
         MGroupedSettings::plane_shuffle_packed(),
         &FORMATS.map(GroupedRows::of),
     ));
 }
 
 /// Rows grouped against a stack packed in each format, through the cube staged routine's packed
-/// settings, which stage a packed input for a matrix instruction.
+/// settings, which stage a packed input for a matrix instruction: skipped on a device with none.
 #[test]
 fn every_packed_cube_staged_setting_reads_each_group_s_packed_slab() {
     let grouped = ByGroupedRoutine::new(CubeStagedMatmulRoutine);
-    grouped.check(grouped.at(
+    if grouped
+        .hw
+        .properties
+        .features
+        .matmul
+        .cmma
+        .iter()
+        .next()
+        .is_none()
+    {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "the cube staged routine stages a packed input for a matrix instruction".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+    grouped.check_some(grouped.at(
         MGroupedSettings::cube_staged_packed(&grouped.hw),
         &FORMATS.map(GroupedRows::of),
     ));

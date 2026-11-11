@@ -22,13 +22,13 @@ use crate::tiled::{ByRoutine, upload};
 #[test]
 fn every_plane_shuffle_setting_reads_each_route_s_slab() {
     let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
-    shuffle.check(shuffle.at_every_setting(&[Routed::MOE]));
+    shuffle.check_some(shuffle.at_every_setting(&[Routed::MOE]));
 }
 
 #[test]
 fn every_unit_registers_setting_reads_each_route_s_slab() {
     let registers = ByRoutine::new(UnitRegistersMatmulRoutine, Declines::AsItStates);
-    registers.check(registers.at_every_setting(&[Routed::MOE]));
+    registers.check_some(registers.at_every_setting(&[Routed::MOE]));
 }
 
 /// Every packed setting of the plane shuffle, against a stack packed in each format, its `n` a
@@ -40,7 +40,7 @@ fn every_packed_plane_shuffle_setting_reads_each_route_s_packed_slab() {
         .into_iter()
         .flat_map(|format| [Routed::MOE.packed(format), Routed::NARROW.packed(format)])
         .collect();
-    shuffle.check(shuffle.at(PlaneShuffleMatmulRoutine.packed_settings(), &products));
+    shuffle.check_some(shuffle.at(PlaneShuffleMatmulRoutine.packed_settings(), &products));
 }
 
 /// The routed autotune, against a stack laid either way it takes: a col float stack, its buffer
