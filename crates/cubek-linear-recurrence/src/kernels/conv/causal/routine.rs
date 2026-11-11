@@ -1,3 +1,4 @@
+use super::base;
 use super::kernel::cube_causal_conv_kernel;
 use crate::kernels::conv::{
     CausalConvBlueprint, CausalConvInputs, CausalConvOutputs, CausalConvPast, CausalConvProblem,
@@ -173,7 +174,7 @@ impl Routine for CubeCausalConvRoutine {
         problem: &CausalConvProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        CausalConvBlueprint::prepare(hw, problem, settings)
+        base::prepare(hw, problem, settings)
     }
 }
 

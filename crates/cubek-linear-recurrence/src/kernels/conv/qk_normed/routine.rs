@@ -1,3 +1,4 @@
+use super::base;
 use super::kernel::cube_qk_normed_conv_kernel;
 use crate::kernels::conv::{
     ConvStreams, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
@@ -171,7 +172,7 @@ impl Routine for CubeQkNormedConvRoutine {
         problem: &QkNormedConvProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        QkNormedConvBlueprint::prepare(hw, problem, settings)
+        base::prepare(hw, problem, settings)
     }
 }
 
