@@ -13,6 +13,8 @@ use cubecl::{client::Client, features::TypeUsage, prelude::*, zspace::shape};
 use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 
 use super::harness::{dequantize, f32_tensor, quantize};
+use super::{Needs, Quantized, RoundTrip};
+use cubek_test_utils::ScopeUnderTest;
 
 /// The `e2m1` magnitudes, in code order. Written out rather than derived: a table derived from the
 /// codec under test would agree with it however wrong it is.
@@ -82,24 +84,14 @@ fn round_trip(scheme: &QuantScheme, data: &[f32]) -> Vec<f32> {
 #[test]
 fn every_code_point_survives_the_round_trip() {
     let data = every_code();
-    let computed = round_trip(&scheme(false), &data);
-
-    assert_eq!(
-        computed, data,
-        "an e2m1 code point did not reconstruct as itself"
-    );
+    Quantized.check([RoundTrip::at_unit_scale(scheme(false), &data, &data)]);
 }
 
 /// The same, under the per-tensor level NVFP4 carries — the composition must not disturb the grid.
 #[test]
 fn every_code_point_survives_a_two_level_round_trip() {
     let data = every_code();
-    let computed = round_trip(&scheme(true), &data);
-
-    assert_eq!(
-        computed, data,
-        "an e2m1 code point did not reconstruct as itself under a per-tensor scale"
-    );
+    Quantized.check([RoundTrip::at_unit_scale(scheme(true), &data, &data)]);
 }
 
 /// Whatever goes in, what comes out is a code point. An integer codec fails this on `5.0`, which
@@ -148,15 +140,8 @@ fn values_between_code_points_round_to_nearest_ties_to_even() {
         (0.0, 0.0),
     ];
 
-    let data: Vec<f32> = cases.iter().map(|(input, _)| *input).collect();
-    let computed = round_trip(&scheme(false), &data);
-
-    for ((input, expected), got) in cases.iter().zip(computed) {
-        assert_eq!(
-            got, *expected,
-            "{input} quantized to {got}, wanted {expected}"
-        );
-    }
+    let (data, expected): (Vec<f32>, Vec<f32>) = cases.into_iter().unzip();
+    Quantized.check([RoundTrip::at_unit_scale(scheme(false), &data, &expected)]);
 }
 
 /// The negative half of the grid is the positive half's mirror, sign included. A codec deriving
@@ -170,9 +155,7 @@ fn the_sign_is_carried() {
             if i % 2 == 0 { magnitude } else { -magnitude }
         })
         .collect();
-    let computed = round_trip(&scheme(false), &data);
-
-    assert_eq!(computed, data, "an e2m1 sign was lost in the round trip");
+    Quantized.check([RoundTrip::at_unit_scale(scheme(false), &data, &data)]);
 }
 
 /// MXFP4, the OCP microscaling format: the same `e2m1` values in blocks of 32, scaled by one
@@ -193,6 +176,14 @@ mod mx {
             .with_store(QuantStore::PackedU32(0))
             .with_mode(QuantMode::Symmetric)
             .per_block([MX_BLOCK as u8], ScaleDtype::UE8M0)
+    }
+
+    impl RoundTrip {
+        /// One MXFP4 block of `data`, which must come back as `expected`, where the runtime can
+        /// hold a `ue8m0` scale at all.
+        fn mx_block(data: &[f32], expected: &[f32]) -> Self {
+            Self::at_unit_scale(mxfp4(), data, expected).needing(Needs::Byte)
+        }
     }
 
     /// Whether this runtime can hold a `ue8m0` scale at all.
@@ -241,7 +232,7 @@ mod mx {
     /// f32, so there is nothing for a tolerance to hide.
     #[test]
     fn a_power_of_two_scale_round_trips_exactly() {
-        for exp in [-8i32, -1, 0, 1, 8] {
+        Quantized.check([-8i32, -1, 0, 1, 8].map(|exp| {
             let scale = 2f32.powi(exp);
             let data: Vec<f32> = (0..MX_BLOCK)
                 .map(|i| {
@@ -249,15 +240,8 @@ mod mx {
                     if i % 2 == 0 { magnitude } else { -magnitude }
                 })
                 .collect();
-
-            let Some(computed) = round_trip_at(scale, &data) else {
-                return;
-            };
-            assert_eq!(
-                computed, data,
-                "2^{exp} scaled block did not round trip exactly"
-            );
-        }
+            RoundTrip::mx_block(&data, &data).scaled(scale)
+        }));
     }
 
     /// A calibration that is not a power of two is stored as the next one **up**. Up is what keeps
@@ -266,14 +250,8 @@ mod mx {
     fn a_scale_between_powers_of_two_rounds_up() {
         // 1.5 is stored as 2, so a value at 6 * 1.5 reconstructs against a scale of 2 and lands on
         // the nearest code point to 4.5 — which is 4, not 4.5, since e2m1 has no 4.5.
-        let data: Vec<f32> = core::iter::repeat_n(9.0f32, MX_BLOCK).collect();
-        let Some(computed) = round_trip_at(1.5, &data) else {
-            return;
-        };
-
-        for value in computed {
-            assert_eq!(value, 8.0, "9.0 under a scale of 1.5 landed at {value}");
-        }
+        let data = [9.0f32; MX_BLOCK];
+        Quantized.check([RoundTrip::mx_block(&data, &[8.0; MX_BLOCK]).scaled(1.5)]);
     }
 
     /// A block of zeros survives. `ue8m0` has no code for a zero scale, so the codec has to clamp
@@ -281,12 +259,8 @@ mod mx {
     /// zeros as zeros.
     #[test]
     fn an_all_zero_block_survives_a_scale_it_cannot_store() {
-        let data: Vec<f32> = core::iter::repeat_n(0.0f32, MX_BLOCK).collect();
-
-        let Some(computed) = round_trip_at(0.0, &data) else {
-            return;
-        };
-        assert_eq!(computed, data, "a zero-scaled block did not come back zero");
+        let data = [0.0f32; MX_BLOCK];
+        Quantized.check([RoundTrip::mx_block(&data, &data).scaled(0.0)]);
     }
 
     /// A scale past `ue8m0`'s top pins at 2^127 instead of wrapping into a different exponent,

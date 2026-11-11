@@ -49,11 +49,24 @@ where
     );
 
     match launch(client) {
-        ExecutionOutcome::Executed => match Unrun::of(client, outputs) {
-            Some(unrun) => unrun.outcome(),
-            None => ExecutionOutcome::Executed,
-        },
+        ExecutionOutcome::Executed => ExecutionOutcome::of_outputs(client, outputs),
         other => other,
+    }
+}
+
+impl ExecutionOutcome {
+    /// Whether the launch that writes `outputs`, already queued, ran: a failure that surfaces only
+    /// asynchronously lives on them.
+    ///
+    /// # Panics
+    ///
+    /// As [`launch_and_capture_outcome`], when the outputs carry a failure that is not a refusal.
+    #[track_caller]
+    pub fn of_outputs(client: &Client, outputs: &[&Handle]) -> Self {
+        match Unrun::of(client, outputs) {
+            Some(unrun) => unrun.outcome(),
+            None => Self::Executed,
+        }
     }
 }
 

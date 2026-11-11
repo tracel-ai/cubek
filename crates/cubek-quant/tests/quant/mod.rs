@@ -1,11 +1,14 @@
 use cubecl::prelude::*;
 use cubek_quant::scheme::ScaleDtype;
+mod base;
 mod fp4;
 mod fp8;
 mod harness;
 mod scale_rounding;
 mod tiled;
 mod two_level;
+
+pub(crate) use base::*;
 
 #[macro_export]
 macro_rules! testgen_quant {

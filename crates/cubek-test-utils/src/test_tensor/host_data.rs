@@ -7,7 +7,10 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 
-use crate::test_tensor::{cast::copy_casted, strides::physical_extent};
+use crate::test_tensor::{
+    cast::copy_casted,
+    strides::{StridedLayout, physical_extent},
+};
 
 #[derive(Debug, Clone)]
 pub struct HostData {
@@ -58,6 +61,21 @@ pub enum HostDataVec {
 }
 
 impl HostDataVec {
+    /// How many values it holds.
+    pub fn len(&self) -> usize {
+        match self {
+            HostDataVec::F32(items) => items.len(),
+            HostDataVec::F64(items) => items.len(),
+            HostDataVec::I32(items) => items.len(),
+            HostDataVec::Bool(items) => items.len(),
+        }
+    }
+
+    /// Whether it holds no value.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn get_f32(&self, i: usize) -> f32 {
         match self {
             HostDataVec::F32(items) => items[i],
@@ -65,13 +83,15 @@ impl HostDataVec {
         }
     }
 
-    /// Get the element as `f64`, losslessly upcasting `F32` data if needed.
+    /// Get the element as `f64`, losslessly upcasting `F32` and `I32` data if needed.
     /// This is the precision-preserving accessor used by the correctness
-    /// comparator so `F64` host data can be compared at full precision.
+    /// comparator so `F64` host data can be compared at full precision, and
+    /// integer outputs such as indices compared exactly.
     pub fn get_f64(&self, i: usize) -> f64 {
         match self {
             HostDataVec::F32(items) => items[i] as f64,
             HostDataVec::F64(items) => items[i],
+            HostDataVec::I32(items) => items[i] as f64,
             _ => panic!("Can't get as f64"),
         }
     }
@@ -102,6 +122,7 @@ impl HostDataVec {
         match self {
             HostDataVec::F32(items) => items.get(i).map(|&x| x as f64),
             HostDataVec::F64(items) => items.get(i).copied(),
+            HostDataVec::I32(items) => items.get(i).map(|&x| x as f64),
             _ => None,
         }
     }
@@ -122,6 +143,25 @@ impl HostDataVec {
 }
 
 impl HostData {
+    /// `data` laid row-major over `shape`: what a reference computes on the host.
+    ///
+    /// # Panics
+    ///
+    /// When `data` does not hold one value per index of `shape`.
+    pub fn row_major(data: HostDataVec, shape: Shape) -> Self {
+        assert_eq!(
+            data.len(),
+            shape.iter().product::<usize>(),
+            "{shape:?} takes one value per index"
+        );
+        let strides = StridedLayout::RowMajor.compute_strides(&shape);
+        Self {
+            data,
+            shape,
+            strides,
+        }
+    }
+
     pub fn from_tensor_handle(
         client: &Client,
         mut tensor_handle: TensorHandle,

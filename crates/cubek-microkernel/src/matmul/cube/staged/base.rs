@@ -400,8 +400,9 @@ impl CubeStagedMicrokernel {
     /// instruction's stages keep beside them, or the `window` each contracting plane's fragments
     /// bounce through once the stages are freed, whichever is larger; where its planes merge along
     /// `K`, the accumulator over the box, one sum a cell; and where the TMA engine stores the box,
-    /// the box it is drained into. The accumulator and the box are opened before the walk, so
-    /// they sit beside the stages.
+    /// the box it is drained into. The accumulator is opened before the walk, so it sits beside
+    /// the stages; so is the box, except beside planes set aside to fill, which open it once the
+    /// walk has freed the ring.
     pub fn shared_memory(
         &self,
         hw: &Hardware,
@@ -428,8 +429,12 @@ impl CubeStagedMicrokernel {
             .ring
             .bytes(stage.bytes(hw, item.elements, storage, self.plane.orders) + scales);
         // The windows open once the walk has freed its stages, and take their bytes
-        // (`CubeStagedWalk::drain_sum`).
-        stages.max(windows) + accumulator + stored
+        // (`CubeStagedWalk::drain_sum`); so does the box planes set aside to fill drain into.
+        if self.fill.filling_planes > 0 {
+            stages.max(windows).max(stored) + accumulator
+        } else {
+            stages.max(windows) + accumulator + stored
+        }
     }
 
     /// Bytes one stage's block scales take beside its values, where its planes read the packed
@@ -756,6 +761,10 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
 
     fn delivery(&self) -> Delivery {
         self.fill.delivery.bound()
+    }
+
+    fn fills_by_tma(&self) -> bool {
+        self.fill.delivery == CubeStagedDelivery::Tma
     }
 
     /// As their words where its planes' instruction is block-scaled and takes a word of them as its
