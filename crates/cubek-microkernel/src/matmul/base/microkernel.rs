@@ -43,6 +43,14 @@ pub trait MatmulMicrokernel:
         BlockScales::Fields
     }
 
+    /// Whether it reads a packed rhs a scale block at a time
+    /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)) rather than as the
+    /// rhs is stored: its routine plans and binds the rhs so. `false` for one that reads it as
+    /// stored.
+    fn reads_rhs_by_block(&self) -> bool {
+        false
+    }
+
     /// The element its fill decodes its inputs into, where its stages hold another than they are
     /// stored in: a float input read so, an `f32` one read at tf32, is bound as its words, which
     /// the fill decodes. `None` for one that stages its inputs as they lie.
