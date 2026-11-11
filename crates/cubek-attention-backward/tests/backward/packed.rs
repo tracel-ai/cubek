@@ -9,8 +9,8 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::Shape;
 use cubek_attention::kernels::{
-    AttentionRoutine, AttentionScoring, AttentionTensors, CubeStagedAttentionRoutine, KvBitWidths,
-    PackedAttentionCache, PackedAttentionOperand, ScoreScale,
+    AttentionLaunch, AttentionScoring, AttentionTensors, CubeStagedAttentionRoutine, KvBitWidths,
+    OneRoutine, PackedAttentionCache, PackedAttentionOperand, ScoreScale,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
@@ -210,7 +210,7 @@ fn check_packed(case: Case) {
             },
         )
         .expect("the case's tensors are verified");
-        match CubeStagedAttentionRoutine.launch_on(&hw, tensors, &settings) {
+        match OneRoutine(CubeStagedAttentionRoutine).launch_on(&hw, tensors, &settings) {
             Ok(result) => {
                 // The output comes back `[b, q, h, dv]`, the host's `[b, h, q, dv]`.
                 let actual = HostData::from_tensor_handle(&client, result, HostDataType::F32);

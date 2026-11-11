@@ -7,7 +7,7 @@ use cubek_microkernel::split_keys_merge::plane::plane_split_keys_merge_microkern
 /// logsumexp where the launch binds one: the query is `q = x`, head `g = y % group` of key head
 /// `kv = y / group`, batch `b = z` of the cube's position.
 #[cube(launch_unchecked)]
-pub fn hypercube_attention_merge_kernel<EA: Float, E: Float, N: Size>(
+pub fn plane_split_keys_merge_kernel<EA: Float, E: Float, N: Size>(
     out: &mut Tensor<E>,
     logsumexp: ComptimeOption<&mut Tensor<EA>>,
     slot_out: &mut Tensor<Vector<EA, N>>,

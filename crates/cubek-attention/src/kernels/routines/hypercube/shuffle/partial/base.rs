@@ -2,50 +2,62 @@ use super::kernel::{
     hypercube_attention_partial_kernel, hypercube_attention_partial_packed_kernel,
 };
 use crate::kernels::{
-    AttentionBinding, AttentionCacheBinding, AttentionRoutineProblem, AttentionTensors,
-    HypercubeMerge, HypercubeSecondLaunch, HypercubeShuffleAttentionRoutine,
-    HypercubeShuffleAttentionRoutineBlueprint, HypercubeShuffleMerge,
+    AttentionBinding, AttentionCacheBinding, AttentionRoutineProblem, AttentionSplitSlots,
+    AttentionTensors, HypercubeMerge, HypercubeShuffleAttentionRoutine,
+    HypercubeShuffleAttentionRoutineBlueprint, HypercubeShuffleMerge, PartialAttentionRoutine,
 };
 use cubecl::prelude::ComptimeOptionArgs;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::StageStorage;
+use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
-use cubek_std::Hardware;
 use cubek_std::routine::Grid;
 
-/// The hypercube shuffle merged by a second launch, a plane a query
-/// ([`HypercubeMerge::SecondLaunch`]): every query merged at once rather than one plane a box,
-/// and no cube reading another's stores, so it runs on every device that has a plane width.
-pub type HypercubeSecondLaunchShuffleAttentionRoutine =
-    HypercubeShuffleAttentionRoutine<HypercubeSecondLaunchShuffle>;
+/// The hypercube shuffle stopped at its partials: every cube leaves its run's partial in its slot,
+/// and the split-keys merge launched after it makes the output, a plane a query
+/// ([`HypercubeMerge::SecondLaunch`]). Every query is merged at once rather than one plane a box,
+/// and no cube reads another's stores, so it runs on every device that has a plane width.
+pub type HypercubeShufflePartialAttentionRoutine =
+    HypercubeShuffleAttentionRoutine<HypercubePartialShuffle>;
 
-/// The merge of [`HypercubeSecondLaunchShuffleAttentionRoutine`].
+/// The merge of [`HypercubeShufflePartialAttentionRoutine`]: none of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HypercubeSecondLaunchShuffle;
+pub struct HypercubePartialShuffle;
 
-impl HypercubeShuffleMerge for HypercubeSecondLaunchShuffle {
+impl HypercubeShuffleMerge for HypercubePartialShuffle {
     const MERGE: HypercubeMerge = HypercubeMerge::SecondLaunch;
+    const NAME: &'static str = "hypercube-shuffle-partial-attention";
+}
 
-    /// The second launch, checked against the device.
-    fn validate(
-        hw: &Hardware,
+impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
+    for HypercubeShufflePartialAttentionRoutine
+{
+    fn merge_shape(
+        &self,
         problem: &AttentionRoutineProblem,
-        shape: HypercubeMergeShape,
-    ) -> Result<(), Refusal> {
-        HypercubeSecondLaunch::new(problem, shape).validate(hw)
+        blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
+    ) -> HypercubeMergeShape {
+        HypercubeShuffleAttentionRoutine::merge_shape(self, problem, blueprint)
     }
 
-    /// Two launches: every cube leaving its partial in its slot, then a plane for every query
-    /// merging its slots into the output.
+    /// The query's: the plane shuffle lines every operand alike.
+    fn slot_width(&self, blueprint: &HypercubeShuffleAttentionRoutineBlueprint) -> usize {
+        blueprint.widths.query
+    }
+
+    /// Every cube leaving its partial in its slot. The keys and values are tiles, or a packed
+    /// cache decoded as the planes read it.
     fn dispatch(
+        &self,
         tensors: &AttentionTensors,
         binding: AttentionBinding,
         blueprint: HypercubeShuffleAttentionRoutineBlueprint,
         grid: Grid,
-        shape: HypercubeMergeShape,
+        slots: &AttentionSplitSlots,
     ) {
+        Self::assert_one_width(&binding, &blueprint);
         let problem = tensors.problem();
+        let shape = self.merge_shape(&problem, &blueprint);
         let microkernel = blueprint.microkernel;
-        let slots = tensors.split_slots(shape.slots.splits);
         let width = blueprint.widths.query;
         let (client, count, dim) = (
             tensors.client(),
@@ -84,7 +96,6 @@ impl HypercubeShuffleMerge for HypercubeSecondLaunchShuffle {
                         elements,
                     );
                 }
-                HypercubeSecondLaunch::new(&problem, shape).launch(tensors, slots, width);
             }
             AttentionCacheBinding::Packed(cache) => {
                 let fixup = match cache.fixup {
@@ -117,7 +128,6 @@ impl HypercubeShuffleMerge for HypercubeSecondLaunchShuffle {
                         elements,
                     );
                 }
-                HypercubeSecondLaunch::new(&problem, shape).launch(tensors, slots, width);
             }
         }
     }

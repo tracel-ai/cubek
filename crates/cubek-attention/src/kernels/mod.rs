@@ -2,8 +2,10 @@
 //! any number of query positions.
 //!
 //! [`select`] picks how a call runs; the routines in `routines`, one folder per scope, are what
-//! runs. Every routine writes the output `[b, q, h, dv]`, a token's heads adjacent, so the caller
-//! merges them with a reshape.
+//! runs, each one kernel. A routine writes the output `[b, q, h, dv]`, a token's heads adjacent,
+//! so the caller merges them with a reshape. A partial routine writes only the partials of each
+//! run of the keys ([`PartialAttentionRoutine`]), and the split-keys merge after it the output
+//! ([`SplitKeysAttention`]).
 
 pub mod plan;
 pub mod select;
@@ -18,6 +20,7 @@ mod problem;
 mod queries;
 mod routines;
 mod scoring;
+mod split_keys;
 mod tensors;
 pub mod tune;
 
@@ -31,6 +34,7 @@ pub use problem::*;
 pub use queries::*;
 pub use routines::*;
 pub use scoring::*;
+pub use split_keys::*;
 pub use tensors::*;
 pub use tune::AttentionRoutineCandidate;
 

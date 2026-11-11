@@ -1,7 +1,7 @@
 use crate::kernels::{
-    AttentionKernel, AttentionRoutine, AttentionTensors,
-    HypercubeLastArrivalShuffleAttentionRoutine, HypercubeSecondLaunchFragmentAttentionRoutine,
-    HypercubeSecondLaunchShuffleAttentionRoutine,
+    AttentionKernel, AttentionLaunch, AttentionTensors, HypercubeFragmentPartialAttentionRoutine,
+    HypercubeLastArrivalShuffleAttentionRoutine, HypercubeShufflePartialAttentionRoutine,
+    OneRoutine, SplitKeysAttention,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
@@ -9,20 +9,21 @@ use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_std::Hardware;
 use serde::{Deserialize, Serialize};
 
-/// The hypercube routines a pin names, each at its lead setting, at any query length: a box's
-/// keys cut across cubes.
+/// What a pin of the hypercube names, at its lead setting, at any query length: a box's keys cut
+/// across cubes. A routine whose last cube of a box merges it, or a partial routine merged by a
+/// second launch, the split-keys merge ([`SplitKeysAttention`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HypercubeAttentionKernel {
     /// [`HypercubeLastArrivalShuffleAttentionRoutine`]: each cube's planes shuffling their part
     /// of its run, over a float cache or a packed one decoded as it is read, the last cube of a
     /// box merging it.
     LastArrivalShuffle,
-    /// [`HypercubeSecondLaunchShuffleAttentionRoutine`]: the same cubes, their slots merged by a
-    /// second launch.
+    /// [`HypercubeShufflePartialAttentionRoutine`]: the same cubes, each leaving its partial in
+    /// its slot, then the split-keys merge.
     SecondLaunchShuffle,
-    /// [`HypercubeSecondLaunchFragmentAttentionRoutine`], over a float cache: each cube staging
-    /// its run for plane fragments on a square matrix instruction, its slots merged by a second
-    /// launch.
+    /// [`HypercubeFragmentPartialAttentionRoutine`], over a float cache: each cube staging its run
+    /// for plane fragments on a square matrix instruction and leaving its partial in its slot,
+    /// then the split-keys merge.
     SecondLaunchFragment,
 }
 
@@ -31,12 +32,14 @@ pub enum HypercubeAttentionKernel {
 /// either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HypercubeMerge {
-    /// In the same launch, by the last of the box's cubes to count itself in: one launch, but one
-    /// plane merges a whole box while the rest of the device has nothing left to do. Needs a
-    /// device where one cube's stores reach another within a launch.
+    /// In the routine's own launch, by the last of the box's cubes to count itself in: one
+    /// launch, but one plane merges a whole box while the rest of the device has nothing left to
+    /// do. Needs a device where one cube's stores reach another within a launch.
     LastArrival,
-    /// By a second launch, one plane a row: every row is merged at once, and no cube counts
-    /// itself in anywhere.
+    /// By a second launch, the split-keys merge
+    /// ([`PlaneSplitKeysMergeRoutine`](crate::kernels::PlaneSplitKeysMergeRoutine)), one plane a
+    /// row: every row is merged at once, and no cube counts itself in anywhere. The routine
+    /// leaves its partials, and a strategy launches the merge after it.
     SecondLaunch,
 }
 
@@ -48,7 +51,7 @@ pub const HYPERCUBE_CUBES_UNMET: Refusal = Refusal::Declined {
 };
 
 impl HypercubeAttentionKernel {
-    /// Every hypercube routine a pin names, in declaration order.
+    /// Every hypercube pin, in declaration order.
     pub fn all() -> Vec<Self> {
         vec![
             Self::LastArrivalShuffle,
@@ -57,7 +60,7 @@ impl HypercubeAttentionKernel {
         ]
     }
 
-    /// What a rule that named this routine runs where it declines on geometry the rules cannot
+    /// What a rule that named this pin runs where it declines on geometry the rules cannot
     /// see: the shuffle merged by a second launch after the one merged on the last arrival, which
     /// declines where one cube's stores do not reach another within a launch, and the unit routine
     /// after any other.
@@ -68,7 +71,7 @@ impl HypercubeAttentionKernel {
         }
     }
 
-    /// What a report calls this routine, in kebab-case.
+    /// What a report calls this pin, in kebab-case.
     pub fn name(&self) -> &'static str {
         match self {
             Self::LastArrivalShuffle => "hypercube-last-arrival-shuffle-attention",
@@ -77,7 +80,8 @@ impl HypercubeAttentionKernel {
         }
     }
 
-    /// This routine's lead on `tensors` ([`AttentionRoutine::launch_lead_on`]).
+    /// This pin's lead on `tensors` ([`AttentionLaunch::launch_lead_on`]): its routine's, or its
+    /// partial routine's merged by a second launch.
     ///
     /// # Errors
     ///
@@ -89,14 +93,17 @@ impl HypercubeAttentionKernel {
     ) -> Result<TensorHandle, Refusal> {
         match self {
             Self::LastArrivalShuffle => {
-                HypercubeLastArrivalShuffleAttentionRoutine::new().launch_lead_on(hw, tensors)
+                OneRoutine(HypercubeLastArrivalShuffleAttentionRoutine::new())
+                    .launch_lead_on(hw, tensors)
             }
-            Self::SecondLaunchShuffle => {
-                HypercubeSecondLaunchShuffleAttentionRoutine::new().launch_lead_on(hw, tensors)
+            Self::SecondLaunchShuffle => SplitKeysAttention {
+                partial: HypercubeShufflePartialAttentionRoutine::new(),
             }
-            Self::SecondLaunchFragment => {
-                HypercubeSecondLaunchFragmentAttentionRoutine.launch_lead_on(hw, tensors)
+            .launch_lead_on(hw, tensors),
+            Self::SecondLaunchFragment => SplitKeysAttention {
+                partial: HypercubeFragmentPartialAttentionRoutine,
             }
+            .launch_lead_on(hw, tensors),
         }
     }
 }

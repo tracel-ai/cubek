@@ -4,15 +4,17 @@
 //! among the keys last or first, and a mask differs from head to head.
 
 use core::fmt::Debug;
-use core::marker::PhantomData;
 use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::{Shape, shape};
-use cubek_attention::kernels::{AttentionRoutine, AttentionScoring, AttentionTensors, ScoreScale};
+use cubek_attention::kernels::{
+    AttentionLaunch, AttentionScoring, AttentionTensors, OneRoutine, ScoreScale, SplitKeysAttention,
+};
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::attention::{AttentionMicrokernel, AttentionVisibility, QueryPlacement};
+use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
+use cubek_std::routine::Routine;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 use half::f16;
 
@@ -294,47 +296,66 @@ impl<S: core::fmt::Display> Debug for ForwardCase<S> {
     }
 }
 
-/// An attention routine against the host's forward.
-pub(crate) struct Forward<R, M, SM> {
-    routine: R,
+/// The settings of the routine `L` launches at.
+type SettingsOf<L> = <<L as AttentionLaunch>::Routine as Routine>::Settings;
+
+/// An attention against the host's forward.
+pub(crate) struct Forward<L> {
+    launched: L,
     hw: Hardware,
-    microkernel: PhantomData<(M, SM)>,
 }
 
-impl<R, M, SM> Forward<R, M, SM>
-where
-    R: AttentionRoutine<M, SM>,
-    M: AttentionMicrokernel,
-    R::Settings: Clone + core::fmt::Display,
-{
+impl<R> Forward<OneRoutine<R>> {
+    /// `routine`, which writes the attention, launched alone.
     pub(crate) fn new(routine: R) -> Self {
+        Self::of(OneRoutine(routine))
+    }
+}
+
+impl<R> Forward<SplitKeysAttention<R>> {
+    /// The partial routine `partial`, then the split-keys merge.
+    pub(crate) fn split_keys(partial: R) -> Self {
+        Self::of(SplitKeysAttention { partial })
+    }
+}
+
+impl<L> Forward<L> {
+    fn of(launched: L) -> Self {
         Self {
-            routine,
+            launched,
             hw: Hardware::from_client(&cubecl::test_device().client()),
-            microkernel: PhantomData,
         }
     }
+}
 
+impl<L: AttentionLaunch> Forward<L> {
     /// The routine's lead, the first setting it lists on the test device, on each of `cases`;
     /// none where the device lists none.
-    pub(crate) fn at_its_lead(&self, cases: &[AttentionCase]) -> Vec<ForwardCase<R::Settings>> {
-        self.at(self.routine.settings(&self.hw).into_iter().take(1), cases)
+    pub(crate) fn at_its_lead(&self, cases: &[AttentionCase]) -> Vec<ForwardCase<SettingsOf<L>>> {
+        self.at(
+            self.launched
+                .routine()
+                .settings(&self.hw)
+                .into_iter()
+                .take(1),
+            cases,
+        )
     }
 
     /// Every setting the routine lists on the test device, on each of `cases`.
     pub(crate) fn at_every_setting(
         &self,
         cases: &[AttentionCase],
-    ) -> Vec<ForwardCase<R::Settings>> {
-        self.at(self.routine.settings(&self.hw), cases)
+    ) -> Vec<ForwardCase<SettingsOf<L>>> {
+        self.at(self.launched.routine().settings(&self.hw), cases)
     }
 
     /// Each of `settings` on each of `cases`.
     pub(crate) fn at(
         &self,
-        settings: impl IntoIterator<Item = R::Settings>,
+        settings: impl IntoIterator<Item = SettingsOf<L>>,
         cases: &[AttentionCase],
-    ) -> Vec<ForwardCase<R::Settings>> {
+    ) -> Vec<ForwardCase<SettingsOf<L>>> {
         settings
             .into_iter()
             .flat_map(|settings| {
@@ -347,23 +368,18 @@ where
     }
 
     /// The settings the routine lists on the test device.
-    pub(crate) fn settings(&self) -> Vec<R::Settings> {
-        self.routine.settings(&self.hw)
+    pub(crate) fn settings(&self) -> Vec<SettingsOf<L>> {
+        self.launched.routine().settings(&self.hw)
     }
 }
 
-impl<R, M, SM> ScopeUnderTest for Forward<R, M, SM>
-where
-    R: AttentionRoutine<M, SM>,
-    M: AttentionMicrokernel,
-    R::Settings: Clone + core::fmt::Display,
-{
-    type Case = ForwardCase<R::Settings>;
+impl<L: AttentionLaunch> ScopeUnderTest for Forward<L> {
+    type Case = ForwardCase<SettingsOf<L>>;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
         let tensors = case.case.tensors(client);
         let logsumexp = tensors.logsumexp().expect("asked for");
-        let out = self.routine.launch_on(&self.hw, tensors, &case.settings)?;
+        let out = self.launched.launch_on(&self.hw, tensors, &case.settings)?;
         Ok(vec![
             Written {
                 name: "out",

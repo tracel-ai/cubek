@@ -50,7 +50,6 @@ mod tests {
     use cubecl::tile::launch::Refusal;
     use cubecl::zspace::Shape;
     use cubek_matmul::kernels::tensor::PlainTensor;
-    use cubek_microkernel::attention::AttentionMicrokernel;
     use cubek_std::Hardware;
     use cubek_std::autotune::GroupPriority;
     use cubek_test_utils::{HostData, HostDataType, TestInput};
@@ -128,10 +127,22 @@ mod tests {
     fn packed_queries_match_a_launch_per_sequence() {
         let launches: [(&str, Launch); 3] = [
             ("cube staged", &|client, queries, kv, scoring| {
-                lead(CubeStagedAttentionRoutine, client, queries, kv, scoring)
+                lead(
+                    OneRoutine(CubeStagedAttentionRoutine),
+                    client,
+                    queries,
+                    kv,
+                    scoring,
+                )
             }),
             ("cube shuffle", &|client, queries, kv, scoring| {
-                lead(CubeShuffleAttentionRoutine, client, queries, kv, scoring)
+                lead(
+                    OneRoutine(CubeShuffleAttentionRoutine),
+                    client,
+                    queries,
+                    kv,
+                    scoring,
+                )
             }),
             ("autotune", &|client, queries, kv, scoring| {
                 // Every routine that reads packed queries runs on planes of one committed width:
@@ -162,9 +173,9 @@ mod tests {
         assert!(failures.is_empty(), "{failures:#?}");
     }
 
-    /// `routine` at its lead, or `None` where it declines on this device.
-    fn lead<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
-        routine: R,
+    /// `launch` at its lead, or `None` where it declines on this device.
+    fn lead(
+        launch: impl AttentionLaunch,
         client: &Client,
         queries: AttentionQueries,
         kv: KvSource,
@@ -172,7 +183,7 @@ mod tests {
     ) -> Option<TensorHandle> {
         let tensors = AttentionTensors::attention(client, queries, kv, scoring)
             .expect("the case's tensors are verified");
-        routine
+        launch
             .launch_lead_on(&Hardware::from_client(client), tensors)
             .map_err(|refusal: Refusal| eprintln!("declined on this device: {refusal:?}"))
             .ok()

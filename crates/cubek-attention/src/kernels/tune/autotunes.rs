@@ -11,10 +11,10 @@ use crate::kernels::select::problem::QueryPositions;
 use crate::kernels::tune::AttentionTuneInputs;
 use crate::kernels::tune::key::AttentionKey;
 use crate::kernels::{
-    AttentionRoutine, AttentionRoutineCandidate, CubeShuffleAttentionRoutine,
-    CubeStagedAttentionRoutine, HypercubeLastArrivalShuffleAttentionRoutine,
-    HypercubeSecondLaunchFragmentAttentionRoutine, HypercubeSecondLaunchShuffleAttentionRoutine,
-    HypercubeStreamFragmentAttentionRoutine, UnitAttentionRoutine,
+    AttentionLaunch, AttentionRoutineCandidate, CubeShuffleAttentionRoutine,
+    CubeStagedAttentionRoutine, HypercubeFragmentPartialAttentionRoutine,
+    HypercubeLastArrivalShuffleAttentionRoutine, HypercubeShufflePartialAttentionRoutine,
+    HypercubeStreamFragmentAttentionRoutine, OneRoutine, UnitAttentionRoutine,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tune::{LocalTuner, Tunable, TunableSet, local_tuner};
@@ -108,7 +108,7 @@ pub fn launch_tuned(
 type AttentionAutotune = Autotune<AttentionKey, AttentionTuneInputs, ()>;
 
 /// The routines that serve many query positions: the cube routines, and the hypercube routines for
-/// a prompt's or a chunk's few boxes over many keys. The unit routine is listed only where none of
+/// a prompt's or a chunk's few boxes over many keys, a partial one merged by a second launch. The unit routine is listed only where none of
 /// them can run, for want of a plane width the device commits to: elsewhere measuring its
 /// candidates takes longer than the rest of the autotune. The plane routine is not listed.
 ///
@@ -144,16 +144,13 @@ fn many_queries(
         )
         .prioritized(
             &routines,
-            AttentionRoutineCandidate::list(
-                HypercubeSecondLaunchShuffleAttentionRoutine::new(),
-                hw,
-            ),
-            AttentionRoutineCandidate::launch,
+            AttentionRoutineCandidate::list(HypercubeShufflePartialAttentionRoutine::new(), hw),
+            AttentionRoutineCandidate::launch_split_keys,
         )
         .prioritized(
             &routines,
-            AttentionRoutineCandidate::list(HypercubeSecondLaunchFragmentAttentionRoutine, hw),
-            AttentionRoutineCandidate::launch,
+            AttentionRoutineCandidate::list(HypercubeFragmentPartialAttentionRoutine, hw),
+            AttentionRoutineCandidate::launch_split_keys,
         )
         .prioritized(
             &routines,
@@ -172,7 +169,7 @@ fn many_queries(
 
 /// The routines that serve a single position, reading its group of heads as rows. The
 /// hypercube's cubes of plane shuffles share each key head's cache, merged on the last arrival or
-/// by a second launch; the cube's plane shuffles split a cube's keys. No routine whose cubes stage
+/// by a second launch after the partial routine; the cube's plane shuffles split a cube's keys. No routine whose cubes stage
 /// is listed: a cube staging a step for a decode step's few rows measured twelve times the
 /// hypercube's time. As for many positions, the unit routine is listed only where neither can
 /// run, and the plane routine not at all.
@@ -195,11 +192,8 @@ fn one_query(
         )
         .prioritized(
             &routines,
-            AttentionRoutineCandidate::list(
-                HypercubeSecondLaunchShuffleAttentionRoutine::new(),
-                hw,
-            ),
-            AttentionRoutineCandidate::launch,
+            AttentionRoutineCandidate::list(HypercubeShufflePartialAttentionRoutine::new(), hw),
+            AttentionRoutineCandidate::launch_split_keys,
         )
         .prioritized(
             &routines,
@@ -222,7 +216,7 @@ fn one_query(
 fn unit_lead(hw: &Hardware) -> Tunable<AttentionKey, AttentionTuneInputs, ()> {
     let hw = hw.clone();
     Tunable::new("unit-attention-lead", move |inputs: AttentionTuneInputs| {
-        UnitAttentionRoutine
+        OneRoutine(UnitAttentionRoutine)
             .launch_lead_on(&hw, inputs.tensors)
             .map(|_| ())
             .map_err(|why| format!("the unit routine's lead does not serve this problem: {why:?}"))

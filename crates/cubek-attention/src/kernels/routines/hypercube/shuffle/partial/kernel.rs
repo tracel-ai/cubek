@@ -8,7 +8,7 @@ use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 
 /// Every cube walking its run of its box over the keys its queries see, its planes reading the
-/// keys and values from tiles, leaving its partial in its slot for a second launch to merge.
+/// keys and values from tiles, leaving its partial in its slot for the split-keys merge.
 #[cube(launch_unchecked)]
 pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,

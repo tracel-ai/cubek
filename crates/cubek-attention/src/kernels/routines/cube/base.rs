@@ -1,6 +1,6 @@
 use crate::kernels::{
-    AttentionKernel, AttentionRoutine, AttentionTensors, CubeShuffleAttentionRoutine,
-    CubeStagedAttentionRoutine,
+    AttentionKernel, AttentionLaunch, AttentionTensors, CubeShuffleAttentionRoutine,
+    CubeStagedAttentionRoutine, OneRoutine,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
@@ -43,7 +43,7 @@ impl CubeAttentionKernel {
         }
     }
 
-    /// This routine's lead on `tensors` ([`AttentionRoutine::launch_lead_on`]).
+    /// This routine's lead on `tensors` ([`AttentionLaunch::launch_lead_on`]).
     ///
     /// # Errors
     ///
@@ -54,8 +54,8 @@ impl CubeAttentionKernel {
         tensors: AttentionTensors,
     ) -> Result<TensorHandle, Refusal> {
         match self {
-            Self::Fragment => CubeStagedAttentionRoutine.launch_lead_on(hw, tensors),
-            Self::Shuffle => CubeShuffleAttentionRoutine.launch_lead_on(hw, tensors),
+            Self::Fragment => OneRoutine(CubeStagedAttentionRoutine).launch_lead_on(hw, tensors),
+            Self::Shuffle => OneRoutine(CubeShuffleAttentionRoutine).launch_lead_on(hw, tensors),
         }
     }
 }

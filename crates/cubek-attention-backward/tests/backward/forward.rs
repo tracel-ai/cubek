@@ -7,7 +7,8 @@ use cubecl::prelude::*;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_attention::kernels::{
-    AttentionRoutine, AttentionScoring, AttentionTensors, ScoreScale, UnitAttentionRoutine,
+    AttentionLaunch, AttentionScoring, AttentionTensors, OneRoutine, ScoreScale,
+    UnitAttentionRoutine,
 };
 use cubek_attention_backward::AttentionBackwardTensors;
 use cubek_attention_backward::kernels::{AttentionBackwardRoutine, UnitAttentionBackwardRoutine};
@@ -59,7 +60,7 @@ fn the_backward_pass_reads_the_forward_it_follows() {
     .expect("the case's tensors are verified")
     .with_logsumexp();
     let logsumexp = tensors.logsumexp().expect("asked for");
-    let out = UnitAttentionRoutine
+    let out = OneRoutine(UnitAttentionRoutine)
         .launch_lead_on(&hw, tensors)
         .expect("the unit routine runs everywhere");
     let [batch, queries, heads, value_dim] = out.shape().dims::<4>();
