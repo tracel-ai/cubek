@@ -1,4 +1,5 @@
-//! Every RMS-norm routine, at every setting it lists, against an `f64` host reference.
+//! Every RMS-norm routine, at every setting it lists, ungated and gated by `silu(gate)` before
+//! the norm, against an `f64` host reference.
 
 use super::check::{Declines, check_routine};
 use cubek_rms_norm::kernels::{CubeGroupsRmsNormRoutine, CubeRmsNormRoutine, PlaneRmsNormRoutine};

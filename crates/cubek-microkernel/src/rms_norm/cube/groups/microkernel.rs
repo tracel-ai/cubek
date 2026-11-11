@@ -1,22 +1,23 @@
 use super::base::{CubeGroupsRmsNormMicrokernel, GroupSum};
-use crate::rms_norm::{HeldRow, RmsNormScale};
+use crate::rms_norm::{HeldRow, RmsNormScale, RowReader};
 use crate::row_store::{CubeStage, CubeStore};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Monoid, Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's rows, a group of `microkernel.units` units each: `out = input · scale · weight`,
-/// each unit of a group its lines of the group's row. `input` and `weight` are windowed to the
-/// cube's rows, `groups` of them, and `out` is the cube's window of the output, which its groups
+/// each unit of a group its lines of the group's row. `input`, `gate` where the norm is gated and
+/// `weight` are windowed to the cube's rows, `groups` of them, and `out` is the cube's window of the output, which its groups
 /// write through one store, straight or staged and encoded as `stage` says.
 ///
 /// A group sums its units' partials as `microkernel.sum` says ([`GroupSum`]). Where it sums through
 /// shared memory, each group has its own run of slots, and the cube meets again once every unit
 /// has read the sum, so a cube walking next rows cannot overwrite the slots first.
 #[cube]
-pub fn cube_groups_rms_norm_microkernel<E: Float, W: Float, N: Size>(
+pub fn cube_groups_rms_norm_microkernel<E: Float, H: Float, W: Float, N: Size>(
     cube: &Region,
     input: &Tile,
+    gate: &ComptimeOption<Tile>,
     weight: &Tile,
     out: &Tile,
     scale: &RmsNormScale,
@@ -31,8 +32,13 @@ pub fn cube_groups_rms_norm_microkernel<E: Float, W: Float, N: Size>(
         // A group's units lie along `x` and the cube's groups along `y`, as its resources state
         // them.
         let (slot, unit) = (UNIT_POS_Y as usize, UNIT_POS_X as usize);
-        let mut row = HeldRow::<E, N>::new(microkernel.held_row());
-        let partial = row.load(&input.at(&group), unit);
+        let reader = RowReader::new(
+            &input.at(&group),
+            &RowReader::windowed(gate, &group),
+            microkernel.gate,
+        );
+        let mut row = HeldRow::<H, N>::new(microkernel.held_row());
+        let partial = row.load::<E>(&reader, unit);
 
         let sum = match microkernel.sum {
             GroupSum::Alone => partial,
@@ -87,7 +93,7 @@ pub fn cube_groups_rms_norm_microkernel<E: Float, W: Float, N: Size>(
 
         let row_lines = microkernel.held_row().lines;
         let mut row_out = store.owner(&group, slot * row_lines);
-        row.write::<W>(&weight.at(&group), &mut row_out, unit, scale.of(sum));
+        row.write::<E, W>(&weight.at(&group), &mut row_out, unit, scale.of(sum));
     }
 
     store.finish();

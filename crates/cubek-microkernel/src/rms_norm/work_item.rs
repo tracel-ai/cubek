@@ -1,6 +1,6 @@
-use crate::rms_norm::RmsNormOperand;
+use crate::rms_norm::{GateOrder, RmsNormOperand};
 use crate::row_store::RowStore;
-use cubecl::ir::ElemType;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 
@@ -17,6 +17,8 @@ pub struct RmsNormWorkItem {
     pub dim: usize,
     /// How the rows are stored, which decides the runs an owner may write.
     pub store: RowStore,
+    /// Whether the norm is gated, and where the gate enters.
+    pub gate: Option<GateOrder>,
 }
 
 impl RmsNormWorkItem {
@@ -24,7 +26,16 @@ impl RmsNormWorkItem {
     pub fn element_of(&self, operand: RmsNormOperand) -> ElemType {
         match operand {
             RmsNormOperand::Out => self.output_element,
-            _ => self.element,
+            RmsNormOperand::Input | RmsNormOperand::Weight | RmsNormOperand::Gate => self.element,
+        }
+    }
+
+    /// The element a row is held in between its two passes: `f32` where the gate is applied before
+    /// the norm, since a gated row is not an element's value, else the input's.
+    pub fn held_element(&self) -> ElemType {
+        match self.gate {
+            Some(GateOrder::GateThenNorm) => ElemType::Float(FloatKind::F32),
+            None => self.element,
         }
     }
 
@@ -35,7 +46,7 @@ impl RmsNormWorkItem {
     /// blueprint that binds another.
     pub fn width(&self, hw: &Hardware) -> usize {
         let mut vectorization = Vectorization::new();
-        RmsNormOperand::require_along_run(self.dim, &mut vectorization);
+        RmsNormOperand::require_along_run(self.dim, self.gate, &mut vectorization);
         vectorization.width(RmsNormOperand::Input, |operand| {
             hw.vector_ceiling(self.element_of(operand))
         })
@@ -44,5 +55,42 @@ impl RmsNormWorkItem {
     /// Lines of the row at [`width`](Self::width).
     pub fn lines(&self, hw: &Hardware) -> usize {
         self.dim.div_ceil(self.width(hw)).max(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rms_norm::HeldRowShape;
+
+    const F16: ElemType = ElemType::Float(FloatKind::F16);
+
+    fn item(gate: Option<GateOrder>) -> RmsNormWorkItem {
+        RmsNormWorkItem {
+            element: F16,
+            output_element: F16,
+            dim: 2048,
+            store: RowStore::Plain,
+            gate,
+        }
+    }
+
+    /// A row gated before the norm is held in `f32`, which doubles the registers an `f16` row
+    /// takes.
+    #[test]
+    fn a_row_gated_before_the_norm_is_held_in_f32() {
+        let shape = HeldRowShape {
+            lines: 256,
+            units: 32,
+        };
+        let registers = |gate| {
+            let item = item(gate);
+            shape.work(8, item.held_element()).registers
+        };
+        assert_eq!(item(None).held_element(), F16);
+        assert_eq!(
+            registers(Some(GateOrder::GateThenNorm)) - 1,
+            2 * (registers(None) - 1)
+        );
     }
 }

@@ -7,7 +7,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_rms_norm::kernels::{RmsNormCall, RmsNormRoutine, RmsNormRoutineCandidate};
+use cubek_rms_norm::kernels::{RmsNormCall, RmsNormGate, RmsNormRoutine, RmsNormRoutineCandidate};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::{HostData, HostDataType, TestInput};
@@ -84,12 +84,12 @@ fn runs_on(client: &Client, element: ElemType) -> bool {
     usage.is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer)
 }
 
-fn run_gated(_: &Run) -> bool {
-    false
+fn run_gated(run: &Run) -> bool {
+    run.order.is_some()
 }
 
 fn reference(case: &Case, run: &Run) -> Vec<f64> {
-    case.reference(run.element)
+    case.reference(run.element, run.order)
 }
 
 /// The norm `run` states of `case`, its operands uploaded.
@@ -102,6 +102,10 @@ fn call(client: &Client, case: &Case, run: &Run) -> RmsNormCall {
         weight: tensor(client, weight.clone(), &[weight.len()], element),
         epsilon: EPSILON,
         output_element: run.output_element,
+        gate: run.order.map(|order| RmsNormGate {
+            tensor: tensor(client, case.gate(), &shape, element),
+            order,
+        }),
     }
 }
 
