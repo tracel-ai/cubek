@@ -4,7 +4,7 @@
 
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::fft::{Irfft, IrfftLaunch};
+use crate::fft::{Irfft, IrfftLaunch, IrfftPadding};
 
 #[test]
 fn irfft_light_axis_last() {
@@ -33,12 +33,12 @@ fn irfft_light_axis_last_n16() {
 
 #[test]
 fn irfft_virtual_padding_axis_1_matches_materialized_zero_padding() {
-    IrfftLaunch.check([Irfft::padded(&[2, 3, 3], 1, 8)]);
+    IrfftLaunch.check([Irfft::padded(&[2, 3, 3], 1, IrfftPadding { n_fft: 8 })]);
 }
 
 #[test]
 fn irfft_virtual_padding_dc_only_matches_materialized_zero_padding() {
-    IrfftLaunch.check([Irfft::padded(&[2, 1, 3], 1, 8)]);
+    IrfftLaunch.check([Irfft::padded(&[2, 1, 3], 1, IrfftPadding { n_fft: 8 })]);
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn irfft_batched_large_axis_last() {
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_large_virtual_padding_matches_materialized_zero_padding() {
-    IrfftLaunch.check([Irfft::padded(&[1, 3000], 1, 8192)]);
+    IrfftLaunch.check([Irfft::padded(&[1, 3000], 1, IrfftPadding { n_fft: 8192 })]);
 }
 
 #[test]

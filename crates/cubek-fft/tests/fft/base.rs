@@ -1,6 +1,6 @@
 //! The transforms against the crate's host references: the real forward transform and its
 //! inverse, each over a signal or spectrum seeded uniformly or, virtually padded, over one whose
-//! padding the kernel never reads; and the complex transform there and back.
+//! buffer holds values past what the kernel may read; and the complex transform there and back.
 
 use cubecl::client::Client;
 use cubecl::features::TypeUsage;
@@ -8,6 +8,7 @@ use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
+use cubecl::zspace::Shape;
 use cubek_fft::eval::cpu_reference::{irfft_ref, rfft_ref};
 use cubek_fft::{
     CfftBindings, FftMode, cfft_launch_any_size, irfft_launch, irfft_launch_padded, rfft_launch,
@@ -19,6 +20,10 @@ use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Test
 const DECLINED: Refusal = Refusal::Declined {
     why: "the transform runs no such launch on this device",
 };
+
+/// Transforms no longer than this are held to a tight tolerance: a backend's `sin` and `cos`
+/// drift only over long transforms.
+const SHORT: usize = 64;
 
 /// Along `dim` of `shape`, the axis transformed.
 #[derive(Debug, Clone)]
@@ -35,71 +40,79 @@ impl Axis {
         }
     }
 
-    /// `shape` with `dim` `extent` long.
-    fn with_extent(&self, extent: usize) -> Vec<usize> {
+    /// The same axis, `extent` long.
+    fn with_extent(&self, extent: usize) -> Self {
         let mut shape = self.shape.clone();
         shape[self.dim] = extent;
-        shape
+        Self {
+            shape,
+            dim: self.dim,
+        }
     }
 
-    /// The value at `coords`: a smooth wave over every axis, so no window repeats another.
-    fn sample(coords: &[usize]) -> f32 {
-        coords
-            .iter()
-            .enumerate()
-            .map(|(axis, coord)| (axis as f32 + 1.0) * (*coord as f32 + 0.25))
-            .sum::<f32>()
-            .sin()
+    fn len(&self) -> usize {
+        self.shape[self.dim]
     }
 
-    /// The samples of a tensor of `shape`, zero past `len` along `dim`.
-    fn samples(shape: &[usize], dim: usize, len: usize) -> Vec<f32> {
-        (0..shape.iter().product::<usize>())
-            .map(|mut index| {
-                let mut coords = vec![0; shape.len()];
-                for axis in (0..shape.len()).rev() {
-                    coords[axis] = index % shape[axis];
-                    index /= shape[axis];
-                }
-                match coords[dim] < len {
-                    true => Self::sample(&coords),
-                    false => 0.0,
-                }
-            })
-            .collect()
-    }
-
-    /// `values` of `shape` in `element`, its tensor and its values on the host.
-    fn tensor(
-        client: &Client,
-        shape: Vec<usize>,
-        values: Vec<f32>,
-        element: ElemType,
-    ) -> (TensorHandle, HostData) {
-        TestInput::builder(client.clone(), shape)
-            .dtype(element)
-            .custom(values)
-            .generate_with_f32_host_data()
-    }
-
-    /// Uniform values in `[-1, 1)` seeded by `seed`, of `shape` in `element`.
-    fn seeded(
-        client: &Client,
-        shape: Vec<usize>,
-        seed: u64,
-        element: ElemType,
-    ) -> (TensorHandle, HostData) {
-        TestInput::builder(client.clone(), shape)
+    /// Uniform values in `[-1, 1)` seeded by `seed` over this shape, in `element`: the tensor, and
+    /// its values read back.
+    fn seeded(&self, client: &Client, seed: u64, element: ElemType) -> (TensorHandle, HostData) {
+        TestInput::builder(client.clone(), self.shape.clone())
             .dtype(element)
             .uniform(seed, -1., 1.)
             .generate_with_f32_host_data()
     }
 
-    fn zeros(client: &Client, shape: Vec<usize>, element: ElemType) -> TensorHandle {
-        TestInput::builder(client.clone(), shape)
+    /// `values` over this shape, uploaded in `element`.
+    fn upload(&self, client: &Client, values: Vec<f32>, element: ElemType) -> TensorHandle {
+        TestInput::builder(client.clone(), self.shape.clone())
             .dtype(element)
-            .zeros()
+            .custom(values)
             .generate_without_host_data()
+    }
+
+    /// `values` over this shape, on the host.
+    fn host(&self, values: Vec<f32>) -> HostData {
+        HostData::row_major(HostDataVec::F32(values), Shape::from(self.shape.clone()))
+    }
+}
+
+/// A smooth wave over every axis of a tensor, so no window repeats another.
+#[derive(Debug, Clone, Copy)]
+enum Wave {
+    Sine,
+    Cosine,
+}
+
+impl Wave {
+    fn at(self, coords: &[usize]) -> f32 {
+        let phase: f32 = coords
+            .iter()
+            .enumerate()
+            .map(|(axis, coord)| (axis as f32 + 1.0) * (*coord as f32 + 0.25))
+            .sum();
+        match self {
+            Wave::Sine => phase.sin(),
+            Wave::Cosine => phase.cos(),
+        }
+    }
+
+    /// The wave over `axis`'s shape, zero from `held` on along its axis.
+    fn over(self, axis: &Axis, held: usize) -> Vec<f32> {
+        let shape = &axis.shape;
+        (0..shape.iter().product::<usize>())
+            .map(|mut index| {
+                let mut coords = vec![0; shape.len()];
+                for d in (0..shape.len()).rev() {
+                    coords[d] = index % shape[d];
+                    index /= shape[d];
+                }
+                match coords[axis.dim] < held {
+                    true => self.at(&coords),
+                    false => 0.0,
+                }
+            })
+            .collect()
     }
 }
 
@@ -112,8 +125,8 @@ pub(crate) struct Rfft {
     pub padded: Option<RfftPadding>,
 }
 
-/// A signal of `signal_len` samples, transformed as `n_fft`: what lies past `signal_len` in the
-/// buffer is never read.
+/// A signal of `signal_len` samples, transformed as `n_fft`: the buffer holds samples past
+/// `signal_len`, which the kernel must not read.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RfftPadding {
     pub signal_len: usize,
@@ -140,28 +153,34 @@ impl Rfft {
         }
     }
 
-    /// The signal the kernel reads, and the one the host transforms: the same, or zero-padded.
-    fn signal(&self, client: &Client) -> (TensorHandle, HostData) {
-        let Axis { shape, dim } = &self.axis;
+    /// The samples the transform covers.
+    fn n_fft(&self) -> usize {
+        self.padded.map_or(self.axis.len(), |padding| padding.n_fft)
+    }
+
+    /// The signal the kernel reads.
+    fn signal(&self, client: &Client) -> TensorHandle {
         match self.padded {
-            None => Axis::seeded(client, shape.clone(), 42, self.element),
-            Some(RfftPadding { signal_len, n_fft }) => {
-                let read = Axis::samples(shape, *dim, signal_len);
-                let (tensor, _) = Axis::tensor(client, shape.clone(), read, self.element);
-                let full = self.axis.with_extent(n_fft);
-                let padded = Axis::samples(&full, *dim, signal_len);
-                let (_, host) = Axis::tensor(client, full, padded, self.element);
-                (tensor, host)
+            None => self.axis.seeded(client, 42, self.element).0,
+            Some(_) => {
+                let every = Wave::Sine.over(&self.axis, self.axis.len());
+                self.axis.upload(client, every, self.element)
             }
         }
     }
 
-    fn bins(&self) -> usize {
-        let len = match self.padded {
-            Some(padding) => padding.n_fft,
-            None => self.axis.shape[self.axis.dim],
-        };
-        len / 2 + 1
+    /// The signal the host transforms: the same, or its first `signal_len` samples zero-padded.
+    fn host_signal(&self) -> HostData {
+        match self.padded {
+            None => {
+                let client = cubecl::test_device().client();
+                self.axis.seeded(&client, 42, self.element).1
+            }
+            Some(RfftPadding { signal_len, n_fft }) => {
+                let padded = self.axis.with_extent(n_fft);
+                padded.host(Wave::Sine.over(&padded, signal_len))
+            }
+        }
     }
 }
 
@@ -180,23 +199,23 @@ impl ScopeUnderTest for RfftLaunch {
                 why: "the device does no arithmetic in the element",
             });
         }
-        let (signal, _) = case.signal(client);
-        let spectrum = case.axis.with_extent(case.bins());
-        let re = Axis::zeros(client, spectrum.clone(), case.element);
-        let im = Axis::zeros(client, spectrum, case.element);
-        let (signal, re_out, im_out) =
-            (signal.binding(), re.clone().binding(), im.clone().binding());
+        let signal = case.signal(client).binding();
+        let spectrum = case.axis.with_extent(case.n_fft() / 2 + 1).shape;
+        let re = TensorHandle::zeros(client, spectrum.clone(), case.element);
+        let im = TensorHandle::zeros(client, spectrum, case.element);
+        let (re_out, im_out) = (re.clone().binding(), im.clone().binding());
+        let dim = case.axis.dim;
         let launched = match case.padded {
             Some(padding) => rfft_launch_padded(
                 client,
                 signal,
                 re_out,
                 im_out,
-                case.axis.dim,
+                dim,
                 padding.signal_len,
                 case.element,
             ),
-            None => rfft_launch(client, signal, re_out, im_out, case.axis.dim, case.element),
+            None => rfft_launch(client, signal, re_out, im_out, dim, case.element),
         };
         launched.map_err(|_| DECLINED)?;
         Ok(vec![
@@ -214,62 +233,80 @@ impl ScopeUnderTest for RfftLaunch {
     }
 
     fn reference(&self, case: &Rfft) -> Vec<HostData> {
-        let (_, signal) = case.signal(&cubecl::test_device().client());
-        let (re, im) = rfft_ref(&signal, case.axis.dim, None);
+        let (re, im) = rfft_ref(&case.host_signal(), case.axis.dim, None);
         vec![re, im]
     }
 
-    /// Loose: a backend's `sin` and `cos` are less precise than the host's, as wgpu's are.
-    fn tolerance(&self, _case: &Rfft) -> f32 {
-        0.4
+    /// Tight on a short transform; loose on a long one, whose twiddles a backend's `sin` and
+    /// `cos` compute less precisely than the host's, as wgpu's do.
+    fn tolerance(&self, case: &Rfft) -> f32 {
+        match case.n_fft() <= SHORT {
+            true => 1e-3,
+            false => 0.4,
+        }
     }
 }
 
-/// The real inverse transform along an axis: of a seeded spectrum, or of `bins` bins the kernel
-/// zero-pads to the bins of `n_fft` itself.
+/// The real inverse transform along an axis: of a seeded spectrum, or of the bins the axis holds,
+/// which the kernel zero-pads to the bins of `n_fft` itself.
 #[derive(Debug, Clone)]
 pub(crate) struct Irfft {
     pub axis: Axis,
-    pub padded_to: Option<usize>,
+    pub padded: Option<IrfftPadding>,
+}
+
+/// A spectrum of fewer bins than `n_fft` has, transformed as `n_fft`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct IrfftPadding {
+    pub n_fft: usize,
 }
 
 impl Irfft {
     pub(crate) fn seeded(shape: &[usize], dim: usize) -> Self {
         Self {
             axis: Axis::of(shape, dim),
-            padded_to: None,
+            padded: None,
         }
     }
 
-    /// The spectrum of `shape` along `dim`, zero-padded to the bins of `n_fft`.
-    pub(crate) fn padded(shape: &[usize], dim: usize, n_fft: usize) -> Self {
+    pub(crate) fn padded(shape: &[usize], dim: usize, padding: IrfftPadding) -> Self {
         Self {
             axis: Axis::of(shape, dim),
-            padded_to: Some(n_fft),
+            padded: Some(padding),
         }
     }
 
-    /// The spectrum the kernel reads, real and imaginary, and the one the host transforms.
-    fn spectrum(&self, client: &Client) -> [(TensorHandle, HostData); 2] {
+    /// The samples the transform gives back.
+    fn n_fft(&self) -> usize {
+        self.padded
+            .map_or((self.axis.len() - 1) * 2, |padding| padding.n_fft)
+    }
+
+    /// The spectrum the kernel reads, real then imaginary: seeded, or two different waves.
+    fn spectrum(&self, client: &Client) -> [TensorHandle; 2] {
         let element = f32::elem_type_native();
-        let Axis { shape, dim } = &self.axis;
-        match self.padded_to {
-            None => [43, 44].map(|seed| Axis::seeded(client, shape.clone(), seed, element)),
-            Some(n_fft) => [(); 2].map(|()| {
-                let bins = shape[*dim];
-                let read = Axis::samples(shape, *dim, bins);
-                let (tensor, _) = Axis::tensor(client, shape.clone(), read, element);
-                let full = self.axis.with_extent(n_fft / 2 + 1);
-                let padded = Axis::samples(&full, *dim, bins);
-                let (_, host) = Axis::tensor(client, full, padded, element);
-                (tensor, host)
+        match self.padded {
+            None => [43, 44].map(|seed| self.axis.seeded(client, seed, element).0),
+            Some(_) => [Wave::Sine, Wave::Cosine].map(|wave| {
+                let bins = wave.over(&self.axis, self.axis.len());
+                self.axis.upload(client, bins, element)
             }),
         }
     }
 
-    fn signal_len(&self) -> usize {
-        self.padded_to
-            .unwrap_or((self.axis.shape[self.axis.dim] - 1) * 2)
+    /// The spectrum the host transforms: the same, or zero-padded to the bins of `n_fft`.
+    fn host_spectrum(&self) -> [HostData; 2] {
+        match self.padded {
+            None => {
+                let client = cubecl::test_device().client();
+                [43, 44].map(|seed| self.axis.seeded(&client, seed, f32::elem_type_native()).1)
+            }
+            Some(IrfftPadding { n_fft }) => {
+                let padded = self.axis.with_extent(n_fft / 2 + 1);
+                [Wave::Sine, Wave::Cosine]
+                    .map(|wave| padded.host(wave.over(&padded, self.axis.len())))
+            }
+        }
     }
 }
 
@@ -281,12 +318,13 @@ impl ScopeUnderTest for IrfftLaunch {
 
     fn launch(&self, client: &Client, case: &Irfft) -> Result<Vec<Written>, Refusal> {
         let element = f32::elem_type_native();
-        let [(re, _), (im, _)] = case.spectrum(client);
-        let signal = Axis::zeros(client, case.axis.with_extent(case.signal_len()), element);
+        let [re, im] = case.spectrum(client);
+        let signal =
+            TensorHandle::zeros(client, case.axis.with_extent(case.n_fft()).shape, element);
         let (re, im, out) = (re.binding(), im.binding(), signal.clone().binding());
-        let dim = case.axis.dim;
-        let launched = match case.padded_to {
-            Some(_) => irfft_launch_padded(client, re, im, out, dim, case.axis.shape[dim], element),
+        let (dim, bins) = (case.axis.dim, case.axis.len());
+        let launched = match case.padded {
+            Some(_) => irfft_launch_padded(client, re, im, out, dim, bins, element),
             None => irfft_launch(client, re, im, out, dim, element),
         };
         launched.map_err(|_| DECLINED)?;
@@ -298,12 +336,15 @@ impl ScopeUnderTest for IrfftLaunch {
     }
 
     fn reference(&self, case: &Irfft) -> Vec<HostData> {
-        let [(_, re), (_, im)] = case.spectrum(&cubecl::test_device().client());
+        let [re, im] = case.host_spectrum();
         vec![irfft_ref(&re, &im, case.axis.dim, None)]
     }
 
-    fn tolerance(&self, _case: &Irfft) -> f32 {
-        0.01
+    fn tolerance(&self, case: &Irfft) -> f32 {
+        match case.n_fft() <= SHORT {
+            true => 1e-3,
+            false => 0.01,
+        }
     }
 }
 
@@ -321,23 +362,17 @@ impl CfftRoundTrip {
         }
     }
 
-    /// The input, real and imaginary, seeded.
+    /// The input, real and imaginary, seeded: the tensors, and their values read back.
     fn input(&self, client: &Client) -> [(TensorHandle, HostData); 2] {
-        [42, 7].map(|seed| {
-            Axis::seeded(
-                client,
-                self.axis.shape.clone(),
-                seed,
-                f32::elem_type_native(),
-            )
-        })
+        [42, 7].map(|seed| self.axis.seeded(client, seed, f32::elem_type_native()))
     }
 }
 
-/// The complex transform launched forward, then inverse, against the input it scales.
-pub(crate) struct CfftThereAndBack;
+/// The complex transform's round trip, launched forward then inverse, against the input it
+/// scales.
+pub(crate) struct CfftRoundTripLaunch;
 
-impl ScopeUnderTest for CfftThereAndBack {
+impl ScopeUnderTest for CfftRoundTripLaunch {
     type Case = CfftRoundTrip;
 
     fn launch(&self, client: &Client, case: &CfftRoundTrip) -> Result<Vec<Written>, Refusal> {
@@ -345,7 +380,7 @@ impl ScopeUnderTest for CfftThereAndBack {
         let [(input_re, _), (input_im, _)] = case.input(client);
         let shape = case.axis.shape.clone();
         let [spectrum_re, spectrum_im, recovered_re, recovered_im] =
-            [(); 4].map(|()| Axis::zeros(client, shape.clone(), element));
+            [(); 4].map(|()| TensorHandle::zeros(client, shape.clone(), element));
         let forward = CfftBindings {
             input_re: input_re.binding(),
             input_im: input_im.binding(),
@@ -377,7 +412,7 @@ impl ScopeUnderTest for CfftThereAndBack {
     }
 
     fn reference(&self, case: &CfftRoundTrip) -> Vec<HostData> {
-        let n = case.axis.shape[case.axis.dim] as f32;
+        let n = case.axis.len() as f32;
         case.input(&cubecl::test_device().client())
             .map(|(_, mut host)| {
                 if let HostDataVec::F32(values) = &mut host.data {

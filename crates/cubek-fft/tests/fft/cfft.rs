@@ -5,7 +5,7 @@ use cubek_test_utils::{
     assert_equals_approx,
 };
 
-use crate::fft::{CfftRoundTrip, CfftThereAndBack};
+use crate::fft::{CfftRoundTrip, CfftRoundTripLaunch};
 
 /// Scale every element of an f32 `HostData` by `factor`.
 fn scaled(mut host: HostData, factor: f32) -> HostData {
@@ -31,17 +31,17 @@ fn combine_re_im(re: ValidationResult, im: ValidationResult) -> ValidationResult
 /// unnormalized both ways.
 #[test]
 fn cfft_roundtrip_axis_last() {
-    CfftThereAndBack.check([CfftRoundTrip::of(&[1, 8], 1)]);
+    CfftRoundTripLaunch.check([CfftRoundTrip::of(&[1, 8], 1)]);
 }
 
 #[test]
 fn cfft_roundtrip_axis_1_strided() {
-    CfftThereAndBack.check([CfftRoundTrip::of(&[2, 8, 3], 1)]);
+    CfftRoundTripLaunch.check([CfftRoundTrip::of(&[2, 8, 3], 1)]);
 }
 
 #[test]
 fn cfft_roundtrip_axis_0_strided() {
-    CfftThereAndBack.check([CfftRoundTrip::of(&[16, 2], 0)]);
+    CfftRoundTripLaunch.check([CfftRoundTrip::of(&[16, 2], 0)]);
 }
 
 // Batched cases: several windows transformed in one launch, every element
@@ -49,12 +49,12 @@ fn cfft_roundtrip_axis_0_strided() {
 // concurrent cubes, which corrupts all but one window.
 #[test]
 fn cfft_roundtrip_batched() {
-    CfftThereAndBack.check([CfftRoundTrip::of(&[5, 16], 1)]);
+    CfftRoundTripLaunch.check([CfftRoundTrip::of(&[5, 16], 1)]);
 }
 
 #[test]
 fn cfft_roundtrip_batched_larger() {
-    CfftThereAndBack.check([CfftRoundTrip::of(&[4, 64], 1)]);
+    CfftRoundTripLaunch.check([CfftRoundTrip::of(&[4, 64], 1)]);
 }
 
 #[test]
