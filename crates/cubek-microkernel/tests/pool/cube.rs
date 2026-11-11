@@ -1,7 +1,7 @@
 //! The cube max pool microkernel alone: each block of a cube's walk, its units each a run of
 //! channels of one output position.
 
-use cubek_microkernel::testing::pool::WindowAxis;
+use crate::launch::pool::WindowAxis;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

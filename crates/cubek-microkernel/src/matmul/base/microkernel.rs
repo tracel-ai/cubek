@@ -26,6 +26,12 @@ pub trait MatmulMicrokernel:
         Delivery::SyncPerUnit
     }
 
+    /// Whether the TMA engine fills its stages, from descriptors its routine binds in place of the
+    /// operands the launcher binds: false for one whose units move them.
+    fn fills_by_tma(&self) -> bool {
+        false
+    }
+
     /// How a packed input's words are moved into its stages: as [`delivery`](Self::delivery)
     /// moves the float inputs, except where its fill decodes them
     /// ([`decoded_stage`](Self::decoded_stage)), which passes them through the units' registers,

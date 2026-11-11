@@ -1,7 +1,7 @@
 //! The plane RMS norm microkernel alone: one plane holds its row in its lanes' registers.
 
+use crate::launch::rms_norm::RmsNormSettings;
 use cubek_microkernel::rms_norm::plane::PlaneRmsNormMicrokernel;
-use cubek_microkernel::testing::rms_norm::RmsNormSettings;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::ScopeUnderTest;

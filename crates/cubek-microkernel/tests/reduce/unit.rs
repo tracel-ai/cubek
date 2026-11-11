@@ -1,6 +1,6 @@
 //! The unit reduce microkernel alone: a plane's first unit reduces its row.
 
-use cubek_microkernel::testing::reduce::ReduceScope;
+use crate::launch::reduce::ReduceScope;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

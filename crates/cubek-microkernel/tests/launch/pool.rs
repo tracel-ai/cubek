@@ -2,14 +2,14 @@
 //! `[1, oh, ow, c]`, every output cell the largest tap of its window, laid out as
 //! [`WindowedLaunch`] says. The reduce reads the max's identity past the input's edge.
 
-use crate::pool::PoolWorkItem;
-use crate::pool::cube::{
-    CubeMaxPoolMicrokernel, CubeMaxPoolMicrokernelSettings, cube_max_pool_microkernel,
-};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::pool::PoolWorkItem;
+use cubek_microkernel::pool::cube::{
+    CubeMaxPoolMicrokernel, CubeMaxPoolMicrokernelSettings, cube_max_pool_microkernel,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
@@ -18,7 +18,6 @@ pub use super::window::{Channels, WindowAxis, WindowedLaunch};
 /// A max pool microkernel ready to launch.
 #[derive(Debug, Clone, Copy)]
 pub struct PoolLaunch {
-    pub microkernel: CubeMaxPoolMicrokernel,
     pub windowed: WindowedLaunch,
 }
 
@@ -38,11 +37,8 @@ impl PoolLaunch {
             channels: channels.per_unit,
             outputs: channels.per_unit,
         };
-        let microkernel = CubeMaxPoolMicrokernel::best(hw, &item, &CubeMaxPoolMicrokernelSettings)?;
-        Ok(Self {
-            microkernel,
-            windowed,
-        })
+        CubeMaxPoolMicrokernel::best(hw, &item, &CubeMaxPoolMicrokernelSettings)?;
+        Ok(Self { windowed })
     }
 
     /// `output[0, oh, ow, c]`, the largest of `input[0, oh · s + th · d - p, ow · s + tw · d - p,

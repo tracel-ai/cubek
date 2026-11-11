@@ -1,13 +1,13 @@
 //! What every attention microkernel computes alone: `softmax(scale · q · kᵀ) · v` over one batch
 //! and one head, every key attended, all row-major, and each query's `ln Σ exp(scale · q · kᵀ)`.
 
+use crate::launch::attention::{AttentionElements, AttentionLaunch};
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
-use cubek_microkernel::testing::attention::{AttentionElements, AttentionLaunch};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};

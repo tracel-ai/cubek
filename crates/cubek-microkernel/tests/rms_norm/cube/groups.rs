@@ -1,7 +1,7 @@
 //! The cube groups RMS norm microkernel alone: a group of a cube's units shares one row.
 
+use crate::launch::rms_norm::RmsNormSettings;
 use cubek_microkernel::rms_norm::cube::CubeGroupsRmsNormMicrokernel;
-use cubek_microkernel::testing::rms_norm::RmsNormSettings;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::ScopeUnderTest;

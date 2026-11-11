@@ -1,11 +1,11 @@
 //! What every interpolate microkernel computes alone: each output cell its window's taps inside
 //! the input, each weighted, summed.
 
+use crate::launch::interpolate::{Channels, InterpolateLaunch, WindowAxis};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
-use cubek_microkernel::testing::interpolate::{Channels, InterpolateLaunch, WindowAxis};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 

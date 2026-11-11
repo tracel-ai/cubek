@@ -1,10 +1,10 @@
 //! The plane fragment microkernel alone: one plane walks its tile through its own stages.
 
+use crate::launch::matmul::{MatmulElements, PlaneFragmentLaunch};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::plane::{
     PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
-use cubek_microkernel::testing::matmul::{MatmulElements, PlaneFragmentLaunch};
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 
