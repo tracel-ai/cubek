@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Grid, LastArrival, Refusal};
+use cubecl::tile::launch::{Grid, LastArrival, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{
     Launcher, Partitioning, Space, StageStorage, TileSpec, TileTensor, TileTensorLaunch,
@@ -14,12 +14,13 @@ use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
     hypercube_staged_last_arrival_microkernel,
 };
-use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel};
+use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::Microkernel;
 
 use super::{MatmulElements, MatmulLaunch, OneCube};
+use crate::launch::Lines;
 
 /// The cubes sharing the boxes' stages of `K`, laid end to end. Over [`BOXES`] boxes of one stage
 /// each, two cubes hold a box whole and two walk nothing; of three, every run but one crosses from
@@ -30,11 +31,12 @@ const CUBES: usize = 4;
 const BOXES: usize = 2;
 
 /// One hypercube staged microkernel ready to launch on [`BOXES`] boxes, `steps` stages of `K` deep,
-/// their stages shared by [`CUBES`] cubes.
+/// their stages shared by [`CUBES`] cubes, its operands and the boxes' slots `widths` values a line.
 #[derive(Debug, Clone)]
 pub struct HypercubeStagedLaunch {
     pub microkernel: HypercubeStagedMicrokernel,
     pub elements: MatmulElements,
+    widths: MatmulOperands<usize>,
     storage: StageStorage,
     plane_width: u32,
     shape: [usize; 3],
@@ -50,6 +52,7 @@ impl HypercubeStagedLaunch {
         hw: &Hardware,
         elements: MatmulElements,
         settings: &HypercubeStagedMicrokernelSettings,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self, Refusal> {
         if !hw.properties.features.device_memory_scope {
@@ -84,12 +87,19 @@ impl HypercubeStagedLaunch {
         let microkernel = HypercubeStagedMicrokernel {
             cube: resolved.microkernel,
         };
-        let [m, n, k] = OneCube::new(
+        let one_box = OneCube::new(
             microkernel.cube.launch_tiling().cubes(&[M, N]).build(),
             ComputeScope::Cube,
             steps,
-        )
-        .shape;
+        );
+        // The slots hold the sum's element at the output's width, as the routine binds them.
+        let mut vectorization = Vectorization::new();
+        microkernel.vectorize(&one_box.cube_space(), &mut vectorization);
+        vectorization.require(VectorRequirement::Access {
+            operand: MatmulOperand::Out,
+            elements: hw.vector_ceiling(elements.sum),
+        });
+        let [m, n, k] = one_box.shape;
         let shape = [m, n * BOXES, k];
         let partitioning = Partitioning::new(
             Space::new(&[(M, shape[0]), (N, shape[1]), (K, shape[2])]),
@@ -103,6 +113,7 @@ impl HypercubeStagedLaunch {
         Ok(Self {
             microkernel,
             elements,
+            widths: elements.widths(hw, lines, &vectorization),
             storage: resolved.storage,
             plane_width: resolved.plane_width,
             shape,
@@ -162,7 +173,9 @@ impl HypercubeStagedLaunch {
             cube_dim: partitioning.cube_dim(self.plane_width),
         };
         let launcher = Launcher::new(client, partitioning.clone(), partitioning.space(), grid)?;
-        let [lhs, rhs, out] = self.elements.bound(operands, self.rhs_layout());
+        let [lhs, rhs, out] = self
+            .elements
+            .bound(operands, self.rhs_layout(), self.widths);
         let slots = TensorHandle::empty(
             client,
             partitioning.arrival_slots(&[M, N]),
@@ -171,7 +184,7 @@ impl HypercubeStagedLaunch {
         let slots = TileTensorLaunch::new(
             slots.into_arg(),
             self.elements.sum,
-            1,
+            self.widths.out,
             TileSpec::direct(&[M, N]),
         );
         // SAFETY: every operand is bound through the launcher at the problem's own extents, the
@@ -182,7 +195,7 @@ impl HypercubeStagedLaunch {
                 client,
                 launcher.cube_count(),
                 launcher.cube_dim(),
-                1,
+                self.widths.out,
                 lhs,
                 rhs,
                 out,

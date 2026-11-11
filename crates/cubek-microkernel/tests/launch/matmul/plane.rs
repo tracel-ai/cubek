@@ -1,7 +1,7 @@
 //! The plane matmul microkernels on one work item.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Grid, Refusal, Vectorization};
 use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubecl::tile::{
     Instruction, Launcher, Partitioning, Region, Scratch, Semiring, Space, StageStorage, Stages,
@@ -22,13 +22,16 @@ use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{Microkernel, StageRing};
 
 use super::{MatmulElements, MatmulLaunch, OneCube, WholeRows};
+use crate::launch::Lines;
 
 /// One plane fragment microkernel ready to launch on one work item: the microkernel the device
-/// picks at `settings`, and the problem one plane's tile wide, `steps` stages deep.
+/// picks at `settings`, and the problem one plane's tile wide, `steps` stages deep, its operands
+/// `widths` values a line.
 #[derive(Debug, Clone)]
 pub struct PlaneFragmentLaunch {
     pub microkernel: PlaneFragmentMicrokernel,
     pub elements: MatmulElements,
+    widths: MatmulOperands<usize>,
     /// `m`, `n` and `k` of the problem.
     pub shape: [usize; 3],
     stage: StageStorage,
@@ -47,6 +50,7 @@ impl PlaneFragmentLaunch {
         hw: &Hardware,
         elements: MatmulElements,
         settings: &PlaneFragmentMicrokernelSettings,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self, Refusal> {
         let item = elements.work_item();
@@ -54,6 +58,10 @@ impl PlaneFragmentLaunch {
         let [m, n, k] = [M, N, K].map(|axis| microkernel.tile_extent(axis));
         let stage = MatmulStage::new(Space::new(&[(M, m), (N, n), (K, k)]), MatmulAxes::MNK);
         let plane_width = microkernel.instruction.units(hw)?;
+        // The launch stages the plane's operands itself, as a cube staged fill would.
+        let mut vectorization = Vectorization::new();
+        stage.require_runs(microkernel.orders, &mut vectorization);
+        microkernel.vectorize(&(), &mut vectorization);
         let ring = StageRing::SINGLE.resolve(
             hw,
             &stage.operands(
@@ -74,6 +82,7 @@ impl PlaneFragmentLaunch {
         Ok(Self {
             microkernel,
             elements,
+            widths: elements.widths(hw, lines, &vectorization),
             shape: [m, n, k * steps],
             stage: storage,
             ring,
@@ -117,7 +126,9 @@ impl MatmulLaunch for PlaneFragmentLaunch {
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         let MatmulElements { input, sum, .. } = self.elements;
-        let [lhs, rhs, out] = self.elements.bound([lhs, rhs, out], self.rhs_layout());
+        let [lhs, rhs, out] = self
+            .elements
+            .bound([lhs, rhs, out], self.rhs_layout(), self.widths);
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles.
         unsafe {
@@ -221,11 +232,13 @@ fn plane_fragment_staged_microkernel<EL: Numeric>(
 }
 
 /// One plane shuffle microkernel ready to launch on one plane's box, every row held whole: the
-/// microkernel the device picks at `settings`, `steps` of its reads of `K` deep.
+/// microkernel the device picks at `settings`, `steps` of its reads of `K` deep, its operands
+/// `widths` values a line.
 #[derive(Debug, Clone)]
 pub struct PlaneShuffleLaunch {
     pub microkernel: PlaneShuffleMicrokernel,
     pub elements: MatmulElements,
+    widths: MatmulOperands<usize>,
     one_cube: OneCube,
 }
 
@@ -243,10 +256,13 @@ impl PlaneShuffleLaunch {
         elements: MatmulElements,
         settings: &PlaneShuffleMicrokernelSettings,
         rows: WholeRows,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self, Refusal> {
         let item = elements.work_item_of(MatmulRows::Whole(rows.0), Self::RHS);
         let microkernel = PlaneShuffleMicrokernel::best(hw, &item, settings)?;
+        let mut vectorization = Vectorization::new();
+        microkernel.vectorize(&(), &mut vectorization);
         let levels = microkernel
             .tiling()
             .launch_planes(&[M, N], PlaneOrder::new(&[(N, 1)], CubeOrder::RowMajor))
@@ -254,6 +270,7 @@ impl PlaneShuffleLaunch {
         Ok(Self {
             microkernel,
             elements,
+            widths: elements.widths(hw, lines, &vectorization),
             one_cube: OneCube::new(levels, ComputeScope::Plane, steps),
         })
     }
@@ -278,7 +295,9 @@ impl MatmulLaunch for PlaneShuffleLaunch {
         let launcher = self
             .one_cube
             .launcher(client, self.microkernel.plane_width() as u32)?;
-        let [lhs, rhs, out] = self.elements.bound([lhs, rhs, out], self.rhs_layout());
+        let [lhs, rhs, out] = self
+            .elements
+            .bound([lhs, rhs, out], self.rhs_layout(), self.widths);
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles; it holds no shared memory.
         unsafe {

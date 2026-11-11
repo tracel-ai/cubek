@@ -1,6 +1,7 @@
 //! The hypercube staged microkernel alone: cubes sharing one box's `K`, each walking its run of
 //! the stages, the box's last arrival adding their parts up.
 
+use crate::launch::Lines;
 use crate::launch::matmul::{HypercubeStagedLaunch, MatmulElements};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::hypercube::{
@@ -19,9 +20,10 @@ impl MatmulSettings for HypercubeStagedMicrokernelSettings {
         &self,
         hw: &Hardware,
         elements: MatmulElements,
+        lines: Lines,
         steps: usize,
     ) -> Result<HypercubeStagedLaunch, Refusal> {
-        HypercubeStagedLaunch::new(hw, elements, self, steps)
+        HypercubeStagedLaunch::new(hw, elements, self, lines, steps)
     }
 }
 
