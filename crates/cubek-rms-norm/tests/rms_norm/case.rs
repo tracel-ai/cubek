@@ -77,7 +77,10 @@ impl Case {
                 let mean = values.iter().map(|x| x * x).sum::<f64>() / group as f64;
                 let scale = 1.0 / (mean + EPSILON as f64).sqrt();
                 for (d, x) in values.iter().enumerate() {
-                    let after = 1.0;
+                    let after = match order {
+                        Some(GateOrder::NormThenGate) => silu(gates[d]),
+                        _ => 1.0,
+                    };
                     out.push(x * scale * weight[weights + first + d] * after);
                 }
             }
@@ -123,7 +126,11 @@ fn runs(orders: &[Option<GateOrder>], pairs: &[(ElemType, ElemType)]) -> Vec<Run
 pub fn blocks() -> Vec<Block> {
     let mut a_row = Case::new(6, 128);
     a_row.weight_a_row = true;
-    let orders = [None, Some(GateOrder::GateThenNorm)];
+    let orders = [
+        None,
+        Some(GateOrder::GateThenNorm),
+        Some(GateOrder::NormThenGate),
+    ];
     vec![
         // Every setting's partitioning: a decode row, a prompt's rows, a prime row that binds one
         // element at a time, a row a line past a power of two, one longer than a plane's
@@ -158,11 +165,18 @@ pub fn blocks() -> Vec<Block> {
         // Edge cases, under the orders and elements that stress them.
         Block {
             every_setting: false,
-            runs: vec![Run {
-                element: F16,
-                output_element: F32,
-                order: Some(GateOrder::GateThenNorm),
-            }],
+            runs: vec![
+                Run {
+                    element: F16,
+                    output_element: F32,
+                    order: Some(GateOrder::GateThenNorm),
+                },
+                Run {
+                    element: BF16,
+                    output_element: BF16,
+                    order: Some(GateOrder::NormThenGate),
+                },
+            ],
             cases: vec![
                 // No rows: nothing to launch.
                 Case::new(0, 128),

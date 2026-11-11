@@ -87,10 +87,11 @@ impl<H: Float, N: Size> HeldRow<H, N> {
     }
 
     /// Unit `unit`'s lines written into `out` at `W`, each scaled by `factor` and multiplied by its
-    /// line of `weight`, of element `E`, in `f32`, then rounded once. `out` and `weight` are the
-    /// owner's run, and a line past it is not written.
+    /// line of `weight`, of element `E`, in `f32`, and gated where the gate comes last, then rounded
+    /// once. `out` and `weight` are the owner's run, and a line past it is not written.
     pub fn write<E: Float, W: Float>(
         &self,
+        reader: &RowReader,
         weight: &Tile,
         out: &mut OwnerLines,
         unit: usize,
@@ -106,7 +107,8 @@ impl<H: Float, N: Size> HeldRow<H, N> {
                 let scaled = Vector::<f32, N>::cast_from(self.lines[i])
                     * Vector::<f32, N>::cast_from(factor)
                     * Vector::<f32, N>::cast_from(weights.read(line));
-                out.write::<W, N>(line, Vector::<W, N>::cast_from(scaled));
+                let written = reader.written::<E, N>(line, scaled);
+                out.write::<W, N>(line, Vector::<W, N>::cast_from(written));
             }
         }
     }
