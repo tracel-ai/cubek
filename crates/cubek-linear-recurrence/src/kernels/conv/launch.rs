@@ -64,7 +64,7 @@ pub trait CausalConvRoutine<M>:
     ) -> Result<<Self::Tensors as ConvTensors>::Outputs, Refusal> {
         let tensors = Self::Tensors::new(inputs)?;
         let (blueprint, grid) = self.prepare_first_served(hw, tensors.problem())?;
-        Ok(self.launch(tensors, blueprint, grid))
+        Ok(launch(self, tensors, blueprint, grid))
     }
 
     /// [`launch_on`](Self::launch_on), preparing a problem once however often it is launched.
@@ -86,22 +86,22 @@ pub trait CausalConvRoutine<M>:
         let tensors = Self::Tensors::new(inputs)?;
         let (blueprint, grid) =
             prepared.prepare(self, hw, tensors.problem(), &Self::Settings::default())?;
-        Ok(self.launch(tensors, blueprint, grid))
+        Ok(launch(self, tensors, blueprint, grid))
     }
+}
 
-    /// The conv on `grid`, then the write back of a prompt's rings.
-    fn launch(
-        &self,
-        tensors: Self::Tensors,
-        blueprint: CausalConvBlueprint<M>,
-        grid: Grid,
-    ) -> <Self::Tensors as ConvTensors>::Outputs {
-        let binding = tensors.bind(&blueprint, &grid);
-        let write_back = blueprint.write_back.clone();
-        self.dispatch(&tensors, binding, blueprint, grid);
-        if let Some(write_back) = write_back {
-            write_back.launch(tensors.reads());
-        }
-        tensors.into_outputs()
+/// The conv on `grid`, then the write back of a prompt's rings: no routine can skip or reorder it.
+fn launch<M, R: CausalConvRoutine<M> + ?Sized>(
+    routine: &R,
+    tensors: R::Tensors,
+    blueprint: CausalConvBlueprint<M>,
+    grid: Grid,
+) -> <R::Tensors as ConvTensors>::Outputs {
+    let binding = tensors.bind(&blueprint, &grid);
+    let write_back = blueprint.write_back.clone();
+    routine.dispatch(&tensors, binding, blueprint, grid);
+    if let Some(write_back) = write_back {
+        write_back.launch(tensors.reads());
     }
+    tensors.into_outputs()
 }
