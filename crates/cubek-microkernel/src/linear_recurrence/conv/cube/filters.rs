@@ -1,14 +1,9 @@
 use super::past_taps::PastTaps;
+use crate::activation::silu;
 use crate::linear_recurrence::CHANNEL;
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 use cubek_std::microkernel::{ArithmeticInstruction, UnitWork};
-
-/// The logistic function.
-#[cube]
-fn sigmoid(x: f32) -> f32 {
-    1.0f32 / (1.0f32 + (-x).exp())
-}
 
 /// The depthwise filters of every channel and, where there is one, each channel's bias.
 #[derive(CubeType)]
@@ -105,7 +100,7 @@ impl CausalFilters {
         #[unroll]
         for lane in 0..width {
             let mixed = f32::cast_from(E::cast_from(sums.extract(lane)));
-            convolved.insert(lane, f32::cast_from(E::cast_from(mixed * sigmoid(mixed))));
+            convolved.insert(lane, f32::cast_from(E::cast_from(silu(mixed))));
         }
         convolved
     }
