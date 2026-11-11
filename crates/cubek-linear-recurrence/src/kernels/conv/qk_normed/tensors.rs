@@ -2,8 +2,8 @@
 
 use crate::kernels::conv::reads::{BoundReads, CausalConvReads, bound};
 use crate::kernels::conv::{
-    CausalConvBlueprint, CausalConvPast, CausalConvPastInputs, QK_NORMED_CONV_OUTPUT_ELEMENT,
-    QkNormedConvProblem,
+    CausalConvBlueprint, CausalConvPast, CausalConvPastInputs, ConvTensors,
+    QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem,
 };
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
@@ -115,7 +115,7 @@ pub struct QkNormedConvTensors {
 }
 
 /// The operands of a launch bound under one launcher. Not `Debug`: cubek's `Launcher` is not.
-pub(crate) struct QkNormedConvBinding {
+pub struct QkNormedConvBinding {
     pub launcher: Launcher,
     pub reads: BoundReads,
     pub query: TileTensorLaunch,
@@ -124,6 +124,18 @@ pub(crate) struct QkNormedConvBinding {
 }
 
 impl QkNormedConvTensors {
+    /// The epsilon of the queries' and keys' norms.
+    pub(crate) fn epsilon(&self) -> f32 {
+        self.epsilon
+    }
+}
+
+impl ConvTensors for QkNormedConvTensors {
+    type Inputs = QkNormedConvInputs;
+    type Outputs = QkNormedConvOutputs;
+    type Problem = QkNormedConvProblem;
+    type Binding = QkNormedConvBinding;
+
     /// The conv of `inputs`, its outputs allocated.
     ///
     /// # Errors
@@ -135,7 +147,7 @@ impl QkNormedConvTensors {
     ///
     /// On operands whose shapes disagree with the heads, whose innermost axis is strided, on
     /// operands of different elements, on tables that are not `u32`, and on a store of no slot.
-    pub fn new(inputs: QkNormedConvInputs) -> Result<Self, Refusal> {
+    fn new(inputs: QkNormedConvInputs) -> Result<Self, Refusal> {
         let QkNormedConvInputs {
             client,
             qkv,
@@ -185,38 +197,19 @@ impl QkNormedConvTensors {
         })
     }
 
-    /// The client the operands live on, which a launch submits to.
-    pub(crate) fn client(&self) -> &Client {
-        self.reads.client()
-    }
-
-    /// The operands every conv reads.
-    pub(crate) fn reads(&self) -> &CausalConvReads {
+    fn reads(&self) -> &CausalConvReads {
         &self.reads
     }
 
-    /// The problem the tensors state.
-    pub fn problem(&self) -> &QkNormedConvProblem {
+    fn problem(&self) -> &QkNormedConvProblem {
         &self.problem
     }
 
-    /// The epsilon of the queries' and keys' norms.
-    pub(crate) fn epsilon(&self) -> f32 {
-        self.epsilon
-    }
-
-    /// The outputs, written.
-    pub(crate) fn into_outputs(self) -> QkNormedConvOutputs {
+    fn into_outputs(self) -> QkNormedConvOutputs {
         self.outputs
     }
 
-    /// Every operand bound as `blueprint` states it, on `grid`, a ring placed at the slot its
-    /// table names.
-    pub(crate) fn bind<M>(
-        &self,
-        blueprint: &CausalConvBlueprint<M>,
-        grid: &Grid,
-    ) -> QkNormedConvBinding {
+    fn bind<M>(&self, blueprint: &CausalConvBlueprint<M>, grid: &Grid) -> QkNormedConvBinding {
         let launcher = blueprint.launcher(self.reads.client(), grid);
         let width = blueprint.width;
         let lead = self.problem.past.output_lead();

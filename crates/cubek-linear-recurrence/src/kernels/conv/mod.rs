@@ -13,6 +13,7 @@ mod blueprint;
 mod causal;
 #[cfg(test)]
 mod fixtures;
+mod launch;
 mod past;
 mod qk_normed;
 mod reads;
@@ -20,7 +21,9 @@ mod ring_write_back;
 
 pub use blueprint::*;
 pub use causal::*;
+pub use launch::*;
 pub(crate) use past::admit_element;
 pub use past::*;
 pub use qk_normed::*;
+pub use reads::{BoundReads, CausalConvReads};
 pub use ring_write_back::RingWriteBack;

@@ -13,7 +13,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::server::Handle;
 use cubek_linear_recurrence::kernels::conv::{
-    CausalConvPastInputs, CubeQkNormedConvRoutine, QkNormedConvInputs,
+    CausalConvPastInputs, CausalConvRoutine, CubeQkNormedConvRoutine, QkNormedConvInputs,
 };
 use cubek_linear_recurrence::kernels::refusals::CONV_NOTHING_TO_CONVOLVE;
 use cubek_matmul::kernels::tensor::PlainTensor;

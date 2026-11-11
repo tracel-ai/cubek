@@ -10,8 +10,8 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::metadata::Metadata;
 use cubek_linear_recurrence::kernels::conv::{
-    CausalConvPastInputs, CubeQkNormedConvRoutine, QkNormedConvInputs, QkNormedConvOutputs,
-    QkNormedConvTensors,
+    CausalConvPastInputs, CausalConvRoutine, ConvTensors, CubeQkNormedConvRoutine,
+    QkNormedConvInputs, QkNormedConvOutputs, QkNormedConvTensors,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;

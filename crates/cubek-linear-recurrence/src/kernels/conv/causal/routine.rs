@@ -1,8 +1,8 @@
 use super::base;
 use super::kernel::cube_causal_conv_kernel;
 use crate::kernels::conv::{
-    CausalConvBlueprint, CausalConvInputs, CausalConvOutputs, CausalConvPast, CausalConvProblem,
-    CausalConvTensors,
+    CausalConvBinding, CausalConvBlueprint, CausalConvPast, CausalConvProblem, CausalConvRoutine,
+    CausalConvTensors, ConvTensors,
 };
 use crate::kernels::refusals::admit_on_device;
 use cubecl::tile::launch::{Refusal, Vectorization};
@@ -13,7 +13,7 @@ use cubek_microkernel::linear_recurrence::conv::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
-use cubek_std::routine::{Grid, PreparedLaunches, Routine};
+use cubek_std::routine::{Grid, Routine};
 
 /// The causal conv with a box of channel lines of a row, or of a position of a prompt, in each
 /// cube, a line to each unit. It reads no plane feature, so it is the floor every device runs.
@@ -22,79 +22,6 @@ pub struct CubeCausalConvRoutine;
 
 /// The blueprint of [`CubeCausalConvRoutine`].
 pub type CubeCausalConvRoutineBlueprint = CausalConvBlueprint<CubeCausalConvMicrokernel>;
-
-impl CubeCausalConvRoutine {
-    /// The causal conv of `inputs`, launched on their client's device, prepared for `hw`.
-    ///
-    /// # Errors
-    ///
-    /// Why `hw` cannot run the conv on these inputs.
-    pub fn launch_on(
-        &self,
-        hw: &Hardware,
-        inputs: CausalConvInputs,
-    ) -> Result<CausalConvOutputs, Refusal> {
-        let tensors = CausalConvTensors::new(inputs)?;
-        let (blueprint, grid) = self.prepare_first_served(hw, tensors.problem())?;
-        self.launch(hw, tensors, blueprint, grid)
-    }
-
-    /// [`launch_on`](Self::launch_on), preparing a problem once however often it is launched.
-    ///
-    /// # Errors
-    ///
-    /// Why `hw` cannot run the conv on these inputs.
-    pub fn launch_prepared_on(
-        &self,
-        prepared: &PreparedLaunches<Self>,
-        hw: &Hardware,
-        inputs: CausalConvInputs,
-    ) -> Result<CausalConvOutputs, Refusal> {
-        let tensors = CausalConvTensors::new(inputs)?;
-        let (blueprint, grid) =
-            prepared.prepare(self, hw, tensors.problem(), &CausalConvSettings)?;
-        self.launch(hw, tensors, blueprint, grid)
-    }
-
-    fn launch(
-        &self,
-        hw: &Hardware,
-        tensors: CausalConvTensors,
-        blueprint: CubeCausalConvRoutineBlueprint,
-        grid: Grid,
-    ) -> Result<CausalConvOutputs, Refusal> {
-        let problem = tensors.problem();
-        let (element, output_element) = (problem.element, problem.output_element);
-        let columns = problem.past.ring().columns;
-        let binding = tensors.bind(&blueprint, &grid);
-        // SAFETY: every operand is bound through the launcher and indexed only through its tile,
-        // whose reads past an edge are masked. A unit writes only the ring channels it reads, and
-        // a cube only its own position and box of the output.
-        unsafe {
-            cube_causal_conv_kernel::launch_unchecked(
-                tensors.client(),
-                grid.launch.cube_count.clone(),
-                grid.launch.cube_dim,
-                blueprint.width,
-                binding.reads.input,
-                binding.reads.filters,
-                binding.bias.into(),
-                binding.reads.past.ring,
-                binding.reads.past.lengths,
-                binding.output,
-                columns,
-                binding.launcher.partitioning_arg(),
-                blueprint.microkernel,
-                element,
-                output_element,
-            );
-        }
-        if let Some(write_back) = &blueprint.write_back {
-            write_back.launch(hw, tensors.reads());
-        }
-        Ok(tensors.into_outputs())
-    }
-}
 
 /// Whether `hw` runs `problem`: what a caller asks before it falls back to composed ops.
 ///
@@ -178,6 +105,42 @@ impl Routine for CubeCausalConvRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         base::prepare(hw, problem, settings)
+    }
+}
+
+impl CausalConvRoutine<CubeCausalConvMicrokernel> for CubeCausalConvRoutine {
+    type Tensors = CausalConvTensors;
+
+    fn dispatch(
+        &self,
+        tensors: &CausalConvTensors,
+        binding: CausalConvBinding,
+        blueprint: CubeCausalConvRoutineBlueprint,
+        grid: Grid,
+    ) {
+        let problem = tensors.problem();
+        // SAFETY: every operand is bound through the launcher and indexed only through its tile,
+        // whose reads past an edge are masked. A unit writes only the ring channels it reads, and
+        // a cube only its own position and box of the output.
+        unsafe {
+            cube_causal_conv_kernel::launch_unchecked(
+                tensors.reads().client(),
+                grid.launch.cube_count.clone(),
+                grid.launch.cube_dim,
+                blueprint.width,
+                binding.reads.input,
+                binding.reads.filters,
+                binding.bias.into(),
+                binding.reads.past.ring,
+                binding.reads.past.lengths,
+                binding.output,
+                problem.past.ring().columns,
+                binding.launcher.partitioning_arg(),
+                blueprint.microkernel,
+                problem.element,
+                problem.output_element,
+            );
+        }
     }
 }
 

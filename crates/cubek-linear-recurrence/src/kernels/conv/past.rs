@@ -254,7 +254,7 @@ pub enum CausalConvPastInputs {
 }
 
 /// The past's operands bound under one launcher.
-pub(crate) struct BoundPast {
+pub struct BoundPast {
     pub ring: TileTensorLaunch,
     pub lengths: TileTensorLaunch,
 }

@@ -10,8 +10,8 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::server::Handle;
 use cubek_linear_recurrence::kernels::conv::{
-    CausalConvInputs, CausalConvOutputs, CausalConvPastInputs, CausalConvTensors,
-    CubeCausalConvRoutine,
+    CausalConvInputs, CausalConvOutputs, CausalConvPastInputs, CausalConvRoutine,
+    CausalConvTensors, ConvTensors, CubeCausalConvRoutine,
 };
 use cubek_linear_recurrence::kernels::refusals::{
     CAUSAL_CONV_OUTPUT_UNSUPPORTED, CONV_NOTHING_TO_CONVOLVE, CONV_TAPS_PAST_RING,

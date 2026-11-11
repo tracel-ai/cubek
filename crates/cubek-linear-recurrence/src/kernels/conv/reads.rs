@@ -14,7 +14,7 @@ use cubek_std::routine::ADMITTED_PLAN_RUNS;
 /// The operands every conv reads: the input channels, the filters `[channels, taps]` (a unit dim
 /// between allowed) and the past, in one element.
 #[derive(Clone)]
-pub(crate) struct CausalConvReads {
+pub struct CausalConvReads {
     client: Client,
     input: PlainTensor,
     filters: PlainTensor,
@@ -26,7 +26,7 @@ pub(crate) struct CausalConvReads {
 }
 
 /// The reads bound under one launcher, `width` values a line.
-pub(crate) struct BoundReads {
+pub struct BoundReads {
     pub input: TileTensorLaunch,
     pub filters: TileTensorLaunch,
     pub past: BoundPast,

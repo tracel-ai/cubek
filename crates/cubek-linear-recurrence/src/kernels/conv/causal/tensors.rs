@@ -2,7 +2,7 @@
 
 use crate::kernels::conv::reads::{BoundReads, CausalConvReads, bound};
 use crate::kernels::conv::{
-    CausalConvBlueprint, CausalConvPast, CausalConvPastInputs, CausalConvProblem,
+    CausalConvBlueprint, CausalConvPast, CausalConvPastInputs, CausalConvProblem, ConvTensors,
 };
 use crate::kernels::refusals::CAUSAL_CONV_CHANNELS_EMPTY;
 use cubecl::client::Client;
@@ -65,14 +65,19 @@ pub struct CausalConvTensors {
 }
 
 /// The operands of a launch bound under one launcher. Not `Debug`: cubek's `Launcher` is not.
-pub(crate) struct CausalConvBinding {
+pub struct CausalConvBinding {
     pub launcher: Launcher,
     pub reads: BoundReads,
     pub bias: Option<TileTensorLaunch>,
     pub output: TileTensorLaunch,
 }
 
-impl CausalConvTensors {
+impl ConvTensors for CausalConvTensors {
+    type Inputs = CausalConvInputs;
+    type Outputs = CausalConvOutputs;
+    type Problem = CausalConvProblem;
+    type Binding = CausalConvBinding;
+
     /// The causal conv of `inputs`, its output allocated.
     ///
     /// # Errors
@@ -86,7 +91,7 @@ impl CausalConvTensors {
     /// On operands whose shapes disagree with the input's channels, whose innermost axis is
     /// strided, on operands of different elements, on tables that are not `u32`, and on a store of
     /// no slot.
-    pub fn new(inputs: CausalConvInputs) -> Result<Self, Refusal> {
+    fn new(inputs: CausalConvInputs) -> Result<Self, Refusal> {
         let CausalConvInputs {
             client,
             input,
@@ -162,33 +167,19 @@ impl CausalConvTensors {
         })
     }
 
-    /// The client the operands live on, which a launch submits to.
-    pub(crate) fn client(&self) -> &Client {
-        self.reads.client()
-    }
-
-    /// The operands every conv reads.
-    pub(crate) fn reads(&self) -> &CausalConvReads {
+    fn reads(&self) -> &CausalConvReads {
         &self.reads
     }
 
-    /// The problem the tensors state.
-    pub fn problem(&self) -> &CausalConvProblem {
+    fn problem(&self) -> &CausalConvProblem {
         &self.problem
     }
 
-    /// The output, written.
-    pub(crate) fn into_outputs(self) -> CausalConvOutputs {
+    fn into_outputs(self) -> CausalConvOutputs {
         self.outputs
     }
 
-    /// Every operand bound as `blueprint` states it, on `grid`, a ring placed at the slot its
-    /// table names.
-    pub(crate) fn bind<M>(
-        &self,
-        blueprint: &CausalConvBlueprint<M>,
-        grid: &Grid,
-    ) -> CausalConvBinding {
+    fn bind<M>(&self, blueprint: &CausalConvBlueprint<M>, grid: &Grid) -> CausalConvBinding {
         let launcher = blueprint.launcher(self.reads.client(), grid);
         let width = blueprint.width;
         let axes: &'static [Axis] = match self.problem.past {

@@ -1,8 +1,9 @@
 use super::base;
 use super::kernel::cube_qk_normed_conv_kernel;
 use crate::kernels::conv::{
-    CausalConvBlueprint, ConvStreams, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvInputs,
-    QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors, admit_element,
+    CausalConvBlueprint, CausalConvRoutine, ConvStreams, ConvTensors,
+    QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBinding, QkNormedConvProblem, QkNormedConvTensors,
+    admit_element,
 };
 use crate::kernels::refusals::admit_on_device;
 use cubecl::tile::launch::{Refusal, Vectorization};
@@ -13,7 +14,7 @@ use cubek_microkernel::linear_recurrence::conv::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
-use cubek_std::routine::{Grid, PreparedLaunches, Routine};
+use cubek_std::routine::{Grid, Routine};
 
 /// The conv with a key head of a row, or of a position of a prompt, in each cube, its units
 /// dealing the head's channels a line at a time. It reads no plane feature, so it is the floor
@@ -23,79 +24,6 @@ pub struct CubeQkNormedConvRoutine;
 
 /// The blueprint of [`CubeQkNormedConvRoutine`].
 pub type CubeQkNormedConvRoutineBlueprint = CausalConvBlueprint<CubeQkNormedConvMicrokernel>;
-
-impl CubeQkNormedConvRoutine {
-    /// The conv of `inputs`, launched on their client's device, prepared for `hw`.
-    ///
-    /// # Errors
-    ///
-    /// Why `hw` cannot run the conv on these inputs.
-    pub fn launch_on(
-        &self,
-        hw: &Hardware,
-        inputs: QkNormedConvInputs,
-    ) -> Result<QkNormedConvOutputs, Refusal> {
-        let tensors = QkNormedConvTensors::new(inputs)?;
-        let (blueprint, grid) = self.prepare_first_served(hw, tensors.problem())?;
-        self.launch(hw, tensors, blueprint, grid)
-    }
-
-    /// [`launch_on`](Self::launch_on), preparing a problem once however often it is launched.
-    ///
-    /// # Errors
-    ///
-    /// Why `hw` cannot run the conv on these inputs.
-    pub fn launch_prepared_on(
-        &self,
-        prepared: &PreparedLaunches<Self>,
-        hw: &Hardware,
-        inputs: QkNormedConvInputs,
-    ) -> Result<QkNormedConvOutputs, Refusal> {
-        let tensors = QkNormedConvTensors::new(inputs)?;
-        let (blueprint, grid) =
-            prepared.prepare(self, hw, tensors.problem(), &QkNormedConvSettings)?;
-        self.launch(hw, tensors, blueprint, grid)
-    }
-
-    fn launch(
-        &self,
-        hw: &Hardware,
-        tensors: QkNormedConvTensors,
-        blueprint: CubeQkNormedConvRoutineBlueprint,
-        grid: Grid,
-    ) -> Result<QkNormedConvOutputs, Refusal> {
-        let problem = tensors.problem();
-        let columns = problem.past.ring().columns;
-        let binding = tensors.bind(&blueprint, &grid);
-        // SAFETY: every operand is bound through the launcher and indexed only through its tile,
-        // whose reads past an edge are masked. A unit writes only the ring channels it reads, and
-        // a cube only its own position and key head of the outputs.
-        unsafe {
-            cube_qk_normed_conv_kernel::launch_unchecked(
-                tensors.client(),
-                grid.launch.cube_count.clone(),
-                grid.launch.cube_dim,
-                blueprint.width,
-                binding.reads.input,
-                binding.reads.filters,
-                binding.reads.past.ring,
-                binding.reads.past.lengths,
-                binding.query,
-                binding.key,
-                binding.value,
-                columns,
-                tensors.epsilon(),
-                binding.launcher.partitioning_arg(),
-                blueprint.microkernel,
-                problem.element,
-            );
-        }
-        if let Some(write_back) = &blueprint.write_back {
-            write_back.launch(hw, tensors.reads());
-        }
-        Ok(tensors.into_outputs())
-    }
-}
 
 /// Whether `hw` runs `problem`: what a caller asks before it falls back to composed ops.
 ///
@@ -176,6 +104,43 @@ impl Routine for CubeQkNormedConvRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         base::prepare(hw, problem, settings)
+    }
+}
+
+impl CausalConvRoutine<CubeQkNormedConvMicrokernel> for CubeQkNormedConvRoutine {
+    type Tensors = QkNormedConvTensors;
+
+    fn dispatch(
+        &self,
+        tensors: &QkNormedConvTensors,
+        binding: QkNormedConvBinding,
+        blueprint: CubeQkNormedConvRoutineBlueprint,
+        grid: Grid,
+    ) {
+        let problem = tensors.problem();
+        // SAFETY: every operand is bound through the launcher and indexed only through its tile,
+        // whose reads past an edge are masked. A unit writes only the ring channels it reads, and
+        // a cube only its own position and key head of the outputs.
+        unsafe {
+            cube_qk_normed_conv_kernel::launch_unchecked(
+                tensors.reads().client(),
+                grid.launch.cube_count.clone(),
+                grid.launch.cube_dim,
+                blueprint.width,
+                binding.reads.input,
+                binding.reads.filters,
+                binding.reads.past.ring,
+                binding.reads.past.lengths,
+                binding.query,
+                binding.key,
+                binding.value,
+                problem.past.ring().columns,
+                tensors.epsilon(),
+                binding.launcher.partitioning_arg(),
+                blueprint.microkernel,
+                problem.element,
+            );
+        }
     }
 }
 
