@@ -6,9 +6,6 @@ use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
 
-/// The units a cube deals a box of channel lines between, at most.
-const MOST_UNITS: usize = 64;
-
 /// What a causal conv is: the channels it convolves, the filter's taps and where its past is read
 /// from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -72,11 +69,7 @@ impl Microkernel for CubeCausalConvMicrokernel {
         item: &CausalConvWorkItem,
         _: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        let hardware = &hw.properties.hardware;
-        let units = MOST_UNITS
-            .min(item.channels)
-            .min(hardware.max_units_per_cube as usize)
-            .min(hardware.max_cube_dim.0 as usize);
+        let units = ChannelBox::most_units(hw).min(item.channels);
         (units > 0)
             .then_some(Self {
                 units,
