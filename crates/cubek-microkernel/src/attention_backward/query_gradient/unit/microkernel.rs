@@ -33,10 +33,10 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
     let mut delta = delta.clone();
     delta.dot::<EA>(out_gradient, out);
 
-    let mut sum = query_gradient.accumulator::<EA>(
+    let mut sum = query_gradient.register_accumulator::<EA>(
         bias,
         key,
-        microkernel.query_gradient.tile_instruction(),
+        microkernel.query_gradient.block(),
         Semiring::SUM_PROD,
     );
 
@@ -45,10 +45,10 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
         let (query, key, value) = (query.at(&step), key.at(&step), value.at(&step));
         let (out_gradient, bias) = (out_gradient.at(&step), bias.at(&step));
 
-        let mut score = bias.accumulator::<EA>(
+        let mut score = bias.register_accumulator::<EA>(
             &query,
             &key,
-            microkernel.score.tile_instruction(),
+            microkernel.score.block(),
             Semiring::SUM_PROD,
         );
 
@@ -59,10 +59,10 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
 
         score.along(S).probabilities::<EA>(scale, &bias, logsumexp);
 
-        let mut gradient = bias.accumulator::<EA>(
+        let mut gradient = bias.register_accumulator::<EA>(
             &out_gradient,
             &value,
-            microkernel.score_gradient.tile_instruction(),
+            microkernel.score_gradient.block(),
             Semiring::SUM_PROD,
         );
 

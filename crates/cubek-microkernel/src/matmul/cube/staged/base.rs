@@ -4,7 +4,7 @@ use crate::matmul::cube::{
 };
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
-    PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
+    PlaneFragmentMicrokernelSettings,
 };
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands,
@@ -13,6 +13,7 @@ use crate::matmul::{
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::space::ComputeScope;
 use cubecl::tile::space::Coverage;
 use cubecl::tile::{Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
@@ -166,12 +167,6 @@ impl CubeStagedMicrokernel {
             };
             candidates.extend(
                 PlaneFragmentMicrokernel::candidates(hw, &item.read_as(read), &settings.plane)
-                    .filter(|plane| {
-                        !matches!(
-                            plane.instruction,
-                            PlaneFragmentInstruction::Registers { .. }
-                        )
-                    })
                     .map(|plane| Self::new(settings, plane, CubeStagedDepth::Steps, reads)),
             );
         }
@@ -212,8 +207,8 @@ impl CubeStagedMicrokernel {
     }
 
     /// The planes against the packed inputs of `item`, at `settings` counted in its steps: the
-    /// float product's plane microkernels on the decoded stages, through the transport the settings
-    /// ask for first, one for each matrix instruction under which a step of `K`, the stage, is
+    /// float product's plane microkernels on the decoded stages, the tile layer's instruction
+    /// first, one for each matrix instruction under which a step of `K`, the stage, is
     /// whole scale blocks, each a whole number of the instruction's steps. A plane holds the
     /// settings' steps of `M` and `N` and walks a step of `K` through each stage, block by block,
     /// in the instruction's calls ([`MatmulStep::calls`]). Only the matrix instructions: the
@@ -231,17 +226,8 @@ impl CubeStagedMicrokernel {
         PlaneFragmentMicrokernel::candidates(
             hw,
             &item.decoded(),
-            &PlaneFragmentMicrokernelSettings {
-                transport: settings.plane.transport,
-                ..PlaneFragmentMicrokernelSettings::DEFAULT
-            },
+            &PlaneFragmentMicrokernelSettings::DEFAULT,
         )
-        .filter(|plane| {
-            !matches!(
-                plane.instruction,
-                PlaneFragmentInstruction::Registers { .. }
-            )
-        })
         .filter_map(|plane| {
             let [(_, m), (_, n), (_, k)] = plane.instruction.shape();
             let step = step.clone()?.under(Space::new(&[(M, m), (N, n), (K, k)]));
@@ -286,8 +272,6 @@ impl CubeStagedMicrokernel {
             filling_planes: self.fill.filling_planes,
             ring: self.ring,
             scratch: self.scratch,
-            instruction: self.plane.tile_instruction(),
-            step_sum: self.plane.instruction.step_sum(),
             store: self.store,
             reads: self.reads,
             rows_along: self.plane.settings.rows_along,
@@ -365,7 +349,7 @@ impl CubeStagedMicrokernel {
         let cut_short = cube_space.overhangs_output && self.store == CubeStagedStore::Fragments;
         let window = match self.plane.instruction.drain() {
             PlaneFragmentDrain::Bounce => self.scratch.at_least_bouncing(true),
-            PlaneFragmentDrain::CellByCell | PlaneFragmentDrain::InLines => Scratch::None,
+            PlaneFragmentDrain::CellByCell => Scratch::None,
         };
         let bounces = merges || cut_short || item.destination == MatmulDestination::Sink;
         let scratch = match bounces {
@@ -501,10 +485,10 @@ impl Microkernel for CubeStagedMicrokernel {
     /// instruction steps of `K` a stage, which read longer runs of a col rhs's rows; the small
     /// ones a short problem fills the device with; the small cubes, one to four planes on a line
     /// each holding a deep grid, where a small instruction (Metal's `8×8×8` simdgroup matrix, or
-    /// the software instruction) contracts more per shared read and more cubes fit a core; the tile
-    /// DSL's multi-row box ([`MULTI_ROW`](CubeStagedMicrokernelSettings::MULTI_ROW)) — the named
-    /// ones crossed with the rings that keep a second stage in flight and the transport that
-    /// reaches its instruction.
+    /// the software instruction) contracts more per shared read and more cubes fit a core — the
+    /// named ones crossed with the rings that keep a second stage in flight. The instruction is
+    /// the tile layer's ([`Contraction::instruction`](cubecl::tile::Contraction::instruction)),
+    /// never a setting.
     ///
     /// Then the default's grid on two by two planes and the small cube four fragments deep on two
     /// planes, each with its stage's rows in order ([`StageLayout::Blocks`]): a col rhs's
@@ -524,7 +508,6 @@ impl Microkernel for CubeStagedMicrokernel {
     /// ([`PlaneFragmentStepSum::Narrow`](crate::matmul::plane::PlaneFragmentStepSum::Narrow)).
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         use PlaneFragmentMicrokernelSettings as Plane;
-        use PlaneFragmentTransport::Mma;
         let lead = Self::Settings::DEFAULT;
         let count = |n: usize| NonZeroUsize::new(n).unwrap();
         let layout = MatmulPlaneLayout::new;
@@ -544,7 +527,6 @@ impl Microkernel for CubeStagedMicrokernel {
         let deep_on_4x2 = boxed((4, 4, 2), (4, 2));
         let small_on_2x1 = boxed((2, 4, 2), (2, 1));
         let small_on_2x2 = boxed((2, 4, 2), (2, 2));
-        let multi_row = Self::Settings::MULTI_ROW;
         let small_cubes = [
             ((4, 4, 2), (1, 2)),
             ((8, 2, 2), (1, 2)),
@@ -558,13 +540,7 @@ impl Microkernel for CubeStagedMicrokernel {
             ..settings
         };
         let rows_in_order = [layouts[0], small_cubes[2]].map(in_order);
-        let boxes = [
-            deep_on_2x2,
-            deep_on_4x2,
-            small_on_2x1,
-            small_on_2x2,
-            multi_row,
-        ];
+        let boxes = [deep_on_2x2, deep_on_4x2, small_on_2x1, small_on_2x2];
 
         let double = StageRing::DOUBLE;
         let prefetching = StageRing::DOUBLE_THROUGH_REGISTERS;
@@ -574,10 +550,8 @@ impl Microkernel for CubeStagedMicrokernel {
         // too: whichever of the two the device's shared memory refuses is not raced.
         let rings = [
             lead.ringed(double),
-            multi_row.ringed(double),
             lead.ringed(prefetching_one_stage),
             lead.ringed(prefetching),
-            multi_row.ringed(prefetching),
             deep.ringed(prefetching),
             deep.ringed(prefetching_one_stage),
             deep_on_2x2.ringed(prefetching),
@@ -586,23 +560,6 @@ impl Microkernel for CubeStagedMicrokernel {
             small_on_2x1.ringed(prefetching),
             small_on_2x2.ringed(prefetching),
         ];
-        // The deep box in the `mma` instruction's terms: its `16 × 8` fragments two by sixteen
-        // give the plane the `32 × 128` tile four by four of `cmma`'s `8 × 32` do. The deep box's
-        // own fragments give it `64 × 32`, a box too narrow along `n` to reuse its lhs.
-        let deep_for_mma = boxed((2, 16, 2), (4, 1));
-        let transports = [
-            deep_for_mma,
-            deep_for_mma.ringed(prefetching),
-            deep_for_mma.ringed(prefetching_one_stage),
-            deep,
-            deep.ringed(prefetching),
-            deep.ringed(prefetching_one_stage),
-            small_on_2x2,
-            small_on_2x1.ringed(prefetching),
-            small_on_2x2.ringed(prefetching),
-        ]
-        .map(|settings| settings.through(Mma));
-
         let split_lead = Self::Settings::SPLIT_ALONG_K;
         let split = |planes_along_k| Self::Settings {
             planes_along_k: count(planes_along_k),
@@ -627,7 +584,6 @@ impl Microkernel for CubeStagedMicrokernel {
             .chain(boxes)
             .chain(small_cubes)
             .chain(rings)
-            .chain(transports)
             .chain(rows_in_order)
             .chain([split_lead])
             .chain(splits)
@@ -643,14 +599,15 @@ impl Microkernel for CubeStagedMicrokernel {
         }
     }
 
-    /// Where the settings ask for a warpgroup MMA, that its rules do not hold for this device or
-    /// product ([`PlaneFragmentTransport::Wgmma`]); [`DECLINE`](Self::DECLINE) otherwise.
+    /// Where the settings put the planes on warpgroups, that the warpgroup MMA's rules do not hold
+    /// for this device or product; [`DECLINE`](Self::DECLINE) otherwise.
     fn decline(settings: &Self::Settings) -> &'static str {
-        match settings.plane.transport {
-            PlaneFragmentTransport::Wgmma => {
-                "this setting asks for a warpgroup MMA, which this device or product does not take"
+        match settings.plane.holder {
+            ComputeScope::WARPGROUP => {
+                "this setting deals tiles to warpgroups, whose warpgroup MMA this device or \
+                 product does not take"
             }
-            PlaneFragmentTransport::Cmma | PlaneFragmentTransport::Mma => Self::DECLINE,
+            _ => Self::DECLINE,
         }
     }
 
@@ -706,11 +663,6 @@ impl Microkernel for CubeStagedMicrokernel {
                 vectorization.require(VectorRequirement::Elementwise {
                     operand: MatmulOperand::Out,
                 });
-                if self.plane.instruction.drain() == PlaneFragmentDrain::InLines {
-                    vectorization.require(VectorRequirement::Elementwise {
-                        operand: MatmulOperand::Rhs,
-                    });
-                }
             }
         }
         self.plane.vectorize(&(), vectorization);
@@ -866,10 +818,6 @@ mod tests {
         let rounded =
             CubeStagedMicrokernel::best(&hw, &item(MatmulReading::Rounded), &settings).unwrap();
         assert_eq!(rounded.decoded_stage(), Some(tf32));
-        assert!(!matches!(
-            rounded.plane.instruction,
-            PlaneFragmentInstruction::Registers { .. }
-        ));
         let exact =
             CubeStagedMicrokernel::best(&hw, &item(MatmulReading::AsStored), &settings).unwrap();
         assert_eq!(exact.decoded_stage(), None);

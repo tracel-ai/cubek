@@ -500,7 +500,7 @@ impl MatmulRoutine<PlaneShuffleMicrokernel> for PlaneShuffleMatmulRoutine {
                 binding.rhs,
                 O::arg(binding.out),
                 binding.launcher.partitioning_arg(),
-                blueprint.microkernel.tile_instruction(),
+                blueprint.microkernel.block(),
                 [sum, out],
             );
         }

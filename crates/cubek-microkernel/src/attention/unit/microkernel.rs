@@ -26,8 +26,8 @@ pub fn unit_attention_microkernel<EA: Float>(
     scale: EA,
     #[comptime] microkernel: UnitAttentionMicrokernel,
 ) {
-    let value_instruction = microkernel.value.tile_instruction();
-    let mut sum = out.accumulator::<EA>(bias, value, value_instruction, Semiring::SUM_PROD);
+    let value_block = microkernel.value.block();
+    let mut sum = out.register_accumulator::<EA>(bias, value, value_block, Semiring::SUM_PROD);
     sum.zero();
 
     let mut softmax = OnlineSoftmax::<EA>::along(bias, S);
@@ -75,8 +75,8 @@ pub(crate) fn unit_attention_step<EA: Float>(
     scale: EA,
     #[comptime] microkernel: UnitAttentionMicrokernel,
 ) {
-    let score_instruction = microkernel.score.tile_instruction();
-    let mut score = bias.accumulator::<EA>(query, key, score_instruction, Semiring::SUM_PROD);
+    let score_block = microkernel.score.block();
+    let mut score = bias.register_accumulator::<EA>(query, key, score_block, Semiring::SUM_PROD);
     score.zero();
 
     for depth in step.walk() {

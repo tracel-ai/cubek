@@ -13,7 +13,7 @@ use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedStore, MatmulPlaneLayout,
 };
-use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
+use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_std::Hardware;
 use cubek_std::microkernel::KernelEstimate;
 use cubek_std::microkernel::StageRing;
@@ -114,9 +114,7 @@ impl Routine for CubeStagedTmaStoredMatmulRoutine {
         };
         [((2, 8, 4), (2, 2)), ((2, 4, 4), (2, 2))]
             .map(|(grid, planes)| Self::Settings {
-                microkernel: boxed(grid, planes)
-                    .ringed(StageRing::TRIPLE)
-                    .through(PlaneFragmentTransport::Mma),
+                microkernel: boxed(grid, planes).ringed(StageRing::TRIPLE),
                 filling_planes: 1,
                 cube_order: CubeOrder::RowMajor,
             })

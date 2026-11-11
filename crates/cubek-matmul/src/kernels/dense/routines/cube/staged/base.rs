@@ -17,7 +17,7 @@ use cubecl::tile::launch::{
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{StageStorage, TileTensorLaunch};
+use cubecl::tile::{FragmentSource, Instruction, StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::{
     CubeStagedAsyncCopyRefusal, CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel,
     CubeStagedMicrokernelSettings, CubeStagedResolved, CubeStagedStore, CubeStagedTmaRefusal,
@@ -71,10 +71,34 @@ impl<'a> CubeStagedPlacement<'a> {
         let item = view.work_item();
         CubeStagedMicrokernel::admits(&item)?;
         let by_units = fill.delivery == CubeStagedDelivery::Copy;
-        let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
-            .find(|candidate| {
+        let candidates: Vec<_> = CubeStagedMicrokernel::candidates(hw, &item, settings)
+            .filter(|candidate| {
                 by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
             })
+            .collect();
+        // An operand the TMA engine lands is read in the instruction the tile layer picks for
+        // landed operands: the planes take the first candidate it picks, and the first one
+        // otherwise, as the kernel's sum will.
+        let tiles_pick = |candidate: &&CubeStagedMicrokernel| {
+            let plane = &candidate.plane;
+            let [(_, m), (_, n), (_, k)] = plane.instruction.shape_along(plane.settings.rows_along);
+            let picked = Instruction::for_accumulator(
+                &hw.properties,
+                &hw.target,
+                plane.settings.holder,
+                FragmentSource::Landed(item.elements.lhs),
+                FragmentSource::Landed(item.elements.rhs),
+                item.sum,
+                [m, n, k],
+            );
+            picked == Some(plane.tile_instruction())
+        };
+        let landed = fill.delivery == CubeStagedDelivery::Tma;
+        let microkernel = candidates
+            .iter()
+            .find(|candidate| landed && tiles_pick(candidate))
+            .or(candidates.first())
+            .copied()
             .ok_or(Refusal::Declined {
                 why: CubeStagedMicrokernel::decline(settings),
             })?;

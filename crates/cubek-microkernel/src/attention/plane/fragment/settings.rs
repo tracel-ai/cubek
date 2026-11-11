@@ -89,7 +89,6 @@ impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
         match self.transport {
             PlaneFragmentTransport::Mma => {}
             PlaneFragmentTransport::Cmma => write!(f, " transport=cmma")?,
-            PlaneFragmentTransport::Wgmma => write!(f, " transport=wgmma")?,
         }
         match self.shape {
             InstructionShape::Square => {}

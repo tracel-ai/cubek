@@ -44,7 +44,7 @@ pub fn hypercube_last_arrival_matmul_kernel<
         let (from, steps) = portion.steps(i);
 
         let merge = slots.last_arrival::<VO>(&partitioning, &portion, i, arrivals);
-        hypercube_staged_last_arrival_microkernel::<EA, EL>(
+        hypercube_staged_last_arrival_microkernel::<EA>(
             tile.over(&stages).range(from, steps),
             &a.at(&tile),
             &b.at(&tile),

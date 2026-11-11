@@ -1,9 +1,8 @@
 use crate::matmul::cube::MatmulPlaneLayout;
-use crate::matmul::plane::{
-    PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong, PlaneFragmentTransport,
-};
+use crate::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong};
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
+use cubecl::tile::space::ComputeScope;
 use cubek_std::microkernel::{StageLayout, StageRing};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -49,15 +48,6 @@ impl CubeStagedMicrokernelSettings {
         ..Self::DEFAULT
     };
 
-    /// The tile DSL's multi-row box: one column of four planes, each holding two rows of fragments
-    /// across the cube's `n`, reached through the tile DSL's transport. Under `cmma` a row rhs's
-    /// `B` fragment is read in scalar loads and spills two steps deep, where the tile DSL's
-    /// transport does not.
-    pub const MULTI_ROW: Self = Self::boxed(
-        PlaneFragmentMicrokernelSettings::grid(2, 8, 2).through(PlaneFragmentTransport::Mma),
-        MatmulPlaneLayout::new(4, 1),
-    );
-
     /// A box against a packed input, counted in steps of the packed product
     /// ([`MatmulStep`](crate::matmul::MatmulStep)): `steps` of `M` and `N` on each
     /// plane, on `planes` (along `m` by along `n`), holding its stages in `ring`. A step's box is
@@ -85,7 +75,7 @@ impl CubeStagedMicrokernelSettings {
 
     /// A box against a packed input its stages hold as it is stored, its planes decoding it as
     /// each fragment loads: `fragments` of the decoding instruction along `m`, `n` and `k` on each
-    /// plane, through the tile DSL's transport, each fragment as deep as the stage
+    /// plane, each fragment as deep as the stage
     /// ([`windowed`](PlaneFragmentMicrokernelSettings::windowed)), on `planes` (along `m` by along
     /// `n`), holding its stages in `ring`. Each fragment of the rhs is decoded once a step and
     /// contracted against every fragment of the lhs along `m`.
@@ -150,10 +140,10 @@ impl CubeStagedMicrokernelSettings {
         Self { ring, ..self }
     }
 
-    /// These settings with their planes reaching the matrix instruction through `transport`.
-    pub const fn through(self, transport: PlaneFragmentTransport) -> Self {
+    /// These settings with each plane tile held by `holder`.
+    pub const fn held_by(self, holder: ComputeScope) -> Self {
         Self {
-            plane: self.plane.through(transport),
+            plane: self.plane.held_by(holder),
             ..self
         }
     }

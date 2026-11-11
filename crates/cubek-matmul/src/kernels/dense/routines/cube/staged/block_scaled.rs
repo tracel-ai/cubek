@@ -43,7 +43,7 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::{BlockScaledOperands, Space};
 use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
-use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
+use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStep};
 use cubek_std::layout::stored::{Operand, Packing};
 use cubek_std::matmul_axes::{K, M, N};
@@ -231,7 +231,6 @@ fn in_steps(step: &MatmulStep, shape: StagedShape) -> CubeStagedMicrokernelSetti
             along_m: calls(rows, M),
             along_n: calls(columns, N),
             depth: calls(depth, K),
-            transport: PlaneFragmentTransport::Mma,
             ..PlaneFragmentMicrokernelSettings::DEFAULT
         },
         planes: MatmulPlaneLayout::new(shape.planes.0, shape.planes.1),

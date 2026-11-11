@@ -12,18 +12,17 @@ mod base {
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::launch::{Delivery, Refusal};
     use cubecl::tile::layout::ElemAlignment;
-    use cubecl::tile::space::CubeOrder;
+    use cubecl::tile::space::{ComputeScope, CubeOrder};
     use cubecl::tile::stage::RowChunks;
     use cubecl::tile::{Scratch, StageStorage};
     use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::{
         CubeStagedAsyncCopyRefusal, CubeStagedDelivery, CubeStagedFillingRefusal,
         CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedStore,
-        CubeStagedTmaRefusal, CubeStagedTmaStoreRefusal, MatmulPlaneLayout,
+        CubeStagedTmaRefusal, CubeStagedTmaStoreRefusal,
     };
     use cubek_microkernel::matmul::plane::{
         PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-        PlaneFragmentStepSum, PlaneFragmentTransport,
     };
     use cubek_microkernel::matmul::{
         MatmulDestination, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead,
@@ -53,50 +52,6 @@ mod base {
             &partitioning.cube_space(),
             microkernel,
         )
-    }
-
-    /// Every setting the six cube staged routines list on `hw`, by its microkernel's settings,
-    /// each named by its routine.
-    fn every_listed(hw: &Hardware) -> Vec<(String, CubeStagedMicrokernelSettings)> {
-        let named = |name: String, microkernel| (name, microkernel);
-        let mut listed = Vec::new();
-        listed.extend(
-            CubeStagedMatmulRoutine
-                .settings(hw)
-                .into_iter()
-                .map(|s| named(s.to_string(), s.microkernel)),
-        );
-        listed.extend(
-            CubeStagedAsyncCopyMatmulRoutine
-                .settings(hw)
-                .into_iter()
-                .map(|s| named(s.to_string(), s.microkernel)),
-        );
-        listed.extend(
-            CubeStagedTmaMatmulRoutine
-                .settings(hw)
-                .into_iter()
-                .map(|s| named(s.to_string(), s.microkernel)),
-        );
-        listed.extend(
-            CubeStagedTmaFillerMatmulRoutine
-                .settings(hw)
-                .into_iter()
-                .map(|s| named(s.to_string(), s.microkernel)),
-        );
-        listed.extend(
-            CubeStagedTmaStoredMatmulRoutine
-                .settings(hw)
-                .into_iter()
-                .map(|s| named(s.to_string(), s.microkernel)),
-        );
-        listed.extend(
-            CubeStagedWgmmaMatmulRoutine
-                .settings(hw)
-                .into_iter()
-                .map(|s| named(s.to_string(), s.microkernel)),
-        );
-        listed
     }
 
     /// A routine's preparation of a problem at one of its settings, named by the setting.
@@ -358,10 +313,10 @@ mod base {
         (blueprint.microkernel.plane.instruction, grid.planes().width)
     }
 
-    /// The vendor's transport, then the tile DSL's for the same shape, then the software
-    /// instruction.
+    /// The tile layer's pick alone: the vendor's transport for a sum written out, and not the tile
+    /// DSL's at the same shape, which would build a twin, nor the software instruction.
     #[test]
-    fn the_candidates_are_the_matrix_instructions_then_the_software_one() {
+    fn the_candidates_are_the_tiles_pick_alone() {
         let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
         let item = MatmulView::new(&problem(), CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
@@ -372,41 +327,88 @@ mod base {
             .collect();
         assert_eq!(
             instructions,
-            [
-                PlaneFragmentInstruction::Cmma { shape: SHAPE },
-                PlaneFragmentInstruction::mma(SHAPE),
-                PlaneFragmentInstruction::Registers {
-                    step_sum: PlaneFragmentStepSum::Wide,
-                },
-            ]
+            [PlaneFragmentInstruction::Cmma { shape: SHAPE }]
         );
     }
 
-    /// A setting asking for the tile DSL's transport first reaches the shape through it before the
-    /// vendor's, and still ends in the software instruction.
+    /// No two settings the cube staged routines list build the same kernel: on a device offering
+    /// its `f16` instruction to both transports, no two settings that prepare a product prepare
+    /// the same blueprint, so a race times each kernel once. The instruction is the tile layer's,
+    /// so a setting that named a transport would repeat another setting's kernel.
     #[test]
-    fn a_transport_setting_orders_the_two_transports() {
-        let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
-        let item = MatmulView::new(&problem(), CubeStagedMatmulRoutine::ROWS_KIND)
-            .expect(MatmulView::PREPARED)
-            .work_item();
-        let settings = PlaneFragmentMicrokernelSettings {
-            transport: PlaneFragmentTransport::Mma,
-            ..PlaneFragmentMicrokernelSettings::DEFAULT
+    fn no_two_settings_build_the_same_kernel() {
+        let eight = MmaConfig {
+            m: 8,
+            n: 8,
+            k: 8,
+            ..SHAPE
         };
-        let instructions: Vec<_> = PlaneFragmentMicrokernel::candidates(&hw, &item, &settings)
-            .map(|candidate| candidate.instruction)
-            .collect();
-        assert_eq!(
-            instructions,
-            [
-                PlaneFragmentInstruction::mma(SHAPE),
-                PlaneFragmentInstruction::Cmma { shape: SHAPE },
-                PlaneFragmentInstruction::Registers {
-                    step_sum: PlaneFragmentStepSum::Wide,
-                },
-            ]
-        );
+        let narrow = MmaConfig { n: 8, ..SHAPE };
+        let devices = [
+            (
+                "strix_halo",
+                devices::offering_mma(offering(devices::strix_halo()), [narrow]),
+            ),
+            (
+                "h100",
+                devices::offering_mma(offering(devices::h100()), [narrow]),
+            ),
+            (
+                "m2_pro",
+                devices::offering_mma(devices::offering_cmma(devices::m2_pro(), [eight]), [eight]),
+            ),
+        ];
+        for (device, hw) in devices {
+            for problem in [
+                MatmulRoutineProblem::dense(1024, 1024, 1024, F16),
+                col_rhs(),
+            ] {
+                let mut prepared = Vec::new();
+                prepared.extend(prepared_by(
+                    &hw,
+                    &problem,
+                    CubeStagedMatmulRoutine,
+                    CubeStagedMatmulRoutine.settings(&hw),
+                ));
+                prepared.extend(prepared_by(
+                    &hw,
+                    &problem,
+                    CubeStagedAsyncCopyMatmulRoutine,
+                    CubeStagedAsyncCopyMatmulRoutine.settings(&hw),
+                ));
+                prepared.extend(prepared_by(
+                    &hw,
+                    &problem,
+                    CubeStagedTmaMatmulRoutine,
+                    CubeStagedTmaMatmulRoutine.settings(&hw),
+                ));
+                prepared.extend(prepared_by(
+                    &hw,
+                    &problem,
+                    CubeStagedTmaFillerMatmulRoutine,
+                    CubeStagedTmaFillerMatmulRoutine.settings(&hw),
+                ));
+                prepared.extend(prepared_by(
+                    &hw,
+                    &problem,
+                    CubeStagedTmaStoredMatmulRoutine,
+                    CubeStagedTmaStoredMatmulRoutine.settings(&hw),
+                ));
+                let built: Vec<_> = prepared
+                    .into_iter()
+                    .filter_map(|(name, prepared)| Some((name, prepared.ok()?.0)))
+                    .collect();
+                assert!(!built.is_empty(), "{device}: no setting prepares");
+                for (position, (name, blueprint)) in built.iter().enumerate() {
+                    for (other, other_blueprint) in &built[position + 1..] {
+                        assert!(
+                            blueprint != other_blueprint,
+                            "{device}: {name} and {other} build the same kernel"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// A device offering its shape only under the tile DSL's transport runs it there.
@@ -451,8 +453,7 @@ mod base {
             CubeStagedMatmulRoutine
                 .settings(&hw)
                 .iter()
-                .all(|settings| settings.microkernel.plane.transport
-                    != PlaneFragmentTransport::Wgmma)
+                .all(|settings| settings.microkernel.plane.holder == ComputeScope::Plane)
         );
         for (problem, col) in [(problem(), false), (col_rhs(), true)] {
             let prepared = CubeStagedWgmmaMatmulRoutine.prepare(&hw, &problem, &wgmma[0]);
@@ -562,41 +563,20 @@ mod base {
     }
 
     /// No instruction for the elements, or a plane whose width the device will not commit to, which
-    /// a fragment spread across the plane needs: the software instruction runs, on its own units.
+    /// a fragment spread across the plane needs: the plane routine refuses, as a plane holds a
+    /// fragment, and the unit routines take the product.
     #[test]
-    fn the_software_instruction_runs_where_no_matrix_instruction_does() {
-        let software = PlaneFragmentInstruction::Registers {
-            step_sum: PlaneFragmentStepSum::Wide,
-        };
-        let units = software.units(&devices::strix_halo()).unwrap() as usize;
+    fn the_plane_routine_refuses_where_no_matrix_instruction_runs() {
+        let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
         for hw in [
             devices::strix_halo(),
             offering(devices::rdna_range()),
             offering(devices::wgpu_no_subgroups()),
         ] {
-            assert_eq!(elected(hw.clone(), &problem()), (software, units), "{hw:?}");
+            let prepared = CubeStagedMatmulRoutine.prepare(&hw, &problem(), &settings);
+            assert!(prepared.is_err(), "{hw:?}");
         }
     }
-
-    /// A narrow step changes what the product computes, so it is an opt-in: no setting the routine
-    /// lists, on any device, asks for one.
-    #[test]
-    fn no_listed_setting_steps_narrow() {
-        for hw in [
-            devices::strix_halo(),
-            devices::wgpu_no_subgroups(),
-            devices::h100(),
-        ] {
-            for (name, microkernel) in every_listed(&hw) {
-                assert_eq!(
-                    microkernel.plane.step_sum,
-                    PlaneFragmentStepSum::Wide,
-                    "{name}"
-                );
-            }
-        }
-    }
-
     /// The device prunes the lists: the copy engine's routine lists settings only where the copy
     /// engine runs, which elsewhere it would refuse.
     #[test]
@@ -607,30 +587,6 @@ mod base {
             assert_eq!(engine_twins(hw.clone()), 0, "{hw:?}");
         }
     }
-
-    /// A narrow step where the setting asks for it and the operands admit it — `f16` summed in
-    /// `f32` — and the wide step's kernel everywhere else, matrix instructions included.
-    #[test]
-    fn a_narrow_step_is_the_software_instructions_on_f16_alone() {
-        let narrow = default_with(|microkernel| {
-            microkernel.plane.step_sum = PlaneFragmentStepSum::Narrow;
-        });
-        let elected = |hw: &Hardware, element| {
-            let problem = MatmulRoutineProblem::dense(37, 29, 19, element);
-            let (blueprint, _) = CubeStagedMatmulRoutine
-                .prepare(hw, &problem, &narrow)
-                .expect("the plane routine prepares here");
-            blueprint.microkernel.plane.instruction.step_sum()
-        };
-        let software = devices::strix_halo();
-        assert_eq!(elected(&software, F16), PlaneFragmentStepSum::Narrow);
-        assert_eq!(elected(&software, F32), PlaneFragmentStepSum::Wide);
-        assert_eq!(
-            elected(&offering(devices::strix_halo()), F16),
-            PlaneFragmentStepSum::Wide
-        );
-    }
-
     /// A CPU runtime holds a dozen units a cube, fewer than one cube of planes of the software
     /// instruction: the plane routine declines there, and the unit routine is the floor.
     #[test]
@@ -672,35 +628,6 @@ mod base {
                 }
             }
         }
-    }
-
-    /// The tile DSL's multi-row box on the `16×16×16` instruction: four planes stacked along `m`,
-    /// each holding two rows of eight fragments, so one plane owns `32 × 128` and the cube's box is
-    /// `128 × 128`, walked two instruction steps of `K` a stage, the cubes in strips along `m`.
-    #[test]
-    fn the_multi_row_box_stacks_its_planes_along_m() {
-        let hw = offering(devices::strix_halo());
-        let problem = MatmulRoutineProblem::dense(1024, 1024, 256, F16);
-        let multi_row = CubeStagedMatmulRoutine
-            .settings(&hw)
-            .into_iter()
-            .find(|settings| settings.microkernel.planes == MatmulPlaneLayout::new(4, 1))
-            .expect("the list holds a multi-row box");
-        let (blueprint, grid) = CubeStagedMatmulRoutine
-            .prepare(&hw, &problem, &multi_row)
-            .expect("the routine runs here");
-        let (cube, stage) = (
-            blueprint.partitioning.cube_space().space,
-            blueprint.partitioning.stage(),
-        );
-        assert_eq!((cube.extent(M), cube.extent(N)), (128, 128));
-        assert_eq!(stage.extent(K), 32);
-        assert_eq!(blueprint.microkernel.plane.tile_extent(M), 32);
-        assert_eq!(grid.planes().count, 4);
-        assert_eq!(
-            blueprint.partitioning.cube_order(),
-            CubeOrder::SwizzleRow(4)
-        );
     }
 
     /// A second stage in flight holds a second stage of shared memory, and the blueprint carries
@@ -1556,29 +1483,6 @@ mod base {
             .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.scratch, Scratch::OneTile);
     }
-
-    /// Planes running the software instruction add their cells into the accumulator on their
-    /// own, and hold no window to bounce them through.
-    #[test]
-    fn the_software_instruction_adds_without_a_scratch() {
-        let settings = CubeStagedMatmulRoutineSettings::SPLIT_ALONG_K;
-        let (blueprint, grid) = CubeStagedMatmulRoutine
-            .prepare(&devices::strix_halo(), &problem(), &settings)
-            .expect("the routine runs the software instruction here");
-        let plane = blueprint.microkernel.plane;
-        assert_eq!(
-            plane.instruction,
-            PlaneFragmentInstruction::Registers {
-                step_sum: PlaneFragmentStepSum::Wide,
-            }
-        );
-        assert_eq!(blueprint.microkernel.scratch, Scratch::None);
-        assert_eq!(
-            grid.planes().width,
-            plane.instruction.units(&devices::strix_halo()).unwrap() as usize
-        );
-    }
-
     /// Planes split along `K` read their stages as wide as the device reads `f16`; the output is
     /// copied out of the atomics one element at a time.
     #[test]

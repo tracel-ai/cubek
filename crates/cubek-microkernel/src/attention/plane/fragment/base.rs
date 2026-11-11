@@ -11,7 +11,7 @@ use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Instruction, Level, Levels, Space};
+use cubecl::tile::{Axis, Level, Levels, Space};
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, SWIZZLED_STAGE_UNREAD,
@@ -75,20 +75,15 @@ impl PlaneFragmentAttentionMicrokernel {
     pub fn score_holder(&self) -> ScoreHolder {
         match self.score.instruction {
             PlaneFragmentInstruction::Mma { .. } => ScoreHolder::Fragments,
-            PlaneFragmentInstruction::Cmma { .. }
-            | PlaneFragmentInstruction::Registers { .. }
-            | PlaneFragmentInstruction::Wgmma { .. } => ScoreHolder::Window,
+            PlaneFragmentInstruction::Cmma { .. } | PlaneFragmentInstruction::Wgmma { .. } => {
+                ScoreHolder::Window
+            }
         }
     }
 
     /// The edge a fragment of the output spans along the value dim, which a drain writes at once.
     pub fn out_edge(&self) -> usize {
         self.value.leaf_extent(MatmulDim::N)
-    }
-
-    /// The value's instruction as the tile DSL runs it, which the plane's sum is opened in.
-    pub fn tile_instruction(&self) -> Instruction {
-        self.value.tile_instruction()
     }
 
     /// The score's own levels where the plane reads it through its windows, which its accumulator
@@ -140,7 +135,6 @@ impl PlaneFragmentAttentionMicrokernel {
         let unsized_grid = PlaneFragmentMicrokernelSettings {
             along_m: settings.seq_q,
             along_n: settings.seq_kv,
-            transport: settings.transport,
             ..PlaneFragmentMicrokernelSettings::DEFAULT
         };
         let value_item = Self::value_item(item);
@@ -227,15 +221,12 @@ impl PlaneFragmentAttentionMicrokernel {
                     .map(PlaneFragmentInstruction::mma)
             }
 
-            PlaneFragmentInstruction::Mma { .. }
-            | PlaneFragmentInstruction::Registers { .. }
-            | PlaneFragmentInstruction::Wgmma { .. } => None,
+            PlaneFragmentInstruction::Mma { .. } | PlaneFragmentInstruction::Wgmma { .. } => None,
         }
     }
 
     /// Whether `score` comes after another of the settings' preference: one through the other
-    /// transport, or a cmma one of the other shape. The shared microkernel already lists the
-    /// settings' transport first.
+    /// transport, or a cmma one of the other shape.
     fn deferred(
         settings: PlaneFragmentAttentionMicrokernelSettings,
         score: PlaneFragmentInstruction,
@@ -248,10 +239,7 @@ impl PlaneFragmentAttentionMicrokernel {
             PlaneFragmentInstruction::Mma { .. } => {
                 (settings.transport != PlaneFragmentTransport::Mma, false)
             }
-            PlaneFragmentInstruction::Wgmma { .. } => {
-                (settings.transport != PlaneFragmentTransport::Wgmma, false)
-            }
-            PlaneFragmentInstruction::Registers { .. } => (true, false),
+            PlaneFragmentInstruction::Wgmma { .. } => (true, false),
         }
     }
 

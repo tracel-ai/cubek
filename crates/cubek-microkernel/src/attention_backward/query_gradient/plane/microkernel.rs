@@ -41,7 +41,6 @@ pub fn plane_fragment_query_gradient_microkernel<EA: Float, ES: Float>(
     delta.dot::<EA>(out_gradient, out);
 
     let walk = queries.walk().range(0, steps);
-    let sum = PlaneQueryGradientMicrokernel::open_sum::<EA>(query_gradient, bias, key, microkernel);
 
     // The query and the output's gradient span no key: staged once, before the walk.
     let mut staged_query = query.stage_for(&walk, StageStorage::Strided, None);
@@ -51,6 +50,14 @@ pub fn plane_fragment_query_gradient_microkernel<EA: Float, ES: Float>(
 
     let windows =
         ScoreWindows::held_or_open::<EA, ES>(&walk, comptime!(vec![G, Q, S]), microkernel.holder());
+    let gradient = ScoreWindows::cast_box::<EA>(
+        &windows,
+        &walk,
+        comptime!(vec![G, Q, S]),
+        &staged_out_gradient,
+    );
+    let sum =
+        PlaneQueryGradientMicrokernel::open_sum::<EA>(query_gradient, &gradient, key, microkernel);
 
     // The query, the output's gradient and the dot products land before any is read.
     sync_plane();
@@ -92,20 +99,16 @@ pub fn plane_fragment_query_gradient_microkernel<EA: Float, ES: Float>(
 #[cube]
 impl PlaneQueryGradientMicrokernel {
     /// The sum every stage's query gradient adds into, at `EA`, opened at zero on `query_gradient`
-    /// against the keys, with the scratch its scale bounces through.
+    /// against what each stage contracts with the keys, `gradient`
+    /// ([`ScoreWindows::cast_box`]), with the scratch its scale bounces through.
     pub(crate) fn open_sum<EA: Float>(
         query_gradient: &Tile,
-        bias: &Tile,
+        gradient: &Tile,
         key: &Tile,
         #[comptime] microkernel: Self,
     ) -> Tile {
         let mut sum = query_gradient
-            .accumulator::<EA>(
-                bias,
-                key,
-                microkernel.query_gradient.tile_instruction(),
-                Semiring::SUM_PROD,
-            )
+            .accumulator::<EA>(gradient, key, Semiring::SUM_PROD)
             .with_scratch(microkernel.sum_scratch());
         sum.zero();
         sum
@@ -189,7 +192,6 @@ impl PlaneQueryGradientMicrokernel {
         #[comptime] score_gradient_levels: Vec<Level>,
     ) {
         let (scores, gradients) = (&windows.scores, &windows.gradients);
-        let wide = ComptimeOption::<Tile>::new_None();
 
         ScoreWindows::contract_into::<EA>(scores, query, key, microkernel.score, score_levels);
 
@@ -226,10 +228,8 @@ impl PlaneQueryGradientMicrokernel {
         plane_fragment_microkernel(
             stage,
             &sum.clone(),
-            &wide,
             &cast,
             key,
-            microkernel.query_gradient.tile_instruction(),
             None,
             MatmulOperands::AS_BOUND,
         );

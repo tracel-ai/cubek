@@ -132,9 +132,9 @@ impl PlaneQueryGradientMicrokernel {
     pub fn holder(&self) -> ScoreHolder {
         match self.score.instruction {
             PlaneFragmentInstruction::Mma { .. } => ScoreHolder::Fragments,
-            PlaneFragmentInstruction::Cmma { .. }
-            | PlaneFragmentInstruction::Registers { .. }
-            | PlaneFragmentInstruction::Wgmma { .. } => ScoreHolder::Window,
+            PlaneFragmentInstruction::Cmma { .. } | PlaneFragmentInstruction::Wgmma { .. } => {
+                ScoreHolder::Window
+            }
         }
     }
 
@@ -144,7 +144,7 @@ impl PlaneQueryGradientMicrokernel {
     pub fn sum_scratch(&self) -> Scratch {
         match self.query_gradient.instruction.drain() {
             PlaneFragmentDrain::Bounce => self.settings.scratch,
-            PlaneFragmentDrain::CellByCell | PlaneFragmentDrain::InLines => Scratch::None,
+            PlaneFragmentDrain::CellByCell => Scratch::None,
         }
     }
 
@@ -289,7 +289,6 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
         let grid = PlaneFragmentMicrokernelSettings {
             along_m: settings.seq_q,
             along_n: settings.seq_kv,
-            transport: settings.transport,
             ..PlaneFragmentMicrokernelSettings::DEFAULT
         };
         let (score_item, gradient_item) = (item.score(Q), item.score_gradient(Q));

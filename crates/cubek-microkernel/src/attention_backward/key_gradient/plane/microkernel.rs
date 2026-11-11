@@ -50,7 +50,7 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
     let sums = KeyGradientSums::open::<EA>(
         key_gradient,
         value_gradient,
-        &ScoreWindows::scores_box::<EA>(&windows, &shape, key, microkernel.score),
+        &ScoreWindows::cast_box::<EA>(&windows, &shape, comptime!(vec![S, Q]), key),
         &query.at(&first_head),
         &out_gradient.at(&first_head),
         microkernel,
@@ -132,22 +132,12 @@ impl KeyGradientSums {
         #[comptime] microkernel: PlaneKeyGradientMicrokernel,
     ) -> KeyGradientSums {
         let mut key = key_gradient
-            .accumulator::<EA>(
-                scores,
-                query,
-                microkernel.key_gradient.tile_instruction(),
-                Semiring::SUM_PROD,
-            )
+            .accumulator::<EA>(scores, query, Semiring::SUM_PROD)
             .with_scratch(microkernel.sum_scratch());
         key.zero();
 
         let mut value = value_gradient
-            .accumulator::<EA>(
-                scores,
-                out_gradient,
-                microkernel.value_gradient.tile_instruction(),
-                Semiring::SUM_PROD,
-            )
+            .accumulator::<EA>(scores, out_gradient, Semiring::SUM_PROD)
             .with_scratch(microkernel.sum_scratch());
         value.zero();
 
@@ -261,7 +251,6 @@ impl PlaneKeyGradientMicrokernel {
     ) {
         let (scores, gradients) = (&windows.scores, &windows.gradients);
         let mut cast = windows.cast.clone();
-        let wide = ComptimeOption::<Tile>::new_None();
 
         ScoreWindows::contract_into::<EA>(scores, key, query, microkernel.score, score_levels);
 
@@ -283,10 +272,8 @@ impl PlaneKeyGradientMicrokernel {
         plane_fragment_microkernel(
             stage,
             &sums.value.clone(),
-            &wide,
             &cast.clone(),
             out_gradient,
-            microkernel.value_gradient.tile_instruction(),
             comptime!(Some(D)),
             MatmulOperands::AS_BOUND,
         );
@@ -317,10 +304,8 @@ impl PlaneKeyGradientMicrokernel {
         plane_fragment_microkernel(
             stage,
             &sums.key.clone(),
-            &wide,
             &cast.clone(),
             query,
-            microkernel.key_gradient.tile_instruction(),
             comptime!(Some(DV)),
             MatmulOperands::AS_BOUND,
         );
