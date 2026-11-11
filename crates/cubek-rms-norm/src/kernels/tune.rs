@@ -26,7 +26,8 @@ use cubek_std::routine::{Grid, PreparedLaunches, Routine};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// What makes two norms want the same kernel.
+/// What makes two norms want the same kernel: the elements the rows are read and written in, the
+/// width and the count.
 ///
 /// The row width is **exact**: it is a `d_model` or a `head_dim`, fixed by the model config, and
 /// every owner sizes its registers by it. The row count is anchored — it is the axis a caller
@@ -34,6 +35,8 @@ use std::sync::Arc;
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct RmsNormKey {
     elem: ElemType,
+    /// The element the norm is written at: it changes the kernel and the width it binds at.
+    output_element: ElemType,
     /// The normalized row's width.
     dim: usize,
     #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
@@ -64,31 +67,34 @@ impl RmsNormKey {
     }
 }
 
-/// The key of the norm of `x`'s rows: what tells it apart is the rows' element, width and count.
-impl From<&PlainTensor> for RmsNormKey {
-    fn from(x: &PlainTensor) -> Self {
-        let shape = &x.binding.shape;
+/// The key of the norm `call` states.
+impl From<&RmsNormCall> for RmsNormKey {
+    fn from(call: &RmsNormCall) -> Self {
+        let shape = &call.input.binding.shape;
         let d = shape[shape.len() - 1];
         let rows = shape.iter().product::<usize>() / d;
-        Self::new(x.elem, d, rows)
+        Self::new(call.input.elem, call.output_element, d, rows)
     }
 }
 
-/// The problem a tuning key describes, at its bucket's rows: dense operands of the key's element.
+/// The problem a tuning key describes, at its bucket's rows: dense operands of the key's element,
+/// written at its output element.
 impl From<&RmsNormKey> for RmsNormRoutineProblem {
     fn from(key: &RmsNormKey) -> Self {
-        Self::dense(key.rows, key.dim, key.elem)
+        Self::dense(key.rows, key.dim, key.elem).writing(key.output_element)
     }
 }
 
 /// One norm, `input / sqrt(mean(input², last) + epsilon) · weight`, as a launch and an autotune
-/// read it: the rows and the weight on `client`'s device.
+/// read it: the rows and the weight on `client`'s device, the output written at `output_element`:
+/// the input's, or `f32`.
 #[derive(Clone)]
 pub struct RmsNormCall {
     pub client: Client,
     pub input: PlainTensor,
     pub weight: PlainTensor,
     pub epsilon: f32,
+    pub output_element: ElemType,
 }
 
 /// What an autotune's candidate hands back: the norm.
@@ -291,7 +297,12 @@ where
     ///
     /// Why this device cannot run the norm at this setting.
     pub fn launch(&self, call: &RmsNormCall) -> Result<TensorHandle, Refusal> {
-        let tensors = RmsNormTensors::new(&call.client, call.input.clone(), call.weight.clone())?;
+        let tensors = RmsNormTensors::new(
+            &call.client,
+            call.input.clone(),
+            call.weight.clone(),
+            call.output_element,
+        )?;
         self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
             tensors
                 .bind(blueprint, grid)
@@ -308,8 +319,13 @@ where
     ///
     /// Why this device cannot run the norm at this setting, or why `out` cannot hold it.
     pub fn launch_tiled(&self, call: &RmsNormCall, out: PlainTensor) -> Result<(), Refusal> {
-        let tensors =
-            RmsNormTensors::tiled(&call.client, call.input.clone(), call.weight.clone(), out)?;
+        let tensors = RmsNormTensors::tiled(
+            &call.client,
+            call.input.clone(),
+            call.weight.clone(),
+            out,
+            call.output_element,
+        )?;
         self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
             tensors
                 .bind(blueprint, grid)
@@ -326,8 +342,13 @@ where
     ///
     /// Why this device cannot encode the norm at this setting, or why `out` cannot hold it.
     pub fn launch_packed(&self, call: &RmsNormCall, out: PackedTensor) -> Result<(), Refusal> {
-        let tensors =
-            RmsNormTensors::packed(&call.client, call.input.clone(), call.weight.clone(), out)?;
+        let tensors = RmsNormTensors::packed(
+            &call.client,
+            call.input.clone(),
+            call.weight.clone(),
+            out,
+            call.output_element,
+        )?;
         self.launch_on::<Encoded, _>(call, &tensors, |blueprint, grid| {
             tensors.bind(blueprint, grid)
         })
@@ -356,7 +377,12 @@ where
     where
         R: Copy,
     {
-        let tensors = RmsNormTensors::sink(&call.client, call.input.clone(), call.weight.clone())?;
+        let tensors = RmsNormTensors::sink(
+            &call.client,
+            call.input.clone(),
+            call.weight.clone(),
+            call.output_element,
+        )?;
         if tensors.problem().rows == 0 {
             return Err(RMS_NORM_SINK_TAKES_NO_ROWS);
         }
@@ -453,7 +479,7 @@ pub fn launch_tuned(call: RmsNormCall, device: &Device, tile: GroupPriority) -> 
         let (handle, _) = PlainTensor::empty_contiguous(
             &call.client,
             call.input.binding.shape.clone(),
-            call.input.elem,
+            call.output_element,
         );
         return handle;
     }
@@ -482,7 +508,7 @@ pub fn launch_into_tuned(
     tile: GroupPriority,
     out: LhsOutput,
 ) -> Result<(), Refusal> {
-    if let Some(elected) = fastest_rms_norm_routine(&call.client, device, &call.input, tile)
+    if let Some(elected) = fastest_rms_norm_routine(device, call, tile)
         && elected.launch_into(call, out.clone()).is_ok()
     {
         return Ok(());
@@ -491,18 +517,17 @@ pub fn launch_into_tuned(
     RmsNormRoutineCandidate::floor(&hw).launch_into(call, out)
 }
 
-/// The routine, at its setting, that the autotune found fastest for the norm of `input`'s rows on
-/// `client`'s `device`, or `None` where no round has settled the key, or the floor named apart won
+/// The routine, at its setting, that the autotune found fastest for the norm `call` states on
+/// `call`'s client's `device`, or `None` where no round has settled the key, or the floor named apart won
 /// it: what a fused tail runs the norm on, so it inherits the kernel the unfused round chose.
 pub fn fastest_rms_norm_routine(
-    client: &Client,
     device: &Device,
-    input: &PlainTensor,
+    call: &RmsNormCall,
     tile: GroupPriority,
 ) -> Option<RmsNormCandidate> {
-    let id = CubeTuneId::new(client, device);
-    let tunables = tunables(&id, client, tile);
-    let key = RmsNormKey::from(input);
+    let id = CubeTuneId::new(&call.client, device);
+    let tunables = tunables(&id, &call.client, tile);
+    let key = RmsNormKey::from(call);
     TUNER.fastest_identity(&id, &tunables, &key)?.routine()
 }
 
@@ -522,7 +547,7 @@ fn candidates(
 ) -> TunableSet<RmsNormKey, RmsNormCall, RmsNormOutput, RmsNormIdentity> {
     let mut autotune =
         Autotune::<RmsNormKey, RmsNormCall, RmsNormOutput, RmsNormIdentity>::measured_on(
-            |call: &RmsNormCall| RmsNormKey::from(&call.input),
+            |call: &RmsNormCall| RmsNormKey::from(call),
             "as-keyed",
             RmsNormKey::representative,
         );
@@ -569,9 +594,9 @@ mod tests {
     #[test]
     fn every_device_keeps_the_floor_and_a_decline_claims_nothing() {
         for key in [
-            RmsNormKey::new(F16, 2560, 1),
-            RmsNormKey::new(F16, 128, 512 * 24),
-            RmsNormKey::new(F16, 8192, 1),
+            RmsNormKey::new(F16, F16, 2560, 1),
+            RmsNormKey::new(F16, F16, 128, 512 * 24),
+            RmsNormKey::new(F16, F16, 8192, 1),
         ] {
             for hw in [
                 devices::rdna_range(),
@@ -616,7 +641,7 @@ mod tests {
         }
         let hw = devices::h100();
 
-        let key = RmsNormKey::new(F16, 512, 512);
+        let key = RmsNormKey::new(F16, F16, 512, 512);
         let (cubes, listed) = distinct(
             RmsNormRoutineCandidate::list(CubeRmsNormRoutine, &hw)
                 .iter()
@@ -627,7 +652,7 @@ mod tests {
             "{cubes} blueprints of {listed} cube settings"
         );
 
-        let key = RmsNormKey::new(F16, 65536, 1);
+        let key = RmsNormKey::new(F16, F16, 65536, 1);
         let (groups, listed) = distinct(
             RmsNormRoutineCandidate::list(CubeGroupsRmsNormRoutine, &hw)
                 .iter()
@@ -639,6 +664,15 @@ mod tests {
         );
     }
 
+    /// What a norm is written at changes the kernel, so it splits the key.
+    #[test]
+    fn the_key_splits_on_the_output_element() {
+        let f32_out = RmsNormKey::new(F16, ElemType::Float(FloatKind::F32), 2560, 1);
+        assert_ne!(f32_out, RmsNormKey::new(F16, F16, 2560, 1));
+        let problem = RmsNormRoutineProblem::from(&f32_out);
+        assert_eq!(problem.output_element, ElemType::Float(FloatKind::F32));
+    }
+
     /// A decode step's single row by cubes of one row falls short of the device, and a prompt's
     /// rows fill it.
     #[test]
@@ -646,9 +680,9 @@ mod tests {
         let hw = devices::strix_halo();
         let lead = RmsNormRoutineCandidate::list(PlaneRmsNormRoutine, &hw).swap_remove(0);
         assert_eq!(
-            lead.priority(&RmsNormKey::new(F16, 128, 512 * 24)),
+            lead.priority(&RmsNormKey::new(F16, F16, 128, 512 * 24)),
             CandidatePriority::FIRST
         );
-        assert!(lead.priority(&RmsNormKey::new(F16, 128, 1)) < CandidatePriority::FIRST);
+        assert!(lead.priority(&RmsNormKey::new(F16, F16, 128, 1)) < CandidatePriority::FIRST);
     }
 }

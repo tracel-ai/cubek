@@ -4,6 +4,23 @@
 use cubecl::ir::{ElemType, FloatKind};
 
 pub const EPSILON: f32 = 1e-6;
+pub const F32: ElemType = ElemType::Float(FloatKind::F32);
+pub const F16: ElemType = ElemType::Float(FloatKind::F16);
+pub const BF16: ElemType = ElemType::Float(FloatKind::BF16);
+
+/// One launch's elements, and where its gate enters.
+#[derive(Debug, Clone, Copy)]
+pub struct Run {
+    pub element: ElemType,
+    pub output_element: ElemType,
+}
+
+/// Runs over cases, at every setting a routine lists or at its default one.
+pub struct Block {
+    pub every_setting: bool,
+    pub runs: Vec<Run>,
+    pub cases: Vec<Case>,
+}
 
 /// `rows` rows of `dim` channels, scaled by one weight row or one per row.
 #[derive(Debug, Clone, Copy)]
@@ -55,6 +72,7 @@ impl Case {
 pub fn round_to(value: f32, element: ElemType) -> f64 {
     match element {
         ElemType::Float(FloatKind::F16) => half::f16::from_f32(value).to_f32() as f64,
+        ElemType::Float(FloatKind::BF16) => half::bf16::from_f32(value).to_f32() as f64,
         _ => value as f64,
     }
 }
@@ -64,26 +82,48 @@ fn wobble(i: usize, salt: usize) -> f32 {
     ((i.wrapping_mul(2654435761) + salt * 40503) % 2048) as f32 / 512.0 - 2.0
 }
 
-pub fn cases() -> Vec<Case> {
+/// The runs of `pairs`, each under every order of `orders`.
+fn runs(pairs: &[(ElemType, ElemType)]) -> Vec<Run> {
+    pairs
+        .iter()
+        .map(|&(element, output_element)| Run {
+            element,
+            output_element,
+        })
+        .collect()
+}
+
+/// What each setting runs, and what the default one runs.
+pub fn blocks() -> Vec<Block> {
     let mut a_row = Case::new(6, 128);
     a_row.weight_a_row = true;
     vec![
-        // Decode steps: the model's row, and a head norm's rows.
-        Case::new(1, 2560),
-        Case::new(16, 128),
-        // A prompt's rows of the model and of its heads.
-        Case::new(37, 1024),
-        Case::new(300, 128),
-        // A short row, a prime one that binds one element at a time, and one a line past a power
-        // of two.
-        Case::new(3, 96),
-        Case::new(2, 111),
-        Case::new(1, 4100),
-        // A row longer than a plane's registers hold, which only the cube and the floor take.
-        Case::new(2, 8192),
-        // No rows: nothing to launch.
-        Case::new(0, 128),
-        // A weight a row, as the query and key heads of a decode step share their norms' weights.
-        a_row,
+        // Every setting's partitioning: a decode row, a prompt's rows, a prime row that binds one
+        // element at a time, a row a line past a power of two, one longer than a plane's
+        // registers hold, and a weight a row.
+        Block {
+            every_setting: true,
+            runs: runs(&[(F16, F16)]),
+            cases: vec![
+                Case::new(1, 2560),
+                Case::new(300, 128),
+                Case::new(2, 111),
+                Case::new(1, 4100),
+                Case::new(2, 8192),
+                a_row,
+            ],
+        },
+        // Each order at each element pair, plain and grouped.
+        Block {
+            every_setting: false,
+            runs: runs(&[
+                (F32, F32),
+                (F16, F16),
+                (BF16, BF16),
+                (F16, F32),
+                (BF16, F32),
+            ]),
+            cases: vec![Case::new(16, 128)],
+        },
     ]
 }

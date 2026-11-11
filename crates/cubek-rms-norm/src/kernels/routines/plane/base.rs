@@ -159,6 +159,7 @@ impl RmsNormRoutine<PlaneRmsNormMicrokernel> for PlaneRmsNormRoutine {
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel,
                 problem.element,
+                problem.output_element,
             );
         }
     }

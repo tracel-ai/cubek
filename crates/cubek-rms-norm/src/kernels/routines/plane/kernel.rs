@@ -8,22 +8,23 @@ use cubek_microkernel::row_store::OwnerLines;
 
 /// Every plane of the launch, running its row.
 #[cube(launch_unchecked)]
-pub fn plane_rms_norm_kernel<E: Float, N: Size, O: Destination>(
+pub fn plane_rms_norm_kernel<E: Float, W: Float, N: Size, O: Destination>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,
-    out: &O::Arg<E>,
+    out: &O::Arg<W>,
     epsilon: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneRmsNormMicrokernel,
     #[define(E)] _element: ElemType,
+    #[define(W)] _output_element: ElemType,
 ) {
     let x = input.tile(&partitioning);
     let w = weight.tile(&partitioning);
-    let o = O::tile::<E, N>(out, &partitioning);
+    let o = O::tile::<W, N>(out, &partitioning);
     let scale = RmsNormScale::new(epsilon, microkernel.dim);
     for plane in &partitioning {
         let mut row_out = OwnerLines::window(o.at(&plane));
-        plane_rms_norm_microkernel::<E, N>(
+        plane_rms_norm_microkernel::<E, W, N>(
             &x.at(&plane),
             &w.at(&plane),
             &mut row_out,
@@ -31,5 +32,5 @@ pub fn plane_rms_norm_kernel<E: Float, N: Size, O: Destination>(
             microkernel,
         );
     }
-    O::finish::<E>(out);
+    O::finish::<W>(out);
 }
