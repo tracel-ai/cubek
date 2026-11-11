@@ -158,11 +158,12 @@ impl PackedTensor {
     /// ([`PlainTensor::in_buffer_order`]): a transposed view of a packed matrix, a tied embedding
     /// read as a head, is the matrix it views, its rows along the axis its words do not run
     /// along. The scales are laid in rows and bound on whole words, as [`new`](Self::new) takes
-    /// them.
+    /// them. Values a load laid in tile order are read in it ([`of_tile_order`](Self::of_tile_order)).
     ///
     /// # Errors
     ///
-    /// [`SCALES_NOT_ALONG_WORDS`], and [`PACKED_NOT_ONE_MATRIX_IN_ROWS`].
+    /// [`SCALES_NOT_ALONG_WORDS`], and [`PACKED_NOT_ONE_MATRIX_IN_ROWS`]; for values in tile order,
+    /// [`STORED_TILES_UNREAD`].
     ///
     /// # Panics
     ///
@@ -179,8 +180,20 @@ impl PackedTensor {
         let operand = Operand::axis_of(&scheme, axes)
             .and_then(|axis| Operand::of_scheme(&scheme, axis, axes))
             .ok_or(SCALES_NOT_ALONG_WORDS)?;
+        if values.tiling.is_tiled() {
+            let words = PlainTensor::new(values, WORD);
+            return Self::of_tile_order(
+                client,
+                words,
+                block_scales,
+                global_scale,
+                scheme,
+                operand,
+                axes,
+            );
+        }
         let shape = values.shape.clone();
-        if shape.rank() != 2 || values.tiling.is_tiled() {
+        if shape.rank() != 2 {
             return Err(PACKED_NOT_ONE_MATRIX_IN_ROWS);
         }
         let words = Self::stored_words(values, &scheme).in_buffer_order();
@@ -196,6 +209,47 @@ impl PackedTensor {
             scheme,
             operand,
             [(axes[0], shape[0]), (axes[1], shape[1])],
+        ))
+    }
+
+    /// A quantized matrix whose `words` a load laid in tile order, their binding stating the order
+    /// over the values, read in the order it states ([`read_in_tiles`](Self::read_in_tiles)): its
+    /// words as they are stored, and its block scales where that order keeps them, in tiles of
+    /// their own laid block by block ([`TileWords::BlockByBlock`]), in rows laid row by row. The
+    /// per-tensor scale is bound as [`of_quantized`](Self::of_quantized) binds it.
+    ///
+    /// # Errors
+    ///
+    /// [`STORED_TILES_UNREAD`]: anything but one matrix, or tiles no read takes whole.
+    fn of_tile_order(
+        client: &Client,
+        words: PlainTensor,
+        block_scales: PlainTensor,
+        global_scale: Option<PlainTensor>,
+        scheme: QuantScheme,
+        operand: Operand,
+        axes: [Axis; 2],
+    ) -> Result<Self, Refusal> {
+        let shape = words.shape();
+        if shape.rank() != 2 {
+            return Err(STORED_TILES_UNREAD);
+        }
+        let sized = [(axes[0], shape[0]), (axes[1], shape[1])];
+        let hw = Hardware::from_client(client);
+        let operand = Self::read_in_tiles(&hw, sized, operand, &words.meta())?;
+        let in_rows_of_words =
+            |scale: PlainTensor| Self::bound_to_whole_words(scale.into_contiguous(client));
+        let block_scales = match operand.tile_order().map(TileOrder::words) {
+            Some(TileWords::BlockByBlock) => Self::bound_to_whole_words(block_scales),
+            Some(TileWords::RowByRow) | None => in_rows_of_words(block_scales.in_buffer_order()),
+        };
+        Ok(Self::new(
+            words,
+            block_scales,
+            global_scale.map(in_rows_of_words),
+            scheme,
+            operand,
+            sized,
         ))
     }
 
@@ -1099,12 +1153,21 @@ impl PackedTensor {
         }
     }
 
-    /// `tensor`, contiguous, its binding ending on the `u32` word that holds its last element: the
-    /// routines read scales a word at a time. A quantized buffer starts each region on a word, so the
-    /// word's tail is allocated.
+    /// `tensor`, its binding ending on the `u32` word that holds its last element, the gaps between
+    /// its rows or its tiles included: the routines read scales a word at a time. A quantized buffer
+    /// starts each region on a word, so the word's tail is allocated.
     fn bound_to_whole_words(mut tensor: PlainTensor) -> PlainTensor {
+        let (shape, strides) = (&tensor.binding.shape, &tensor.binding.strides);
+        let elements = match shape.num_elements() {
+            0 => 0,
+            _ => {
+                1 + (0..shape.rank())
+                    .map(|dim| (shape[dim] - 1) * strides[dim])
+                    .sum::<usize>()
+            }
+        };
+        let bytes = (elements * tensor.elem.size()) as u64;
         let handle = &mut tensor.binding.handle;
-        let bytes = (tensor.binding.shape.num_elements() * tensor.elem.size()) as u64;
         let end = handle.offset_start.unwrap_or(0) + bytes.next_multiple_of(4);
         handle.offset_end = Some(handle.size - end);
         tensor
