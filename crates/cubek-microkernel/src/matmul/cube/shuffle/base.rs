@@ -153,6 +153,19 @@ impl CubeShuffleMicrokernelSettings {
         32,
     )
     .by_block();
+
+    /// [`SPLIT_K`](Self::SPLIT_K) with each plane's units placed by the memory transaction: as
+    /// few along `K` as fill one beside the rows the rhs lays side by side, the rest a column each
+    /// along `N`. In tile order block by block, where a block of every row of a tile lies
+    /// together, a plane's load is then whole transactions, where `SPLIT_K`'s units, each a block
+    /// of `K` of the same columns, touch one line apiece.
+    pub const SPLIT_K_ONE_TRANSACTION: Self = Self::new(
+        CubeShufflePlaneSettings::Shuffle(
+            PlaneShuffleMicrokernelSettings::stepping(1, None).one_transaction(),
+        ),
+        32,
+    )
+    .by_block();
 }
 
 impl core::fmt::Display for CubeShuffleMicrokernelSettings {

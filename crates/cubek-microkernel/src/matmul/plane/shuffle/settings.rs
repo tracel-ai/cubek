@@ -115,6 +115,15 @@ impl PlaneShuffleMicrokernelSettings {
         }
     }
 
+    /// These settings with as few units along `K` as fill one memory transaction, the rest of
+    /// the plane along `N` ([`PlaneShuffleKSplit::OneTransaction`]).
+    pub const fn one_transaction(self) -> Self {
+        Self {
+            k_split: PlaneShuffleKSplit::OneTransaction,
+            ..self
+        }
+    }
+
     /// Units side by side along `M` for `rows` rows on a plane `plane_width` wide: as many as
     /// leave each unit [`rows_per_unit`](Self::rows_per_unit), dividing both the rows and the
     /// plane, and one where a unit holds every row.

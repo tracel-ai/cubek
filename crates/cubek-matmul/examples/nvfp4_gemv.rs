@@ -10,7 +10,8 @@
 //! ```
 //!
 //! `NVFP4_M` sets the rows (1), `NVFP4_ROUNDS` the rounds (3), `NVFP4_SHAPE` keeps one shape,
-//! `NVFP4_ONLY` keeps the settings whose name contains it.
+//! `NVFP4_ONLY` keeps the settings whose name contains it, `NVFP4_LAYOUT` keeps the weight in
+//! `rows` or in `tiles`, the tile order a load stores it in on this device (both).
 
 use std::time::Duration;
 
@@ -20,12 +21,15 @@ use cubecl::ir::{ElemType, FloatKind, UIntKind};
 
 use cubecl::quant::scheme::ScaleDtype;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::kind::Field;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{CubeShuffleMatmulRoutine, MatmulRoutine, PlaneShuffleMatmulRoutine};
+use cubek_matmul::tiled::storage;
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
+use cubek_std::layout::tile_order;
 use cubek_std::matmul_axes::{K, N};
 use half::f16;
 
@@ -140,7 +144,13 @@ fn tensor(client: &Client, bytes: &[u8], shape: [usize; 2], elem: ElemType) -> T
 }
 
 impl Device {
-    fn new(client: &Client, host: &Host, m: usize, n: usize, k: usize) -> Self {
+    fn new(
+        client: &Client,
+        hw: &Hardware,
+        host: &Host,
+        (m, n, k): (usize, usize, usize),
+        layout: Layout,
+    ) -> Self {
         let scheme = nvfp4_scheme();
         let words: Vec<u8> = host.words.iter().flat_map(|w| w.to_le_bytes()).collect();
         let scales: Vec<u8> = host
@@ -148,6 +158,20 @@ impl Device {
             .iter()
             .flat_map(|w| w.to_le_bytes())
             .collect();
+        let global = Some(PlainTensor::of_handle(tensor(
+            client,
+            &host.global.to_le_bytes(),
+            [1, 1],
+            F32,
+        )));
+        if layout == Layout::Tiles {
+            let x: Vec<u8> = host.x.iter().flat_map(|v| v.to_le_bytes()).collect();
+            return Device {
+                weight: in_tile_order(client, hw, &words, &scales, global, (n, k)),
+                x: PlainTensor::of_handle(tensor(client, &x, [m, k], F16)),
+                out: tensor(client, &vec![0u8; m * n * 2], [m, n], F16),
+            };
+        }
         let weight = PackedTensor::new(
             PlainTensor::of_handle(tensor(client, &words, [n, k / CODES_PER_WORD], WORD)),
             // A byte a block, as a checkpoint stores them: four share a word in memory.
@@ -157,12 +181,7 @@ impl Device {
                 [n, k / BLOCK],
                 ElemType::from_scale_dtype(ScaleDtype::UE4M3),
             )),
-            Some(PlainTensor::of_handle(tensor(
-                client,
-                &host.global.to_le_bytes(),
-                [1, 1],
-                F32,
-            ))),
+            global,
             scheme,
             Operand::of_scheme(&scheme, K, [N, K]).expect("one block along k"),
             [(N, n), (K, k)],
@@ -178,6 +197,84 @@ impl Device {
     fn out(&self) -> PlainTensor {
         PlainTensor::of_handle(self.out.clone())
     }
+}
+
+/// Where the weight's words and block scales lie.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    /// Each column's words and scales down `k`, as a checkpoint stores them.
+    Rows,
+    /// The tile order a load stores the weight in on this device, its scales beside it, as
+    /// Metabolic's `into_tile_order` lays it out.
+    Tiles,
+}
+
+/// The weight in `words` (`[n, k / 8]`) and `scales` (`[n, k / 16]` bytes) laid out in the tile
+/// order a load stores it in on `hw`, at the `64 × 16` tile a decode step's packed weight is
+/// stored in on an RDNA GPU.
+fn in_tile_order(
+    client: &Client,
+    hw: &Hardware,
+    words: &[u8],
+    scales: &[u8],
+    global: Option<PlainTensor>,
+    (n, k): (usize, usize),
+) -> PackedTensor {
+    use cubecl::prelude::TensorBinding;
+    use cubecl::zspace::metadata::Metadata;
+    use cubek_matmul::kernels::tensor::PackedTensor as Packed;
+
+    // The same bytes stated over `[k, n]`, its words down `k`: the statement tile order stores.
+    let scheme = tile_order::nvfp4_scheme();
+    let order = storage::tile_order_on(hw, &scheme, (64, 16), (k, n)).expect("NVFP4 is tile order");
+    let words_per_load = hw.load_values(WORD);
+    let blocks = k / BLOCK;
+    let bound = |handle: cubecl::server::Handle, meta: Metadata| TensorBinding {
+        handle: handle.binding(),
+        strides: meta.strides,
+        shape: meta.shape,
+        tiling: meta.tiling,
+    };
+    // The values as the kernel names them, `[n, k/block, block]`, counted in values over words.
+    let values = storage::tile(
+        client,
+        bound(
+            client.create_from_slice(words),
+            Metadata::new([n, blocks, BLOCK], [k, BLOCK, 1]),
+        ),
+        &tile_order::values_axes(N),
+        WORD,
+        Some(Field::from(scheme.value)),
+        order.values_storage(N, words_per_load),
+    )
+    .expect("the values tile");
+    // The scales, `[n, k/block]`, a byte each, counted in scales over words.
+    let tiled_scales = storage::tile(
+        client,
+        bound(
+            client.create_from_slice(scales),
+            Metadata::new([n, blocks], [blocks, 1]),
+        ),
+        &tile_order::scales_axes(N),
+        WORD,
+        Some(Field::of_scale(ScaleDtype::UE4M3)),
+        order
+            .scales_storage(N, order.rows_a_load(N, words_per_load))
+            .expect("block by block, the scales lie in tiles"),
+    )
+    .expect("the scales tile");
+    let matrix = tile_order::matrix_values(&values.metadata);
+    let sized = [(K, k), (N, n)];
+    let operand = Operand::of_scheme(&scheme, K, [K, N]).expect("one block along k");
+    let operand = Packed::read_in_tiles(hw, sized, operand, &matrix).expect("read in its tiles");
+    Packed::new(
+        PlainTensor::new(bound(values.handle, matrix), WORD),
+        PlainTensor::new(bound(tiled_scales.handle, *tiled_scales.metadata), WORD),
+        global,
+        scheme,
+        operand,
+        sized,
+    )
 }
 
 /// A routine at one setting, launched against one copy.
@@ -297,40 +394,52 @@ fn main() {
         let host = Host::new(m, n, k);
         let bytes = n * k / 2 + n * k / BLOCK;
         let copies = ROTATION.div_ceil(bytes).max(2);
-        let data: Vec<Device> = (0..copies)
-            .map(|_| Device::new(&client, &host, m, n, k))
-            .collect();
-        println!("{name}: m {m}, n {n}, k {k}, {:.1} MB", bytes as f64 / 1e6);
-
-        // Each setting that launches, and how far its output is from the reference.
-        let mut served = Vec::new();
-        for (label, launch) in candidates(&hw, &client) {
-            if only.as_deref().is_some_and(|o| !label.contains(o)) {
+        for layout in [Layout::Rows, Layout::Tiles] {
+            let wanted = std::env::var("NVFP4_LAYOUT").ok();
+            if wanted
+                .as_deref()
+                .is_some_and(|w| !format!("{layout:?}").eq_ignore_ascii_case(w))
+            {
                 continue;
             }
-            match launch(&data[0]) {
-                Ok(()) => {
-                    let got = read_f16(&client, &data[0].out);
-                    let err = worst_error(&got, &host);
-                    served.push((label, launch, err));
-                }
-                Err(why) => println!("  {label:<60} declined: {why}"),
-            }
-        }
-        let mut best = vec![Duration::MAX; served.len()];
-        for _ in 0..env_usize("NVFP4_ROUNDS", 3) {
-            for (i, (_, launch, _)) in served.iter().enumerate() {
-                best[i] = best[i].min(time(&client, &data, launch));
-            }
-        }
-        for ((label, launch, err), t) in served.iter().zip(best) {
-            let host = host_time(&client, &data, launch);
+            let data: Vec<Device> = (0..copies)
+                .map(|_| Device::new(&client, &hw, &host, (m, n, k), layout))
+                .collect();
             println!(
-                "  {label:<60} {:>7.1} GB/s  {:>7.1} µs  host {:>6.1} µs  err {err:.1e}",
-                bytes as f64 / t.as_secs_f64() / 1e9,
-                t.as_secs_f64() * 1e6,
-                host.as_secs_f64() * 1e6
+                "{name} in {layout:?}: m {m}, n {n}, k {k}, {:.1} MB",
+                bytes as f64 / 1e6
             );
+
+            // Each setting that launches, and how far its output is from the reference.
+            let mut served = Vec::new();
+            for (label, launch) in candidates(&hw, &client) {
+                if only.as_deref().is_some_and(|o| !label.contains(o)) {
+                    continue;
+                }
+                match launch(&data[0]) {
+                    Ok(()) => {
+                        let got = read_f16(&client, &data[0].out);
+                        let err = worst_error(&got, &host);
+                        served.push((label, launch, err));
+                    }
+                    Err(why) => println!("  {label:<60} declined: {why}"),
+                }
+            }
+            let mut best = vec![Duration::MAX; served.len()];
+            for _ in 0..env_usize("NVFP4_ROUNDS", 3) {
+                for (i, (_, launch, _)) in served.iter().enumerate() {
+                    best[i] = best[i].min(time(&client, &data, launch));
+                }
+            }
+            for ((label, launch, err), t) in served.iter().zip(best) {
+                let host = host_time(&client, &data, launch);
+                println!(
+                    "  {label:<60} {:>7.1} GB/s  {:>7.1} µs  host {:>6.1} µs  err {err:.1e}",
+                    bytes as f64 / t.as_secs_f64() / 1e9,
+                    t.as_secs_f64() * 1e6,
+                    host.as_secs_f64() * 1e6
+                );
+            }
         }
     }
 }

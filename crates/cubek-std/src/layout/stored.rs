@@ -5,7 +5,7 @@
 //! reads one value and is constant inside nothing, and the same reads serve it without asking
 //! whether anything is quantized at all.
 
-use crate::layout::tile_order::{TileOrder, scales_axes, values_axes};
+use crate::layout::tile_order::{TileOrder, TileWords, scales_axes, values_axes};
 use crate::matmul_axes::{K, blocked};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
 use cubecl::tile::launch::Refusal;
@@ -251,9 +251,7 @@ impl Operand {
         let axis = self.scaled_along()?;
         let block = self.scale?.extent(axis);
         let lined = match self.tiles {
-            None => {
-                self.read.axis() == Some(axis) && block.is_multiple_of(self.read.extent(axis))
-            }
+            None => self.read.axis() == Some(axis) && block.is_multiple_of(self.read.extent(axis)),
             Some(order) => axis == K && order.block() == block,
         };
         lined.then(|| Operand {
@@ -533,6 +531,20 @@ impl Operand {
             .rev()
             .find(|&group| units.is_multiple_of(group) && words.is_multiple_of(group))
             .unwrap_or(1)
+    }
+
+    /// Reads of neighbouring rows, those `across` the axis its words run along, that lie side by
+    /// side in memory at the same place along that axis: a tile's rows a read's width apart, where
+    /// tile order lays a block's words of every row of its tile together
+    /// ([`TileWords::BlockByBlock`](crate::layout::tile_order::TileWords::BlockByBlock)); one
+    /// otherwise, each row's reads its own run.
+    pub fn rows_side_by_side(&self, across: Axis) -> usize {
+        match self.tiles {
+            Some(order) if order.words() == TileWords::BlockByBlock => {
+                order.tile().1 / self.read.extent(across).max(1)
+            }
+            Some(_) | None => 1,
+        }
     }
 
     /// How `units` spread `axis` between them, stated from the leaf up.

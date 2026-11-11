@@ -201,10 +201,14 @@ impl PlaneShuffleMicrokernel {
     /// to one whose columns close `n` on one split axis and leave `shared` units, the plane's share
     /// left by the units along `M`, whole groups along `N`.
     ///
-    /// A unit reads one step of `K` a turn by the whole share, the units as many as the scales'
-    /// words divide: where the units take a word of scales a turn, a turn is a step along `K`, and
-    /// a step a load makes deeper than a word of scales is declined. Settings stating another
-    /// depth or split of `K` size none.
+    /// A unit reads one step of `K` a turn, the units as many as the scales' words divide: where
+    /// the units take a word of scales a turn, a turn is a step along `K`, and a step a load makes
+    /// deeper than a word of scales is declined. The whole share splits `K`
+    /// ([`WholePlane`](PlaneShuffleKSplit::WholePlane)), or as few units as fill one memory
+    /// transaction beside the rows the rhs lays side by side, the rest along `N`
+    /// ([`OneTransaction`](PlaneShuffleKSplit::OneTransaction)): in rows, a transaction's worth of
+    /// reads down a column; block by block in tile order, where a block of every row of a tile
+    /// lies together, as few as that leaves. Settings stating another depth size none.
     fn packed_steps(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -215,10 +219,24 @@ impl PlaneShuffleMicrokernel {
         let operand = space.operand(MatmulOperand::Rhs);
         let step = MatmulStep::new(hw, space.operands(), item.elements);
         let (depth, columns_a_step) = (step.along(K), step.along(N));
-        let units_along_k = operand.units_distributing(K, space.k, shared);
+        let wanted = match settings.k_split {
+            PlaneShuffleKSplit::WholePlane => shared,
+            PlaneShuffleKSplit::OneTransaction => {
+                let read_bytes = space
+                    .packings
+                    .rhs
+                    .map_or(WORD_BYTES, |packing| {
+                        packing.values_bytes(operand.read_values())
+                    })
+                    .max(1);
+                let side_by_side = read_bytes * operand.rows_side_by_side(N);
+                (hw.transaction_bytes() / side_by_side).clamp(1, shared)
+            }
+        };
+        let units_along_k = operand.units_distributing(K, space.k, wanted);
         let groups_along_n = shared / units_along_k;
         let one_step_a_turn = settings.depth == NonZeroUsize::MIN
-            && settings.k_split == PlaneShuffleKSplit::WholePlane
+            && shared.is_multiple_of(units_along_k)
             && operand
                 .grouping(K, space.k)
                 .is_none_or(|block| depth == block * operand.scales_per_word())
@@ -682,20 +700,30 @@ mod tests {
         assert_eq!(packed(3, 1).units_along_m, 1);
     }
 
-    /// A packed rhs is read a step of `K` a turn by the whole plane: a setting stating a deeper
-    /// block, or another split of `K`, sizes no plane against it.
+    /// A packed rhs is read a step of `K` a turn: a setting stating a deeper block sizes no plane
+    /// against it.
     #[test]
     fn a_packed_rhs_is_read_one_step_a_turn() {
-        for settings in [
-            PlaneShuffleMicrokernelSettings::DEFAULT,
-            PlaneShuffleMicrokernelSettings::ONE_READ_ONE_TRANSACTION,
-        ] {
-            assert_eq!(
-                PlaneShuffleMicrokernel::candidates(&devices::m2_pro(), &tile_order(1), &settings)
-                    .count(),
-                0,
-                "{settings}"
-            );
+        let settings = PlaneShuffleMicrokernelSettings::DEFAULT;
+        assert_eq!(
+            PlaneShuffleMicrokernel::candidates(&devices::m2_pro(), &tile_order(1), &settings)
+                .count(),
+            0,
+        );
+    }
+
+    /// One transaction's worth of units along `K` against a packed rhs whose rows each lie in a
+    /// run of their own: fewer than the plane, the rest of it along `N`, every unit a turn.
+    #[test]
+    fn one_transaction_puts_the_rest_of_the_plane_along_n() {
+        let hw = devices::m2_pro();
+        let settings = PlaneShuffleMicrokernelSettings::stepping(1, None).one_transaction();
+        let planes: Vec<_> =
+            PlaneShuffleMicrokernel::candidates(&hw, &tile_order(1), &settings).collect();
+        assert!(!planes.is_empty());
+        for plane in planes {
+            assert!(plane.units_along_k < plane.plane_width(), "{plane}");
+            assert!(plane.groups_along_n > 1, "{plane}");
         }
     }
 }

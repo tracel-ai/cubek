@@ -65,6 +65,14 @@ impl CubeShuffleMatmulRoutineSettings {
         microkernel: CubeShuffleMicrokernelSettings::SPLIT_K,
         cubes_per_worker: Some(NonZeroUsize::new(4).unwrap()),
     };
+
+    /// [`PACKED_SPLIT_K`](Self::PACKED_SPLIT_K) with its planes' units placed by the memory
+    /// transaction ([`CubeShuffleMicrokernelSettings::SPLIT_K_ONE_TRANSACTION`]): the split for a
+    /// weight in tile order block by block.
+    pub const PACKED_SPLIT_K_ONE_TRANSACTION: Self = Self {
+        microkernel: CubeShuffleMicrokernelSettings::SPLIT_K_ONE_TRANSACTION,
+        cubes_per_worker: Some(NonZeroUsize::new(4).unwrap()),
+    };
 }
 
 impl core::fmt::Display for CubeShuffleMatmulRoutineSettings {
@@ -95,7 +103,10 @@ impl CubeShuffleMatmulRoutine {
                 microkernel,
                 cubes_per_worker: None,
             })
-            .chain([CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K])
+            .chain([
+                CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K,
+                CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K_ONE_TRANSACTION,
+            ])
             .collect()
     }
 
