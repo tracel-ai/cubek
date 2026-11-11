@@ -5,7 +5,7 @@ use crate::kernels::test_support::{offering, qwen};
 use crate::kernels::*;
 use cubecl::tile::stage::Prefetch;
 use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
-use cubek_microkernel::attention::{AttentionMicrokernel, Q, S};
+use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperands, Q, S};
 use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 use cubek_std::routine::Routine;
 use cubek_std::{Hardware, devices};
@@ -152,4 +152,90 @@ fn every_hypercube_fragment_setting_prepares() {
             }
         }
     }
+}
+
+/// A prompt whose query and keys are `e4m3` beside `f16` values: an FP8 score.
+fn fp8_score(queries: usize, keys: usize) -> AttentionRoutineProblem {
+    let e4m3 = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::E4M3);
+    let f16 = qwen(queries, keys);
+    AttentionRoutineProblem {
+        elements: AttentionOperands {
+            query: e4m3,
+            key: e4m3,
+            ..f16.elements
+        },
+        ..f16
+    }
+}
+
+/// An RTX PRO 6000 offering the manual `mma`'s 16-bit forms and its `e4m3` one.
+fn offering_fp8() -> Hardware {
+    let (f16, f32, e4m3) = (
+        cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F16),
+        cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F32),
+        cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::E4M3),
+    );
+    let form = |a, k| cubecl::features::MmaConfig {
+        a_type: a,
+        b_type: a,
+        cd_type: f32,
+        m: 16,
+        n: 8,
+        k,
+    };
+    devices::offering_mma(
+        devices::rtx_pro_6000(),
+        [form(f16, 8), form(f16, 16), form(e4m3, 32)],
+    )
+}
+
+/// An FP8 score is the plane fragments' alone: their score on the device's `e4m3` instruction,
+/// their value on its 16-bit one. The shuffles and the unit routine, which compute in their
+/// operands' one element, decline it, and so do the fragments on a device without the `e4m3`
+/// instruction.
+#[test]
+fn an_fp8_score_is_read_by_the_plane_fragments_alone() {
+    let (hw, problem) = (offering_fp8(), fp8_score(512, 4096));
+    let e4m3 = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::E4M3);
+    let f16 = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F16);
+    let fragments = HypercubeSecondLaunchFragmentAttentionRoutine;
+    let prepared: Vec<_> = fragments
+        .settings(&hw)
+        .iter()
+        .filter_map(|settings| fragments.prepare(&hw, &problem, settings).ok())
+        .collect();
+    assert!(
+        !prepared.is_empty(),
+        "no fragment setting reads an FP8 score"
+    );
+    for (blueprint, _) in &prepared {
+        let served = blueprint.microkernel.served(&problem.work_item()).elements;
+        assert_eq!((served.query, served.key, served.value), (e4m3, e4m3, f16));
+    }
+
+    let declines = |prepared: bool, name: &str| assert!(!prepared, "{name} reads an FP8 score");
+    let shuffle = HypercubeSecondLaunchShuffleAttentionRoutine::new();
+    declines(
+        shuffle
+            .settings(&hw)
+            .iter()
+            .any(|settings| shuffle.prepare(&hw, &problem, settings).is_ok()),
+        "the plane shuffle",
+    );
+    declines(
+        UnitAttentionRoutine.settings(&hw).iter().any(|settings| {
+            UnitAttentionRoutine
+                .prepare(&hw, &problem, settings)
+                .is_ok()
+        }),
+        "the unit routine",
+    );
+    let without = offering(devices::rtx_pro_6000(), 16);
+    declines(
+        fragments
+            .settings(&without)
+            .iter()
+            .any(|settings| fragments.prepare(&without, &problem, settings).is_ok()),
+        "the plane fragments without an e4m3 instruction",
+    );
 }

@@ -121,7 +121,8 @@ impl Microkernel for UnitAttentionMicrokernel {
     type Operand = AttentionOperand;
     type CubeSpace = Space;
 
-    const DECLINE: &'static str = "the unit microkernel asks nothing of the hardware";
+    const DECLINE: &'static str = "the unit microkernel asks nothing of the hardware, and computes \
+         in its operands' one element";
 
     /// The default, then two rows a unit against eight keys, and a row a unit against four and
     /// sixteen.
@@ -140,7 +141,9 @@ impl Microkernel for UnitAttentionMicrokernel {
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
         let settings = *settings;
-        let dims = NonZeroUsize::new(item.head_dim).zip(NonZeroUsize::new(item.val_dim));
+        let dims = NonZeroUsize::new(item.head_dim)
+            .zip(NonZeroUsize::new(item.val_dim))
+            .filter(|_| item.in_one_element());
         let multiplications = dims.and_then(|(head, value)| {
             let score = UnitRegistersMicrokernelSettings {
                 rows: settings.seq_q,

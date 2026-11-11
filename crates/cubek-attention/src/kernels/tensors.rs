@@ -6,6 +6,7 @@ use crate::kernels::{
     QueryAxis,
 };
 use cubecl::client::Client;
+use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::prelude::TensorArg;
 use cubecl::std::tensor::TensorHandle;
@@ -17,16 +18,17 @@ use cubecl::tile::{
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperands, B, D, DV, G, KV, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, B, D, DV, G, KV, Q, S,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
 
 /// What a launch declines before preparing anything: an element the routines do not take, or
-/// operands of two elements.
+/// operands of two elements other than an FP8 score's.
 pub const ATTENTION_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
-    why: "the microkernel attention takes f32, f16 and bf16 operands of one element",
+    why: "the microkernel attention takes f32, f16 and bf16 operands of one element, or an e4m3 \
+          query and keys beside f16 or bf16 values",
 };
 
 /// What a packed launch declines before preparing anything: an operand packed at a width the
@@ -241,6 +243,16 @@ impl AttentionTensors {
         Self::attention(client, queries, kv, scoring)
     }
 
+    /// The element an FP8 score's query and keys are stored in.
+    pub const FP8_SCORE: ElemType = ElemType::Float(FloatKind::E4M3);
+
+    /// The elements the values beside an FP8 score's query and keys may be stored in, which the
+    /// output takes.
+    pub const FP8_SCORE_VALUES: [ElemType; 2] = [
+        ElemType::Float(FloatKind::F16),
+        ElemType::Float(FloatKind::BF16),
+    ];
+
     /// The elements the routines are verified at.
     pub const VERIFIED: [ElemType; 3] = [
         ElemType::Float(FloatKind::F32),
@@ -265,10 +277,7 @@ impl AttentionTensors {
         value: &PlainTensor,
         pages: Option<&PlainTensor>,
     ) -> Result<(), Refusal> {
-        if query.elem != key.elem || query.elem != value.elem {
-            return Err(ATTENTION_ELEMENT_UNVERIFIED);
-        }
-        Self::admit_element(client, query)?;
+        Self::admit_elements(client, query, key, value)?;
         let (q_shape, k_shape, v_shape) = (query.shape(), key.shape(), value.shape());
         assert!(
             q_shape.num_dims() == 4 && k_shape.num_dims() == 4 && v_shape.num_dims() == 4,
@@ -323,6 +332,42 @@ impl AttentionTensors {
         Ok(())
     }
 
+    /// The elements of float operands, where the routines take them and `client`'s device runs
+    /// them: one element for all three, or an FP8 score, an e4m3 query and keys beside 16-bit
+    /// values ([`FP8_SCORE_VALUES`](Self::FP8_SCORE_VALUES)), which the score multiplies on the
+    /// device's FP8 instruction and the value on its 16-bit one.
+    ///
+    /// # Errors
+    ///
+    /// [`ATTENTION_ELEMENT_UNVERIFIED`] and [`ELEMENT_NOT_ON_DEVICE`].
+    fn admit_elements(
+        client: &Client,
+        query: &PlainTensor,
+        key: &PlainTensor,
+        value: &PlainTensor,
+    ) -> Result<(), Refusal> {
+        let fp8_score = query.elem == Self::FP8_SCORE
+            && key.elem == Self::FP8_SCORE
+            && Self::FP8_SCORE_VALUES.contains(&value.elem);
+        if fp8_score {
+            // The query and the keys are only stored and read by the FP8 instruction, which the
+            // microkernel asks of the device as it prepares; the values are computed in.
+            let stored = client
+                .properties()
+                .features
+                .type_usage(Self::FP8_SCORE)
+                .contains(TypeUsage::Buffer);
+            return match stored && value.runs_on(client) {
+                true => Ok(()),
+                false => Err(ELEMENT_NOT_ON_DEVICE),
+            };
+        }
+        if query.elem != key.elem || query.elem != value.elem {
+            return Err(ATTENTION_ELEMENT_UNVERIFIED);
+        }
+        Self::admit_element(client, query)
+    }
+
     /// The query's element, where the routines take it and `client`'s device runs it.
     ///
     /// # Errors
@@ -368,6 +413,12 @@ impl AttentionTensors {
         let q_shape = query.shape();
         let (batch, heads, queries) = (q_shape[0], q_shape[1], q_shape[2]);
         let value = kv.val_dim();
+        // The output is the values' weighted sum, at their element: the query's, but beside an
+        // FP8 score's e4m3 query, the 16-bit values'.
+        let out_elem = match &kv.cache {
+            AttentionCache::Float { value, .. } => value.elem,
+            AttentionCache::Packed(_) => query.elem,
+        };
         // Dense, as every arm of the attention seam allocates it: a token's heads are one row, so
         // the caller merges them by a reshape. The views below are a factorization of these
         // strides, which a pitched allocation would invalidate.
@@ -376,16 +427,13 @@ impl AttentionTensors {
                 let (out, out_plain) = PlainTensor::empty_contiguous(
                     client,
                     [batch, queries, heads, value].into(),
-                    query.elem,
+                    out_elem,
                 );
                 (QueryAxis::new(queries, scoring.visibility), out, out_plain)
             }
             Some(_) => {
-                let (out, end_to_end) = PlainTensor::empty_contiguous(
-                    client,
-                    [queries, heads, value].into(),
-                    query.elem,
-                );
+                let (out, end_to_end) =
+                    PlainTensor::empty_contiguous(client, [queries, heads, value].into(), out_elem);
                 let strides = &end_to_end.binding.strides;
                 let out_plain = end_to_end.viewed(Metadata::new(
                     [batch, queries, heads, value],
@@ -559,24 +607,29 @@ impl AttentionTensors {
         let (group, queries, visibility) =
             self.axis
                 .read(heads / kv_heads, queries, self.scoring.visibility);
-        let element = self.query.elem;
         let head = self.query.shape()[4];
         let start = PlainTensor::start_bytes;
-        let (key_alignment, value_alignment, key_start, value_start) = match &self.kv.cache {
-            AttentionCache::Float { key, value } => (
-                key.elem_alignment(),
-                value.elem_alignment(),
-                start(key),
-                start(value),
-            ),
-            // The decoded lines lie as dense rows of the head dim.
-            AttentionCache::Packed(_) => (
-                ElemAlignment::dense_rows(head),
-                ElemAlignment::dense_rows(value),
-                0,
-                0,
-            ),
-        };
+        let query_elem = self.query.elem;
+        let (key_alignment, value_alignment, key_start, value_start, key_elem, value_elem) =
+            match &self.kv.cache {
+                AttentionCache::Float { key, value } => (
+                    key.elem_alignment(),
+                    value.elem_alignment(),
+                    start(key),
+                    start(value),
+                    key.elem,
+                    value.elem,
+                ),
+                // The decoded lines lie as dense rows of the head dim, at the query's element.
+                AttentionCache::Packed(_) => (
+                    ElemAlignment::dense_rows(head),
+                    ElemAlignment::dense_rows(value),
+                    0,
+                    0,
+                    query_elem,
+                    query_elem,
+                ),
+            };
         AttentionRoutineProblem {
             batch,
             num_kv_heads: kv_heads,
@@ -587,10 +640,10 @@ impl AttentionTensors {
             val_dim: value,
             visibility,
             elements: AttentionOperands {
-                query: element,
-                key: element,
-                value: element,
-                out: element,
+                query: query_elem,
+                key: key_elem,
+                value: value_elem,
+                out: self.out_view.elem,
             },
             elem_alignments: AttentionOperands {
                 query: self.query.elem_alignment(),
@@ -659,17 +712,14 @@ impl AttentionTensors {
         .expect(ADMITTED_PLAN_RUNS);
         let widths = blueprint.widths;
         let problem = self.problem();
-        let stored = problem.elements.query;
-        let read = blueprint
-            .microkernel
-            .served(&problem.work_item())
-            .elements
-            .query;
+        let read = blueprint.microkernel.served(&problem.work_item()).elements;
         // Read at another element than the float it is stored in, an operand is bound as its u32
         // words, each one value of that float, which its kernel's stages decode at the read
         // element.
-        let words = match stored {
-            ElemType::Float(kind) if read != stored => Some(kind),
+        let words = |operand: AttentionOperand| match problem.elements.get(operand) {
+            ElemType::Float(kind) if read.get(operand) != problem.elements.get(operand) => {
+                Some(kind)
+            }
             _ => None,
         };
         let arg = |tensor: &PlainTensor, axes: &'static [Axis], width: usize, element: ElemType| {
@@ -678,11 +728,15 @@ impl AttentionTensors {
                 .axes(axes)
                 .vectorize(width)
         };
-        let read_operand = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| match words {
-            Some(kind) => arg(tensor, axes, width, ElemType::UInt(UIntKind::U32)).packed(kind),
-            None => arg(tensor, axes, width, read),
-        };
-        let query_delivery = match words {
+        let read_operand =
+            |tensor: &PlainTensor,
+             axes: &'static [Axis],
+             width: usize,
+             operand: AttentionOperand| match words(operand) {
+                Some(kind) => arg(tensor, axes, width, ElemType::UInt(UIntKind::U32)).packed(kind),
+                None => arg(tensor, axes, width, read.get(operand)),
+            };
+        let query_delivery = match words(AttentionOperand::Query) {
             Some(_) => Delivery::SyncPerUnit,
             None => blueprint
                 .microkernel
@@ -705,15 +759,20 @@ impl AttentionTensors {
             None => bound,
         };
         let query = runs(
-            read_operand(&self.query, &[B, KV, G, Q, D], widths.query)
-                .delivery(query_delivery)
-                .build()
-                .expect(ADMITTED_PLAN_RUNS)
-                .arg(),
+            read_operand(
+                &self.query,
+                &[B, KV, G, Q, D],
+                widths.query,
+                AttentionOperand::Query,
+            )
+            .delivery(query_delivery)
+            .build()
+            .expect(ADMITTED_PLAN_RUNS)
+            .arg(),
         );
         // The keys and values move into their stages as the microkernel says, unless they are
         // bound as words its stages decode, which pass through the units' registers.
-        let delivery = match words {
+        let delivery = match words(AttentionOperand::Key).or(words(AttentionOperand::Value)) {
             Some(_) => Delivery::SyncPerUnit,
             None => blueprint
                 .microkernel
@@ -723,8 +782,11 @@ impl AttentionTensors {
             AttentionCache::Float { key, value } => {
                 // A pool of pages is placed by its table, keyed by the batch and the keys'
                 // positions: it covers the launch, its rows the batch and its columns the keys.
-                let read_cache = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
-                    let arg = read_operand(tensor, axes, width)
+                let read_cache = |tensor: &PlainTensor,
+                                  axes: &'static [Axis],
+                                  width: usize,
+                                  operand: AttentionOperand| {
+                    let arg = read_operand(tensor, axes, width, operand)
                         .delivery(delivery)
                         .build()
                         .expect(ADMITTED_PLAN_RUNS)
@@ -745,12 +807,22 @@ impl AttentionTensors {
                     }
                 };
                 let key = match blueprint.microkernel.key_order() {
-                    BindingOrder::InBufferOrder => read_cache(key, &[B, KV, S, D], widths.key),
-                    BindingOrder::Stated => {
-                        read_cache(&key.transposed(), &[B, KV, D, S], widths.key)
+                    BindingOrder::InBufferOrder => {
+                        read_cache(key, &[B, KV, S, D], widths.key, AttentionOperand::Key)
                     }
+                    BindingOrder::Stated => read_cache(
+                        &key.transposed(),
+                        &[B, KV, D, S],
+                        widths.key,
+                        AttentionOperand::Key,
+                    ),
                 };
-                let value = read_cache(value, &[B, KV, S, DV], widths.value);
+                let value = read_cache(
+                    value,
+                    &[B, KV, S, DV],
+                    widths.value,
+                    AttentionOperand::Value,
+                );
                 AttentionCacheBinding::Tiles { key, value }
             }
             AttentionCache::Packed(cache) => AttentionCacheBinding::Packed(cache.bind(&launcher)),

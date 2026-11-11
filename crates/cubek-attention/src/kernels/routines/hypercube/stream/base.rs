@@ -254,9 +254,10 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         let splits = Self::splits(&problem, &blueprint.partitioning);
         let slots = tensors.split_slots(splits);
         let arrivals = tensors.box_arrivals(microkernel.cube.seq_q());
-        // Its planes keep their sums in the first, write the output in the second and read the
-        // stage in the last.
-        let elements = microkernel
+        // Its planes keep their sums in the first, write the output in the second, read the
+        // query and the keys' stage in the third and cast their probabilities to the values'
+        // element in the last.
+        let [sum, out, staged, probabilities] = microkernel
             .served(&problem.work_item())
             .served_kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -289,7 +290,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 splits,
                 problem.visibility,
                 blueprint.shared_memory.clone(),
-                elements,
+                [sum, out, staged, probabilities],
             );
         }
     }

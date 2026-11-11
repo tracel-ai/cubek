@@ -192,9 +192,10 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
             HypercubeMerge::SecondLaunch.seq_q(&microkernel),
         );
         let slots = tensors.split_slots(shape.slots.splits);
-        // Its planes keep their sums in the first and read the stage in the last; they leave
+        // Its planes keep their sums in the first, read the query and the keys' stage in the
+        // second and cast their probabilities to the values' element in the last; they leave
         // their rows in the slots, and the output is read for its shape alone.
-        let [sum, _, staged] = microkernel
+        let [sum, _, staged, probabilities] = microkernel
             .served(&problem.work_item())
             .served_kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads of a tile the
@@ -222,7 +223,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 shape,
                 problem.visibility,
                 blueprint.shared_memory.clone(),
-                [sum, staged],
+                [sum, staged, probabilities],
             );
         }
         HypercubeSecondLaunch::new(&problem, shape).launch(tensors, slots, SLOT_WIDTH);
