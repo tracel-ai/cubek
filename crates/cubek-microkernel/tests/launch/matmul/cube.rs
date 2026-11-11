@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Axis, Instruction, Partitioning, StageStorage, TileTensor};
+use cubecl::tile::{Axis, Partitioning, RegisterBlock, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings, CubeStagedMicrokernel,
@@ -95,7 +95,7 @@ impl MatmulLaunch for CubeShuffleLaunch {
                 rhs,
                 out,
                 launcher.partitioning_arg(),
-                microkernel.plane.tile_instruction(),
+                microkernel.plane.block(),
                 microkernel.meet,
                 microkernel.split(),
                 microkernel.planes_along_k.get(),
@@ -122,7 +122,7 @@ fn cube_shuffle_kernel<EA: Numeric, E: Numeric>(
     rhs: &TileTensor<'_>,
     out: &TileTensor<'_>,
     partitioning: Partitioning,
-    #[comptime] instruction: Instruction,
+    #[comptime] block: Option<RegisterBlock>,
     #[comptime] meet: CubeMeet,
     #[comptime] split: Axis,
     #[comptime] planes: usize,
@@ -138,7 +138,7 @@ fn cube_shuffle_kernel<EA: Numeric, E: Numeric>(
             &c.at(&cube),
             &a.at(&cube),
             &b.at(&cube),
-            instruction,
+            block,
             meet,
             split,
             planes,
@@ -244,6 +244,10 @@ impl MatmulLaunch for CubeStagedLaunch {
 }
 
 /// The one cube walking its box's `K` a stage at a time.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
 #[cube(launch_unchecked)]
 fn cube_staged_kernel<EA: Numeric, EL: Numeric>(
     lhs: &TileTensor<'_>,
@@ -259,7 +263,7 @@ fn cube_staged_kernel<EA: Numeric, EL: Numeric>(
     let c = out.tile(&partitioning);
     for cube in &partitioning {
         let b = b.at(&cube);
-        cube_staged_microkernel::<EA, EL>(
+        cube_staged_microkernel::<EA>(
             cube.walk_within(&b),
             &a.at(&cube),
             &b,
