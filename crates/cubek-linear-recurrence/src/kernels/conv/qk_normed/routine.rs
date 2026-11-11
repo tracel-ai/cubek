@@ -33,7 +33,7 @@ impl CubeQkNormedConvRoutine {
     ) -> Result<QkNormedConvOutputs, Refusal> {
         let tensors = QkNormedConvTensors::new(inputs)?;
         let (blueprint, grid) = self.prepare_first_served(hw, tensors.problem())?;
-        self.launch(hw, tensors, blueprint, grid)
+        self.launch(tensors, blueprint, grid)
     }
 
     /// [`launch_on`](Self::launch_on), preparing a problem once however often it is launched.
@@ -50,12 +50,11 @@ impl CubeQkNormedConvRoutine {
         let tensors = QkNormedConvTensors::new(inputs)?;
         let (blueprint, grid) =
             prepared.prepare(self, hw, tensors.problem(), &QkNormedConvSettings)?;
-        self.launch(hw, tensors, blueprint, grid)
+        self.launch(tensors, blueprint, grid)
     }
 
     fn launch(
         &self,
-        hw: &Hardware,
         tensors: QkNormedConvTensors,
         blueprint: QkNormedConvBlueprint,
         grid: Grid,
@@ -87,7 +86,7 @@ impl CubeQkNormedConvRoutine {
             );
         }
         if let Some(write_back) = &blueprint.write_back {
-            write_back.launch(hw, tensors.reads());
+            write_back.launch(tensors.reads());
         }
         Ok(tensors.into_outputs())
     }

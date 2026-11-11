@@ -15,6 +15,7 @@ use cubek_microkernel::linear_recurrence::{CausalConvPartitioning, HEAD_CHANNEL,
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_std::routine::{CubeResources, Grid};
+use std::sync::Arc;
 
 /// What a conv launch compiles: the microkernel, the partitioning, the width the channels bind at,
 /// and the launch that fills a prompt's rings after it.
@@ -23,7 +24,7 @@ pub struct QkNormedConvBlueprint {
     pub microkernel: CubeQkNormedConvMicrokernel,
     pub partitioning: CausalConvPartitioning,
     pub width: usize,
-    pub write_back: Option<RingWriteBack>,
+    pub write_back: Option<Arc<RingWriteBack>>,
 }
 
 impl QkNormedConvBlueprint {
