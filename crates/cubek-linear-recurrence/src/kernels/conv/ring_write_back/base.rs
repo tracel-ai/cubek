@@ -1,47 +1,16 @@
 //! The launch that fills a prompt's rings, which every conv ends with.
 
+use super::kernel::ring_write_back_kernel;
 use crate::kernels::conv::reads::{CausalConvReads, bound};
 use crate::kernels::conv::{CausalConvPast, CausalConvPastInputs};
-use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::{Levels, Partitioning, Space, TileTensor};
-use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::linear_recurrence::conv::cube::{
-    ChannelBox, PastTiles, cube_ring_write_back_microkernel,
-};
+use cubecl::tile::{Levels, Space};
+use cubek_microkernel::linear_recurrence::conv::cube::ChannelBox;
 use cubek_microkernel::linear_recurrence::{
     BATCH, CHANNEL, CHANNEL_BOX, CausalConvPartitioning, LINE_IN_BOX, RING_POSITION,
     STREAM_POSITION,
 };
 use cubek_std::routine::{CubeResources, Grid};
-
-/// Every cube copies a box of channel lines of one of a row's last `taps - 1` valid positions of a
-/// prompt into its ring. It runs after the convolution has read every ring.
-#[cube(launch_unchecked)]
-pub fn ring_write_back_kernel<E: Float, N: Size>(
-    input: &TileTensor<'_>,
-    ring: &TileTensor<'_>,
-    lengths: &TileTensor<'_>,
-    valid: &TileTensor<'_>,
-    columns: usize,
-    partitioning: Partitioning,
-    #[comptime] lines: ChannelBox,
-    #[comptime] read_columns: usize,
-    #[define(E)] _element: ElemType,
-) {
-    let tiles = PastTiles {
-        input: input.tile(&partitioning),
-        ring: ring.tile(&partitioning),
-        lengths: lengths.tile(&partitioning),
-        columns,
-    };
-    let valid = valid.tile(&partitioning);
-    for cube in &partitioning {
-        let tiles = tiles.at(&cube);
-        let valid = valid.at(&cube);
-        cube_ring_write_back_microkernel::<E, N>(&cube, &tiles, &valid, lines, read_columns);
-    }
-}
 
 /// The write back of a prompt's rings, placed over the channels the calling conv convolves.
 pub(crate) struct RingWriteBackLaunch {
