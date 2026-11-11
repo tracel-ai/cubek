@@ -13,6 +13,7 @@ use cubek_microkernel::linear_recurrence::conv::cube::PastKind;
 use cubek_microkernel::linear_recurrence::{
     BATCH, CHANNEL, POSITION, PROMPT_POSITION, RING_COLUMN, STORE_SLOT,
 };
+use cubek_std::microkernel::GlobalStream;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 use super::reads::bound;
@@ -42,6 +43,18 @@ pub struct ConvExtent {
     pub batch: usize,
     pub channels: usize,
     pub taps: usize,
+}
+
+/// What one cube of a conv moves through global memory, apart from the past's own traffic: its
+/// `channels` channels of a position, `run` values of each read contiguously.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ConvStreams {
+    pub channels: usize,
+    pub taps: usize,
+    pub run: usize,
+    pub element_size: usize,
+    pub filters: GlobalStream,
+    pub outputs: GlobalStream,
 }
 
 /// A store of `slots` rings of `columns` columns, one ring a sequence.
@@ -107,6 +120,47 @@ impl CausalConvPast {
             return Err(CONV_TAPS_PAST_RING);
         }
         Ok(())
+    }
+
+    /// The streams one cube reads and writes: the input and the ring it reads, the ring a window
+    /// writes, and a prompt's share of the write back, which reads each row's last `taps - 1`
+    /// positions and writes them to its ring.
+    pub(crate) fn streams(&self, conv: &ConvStreams) -> (Vec<GlobalStream>, Vec<GlobalStream>) {
+        let stream = |elements: usize| GlobalStream {
+            bytes: (elements * conv.element_size) as u64,
+            run_bytes: conv.run * conv.element_size,
+        };
+        let ring_columns = conv.channels * (conv.taps - 1);
+        match self {
+            Self::Window { .. } => (
+                vec![stream(conv.channels), conv.filters, stream(ring_columns)],
+                vec![stream(conv.channels), conv.outputs],
+            ),
+            Self::Prompt { positions, .. } => {
+                let write_back = stream(ring_columns.div_ceil(*positions));
+                (
+                    vec![stream(conv.channels * conv.taps), conv.filters, write_back],
+                    vec![conv.outputs, write_back],
+                )
+            }
+        }
+    }
+
+    /// The bytes of activations a conv over `extent` reads and writes, apart from the filters:
+    /// every tap of every position over a window, and a prompt's positions once and its write
+    /// back.
+    pub(crate) fn bytes(&self, extent: ConvExtent, element_size: usize) -> (usize, usize) {
+        let channels = extent.batch * self.positions() * extent.channels;
+        match self {
+            Self::Window { .. } => (
+                channels * extent.taps * element_size,
+                channels * element_size,
+            ),
+            Self::Prompt { .. } => {
+                let ring = extent.batch * (extent.taps - 1) * extent.channels * element_size;
+                (channels * element_size + ring, ring)
+            }
+        }
     }
 
     /// The axes an input leads with, ahead of its channels: a row, and a prompt's position.

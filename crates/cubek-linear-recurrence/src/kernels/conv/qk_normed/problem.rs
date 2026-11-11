@@ -1,7 +1,7 @@
 //! The problem a conv routine computes.
 
 use crate::kernels::conv::admit_element;
-use crate::kernels::conv::{CausalConvPast, CubeQkNormedConvRoutine};
+use crate::kernels::conv::{CausalConvPast, ConvExtent, CubeQkNormedConvRoutine};
 use crate::kernels::refusals::{
     CONV_BINDINGS_PAST_DEVICE, CONV_NOTHING_TO_CONVOLVE, QK_NORMED_CONV_BINDING_BUFFERS,
     QK_NORMED_CONV_HEADS_EMPTY,
@@ -161,16 +161,19 @@ impl EstimatedProblem for QkNormedConvProblem {
     fn demand(&self) -> Work {
         let conv_dim = self.heads.conv_dim();
         let size = self.element.size();
-        let filters = conv_dim * self.taps * size;
-        let positions = self.past.positions();
-        let channels = self.batch * positions * conv_dim;
-        let (read, written) = match self.past {
-            CausalConvPast::Window { .. } => (channels * self.taps * size, channels * size),
-            CausalConvPast::Prompt { .. } => (channels * size, 0),
+        let extent = ConvExtent {
+            batch: self.batch,
+            channels: conv_dim,
+            taps: self.taps,
         };
+        let (read, written) = self.past.bytes(extent, size);
+        let channels = self.batch * self.past.positions() * conv_dim;
         Work {
             compute_ops: self.work_item().operations(channels),
-            bytes: read + filters + written + channels * QK_NORMED_CONV_OUTPUT_ELEMENT.size(),
+            bytes: read
+                + conv_dim * self.taps * size
+                + written
+                + channels * QK_NORMED_CONV_OUTPUT_ELEMENT.size(),
         }
     }
 }
