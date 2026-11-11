@@ -151,8 +151,7 @@ impl CubeStagedMicrokernel {
     /// layout and requests.
     ///
     /// Rounded first, as the multi-level routines promote an `f32` product to tf32 where they
-    /// may: on a device whose matrix instructions take no `f32`, the exact planes run the
-    /// software instruction, which a matrix instruction outruns many times over.
+    /// may: on a device whose matrix instructions take no `f32`, no exact plane runs.
     fn as_stored_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -314,8 +313,9 @@ impl CubeStagedMicrokernel {
     /// store engines serve the problem's buffers is the routine's to check.
     ///
     /// Its fragments bounce through a scratch wherever they cannot land their cells on their own:
-    /// into an output they add into, where the planes merge along `K`, and into one they cannot address whole, a tile the output's edge cuts short or a
-    /// sink. The software instruction's cells and a manual fragment's land on their own.
+    /// into an output they add into, where the planes merge along `K`, and into one they cannot
+    /// address whole, a tile the output's edge cuts short or a sink. A manual fragment's cells
+    /// land on their own.
     ///
     /// Whether this problem's edge cuts a tile short reads the exact `m`, which a tune key
     /// anchors: the problem a candidate is ranked on and the one it launches on can differ on it

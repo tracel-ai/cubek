@@ -1,10 +1,16 @@
 use core::num::NonZeroUsize;
 use cubecl::tile::space::ComputeScope;
 
-/// The steps a plane holds along `m` and `n`, and how many steps of `K` it walks per stage, each
-/// step the fewest calls of the instruction every load fills whole
-/// ([`MatmulStep`](crate::matmul::MatmulStep)). The instruction is not a setting: the tile layer
-/// picks it for the product ([`Instruction::for_accumulator`](cubecl::tile::Instruction::for_accumulator)).
+/// The box a plane holds along `m` and `n`, and how deep along `K` it walks per stage, in units:
+/// steps of the device's matrix unit for the product's elements, its largest square instruction
+/// ([`PlaneFragmentMicrokernel::matrix_unit`](super::PlaneFragmentMicrokernel::matrix_unit)),
+/// each the fewest calls of it every load fills whole
+/// ([`MatmulStep`](crate::matmul::MatmulStep)). So a setting is one box in elements on a device,
+/// whichever instruction cuts it. The instruction is not a setting: the tile layer picks it for
+/// the product ([`Instruction::for_accumulator`](cubecl::tile::Instruction::for_accumulator)).
+///
+/// A resolved [`PlaneFragmentMicrokernel`](super::PlaneFragmentMicrokernel) states the same
+/// fields in its own instruction's calls: the box cut into fragments.
 ///
 /// A warpgroup MMA holds one instruction a plane group, `along_n` times its form's granularity
 /// wide: there `along_m` is one, and the steps along `n` size the instruction rather than a grid of
@@ -56,7 +62,7 @@ pub enum PlaneFragmentDepth {
 impl PlaneFragmentMicrokernelSettings {
     pub const DEFAULT: Self = Self::grid(4, 4, 1);
 
-    /// `along_m` by `along_n` steps a plane, `depth` steps of `K` a stage, wide steps.
+    /// `along_m` by `along_n` units a plane, `depth` units of `K` a stage.
     ///
     /// # Panics
     ///
@@ -100,7 +106,7 @@ impl PlaneFragmentMicrokernelSettings {
 
 impl core::fmt::Display for PlaneFragmentMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "steps={}x{}x{}", self.along_m, self.along_n, self.depth)?;
+        write!(f, "units={}x{}x{}", self.along_m, self.along_n, self.depth)?;
         match self.holder {
             ComputeScope::Plane => {}
             ComputeScope::PlaneGroup { planes } => write!(f, " plane_groups={planes}")?,
