@@ -321,7 +321,9 @@ impl CubeStagedTmaRefusal {
         // are whole lines where `k` packs into them. A float one is aligned as its buffer states.
         let lhs_in_tiles = buffers.stored_tiles.lhs.is_some();
         let lhs_rows_aligned = match blocks.packings.lhs {
-            Some(_) => (blocks.k * bits(MatmulOperand::Lhs) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES),
+            Some(_) => {
+                (blocks.k * bits(MatmulOperand::Lhs) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES)
+            }
             None => buffers
                 .alignments
                 .lhs

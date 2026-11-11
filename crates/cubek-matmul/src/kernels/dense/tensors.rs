@@ -1031,7 +1031,20 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             ),
         };
         let lhs = bind(&self.lhs, [M, K], blueprint.widths.lhs);
-        let rhs = bind(&self.rhs, [K, N], blueprint.widths.rhs);
+        // A microkernel reading the rhs a block at a time planned on the rhs read so.
+        let by_block = match (&self.rhs, blueprint.microkernel.reads_rhs_by_block()) {
+            (StoredTensor::Packed(tensor), true) => {
+                Some(StoredTensor::Packed(tensor.by_block().expect(
+                    "a microkernel reading by block planned on an rhs that reads so",
+                )))
+            }
+            _ => None,
+        };
+        let rhs = bind(
+            by_block.as_ref().unwrap_or(&self.rhs),
+            [K, N],
+            blueprint.widths.rhs,
+        );
         let lhs = self.read_through_table(MatmulOperand::Lhs, lhs);
         let rhs = self.read_through_table(MatmulOperand::Rhs, rhs);
         MatmulBinding {

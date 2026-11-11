@@ -148,8 +148,9 @@ mod cube_shuffle {
     use cubek_std::devices;
     use cubek_std::routine::Routine;
 
-    /// Every setting that prepares cuts whole steps, at one row and at eight. It declines what
-    /// leaves its planes fewer than two turns of `K` each, so only some prepare.
+    /// Every setting that prepares cuts whole steps, at one row and at eight, of the rhs as it
+    /// reads it: as stored, or a scale block at a time. It declines what leaves its planes fewer
+    /// than two turns of `K` each, so only some prepare.
     #[test]
     fn every_box_is_whole_steps() {
         let hw = devices::m2_pro();
@@ -162,10 +163,15 @@ mod cube_shuffle {
                         continue;
                     };
                     prepared += 1;
+                    let read = match settings.microkernel.by_block {
+                        true => CubeShuffleMatmulRoutine::rhs_by_block(&problem)
+                            .expect("a by-block setting prepared on an rhs read so"),
+                        false => problem.clone(),
+                    };
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
-                            whole_steps(&step(&hw, &problem), &space),
+                            whole_steps(&step(&hw, &read), &space),
                             "{name} at {settings}: {space:?}"
                         );
                     }
@@ -173,6 +179,22 @@ mod cube_shuffle {
             }
         }
         assert!(prepared > 0);
+    }
+
+    /// The by-block split of `K` reads NVFP4 in rows only: in tile order its blocks are no
+    /// read's, and no other scale is bound a byte apiece.
+    #[test]
+    fn the_split_k_reads_nvfp4_in_rows_alone() {
+        let hw = devices::m2_pro();
+        let settings = crate::kernels::CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K;
+        for (name, problem) in problems(1) {
+            let prepared = CubeShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
+            assert_eq!(
+                prepared.is_ok(),
+                name == "nvfp4 rows",
+                "{name}: {prepared:?}"
+            );
+        }
     }
 }
 
