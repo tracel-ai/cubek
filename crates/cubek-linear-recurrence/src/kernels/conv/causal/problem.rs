@@ -13,9 +13,7 @@ use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_microkernel::linear_recurrence::conv::CausalConvOperandMap;
 use cubek_microkernel::linear_recurrence::conv::cube::CausalConvWorkItem;
-use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, CHANNEL_BOX, LINE_IN_BOX, POSITION, TAP,
-};
+use cubek_microkernel::linear_recurrence::{BATCH, CHANNEL, CHANNEL_BOX, LINE_IN_BOX, TAP};
 use cubek_std::Hardware;
 use cubek_std::routine::{EstimatedProblem, Routine};
 
@@ -118,9 +116,7 @@ impl CausalConvProblem {
             (LINE_IN_BOX, width),
             (TAP, self.taps),
         ];
-        if let CausalConvPast::Prompt { .. } = self.past {
-            axes.insert(0, (POSITION, 1));
-        }
+        axes.splice(0..0, self.past.leaf_axes());
         axes
     }
 
@@ -135,21 +131,14 @@ impl CausalConvProblem {
     ) -> Self {
         let rows =
             |shape: &[usize]| ElemAlignment::new(shape, &row_major_contiguous_strides(shape));
-        let positions = past.positions();
-        let (input, output) = match past {
-            CausalConvPast::Window { .. } => (rows(&[batch, channels]), rows(&[batch, channels])),
-            CausalConvPast::Prompt { .. } => (
-                rows(&[batch, positions, channels]),
-                rows(&[batch, positions, channels]),
-            ),
-        };
+        let dense = rows(&[past.lead_extents(batch).as_slice(), &[channels]].concat());
         let alignments = CausalConvOperandMap {
-            input,
+            input: dense,
             filters: rows(&[channels, taps]),
             bias: rows(&[channels]),
             ring: rows(&[past.ring().slots.get(), past.ring().columns, channels]),
             lengths: rows(&[batch]),
-            output,
+            output: dense,
         };
         Self {
             batch,

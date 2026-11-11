@@ -2,7 +2,7 @@
 
 use crate::kernels::conv::reads::{BoundReads, CausalConvReads, bound};
 use crate::kernels::conv::{
-    CausalConvBlueprint, CausalConvPast, CausalConvPastInputs, CausalConvProblem, ConvTensors,
+    CausalConvBlueprint, CausalConvPastInputs, CausalConvProblem, ConvTensors,
 };
 use crate::kernels::refusals::CAUSAL_CONV_CHANNELS_EMPTY;
 use cubecl::client::Client;
@@ -10,11 +10,11 @@ use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Launcher, TileTensorLaunch};
+use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
+use cubek_microkernel::linear_recurrence::CHANNEL;
 use cubek_microkernel::linear_recurrence::conv::CausalConvOperandMap;
-use cubek_microkernel::linear_recurrence::{BATCH, CHANNEL, POSITION};
 use cubek_std::routine::Grid;
 
 /// The inputs of a causal conv: the channels, the filters `[channels, taps]` (a unit dim between
@@ -121,10 +121,11 @@ impl ConvTensors for CausalConvTensors {
                 "the innermost axis of an operand of the conv is contiguous"
             );
         }
-        let shape = match reads.past() {
-            CausalConvPast::Window { .. } => vec![reads.batch(), channels],
-            CausalConvPast::Prompt { positions, .. } => vec![reads.batch(), positions, channels],
-        };
+        let shape = [
+            reads.past().lead_extents(reads.batch()).as_slice(),
+            &[channels],
+        ]
+        .concat();
         let (handle, output) =
             PlainTensor::empty_contiguous(reads.client(), Shape::from(shape), output_element);
         if !output.runs_on(reads.client()) {
@@ -182,14 +183,11 @@ impl ConvTensors for CausalConvTensors {
     fn bind<M>(&self, blueprint: &CausalConvBlueprint<M>, grid: &Grid) -> CausalConvBinding {
         let launcher = blueprint.launcher(self.reads.client(), grid);
         let width = blueprint.width;
-        let axes: &'static [Axis] = match self.problem.past {
-            CausalConvPast::Window { .. } => &[BATCH, CHANNEL],
-            CausalConvPast::Prompt { .. } => &[BATCH, POSITION, CHANNEL],
-        };
+        let axes = [self.problem.past.output_lead(), &[CHANNEL]].concat();
         CausalConvBinding {
             reads: self.reads.bind(&launcher, width),
             bias: (self.bias.as_ref()).map(|bias| bound(&launcher, bias, &[CHANNEL], 1)),
-            output: bound(&launcher, &self.output, axes, width),
+            output: bound(&launcher, &self.output, &axes, width),
             launcher,
         }
     }
