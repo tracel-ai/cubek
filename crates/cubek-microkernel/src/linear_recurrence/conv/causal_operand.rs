@@ -4,7 +4,7 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CausalConvOperand {
     /// `[batch, channel]`: the newest value of every channel over a window, or `[batch,
-    /// stream_position, channel]` over a prompt.
+    /// prompt_position, channel]` over a prompt.
     Input,
     /// `[channel, tap]`: the filter of every channel, its newest tap last.
     Filters,

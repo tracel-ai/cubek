@@ -203,6 +203,10 @@ mod tests {
                 );
                 let lines = problem.channels / blueprint.width;
                 assert!(blueprint.microkernel.units <= lines);
+                assert_eq!(
+                    blueprint.write_back.is_some(),
+                    problem.past.writes_ring_after()
+                );
                 let boxes = lines.div_ceil(blueprint.microkernel.units);
                 assert_eq!(
                     blueprint.partitioning.as_cubek().distributed(LINE_IN_BOX),
