@@ -17,14 +17,14 @@ use std::sync::Arc;
 /// the conv's blueprint holds of the launch that follows it. It keeps the grid and launcher its
 /// preparation settled, so a prepared conv fills rings without placing anything again.
 #[derive(Debug, Clone)]
-pub struct RingWriteBack {
+pub struct RingWriteBackLaunch {
     partitioning: CausalConvPartitioning,
     width: usize,
     lines: ChannelBox,
     grid: Grid,
 }
 
-impl PartialEq for RingWriteBack {
+impl PartialEq for RingWriteBackLaunch {
     /// The placement: the grid follows from it on a device.
     fn eq(&self, other: &Self) -> bool {
         self.partitioning == other.partitioning
@@ -33,9 +33,9 @@ impl PartialEq for RingWriteBack {
     }
 }
 
-impl Eq for RingWriteBack {}
+impl Eq for RingWriteBackLaunch {}
 
-impl RingWriteBack {
+impl RingWriteBackLaunch {
     /// The write back of a prompt over `extent`, its channels `width` values a line, checked
     /// against `hw`, or none for a window, which writes its own ring.
     ///
