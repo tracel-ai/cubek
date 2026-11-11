@@ -211,8 +211,7 @@ impl CubeStagedMicrokernel {
     /// first, one for each matrix instruction under which a step of `K`, the stage, is
     /// whole scale blocks, each a whole number of the instruction's steps. A plane holds the
     /// settings' steps of `M` and `N` and walks a step of `K` through each stage, block by block,
-    /// in the instruction's calls ([`MatmulStep::calls`]). Only the matrix instructions: the
-    /// software one's units read the stage at widths this routine does not bind. The units filling
+    /// in the instruction's calls ([`MatmulStep::calls`]). The units filling
     /// each stage decode every packed input into [`MatmulWorkItem::decoded_element`].
     fn decoding_candidates(
         hw: &Hardware,
@@ -370,9 +369,8 @@ impl CubeStagedMicrokernel {
         }
         // A box lands a stage as one run of whole rows; the units copy it in the layout the
         // setting names, or the instruction's own. Resolved to the layout it lays, a setting that
-        // names the instruction's own, or any layout under the software instruction's strided
-        // stage, launches as its twin does, and a table sees one launch rather than timing it
-        // twice.
+        // names the instruction's own launches as its twin does, and a table sees one launch
+        // rather than timing it twice.
         let (storage, stage_layout) = match fill.delivery {
             CubeStagedDelivery::Tma => (landed, None),
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => {
@@ -489,11 +487,11 @@ impl Microkernel for CubeStagedMicrokernel {
     /// layout. Then the named boxes a star moving one axis never reaches — the deep ones, two
     /// instruction steps of `K` a stage, which read longer runs of a col rhs's rows; the small
     /// ones a short problem fills the device with; the small cubes, one to four planes on a line
-    /// each holding a deep grid, where a small instruction (Metal's `8×8×8` simdgroup matrix, or
-    /// the software instruction) contracts more per shared read and more cubes fit a core — the
-    /// named ones crossed with the rings that keep a second stage in flight. The instruction is
-    /// the tile layer's ([`Contraction::instruction`](cubecl::tile::Contraction::instruction)),
-    /// never a setting.
+    /// each holding a deep grid, where a small instruction (Metal's `8×8×8` simdgroup matrix)
+    /// contracts more per shared read and more cubes fit a core — the named ones crossed with the
+    /// rings that keep a second stage in flight. The instruction is the tile layer's
+    /// ([`Instruction::for_accumulator`](cubecl::tile::Instruction::for_accumulator)), never a
+    /// setting.
     ///
     /// Then the default's grid on two by two planes and the small cube four fragments deep on two
     /// planes, each with its stage's rows in order ([`StageLayout::Blocks`]): a col rhs's
@@ -507,10 +505,6 @@ impl Microkernel for CubeStagedMicrokernel {
     ///
     /// Every one fills its stages by the cube's units; the routines of the other engines race
     /// their own lists.
-    ///
-    /// Never the narrow step, which changes what the product computes, a thing a race on time
-    /// alone cannot weigh
-    /// ([`PlaneFragmentStepSum::Narrow`](crate::matmul::plane::PlaneFragmentStepSum::Narrow)).
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         use PlaneFragmentMicrokernelSettings as Plane;
         let lead = Self::Settings::DEFAULT;
@@ -637,10 +631,8 @@ impl Microkernel for CubeStagedMicrokernel {
     /// stage's extent along each one's contiguous axis, one element wide where the TMA engine
     /// fills it. Each plane drains its tile a fragment at a time, or a cell at a time from a manual
     /// fragment, into the output; merged along
-    /// `K` in shared memory, it drains one element at a time, since an atomic takes one, and
-    /// planes on the software instruction drain their register block, which holds the rhs's lines,
-    /// so the rhs is read one element at a time too. Its planes' reads are the plane
-    /// microkernel's.
+    /// `K` in shared memory, it drains one element at a time, since an atomic takes one. Its
+    /// planes' reads are the plane microkernel's.
     fn vectorize(
         &self,
         cube_space: &MatmulCubeSpace,

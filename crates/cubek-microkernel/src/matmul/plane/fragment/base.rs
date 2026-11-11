@@ -558,7 +558,7 @@ impl PlaneFragmentMicrokernel {
     }
 
     /// The extent along `dim` of the leaf a unit reads: one fragment's tile, as deep as its
-    /// [`PlaneFragmentDepth`] says, or a unit's block of the software instruction.
+    /// [`PlaneFragmentDepth`] says.
     pub fn leaf_extent(&self, dim: MatmulDim) -> usize {
         let depth = match self.settings.fragment_depth {
             PlaneFragmentDepth::Instruction => 1,
@@ -700,12 +700,13 @@ impl Microkernel for PlaneFragmentMicrokernel {
         }
     }
 
-    /// The matrix instruction the tile layer picks for these elements and this sum, then every
-    /// other one this device offers through cubecl's fragment operations, then through the tile
-    /// DSL's own transport, each the one that contracts the most per call first; then the software
-    /// instruction, which every device runs. A matrix instruction spreads its fragment across the
-    /// plane, so it is offered only where the device commits to one plane width. Where the
-    /// settings put the plane on a warpgroup, the warpgroup MMA alone, where it runs. Against a packed rhs, the planes that decode it as they load, at the grids
+    /// Every matrix instruction this device offers for these elements and this sum at a shape the
+    /// tile layer picks it for ([`Instruction::for_accumulator`]), the one that
+    /// contracts the most per call first; none where the device offers none, as a plane holds a
+    /// fragment. A matrix instruction spreads its fragment across the plane, so it is offered only
+    /// where the device commits to one plane width. Where the settings deal the tiles to
+    /// warpgroups, the warpgroup MMA alone, where it runs. Against a packed rhs, the planes that
+    /// decode it as they load, at the grids
     /// [`windowed`](PlaneFragmentMicrokernelSettings::windowed) names, narrowed until their columns
     /// close `n`.
     fn candidates(

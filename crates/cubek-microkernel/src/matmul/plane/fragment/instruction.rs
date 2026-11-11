@@ -12,7 +12,7 @@ use cubek_std::microkernel::{ArithmeticInstruction, SWIZZLED_STAGE_UNREAD, Stage
 use cubek_std::{BlockScaledMma, Hardware};
 
 /// What a plane's fragments contract through: one of the device's matrix instructions, reached
-/// by either transport, or the software instruction every device runs.
+/// by either transport, the one the tile layer picks for it.
 ///
 /// Each is a tile of `m × n × k` the plane's units hold between them, which the plane
 /// microkernel's settings multiply into the tile one plane owns, so a setting means the same
@@ -125,7 +125,7 @@ impl PlaneFragmentInstruction {
     ///
     /// Measured on an L4 for a weight gradient's `f32` col lhs at tf32: staged in the product's
     /// order, a unit reads one value at a time across the lhs's lines, and the cmma candidates
-    /// lose to the software instruction.
+    /// lost to the software instruction a plane once ran.
     pub fn orders(self, layouts: MatmulOperands<MatmulLayout>) -> MatmulOperands<BindingOrder> {
         let lhs = match (self, layouts.lhs) {
             (Self::Cmma { .. } | Self::Mma { .. }, MatmulLayout::Col) => {

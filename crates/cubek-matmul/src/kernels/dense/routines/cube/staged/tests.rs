@@ -315,7 +315,7 @@ mod base {
     }
 
     /// The tile layer's pick alone: the vendor's transport for a sum written out, and not the tile
-    /// DSL's at the same shape, which would build a twin, nor the software instruction.
+    /// DSL's at the same shape, which would build a twin.
     #[test]
     fn the_candidates_are_the_tiles_pick_alone() {
         let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
