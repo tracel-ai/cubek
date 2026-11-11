@@ -1,7 +1,6 @@
 //! Packed matrices as the tiled tests build them: block-scaled values a quantizer reads back
 //! exactly, bound as the words and scales a kernel reads.
 
-use super::indexed::upload;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::Scalar;
@@ -12,27 +11,23 @@ use cubecl::zspace::Shape;
 use cubecl_common::{e4m3, ue8m0};
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
-use cubek_matmul::kernels::{CubeShuffleMatmulRoutine, MatmulRoutine, PlaneShuffleMatmulRoutine};
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_axes::K;
 use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
-use half::bf16;
+
+use crate::tiled::upload;
 
 /// The per-tensor scale a two-level format is built under.
 const GLOBAL_SCALE: f32 = 2.;
-
-/// Loose enough for a `bf16` output.
-const BF16_TOLERANCE: f32 = 1e-2;
 
 /// Block scales with one or two mantissa bits, which the quantizer and a `ue4m3` byte hold exactly;
 /// a `ue8m0` byte holds only the first.
 const MANTISSAS: [f32; 4] = [1., 1.5, 2., 3.];
 
 /// The block-scaled formats a packed test matrix is built in.
-#[derive(Clone, Copy, Debug)]
-pub(super) enum PackedFormat {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PackedFormat {
     Q8,
     Q4,
     Nvfp4,
@@ -40,7 +35,7 @@ pub(super) enum PackedFormat {
 }
 
 impl PackedFormat {
-    pub(super) fn scheme(self) -> QuantScheme {
+    pub(crate) fn scheme(self) -> QuantScheme {
         let blocks_of_32 = |value| {
             QuantScheme::default()
                 .with_value(value)
@@ -62,7 +57,7 @@ impl PackedFormat {
 /// `slabs` matrices of `rows` rows of `k` values, laid one after the other along the axis of
 /// `operand` beside `K`, packed along `k` in `format`.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct PackedSlabsSpec {
+pub(crate) struct PackedSlabsSpec {
     pub format: PackedFormat,
     pub operand: MatmulOperand,
     pub slabs: usize,
@@ -73,14 +68,30 @@ pub(super) struct PackedSlabsSpec {
 
 /// A packed matrix of slabs with the dequantized values it holds. Its words run along `k`, a row
 /// each, as a checkpoint stores them whichever axis the rows are.
-pub(super) struct PackedSlabs {
+pub(crate) struct PackedSlabs {
     spec: PackedSlabsSpec,
     tensor: PackedTensor,
+    host: HostSlabs,
+}
+
+/// The dequantized values of a packed matrix of slabs, on the host: what a routine reading it
+/// multiplies.
+#[derive(Debug, Clone)]
+pub(crate) struct HostSlabs {
+    rows: usize,
+    k: usize,
     values: Vec<f32>,
 }
 
+impl HostSlabs {
+    /// The value at `k` and row `row` of slab `slab`.
+    pub(crate) fn cell(&self, slab: usize, k: usize, row: usize) -> f32 {
+        self.values[(slab * self.rows + row) * self.k + k]
+    }
+}
+
 impl PackedSlabs {
-    pub(super) fn new(client: &Client, spec: PackedSlabsSpec) -> Self {
+    pub(crate) fn new(client: &Client, spec: PackedSlabsSpec) -> Self {
         let scheme = spec.format.scheme();
         let rows = spec.slabs * spec.rows;
         let exact = spec.exact_values(&scheme);
@@ -95,10 +106,6 @@ impl PackedSlabs {
             (rows, spec.k / block_of(&scheme)),
         );
         let global = (scheme.num_levels() > 1).then(|| upload(client, &[1, 1], &[GLOBAL_SCALE]));
-        let values = match global {
-            Some(_) => exact.into_iter().map(|v| v * GLOBAL_SCALE).collect(),
-            None => exact,
-        };
         let across = across(spec.operand);
         let tensor = PackedTensor::new(
             PlainTensor::of_handle(quantized.handle),
@@ -111,19 +118,19 @@ impl PackedSlabs {
         let slabs = Self {
             spec,
             tensor,
-            values,
+            host: spec.dequantized(),
         };
         slabs.assert_distinct(&scheme);
         slabs
     }
 
     /// The matrix whole, its slabs not yet read as such.
-    pub(super) fn matrix(&self) -> PackedTensor {
+    pub(crate) fn matrix(&self) -> PackedTensor {
         self.tensor.clone()
     }
 
     /// The matrix read as the stack of its slabs.
-    pub(super) fn stack(&self) -> StoredTensor {
+    pub(crate) fn stack(&self) -> StoredTensor {
         let stack = self
             .matrix()
             .stacked(self.spec.slabs, across(self.spec.operand))
@@ -132,25 +139,25 @@ impl PackedSlabs {
     }
 
     /// The dequantized value at `k` and row `row` of slab `slab`.
-    pub(super) fn cell(&self, slab: usize, k: usize, row: usize) -> f32 {
-        self.values[(slab * self.spec.rows + row) * self.spec.k + k]
+    pub(crate) fn cell(&self, slab: usize, k: usize, row: usize) -> f32 {
+        self.host.cell(slab, k, row)
     }
 
     /// Slabs, rows and the words of a block all hold different values, so a read of the wrong one
     /// cannot match.
     fn assert_distinct(&self, scheme: &QuantScheme) {
         let PackedSlabsSpec { rows, k, .. } = self.spec;
-        let slabs: Vec<&[f32]> = self.values.chunks(rows * k).collect();
+        let slabs: Vec<&[f32]> = self.host.values.chunks(rows * k).collect();
         for (i, a) in slabs.iter().enumerate() {
             for b in &slabs[i + 1..] {
                 assert!(mostly_differ(a, b), "two slabs hold the same values");
             }
         }
         assert!(
-            mostly_differ(&self.values[..k], &self.values[k..2 * k]),
+            mostly_differ(&self.host.values[..k], &self.host.values[k..2 * k]),
             "two rows hold the same values"
         );
-        let words: Vec<&[f32]> = self.values[..block_of(scheme)]
+        let words: Vec<&[f32]> = self.host.values[..block_of(scheme)]
             .chunks(scheme.num_quants())
             .collect();
         for (i, a) in words.iter().enumerate() {
@@ -162,6 +169,22 @@ impl PackedSlabs {
 }
 
 impl PackedSlabsSpec {
+    /// The values the matrix holds, dequantized, computed on the host alone: the exact values,
+    /// under the per-tensor scale where the format has one.
+    pub(crate) fn dequantized(&self) -> HostSlabs {
+        let scheme = self.format.scheme();
+        let exact = self.exact_values(&scheme);
+        let values = match scheme.num_levels() > 1 {
+            true => exact.into_iter().map(|v| v * GLOBAL_SCALE).collect(),
+            false => exact,
+        };
+        HostSlabs {
+            rows: self.rows,
+            k: self.k,
+            values,
+        }
+    }
+
     /// Values in blocks, each holding its peak and codes of the scheme under its own scale, so the
     /// quantizer rounds nothing and the host's values are the dequantized ones.
     fn exact_values(&self, scheme: &QuantScheme) -> Vec<f32> {
@@ -209,7 +232,7 @@ fn mostly_differ(a: &[f32], b: &[f32]) -> bool {
 }
 
 /// The values one of `scheme`'s block scales covers along a row.
-fn block_of(scheme: &QuantScheme) -> usize {
+pub(crate) fn block_of(scheme: &QuantScheme) -> usize {
     scheme
         .block_size()
         .expect("a block-scaled scheme")
@@ -259,143 +282,4 @@ fn stored_scales(
         client.create_from_slice(&bytes),
         ElemType::from_scale_dtype(stored),
     )
-}
-
-/// A packed tensor counts the bytes its words and scales bind, not the buffer they share: a
-/// framework stores the three in one, each bound over its own region of it. An autotune's
-/// roofline reads these bytes, and counting the shared buffer once a part tripled them.
-#[test]
-fn a_packed_tensor_binds_its_parts_not_the_buffer_they_share() {
-    let client = cubek_test_utils::client();
-    let scheme = nvfp4_scheme();
-    let (rows, k) = (16, 64);
-    let word = ElemType::UInt(cubecl::ir::UIntKind::U32).size();
-    let words = rows * k / scheme.num_quants();
-    let scale_words = rows * k / block_of(&scheme) / word;
-    let total = (words + scale_words + 1) * word;
-    let buffer = client.empty(total);
-    let part = |from: usize, words: usize, shape: [usize; 2], elem: ElemType| {
-        let handle = buffer
-            .clone()
-            .offset_start(from as u64)
-            .offset_end((total - from - words * word) as u64);
-        PlainTensor::of_handle(TensorHandle::new_contiguous(
-            Shape::from(shape.to_vec()),
-            handle,
-            elem,
-        ))
-    };
-    let u32 = ElemType::UInt(cubecl::ir::UIntKind::U32);
-    let packed = PackedTensor::new(
-        part(0, words, [rows, words / rows], u32),
-        part(words * word, scale_words, [rows, scale_words / rows], u32),
-        Some(part((words + scale_words) * word, 1, [1, 1], u32)),
-        scheme,
-        Operand::of_scheme(&scheme, K, [N, K]).expect("one block along k"),
-        [(N, rows), (K, k)],
-    );
-
-    assert_eq!(StoredTensor::Packed(packed).bytes(), total);
-}
-
-/// A packed matrix seen through a transposed view, as a framework hands a tied embedding to the
-/// vocabulary head: `[n, k]` packed along `k`, bound as `[k, n]` under swapped strides, its words
-/// running along the view's first axis. [`PackedTensor::of_quantized`] reads it as the matrix it
-/// views, and the routines a decode step races answer its product. It refused the view once, its
-/// words not row-major under it, and the framework dequantized the whole head on every step.
-#[test]
-fn a_transposed_packed_matrix_is_read_as_the_matrix_it_views() {
-    let (m, n, k) = (4, 96, 512);
-    let client = cubek_test_utils::client();
-    let hw = Hardware::from_client(&client);
-    let weight = PackedSlabs::new(
-        &client,
-        PackedSlabsSpec {
-            format: PackedFormat::Nvfp4,
-            operand: MatmulOperand::Rhs,
-            slabs: 1,
-            rows: n,
-            k,
-            seed: 3,
-        },
-    );
-    let matrix = weight.matrix();
-    // The view's scheme, as a framework's transpose restates it: blocks and words along its
-    // first axis.
-    let mut scheme = matrix.scheme();
-    scheme.swap_block_dims(2, 0, 1);
-    scheme.store = QuantStore::PackedU32(1);
-    let mut values = matrix.words().transposed().binding;
-    values.shape[0] = k;
-    let mut scales = matrix.scales().cloned();
-    let block_scales = scales.next().expect("block scales").transposed();
-    let rhs =
-        PackedTensor::of_quantized(&client, values, scheme, block_scales, scales.next(), [K, N])
-            .expect("a transposed view of a packed matrix reads as stored");
-
-    let lhs: Vec<bf16> = (0..m * k)
-        .map(|i| bf16::from_f32(((i * 7919 % 2003) as f32 / 1001.5) - 1.))
-        .collect();
-    let expected: Vec<f32> = (0..m * n)
-        .map(|at| {
-            let (row, column) = (at / n, at % n);
-            (0..k)
-                .map(|kk| lhs[row * k + kk].to_f32() * weight.cell(0, kk, column))
-                .sum()
-        })
-        .collect();
-    let mut ran = Vec::new();
-    let mut wrong = Vec::new();
-    let mut race = |launch: &dyn Fn(StoredTensor, PlainTensor) -> Option<String>| {
-        let (out, bound) = PlainTensor::empty_contiguous(
-            &client,
-            Shape::from(vec![m, n]),
-            bf16::elem_type_native(),
-        );
-        let Some(settings) = launch(StoredTensor::Packed(rhs.clone()), bound) else {
-            return;
-        };
-        let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
-        let off = expected
-            .iter()
-            .enumerate()
-            .filter(|&(at, &want)| {
-                (got.get_f32(&[at / n, at % n]) - want).abs() > BF16_TOLERANCE * (1. + want.abs())
-            })
-            .count();
-        if off > 0 {
-            wrong.push(format!("{settings}: {off} wrong"));
-        }
-        ran.push(settings);
-    };
-    macro_rules! raced {
-        ($routine:expr, $settings:expr) => {
-            for settings in $settings {
-                race(&|rhs, out| {
-                    $routine
-                        .launch_into(
-                            &hw,
-                            &client,
-                            StoredTensor::Plain(upload(&client, &[m, k], &lhs)),
-                            rhs,
-                            out,
-                            &settings,
-                        )
-                        .ok()
-                        .map(|_| settings.to_string())
-                });
-            }
-        };
-    }
-    raced!(
-        PlaneShuffleMatmulRoutine,
-        PlaneShuffleMatmulRoutine.packed_settings()
-    );
-    raced!(
-        CubeShuffleMatmulRoutine,
-        CubeShuffleMatmulRoutine.packed_settings(&hw)
-    );
-
-    assert!(!ran.is_empty(), "no shuffle setting prepares a packed rhs");
-    assert!(wrong.is_empty(), "{wrong:#?}");
 }

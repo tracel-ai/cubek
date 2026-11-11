@@ -1,50 +1,25 @@
-//! Inferred-blueprint smoke tests for the plane vec-mat inner-product routines.
-//!
-//! The tile matmul used here only supports a ColMajor rhs, which is why these
-//! tests don't use the default row-row `rect` helper.
+//! Inferred-blueprint smoke tests for the plane vec-mat inner-product routines, whose tile matmul
+//! takes only a col rhs.
 
-use cubecl::{ir::AddressType, zspace::shape};
-use cubek_matmul::{
-    definition::{MatmulGlobalElems, MatmulProblem},
-    multi_level::Strategy as MultiLevel,
-    strategy::Strategy,
-};
-use cubek_std::MatrixLayout;
+use cubek_matmul::multi_level::Strategy as MultiLevel;
+use cubek_test_utils::ScopeUnderTest;
 
-use crate::harness::{client, f16_elems, test_matmul_strategy};
-
-fn vecmat_problem(n: usize, k: usize, elems: MatmulGlobalElems) -> MatmulProblem {
-    // (1, n, k) vec-mat shape; rhs must be ColMajor for the inner-product tile.
-    MatmulProblem::from_parameters(
-        1,
-        n,
-        k,
-        shape![1],
-        shape![1],
-        MatrixLayout::RowMajor,
-        MatrixLayout::ColMajor,
-        MatrixLayout::RowMajor,
-        None,
-        None,
-        elems,
-        AddressType::U32,
-    )
-}
+use crate::matmul::{ByStrategy, Declines, F16, Product};
 
 #[test]
 fn simple_vecmat() {
-    test_matmul_strategy(
-        client(),
-        vecmat_problem(128, 128, f16_elems()),
-        MultiLevel::SimpleVecMat(Default::default()).into(),
+    let vecmat = ByStrategy::new(
+        MultiLevel::SimpleVecMat(Default::default()),
+        Declines::AsItStates,
     );
+    vecmat.check([Product::of(F16).m(1).n(128).k(128).rhs_along_k()]);
 }
 
 #[test]
 fn double_vecmat() {
-    test_matmul_strategy(
-        client(),
-        vecmat_problem(128, 128, f16_elems()),
-        MultiLevel::DoubleVecMat(Default::default()).into(),
+    let vecmat = ByStrategy::new(
+        MultiLevel::DoubleVecMat(Default::default()),
+        Declines::AsItStates,
     );
+    vecmat.check([Product::of(F16).m(1).n(128).k(128).rhs_along_k()]);
 }
