@@ -9,7 +9,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Launcher, TileTensorLaunch};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
-use cubek_microkernel::linear_recurrence::{BATCH, CHANNEL, PROMPT_POSITION, TAP};
+use cubek_microkernel::linear_recurrence::{CHANNEL, TAP};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// The activation elements the convs are verified at.
@@ -111,15 +111,17 @@ impl CausalConvReads {
         })
     }
 
+    /// The input bound under `launcher`, `width` values a line.
+    pub(crate) fn bind_input(&self, launcher: &Launcher, width: usize) -> TileTensorLaunch {
+        let axes = [self.past.input_lead(), &[CHANNEL]].concat();
+        bound(launcher, &self.input, &axes, width)
+    }
+
     /// The reads bound under `launcher`, `width` values a line, the ring placed at the slot its
     /// table names.
     pub(crate) fn bind(&self, launcher: &Launcher, width: usize) -> BoundReads {
-        let input_axes: &'static [Axis] = match self.past {
-            CausalConvPast::Window { .. } => &[BATCH, CHANNEL],
-            CausalConvPast::Prompt { .. } => &[BATCH, PROMPT_POSITION, CHANNEL],
-        };
         BoundReads {
-            input: bound(launcher, &self.input, input_axes, width),
+            input: self.bind_input(launcher, width),
             filters: bound(launcher, &self.filters, &[CHANNEL, TAP], 1),
             past: self.past_inputs.bind(launcher, width),
         }
@@ -130,7 +132,7 @@ impl CausalConvReads {
 pub(crate) fn bound(
     launcher: &Launcher,
     tensor: &PlainTensor,
-    axes: &'static [Axis],
+    axes: &[Axis],
     width: usize,
 ) -> TileTensorLaunch {
     launcher

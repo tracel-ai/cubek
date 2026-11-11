@@ -15,8 +15,8 @@ use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperandMap;
 use cubek_microkernel::linear_recurrence::conv::cube::QkNormedConvWorkItem;
 use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, HEAD_CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceHeads,
-    TAP, VALUE_FEATURE,
+    BATCH, CHANNEL, HEAD_CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, RecurrenceHeads, TAP,
+    VALUE_FEATURE,
 };
 use cubek_std::Hardware;
 use cubek_std::routine::{EstimatedProblem, Routine};
@@ -109,9 +109,7 @@ impl QkNormedConvProblem {
             (HEAD_CHANNEL, width),
             (TAP, self.taps),
         ];
-        if let CausalConvPast::Prompt { .. } = self.past {
-            axes.insert(0, (POSITION, 1));
-        }
+        axes.splice(0..0, self.past.leaf_axes());
         axes
     }
 
@@ -132,19 +130,11 @@ impl QkNormedConvProblem {
             value_features,
         } = heads;
         let conv_dim = heads.conv_dim();
-        let positions = past.positions();
-        let (input, keyed, valued) = match past {
-            CausalConvPast::Window { .. } => (
-                rows(&[batch, conv_dim]),
-                rows(&[batch, key_heads, key_features]),
-                rows(&[batch, key_heads, heads_per_group, value_features]),
-            ),
-            CausalConvPast::Prompt { .. } => (
-                rows(&[batch, positions, conv_dim]),
-                rows(&[batch, positions, key_heads, key_features]),
-                rows(&[batch, positions, key_heads, heads_per_group, value_features]),
-            ),
-        };
+        let lead = past.lead_extents(batch);
+        let with_lead = |tail: &[usize]| rows(&[lead.as_slice(), tail].concat());
+        let input = with_lead(&[conv_dim]);
+        let keyed = with_lead(&[key_heads, key_features]);
+        let valued = with_lead(&[key_heads, heads_per_group, value_features]);
         let alignments = QkNormedConvOperandMap {
             qkv: input,
             filters: rows(&[conv_dim, taps]),

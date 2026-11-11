@@ -75,6 +75,39 @@ impl CausalConvPast {
         Ok(())
     }
 
+    /// The axes an input leads with, ahead of its channels: a row, and a prompt's position.
+    pub(crate) fn input_lead(&self) -> &'static [Axis] {
+        match self {
+            Self::Window { .. } => &[BATCH],
+            Self::Prompt { .. } => &[BATCH, PROMPT_POSITION],
+        }
+    }
+
+    /// The axes an output leads with, ahead of its features: a row, and a prompt's position.
+    pub(crate) fn output_lead(&self) -> &'static [Axis] {
+        match self {
+            Self::Window { .. } => &[BATCH],
+            Self::Prompt { .. } => &[BATCH, POSITION],
+        }
+    }
+
+    /// The extents of [`input_lead`](Self::input_lead) and [`output_lead`](Self::output_lead) over
+    /// `batch` rows.
+    pub(crate) fn lead_extents(&self, batch: usize) -> Vec<usize> {
+        match self {
+            Self::Window { .. } => vec![batch],
+            Self::Prompt { positions, .. } => vec![batch, *positions],
+        }
+    }
+
+    /// The axes of a cube's leaf the past adds: a cube holds one position of a prompt.
+    pub(crate) fn leaf_axes(&self) -> Vec<(Axis, usize)> {
+        match self {
+            Self::Window { .. } => vec![],
+            Self::Prompt { .. } => vec![(POSITION, 1)],
+        }
+    }
+
     /// The axes the past's operands carry: the store, and the prompt's positions.
     pub(crate) fn past_axes(&self) -> Vec<(Axis, usize)> {
         let ring = self.ring();

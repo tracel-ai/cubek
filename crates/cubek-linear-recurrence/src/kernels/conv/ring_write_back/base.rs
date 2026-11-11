@@ -7,8 +7,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Levels, Space};
 use cubek_microkernel::linear_recurrence::conv::cube::ChannelBox;
 use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, CHANNEL_BOX, CausalConvPartitioning, LINE_IN_BOX, PROMPT_POSITION,
-    RING_POSITION,
+    BATCH, CHANNEL, CHANNEL_BOX, CausalConvPartitioning, LINE_IN_BOX, RING_POSITION,
 };
 use cubek_std::routine::{CubeResources, Grid};
 
@@ -85,12 +84,7 @@ impl RingWriteBackLaunch {
                 self.partitioning.as_cubek().space().clone(),
             )
         });
-        let input = bound(
-            &launcher,
-            &reads.input,
-            &[BATCH, PROMPT_POSITION, CHANNEL],
-            self.width,
-        );
+        let input = reads.bind_input(&launcher, self.width);
         let past = reads.past_inputs.bind(&launcher, self.width);
         let valid = bound(&launcher, valid, &[BATCH], 1);
         // SAFETY: every operand is bound through the launcher and indexed only through its tile,
