@@ -165,6 +165,8 @@ fn dequantize_rejects_a_missing_global_scale() {
     );
 }
 
+/// The outputs reach about 0.03, where an f16 step is about 1.5e-5. The global scale sits in f16's
+/// subnormals, so a global scale narrowed to f16 lands about 2% off, far outside the tolerance.
 #[test]
 fn the_global_scale_is_read_as_f32_not_as_the_compute_type() {
     let num_blocks = M * N / BLOCK;
@@ -173,7 +175,7 @@ fn the_global_scale_is_read_as_f32_not_as_the_compute_type() {
         OUTER,
         scales,
         |i| (i % 9) as f32 - 4.0,
-        1e-2,
+        3e-5,
     )]);
 }
 

@@ -386,7 +386,7 @@ impl ConvCase {
 pub fn tolerance(elem: ElemType) -> f64 {
     match elem {
         F32 => 2e-4,
-        F16 => 6e-3,
+        F16 => 1e-3,
         _ => 5e-2,
     }
 }

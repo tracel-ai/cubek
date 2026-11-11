@@ -7,12 +7,12 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubek_reduce::{
-    ReduceDtypes, ReducePrecision, ReduceStrategy, ReduceWithIndicesDtypes,
+    ReduceDtypes, ReduceError, ReducePrecision, ReduceStrategy, ReduceWithIndicesDtypes,
     components::instructions::ReduceOperationConfig,
 };
 use cubek_test_utils::{
-    Distribution, HostData, HostDataType, HostDataVec, ScopeUnderTest, StridedLayout, TestInput,
-    Written,
+    Distribution, ExecutionOutcome, HostData, HostDataType, HostDataVec, ScopeUnderTest,
+    StridedLayout, TestInput, Written,
 };
 
 use cubek_reduce::eval::cpu_reference::{
@@ -182,10 +182,16 @@ impl TestCase {
             }
             _ => contiguous_strides(output_shape.as_slice()),
         };
+        // Poisoned: NaN where the output holds values, an index no row reaches where it holds
+        // indices or flags, so a cell the kernel never writes fails the comparison.
+        let poison = match output_dtype {
+            ElemType::Float(_) => f32::NAN,
+            _ => 77_777.0,
+        };
         TestInput::builder(client.clone(), output_shape.clone())
             .dtype(output_dtype)
             .layout(StridedLayout::Explicit(strides.iter().copied().collect()))
-            .zeros()
+            .custom(vec![poison; output_shape.num_elements()])
             .generate_without_host_data()
     }
 }
@@ -255,6 +261,9 @@ impl Op {
         match self {
             Op::Any => Distribution::Bernoulli(flag_probability),
             Op::All => Distribution::Bernoulli(1.0 - flag_probability),
+            // Around one, so a long row's product neither vanishes nor overflows, and a product
+            // the kernel never wrote cannot pass as one too small to tell from zero.
+            Op::Prod => Distribution::Uniform(0.9, 1.1),
             _ => Distribution::Uniform(-1., 1.),
         }
     }
@@ -289,14 +298,33 @@ impl Op {
         }
     }
 
-    /// The tolerance of the values: a sum's rounding, a product's exponential error, and nothing
-    /// for what a reduction selects or counts.
-    fn tolerance(self) -> f32 {
+    /// The tolerance of the values: nothing for what a reduction selects or counts, and for a
+    /// sum, a mean or a product, the rounding of the element it is written in, or of a 16-bit
+    /// accumulator, whose error grows with the row.
+    fn tolerance(self, output: ElemType, accumulation: ElemType) -> f32 {
+        let rounding = |element: ElemType| match element {
+            ElemType::Float(FloatKind::F64) => 1e-6,
+            ElemType::Float(FloatKind::F16) => 2e-3,
+            ElemType::Float(FloatKind::BF16) => 1.6e-2,
+            _ => 1e-4,
+        };
         match self {
-            Op::Sum | Op::Mean | Op::Min | Op::Max | Op::MaxAbs => 0.0625,
-            Op::Prod => 1.0,
-            Op::TopK(_) | Op::TopKWithIndices(_) | Op::MinWithIndices | Op::MaxWithIndices => 1e-7,
-            Op::Any | Op::All | Op::ArgMax | Op::ArgMin | Op::ArgTopK(_) => 0.,
+            Op::Sum | Op::Mean | Op::Prod => match accumulation {
+                ElemType::Float(FloatKind::F16 | FloatKind::BF16) => 0.0625,
+                _ => rounding(output),
+            },
+            Op::Min
+            | Op::Max
+            | Op::MaxAbs
+            | Op::TopK(_)
+            | Op::TopKWithIndices(_)
+            | Op::MinWithIndices
+            | Op::MaxWithIndices
+            | Op::Any
+            | Op::All
+            | Op::ArgMax
+            | Op::ArgMin
+            | Op::ArgTopK(_) => 0.,
         }
     }
 }
@@ -367,15 +395,34 @@ impl ScopeUnderTest for Reduces {
                 },
             ),
         };
+        // A device declines only by what it lacks; any other error is the test's or the kernel's,
+        // and a case of explicit data must execute whatever the device.
         match launched {
             Ok(()) => {}
             Err(why) if case.custom_input.is_some() => {
                 panic!("{reduction:?}: a case of explicit data must execute, refused: {why:?}")
             }
-            Err(_) => {
+            Err(
+                ReduceError::PlanesUnavailable
+                | ReduceError::ImprecisePlaneDim
+                | ReduceError::CubeCountTooLarge
+                // A cube forced to a plane width the device does not have.
+                | ReduceError::Validation {
+                    details: "`cube_dim.x` must match `plane_size_max`",
+                },
+            ) => {
                 return Err(Refusal::Declined {
                     why: "the reduce entry runs no such configuration on this device",
                 });
+            }
+            Err(why) => panic!("{reduction:?}: {why}"),
+        }
+        if case.custom_input.is_some() {
+            let handles: Vec<_> = outputs.iter().map(|(_, tensor)| &tensor.handle).collect();
+            if let ExecutionOutcome::CompileError(why) =
+                ExecutionOutcome::of_outputs(client, &handles)
+            {
+                panic!("{reduction:?}: a case of explicit data must execute: {why}");
             }
         }
         let names = match op.with_indices() {
@@ -407,7 +454,9 @@ impl ScopeUnderTest for Reduces {
     }
 
     fn tolerance(&self, reduction: &Reduction) -> f32 {
-        reduction.op.tolerance()
+        let case = &reduction.case;
+        let output = reduction.op.output_dtypes(case.input_dtype)[0];
+        reduction.op.tolerance(output, case.accumulation_dtype)
     }
 
     /// The indices a fused reduction writes are exact.
