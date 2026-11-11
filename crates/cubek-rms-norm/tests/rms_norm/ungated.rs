@@ -3,20 +3,17 @@
 //! prime row that binds one element at a time, a row one line past a power of two, a row longer
 //! than a plane's registers hold, no rows at all, and a weight with a row for each row.
 
-use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
-use cubecl::zspace::Shape;
-use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_rms_norm::kernels::{
     CubeGroupsRmsNormRoutine, CubeRmsNormRoutine, PlaneRmsNormRoutine, RmsNormCall, RmsNormRoutine,
     RmsNormRoutineCandidate,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType};
 
-const EPSILON: f32 = 1e-6;
+use super::harness::{EPSILON, round_to, tensor, wobble};
 
 /// The floor serves every case at every setting: a decline would be a family with nothing to fall
 /// back on.
@@ -165,26 +162,4 @@ fn check_routine<M: Microkernel, R: RmsNormRoutine<M> + Copy>(routine: R, declin
         }
     }
     assert!(launched > 0, "the routine ran no case on this device");
-}
-
-/// `values` uploaded as `element`, row-major in `shape`.
-fn tensor(client: &Client, values: Vec<f32>, shape: &[usize], element: ElemType) -> PlainTensor {
-    let handle = TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
-        .dtype(element)
-        .custom(values)
-        .generate_without_host_data();
-    PlainTensor::of_handle(handle)
-}
-
-/// Values in `[-2, 2)`, not periodic in any extent a case uses.
-fn wobble(i: usize, salt: usize) -> f32 {
-    ((i.wrapping_mul(2654435761) + salt * 40503) % 2048) as f32 / 512.0 - 2.0
-}
-
-/// `value` as `element` holds it.
-fn round_to(value: f32, element: ElemType) -> f32 {
-    match element {
-        ElemType::Float(FloatKind::F16) => half::f16::from_f32(value).to_f32(),
-        _ => value,
-    }
 }
