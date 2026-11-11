@@ -21,5 +21,5 @@ pub fn plane_rms_norm_microkernel<E: Float, H: Float, W: Float, N: Size>(
     let reader = RowReader::new(input, gate, microkernel.gate);
     let mut row = HeldRow::<H, N>::new(microkernel.held_row());
     let sum = UnitShare::Plane.reduce::<f32>(row.load::<E>(&reader, lane), Monoid::Sum);
-    row.write::<E, W>(weight, out, lane, scale.of(sum));
+    row.write::<E, W>(&reader, weight, out, lane, scale.of(sum));
 }

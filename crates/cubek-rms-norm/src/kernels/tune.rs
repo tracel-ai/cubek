@@ -672,7 +672,8 @@ mod tests {
         let plain = RmsNormKey::new(F16, F16, None, 2560, 1);
         let widened = RmsNormKey::new(F16, f32, None, 2560, 1);
         let before = RmsNormKey::new(F16, F16, Some(GateOrder::GateThenNorm), 2560, 1);
-        let keys = [&plain, &widened, &before];
+        let after = RmsNormKey::new(F16, F16, Some(GateOrder::NormThenGate), 2560, 1);
+        let keys = [&plain, &widened, &before, &after];
         for (i, key) in keys.iter().enumerate() {
             assert!(keys[i + 1..].iter().all(|other| other != key));
         }

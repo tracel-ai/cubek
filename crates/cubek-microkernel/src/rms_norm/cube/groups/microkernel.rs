@@ -93,7 +93,13 @@ pub fn cube_groups_rms_norm_microkernel<E: Float, H: Float, W: Float, N: Size>(
 
         let row_lines = microkernel.held_row().lines;
         let mut row_out = store.owner(&group, slot * row_lines);
-        row.write::<E, W>(&weight.at(&group), &mut row_out, unit, scale.of(sum));
+        row.write::<E, W>(
+            &reader,
+            &weight.at(&group),
+            &mut row_out,
+            unit,
+            scale.of(sum),
+        );
     }
 
     store.finish();

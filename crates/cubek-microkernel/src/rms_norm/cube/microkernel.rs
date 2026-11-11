@@ -53,7 +53,13 @@ pub fn cube_rms_norm_microkernel<E: Float, H: Float, W: Float, N: Size>(
 
         let run_lines = microkernel.plane.held_row().lines;
         let mut run_out = store.owner(&plane, slot * run_lines);
-        row.write::<E, W>(&weight.at(&plane), &mut run_out, lane, scale.of(sum));
+        row.write::<E, W>(
+            &reader,
+            &weight.at(&plane),
+            &mut run_out,
+            lane,
+            scale.of(sum),
+        );
     }
 
     store.finish();

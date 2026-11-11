@@ -5,7 +5,8 @@ use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
 /// What an owner's units read a row's lines from: the input's tile, and the gate's where the norm
 /// is gated. It emits the lines the norm sums and scales, which are the input's, or the input's
-/// times the silu of the gate's where the gate comes first.
+/// times the silu of the gate's where the gate comes first, and applies the gate to the lines the
+/// norm writes where it comes last.
 #[derive(CubeType)]
 pub struct RowReader {
     input: Tile,
@@ -49,7 +50,22 @@ impl RowReader {
                 let gated = activation::gated::<N>(Vector::<f32, N>::cast_from(row), gate);
                 Vector::<H, N>::cast_from(gated)
             }
-            None => Vector::<H, N>::cast_from(row),
+            Some(GateOrder::NormThenGate) | None => Vector::<H, N>::cast_from(row),
+        }
+    }
+
+    /// Line `line` of the norm, `scaled` in `f32`, as it is written: multiplied by the silu of the
+    /// gate's where the gate comes last.
+    pub fn written<E: Float, N: Size>(
+        &self,
+        line: usize,
+        scaled: Vector<f32, N>,
+    ) -> Vector<f32, N> {
+        match comptime!(self.order) {
+            Some(GateOrder::NormThenGate) => {
+                activation::gated::<N>(scaled, self.gate_line::<E, N>(line))
+            }
+            Some(GateOrder::GateThenNorm) | None => scaled,
         }
     }
 

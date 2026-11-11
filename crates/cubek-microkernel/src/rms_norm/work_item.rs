@@ -35,7 +35,7 @@ impl RmsNormWorkItem {
     pub fn held_element(&self) -> ElemType {
         match self.gate {
             Some(GateOrder::GateThenNorm) => ElemType::Float(FloatKind::F32),
-            None => self.element,
+            Some(GateOrder::NormThenGate) | None => self.element,
         }
     }
 
@@ -88,6 +88,7 @@ mod tests {
             shape.work(8, item.held_element()).registers
         };
         assert_eq!(item(None).held_element(), F16);
+        assert_eq!(item(Some(GateOrder::NormThenGate)).held_element(), F16);
         assert_eq!(
             registers(Some(GateOrder::GateThenNorm)) - 1,
             2 * (registers(None) - 1)
