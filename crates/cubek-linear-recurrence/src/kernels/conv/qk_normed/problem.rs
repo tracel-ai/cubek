@@ -1,6 +1,6 @@
 //! The problem a conv routine computes.
 
-use crate::kernels::conv::reads::CausalConvReads;
+use crate::kernels::conv::admit_element;
 use crate::kernels::conv::{CausalConvPast, CubeQkNormedConvRoutine};
 use crate::kernels::refusals::{
     CONV_BINDINGS_PAST_DEVICE, CONV_NOTHING_TO_CONVOLVE, QK_NORMED_CONV_BINDING_BUFFERS,
@@ -63,7 +63,7 @@ impl QkNormedConvProblem {
         if self.batch == 0 {
             return Err(CONV_NOTHING_TO_CONVOLVE);
         }
-        CausalConvReads::admit_element(self.element)?;
+        admit_element(self.element)?;
         self.past.admit(self.taps)?;
         if QK_NORMED_CONV_BINDING_BUFFERS > hw.properties.hardware.max_bindings {
             return Err(CONV_BINDINGS_PAST_DEVICE);

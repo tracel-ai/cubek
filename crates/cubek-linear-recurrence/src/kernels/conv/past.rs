@@ -1,8 +1,10 @@
 //! The past a causal conv's taps run over, which every conv of the family reads the same way.
 
-use crate::kernels::refusals::{CONV_NOTHING_TO_CONVOLVE, CONV_TAPS_PAST_RING};
+use crate::kernels::refusals::{
+    CONV_ELEMENT_UNSUPPORTED, CONV_NOTHING_TO_CONVOLVE, CONV_TAPS_PAST_RING,
+};
 use core::num::NonZeroUsize;
-use cubecl::ir::{ElemType, UIntKind};
+use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::metadata::Metadata;
@@ -14,6 +16,25 @@ use cubek_microkernel::linear_recurrence::{
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 use super::reads::bound;
+
+/// The activation elements the convs are verified at.
+const ELEMENTS: [ElemType; 2] = [
+    ElemType::Float(FloatKind::F16),
+    ElemType::Float(FloatKind::F32),
+];
+
+/// Whether the convs read and write activations of `element`.
+///
+/// # Errors
+///
+/// [`CONV_ELEMENT_UNSUPPORTED`] for any but `f16` and `f32`.
+pub(crate) fn admit_element(element: ElemType) -> Result<(), Refusal> {
+    if ELEMENTS.contains(&element) {
+        Ok(())
+    } else {
+        Err(CONV_ELEMENT_UNSUPPORTED)
+    }
+}
 
 /// A store of `slots` rings of `columns` columns, one ring a sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -219,15 +240,19 @@ impl CausalConvPastInputs {
     ///
     /// On shapes that disagree with `channels`, and on tables that are not `u32` or not
     /// `[rows]`.
-    pub(crate) fn shaped(
-        &mut self,
+    pub(crate) fn view(
+        self,
         input: PlainTensor,
         channels: usize,
-    ) -> Result<(PlainTensor, CausalConvPast), Refusal> {
+    ) -> Result<(Self, PlainTensor, CausalConvPast), Refusal> {
         let shape = input.shape().to_vec();
+        assert!(
+            shape.len() >= 2,
+            "the input has a row axis and a channel axis"
+        );
         let rows = shape[0];
         let strides = &input.binding.strides;
-        let (positions, extents, input_strides) = match self {
+        let (positions, extents, input_strides) = match &self {
             Self::Window { .. } => {
                 assert!(
                     shape.last() == Some(&channels)
@@ -272,20 +297,35 @@ impl CausalConvPastInputs {
             slots: NonZeroUsize::new(slots_in_store).expect("a store holds a slot"),
             columns,
         };
-        let past = match self {
-            Self::Window { ring: store, .. } => {
-                *store = viewed;
-                CausalConvPast::Window { ring }
-            }
+        Ok(match self {
+            Self::Window { slots, lengths, .. } => (
+                Self::Window {
+                    ring: viewed,
+                    slots,
+                    lengths,
+                },
+                input,
+                CausalConvPast::Window { ring },
+            ),
             Self::Prompt {
-                ring: store, valid, ..
+                slots,
+                lengths,
+                valid,
+                ..
             } => {
                 assert_eq!(valid.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
                 assert_eq!(valid.shape().dims::<1>(), [rows]);
-                *store = viewed;
-                CausalConvPast::Prompt { ring, positions }
+                (
+                    Self::Prompt {
+                        ring: viewed,
+                        slots,
+                        lengths,
+                        valid,
+                    },
+                    input,
+                    CausalConvPast::Prompt { ring, positions },
+                )
             }
-        };
-        Ok((input, past))
+        })
     }
 }

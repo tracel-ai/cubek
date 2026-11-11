@@ -15,5 +15,6 @@ mod qk_normed;
 mod reads;
 mod ring_write_back;
 
+pub(crate) use past::admit_element;
 pub use past::*;
 pub use qk_normed::*;

@@ -146,31 +146,31 @@ impl QkNormedConvTensors {
         } = inputs;
         let reads = CausalConvReads::new(client, qkv, filters, past, heads.conv_dim())?;
         let (outputs, [query, key, value]) =
-            QkNormedConvOutputs::allocate(&reads.client, &heads, reads.batch, &reads.past)?;
+            QkNormedConvOutputs::allocate(reads.client(), &heads, reads.batch(), &reads.past())?;
         let alignments = QkNormedConvOperandMap {
-            qkv: reads.input.elem_alignment(),
-            filters: reads.filters.elem_alignment(),
-            ring: reads.past_inputs.ring().elem_alignment(),
-            lengths: reads.past_inputs.lengths().elem_alignment(),
+            qkv: reads.input().elem_alignment(),
+            filters: reads.filters().elem_alignment(),
+            ring: reads.past_inputs().ring().elem_alignment(),
+            lengths: reads.past_inputs().lengths().elem_alignment(),
             query: query.elem_alignment(),
             key: key.elem_alignment(),
             value: value.elem_alignment(),
         };
         let start_bytes = QkNormedConvOperandMap {
-            qkv: reads.input.start_bytes(),
-            filters: reads.filters.start_bytes(),
-            ring: reads.past_inputs.ring().start_bytes(),
-            lengths: reads.past_inputs.lengths().start_bytes(),
+            qkv: reads.input().start_bytes(),
+            filters: reads.filters().start_bytes(),
+            ring: reads.past_inputs().ring().start_bytes(),
+            lengths: reads.past_inputs().lengths().start_bytes(),
             query: query.start_bytes(),
             key: key.start_bytes(),
             value: value.start_bytes(),
         };
         let problem = QkNormedConvProblem {
-            batch: reads.batch,
+            batch: reads.batch(),
             heads,
-            taps: reads.taps,
-            element: reads.element,
-            past: reads.past,
+            taps: reads.taps(),
+            element: reads.element(),
+            past: reads.past(),
             alignments,
             start_bytes,
         };
@@ -187,7 +187,7 @@ impl QkNormedConvTensors {
 
     /// The client the operands live on, which a launch submits to.
     pub(crate) fn client(&self) -> &Client {
-        &self.reads.client
+        self.reads.client()
     }
 
     /// The operands every conv reads.
@@ -217,7 +217,7 @@ impl QkNormedConvTensors {
         blueprint: &QkNormedConvBlueprint,
         grid: &Grid,
     ) -> QkNormedConvBinding {
-        let launcher = blueprint.launcher(&self.reads.client, grid);
+        let launcher = blueprint.launcher(self.reads.client(), grid);
         let width = blueprint.width;
         let lead = self.problem.past.output_lead();
         let keyed: Vec<Axis> = [lead, &[KEY_HEAD, KEY_FEATURE]].concat();

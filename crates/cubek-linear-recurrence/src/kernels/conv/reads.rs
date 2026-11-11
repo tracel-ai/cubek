@@ -2,9 +2,8 @@
 
 use crate::kernels::conv::past::BoundPast;
 use crate::kernels::conv::{CausalConvPast, CausalConvPastInputs};
-use crate::kernels::refusals::CONV_ELEMENT_UNSUPPORTED;
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, FloatKind};
+use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Launcher, TileTensorLaunch};
 use cubecl::zspace::metadata::Metadata;
@@ -12,25 +11,19 @@ use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::linear_recurrence::{CHANNEL, TAP};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
-/// The activation elements the convs are verified at.
-const ELEMENTS: [ElemType; 2] = [
-    ElemType::Float(FloatKind::F16),
-    ElemType::Float(FloatKind::F32),
-];
-
 /// The operands every conv reads: the input channels, the filters `[channels, taps]` (a unit dim
 /// between allowed) and the past, in one element.
 #[derive(Clone)]
 pub(crate) struct CausalConvReads {
-    pub client: Client,
-    pub input: PlainTensor,
-    pub filters: PlainTensor,
-    pub past_inputs: CausalConvPastInputs,
-    pub past: CausalConvPast,
-    pub batch: usize,
-    pub channels: usize,
-    pub taps: usize,
-    pub element: ElemType,
+    client: Client,
+    input: PlainTensor,
+    filters: PlainTensor,
+    past_inputs: CausalConvPastInputs,
+    past: CausalConvPast,
+    batch: usize,
+    channels: usize,
+    taps: usize,
+    element: ElemType,
 }
 
 /// The reads bound under one launcher, `width` values a line.
@@ -41,19 +34,6 @@ pub(crate) struct BoundReads {
 }
 
 impl CausalConvReads {
-    /// Whether the convs read and write activations of `element`.
-    ///
-    /// # Errors
-    ///
-    /// [`CONV_ELEMENT_UNSUPPORTED`] for any but `f16` and `f32`.
-    pub(crate) fn admit_element(element: ElemType) -> Result<(), Refusal> {
-        if ELEMENTS.contains(&element) {
-            Ok(())
-        } else {
-            Err(CONV_ELEMENT_UNSUPPORTED)
-        }
-    }
-
     /// The reads of `input` of `channels` channels, viewed as the kernels read them.
     ///
     /// # Errors
@@ -85,6 +65,10 @@ impl CausalConvReads {
         }
         let filter_shape = filters.shape().to_vec();
         assert!(
+            filter_shape.len() >= 2,
+            "the filters have a channel axis and a tap axis"
+        );
+        assert!(
             filter_shape[0] == channels
                 && filter_shape[1..filter_shape.len() - 1]
                     .iter()
@@ -96,19 +80,55 @@ impl CausalConvReads {
             vec![channels, taps],
             vec![filters.binding.strides[0], 1],
         ));
-        let mut past = past;
-        let (input, shape) = past.shaped(input, channels)?;
+        let (past_inputs, input, past) = past.view(input, channels)?;
         Ok(Self {
             client,
             batch: input.shape()[0],
             input,
             filters,
-            past_inputs: past,
-            past: shape,
+            past_inputs,
+            past,
             channels,
             taps,
             element,
         })
+    }
+
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
+    }
+
+    pub(crate) fn input(&self) -> &PlainTensor {
+        &self.input
+    }
+
+    pub(crate) fn filters(&self) -> &PlainTensor {
+        &self.filters
+    }
+
+    pub(crate) fn past_inputs(&self) -> &CausalConvPastInputs {
+        &self.past_inputs
+    }
+
+    pub(crate) fn past(&self) -> CausalConvPast {
+        self.past
+    }
+
+    /// The rows.
+    pub(crate) fn batch(&self) -> usize {
+        self.batch
+    }
+
+    pub(crate) fn channels(&self) -> usize {
+        self.channels
+    }
+
+    pub(crate) fn taps(&self) -> usize {
+        self.taps
+    }
+
+    pub(crate) fn element(&self) -> ElemType {
+        self.element
     }
 
     /// The input bound under `launcher`, `width` values a line.

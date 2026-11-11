@@ -1,9 +1,8 @@
 use super::kernel::cube_qk_normed_conv_kernel;
-use crate::kernels::conv::reads::CausalConvReads;
 use crate::kernels::conv::ring_write_back::RingWriteBackLaunch;
 use crate::kernels::conv::{
     CausalConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
-    QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors,
+    QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors, admit_element,
 };
 use crate::kernels::refusals::admit_on_device;
 use cubecl::tile::launch::{Refusal, Vectorization};
@@ -109,7 +108,7 @@ impl CubeQkNormedConvRoutine {
 /// device lacks the activations' element or `f32`, or what [`QkNormedConvProblem::admit`]
 /// declines.
 pub fn serves_qk_normed_conv(hw: &Hardware, problem: &QkNormedConvProblem) -> Result<(), Refusal> {
-    CausalConvReads::admit_element(problem.element)?;
+    admit_element(problem.element)?;
     admit_on_device(hw, [problem.element, QK_NORMED_CONV_OUTPUT_ELEMENT])?;
     problem.admit(hw)
 }
