@@ -8,6 +8,7 @@ use cubecl::ir::ElemType;
 use cubecl::server::Handle;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
+use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_linear_recurrence::kernels::conv::{
     CubeQkNormedConvRoutine, GatedDeltaConvPastInputs, QkNormedConvInputs, QkNormedConvOutputs,
@@ -17,6 +18,7 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
 use cubek_std::Hardware;
 use cubek_std::routine::PreparedLaunches;
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
 
 pub const EPSILON: f32 = 1e-6;
 
@@ -275,11 +277,10 @@ impl ConvCase {
     }
 }
 
-/// A conv launched: the window's buffer to read back, what it held before, and how it lies.
+/// A conv launched: the window's buffer to read back, and what it held before.
 pub struct Stored {
     pub raw: Handle,
     pub before: Vec<f32>,
-    pub layout: ConvLayout,
 }
 
 /// A tensor of `shape` and `strides` over `buffer` uploaded as `elem`, its view starting `start`
@@ -375,7 +376,6 @@ impl ConvCase {
             Stored {
                 raw,
                 before: buffer,
-                layout,
             },
         )
     }
@@ -439,45 +439,166 @@ pub fn admit(hw: &Hardware, inputs: QkNormedConvInputs) -> Result<(), Refusal> {
     tensors.problem().admit(hw)
 }
 
-impl ConvCase {
-    /// The outputs and the window against the reference: every row's queries, keys and values,
-    /// the ring column each row wrote bit for bit its newest values, and every other element of
-    /// the buffer, the gaps and the unlisted slots included, as it was uploaded.
-    pub fn check(
-        &self,
-        client: &Client,
-        o: &ConvOperands,
-        stored: &Stored,
-        outputs: QkNormedConvOutputs,
-        elem: ElemType,
-        what: &str,
-    ) {
-        let layout = stored.layout;
-        let want = self.reference(o, &o.window, elem);
-        compare_outputs(client, &outputs, &want, elem, &format!("{what} {self:?}"));
-        let conv_dim = self.conv_dim();
-        let after = read(client, stored.raw.clone(), elem);
-        let mut written = vec![false; after.len()];
-        for (row, &(slot, positions)) in self.rows.iter().enumerate() {
-            let to = self.window_at(layout, slot, positions % self.columns);
-            for channel in 0..conv_dim {
-                written[to + channel] = true;
-                assert_eq!(
-                    after[to + channel].to_bits(),
-                    o.qkv[row * conv_dim + channel].to_bits(),
-                    "{what} {self:?}: the column row {row} wrote, channel {channel}"
+/// How a conv's slot and length tables are bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tables {
+    /// Dense, an entry a row.
+    Dense,
+    /// Columns of wider tensors: each row reads its own entry, not its neighbour's.
+    Strided,
+    /// Every slot entry past the store's last, which reads and writes the last.
+    PastTheStore,
+}
+
+/// One conv over a window: a case at an element, its window laid out as `layout` lays it, its
+/// tables bound as `tables` names.
+#[derive(Debug, Clone)]
+pub struct WindowConv {
+    pub case: ConvCase,
+    pub element: ElemType,
+    pub layout: ConvLayout,
+    pub tables: Tables,
+}
+
+impl WindowConv {
+    pub fn new(case: ConvCase, element: ElemType, layout: ConvLayout) -> Self {
+        Self {
+            case,
+            element,
+            layout,
+            tables: Tables::Dense,
+        }
+    }
+
+    pub fn tables(self, tables: Tables) -> Self {
+        Self { tables, ..self }
+    }
+}
+
+/// The conv over a window against the host: the queries, keys and values, and the window's whole
+/// buffer, in which each row writes its ring column bit for bit its newest values and nothing
+/// else changes, the gaps and the unlisted slots included. A device may decline a conv only by the
+/// refusal admission names. With `prepared`, every launch prepares through it.
+pub struct WindowConvs {
+    pub prepared: Option<PreparedLaunches<CubeQkNormedConvRoutine>>,
+}
+
+impl WindowConvs {
+    /// `outputs` and their names, each contiguous tensor read as one row of its elements.
+    pub fn written(
+        outputs: impl IntoIterator<Item = (&'static str, TensorHandle)>,
+    ) -> Vec<Written> {
+        outputs
+            .into_iter()
+            .map(|(name, tensor)| {
+                let elements = tensor.shape().num_elements();
+                Written {
+                    name,
+                    tensor: TensorHandle::new(tensor.handle, [elements], [1], tensor.dtype),
+                    host: HostDataType::F32,
+                }
+            })
+            .collect()
+    }
+
+    /// `values` as one row of the host's, as [`written`](Self::written) reads an output.
+    pub fn flat(values: Vec<f32>) -> HostData {
+        let elements = values.len();
+        HostData::row_major(HostDataVec::F32(values), Shape::from(vec![elements]))
+    }
+
+    /// The queries, keys and values of `want`, each as one row.
+    pub fn outputs(want: &HostOutputs) -> [HostData; 3] {
+        let narrowed = |values: &[f64]| values.iter().map(|&x| x as f32).collect();
+        [
+            Self::flat(narrowed(&want.query)),
+            Self::flat(narrowed(&want.key)),
+            Self::flat(narrowed(&want.value)),
+        ]
+    }
+}
+
+impl ScopeUnderTest for WindowConvs {
+    type Case = WindowConv;
+
+    /// # Panics
+    ///
+    /// On a refusal other than the one admission names.
+    fn launch(&self, client: &Client, conv: &WindowConv) -> Result<Vec<Written>, Refusal> {
+        let hw = Hardware::from_client(client);
+        let case = &conv.case;
+        let operands = case.operands(conv.element);
+        let (mut inputs, stored) = case.inputs(client, &operands, conv.layout, conv.element);
+        let (slots, lengths) = tables_of(&mut inputs);
+        match conv.tables {
+            Tables::Dense => {}
+            Tables::Strided => {
+                *slots = strided_table(
+                    client,
+                    case.rows.iter().map(|&(s, _)| s as u32).collect(),
+                    0,
                 );
+                *lengths = strided_table(
+                    client,
+                    case.rows.iter().map(|&(_, p)| p as u32).collect(),
+                    7,
+                );
+            }
+            Tables::PastTheStore => {
+                *slots = table(client, vec![case.slots as u32 + 5; case.rows.len()]);
             }
         }
-        for (i, &written) in written.iter().enumerate() {
-            if !written {
-                let before = round_to(stored.before[i], elem);
-                assert_eq!(
-                    after[i].to_bits(),
-                    before.to_bits(),
-                    "{what} {self:?}: element {i} the conv does not write changed"
-                );
+        let launched = match &self.prepared {
+            Some(prepared) => {
+                CubeQkNormedConvRoutine.launch_prepared_on(prepared, &hw, inputs.clone())
             }
+            None => CubeQkNormedConvRoutine.launch_on(&hw, inputs.clone()),
+        };
+        let outputs = launched.inspect_err(|why| {
+            assert_eq!(
+                admit(&hw, inputs),
+                Err(why.clone()),
+                "{conv:?}: refused but admitted"
+            );
+        })?;
+        let window = TensorHandle::new(stored.raw, [stored.before.len()], [1], conv.element);
+        Ok(Self::written([
+            ("queries", outputs.query),
+            ("keys", outputs.key),
+            ("values", outputs.value),
+            ("window", window),
+        ]))
+    }
+
+    fn reference(&self, conv: &WindowConv) -> Vec<HostData> {
+        let case = &conv.case;
+        let operands = case.operands(conv.element);
+        let want = case.reference(&operands, &operands.window, conv.element);
+        let conv_dim = case.conv_dim();
+        let mut window: Vec<f32> = case
+            .laid_out(&operands.window, conv.layout)
+            .into_iter()
+            .map(|value| round_to(value, conv.element))
+            .collect();
+        for (row, &(slot, positions)) in case.rows.iter().enumerate() {
+            let to = case.window_at(conv.layout, slot, positions % case.columns);
+            window[to..to + conv_dim]
+                .copy_from_slice(&operands.qkv[row * conv_dim..(row + 1) * conv_dim]);
+        }
+        let mut reference = Self::outputs(&want).to_vec();
+        reference.push(Self::flat(window));
+        reference
+    }
+
+    fn tolerance(&self, conv: &WindowConv) -> f32 {
+        tolerance(conv.element) as f32
+    }
+
+    /// What the conv does not write, and the newest values it copies, must hold bit for bit.
+    fn tolerance_of(&self, conv: &WindowConv, name: &'static str) -> f32 {
+        match name {
+            "window" => 0.,
+            _ => self.tolerance(conv),
         }
     }
 }
@@ -500,76 +621,47 @@ fn layouts() -> Vec<ConvLayout> {
 #[test]
 fn the_conv_matches_the_reference() {
     let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
+    let mut convs = Vec::new();
     for elem in activation_elements(&client) {
         for layout in layouts() {
             for case in cases() {
-                let operands = case.operands(elem);
-                let (inputs, stored) = case.inputs(&client, &operands, layout, elem);
-                let what = format!("{layout:?}");
-                if let Some(outputs) = conv_or_skip(&hw, inputs, &what) {
-                    case.check(&client, &operands, &stored, outputs, elem, &what);
-                }
+                convs.push(WindowConv::new(case, elem, layout));
             }
         }
     }
+    WindowConvs { prepared: None }.check(convs);
 }
 
 /// Tables that are columns of wider tensors: each row reads its own entry, not its neighbour's.
 #[test]
 fn tables_at_a_stride_are_read_by_it() {
-    let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
     let case = case((2, 3, 37, 53), 4, 5, 6, &[(4, 9), (1, 0), (2, 1), (5, 2)]);
-    let operands = case.operands(F32);
-    let (mut inputs, stored) = case.inputs(&client, &operands, ConvLayout::default(), F32);
-    let (slots, lengths) = tables_of(&mut inputs);
-    *slots = strided_table(
-        &client,
-        case.rows.iter().map(|&(s, _)| s as u32).collect(),
-        0,
-    );
-    *lengths = strided_table(
-        &client,
-        case.rows.iter().map(|&(_, p)| p as u32).collect(),
-        7,
-    );
-    if let Some(outputs) = conv_or_skip(&hw, inputs, "tables at a stride") {
-        case.check(&client, &operands, &stored, outputs, F32, "strided tables");
-    }
+    WindowConvs { prepared: None }
+        .check([WindowConv::new(case, F32, ConvLayout::default()).tables(Tables::Strided)]);
 }
 
 /// A slot past the store's last reads and writes the last: the row behaves as one listing the last
 /// slot, and leaves every other slot as it was.
 #[test]
 fn a_slot_past_the_store_is_the_last_slot() {
-    let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
     let case = case((2, 3, 37, 53), 4, 5, 4, &[(3, 7)]);
-    let operands = case.operands(F32);
-    let (mut inputs, stored) = case.inputs(&client, &operands, ConvLayout::default(), F32);
-    *tables_of(&mut inputs).0 = table(&client, vec![case.slots as u32 + 5]);
-    if let Some(outputs) = conv_or_skip(&hw, inputs, "a slot past the store") {
-        case.check(&client, &operands, &stored, outputs, F32, "clamped slot");
-    }
+    WindowConvs { prepared: None }
+        .check([WindowConv::new(case, F32, ConvLayout::default()).tables(Tables::PastTheStore)]);
 }
 
 /// Two launches of one prepared problem with different slot tables each leave the results of
 /// their own rows.
 #[test]
 fn a_prepared_problem_is_right_for_each_slot_table() {
-    let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
-    let prepared = PreparedLaunches::default();
     let tables: [&[(usize, usize)]; 2] = [&[(4, 9), (1, 0), (2, 1)], &[(0, 3), (3, 0), (5, 8)]];
-    for rows in tables {
-        let case = case((2, 3, 37, 53), 4, 5, 6, rows);
-        let operands = case.operands(F32);
-        let (inputs, stored) = case.inputs(&client, &operands, ConvLayout::default(), F32);
-        let launched = CubeQkNormedConvRoutine.launch_prepared_on(&prepared, &hw, inputs.clone());
-        let outputs = served("a prepared launch", launched, || admit(&hw, inputs));
-        if let Some(outputs) = outputs {
-            case.check(&client, &operands, &stored, outputs, F32, "prepared");
-        }
+    WindowConvs {
+        prepared: Some(PreparedLaunches::default()),
     }
+    .check(tables.map(|rows| {
+        WindowConv::new(
+            case((2, 3, 37, 53), 4, 5, 6, rows),
+            F32,
+            ConvLayout::default(),
+        )
+    }));
 }
