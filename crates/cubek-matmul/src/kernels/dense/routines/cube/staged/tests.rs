@@ -526,16 +526,16 @@ mod base {
             assert!(blueprint.widths.rhs > 1, "{:?}", blueprint.widths);
         }
     }
+
     /// A row rhs is bound as the product names it whatever the instruction.
     #[test]
     fn a_row_rhs_is_bound_as_the_product_names_it() {
         let problem = MatmulRoutineProblem::dense(128, 256, 512, F16);
-        for hw in [offering(devices::strix_halo())] {
-            let (blueprint, _) = CubeStagedMatmulRoutine
-                .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
-                .expect("the routine runs here");
-            assert_eq!(blueprint.microkernel.plane.orders.rhs, BindingOrder::Stated);
-        }
+        let hw = offering(devices::strix_halo());
+        let (blueprint, _) = CubeStagedMatmulRoutine
+            .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
+            .expect("the routine runs here");
+        assert_eq!(blueprint.microkernel.plane.orders.rhs, BindingOrder::Stated);
     }
 
     /// No instruction for the elements, or a plane whose width the device will not commit to, which
