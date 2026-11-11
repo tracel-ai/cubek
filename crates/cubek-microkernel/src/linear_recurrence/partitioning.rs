@@ -28,7 +28,7 @@ pub const RING_COLUMN: Axis = Axis(10);
 /// A channel of one key head, head local: no operand binds it, only the units level cuts it.
 pub const HEAD_CHANNEL: Axis = Axis(11);
 /// A position of a prompt that later positions read by tap: no level cuts it.
-pub const STREAM_POSITION: Axis = Axis(12);
+pub const PROMPT_POSITION: Axis = Axis(12);
 /// The two rates of a position and value head, the log of its decay at 0 and its strength at 1: no
 /// level cuts it.
 pub const RATE: Axis = Axis(13);
@@ -111,7 +111,7 @@ impl CausalConvPartitioning {
     /// the launch.
     pub fn kernel(&self) -> Partitioning {
         let space = self.partitioning.space();
-        let dynamic: Vec<Axis> = [BATCH, POSITION, STORE_SLOT, RING_COLUMN, STREAM_POSITION]
+        let dynamic: Vec<Axis> = [BATCH, POSITION, STORE_SLOT, RING_COLUMN, PROMPT_POSITION]
             .into_iter()
             .filter(|axis| space.contains(*axis))
             .collect();

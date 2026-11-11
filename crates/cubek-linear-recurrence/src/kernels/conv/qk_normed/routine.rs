@@ -108,7 +108,7 @@ impl CubeQkNormedConvRoutine {
 /// [`ELEMENT_NOT_ON_DEVICE`](cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE) where the
 /// device lacks the activations' element or `f32`, or what [`QkNormedConvProblem::admit`]
 /// declines.
-pub fn serves(hw: &Hardware, problem: &QkNormedConvProblem) -> Result<(), Refusal> {
+pub fn serves_qk_normed_conv(hw: &Hardware, problem: &QkNormedConvProblem) -> Result<(), Refusal> {
     CausalConvReads::admit_element(problem.element)?;
     admit_on_device(hw, [problem.element, QK_NORMED_CONV_OUTPUT_ELEMENT])?;
     problem.admit(hw)

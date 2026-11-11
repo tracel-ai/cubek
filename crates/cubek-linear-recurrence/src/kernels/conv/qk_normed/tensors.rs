@@ -150,12 +150,12 @@ impl QkNormedConvTensors {
         } = inputs;
         let reads = CausalConvReads::new(client, qkv, filters, past, heads.conv_dim())?;
         let (outputs, [query, key, value]) =
-            QkNormedConvOutputs::allocate(&reads.client, &heads, reads.batch, &reads.shape)?;
+            QkNormedConvOutputs::allocate(&reads.client, &heads, reads.batch, &reads.past)?;
         let alignments = QkNormedConvOperandMap {
             qkv: reads.input.elem_alignment(),
             filters: reads.filters.elem_alignment(),
-            ring: reads.past.ring().elem_alignment(),
-            lengths: reads.past.lengths().elem_alignment(),
+            ring: reads.past_inputs.ring().elem_alignment(),
+            lengths: reads.past_inputs.lengths().elem_alignment(),
             query: query.elem_alignment(),
             key: key.elem_alignment(),
             value: value.elem_alignment(),
@@ -163,8 +163,8 @@ impl QkNormedConvTensors {
         let start_bytes = QkNormedConvOperandMap {
             qkv: reads.input.start_bytes(),
             filters: reads.filters.start_bytes(),
-            ring: reads.past.ring().start_bytes(),
-            lengths: reads.past.lengths().start_bytes(),
+            ring: reads.past_inputs.ring().start_bytes(),
+            lengths: reads.past_inputs.lengths().start_bytes(),
             query: query.start_bytes(),
             key: key.start_bytes(),
             value: value.start_bytes(),
@@ -174,7 +174,7 @@ impl QkNormedConvTensors {
             heads,
             taps: reads.taps,
             element: reads.element,
-            past: reads.shape,
+            past: reads.past,
             alignments,
             start_bytes,
         };

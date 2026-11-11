@@ -9,7 +9,7 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::linear_recurrence::conv::cube::PastKind;
 use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, POSITION, RING_COLUMN, STORE_SLOT, STREAM_POSITION,
+    BATCH, CHANNEL, POSITION, PROMPT_POSITION, RING_COLUMN, STORE_SLOT,
 };
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
@@ -76,18 +76,18 @@ impl CausalConvPast {
     }
 
     /// The axes the past's operands carry: the store, and the prompt's positions.
-    pub(crate) fn ring_axes(&self) -> Vec<(Axis, usize)> {
+    pub(crate) fn past_axes(&self) -> Vec<(Axis, usize)> {
         let ring = self.ring();
         let mut axes = vec![(STORE_SLOT, ring.slots.get()), (RING_COLUMN, ring.columns)];
         if let Self::Prompt { positions, .. } = self {
-            axes.push((STREAM_POSITION, *positions));
+            axes.push((PROMPT_POSITION, *positions));
         }
         axes
     }
 
     /// The axes of the past, and of the positions a cube convolves.
     pub(crate) fn axes(&self) -> Vec<(Axis, usize)> {
-        let mut axes = self.ring_axes();
+        let mut axes = self.past_axes();
         if let Self::Prompt { positions, .. } = self {
             axes.push((POSITION, *positions));
         }

@@ -7,8 +7,8 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Levels, Space};
 use cubek_microkernel::linear_recurrence::conv::cube::ChannelBox;
 use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, CHANNEL_BOX, CausalConvPartitioning, LINE_IN_BOX, RING_POSITION,
-    STREAM_POSITION,
+    BATCH, CHANNEL, CHANNEL_BOX, CausalConvPartitioning, LINE_IN_BOX, PROMPT_POSITION,
+    RING_POSITION,
 };
 use cubek_std::routine::{CubeResources, Grid};
 
@@ -33,7 +33,7 @@ impl RingWriteBackLaunch {
         width: usize,
         units: usize,
     ) -> Result<Option<Self>, Refusal> {
-        if !matches!(reads.shape, CausalConvPast::Prompt { .. }) {
+        if !matches!(reads.past, CausalConvPast::Prompt { .. }) {
             return Ok(None);
         }
         let lines = reads.channels / width;
@@ -46,7 +46,7 @@ impl RingWriteBackLaunch {
             (LINE_IN_BOX, units * width),
             (CHANNEL, reads.channels),
         ];
-        axes.extend(reads.shape.ring_axes());
+        axes.extend(reads.past.past_axes());
         let leaf = [
             (RING_POSITION, 1),
             (CHANNEL_BOX, 1),
@@ -76,7 +76,7 @@ impl RingWriteBackLaunch {
 
     /// Copies `reads`' prompt into its rings.
     pub(crate) fn launch(&self, reads: &CausalConvReads) {
-        let CausalConvPastInputs::Prompt { valid, .. } = &reads.past else {
+        let CausalConvPastInputs::Prompt { valid, .. } = &reads.past_inputs else {
             unreachable!("only a prompt is prepared a write back");
         };
         let launcher = self.grid.launcher(&reads.client, || {
@@ -88,10 +88,10 @@ impl RingWriteBackLaunch {
         let input = bound(
             &launcher,
             &reads.input,
-            &[BATCH, STREAM_POSITION, CHANNEL],
+            &[BATCH, PROMPT_POSITION, CHANNEL],
             self.width,
         );
-        let past = reads.past.bind(&launcher, self.width);
+        let past = reads.past_inputs.bind(&launcher, self.width);
         let valid = bound(&launcher, valid, &[BATCH], 1);
         // SAFETY: every operand is bound through the launcher and indexed only through its tile,
         // whose reads past an edge are masked. A cube writes the ring columns of its own position
@@ -107,7 +107,7 @@ impl RingWriteBackLaunch {
                 past.ring,
                 past.lengths,
                 valid,
-                reads.shape.ring().columns,
+                reads.past.ring().columns,
                 launcher.partitioning_arg(),
                 self.lines,
                 reads.taps - 1,
