@@ -15,7 +15,7 @@ pub fn ring_write_back_kernel<E: Float, N: Size>(
     valid: &TileTensor<'_>,
     columns: usize,
     partitioning: Partitioning,
-    #[comptime] lines: ChannelBox,
+    #[comptime] channel_box: ChannelBox,
     #[comptime] read_columns: usize,
     #[define(E)] _element: ElemType,
 ) {
@@ -29,6 +29,6 @@ pub fn ring_write_back_kernel<E: Float, N: Size>(
     for cube in &partitioning {
         let tiles = tiles.at(&cube);
         let valid = valid.at(&cube);
-        cube_ring_write_back_microkernel::<E, N>(&cube, &tiles, &valid, lines, read_columns);
+        cube_ring_write_back_microkernel::<E, N>(&cube, &tiles, &valid, channel_box, read_columns);
     }
 }

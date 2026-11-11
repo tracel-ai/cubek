@@ -1,7 +1,7 @@
 //! What the linear recurrence kernels decline with, by name.
 
 use cubecl::features::TypeUsage;
-use cubecl::ir::ElemType;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE;
 use cubek_std::Hardware;
@@ -19,6 +19,26 @@ pub(crate) fn admit_on_device(hw: &Hardware, elements: [ElemType; 2]) -> Result<
         }
     }
     Ok(())
+}
+
+/// The activation elements the convs are verified at.
+const ELEMENTS: [ElemType; 3] = [
+    ElemType::Float(FloatKind::F16),
+    ElemType::Float(FloatKind::BF16),
+    ElemType::Float(FloatKind::F32),
+];
+
+/// Whether the convs read and write activations of `element`.
+///
+/// # Errors
+///
+/// [`CONV_ELEMENT_UNSUPPORTED`] for any but `f16`, `bf16` and `f32`.
+pub(crate) fn admit_element(element: ElemType) -> Result<(), Refusal> {
+    if ELEMENTS.contains(&element) {
+        Ok(())
+    } else {
+        Err(CONV_ELEMENT_UNSUPPORTED)
+    }
 }
 
 /// What a routine declines a problem with that states the update rule of the other routine.

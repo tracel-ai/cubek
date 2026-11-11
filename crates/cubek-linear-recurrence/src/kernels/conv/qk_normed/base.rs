@@ -2,7 +2,7 @@
 
 use crate::kernels::conv::{
     CausalConvBlueprint, ConvExtent, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem,
-    RingWriteBack,
+    RingWriteBackLaunch,
 };
 use cubecl::tile::Levels;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
@@ -47,7 +47,7 @@ pub(super) fn prepare(
         channels: item.heads.conv_dim(),
         taps: problem.taps,
     };
-    let write_back = RingWriteBack::prepare(hw, &problem.past, extent, width)?;
+    let write_back = RingWriteBackLaunch::prepare(hw, &problem.past, extent, width)?;
     let blueprint = CausalConvBlueprint::new(microkernel, partitioning, width, write_back);
     Ok((blueprint, grid))
 }

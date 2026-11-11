@@ -1,6 +1,7 @@
 //! The problem a causal conv routine computes.
 
-use crate::kernels::conv::{CausalConvPast, ConvExtent, CubeCausalConvRoutine, admit_element};
+use crate::kernels::conv::{CausalConvPast, ConvExtent, CubeCausalConvRoutine};
+use crate::kernels::refusals::admit_element;
 use crate::kernels::refusals::{
     CAUSAL_CONV_BINDING_BUFFERS, CAUSAL_CONV_CHANNELS_EMPTY, CAUSAL_CONV_OUTPUT_UNSUPPORTED,
     CONV_BINDINGS_PAST_DEVICE, CONV_NOTHING_TO_CONVOLVE,

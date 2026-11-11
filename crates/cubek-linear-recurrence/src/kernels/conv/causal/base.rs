@@ -1,6 +1,8 @@
 //! How the causal conv places a launch and settles the width its channels bind at.
 
-use crate::kernels::conv::{CausalConvBlueprint, CausalConvProblem, ConvExtent, RingWriteBack};
+use crate::kernels::conv::{
+    CausalConvBlueprint, CausalConvProblem, ConvExtent, RingWriteBackLaunch,
+};
 use cubecl::tile::Levels;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
@@ -44,7 +46,7 @@ pub(super) fn prepare(
         channels: problem.channels,
         taps: problem.taps,
     };
-    let write_back = RingWriteBack::prepare(hw, &problem.past, extent, width)?;
+    let write_back = RingWriteBackLaunch::prepare(hw, &problem.past, extent, width)?;
     let blueprint = CausalConvBlueprint::new(microkernel, partitioning, width, write_back);
     Ok((blueprint, grid))
 }

@@ -1,10 +1,7 @@
 //! A conv launch's compile-time decisions.
 
-use crate::kernels::conv::RingWriteBack;
-use cubecl::client::Client;
-use cubecl::tile::Launcher;
+use crate::kernels::conv::RingWriteBackLaunch;
 use cubek_microkernel::linear_recurrence::CausalConvPartitioning;
-use cubek_std::routine::Grid;
 use std::sync::Arc;
 
 /// What a launch of a conv compiles: the microkernel, the partitioning that places its cubes, the
@@ -16,7 +13,7 @@ pub struct CausalConvBlueprint<M> {
     pub microkernel: M,
     pub partitioning: CausalConvPartitioning,
     pub width: usize,
-    pub write_back: Option<Arc<RingWriteBack>>,
+    pub write_back: Option<Arc<RingWriteBackLaunch>>,
 }
 
 impl<M> CausalConvBlueprint<M> {
@@ -26,7 +23,7 @@ impl<M> CausalConvBlueprint<M> {
         microkernel: M,
         partitioning: CausalConvPartitioning,
         width: usize,
-        write_back: Option<Arc<RingWriteBack>>,
+        write_back: Option<Arc<RingWriteBackLaunch>>,
     ) -> Self {
         Self {
             microkernel,
@@ -34,15 +31,5 @@ impl<M> CausalConvBlueprint<M> {
             width,
             write_back,
         }
-    }
-
-    /// The launcher of `grid`, settled over the partitioning's extents on its first launch.
-    pub(crate) fn launcher(&self, client: &Client, grid: &Grid) -> Launcher {
-        grid.launcher(client, || {
-            (
-                self.partitioning.kernel(),
-                self.partitioning.as_cubek().space().clone(),
-            )
-        })
     }
 }

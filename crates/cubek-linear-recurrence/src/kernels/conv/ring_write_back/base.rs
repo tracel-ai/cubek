@@ -17,25 +17,25 @@ use std::sync::Arc;
 /// the conv's blueprint holds of the launch that follows it. It keeps the grid and launcher its
 /// preparation settled, so a prepared conv fills rings without placing anything again.
 #[derive(Debug, Clone)]
-pub struct RingWriteBack {
+pub struct RingWriteBackLaunch {
     partitioning: CausalConvPartitioning,
     width: usize,
-    lines: ChannelBox,
+    channel_box: ChannelBox,
     grid: Grid,
 }
 
-impl PartialEq for RingWriteBack {
+impl PartialEq for RingWriteBackLaunch {
     /// The placement: the grid follows from it on a device.
     fn eq(&self, other: &Self) -> bool {
         self.partitioning == other.partitioning
             && self.width == other.width
-            && self.lines == other.lines
+            && self.channel_box == other.channel_box
     }
 }
 
-impl Eq for RingWriteBack {}
+impl Eq for RingWriteBackLaunch {}
 
-impl RingWriteBack {
+impl RingWriteBackLaunch {
     /// The write back of a prompt over `extent`, its channels `width` values a line, checked
     /// against `hw`, or none for a window, which writes its own ring.
     ///
@@ -73,7 +73,7 @@ impl RingWriteBack {
             Levels::leaf(&leaf).units_distributed(LINE_IN_BOX, units),
             &[RING_POSITION, CHANNEL_BOX],
         );
-        let lines = ChannelBox {
+        let channel_box = ChannelBox {
             units,
             channels: extent.channels,
         };
@@ -85,7 +85,7 @@ impl RingWriteBack {
         Ok(Some(Arc::new(Self {
             partitioning,
             width,
-            lines,
+            channel_box,
             grid,
         })))
     }
@@ -96,12 +96,7 @@ impl RingWriteBack {
         let CausalConvPastInputs::Prompt { valid, .. } = reads.past_inputs() else {
             unreachable!("only a prompt is prepared a write back");
         };
-        let launcher = grid.launcher(reads.client(), || {
-            (
-                self.partitioning.kernel(),
-                self.partitioning.as_cubek().space().clone(),
-            )
-        });
+        let launcher = self.partitioning.launcher(reads.client(), grid);
         let input = reads.bind_input(&launcher, self.width);
         let past = reads.past_inputs().bind(&launcher, self.width);
         let valid = bound(&launcher, valid, &[BATCH], 1);
@@ -121,7 +116,7 @@ impl RingWriteBack {
                 valid,
                 reads.past().ring().columns,
                 launcher.partitioning_arg(),
-                self.lines,
+                self.channel_box,
                 reads.taps() - 1,
                 reads.element(),
             );

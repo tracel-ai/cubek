@@ -182,7 +182,7 @@ impl ConvTensors for CausalConvTensors {
     }
 
     fn bind<M>(&self, blueprint: &CausalConvBlueprint<M>, grid: &Grid) -> CausalConvBinding {
-        let launcher = blueprint.launcher(self.reads.client(), grid);
+        let launcher = blueprint.partitioning.launcher(self.reads.client(), grid);
         let width = blueprint.width;
         let axes = [self.problem.past.output_lead(), &[CHANNEL]].concat();
         CausalConvBinding {

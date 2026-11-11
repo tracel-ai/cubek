@@ -1,7 +1,7 @@
 //! The problem a conv routine computes.
 
-use crate::kernels::conv::admit_element;
 use crate::kernels::conv::{CausalConvPast, ConvExtent, CubeQkNormedConvRoutine};
+use crate::kernels::refusals::admit_element;
 use crate::kernels::refusals::{
     CONV_BINDINGS_PAST_DEVICE, CONV_NOTHING_TO_CONVOLVE, QK_NORMED_CONV_BINDING_BUFFERS,
     QK_NORMED_CONV_HEADS_EMPTY,
@@ -69,6 +69,15 @@ impl QkNormedConvProblem {
             return Err(CONV_BINDINGS_PAST_DEVICE);
         }
         Ok(())
+    }
+
+    /// The extents the conv's taps run over.
+    pub(crate) fn extent(&self) -> ConvExtent {
+        ConvExtent {
+            batch: self.batch,
+            channels: self.heads.conv_dim(),
+            taps: self.taps,
+        }
     }
 
     pub(crate) fn work_item(&self) -> QkNormedConvWorkItem {
@@ -161,12 +170,7 @@ impl EstimatedProblem for QkNormedConvProblem {
     fn demand(&self) -> Work {
         let conv_dim = self.heads.conv_dim();
         let size = self.element.size();
-        let extent = ConvExtent {
-            batch: self.batch,
-            channels: conv_dim,
-            taps: self.taps,
-        };
-        let (read, written) = self.past.bytes(extent, size);
+        let (read, written) = self.past.bytes(self.extent(), size);
         let channels = self.batch * self.past.positions() * conv_dim;
         Work {
             compute_ops: self.work_item().operations(channels),
