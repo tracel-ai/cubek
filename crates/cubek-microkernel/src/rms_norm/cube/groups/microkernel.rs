@@ -14,7 +14,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// shared memory, each group has its own run of slots, and the cube meets again once every unit
 /// has read the sum, so a cube walking next rows cannot overwrite the slots first.
 #[cube]
-pub fn cube_groups_rms_norm_microkernel<E: Float, N: Size>(
+pub fn cube_groups_rms_norm_microkernel<E: Float, W: Float, N: Size>(
     cube: &Region,
     input: &Tile,
     weight: &Tile,
@@ -24,7 +24,7 @@ pub fn cube_groups_rms_norm_microkernel<E: Float, N: Size>(
     #[comptime] groups: usize,
     #[comptime] stage: CubeStage,
 ) {
-    let mut store = CubeStore::new::<E, N>(out.clone(), stage);
+    let mut store = CubeStore::new::<W, N>(out.clone(), stage);
     let units = microkernel.units;
 
     for group in cube {
@@ -87,7 +87,7 @@ pub fn cube_groups_rms_norm_microkernel<E: Float, N: Size>(
 
         let row_lines = microkernel.held_row().lines;
         let mut row_out = store.owner(&group, slot * row_lines);
-        row.write(&weight.at(&group), &mut row_out, unit, scale.of(sum));
+        row.write::<W>(&weight.at(&group), &mut row_out, unit, scale.of(sum));
     }
 
     store.finish();

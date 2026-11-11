@@ -86,10 +86,10 @@ impl<E: Float, N: Size> HeldRow<E, N> {
         partial
     }
 
-    /// Unit `unit`'s lines written into `out`, each scaled by `factor` in `f32`, cast back, and
-    /// multiplied by its line of `weight`; `out` and `weight` are the owner's run, and a line past
-    /// it is not written.
-    pub fn write(&self, weight: &Tile, out: &mut OwnerLines, unit: usize, factor: f32) {
+    /// Unit `unit`'s lines written into `out` at `W`, each scaled by `factor` and multiplied by its
+    /// line of `weight` in `f32`, then rounded once; `out` and `weight` are the owner's run, and a
+    /// line past it is not written.
+    pub fn write<W: Float>(&self, weight: &Tile, out: &mut OwnerLines, unit: usize, factor: f32) {
         let shape = comptime!(self.shape);
         let weights = weight.flat::<E, N>();
         let factor = Vector::<f32, N>::cast_from(factor);
@@ -98,9 +98,10 @@ impl<E: Float, N: Size> HeldRow<E, N> {
         for i in 0..shape.per_unit() {
             let line = unit + i * shape.units;
             if shape.lines.is_multiple_of(shape.units) || line < shape.lines {
-                let normalized =
-                    Vector::<E, N>::cast_from(Vector::<f32, N>::cast_from(self.lines[i]) * factor);
-                out.write::<E, N>(line, normalized * weights.read(line));
+                let scaled = Vector::<f32, N>::cast_from(self.lines[i])
+                    * factor
+                    * Vector::<f32, N>::cast_from(weights.read(line));
+                out.write::<W, N>(line, Vector::<W, N>::cast_from(scaled));
             }
         }
     }

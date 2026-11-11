@@ -146,6 +146,7 @@ impl RmsNormRoutine<CubeRmsNormMicrokernel> for CubeRmsNormRoutine {
                 blueprint.microkernel,
                 blueprint.stage,
                 problem.element,
+                problem.output_element,
             );
         }
     }

@@ -196,6 +196,7 @@ impl RmsNormRoutine<CubeGroupsRmsNormMicrokernel> for CubeGroupsRmsNormRoutine {
                 groups,
                 blueprint.stage,
                 problem.element,
+                problem.output_element,
             );
         }
     }

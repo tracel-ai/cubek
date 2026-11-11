@@ -12,7 +12,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// cube's row, and `out` is the cube's window of the output, which its planes write their runs
 /// through, straight or staged and encoded as `stage` says.
 #[cube]
-pub fn cube_rms_norm_microkernel<E: Float, N: Size>(
+pub fn cube_rms_norm_microkernel<E: Float, W: Float, N: Size>(
     cube: &Region,
     input: &Tile,
     weight: &Tile,
@@ -21,7 +21,7 @@ pub fn cube_rms_norm_microkernel<E: Float, N: Size>(
     #[comptime] microkernel: CubeRmsNormMicrokernel,
     #[comptime] stage: CubeStage,
 ) {
-    let mut store = CubeStore::new::<E, N>(out.clone(), stage);
+    let mut store = CubeStore::new::<W, N>(out.clone(), stage);
     let planes = microkernel.planes;
 
     for plane in cube {
@@ -47,7 +47,7 @@ pub fn cube_rms_norm_microkernel<E: Float, N: Size>(
 
         let run_lines = microkernel.plane.held_row().lines;
         let mut run_out = store.owner(&plane, slot * run_lines);
-        row.write(&weight.at(&plane), &mut run_out, lane, scale.of(sum));
+        row.write::<W>(&weight.at(&plane), &mut run_out, lane, scale.of(sum));
     }
 
     store.finish();

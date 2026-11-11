@@ -1,13 +1,27 @@
 //! The problem a routine computes.
 
-use cubecl::ir::ElemType;
+use crate::kernels::RMS_NORM_ELEMENT_UNVERIFIED;
+use cubecl::features::TypeUsage;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Space;
+use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::Work;
+use cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE;
 use cubek_microkernel::rms_norm::{B, RmsNormOperands, RmsNormWorkItem};
 use cubek_microkernel::row_store::RowStore;
+use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
 use cubek_std::routine::EstimatedProblem;
+
+/// What a launch declines with where the output is written at an element other than the input's
+/// or `f32`, or at `f32` into anything but a buffer: a packed, tiled or sink output holds the
+/// input's element.
+pub const RMS_NORM_OUTPUT_UNSUPPORTED: Refusal = Refusal::Declined {
+    why: "the RMS norm writes a buffer at f32 or the input's element, and any other output at the input's",
+};
+
+const F32: ElemType = ElemType::Float(FloatKind::F32);
 
 /// `out[b, r] = input[b, r] / sqrt(mean(input[b, r]²) + epsilon) · weight` over `batch` entries
 /// of `rows` rows of `dim` elements, as the host describes it.
@@ -16,8 +30,10 @@ pub struct RmsNormRoutineProblem {
     pub batch: usize,
     pub rows: usize,
     pub dim: usize,
-    /// The element every operand is stored in.
+    /// The element of the input and the weight.
     pub element: ElemType,
+    /// The element the output is written at: `element`, or `f32`.
+    pub output_element: ElemType,
     /// The alignment of each operand's buffer in elements, over the axes this kind names.
     pub elem_alignments: RmsNormOperands<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start.
@@ -31,6 +47,7 @@ impl RmsNormRoutineProblem {
     pub fn work_item(&self) -> RmsNormWorkItem {
         RmsNormWorkItem {
             element: self.element,
+            output_element: self.output_element,
             dim: self.dim,
             store: self.store,
         }
@@ -51,15 +68,17 @@ impl RmsNormRoutineProblem {
     /// How one cube walks `rows` ([`RmsNormCubeRows`]): every row read once and written once, the
     /// weight read once, in one stage held while it computes.
     pub fn cube_staging(&self, rows: RmsNormCubeRows) -> CubeStaging {
-        let size = self.element.size();
-        let stream = |elements: usize| GlobalStream {
-            bytes: (elements * size) as u64,
-            run_bytes: rows.run * size,
+        let stream = |elements: usize, element: ElemType| GlobalStream {
+            bytes: (elements * element.size()) as u64,
+            run_bytes: rows.run * element.size(),
         };
         CubeStaging {
             operations: (4 * rows.rows * self.dim) as f64,
-            reads: vec![stream(rows.rows * self.dim), stream(self.dim)],
-            writes: vec![stream(rows.rows * self.dim)],
+            reads: vec![
+                stream(rows.rows * self.dim, self.element),
+                stream(self.dim, self.element),
+            ],
+            writes: vec![stream(rows.rows * self.dim, self.output_element)],
             stages: 1,
             stages_in_flight: 1,
             drain_atomics: 0,
@@ -76,6 +95,7 @@ impl RmsNormRoutineProblem {
             rows,
             dim,
             element,
+            output_element: element,
             elem_alignments: RmsNormOperands {
                 input: row,
                 weight: row,
@@ -94,6 +114,41 @@ impl RmsNormRoutineProblem {
     pub fn stored(self, store: RowStore) -> Self {
         Self { store, ..self }
     }
+
+    /// This problem, its output written at `output_element`.
+    pub fn writing(self, output_element: ElemType) -> Self {
+        Self {
+            output_element,
+            ..self
+        }
+    }
+
+    /// Whether `hw` runs a norm of rows of `element` written at `output_element`.
+    ///
+    /// # Errors
+    ///
+    /// [`RMS_NORM_ELEMENT_UNVERIFIED`] for rows that are not floats, [`RMS_NORM_OUTPUT_UNSUPPORTED`]
+    /// for an output other than `f32` and the rows' element, [`ELEMENT_NOT_ON_DEVICE`] for an
+    /// element the device does not run.
+    pub fn admit_elements(
+        hw: &Hardware,
+        element: ElemType,
+        output_element: ElemType,
+    ) -> Result<(), Refusal> {
+        if !matches!(element, ElemType::Float(_)) {
+            return Err(RMS_NORM_ELEMENT_UNVERIFIED);
+        }
+        if output_element != element && output_element != F32 {
+            return Err(RMS_NORM_OUTPUT_UNSUPPORTED);
+        }
+        for element in [element, output_element] {
+            let usage = hw.properties.features.type_usage(element);
+            if !usage.is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer) {
+                return Err(ELEMENT_NOT_ON_DEVICE);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The rows one cube owns whole, and the run of a row each of its planes touches contiguously.
@@ -111,7 +166,46 @@ impl EstimatedProblem for RmsNormRoutineProblem {
         let elements = self.batch * self.rows * self.dim;
         Work {
             compute_ops: 4 * elements,
-            bytes: (2 * elements + self.dim) * self.element.size(),
+            bytes: (elements + self.dim) * self.element.size()
+                + elements * self.output_element.size(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::UIntKind;
+    use cubek_std::devices;
+
+    const F16: ElemType = ElemType::Float(FloatKind::F16);
+
+    /// A device running `f16` and `f32`.
+    fn running(mut hw: Hardware) -> Hardware {
+        for element in [F16, F32] {
+            *devices::features(&mut hw)
+                .types
+                .elem
+                .entry(element)
+                .or_default() |= TypeUsage::Arithmetic | TypeUsage::Buffer;
+        }
+        hw
+    }
+
+    /// Float rows are written at their own element or `f32`; any other output, rows that are not
+    /// floats and an element the device does not run are declined.
+    #[test]
+    fn the_norm_is_written_at_the_input_element_or_f32() {
+        let hw = running(devices::h100());
+        let admit = |element, output| RmsNormRoutineProblem::admit_elements(&hw, element, output);
+        let (bf16, u32) = (
+            ElemType::Float(FloatKind::BF16),
+            ElemType::UInt(UIntKind::U32),
+        );
+        assert_eq!(admit(F16, F16), Ok(()));
+        assert_eq!(admit(F16, F32), Ok(()));
+        assert_eq!(admit(F16, bf16), Err(RMS_NORM_OUTPUT_UNSUPPORTED));
+        assert_eq!(admit(u32, u32), Err(RMS_NORM_ELEMENT_UNVERIFIED));
+        assert_eq!(admit(bf16, bf16), Err(ELEMENT_NOT_ON_DEVICE));
     }
 }

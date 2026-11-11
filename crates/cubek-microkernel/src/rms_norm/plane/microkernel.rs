@@ -8,7 +8,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// One plane's row: `out = input · scale · weight`, each lane of the plane its lines. `input` and
 /// `weight` are windowed to the row, and `out` is where the plane writes it.
 #[cube]
-pub fn plane_rms_norm_microkernel<E: Float, N: Size>(
+pub fn plane_rms_norm_microkernel<E: Float, W: Float, N: Size>(
     input: &Tile,
     weight: &Tile,
     out: &mut OwnerLines,
@@ -18,5 +18,5 @@ pub fn plane_rms_norm_microkernel<E: Float, N: Size>(
     let lane = UNIT_POS_PLANE as usize;
     let mut row = HeldRow::<E, N>::new(microkernel.held_row());
     let sum = UnitShare::Plane.reduce::<f32>(row.load(input, lane), Monoid::Sum);
-    row.write(weight, out, lane, scale.of(sum));
+    row.write::<W>(weight, out, lane, scale.of(sum));
 }
