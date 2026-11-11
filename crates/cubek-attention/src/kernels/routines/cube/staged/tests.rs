@@ -9,9 +9,7 @@ mod fragment {
     use cubek_microkernel::matmul::cube::CubeStagedDelivery;
     use cubek_microkernel::matmul::plane::PlaneFragmentDepth;
 
-    use cubek_microkernel::attention::plane::{
-        BLOCK_ROW_BYTES, PlaneFragmentAttentionMicrokernelSettings,
-    };
+    use cubek_microkernel::attention::plane::BLOCK_ROW_BYTES;
     use cubek_std::routine::Routine;
     use cubek_std::{Hardware, devices};
 
