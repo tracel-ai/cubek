@@ -1,11 +1,9 @@
 use crate::linear_recurrence::RecurrenceHeads;
 use crate::linear_recurrence::conv::QkNormedConvOperand;
-use crate::linear_recurrence::conv::cube::{ChannelBox, PastKind};
+use crate::linear_recurrence::conv::cube::{CausalFilters, ChannelBox, PastKind};
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
-use cubek_std::microkernel::{
-    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
-};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// What a conv is: the heads whose channels it mixes, the filter's taps and where its past is read
 /// from.
@@ -106,9 +104,6 @@ impl Microkernel for CubeQkNormedConvMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        estimate.work = Some(UnitWork {
-            instruction: ArithmeticInstruction::Vector,
-            registers: (2 * self.taps + 8) as u32,
-        });
+        estimate.work = Some(CausalFilters::unit_work(self.taps));
     }
 }

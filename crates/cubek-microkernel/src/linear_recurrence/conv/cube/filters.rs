@@ -2,6 +2,7 @@ use super::past_taps::PastTaps;
 use crate::linear_recurrence::CHANNEL;
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
+use cubek_std::microkernel::{ArithmeticInstruction, UnitWork};
 
 /// The logistic function.
 #[cube]
@@ -16,6 +17,17 @@ pub struct CausalFilters {
     bias: ComptimeOption<Tile>,
     #[cube(comptime)]
     taps: usize,
+}
+
+impl CausalFilters {
+    /// What a unit does per line of channels over `taps` taps: the taps and their products held in
+    /// registers, whichever conv it is.
+    pub fn unit_work(taps: usize) -> UnitWork {
+        UnitWork {
+            instruction: ArithmeticInstruction::Vector,
+            registers: (2 * taps + 8) as u32,
+        }
+    }
 }
 
 #[cube]
