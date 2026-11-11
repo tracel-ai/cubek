@@ -17,6 +17,8 @@ use cubecl_common::e4m3;
 use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 
 use super::harness::{dequantize, f32_tensor, quant_outputs, quantize, scale_shape};
+use super::{Needs, Quantized, RoundTrip};
+use cubek_test_utils::ScopeUnderTest;
 
 const M: usize = 8;
 const N: usize = 32;
@@ -93,32 +95,31 @@ fn fixture_with(
     }
 }
 
-/// Round trip the fixture into an f16 output, the type narrow enough that a scale formed anywhere
-/// but in f32 flushes to zero on the way.
-fn round_trip_to_f16(f: &Fixture, scheme: &QuantScheme) -> Vec<half::f16> {
-    let (values, scales, out_global) = quantize(
-        &f.client,
-        scheme,
-        &f.input,
-        &f.scale,
-        Some(&f.global),
-        &f.shape,
-    );
-    let out = dequantize(
-        &f.client,
-        scheme,
-        &values,
-        &scales,
-        out_global.as_ref(),
-        &f.shape,
-        half::f16::elem_type_native(),
-    );
-
-    let computed = f
-        .client
-        .read_one_unchecked_tensor(out.into_copy_descriptor());
-
-    half::f16::from_bytes(&computed).to_vec()
+impl RoundTrip {
+    /// The packed two-level round trip of values sitting on `quant_level`'s integers, every one an
+    /// exact multiple of its block's effective scale, `global` times `scales`, into an f16 output:
+    /// the type narrow enough that a scale formed anywhere but in f32 flushes to zero on the way.
+    fn into_f16(
+        global: f32,
+        scales: Vec<f32>,
+        quant_level: impl Fn(usize) -> f32,
+        tolerance: f32,
+    ) -> Self {
+        let data: Vec<f32> = (0..M * N)
+            .map(|i| quant_level(i) * global * scales[i / BLOCK])
+            .collect();
+        Self {
+            scheme: packed_f32(),
+            shape: shape![M, N],
+            input: data.clone(),
+            scales,
+            global: Some(global),
+            out: half::f16::elem_type_native(),
+            expected: data,
+            tolerance,
+            needs: Needs::Nothing,
+        }
+    }
 }
 
 #[test]
@@ -166,18 +167,14 @@ fn dequantize_rejects_a_missing_global_scale() {
 
 #[test]
 fn the_global_scale_is_read_as_f32_not_as_the_compute_type() {
-    let scheme = packed_f32();
-    let f = fixture(&scheme);
-    let restored = round_trip_to_f16(&f, &scheme);
-
-    assert_eq!(restored.len(), f.data.len());
-    for (i, (&actual, &expected)) in restored.iter().zip(f.data.iter()).enumerate() {
-        let actual = actual.to_f32();
-        assert!(
-            (actual - expected).abs() <= 1e-2,
-            "index {i}: got {actual}, expected {expected}"
-        );
-    }
+    let num_blocks = M * N / BLOCK;
+    let scales: Vec<f32> = (0..num_blocks).map(|b| 1.0 + b as f32 * 64.0).collect();
+    Quantized.check([RoundTrip::into_f16(
+        OUTER,
+        scales,
+        |i| (i % 9) as f32 - 4.0,
+        1e-2,
+    )]);
 }
 
 /// The effective scale is a tensor magnitude times a block spread, so it reaches further down than
@@ -186,33 +183,26 @@ fn the_global_scale_is_read_as_f32_not_as_the_compute_type() {
 /// tensor with it, so this asserts against the correctly rounded product instead.
 #[test]
 fn an_effective_scale_below_f16_still_scales_an_f16_output() {
-    let scheme = packed_f32();
     let global = 1e-6;
     let block = 0.01;
     // 1e-8, under half of f16's smallest subnormal, so a narrowed scale is exactly zero.
     let effective = global * block;
 
     let num_blocks = M * N / BLOCK;
-    let f = fixture_with(&scheme, global, vec![block; num_blocks], |i| {
-        (i % 255) as f32 - 127.0
-    });
-    let restored = round_trip_to_f16(&f, &scheme);
-
     // One f16 subnormal step, which is all the room the output type leaves at this magnitude.
     let ulp = half::f16::from_bits(1).to_f32();
-
-    assert_eq!(restored.len(), f.data.len());
-    assert!(
-        restored.iter().any(|v| v.to_f32() != 0.0),
-        "every value came back zero, the effective scale {effective} was flushed"
+    let trip = RoundTrip::into_f16(
+        global,
+        vec![block; num_blocks],
+        |i| (i % 255) as f32 - 127.0,
+        ulp,
     );
-    for (i, (&actual, &expected)) in restored.iter().zip(f.data.iter()).enumerate() {
-        let actual = actual.to_f32();
-        assert!(
-            (actual - expected).abs() <= ulp,
-            "index {i}: got {actual}, expected {expected} within {ulp}"
-        );
-    }
+    // Values a flushed scale would zero: a reconstruction of zeros fails the comparison.
+    assert!(
+        trip.expected.iter().any(|&value| value.abs() > ulp),
+        "the effective scale {effective} leaves no value a flush would change"
+    );
+    Quantized.check([trip]);
 }
 
 /// ue4m3 inner scales under an f32 global scale, the configuration the level exists for: one byte

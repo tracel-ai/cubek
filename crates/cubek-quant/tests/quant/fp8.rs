@@ -16,6 +16,8 @@ use cubecl::{features::TypeUsage, prelude::*, zspace::shape};
 use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 
 use super::harness::{dequantize, f32_tensor, quantize};
+use super::{Needs, Quantized, RoundTrip};
+use cubek_test_utils::ScopeUnderTest;
 
 /// One block, sized to the vector the packed path builds.
 const BLOCK: usize = 8;
@@ -62,24 +64,16 @@ fn round_trip_stored(value: QuantValue, store: QuantStore, data: &[f32]) -> Vec<
 #[test]
 fn e4m3_code_points_survive_the_round_trip() {
     let data = [0.5f32, 1.5, 2.5, -0.5, -1.5, 0.0625, 288.0, -288.0];
-    let computed = round_trip(QuantValue::E4M3, &data);
-
-    assert_eq!(
-        computed, data,
-        "an e4m3 code point did not reconstruct as itself"
-    );
+    let packed = scheme(QuantValue::E4M3, QuantStore::PackedU32(0));
+    Quantized.check([RoundTrip::at_unit_scale(packed, &data, &data)]);
 }
 
 /// The same for `e5m2`, whose wider exponent reaches further at coarser steps.
 #[test]
 fn e5m2_code_points_survive_the_round_trip() {
     let data = [0.5f32, 1.5, 3.0, -0.5, -1.5, 0.0625, 49152.0, -49152.0];
-    let computed = round_trip(QuantValue::E5M2, &data);
-
-    assert_eq!(
-        computed, data,
-        "an e5m2 code point did not reconstruct as itself"
-    );
+    let packed = scheme(QuantValue::E5M2, QuantStore::PackedU32(0));
+    Quantized.check([RoundTrip::at_unit_scale(packed, &data, &data)]);
 }
 
 /// Magnitudes above what a byte read as two's complement can hold. A field cast from the value
@@ -105,15 +99,9 @@ fn large_magnitudes_do_not_wrap_out_of_the_field() {
 #[test]
 fn magnitudes_past_the_maximum_saturate() {
     let data = [1e4f32, -1e4, 1e30, -1e30, 449.0, -449.0, 448.0, -448.0];
-    let computed = round_trip(QuantValue::E4M3, &data);
-
-    for (input, got) in data.iter().zip(&computed) {
-        assert_eq!(
-            *got,
-            448.0 * input.signum(),
-            "{input} did not saturate at the format's maximum"
-        );
-    }
+    let packed = scheme(QuantValue::E4M3, QuantStore::PackedU32(0));
+    let saturated = data.map(|input| 448.0 * input.signum());
+    Quantized.check([RoundTrip::at_unit_scale(packed, &data, &saturated)]);
 }
 
 /// Whether this runtime can hold a natively stored fp8 value, which is the same question the
@@ -136,33 +124,17 @@ fn native_store_is_addressable() -> bool {
 /// could put the fraction back.
 #[test]
 fn e4m3_code_points_survive_a_native_round_trip() {
-    if !native_store_is_addressable() {
-        return;
-    }
-
     let data = [0.5f32, 1.5, 2.5, -0.5, -1.5, 0.0625, 288.0, -288.0];
-    let computed = round_trip_stored(QuantValue::E4M3, QuantStore::Native, &data);
-
-    assert_eq!(
-        computed, data,
-        "an e4m3 code point did not reconstruct as itself in the native store"
-    );
+    let native = scheme(QuantValue::E4M3, QuantStore::Native);
+    Quantized.check([RoundTrip::at_unit_scale(native, &data, &data).needing(Needs::Byte)]);
 }
 
 /// The same for `e5m2` natively stored.
 #[test]
 fn e5m2_code_points_survive_a_native_round_trip() {
-    if !native_store_is_addressable() {
-        return;
-    }
-
     let data = [0.5f32, 1.5, 3.0, -0.5, -1.5, 0.0625, 49152.0, -49152.0];
-    let computed = round_trip_stored(QuantValue::E5M2, QuantStore::Native, &data);
-
-    assert_eq!(
-        computed, data,
-        "an e5m2 code point did not reconstruct as itself in the native store"
-    );
+    let native = scheme(QuantValue::E5M2, QuantStore::Native);
+    Quantized.check([RoundTrip::at_unit_scale(native, &data, &data).needing(Needs::Byte)]);
 }
 
 /// The two stores are two spellings of one format, so they must agree value for value. A packed

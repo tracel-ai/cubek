@@ -44,6 +44,13 @@ pub trait ScopeUnderTest {
     /// value, or absolute where that value is below one.
     fn tolerance(&self, case: &Self::Case) -> f32;
 
+    /// The tolerance the output `name` is held to at `case`: [`tolerance`](Self::tolerance),
+    /// unless the scope holds one output to its own, as a state kept in `f32` beside an output
+    /// rounded to a narrower element, or a buffer the scope must leave bit for bit.
+    fn tolerance_of(&self, case: &Self::Case, _name: &'static str) -> f32 {
+        self.tolerance(case)
+    }
+
     /// Launch the scope on every case and fail the test, through the active policy, at the first
     /// case whose output differs from the reference.
     #[track_caller]
@@ -76,8 +83,8 @@ pub trait ScopeUnderTest {
             reference.len(),
             "{case:?}: the reference holds one value per output"
         );
-        let tolerance = self.tolerance(case);
         for (output, want) in written.into_iter().zip(reference) {
+            let tolerance = self.tolerance_of(case, output.name);
             let got = HostData::from_tensor_handle(client, output.tensor, output.host);
             let named = |why| format!("{case:?}, {}: {why}", output.name);
             match assert_equals_approx(&got, &want, tolerance) {

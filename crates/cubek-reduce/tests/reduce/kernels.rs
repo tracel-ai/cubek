@@ -2,7 +2,9 @@
 //! each of its dims, every operation, its values and its rows as they lie; and the hypercube's
 //! rows split into parts.
 
+use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, IntKind};
+use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
@@ -13,7 +15,7 @@ use cubek_reduce::kernels::{
 use cubek_std::Hardware;
 use cubek_std::devices;
 use cubek_std::routine::Routine;
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 const I32: ElemType = ElemType::Int(IntKind::I32);
@@ -131,41 +133,9 @@ fn values(len: usize, product: bool) -> Vec<f32> {
         .collect()
 }
 
-/// The first setting of `routine` this device prepares the problem at, launched.
-fn launch<R: ReduceRoutine<M> + core::fmt::Debug, M>(
-    routine: &R,
-    hw: &Hardware,
-    tensors: &ReduceTensors,
-) {
-    let problem = tensors.problem();
-    let settings = routine
-        .settings(hw)
-        .into_iter()
-        .find(|settings| routine.prepare(hw, problem, settings).is_ok())
-        .unwrap_or_else(|| panic!("{routine:?} prepares no setting for {problem:?}"));
-    launch_reduce_routine(routine, tensors, &settings)
-        .unwrap_or_else(|why| panic!("{routine:?} {problem:?}: {why:?}"));
-}
-
-/// The last setting of `routine` this device prepares the problem at, launched: the hypercube's
-/// shortest parts, so that short rows still split.
-fn launch_last<R: ReduceRoutine<M> + core::fmt::Debug, M>(
-    routine: &R,
-    hw: &Hardware,
-    tensors: &ReduceTensors,
-) {
-    let problem = tensors.problem();
-    let settings = routine
-        .settings(hw)
-        .into_iter()
-        .rev()
-        .find(|settings| routine.prepare(hw, problem, settings).is_ok())
-        .unwrap_or_else(|| panic!("{routine:?} prepares no setting for {problem:?}"));
-    launch_reduce_routine(routine, tensors, &settings)
-        .unwrap_or_else(|why| panic!("{routine:?} {problem:?}: {why:?}"));
-}
-
-/// Which routine a check launches.
+/// Which routine a reduction launches, and at which of its settings: the first the device
+/// prepares the problem at, or for the hypercube the last, its shortest parts, so that short rows
+/// still split.
 #[derive(Debug, Clone, Copy)]
 enum Scope {
     Unit,
@@ -174,86 +144,145 @@ enum Scope {
     Hypercube,
 }
 
-fn check(scope: Scope, shape: &[usize], axis: usize, operation: ReduceOperation) {
-    let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
-    let input_values = values(shape.iter().product(), operation == ReduceOperation::Prod);
-    let out_elem = match operation.writes() {
-        ReduceWrites::Values | ReduceWrites::Both => F32,
-        ReduceWrites::Indices => I32,
-    };
-    let mut out_shape = shape.to_vec();
-    out_shape[axis] = operation.written_per_row();
-    let input = TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
-        .dtype(F32)
-        .custom(input_values.clone())
-        .generate_without_host_data();
-    let out = TestInput::builder(client.clone(), Shape::from(out_shape.clone()))
-        .dtype(out_elem)
-        .custom(vec![-7.0; out_shape.iter().product()])
-        .generate_without_host_data();
-    let tensors = ReduceTensors::new(
-        &client,
-        input.binding(),
-        out.clone().binding(),
-        axis,
-        operation,
-        ReduceElements {
-            input: F32,
-            accumulator: F32,
-            out: out_elem,
-        },
-    );
-    match scope {
-        Scope::Unit => launch(&UnitReduceRoutine, &hw, &tensors),
-        Scope::Plane => launch(&PlaneReduceRoutine, &hw, &tensors),
-        Scope::Cube => launch(&CubeReduceRoutine, &hw, &tensors),
-        Scope::Hypercube => launch_last(&HypercubeReduceRoutine, &hw, &tensors),
+impl Scope {
+    /// `routine` at the setting this scope picks, launched on `tensors`.
+    ///
+    /// # Panics
+    ///
+    /// Where the routine prepares no setting for the problem, or the launch fails.
+    fn launch_with<R: ReduceRoutine<M> + core::fmt::Debug, M>(
+        self,
+        routine: &R,
+        hw: &Hardware,
+        tensors: &ReduceTensors,
+    ) {
+        let problem = tensors.problem();
+        let mut settings = routine.settings(hw);
+        if let Scope::Hypercube = self {
+            settings.reverse();
+        }
+        let settings = settings
+            .into_iter()
+            .find(|settings| routine.prepare(hw, problem, settings).is_ok())
+            .unwrap_or_else(|| panic!("{routine:?} prepares no setting for {problem:?}"));
+        launch_reduce_routine(routine, tensors, &settings)
+            .unwrap_or_else(|why| panic!("{routine:?} {problem:?}: {why:?}"));
     }
-    let host = match out_elem {
-        I32 => HostDataType::I32,
-        _ => HostDataType::F32,
-    };
-    let got = HostData::from_tensor_handle(&client, out, host);
-    let out_rows = rows_along(
-        &(0..out_shape.iter().product::<usize>())
-            .map(|i| match out_elem {
-                I32 => got.get_i32(&unravel(i, &out_shape)) as f32,
-                _ => got.get_f32(&unravel(i, &out_shape)),
-            })
-            .collect::<Vec<_>>(),
-        &out_shape,
-        axis,
-    );
-    for (row, (values, cells)) in rows_along(&input_values, shape, axis)
-        .iter()
-        .zip(&out_rows)
-        .enumerate()
-    {
-        for (cell, (have, want)) in cells.iter().zip(reference(values, operation)).enumerate() {
-            assert!(
-                (have.is_nan() && want.is_nan())
-                    || *have == want
-                    || (have - want).abs() <= 1e-6 * want.abs(),
-                "{scope:?} {operation:?} {shape:?} axis {axis} row {row} cell {cell}: got {have}, \
-                 want {want}"
-            );
+}
+
+/// `shape` reduced along `axis` by `operation`, through the routine `scope` names.
+#[derive(Debug, Clone)]
+struct Reduction {
+    scope: Scope,
+    shape: Vec<usize>,
+    axis: usize,
+    operation: ReduceOperation,
+}
+
+impl Reduction {
+    fn input(&self) -> Vec<f32> {
+        values(
+            self.shape.iter().product(),
+            self.operation == ReduceOperation::Prod,
+        )
+    }
+
+    fn out_elem(&self) -> ElemType {
+        match self.operation.writes() {
+            ReduceWrites::Values | ReduceWrites::Both => F32,
+            ReduceWrites::Indices => I32,
         }
     }
-}
 
-/// The coordinates of flat index `i` in `shape`, row-major.
-fn unravel(mut i: usize, shape: &[usize]) -> Vec<usize> {
-    let mut at = vec![0; shape.len()];
-    for d in (0..shape.len()).rev() {
-        at[d] = i % shape[d];
-        i /= shape[d];
+    fn out_shape(&self) -> Vec<usize> {
+        let mut out_shape = self.shape.clone();
+        out_shape[self.axis] = self.operation.written_per_row();
+        out_shape
     }
-    at
 }
 
-/// Every routine reduces a `[2, 5, 300]` tensor along each dim, every operation: along the
-/// contiguous dim, and across it, each lane its own row. The plane and the cube where the device
+/// A reduce routine of the tile stack against the host, row by row.
+struct Routines;
+
+impl ScopeUnderTest for Routines {
+    type Case = Reduction;
+
+    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Refusal> {
+        let hw = Hardware::from_client(client);
+        let (out_elem, out_shape) = (reduction.out_elem(), reduction.out_shape());
+        let input = TestInput::builder(client.clone(), Shape::from(reduction.shape.clone()))
+            .dtype(F32)
+            .custom(reduction.input())
+            .generate_without_host_data();
+        let out = TestInput::builder(client.clone(), Shape::from(out_shape.clone()))
+            .dtype(out_elem)
+            .custom(vec![-7.0; out_shape.iter().product()])
+            .generate_without_host_data();
+        let tensors = ReduceTensors::new(
+            client,
+            input.binding(),
+            out.clone().binding(),
+            reduction.axis,
+            reduction.operation,
+            ReduceElements {
+                input: F32,
+                accumulator: F32,
+                out: out_elem,
+            },
+        );
+        let scope = reduction.scope;
+        match scope {
+            Scope::Unit => scope.launch_with(&UnitReduceRoutine, &hw, &tensors),
+            Scope::Plane => scope.launch_with(&PlaneReduceRoutine, &hw, &tensors),
+            Scope::Cube => scope.launch_with(&CubeReduceRoutine, &hw, &tensors),
+            Scope::Hypercube => scope.launch_with(&HypercubeReduceRoutine, &hw, &tensors),
+        }
+        let host = match out_elem {
+            I32 => HostDataType::I32,
+            _ => HostDataType::F32,
+        };
+        Ok(vec![Written {
+            name: "output",
+            tensor: out,
+            host,
+        }])
+    }
+
+    /// Every row's reference written where the row's cells lie in the output.
+    fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
+        let out_shape = reduction.out_shape();
+        let out_strides = strides(&out_shape);
+        let axis = reduction.axis;
+        let mut out = vec![0.0f32; out_shape.iter().product()];
+        let rows = rows_along(&reduction.input(), &reduction.shape, axis);
+        for (row, values) in rows.iter().enumerate() {
+            let mut rest = row;
+            let mut base = 0;
+            for d in (0..out_shape.len()).rev().filter(|d| *d != axis) {
+                base += (rest % out_shape[d]) * out_strides[d];
+                rest /= out_shape[d];
+            }
+            for (cell, want) in reference(values, reduction.operation)
+                .into_iter()
+                .enumerate()
+            {
+                out[base + cell * out_strides[axis]] = want;
+            }
+        }
+        vec![HostData::row_major(
+            HostDataVec::F32(out),
+            Shape::from(out_shape),
+        )]
+    }
+
+    /// Whole numbers sum exactly; a mean divides once.
+    fn tolerance(&self, _reduction: &Reduction) -> f32 {
+        1e-6
+    }
+}
+
+/// Every routine reduces a `[2, 5, 300]` tensor along each dim, every operation whose rows hold
+/// what it writes: along the contiguous dim, and across it, each lane its own row. The plane and the cube where the device
 /// commits to a plane width.
 #[test]
 fn every_routine_reduces_every_dim_like_the_cpu() {
@@ -262,13 +291,25 @@ fn every_routine_reduces_every_dim_like_the_cpu() {
     if hw.plane_dim().is_ok() {
         scopes.extend([Scope::Plane, Scope::Cube]);
     }
+    let mut reductions = Vec::new();
     for scope in scopes {
         for axis in [2, 1, 0] {
             for operation in OPERATIONS {
-                check(scope, &[2, 5, 300], axis, operation);
+                // A row shorter than `k` leaves cells no reference states: what the kernel pads
+                // them with is its own.
+                if operation.written_per_row() > [2, 5, 300][axis] {
+                    continue;
+                }
+                reductions.push(Reduction {
+                    scope,
+                    shape: vec![2, 5, 300],
+                    axis,
+                    operation,
+                });
             }
         }
     }
+    Routines.check(reductions);
 }
 
 /// The hypercube splits rows into parts, the last one short, and merges them: a `[2, 3, 5000]`
@@ -281,11 +322,18 @@ fn the_hypercube_reduces_split_rows_like_the_cpu() {
     if hw.plane_dim().is_err() || !hw.properties.features.device_memory_scope {
         return;
     }
+    let mut reductions = Vec::new();
     for (shape, axis) in [([2, 3, 5000], 2), ([3, 2100, 4], 1), ([2, 3, 5000], 1)] {
         for operation in OPERATIONS {
-            check(Scope::Hypercube, &shape, axis, operation);
+            reductions.push(Reduction {
+                scope: Scope::Hypercube,
+                shape: shape.to_vec(),
+                axis,
+                operation,
+            });
         }
     }
+    Routines.check(reductions);
 }
 
 /// The problem a host states for `shape` reduced along `axis`, its rows contiguous.
