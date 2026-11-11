@@ -2,54 +2,57 @@
 
 use super::kernel::ring_write_back_kernel;
 use crate::kernels::conv::reads::{CausalConvReads, bound};
-use crate::kernels::conv::{CausalConvPast, CausalConvPastInputs};
+use crate::kernels::conv::{CausalConvPast, CausalConvPastInputs, ConvExtent};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Levels, Space};
 use cubek_microkernel::linear_recurrence::conv::cube::ChannelBox;
 use cubek_microkernel::linear_recurrence::{
     BATCH, CHANNEL, CHANNEL_BOX, CausalConvPartitioning, LINE_IN_BOX, RING_POSITION,
 };
-use cubek_std::routine::{CubeResources, Grid};
+use cubek_std::Hardware;
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, CubeResources, Grid};
 
-/// The write back of a prompt's rings, placed over the channels the calling conv convolves.
-pub(crate) struct RingWriteBackLaunch {
-    partitioning: CausalConvPartitioning,
-    grid: Grid,
-    width: usize,
-    lines: ChannelBox,
+/// The write back of a prompt's rings, placed over the channels the calling conv convolves: what
+/// the conv's blueprint holds of the launch that follows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RingWriteBack {
+    pub partitioning: CausalConvPartitioning,
+    /// Values a line of channels binds at.
+    pub width: usize,
+    pub lines: ChannelBox,
 }
 
-impl RingWriteBackLaunch {
-    /// The write back of `reads`' prompt on `hw`, its channels `width` values a line and its cubes
-    /// of at most `units` units, or none for a window, which writes its own ring.
+impl RingWriteBack {
+    /// The write back of a prompt over `extent`, its channels `width` values a line, checked
+    /// against `hw`, or none for a window, which writes its own ring.
     ///
     /// # Errors
     ///
     /// What the device declines the launch's grid with.
     pub(crate) fn prepare(
-        hw: &cubek_std::Hardware,
-        reads: &CausalConvReads,
+        hw: &Hardware,
+        past: &CausalConvPast,
+        extent: ConvExtent,
         width: usize,
-        units: usize,
     ) -> Result<Option<Self>, Refusal> {
-        if !matches!(reads.past(), CausalConvPast::Prompt { .. }) {
+        if !past.writes_ring_after() {
             return Ok(None);
         }
-        let lines = reads.channels() / width;
-        let units = units.min(lines);
+        let lines = extent.channels / width;
+        let units = ChannelBox::most_units(hw).min(lines);
         let boxes = lines.div_ceil(units);
         let mut axes = vec![
-            (BATCH, reads.batch()),
-            (RING_POSITION, reads.taps() - 1),
+            (BATCH, extent.batch),
+            (RING_POSITION, extent.taps - 1),
             (CHANNEL_BOX, boxes),
             (LINE_IN_BOX, units * width),
-            (CHANNEL, reads.channels()),
+            (CHANNEL, extent.channels),
         ];
-        axes.extend(reads.past().past_axes());
+        axes.extend(past.past_axes());
         let leaf = [
             (RING_POSITION, 1),
             (CHANNEL_BOX, 1),
-            (CHANNEL, reads.channels()),
+            (CHANNEL, extent.channels),
             (LINE_IN_BOX, width),
         ];
         let partitioning = CausalConvPartitioning::new(
@@ -57,28 +60,35 @@ impl RingWriteBackLaunch {
             Levels::leaf(&leaf).units_distributed(LINE_IN_BOX, units),
             &[RING_POSITION, CHANNEL_BOX],
         );
-        let cube = CubeResources {
-            plane_width: units as u32,
-            shared_memory: 0,
-        };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
-        Ok(Some(Self {
+        let write_back = Self {
             partitioning,
-            grid,
             width,
             lines: ChannelBox {
                 units,
-                channels: reads.channels(),
+                channels: extent.channels,
             },
-        }))
+        };
+        write_back.grid(hw)?;
+        Ok(Some(write_back))
     }
 
-    /// Copies `reads`' prompt into its rings.
-    pub(crate) fn launch(&self, reads: &CausalConvReads) {
+    /// The cubes the launch spawns on `hw`.
+    fn grid(&self, hw: &Hardware) -> Result<Grid, Refusal> {
+        let cube = CubeResources {
+            plane_width: self.lines.units as u32,
+            shared_memory: 0,
+        };
+        Grid::new(hw, self.partitioning.as_cubek(), cube)
+    }
+
+    /// Copies `reads`' prompt into its rings, on the grid [`prepare`](Self::prepare) checked on
+    /// `hw`.
+    pub(crate) fn launch(&self, hw: &Hardware, reads: &CausalConvReads) {
+        let grid = self.grid(hw).expect(ADMITTED_PLAN_RUNS);
         let CausalConvPastInputs::Prompt { valid, .. } = reads.past_inputs() else {
             unreachable!("only a prompt is prepared a write back");
         };
-        let launcher = self.grid.launcher(reads.client(), || {
+        let launcher = grid.launcher(reads.client(), || {
             (
                 self.partitioning.kernel(),
                 self.partitioning.as_cubek().space().clone(),
@@ -94,8 +104,8 @@ impl RingWriteBackLaunch {
         unsafe {
             ring_write_back_kernel::launch_unchecked(
                 reads.client(),
-                self.grid.launch.cube_count.clone(),
-                self.grid.launch.cube_dim,
+                grid.launch.cube_count.clone(),
+                grid.launch.cube_dim,
                 self.width,
                 input,
                 past.ring,

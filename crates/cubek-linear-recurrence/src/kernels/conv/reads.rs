@@ -21,7 +21,6 @@ pub(crate) struct CausalConvReads {
     past_inputs: CausalConvPastInputs,
     past: CausalConvPast,
     batch: usize,
-    channels: usize,
     taps: usize,
     element: ElemType,
 }
@@ -88,7 +87,6 @@ impl CausalConvReads {
             filters,
             past_inputs,
             past,
-            channels,
             taps,
             element,
         })
@@ -117,10 +115,6 @@ impl CausalConvReads {
     /// The rows.
     pub(crate) fn batch(&self) -> usize {
         self.batch
-    }
-
-    pub(crate) fn channels(&self) -> usize {
-        self.channels
     }
 
     pub(crate) fn taps(&self) -> usize {

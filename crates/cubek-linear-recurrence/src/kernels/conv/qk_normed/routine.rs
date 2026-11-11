@@ -1,5 +1,4 @@
 use super::kernel::cube_qk_normed_conv_kernel;
-use crate::kernels::conv::ring_write_back::RingWriteBackLaunch;
 use crate::kernels::conv::{
     CausalConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
     QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors, admit_element,
@@ -63,12 +62,6 @@ impl CubeQkNormedConvRoutine {
     ) -> Result<QkNormedConvOutputs, Refusal> {
         let problem = tensors.problem();
         let columns = problem.past.ring().columns;
-        let write_back = RingWriteBackLaunch::prepare(
-            hw,
-            tensors.reads(),
-            blueprint.width,
-            blueprint.microkernel.units,
-        )?;
         let binding = tensors.bind(&blueprint, &grid);
         // SAFETY: every operand is bound through the launcher and indexed only through its tile,
         // whose reads past an edge are masked. A unit writes only the ring channels it reads, and
@@ -93,8 +86,8 @@ impl CubeQkNormedConvRoutine {
                 problem.element,
             );
         }
-        if let Some(write_back) = write_back {
-            write_back.launch(tensors.reads());
+        if let Some(write_back) = &blueprint.write_back {
+            write_back.launch(hw, tensors.reads());
         }
         Ok(tensors.into_outputs())
     }
@@ -282,6 +275,10 @@ mod tests {
                     Some(lines)
                 );
                 assert!(blueprint.microkernel.units <= lines);
+                assert_eq!(
+                    blueprint.write_back.is_some(),
+                    problem.past.writes_ring_after()
+                );
                 let cubes = problem.batch * problem.past.positions() * problem.heads.key_heads;
                 assert_eq!(grid.cubes(), Some(cubes as u64));
                 let mut estimate = KernelEstimate::from(&grid);

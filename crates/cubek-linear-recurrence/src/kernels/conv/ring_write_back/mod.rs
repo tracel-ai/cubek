@@ -1,4 +1,4 @@
 mod base;
 mod kernel;
 
-pub(crate) use base::*;
+pub use base::*;

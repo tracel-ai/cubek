@@ -1,6 +1,8 @@
 //! A conv launch's compile-time decisions.
 
-use crate::kernels::conv::{QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem};
+use crate::kernels::conv::{
+    ConvExtent, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem, RingWriteBack,
+};
 use cubecl::client::Client;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
@@ -14,17 +16,19 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_std::routine::{CubeResources, Grid};
 
-/// What a conv launch compiles: the microkernel, the partitioning, and the width the channels bind
-/// at.
+/// What a conv launch compiles: the microkernel, the partitioning, the width the channels bind at,
+/// and the launch that fills a prompt's rings after it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QkNormedConvBlueprint {
     pub microkernel: CubeQkNormedConvMicrokernel,
     pub partitioning: CausalConvPartitioning,
     pub width: usize,
+    pub write_back: Option<RingWriteBack>,
 }
 
 impl QkNormedConvBlueprint {
-    /// The launch of `problem` on `hw`: no cube holds more units than a head has lines.
+    /// The launch of `problem` on `hw`: no cube holds more units than a head has lines, and the write
+    /// back of a prompt is checked against the device too.
     pub(crate) fn prepare(
         hw: &Hardware,
         problem: &QkNormedConvProblem,
@@ -49,10 +53,17 @@ impl QkNormedConvBlueprint {
             shared_memory: microkernel.shared_memory(),
         };
         let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let extent = ConvExtent {
+            batch: problem.batch,
+            channels: item.heads.conv_dim(),
+            taps: problem.taps,
+        };
+        let write_back = RingWriteBack::prepare(hw, &problem.past, extent, width)?;
         let blueprint = Self {
             microkernel,
             partitioning,
             width,
+            write_back,
         };
         Ok((blueprint, grid))
     }

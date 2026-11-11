@@ -5,8 +5,7 @@ use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
 /// A row's last `taps - 1` valid positions of a prompt, copied into its ring once every position
-/// has read the ring's old columns: the copy is its own launch, unless the ring outlasts the
-/// prompt.
+/// has read the ring's old columns, so the copy is its own launch.
 #[derive(CubeType)]
 pub struct RingWriteBack {
     input: Tile,

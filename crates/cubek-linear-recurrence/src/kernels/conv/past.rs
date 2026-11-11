@@ -36,6 +36,14 @@ pub(crate) fn admit_element(element: ElemType) -> Result<(), Refusal> {
     }
 }
 
+/// The extents a conv's taps run over: `batch` rows of `channels` channels, `taps` to a filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConvExtent {
+    pub batch: usize,
+    pub channels: usize,
+    pub taps: usize,
+}
+
 /// A store of `slots` rings of `columns` columns, one ring a sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RingStore {
@@ -70,6 +78,11 @@ impl CausalConvPast {
         match self {
             Self::Window { ring } | Self::Prompt { ring, .. } => *ring,
         }
+    }
+
+    /// Whether a launch after the conv fills the rings: a window writes its own.
+    pub(crate) fn writes_ring_after(&self) -> bool {
+        matches!(self, Self::Prompt { .. })
     }
 
     /// The positions a row convolves: one over a window.
