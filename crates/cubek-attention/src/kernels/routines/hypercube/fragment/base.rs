@@ -70,9 +70,10 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
 
     /// Its microkernel's settings over plane fragments
     /// ([`HypercubeAttentionMicrokernelSettings::listed`]) on eight cubes a box, then four and
-    /// sixteen.
+    /// sixteen, then seven, ten and thirteen: counts that are no power of two, which may fill the
+    /// device's last wave of boxes where a power of two leaves it mostly idle.
     fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
-        [8, 4, 16]
+        [8, 4, 16, 7, 10, 13]
             .into_iter()
             .flat_map(|cubes| {
                 HypercubeAttentionMicrokernelSettings::FRAGMENT
