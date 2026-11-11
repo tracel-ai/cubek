@@ -827,8 +827,9 @@ mod tests {
         let rounded =
             CubeStagedMicrokernel::best(&hw, &item(MatmulReading::Rounded), &settings).unwrap();
         assert_eq!(rounded.decoded_stage(), Some(tf32));
-        let exact =
-            CubeStagedMicrokernel::best(&hw, &item(MatmulReading::AsStored), &settings).unwrap();
-        assert_eq!(exact.decoded_stage(), None);
+        // The exact product has no instruction for `f32` here, so no plane runs it: the unit
+        // routines take it.
+        let exact = CubeStagedMicrokernel::best(&hw, &item(MatmulReading::AsStored), &settings);
+        assert!(exact.is_err(), "{exact:?}");
     }
 }

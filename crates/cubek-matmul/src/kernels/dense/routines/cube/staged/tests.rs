@@ -485,11 +485,17 @@ mod base {
     /// A `128 × 256 × 512` `f16` product whose rhs is a col rhs: an `[n, k]` buffer behind the
     /// `[k, n]` view.
     fn col_rhs() -> MatmulRoutineProblem {
+        col_rhs_of(128, 256, 512)
+    }
+
+    /// An `f16` product of `m × n × k` whose rhs lies col-major, `K` its rows: what one TMA box
+    /// lands whole under a matrix instruction.
+    fn col_rhs_of(m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
         use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
         MatmulRoutineProblem::from(&MatmulShape {
-            m: 128,
-            n: 256,
-            k: 512,
+            m,
+            n,
+            k,
             batch: 1,
             elem: F16,
             lhs: OperandKey::float(Some(K), MatmulBatching::Batched),
@@ -498,8 +504,7 @@ mod base {
     }
 
     /// Both matrix transports load their `B` col-major, so a col rhs is bound in its buffer's
-    /// order and read in lines along `K`; the software instruction reads the order the product
-    /// names, so the same rhs is read one element at a time.
+    /// order and read in lines along `K`.
     #[test]
     fn the_matrix_transports_bind_a_col_rhs_in_its_buffers_order() {
         let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
@@ -520,42 +525,12 @@ mod base {
             );
             assert!(blueprint.widths.rhs > 1, "{:?}", blueprint.widths);
         }
-
-        let software = prepared(devices::strix_halo());
-        let no_subgroups = prepared(offering(devices::wgpu_no_subgroups()));
-        for blueprint in [software, no_subgroups] {
-            assert_eq!(
-                blueprint.microkernel.plane.orders.rhs,
-                BindingOrder::Stated,
-                "{}",
-                blueprint.microkernel.plane.instruction
-            );
-            assert_eq!(blueprint.widths.rhs, 1);
-        }
     }
-
-    /// The software instruction's register block lines its accumulator with the rhs, so under a
-    /// col rhs read one element at a time the output is written one element at a time too.
-    #[test]
-    fn the_software_instruction_lines_its_output_with_the_rhs() {
-        let (blueprint, _) = CubeStagedMatmulRoutine
-            .prepare(
-                &devices::strix_halo(),
-                &col_rhs(),
-                &CubeStagedMatmulRoutineSettings::DEFAULT,
-            )
-            .expect("the software instruction runs everywhere");
-        assert_eq!((blueprint.widths.rhs, blueprint.widths.out), (1, 1));
-    }
-
     /// A row rhs is bound as the product names it whatever the instruction.
     #[test]
     fn a_row_rhs_is_bound_as_the_product_names_it() {
         let problem = MatmulRoutineProblem::dense(128, 256, 512, F16);
-        for hw in [
-            offering(devices::strix_halo()),
-            offering(devices::rdna_range()),
-        ] {
+        for hw in [offering(devices::strix_halo())] {
             let (blueprint, _) = CubeStagedMatmulRoutine
                 .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
                 .expect("the routine runs here");
@@ -588,49 +563,14 @@ mod base {
             assert_eq!(engine_twins(hw.clone()), 0, "{hw:?}");
         }
     }
-    /// A CPU runtime holds a dozen units a cube, fewer than one cube of planes of the software
-    /// instruction: the plane routine declines there, and the unit routine is the floor.
+    /// A CPU runtime offers no matrix instruction, so it runs no plane: the plane routine
+    /// declines there, and the unit routine is the floor.
     #[test]
     fn declines_a_cube_past_the_units_a_cpu_holds() {
         let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
         let declined = CubeStagedMatmulRoutine.prepare(&devices::cpu_12(), &problem(), &settings);
-        assert!(
-            matches!(declined, Err(Refusal::CubePastDevice { .. })),
-            "{declined:?}"
-        );
+        assert!(declined.is_err(), "{declined:?}");
     }
-
-    /// The default prepares on devices with no matrix instruction, ragged shapes included; a
-    /// setting other than the default may ask for a cube the device cannot hold, and declines
-    /// saying so, and one splitting `K` declines where shared memory takes no atomic add.
-    #[test]
-    fn every_setting_prepares_on_the_software_instruction() {
-        for hw in [devices::wgpu_no_subgroups(), devices::rdna_range()] {
-            for (position, settings) in CubeStagedMatmulRoutine.settings(&hw).iter().enumerate() {
-                for (m, n, k) in [(1, 128, 256), (37, 29, 19), (512, 4096, 4096)] {
-                    let problem = MatmulRoutineProblem::dense(m, n, k, F32);
-                    let prepared = CubeStagedMatmulRoutine.prepare(&hw, &problem, settings);
-                    let outgrown = matches!(
-                        prepared,
-                        Err(Refusal::SharedMemoryPastDevice { .. } | Refusal::CubePastDevice { .. })
-                    );
-                    let unmerged = settings.microkernel.planes_along_k.get() > 1
-                        && !hw.shared_f32_atomic_add()
-                        && matches!(
-                            prepared,
-                            Err(Refusal::Declined {
-                                why: CubeStagedMicrokernel::DECLINE
-                            })
-                        );
-                    assert!(
-                        prepared.is_ok() || (position > 0 && (outgrown || unmerged)),
-                        "{settings} on {hw:?}: {prepared:?}"
-                    );
-                }
-            }
-        }
-    }
-
     /// A second stage in flight holds a second stage of shared memory, and the blueprint carries
     /// the depth to the kernel's ring.
     #[test]
@@ -802,35 +742,45 @@ mod base {
              settings: &CubeStagedTmaStoredMatmulRoutineSettings| {
                 CubeStagedTmaStoredMatmulRoutine.prepare(&hw, problem, settings)
             };
-        let aligned = MatmulRoutineProblem::dense(256, 512, 64, F16);
-        let (blueprint, _) = prepared(devices::h100(), &aligned, &settings).unwrap();
+        let aligned = col_rhs_of(256, 512, 64);
+        let (blueprint, _) = prepared(
+            devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
+            &aligned,
+            &settings,
+        )
+        .unwrap();
         assert_eq!(blueprint.microkernel.store, CubeStagedStore::Tma);
         assert_eq!(blueprint.widths.out, 1);
 
-        let overhanging = MatmulRoutineProblem::dense(33, 512, 64, F16);
-        let (blueprint, _) = prepared(devices::h100(), &overhanging, &settings).unwrap();
+        let overhanging = col_rhs_of(33, 512, 64);
+        let (blueprint, _) = prepared(
+            devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
+            &overhanging,
+            &settings,
+        )
+        .unwrap();
         assert_eq!(blueprint.microkernel.store, CubeStagedStore::Tma);
         assert_eq!(blueprint.microkernel.scratch, Scratch::None);
 
         // Rows of 60 halves are 120 bytes, not whole 16-byte lines.
-        let misaligned = MatmulRoutineProblem::dense(256, 60, 64, F16);
+        let misaligned = col_rhs_of(256, 60, 64);
         let batched = MatmulRoutineProblem {
             batches: vec![2],
             ..aligned.clone()
         };
         for (hw, problem, refusal) in [
             (
-                devices::strix_halo(),
+                devices::offering_mma(devices::strix_halo(), [MmaConfig { n: 8, ..SHAPE }]),
                 &aligned,
                 CubeStagedTmaStoreRefusal::NoBulkTensorCopy,
             ),
             (
-                devices::h100(),
+                devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
                 &misaligned,
                 CubeStagedTmaStoreRefusal::Misaligned,
             ),
             (
-                devices::h100(),
+                devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
                 &batched,
                 CubeStagedTmaStoreRefusal::Batched,
             ),
@@ -842,7 +792,7 @@ mod base {
             );
         }
         let split = prepared(
-            devices::h100(),
+            devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
             &aligned,
             &stored(CubeStagedMatmulRoutineSettings::SPLIT_ALONG_K),
         );
@@ -911,17 +861,15 @@ mod base {
     /// names why, where the units' routine at the same numbers runs.
     #[test]
     fn a_tma_fill_is_delivered_where_nothing_refuses_it() {
-        // The software instruction's stage holds its cells as the operand lies, which a
-        // descriptor's box lands whole.
-        let software = devices::h100();
+        let hw = devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]);
         let by_units = default_with(|microkernel| microkernel.ring = StageRing::DOUBLE);
         let settings = CubeStagedTmaMatmulRoutineSettings {
             microkernel: by_units.microkernel,
             cube_order: by_units.cube_order,
         };
-        let aligned = MatmulRoutineProblem::dense(256, 512, 64, F16);
+        let aligned = col_rhs_of(256, 512, 64);
         let (blueprint, _) = CubeStagedTmaMatmulRoutine
-            .prepare(&software, &aligned, &settings)
+            .prepare(&hw, &aligned, &settings)
             .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.fill.delivery, CubeStagedDelivery::Tma);
         assert_eq!((blueprint.widths.lhs, blueprint.widths.rhs), (1, 1));
@@ -930,19 +878,14 @@ mod base {
             ..blueprint.microkernel
         };
         assert_eq!(
-            tma_refusal(
-                &software,
-                &aligned,
-                &blueprint.partitioning,
-                &through_registers
-            ),
+            tma_refusal(&hw, &aligned, &blueprint.partitioning, &through_registers),
             Some(CubeStagedTmaRefusal::PrefetchInRegisters)
         );
         let batched = MatmulRoutineProblem {
             batches: vec![2],
             ..aligned.clone()
         };
-        let unaligned = MatmulRoutineProblem::dense(256, 512, 60, F16);
+        let unaligned = col_rhs_of(256, 512, 60);
         let sliced = MatmulRoutineProblem {
             start_bytes: MatmulOperands {
                 lhs: 8,
@@ -964,33 +907,34 @@ mod base {
             },
             ..aligned.clone()
         };
+        let row_rhs = MatmulRoutineProblem::dense(256, 512, 64, F16);
         for (hw, problem, why) in [
             (
-                devices::strix_halo(),
+                devices::offering_mma(devices::strix_halo(), [MmaConfig { n: 8, ..SHAPE }]),
                 &aligned,
                 CubeStagedTmaRefusal::NoBulkTensorCopy,
             ),
-            (software.clone(), &batched, CubeStagedTmaRefusal::Batched),
+            (hw.clone(), &batched, CubeStagedTmaRefusal::Batched),
             (
-                software.clone(),
+                hw.clone(),
                 &unaligned,
                 CubeStagedTmaRefusal::Misaligned(MatmulOperand::Lhs),
             ),
             (
-                software.clone(),
+                hw.clone(),
                 &sliced,
                 CubeStagedTmaRefusal::UnalignedStart(MatmulOperand::Lhs),
             ),
             (
-                software.clone(),
+                hw.clone(),
                 &stored,
                 CubeStagedTmaRefusal::StoredInTiles(MatmulOperand::Rhs),
             ),
             // A fragment reads a row rhs's stage in blocks of its tile along `n`, which split
             // the rows a box lands whole.
             (
-                offering(devices::h100()),
-                &aligned,
+                devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
+                &row_rhs,
                 CubeStagedTmaRefusal::Unlanded(MatmulOperand::Rhs),
             ),
         ] {
@@ -1120,9 +1064,13 @@ mod base {
             filling_planes: NonZeroUsize::MIN,
             cube_order: by_units.cube_order,
         };
-        let problem = MatmulRoutineProblem::dense(256, 512, 64, F16);
+        let problem = col_rhs_of(256, 512, 64);
         let (blueprint, _) = CubeStagedTmaFillerMatmulRoutine
-            .prepare(&devices::h100(), &problem, &settings)
+            .prepare(
+                &devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
+                &problem,
+                &settings,
+            )
             .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.fill.filling_planes, 1);
         let placed = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
@@ -1164,17 +1112,25 @@ mod base {
                     )
                 })
         };
-        let covered = MatmulRoutineProblem::dense(256, 512, 64, F16);
+        let covered = col_rhs_of(256, 512, 64);
         let computing = CubeStagedMatmulRoutineSettings::DEFAULT
             .microkernel
             .planes
             .count();
         assert_eq!(
-            set_aside(StageRing::DOUBLE, devices::h100(), &covered),
+            set_aside(
+                StageRing::DOUBLE,
+                devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
+                &covered
+            ),
             Ok((1, computing + 1))
         );
         assert_eq!(
-            set_aside(StageRing::SINGLE, devices::h100(), &covered),
+            set_aside(
+                StageRing::SINGLE,
+                devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
+                &covered
+            ),
             Err(CubeStagedFillingRefusal::OneStage.into())
         );
         assert!(set_aside(StageRing::DOUBLE, devices::strix_halo(), &covered).is_err());
@@ -1281,18 +1237,6 @@ mod base {
         assert_eq!(order(along_m), CubeOrder::SwizzleRow(4));
         assert_eq!(order(along_n), CubeOrder::SwizzleCol(4));
     }
-
-    /// The software instruction writes its cells on their own, so an output its tiles overhang
-    /// holds no scratch.
-    #[test]
-    fn the_software_instruction_never_bounces() {
-        let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
-        let (blueprint, _) = CubeStagedMatmulRoutine
-            .prepare(&devices::strix_halo(), &problem(), &settings)
-            .expect("the software instruction runs here");
-        assert_eq!(blueprint.microkernel.scratch, Scratch::None);
-    }
-
     #[test]
     fn declines_a_cube_past_the_shared_memory() {
         let hw = {
@@ -1410,10 +1354,9 @@ mod base {
     }
 
     /// The setting reaches the stage: rows in order resolve to an in-order stage under a matrix
-    /// instruction, which holds its cells alone; on the software instruction, whose stage is
-    /// strided either way, both layouts prepare one launch, so a table times it once.
+    /// instruction, which holds its cells alone.
     #[test]
-    fn rows_in_order_lay_a_matrix_instructions_stage_and_leave_the_software_ones_alone() {
+    fn rows_in_order_lay_a_matrix_instructions_stage() {
         let in_order = CubeStagedMatmulRoutineSettings {
             microkernel: CubeStagedMicrokernelSettings {
                 stage_layout: Some(StageLayout::Blocks),
@@ -1443,17 +1386,6 @@ mod base {
             blueprint.microkernel.plane.orders,
         );
         assert_eq!(bytes, 12288);
-
-        let software = devices::wgpu_no_subgroups();
-        let f32_problem = MatmulRoutineProblem::dense(37, 29, 19, F32);
-        assert_eq!(
-            prepared(&software, &f32_problem, &in_order),
-            prepared(
-                &software,
-                &f32_problem,
-                &CubeStagedMatmulRoutineSettings::DEFAULT
-            )
-        );
     }
 
     /// The planes meet in shared memory, so a device that cannot add an `f32` there declines,
