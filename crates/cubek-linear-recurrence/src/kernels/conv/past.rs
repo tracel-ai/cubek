@@ -1,10 +1,8 @@
 //! The past a causal conv's taps run over, which every conv of the family reads the same way.
 
-use crate::kernels::refusals::{
-    CONV_ELEMENT_UNSUPPORTED, CONV_NOTHING_TO_CONVOLVE, CONV_TAPS_PAST_RING,
-};
+use crate::kernels::refusals::{CONV_NOTHING_TO_CONVOLVE, CONV_TAPS_PAST_RING};
 use core::num::NonZeroUsize;
-use cubecl::ir::{ElemType, FloatKind, UIntKind};
+use cubecl::ir::{ElemType, UIntKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::metadata::Metadata;
@@ -17,25 +15,6 @@ use cubek_std::microkernel::GlobalStream;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 use super::reads::bound;
-
-/// The activation elements the convs are verified at.
-const ELEMENTS: [ElemType; 2] = [
-    ElemType::Float(FloatKind::F16),
-    ElemType::Float(FloatKind::F32),
-];
-
-/// Whether the convs read and write activations of `element`.
-///
-/// # Errors
-///
-/// [`CONV_ELEMENT_UNSUPPORTED`] for any but `f16` and `f32`.
-pub(crate) fn admit_element(element: ElemType) -> Result<(), Refusal> {
-    if ELEMENTS.contains(&element) {
-        Ok(())
-    } else {
-        Err(CONV_ELEMENT_UNSUPPORTED)
-    }
-}
 
 /// The extents a conv's taps run over: `batch` rows of `channels` channels, `taps` to a filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

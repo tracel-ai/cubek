@@ -1,9 +1,9 @@
 use super::kernel::cube_qk_normed_conv_kernel;
 use crate::kernels::conv::{
     ConvStreams, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
-    QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors, admit_element,
+    QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors,
 };
-use crate::kernels::refusals::admit_on_device;
+use crate::kernels::refusals::{admit_element, admit_on_device};
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::linear_recurrence::CausalConvPartitioning;
 use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperand;

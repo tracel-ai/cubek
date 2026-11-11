@@ -1,7 +1,7 @@
 //! The problem a conv routine computes.
 
-use crate::kernels::conv::admit_element;
 use crate::kernels::conv::{CausalConvPast, ConvExtent, CubeQkNormedConvRoutine};
+use crate::kernels::refusals::admit_element;
 use crate::kernels::refusals::{
     CONV_BINDINGS_PAST_DEVICE, CONV_NOTHING_TO_CONVOLVE, QK_NORMED_CONV_BINDING_BUFFERS,
     QK_NORMED_CONV_HEADS_EMPTY,
