@@ -1,6 +1,6 @@
 //! A causal conv launch's compile-time decisions.
 
-use crate::kernels::conv::CausalConvProblem;
+use crate::kernels::conv::{CausalConvProblem, ConvExtent, RingWriteBack};
 use cubecl::client::Client;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
@@ -21,6 +21,7 @@ pub struct CausalConvBlueprint {
     pub microkernel: CubeCausalConvMicrokernel,
     pub partitioning: CausalConvPartitioning,
     pub width: usize,
+    pub write_back: Option<RingWriteBack>,
 }
 
 impl CausalConvBlueprint {
@@ -42,17 +43,24 @@ impl CausalConvBlueprint {
         let partitioning = CausalConvPartitioning::new(
             problem.space(microkernel.units, width),
             Levels::leaf(&problem.leaf(width)).units_distributed(LINE_IN_BOX, microkernel.units),
-            CHANNEL_BOX,
+            &problem.past.cube_axes(CHANNEL_BOX),
         );
         let cube = CubeResources {
             plane_width: microkernel.units as u32,
             shared_memory: 0,
         };
         let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let extent = ConvExtent {
+            batch: problem.batch,
+            channels: problem.channels,
+            taps: problem.taps,
+        };
+        let write_back = RingWriteBack::prepare(hw, &problem.past, extent, width)?;
         let blueprint = Self {
             microkernel,
             partitioning,
             width,
+            write_back,
         };
         Ok((blueprint, grid))
     }

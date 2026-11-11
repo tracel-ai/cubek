@@ -1,7 +1,6 @@
 //! The problem a causal conv routine computes.
 
-use crate::kernels::conv::reads::CausalConvReads;
-use crate::kernels::conv::{CausalConvPast, CubeCausalConvRoutine};
+use crate::kernels::conv::{CausalConvPast, CubeCausalConvRoutine, admit_element};
 use crate::kernels::refusals::{
     CAUSAL_CONV_BINDING_BUFFERS, CAUSAL_CONV_CHANNELS_EMPTY, CAUSAL_CONV_OUTPUT_UNSUPPORTED,
     CONV_BINDINGS_PAST_DEVICE, CONV_NOTHING_TO_CONVOLVE,
@@ -52,7 +51,7 @@ impl CausalConvProblem {
     /// [`CONV_ELEMENT_UNSUPPORTED`](crate::kernels::refusals::CONV_ELEMENT_UNSUPPORTED) for an
     /// element the convs are not verified at.
     pub fn admit_elements(element: ElemType, output: ElemType) -> Result<(), Refusal> {
-        CausalConvReads::admit_element(element)?;
+        admit_element(element)?;
         if output == element || output == F32 {
             Ok(())
         } else {

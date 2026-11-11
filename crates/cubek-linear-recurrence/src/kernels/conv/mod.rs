@@ -10,11 +10,15 @@
 //! [`cubek_microkernel::linear_recurrence::conv`]'s.
 
 mod causal;
+#[cfg(test)]
+mod fixtures;
 mod past;
 mod qk_normed;
 mod reads;
 mod ring_write_back;
 
 pub use causal::*;
+pub(crate) use past::admit_element;
 pub use past::*;
 pub use qk_normed::*;
+pub use ring_write_back::RingWriteBack;

@@ -1,7 +1,7 @@
 //! The problem a conv routine computes.
 
-use crate::kernels::conv::reads::CausalConvReads;
-use crate::kernels::conv::{CausalConvPast, CubeQkNormedConvRoutine};
+use crate::kernels::conv::admit_element;
+use crate::kernels::conv::{CausalConvPast, ConvExtent, CubeQkNormedConvRoutine};
 use crate::kernels::refusals::{
     CONV_BINDINGS_PAST_DEVICE, CONV_NOTHING_TO_CONVOLVE, QK_NORMED_CONV_BINDING_BUFFERS,
     QK_NORMED_CONV_HEADS_EMPTY,
@@ -15,8 +15,8 @@ use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperandMap;
 use cubek_microkernel::linear_recurrence::conv::cube::QkNormedConvWorkItem;
 use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, HEAD_CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceHeads,
-    TAP, VALUE_FEATURE,
+    BATCH, CHANNEL, HEAD_CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, RecurrenceHeads, TAP,
+    VALUE_FEATURE,
 };
 use cubek_std::Hardware;
 use cubek_std::routine::{EstimatedProblem, Routine};
@@ -63,7 +63,7 @@ impl QkNormedConvProblem {
         if self.batch == 0 {
             return Err(CONV_NOTHING_TO_CONVOLVE);
         }
-        CausalConvReads::admit_element(self.element)?;
+        admit_element(self.element)?;
         self.past.admit(self.taps)?;
         if QK_NORMED_CONV_BINDING_BUFFERS > hw.properties.hardware.max_bindings {
             return Err(CONV_BINDINGS_PAST_DEVICE);
@@ -109,9 +109,7 @@ impl QkNormedConvProblem {
             (HEAD_CHANNEL, width),
             (TAP, self.taps),
         ];
-        if let CausalConvPast::Prompt { .. } = self.past {
-            axes.insert(0, (POSITION, 1));
-        }
+        axes.splice(0..0, self.past.leaf_axes());
         axes
     }
 
@@ -132,19 +130,11 @@ impl QkNormedConvProblem {
             value_features,
         } = heads;
         let conv_dim = heads.conv_dim();
-        let positions = past.positions();
-        let (input, keyed, valued) = match past {
-            CausalConvPast::Window { .. } => (
-                rows(&[batch, conv_dim]),
-                rows(&[batch, key_heads, key_features]),
-                rows(&[batch, key_heads, heads_per_group, value_features]),
-            ),
-            CausalConvPast::Prompt { .. } => (
-                rows(&[batch, positions, conv_dim]),
-                rows(&[batch, positions, key_heads, key_features]),
-                rows(&[batch, positions, key_heads, heads_per_group, value_features]),
-            ),
-        };
+        let lead = past.lead_extents(batch);
+        let with_lead = |tail: &[usize]| rows(&[lead.as_slice(), tail].concat());
+        let input = with_lead(&[conv_dim]);
+        let keyed = with_lead(&[key_heads, key_features]);
+        let valued = with_lead(&[key_heads, heads_per_group, value_features]);
         let alignments = QkNormedConvOperandMap {
             qkv: input,
             filters: rows(&[conv_dim, taps]),
@@ -171,41 +161,20 @@ impl EstimatedProblem for QkNormedConvProblem {
     fn demand(&self) -> Work {
         let conv_dim = self.heads.conv_dim();
         let size = self.element.size();
-        let filters = conv_dim * self.taps * size;
-        let positions = self.past.positions();
-        let channels = self.batch * positions * conv_dim;
-        let (read, written) = match self.past {
-            CausalConvPast::Window { .. } => (channels * self.taps * size, channels * size),
-            CausalConvPast::Prompt { .. } => (channels * size, 0),
+        let extent = ConvExtent {
+            batch: self.batch,
+            channels: conv_dim,
+            taps: self.taps,
         };
+        let (read, written) = self.past.bytes(extent, size);
+        let channels = self.batch * self.past.positions() * conv_dim;
         Work {
             compute_ops: self.work_item().operations(channels),
-            bytes: read + filters + written + channels * QK_NORMED_CONV_OUTPUT_ELEMENT.size(),
+            bytes: read
+                + conv_dim * self.taps * size
+                + written
+                + channels * QK_NORMED_CONV_OUTPUT_ELEMENT.size(),
         }
-    }
-}
-
-#[cfg(test)]
-pub(crate) mod fixtures {
-    use cubek_std::Hardware;
-    use cubek_std::devices;
-
-    /// `hw` as a device that binds as many buffers as the conv's launch does.
-    pub(crate) fn binding_enough(mut hw: Hardware) -> Hardware {
-        devices::topology(&mut hw).max_bindings = 32;
-        hw
-    }
-
-    pub(crate) fn fleet() -> [Hardware; 6] {
-        [
-            devices::h100(),
-            devices::cdna_wave64(),
-            devices::cpu_12(),
-            devices::strix_halo(),
-            devices::rdna_range(),
-            devices::wgpu_no_subgroups(),
-        ]
-        .map(binding_enough)
     }
 }
 

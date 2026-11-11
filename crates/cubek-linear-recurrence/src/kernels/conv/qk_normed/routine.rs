@@ -1,9 +1,7 @@
 use super::kernel::cube_qk_normed_conv_kernel;
-use crate::kernels::conv::reads::CausalConvReads;
-use crate::kernels::conv::ring_write_back::RingWriteBackLaunch;
 use crate::kernels::conv::{
-    CausalConvPast, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
-    QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors,
+    ConvStreams, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvBlueprint, QkNormedConvInputs,
+    QkNormedConvOutputs, QkNormedConvProblem, QkNormedConvTensors, admit_element,
 };
 use crate::kernels::refusals::admit_on_device;
 use cubecl::tile::launch::{Refusal, Vectorization};
@@ -64,12 +62,6 @@ impl CubeQkNormedConvRoutine {
     ) -> Result<QkNormedConvOutputs, Refusal> {
         let problem = tensors.problem();
         let columns = problem.past.ring().columns;
-        let write_back = RingWriteBackLaunch::prepare(
-            hw,
-            tensors.reads(),
-            blueprint.width,
-            blueprint.microkernel.units,
-        )?;
         let binding = tensors.bind(&blueprint, &grid);
         // SAFETY: every operand is bound through the launcher and indexed only through its tile,
         // whose reads past an edge are masked. A unit writes only the ring channels it reads, and
@@ -94,8 +86,8 @@ impl CubeQkNormedConvRoutine {
                 problem.element,
             );
         }
-        if let Some(write_back) = write_back {
-            write_back.launch(tensors.reads());
+        if let Some(write_back) = &blueprint.write_back {
+            write_back.launch(hw, tensors.reads());
         }
         Ok(tensors.into_outputs())
     }
@@ -108,8 +100,8 @@ impl CubeQkNormedConvRoutine {
 /// [`ELEMENT_NOT_ON_DEVICE`](cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE) where the
 /// device lacks the activations' element or `f32`, or what [`QkNormedConvProblem::admit`]
 /// declines.
-pub fn serves(hw: &Hardware, problem: &QkNormedConvProblem) -> Result<(), Refusal> {
-    CausalConvReads::admit_element(problem.element)?;
+pub fn serves_qk_normed_conv(hw: &Hardware, problem: &QkNormedConvProblem) -> Result<(), Refusal> {
+    admit_element(problem.element)?;
     admit_on_device(hw, [problem.element, QK_NORMED_CONV_OUTPUT_ELEMENT])?;
     problem.admit(hw)
 }
@@ -144,30 +136,22 @@ impl Routine for CubeQkNormedConvRoutine {
         let heads = &problem.heads;
         let channels = heads.channels_per_key_head();
         let size = problem.element.size();
-        let output_size = QK_NORMED_CONV_OUTPUT_ELEMENT.size();
         let stream = |elements: usize, run: usize, element_bytes: usize| GlobalStream {
             bytes: (elements * element_bytes) as u64,
             run_bytes: run * element_bytes,
         };
-        let outputs = stream(channels, heads.key_features, output_size);
-        let filters = stream(channels * problem.taps, problem.taps, size);
-        let (reads, writes) = match problem.past {
-            CausalConvPast::Window { .. } => (
-                vec![
-                    stream(channels, heads.key_features, size),
-                    filters,
-                    stream(channels * (problem.taps - 1), heads.key_features, size),
-                ],
-                vec![stream(channels, heads.key_features, size), outputs],
+        let (reads, writes) = problem.past.streams(&ConvStreams {
+            channels,
+            taps: problem.taps,
+            run: heads.key_features,
+            element_size: size,
+            filters: stream(channels * problem.taps, problem.taps, size),
+            outputs: stream(
+                channels,
+                heads.key_features,
+                QK_NORMED_CONV_OUTPUT_ELEMENT.size(),
             ),
-            CausalConvPast::Prompt { .. } => (
-                vec![
-                    stream(channels * problem.taps, heads.key_features, size),
-                    filters,
-                ],
-                vec![outputs],
-            ),
-        };
+        });
         estimate.staging = Some(CubeStaging {
             operations: problem.work_item().operations(channels) as f64,
             reads,
@@ -283,6 +267,10 @@ mod tests {
                     Some(lines)
                 );
                 assert!(blueprint.microkernel.units <= lines);
+                assert_eq!(
+                    blueprint.write_back.is_some(),
+                    problem.past.writes_ring_after()
+                );
                 let cubes = problem.batch * problem.past.positions() * problem.heads.key_heads;
                 assert_eq!(grid.cubes(), Some(cubes as u64));
                 let mut estimate = KernelEstimate::from(&grid);

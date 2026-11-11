@@ -15,7 +15,7 @@ use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperandMap;
 use cubek_microkernel::linear_recurrence::{
-    BATCH, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceHeads, VALUE_FEATURE,
+    HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, RecurrenceHeads, VALUE_FEATURE,
 };
 use cubek_std::routine::Grid;
 
@@ -72,12 +72,8 @@ impl QkNormedConvOutputs {
         batch: usize,
         past: &CausalConvPast,
     ) -> Result<(Self, [PlainTensor; 3]), Refusal> {
-        let (lead, bound) = match *past {
-            CausalConvPast::Window { .. } => (vec![batch, 1], vec![batch]),
-            CausalConvPast::Prompt { positions, .. } => {
-                (vec![batch, positions], vec![batch, positions])
-            }
-        };
+        let lead = [batch, past.positions()];
+        let bound = past.lead_extents(batch);
         let make = |tail: &[usize], bound_tail: &[usize]| {
             let (handle, plain) = PlainTensor::empty_contiguous(
                 client,
@@ -150,31 +146,31 @@ impl QkNormedConvTensors {
         } = inputs;
         let reads = CausalConvReads::new(client, qkv, filters, past, heads.conv_dim())?;
         let (outputs, [query, key, value]) =
-            QkNormedConvOutputs::allocate(&reads.client, &heads, reads.batch, &reads.shape)?;
+            QkNormedConvOutputs::allocate(reads.client(), &heads, reads.batch(), &reads.past())?;
         let alignments = QkNormedConvOperandMap {
-            qkv: reads.input.elem_alignment(),
-            filters: reads.filters.elem_alignment(),
-            ring: reads.past.ring().elem_alignment(),
-            lengths: reads.past.lengths().elem_alignment(),
+            qkv: reads.input().elem_alignment(),
+            filters: reads.filters().elem_alignment(),
+            ring: reads.past_inputs().ring().elem_alignment(),
+            lengths: reads.past_inputs().lengths().elem_alignment(),
             query: query.elem_alignment(),
             key: key.elem_alignment(),
             value: value.elem_alignment(),
         };
         let start_bytes = QkNormedConvOperandMap {
-            qkv: reads.input.start_bytes(),
-            filters: reads.filters.start_bytes(),
-            ring: reads.past.ring().start_bytes(),
-            lengths: reads.past.lengths().start_bytes(),
+            qkv: reads.input().start_bytes(),
+            filters: reads.filters().start_bytes(),
+            ring: reads.past_inputs().ring().start_bytes(),
+            lengths: reads.past_inputs().lengths().start_bytes(),
             query: query.start_bytes(),
             key: key.start_bytes(),
             value: value.start_bytes(),
         };
         let problem = QkNormedConvProblem {
-            batch: reads.batch,
+            batch: reads.batch(),
             heads,
-            taps: reads.taps,
-            element: reads.element,
-            past: reads.shape,
+            taps: reads.taps(),
+            element: reads.element(),
+            past: reads.past(),
             alignments,
             start_bytes,
         };
@@ -191,7 +187,7 @@ impl QkNormedConvTensors {
 
     /// The client the operands live on, which a launch submits to.
     pub(crate) fn client(&self) -> &Client {
-        &self.reads.client
+        self.reads.client()
     }
 
     /// The operands every conv reads.
@@ -221,23 +217,16 @@ impl QkNormedConvTensors {
         blueprint: &QkNormedConvBlueprint,
         grid: &Grid,
     ) -> QkNormedConvBinding {
-        let launcher = blueprint.launcher(&self.reads.client, grid);
+        let launcher = blueprint.launcher(self.reads.client(), grid);
         let width = blueprint.width;
-        let (keyed, valued): (&[Axis], &[Axis]) = match self.problem.past {
-            CausalConvPast::Window { .. } => (
-                &[BATCH, KEY_HEAD, KEY_FEATURE],
-                &[BATCH, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
-            ),
-            CausalConvPast::Prompt { .. } => (
-                &[BATCH, POSITION, KEY_HEAD, KEY_FEATURE],
-                &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
-            ),
-        };
+        let lead = self.problem.past.output_lead();
+        let keyed: Vec<Axis> = [lead, &[KEY_HEAD, KEY_FEATURE]].concat();
+        let valued: Vec<Axis> = [lead, &[KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE]].concat();
         QkNormedConvBinding {
             reads: self.reads.bind(&launcher, width),
-            query: bound(&launcher, &self.query, keyed, width),
-            key: bound(&launcher, &self.key, keyed, width),
-            value: bound(&launcher, &self.value, valued, width),
+            query: bound(&launcher, &self.query, &keyed, width),
+            key: bound(&launcher, &self.key, &keyed, width),
+            value: bound(&launcher, &self.value, &valued, width),
             launcher,
         }
     }

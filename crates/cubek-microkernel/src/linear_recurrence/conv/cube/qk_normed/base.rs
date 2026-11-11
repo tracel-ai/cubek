@@ -1,14 +1,11 @@
 use crate::linear_recurrence::RecurrenceHeads;
 use crate::linear_recurrence::conv::QkNormedConvOperand;
-use crate::linear_recurrence::conv::cube::PastKind;
+use crate::linear_recurrence::conv::cube::{ChannelBox, PastKind};
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
-
-/// The units a cube deals a key head's channels between, at most.
-const MOST_UNITS: usize = 64;
 
 /// What a conv is: the heads whose channels it mixes, the filter's taps and where its past is read
 /// from.
@@ -83,11 +80,7 @@ impl Microkernel for CubeQkNormedConvMicrokernel {
         item: &QkNormedConvWorkItem,
         _: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        let hardware = &hw.properties.hardware;
-        let units = MOST_UNITS
-            .min(item.heads.channels_per_key_head())
-            .min(hardware.max_units_per_cube as usize)
-            .min(hardware.max_cube_dim.0 as usize);
+        let units = ChannelBox::most_units(hw).min(item.heads.channels_per_key_head());
         (units > 0)
             .then_some(Self {
                 units,

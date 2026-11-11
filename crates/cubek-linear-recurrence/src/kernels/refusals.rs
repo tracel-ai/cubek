@@ -82,7 +82,7 @@ pub const CONV_NOTHING_TO_CONVOLVE: Refusal = Refusal::Declined {
 /// What admission declines a filter or a ring with that cannot be read back: fewer than two
 /// taps, or a ring of fewer columns than the taps read back.
 pub const CONV_TAPS_PAST_RING: Refusal = Refusal::Declined {
-    why: "the conv needs two taps or more and a ring of a column fewer than its taps or more",
+    why: "the conv needs at least two taps and a ring of at least `taps - 1` columns",
 };
 
 /// What admission declines a device with that binds fewer buffers to a kernel than a conv's

@@ -1,19 +1,62 @@
 //! The past a causal conv's taps run over, which every conv of the family reads the same way.
 
-use crate::kernels::refusals::{CONV_NOTHING_TO_CONVOLVE, CONV_TAPS_PAST_RING};
+use crate::kernels::refusals::{
+    CONV_ELEMENT_UNSUPPORTED, CONV_NOTHING_TO_CONVOLVE, CONV_TAPS_PAST_RING,
+};
 use core::num::NonZeroUsize;
-use cubecl::ir::{ElemType, UIntKind};
+use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::linear_recurrence::conv::cube::PastKind;
 use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, POSITION, RING_COLUMN, STORE_SLOT, STREAM_POSITION,
+    BATCH, CHANNEL, POSITION, PROMPT_POSITION, RING_COLUMN, STORE_SLOT,
 };
+use cubek_std::microkernel::GlobalStream;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 use super::reads::bound;
+
+/// The activation elements the convs are verified at.
+const ELEMENTS: [ElemType; 3] = [
+    ElemType::Float(FloatKind::F16),
+    ElemType::Float(FloatKind::BF16),
+    ElemType::Float(FloatKind::F32),
+];
+
+/// Whether the convs read and write activations of `element`.
+///
+/// # Errors
+///
+/// [`CONV_ELEMENT_UNSUPPORTED`] for any but `f16`, `bf16` and `f32`.
+pub(crate) fn admit_element(element: ElemType) -> Result<(), Refusal> {
+    if ELEMENTS.contains(&element) {
+        Ok(())
+    } else {
+        Err(CONV_ELEMENT_UNSUPPORTED)
+    }
+}
+
+/// The extents a conv's taps run over: `batch` rows of `channels` channels, `taps` to a filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConvExtent {
+    pub batch: usize,
+    pub channels: usize,
+    pub taps: usize,
+}
+
+/// What one cube of a conv moves through global memory, apart from the past's own traffic: its
+/// `channels` channels of a position, `run` values of each read contiguously.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ConvStreams {
+    pub channels: usize,
+    pub taps: usize,
+    pub run: usize,
+    pub element_size: usize,
+    pub filters: GlobalStream,
+    pub outputs: GlobalStream,
+}
 
 /// A store of `slots` rings of `columns` columns, one ring a sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -51,6 +94,11 @@ impl CausalConvPast {
         }
     }
 
+    /// Whether a launch after the conv fills the rings: a window writes its own.
+    pub(crate) fn writes_ring_after(&self) -> bool {
+        matches!(self, Self::Prompt { .. })
+    }
+
     /// The positions a row convolves: one over a window.
     pub fn positions(&self) -> usize {
         match self {
@@ -75,19 +123,101 @@ impl CausalConvPast {
         Ok(())
     }
 
+    /// The streams one cube reads and writes: the input and the ring it reads, the ring a window
+    /// writes, and a prompt's share of the write back, which reads each row's last `taps - 1`
+    /// positions and writes them to its ring.
+    pub(crate) fn streams(&self, conv: &ConvStreams) -> (Vec<GlobalStream>, Vec<GlobalStream>) {
+        let stream = |elements: usize| GlobalStream {
+            bytes: (elements * conv.element_size) as u64,
+            run_bytes: conv.run * conv.element_size,
+        };
+        let ring_columns = conv.channels * (conv.taps - 1);
+        match self {
+            Self::Window { .. } => (
+                vec![stream(conv.channels), conv.filters, stream(ring_columns)],
+                vec![stream(conv.channels), conv.outputs],
+            ),
+            Self::Prompt { positions, .. } => {
+                let write_back = stream(ring_columns.div_ceil(*positions));
+                (
+                    vec![stream(conv.channels * conv.taps), conv.filters, write_back],
+                    vec![conv.outputs, write_back],
+                )
+            }
+        }
+    }
+
+    /// The bytes of activations a conv over `extent` reads and writes, apart from the filters:
+    /// every tap of every position over a window, and a prompt's positions once and its write
+    /// back.
+    pub(crate) fn bytes(&self, extent: ConvExtent, element_size: usize) -> (usize, usize) {
+        let channels = extent.batch * self.positions() * extent.channels;
+        match self {
+            Self::Window { .. } => (
+                channels * extent.taps * element_size,
+                channels * element_size,
+            ),
+            Self::Prompt { .. } => {
+                let ring = extent.batch * (extent.taps - 1) * extent.channels * element_size;
+                (channels * element_size + ring, ring)
+            }
+        }
+    }
+
+    /// The axes an input leads with, ahead of its channels: a row, and a prompt's position.
+    pub(crate) fn input_lead(&self) -> &'static [Axis] {
+        match self {
+            Self::Window { .. } => &[BATCH],
+            Self::Prompt { .. } => &[BATCH, PROMPT_POSITION],
+        }
+    }
+
+    /// The axes an output leads with, ahead of its features: a row, and a prompt's position.
+    pub(crate) fn output_lead(&self) -> &'static [Axis] {
+        match self {
+            Self::Window { .. } => &[BATCH],
+            Self::Prompt { .. } => &[BATCH, POSITION],
+        }
+    }
+
+    /// The extents of [`input_lead`](Self::input_lead) and [`output_lead`](Self::output_lead) over
+    /// `batch` rows.
+    pub(crate) fn lead_extents(&self, batch: usize) -> Vec<usize> {
+        match self {
+            Self::Window { .. } => vec![batch],
+            Self::Prompt { positions, .. } => vec![batch, *positions],
+        }
+    }
+
+    /// The axes of a cube's leaf the past adds: a cube holds one position of a prompt.
+    pub(crate) fn leaf_axes(&self) -> Vec<(Axis, usize)> {
+        match self {
+            Self::Window { .. } => vec![],
+            Self::Prompt { .. } => vec![(POSITION, 1)],
+        }
+    }
+
+    /// The grid's axes, a prompt's positions ahead of the `boxes` of channels.
+    pub(crate) fn cube_axes(&self, boxes: Axis) -> Vec<Axis> {
+        match self {
+            Self::Window { .. } => vec![boxes],
+            Self::Prompt { .. } => vec![POSITION, boxes],
+        }
+    }
+
     /// The axes the past's operands carry: the store, and the prompt's positions.
-    pub(crate) fn ring_axes(&self) -> Vec<(Axis, usize)> {
+    pub(crate) fn past_axes(&self) -> Vec<(Axis, usize)> {
         let ring = self.ring();
         let mut axes = vec![(STORE_SLOT, ring.slots.get()), (RING_COLUMN, ring.columns)];
         if let Self::Prompt { positions, .. } = self {
-            axes.push((STREAM_POSITION, *positions));
+            axes.push((PROMPT_POSITION, *positions));
         }
         axes
     }
 
     /// The axes of the past, and of the positions a cube convolves.
     pub(crate) fn axes(&self) -> Vec<(Axis, usize)> {
-        let mut axes = self.ring_axes();
+        let mut axes = self.past_axes();
         if let Self::Prompt { positions, .. } = self {
             axes.push((POSITION, *positions));
         }
@@ -186,15 +316,19 @@ impl CausalConvPastInputs {
     ///
     /// On shapes that disagree with `channels`, and on tables that are not `u32` or not
     /// `[rows]`.
-    pub(crate) fn shaped(
-        &mut self,
+    pub(crate) fn view(
+        self,
         input: PlainTensor,
         channels: usize,
-    ) -> Result<(PlainTensor, CausalConvPast), Refusal> {
+    ) -> Result<(Self, PlainTensor, CausalConvPast), Refusal> {
         let shape = input.shape().to_vec();
+        assert!(
+            shape.len() >= 2,
+            "the input has a row axis and a channel axis"
+        );
         let rows = shape[0];
         let strides = &input.binding.strides;
-        let (positions, extents, input_strides) = match self {
+        let (positions, extents, input_strides) = match &self {
             Self::Window { .. } => {
                 assert!(
                     shape.last() == Some(&channels)
@@ -239,20 +373,35 @@ impl CausalConvPastInputs {
             slots: NonZeroUsize::new(slots_in_store).expect("a store holds a slot"),
             columns,
         };
-        let past = match self {
-            Self::Window { ring: store, .. } => {
-                *store = viewed;
-                CausalConvPast::Window { ring }
-            }
+        Ok(match self {
+            Self::Window { slots, lengths, .. } => (
+                Self::Window {
+                    ring: viewed,
+                    slots,
+                    lengths,
+                },
+                input,
+                CausalConvPast::Window { ring },
+            ),
             Self::Prompt {
-                ring: store, valid, ..
+                slots,
+                lengths,
+                valid,
+                ..
             } => {
                 assert_eq!(valid.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
                 assert_eq!(valid.shape().dims::<1>(), [rows]);
-                *store = viewed;
-                CausalConvPast::Prompt { ring, positions }
+                (
+                    Self::Prompt {
+                        ring: viewed,
+                        slots,
+                        lengths,
+                        valid,
+                    },
+                    input,
+                    CausalConvPast::Prompt { ring, positions },
+                )
             }
-        };
-        Ok((input, past))
+        })
     }
 }

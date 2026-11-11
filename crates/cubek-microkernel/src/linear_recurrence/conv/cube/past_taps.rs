@@ -1,4 +1,4 @@
-use crate::linear_recurrence::{POSITION, RING_COLUMN, STREAM_POSITION, walked};
+use crate::linear_recurrence::{POSITION, PROMPT_POSITION, RING_COLUMN, walked};
 use cubecl::tile::{Axis, Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
@@ -83,7 +83,7 @@ impl PastTaps {
         match kind {
             PastKind::Window => self.input.flat::<E, N>().read(line),
             PastKind::Prompt => {
-                read_line::<E, N>(&self.input, STREAM_POSITION, self.position, line)
+                read_line::<E, N>(&self.input, PROMPT_POSITION, self.position, line)
             }
         }
     }
@@ -109,7 +109,7 @@ impl PastTaps {
                 let mut behind = Vector::<E, N>::cast_from(0.0f32);
                 if tap >= read_columns {
                     behind =
-                        read_line::<E, N>(&self.input, STREAM_POSITION, tap - read_columns, line);
+                        read_line::<E, N>(&self.input, PROMPT_POSITION, tap - read_columns, line);
                 } else if self.before + tap >= read_columns {
                     let ring_column =
                         (self.before + tap + self.columns - read_columns) % self.columns;

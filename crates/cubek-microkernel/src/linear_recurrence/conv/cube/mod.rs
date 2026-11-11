@@ -1,6 +1,6 @@
-//! The cube scope: a cube holds a box of channels of one row, or of one position of a prompt, its
-//! units dealing the channels between them. What the two convs share is here: the past their taps
-//! read, and the filters and the silu that make a line of channels.
+//! The cube scope: a cube's units deal a row's, or a prompt position's, channels between them.
+//! What every conv shares is here: the past their taps read, and the filters and the silu that make
+//! a line of channels.
 
 mod box_lines;
 mod causal;

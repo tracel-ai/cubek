@@ -19,16 +19,16 @@ pub const VALUE_FEATURE: Axis = Axis(6);
 /// A slot of a store that holds many sequences' states, which a table places each sequence at: no
 /// level cuts it.
 pub const STORE_SLOT: Axis = Axis(7);
-/// A channel of the `q|k|v` stream the conv mixes.
+/// A channel of the stream the conv mixes.
 pub const CHANNEL: Axis = Axis(8);
 /// A tap of the conv's filter.
 pub const TAP: Axis = Axis(9);
-/// A column of a window store's ring, the conv's past values of every channel.
+/// A column of a store's ring, the conv's past values of every channel.
 pub const RING_COLUMN: Axis = Axis(10);
 /// A channel of one key head, head local: no operand binds it, only the units level cuts it.
 pub const HEAD_CHANNEL: Axis = Axis(11);
 /// A position of a prompt that later positions read by tap: no level cuts it.
-pub const STREAM_POSITION: Axis = Axis(12);
+pub const PROMPT_POSITION: Axis = Axis(12);
 /// The two rates of a position and value head, the log of its decay at 0 and its strength at 1: no
 /// level cuts it.
 pub const RATE: Axis = Axis(13);
@@ -88,22 +88,18 @@ impl RecurrenceWalkPartitioning {
 }
 
 /// How a conv places its microkernel's work: a cube for every box of channels of every row, and
-/// of every position when the space has positions.
+/// of every position the routine puts on the grid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CausalConvPartitioning {
     partitioning: Partitioning,
 }
 
 impl CausalConvPartitioning {
-    /// `space` partitioned with `inside` a cube's box: the boxes `cube_axis` counts ride the grid's
-    /// `x`, or its `y` behind the positions the space has, and rows come one a cube.
-    pub fn new(space: Space, inside: Levels, cube_axis: Axis) -> Self {
-        let positions = [POSITION, RING_POSITION]
-            .into_iter()
-            .find(|axis| space.contains(*axis));
-        let cubes: Vec<Axis> = positions.into_iter().chain([cube_axis]).collect();
+    /// `space` partitioned with `inside` a cube's box: the `cubes` axes ride the grid, the first
+    /// on its `x`, and rows come one a cube.
+    pub fn new(space: Space, inside: Levels, cubes: &[Axis]) -> Self {
         Self {
-            partitioning: Partitioning::new(space, inside.cubes(&cubes).batches(&[BATCH]).build()),
+            partitioning: Partitioning::new(space, inside.cubes(cubes).batches(&[BATCH]).build()),
         }
     }
 
@@ -111,7 +107,7 @@ impl CausalConvPartitioning {
     /// the launch.
     pub fn kernel(&self) -> Partitioning {
         let space = self.partitioning.space();
-        let dynamic: Vec<Axis> = [BATCH, POSITION, STORE_SLOT, RING_COLUMN, STREAM_POSITION]
+        let dynamic: Vec<Axis> = [BATCH, POSITION, STORE_SLOT, RING_COLUMN, PROMPT_POSITION]
             .into_iter()
             .filter(|axis| space.contains(*axis))
             .collect();

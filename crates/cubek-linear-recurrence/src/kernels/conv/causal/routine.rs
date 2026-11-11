@@ -1,5 +1,4 @@
 use super::kernel::cube_causal_conv_kernel;
-use crate::kernels::conv::ring_write_back::RingWriteBackLaunch;
 use crate::kernels::conv::{
     CausalConvBlueprint, CausalConvInputs, CausalConvOutputs, CausalConvPast, CausalConvProblem,
     CausalConvTensors,
@@ -63,12 +62,6 @@ impl CubeCausalConvRoutine {
         let problem = tensors.problem();
         let (element, output_element) = (problem.element, problem.output_element);
         let columns = problem.past.ring().columns;
-        let write_back = RingWriteBackLaunch::prepare(
-            hw,
-            tensors.reads(),
-            blueprint.width,
-            blueprint.microkernel.units,
-        )?;
         let binding = tensors.bind(&blueprint, &grid);
         // SAFETY: every operand is bound through the launcher and indexed only through its tile,
         // whose reads past an edge are masked. A unit writes only the ring channels it reads, and
@@ -92,8 +85,8 @@ impl CubeCausalConvRoutine {
                 output_element,
             );
         }
-        if let Some(write_back) = write_back {
-            write_back.launch(tensors.reads());
+        if let Some(write_back) = &blueprint.write_back {
+            write_back.launch(hw, tensors.reads());
         }
         Ok(tensors.into_outputs())
     }
