@@ -1,11 +1,11 @@
 //! The plane split-keys merge alone: one plane a query merges the query's slots.
 
+use crate::launch::split_keys_merge::PlaneMergeLaunch;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
 use cubek_microkernel::split_keys_merge::SlotShape;
-use cubek_microkernel::testing::split_keys_merge::PlaneMergeLaunch;
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, TestInput, Written};
 

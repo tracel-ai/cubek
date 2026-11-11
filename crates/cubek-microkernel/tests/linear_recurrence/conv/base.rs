@@ -3,12 +3,12 @@
 //! after as the composed ops hold it; every key head's queries then divided by their L2 norm and
 //! the root of their width, its keys by their L2 norm.
 
+use crate::launch::linear_recurrence::conv::{ConvLaunch, ConvStream};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
-use cubek_microkernel::testing::linear_recurrence::conv::{ConvLaunch, ConvStream};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 use half::f16;

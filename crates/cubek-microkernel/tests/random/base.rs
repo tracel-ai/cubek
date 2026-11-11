@@ -2,13 +2,13 @@
 //! lane and component, seeded for its position in the launch, and turned into values of a
 //! distribution. The host replays every generator, so each value is checked, not a statistic.
 
+use crate::launch::random::{RandomLaunch, RandomMicrokernel, UnitRun};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
 use cubek_microkernel::random::plane::PlaneRandomMicrokernelSettings;
 use cubek_microkernel::random::{Bernoulli, DistributionArgs, Normal, SeedsLaunch, Uniform};
-use cubek_microkernel::testing::random::{RandomLaunch, RandomMicrokernel, UnitRun};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 

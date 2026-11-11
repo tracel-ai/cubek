@@ -1,16 +1,16 @@
 //! The plane delta microkernel on its work item: one plane's queries of one head, one a unit,
 //! each query's `delta = Σ_dv out_gradient · out`.
 
-use crate::attention::{B, DV, G, KV, Q};
-use crate::attention_backward::AttentionBackwardWorkItem;
-use crate::attention_backward::delta::plane::{
-    PlaneDeltaMicrokernel, PlaneDeltaMicrokernelSettings, plane_delta_microkernel,
-};
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Launcher, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::attention::{B, DV, G, KV, Q};
+use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
+use cubek_microkernel::attention_backward::delta::plane::{
+    PlaneDeltaMicrokernel, PlaneDeltaMicrokernelSettings, plane_delta_microkernel,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 

@@ -1,10 +1,10 @@
 //! The unit attention microkernel alone: one unit's query rows over every key.
 
+use crate::launch::attention::{AttentionElements, UnitAttentionLaunch};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::unit::{
     UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings,
 };
-use cubek_microkernel::testing::attention::{AttentionElements, UnitAttentionLaunch};
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

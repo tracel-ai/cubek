@@ -1,3 +1,5 @@
+use core::num::NonZeroUsize;
+
 use super::base::{self, CubeStagedMatmulRoutineBlueprint, CubeStagedPlacement};
 use super::block_scaled::{self, StagedShape};
 use crate::kernels::{
@@ -46,8 +48,8 @@ impl CubeStagedTmaStoredMatmulRoutine {
     /// The settings a block-scaled product read as stored races on `hw`
     /// (`block_scaled`): for a prompt's rows, four by four steps on two by
     /// four planes, and two by four on four by two or two by four planes, three stages in flight,
-    /// which a contraction of a few thousand finishes sooner with. None without a bulk tensor
-    /// copy.
+    /// which a contraction of a few thousand finishes sooner with; and the first beside two
+    /// filling planes, four stages in flight. None without a bulk tensor copy.
     pub fn block_scaled_settings(
         &self,
         hw: &Hardware,
@@ -66,13 +68,34 @@ impl CubeStagedTmaStoredMatmulRoutine {
             shape((2, 4, 1), (4, 2)),
             shape((2, 4, 1), (2, 4)),
         ];
-        block_scaled::block_scaled_settings(hw, *self, &shapes, |microkernel| {
-            CubeStagedTmaStoredMatmulRoutineSettings {
+        let settings = |filling_planes| {
+            move |microkernel| CubeStagedTmaStoredMatmulRoutineSettings {
                 microkernel,
-                filling_planes: 0,
+                filling_planes,
                 cube_order: CubeOrder::RowMajor,
             }
-        })
+        };
+        let mut listed = block_scaled::block_scaled_settings(hw, *self, &shapes, settings(0));
+        // The `128 × 128` box beside two filling planes: the activation's scale words, which the
+        // units copy, are then theirs alone, so the planes that contract never wait for a slot to
+        // empty before filling it. The box takes the ring's bytes once the walk is over, which
+        // leaves room for a fourth stage. On an RTX PRO 6000, Devstral Small 2's gate/up at 512
+        // rows: 313 µs every plane filling, 297 beside two filling planes over three stages, 281
+        // over four.
+        let deep = StagedShape {
+            ring: StageRing {
+                stages_in_flight: NonZeroUsize::new(4).unwrap(),
+                ..StageRing::TRIPLE
+            },
+            ..shapes[0]
+        };
+        listed.extend(block_scaled::block_scaled_settings(
+            hw,
+            *self,
+            &[deep],
+            settings(2),
+        ));
+        listed
     }
 }
 

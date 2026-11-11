@@ -1,6 +1,7 @@
 //! The plane delta microkernel alone: each query of one plane's the dot product of its output
 //! with the output's gradient, `delta = Σ_dv out_gradient · out`.
 
+use crate::launch::attention_backward::PlaneDeltaLaunch;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
@@ -9,7 +10,6 @@ use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
 use cubek_microkernel::attention_backward::delta::plane::{
     PlaneDeltaMicrokernel, PlaneDeltaMicrokernelSettings,
 };
-use cubek_microkernel::testing::attention_backward::PlaneDeltaLaunch;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};

@@ -1,17 +1,19 @@
 //! The cube matmul microkernels on one cube's box: planes sharing `K` and meeting in shared memory,
 //! or contracting stages the cube's units fill.
 
-use crate::matmul::cube::{
-    CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings, CubeStagedMicrokernel,
-    CubeStagedMicrokernelSettings, CubeStagedWalk, cube_shuffle_microkernel,
-    cube_staged_microkernel,
-};
-use crate::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Axis, Instruction, Partitioning, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::matmul::cube::{
+    CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings, CubeStagedMicrokernel,
+    CubeStagedMicrokernelSettings, CubeStagedWalk, cube_shuffle_microkernel,
+    cube_staged_microkernel,
+};
+use cubek_microkernel::matmul::{
+    MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
+};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::Microkernel;
@@ -115,7 +117,6 @@ impl MatmulLaunch for CubeShuffleLaunch {
     reason = "each element is defined from its operand at launch, which the kernel is compiled for"
 )]
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn cube_shuffle_kernel<EA: Numeric, E: Numeric>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,

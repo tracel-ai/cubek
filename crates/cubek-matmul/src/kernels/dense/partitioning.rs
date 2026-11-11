@@ -273,6 +273,16 @@ impl MatmulPartitioning {
         self.partitioning.distributed(axis)
     }
 
+    /// Whether its cubes share the boxes as one flat index, each walking a run of them
+    /// ([`MatmulView::persistent_partitioning`](crate::kernels::MatmulView::persistent_partitioning)),
+    /// rather than each taking one.
+    pub fn shares_boxes(&self) -> bool {
+        self.partitioning
+            .levels()
+            .iter()
+            .any(|level| level.shared_by().is_some())
+    }
+
     /// The tile DSL's partitioning, for what it reads of it: the launch and the binding.
     pub fn as_tile(&self) -> &Partitioning {
         &self.partitioning

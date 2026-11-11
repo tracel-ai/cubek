@@ -2,10 +2,10 @@
 //! one head, each a running max, a running sum and an unnormalized output, merged by one plane a
 //! query into the output and the query's logsumexp.
 
-use crate::split_keys_merge::plane::plane_split_keys_merge_microkernel;
-use crate::split_keys_merge::{SlotBox, SlotShape};
 use cubecl::prelude::*;
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::split_keys_merge::plane::plane_split_keys_merge_microkernel;
+use cubek_microkernel::split_keys_merge::{SlotBox, SlotShape};
 
 /// A plane merge ready to launch over `queries` queries of one head, its slots laid out as
 /// `slots` says, a plane `slots.units` wide merging each.

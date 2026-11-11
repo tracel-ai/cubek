@@ -94,7 +94,7 @@ impl CubeStagedWalk {
         if walk.filling_planes == 0 {
             Self::every_plane_fills::<EA, EL>(run, a, b, c, walk, storage);
         } else {
-            Self::planes_set_aside::<EA, EL>(run, a, b, c, walk, storage);
+            Self::planes_set_aside::<EA, EL>(run, a, b, c, walk, storage, false);
         }
     }
 
@@ -126,6 +126,11 @@ impl CubeStagedWalk {
     /// cube barriers are ones the filling planes never reach. The ring's own walk has every plane
     /// fill, so the contracting planes walk the slots themselves; a warpgroup MMA's stage is freed
     /// only once the reads it issued complete ([`Stages::consume_async`]).
+    ///
+    /// `boxed`: `c` is stored by the TMA engine, out of a box in shared memory declared once the
+    /// walk has freed the ring, so it takes the stages' bytes rather than its own; the whole cube
+    /// meets on a cube barrier first, so no plane still reads a stage the box overwrites. Every
+    /// plane opens the sum, so it outlives the walk; a filling plane never touches its own.
     fn planes_set_aside<EA: Numeric, EL: Numeric>(
         run: Walk,
         a: &Tile,
@@ -133,6 +138,7 @@ impl CubeStagedWalk {
         c: &Tile,
         #[comptime] walk: CubeStagedWalk,
         #[comptime] storage: StageStorage,
+        #[comptime] boxed: bool,
     ) {
         let mut c = c.clone();
         let (a, a_factor) = a.factor(c.space(), walk.instruction);
@@ -147,6 +153,8 @@ impl CubeStagedWalk {
         let total = run.total();
         let laps = total.div_ceil(depth);
 
+        let sum = Self::open_sum::<EA>(&c, &a, &b, walk);
+
         match stages.role() {
             Role::Fill => {
                 for lap in 0..laps {
@@ -160,7 +168,6 @@ impl CubeStagedWalk {
                 }
             }
             Role::Compute => {
-                let sum = Self::open_sum::<EA>(&c, &a, &b, walk);
                 let partial =
                     plane_fragment_partial::<EL>(&c, &a, &b, walk.step_sum, walk.instruction);
 
@@ -189,8 +196,24 @@ impl CubeStagedWalk {
                         }
                     }
                 }
+            }
+        }
 
-                c.dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
+        if boxed {
+            stages.free();
+            sync_cube();
+            let mut staged = c.smem_box();
+            match stages.role() {
+                Role::Compute => {
+                    staged.dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
+                }
+                Role::Fill => {}
+            }
+            c.copy_from(&staged);
+        } else {
+            match stages.role() {
+                Role::Compute => c.dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor)),
+                Role::Fill => {}
             }
         }
     }
@@ -230,7 +253,8 @@ impl CubeStagedWalk {
 ///
 /// The planes drain where `walk` says: each its own tile of `c`; each into a box in shared memory
 /// laid as `c`'s, which the whole cube, filling planes too, then stores in one bulk copy
-/// ([`CubeStagedStore::Tma`]); or, splitting `K`, each adding its partial into one accumulator in
+/// ([`CubeStagedStore::Tma`]), the box taking the ring's bytes beside planes set aside to fill;
+/// or, splitting `K`, each adding its partial into one accumulator in
 /// shared memory, atomically, which the cube copies out once it has synchronized
 /// ([`CubeStagedDrain::Merged`]). Planes merging along `K` are never stored by the TMA engine.
 #[cube]
@@ -249,9 +273,13 @@ pub fn cube_staged_microkernel<EA: Numeric, EL: Numeric>(
             CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &c, walk, storage);
         }
         (CubeStagedDrain::EachPlane, CubeStagedStore::Tma) => {
-            let staged = c.smem_box();
-            CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &staged, walk, storage);
-            c.copy_from(&staged);
+            if walk.filling_planes > 0 {
+                CubeStagedWalk::planes_set_aside::<EA, EL>(run, a, b, &c, walk, storage, true);
+            } else {
+                let staged = c.smem_box();
+                CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &staged, walk, storage);
+                c.copy_from(&staged);
+            }
         }
         (CubeStagedDrain::Merged, _) => {
             let accumulator = c.smem_accumulation::<EA>();

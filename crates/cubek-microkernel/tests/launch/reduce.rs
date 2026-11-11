@@ -3,17 +3,6 @@
 //! `input[r, o]` and `out[s, o]`, each owner `width` rows side by side, a row a lane. A hypercube
 //! splits the reduced axis into parts, `input[o, p, r]` or `input[p, r, o]`, a cube a part.
 
-use crate::reduce::cube::{
-    CubeReduceMicrokernel, CubeReduceMicrokernelSettings, cube_reduce_microkernel,
-};
-use crate::reduce::hypercube::{
-    HypercubeReduceMicrokernel, HypercubeReduceMicrokernelSettings, hypercube_reduce_microkernel,
-};
-use crate::reduce::plane::{
-    PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings, plane_reduce_microkernel,
-};
-use crate::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microkernel};
-use crate::reduce::{O, R, ReduceLayout, ReduceWorkItem};
 use cubecl::ir::UIntKind;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
@@ -24,6 +13,17 @@ use cubecl::tile::{
     Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::reduce::cube::{
+    CubeReduceMicrokernel, CubeReduceMicrokernelSettings, cube_reduce_microkernel,
+};
+use cubek_microkernel::reduce::hypercube::{
+    HypercubeReduceMicrokernel, HypercubeReduceMicrokernelSettings, hypercube_reduce_microkernel,
+};
+use cubek_microkernel::reduce::plane::{
+    PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings, plane_reduce_microkernel,
+};
+use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microkernel};
+use cubek_microkernel::reduce::{O, R, ReduceLayout, ReduceWorkItem};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
@@ -408,7 +408,6 @@ fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 
 /// Every row's part, reduced by its cube; the row's last cube merges the parts.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
     out: &TileTensor<'_>,

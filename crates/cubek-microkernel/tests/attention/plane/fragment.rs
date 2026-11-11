@@ -1,10 +1,10 @@
 //! The plane fragment attention microkernel alone: one plane's queries over every key.
 
+use crate::launch::attention::{AttentionElements, PlaneFragmentAttentionLaunch};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
 };
-use cubek_microkernel::testing::attention::{AttentionElements, PlaneFragmentAttentionLaunch};
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

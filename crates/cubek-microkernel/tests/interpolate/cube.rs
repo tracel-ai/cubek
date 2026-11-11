@@ -1,7 +1,7 @@
 //! The cube interpolate microkernel alone: each block of a cube's walk, its units each a run of
 //! channels of one output position, contracting the window's taps against their weights.
 
-use cubek_microkernel::testing::interpolate::WindowAxis;
+use crate::launch::interpolate::WindowAxis;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

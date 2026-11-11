@@ -4,15 +4,6 @@
 //! scaled by their L2 norm, the queries also by the root of their width. Every cube one key head
 //! of one position, its channels a line a unit.
 
-use crate::linear_recurrence::conv::QkNormedConvOperand;
-use crate::linear_recurrence::conv::cube::{
-    CubeQkNormedConvMicrokernel, QkNormedConvSettings, QkNormedConvTiles, QkNormedConvWorkItem,
-    cube_qk_normed_conv_microkernel,
-};
-use crate::linear_recurrence::{
-    BATCH, CHANNEL, HEAD_CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION,
-    QkNormedConvPartitioning, RecurrenceHeads, STREAM_POSITION, TAP, VALUE_FEATURE,
-};
 use cubecl::ir::FloatKind;
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
@@ -20,6 +11,15 @@ use cubecl::tile::{
     Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperand;
+use cubek_microkernel::linear_recurrence::conv::cube::{
+    CubeQkNormedConvMicrokernel, QkNormedConvSettings, QkNormedConvTiles, QkNormedConvWorkItem,
+    cube_qk_normed_conv_microkernel,
+};
+use cubek_microkernel::linear_recurrence::{
+    BATCH, CHANNEL, HEAD_CHANNEL, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION,
+    QkNormedConvPartitioning, RecurrenceHeads, STREAM_POSITION, TAP, VALUE_FEATURE,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
@@ -162,7 +162,6 @@ impl ConvLaunch {
 
 /// Every cube convolving one key head of one position and normalizing its queries and keys.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn cube_qk_normed_conv_kernel<E: Float, N: Size>(
     qkv: &TileTensor<'_>,
     filters: &TileTensor<'_>,

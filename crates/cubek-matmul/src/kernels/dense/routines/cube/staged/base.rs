@@ -167,7 +167,10 @@ impl<'a> CubeStagedPlacement<'a> {
             ..
         } = self;
         let microkernel = resolved.microkernel;
-        problem.check_block_scales(microkernel.block_scales())?;
+        problem.check_block_scales(
+            microkernel.block_scales(),
+            microkernel.fill.delivery == CubeStagedDelivery::Tma,
+        )?;
         let partitioning = view.partitioning(
             microkernel.launch_tiling(),
             &[item.axes.m, item.axes.n],

@@ -3,13 +3,13 @@
 //! strength, `S += k ⊗ (β · (v - Sᵀk))`, and read by the query, `out = Sᵀq`; the last position's
 //! state written back.
 
+use crate::launch::linear_recurrence::walk::WalkLaunch;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
 use cubek_microkernel::linear_recurrence::walk::cube::CubeWalkMicrokernelSettings;
-use cubek_microkernel::testing::linear_recurrence::walk::WalkLaunch;
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
