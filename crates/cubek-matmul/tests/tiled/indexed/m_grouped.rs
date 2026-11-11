@@ -229,15 +229,7 @@ where
         settings: Vec<MGroupedSettings<R::Settings>>,
         products: &[GroupedRows],
     ) -> Vec<AtSetting<MGroupedSettings<R::Settings>, GroupedRows>> {
-        settings
-            .into_iter()
-            .flat_map(|settings| {
-                products.iter().map(move |product| AtSetting {
-                    settings: settings.clone(),
-                    product: product.clone(),
-                })
-            })
-            .collect()
+        AtSetting::every(settings, products)
     }
 }
 

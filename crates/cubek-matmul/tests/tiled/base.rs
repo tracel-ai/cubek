@@ -98,6 +98,21 @@ pub(crate) struct AtSetting<S, P> {
     pub product: P,
 }
 
+impl<S: Clone, P: Clone> AtSetting<S, P> {
+    /// Each of `settings` on each of `products`.
+    pub(crate) fn every(settings: impl IntoIterator<Item = S>, products: &[P]) -> Vec<Self> {
+        settings
+            .into_iter()
+            .flat_map(|settings| {
+                products.iter().map(move |product| AtSetting {
+                    settings: settings.clone(),
+                    product: product.clone(),
+                })
+            })
+            .collect()
+    }
+}
+
 impl<S: Display, P: Debug> Debug for AtSetting<S, P> {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} on {:?}", self.settings, self.product)
@@ -146,15 +161,7 @@ where
         settings: impl IntoIterator<Item = R::Settings>,
         products: &[P],
     ) -> Vec<AtSetting<R::Settings, P>> {
-        settings
-            .into_iter()
-            .flat_map(|settings| {
-                products.iter().map(move |product| AtSetting {
-                    settings: settings.clone(),
-                    product: product.clone(),
-                })
-            })
-            .collect()
+        AtSetting::every(settings, products)
     }
 
     /// The device the routine is listed and launched for.
