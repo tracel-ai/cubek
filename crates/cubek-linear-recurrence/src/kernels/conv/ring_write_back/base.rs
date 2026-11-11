@@ -10,17 +10,30 @@ use cubek_microkernel::linear_recurrence::{
     BATCH, CHANNEL, CHANNEL_BOX, CausalConvPartitioning, LINE_IN_BOX, RING_POSITION,
 };
 use cubek_std::Hardware;
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, CubeResources, Grid};
+use cubek_std::routine::{CubeResources, Grid};
+use std::sync::Arc;
 
 /// The write back of a prompt's rings, placed over the channels the calling conv convolves: what
-/// the conv's blueprint holds of the launch that follows it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// the conv's blueprint holds of the launch that follows it. It keeps the grid and launcher its
+/// preparation settled, so a prepared conv fills rings without placing anything again.
+#[derive(Debug, Clone)]
 pub struct RingWriteBack {
-    pub partitioning: CausalConvPartitioning,
-    /// Values a line of channels binds at.
-    pub width: usize,
-    pub lines: ChannelBox,
+    partitioning: CausalConvPartitioning,
+    width: usize,
+    lines: ChannelBox,
+    grid: Grid,
 }
+
+impl PartialEq for RingWriteBack {
+    /// The placement: the grid follows from it on a device.
+    fn eq(&self, other: &Self) -> bool {
+        self.partitioning == other.partitioning
+            && self.width == other.width
+            && self.lines == other.lines
+    }
+}
+
+impl Eq for RingWriteBack {}
 
 impl RingWriteBack {
     /// The write back of a prompt over `extent`, its channels `width` values a line, checked
@@ -34,7 +47,7 @@ impl RingWriteBack {
         past: &CausalConvPast,
         extent: ConvExtent,
         width: usize,
-    ) -> Result<Option<Self>, Refusal> {
+    ) -> Result<Option<Arc<Self>>, Refusal> {
         if !past.writes_ring_after() {
             return Ok(None);
         }
@@ -60,31 +73,26 @@ impl RingWriteBack {
             Levels::leaf(&leaf).units_distributed(LINE_IN_BOX, units),
             &[RING_POSITION, CHANNEL_BOX],
         );
-        let write_back = Self {
-            partitioning,
-            width,
-            lines: ChannelBox {
-                units,
-                channels: extent.channels,
-            },
+        let lines = ChannelBox {
+            units,
+            channels: extent.channels,
         };
-        write_back.grid(hw)?;
-        Ok(Some(write_back))
-    }
-
-    /// The cubes the launch spawns on `hw`.
-    fn grid(&self, hw: &Hardware) -> Result<Grid, Refusal> {
         let cube = CubeResources {
-            plane_width: self.lines.units as u32,
+            plane_width: units as u32,
             shared_memory: 0,
         };
-        Grid::new(hw, self.partitioning.as_cubek(), cube)
+        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        Ok(Some(Arc::new(Self {
+            partitioning,
+            width,
+            lines,
+            grid,
+        })))
     }
 
-    /// Copies `reads`' prompt into its rings, on the grid [`prepare`](Self::prepare) checked on
-    /// `hw`.
-    pub(crate) fn launch(&self, hw: &Hardware, reads: &CausalConvReads) {
-        let grid = self.grid(hw).expect(ADMITTED_PLAN_RUNS);
+    /// Copies `reads`' prompt into its rings.
+    pub(crate) fn launch(&self, reads: &CausalConvReads) {
+        let grid = &self.grid;
         let CausalConvPastInputs::Prompt { valid, .. } = reads.past_inputs() else {
             unreachable!("only a prompt is prepared a write back");
         };

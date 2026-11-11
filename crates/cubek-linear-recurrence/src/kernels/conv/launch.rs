@@ -64,7 +64,7 @@ pub trait CausalConvRoutine<M>:
     ) -> Result<<Self::Tensors as ConvTensors>::Outputs, Refusal> {
         let tensors = Self::Tensors::new(inputs)?;
         let (blueprint, grid) = self.prepare_first_served(hw, tensors.problem())?;
-        Ok(self.launch(hw, tensors, blueprint, grid))
+        Ok(self.launch(tensors, blueprint, grid))
     }
 
     /// [`launch_on`](Self::launch_on), preparing a problem once however often it is launched.
@@ -86,13 +86,12 @@ pub trait CausalConvRoutine<M>:
         let tensors = Self::Tensors::new(inputs)?;
         let (blueprint, grid) =
             prepared.prepare(self, hw, tensors.problem(), &Self::Settings::default())?;
-        Ok(self.launch(hw, tensors, blueprint, grid))
+        Ok(self.launch(tensors, blueprint, grid))
     }
 
     /// The conv on `grid`, then the write back of a prompt's rings.
     fn launch(
         &self,
-        hw: &Hardware,
         tensors: Self::Tensors,
         blueprint: CausalConvBlueprint<M>,
         grid: Grid,
@@ -101,7 +100,7 @@ pub trait CausalConvRoutine<M>:
         let write_back = blueprint.write_back.clone();
         self.dispatch(&tensors, binding, blueprint, grid);
         if let Some(write_back) = write_back {
-            write_back.launch(hw, tensors.reads());
+            write_back.launch(tensors.reads());
         }
         tensors.into_outputs()
     }

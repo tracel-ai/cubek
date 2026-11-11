@@ -233,9 +233,8 @@ impl CausalConvPast {
 pub enum CausalConvPastInputs {
     /// A ring store `[slots, columns, channels]`, its slots and columns at any stride. Each row
     /// has the slot it lies in (`slots`, `[rows]`, `u32`) and the positions it has convolved
-    /// (`lengths`, `[rows]`, `u32`); a row with none uses nothing of its slot. Two rows may share
-    /// a slot only if it is never read again, and a slot past the store's last reads and writes
-    /// the last.
+    /// (`lengths`, `[rows]`, `u32`). Two rows may share a slot only if it is never read again, and a slot past the
+    /// store's last reads and writes the last.
     Window {
         ring: PlainTensor,
         slots: PlainTensor,

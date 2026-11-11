@@ -5,6 +5,7 @@ use cubecl::client::Client;
 use cubecl::tile::Launcher;
 use cubek_microkernel::linear_recurrence::CausalConvPartitioning;
 use cubek_std::routine::Grid;
+use std::sync::Arc;
 
 /// What a launch of a conv compiles: the microkernel, the partitioning that places its cubes, the
 /// width the channels bind at, and the launch that fills a prompt's rings after it.
@@ -15,7 +16,7 @@ pub struct CausalConvBlueprint<M> {
     pub microkernel: M,
     pub partitioning: CausalConvPartitioning,
     pub width: usize,
-    pub write_back: Option<RingWriteBack>,
+    pub write_back: Option<Arc<RingWriteBack>>,
 }
 
 impl<M> CausalConvBlueprint<M> {
@@ -25,7 +26,7 @@ impl<M> CausalConvBlueprint<M> {
         microkernel: M,
         partitioning: CausalConvPartitioning,
         width: usize,
-        write_back: Option<RingWriteBack>,
+        write_back: Option<Arc<RingWriteBack>>,
     ) -> Self {
         Self {
             microkernel,

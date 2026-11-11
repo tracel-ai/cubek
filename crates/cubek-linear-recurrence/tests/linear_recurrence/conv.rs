@@ -1,4 +1,4 @@
-//! The gated delta conv over a window against a host reference in `f64`. The stores hold NaN
+//! The q,k,v conv over a window against a host reference in `f64`. The stores hold NaN
 //! wherever the conv must not read, and the reference rounds to the activations' element where the
 //! kernel does.
 

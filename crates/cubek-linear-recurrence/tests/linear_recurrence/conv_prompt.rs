@@ -1,4 +1,4 @@
-//! The gated delta conv of a prompt against a host reference in `f64`: rows that have convolved
+//! The q,k,v conv of a prompt against a host reference in `f64`: rows that have convolved
 //! some positions already, so their rings seed the first taps, prompts padded and off a whole read
 //! in their buffers, and rows right padded to unequal lengths. The rings the prompt leaves are read
 //! back, and decode steps run on them.
