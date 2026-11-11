@@ -217,7 +217,7 @@ impl QkNormedConvTensors {
         blueprint: &QkNormedConvBlueprint,
         grid: &Grid,
     ) -> QkNormedConvBinding {
-        let launcher = blueprint.launcher(self.reads.client(), grid);
+        let launcher = blueprint.partitioning.launcher(self.reads.client(), grid);
         let width = blueprint.width;
         let lead = self.problem.past.output_lead();
         let keyed: Vec<Axis> = [lead, &[KEY_HEAD, KEY_FEATURE]].concat();

@@ -96,12 +96,7 @@ impl RingWriteBack {
         let CausalConvPastInputs::Prompt { valid, .. } = reads.past_inputs() else {
             unreachable!("only a prompt is prepared a write back");
         };
-        let launcher = grid.launcher(reads.client(), || {
-            (
-                self.partitioning.kernel(),
-                self.partitioning.as_cubek().space().clone(),
-            )
-        });
+        let launcher = self.partitioning.launcher(reads.client(), grid);
         let input = reads.bind_input(&launcher, self.width);
         let past = reads.past_inputs().bind(&launcher, self.width);
         let valid = bound(&launcher, valid, &[BATCH], 1);

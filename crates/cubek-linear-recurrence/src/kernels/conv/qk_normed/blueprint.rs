@@ -3,10 +3,9 @@
 use crate::kernels::conv::{
     ConvExtent, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem, RingWriteBack,
 };
-use cubecl::client::Client;
+use cubecl::tile::Levels;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Launcher, Levels};
 use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperand;
 use cubek_microkernel::linear_recurrence::conv::cube::{
     CubeQkNormedConvMicrokernel, QkNormedConvSettings,
@@ -67,15 +66,6 @@ impl QkNormedConvBlueprint {
             write_back,
         };
         Ok((blueprint, grid))
-    }
-
-    pub(crate) fn launcher(&self, client: &Client, grid: &Grid) -> Launcher {
-        grid.launcher(client, || {
-            (
-                self.partitioning.kernel(),
-                self.partitioning.as_cubek().space().clone(),
-            )
-        })
     }
 
     /// The widest width the device, the microkernel's accesses and every operand's alignment and

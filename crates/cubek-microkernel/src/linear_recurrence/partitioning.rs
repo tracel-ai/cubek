@@ -1,4 +1,6 @@
-use cubecl::tile::{Axis, Levels, Partitioning, Space};
+use cubecl::client::Client;
+use cubecl::tile::{Axis, Launcher, Levels, Partitioning, Space};
+use cubek_std::routine::Grid;
 
 /// A sequence of the walk, or a row of a decode step.
 pub const BATCH: Axis = Axis(0);
@@ -115,6 +117,13 @@ impl CausalConvPartitioning {
             space.clone().with_dynamic(&dynamic),
             self.partitioning.levels().to_vec(),
         )
+    }
+
+    /// The launcher of `grid`, settled over the partitioning's extents on its first launch.
+    pub fn launcher(&self, client: &Client, grid: &Grid) -> Launcher {
+        grid.launcher(client, || {
+            (self.kernel(), self.partitioning.space().clone())
+        })
     }
 
     /// cubek's partitioning, for the launch and the binding.
