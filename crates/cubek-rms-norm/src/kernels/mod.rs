@@ -1,8 +1,9 @@
 //! The RMS-norm family: `x / sqrt(mean(x², last) + eps) · weight`, the square-sum in `f32`
-//! whatever the rows' element.
+//! whatever the rows' element, written at the rows' element or `f32`.
 //!
 //! One dispatch reads each row once at full vector width, holds it in registers, and writes it
-//! scaled.
+//! scaled. The norm may be gated by `silu(gate)` before or after it, and taken over groups of a
+//! row's channels, a view of the call ([`RmsNormCall::grouped`]) that no routine knows.
 //!
 //! This module holds the routine problem, tensors, blueprint, `launch` (the routine trait), `tune`
 //! (the autotune, and the candidates that launch a routine at a setting, each holding the launches
@@ -13,9 +14,10 @@
 //! floor; a plane owns it, summing across its lanes; or a cube owns it, its planes each summing a
 //! run and meeting once in shared memory, which is what a single row of a model's width wants.
 //!
-//! **Traffic**, per row of `d` elements: `d` read and `d` written, and the weight's `d` read once a
-//! cube, at the rows' width, so the secondary stream costs the request count the dominant one does.
-//! Nothing else crosses the bus, which is what makes the floor a calculation.
+//! **Traffic**, per row of `d` elements: `d` read and `d` written, plus `d` of the gate where there
+//! is one, and the weight's `d` read once a cube, at the rows' width, so the secondary stream costs
+//! the request count the dominant one does. Nothing else crosses the bus, which is what makes the
+//! floor a calculation.
 
 mod blueprint;
 mod launch;
