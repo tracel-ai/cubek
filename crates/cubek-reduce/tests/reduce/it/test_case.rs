@@ -1,3 +1,5 @@
+use cubecl::client::Client;
+use cubecl::tile::launch::Refusal;
 use cubecl::{
     ir::{ElemType, FloatKind},
     prelude::*,
@@ -9,8 +11,8 @@ use cubek_reduce::{
     components::instructions::ReduceOperationConfig,
 };
 use cubek_test_utils::{
-    Distribution, ExecutionOutcome, HostData, HostDataType, HostDataVec, StridedLayout, TestInput,
-    TestOutcome, ValidationResult, assert_equals_approx, launch_and_capture_outcome,
+    Distribution, HostData, HostDataType, HostDataVec, ScopeUnderTest, StridedLayout, TestInput,
+    Written,
 };
 
 use cubek_reduce::eval::cpu_reference::{
@@ -19,6 +21,7 @@ use cubek_reduce::eval::cpu_reference::{
     reference_min, reference_prod, reference_sum, reference_topk,
 };
 
+#[derive(Clone)]
 pub struct TestCase {
     pub shape: Shape,
     pub stride: Strides,
@@ -71,278 +74,88 @@ impl TestCase {
         self
     }
 
+    /// This case reduced by `op`, against the host.
+    fn check(&self, op: Op) {
+        Reduces.check([Reduction {
+            case: self.clone(),
+            op,
+        }]);
+    }
+
     pub fn test_sum(&self) {
-        self.run_reduce_test(
-            |input, axis| reference_sum(input, axis, None),
-            self.input_dtype,
-            ReduceOperationConfig::Sum,
-            0.0625,
-        );
+        self.check(Op::Sum);
     }
 
     pub fn test_mean(&self) {
-        self.run_reduce_test(
-            |input, axis| reference_mean(input, axis, None),
-            self.input_dtype,
-            ReduceOperationConfig::Mean,
-            0.0625,
-        );
+        self.check(Op::Mean);
     }
 
     pub fn test_prod(&self) {
-        self.run_reduce_test(
-            |input, axis| reference_prod(input, axis, None),
-            self.input_dtype,
-            ReduceOperationConfig::Prod,
-            // Prod accumulates exponential error; use a loose relative bound.
-            1.0,
-        );
+        self.check(Op::Prod);
     }
 
     pub fn test_min(&self) {
-        self.run_reduce_test(
-            |input, axis| reference_min(input, axis, None),
-            self.input_dtype,
-            ReduceOperationConfig::Min,
-            0.0625,
-        );
+        self.check(Op::Min);
     }
 
     pub fn test_max(&self) {
-        self.run_reduce_test(
-            |input, axis| reference_max(input, axis, None),
-            self.input_dtype,
-            ReduceOperationConfig::Max,
-            0.0625,
-        );
+        self.check(Op::Max);
     }
 
     pub fn test_max_abs(&self) {
-        self.run_reduce_test(
-            |input, axis| reference_max_abs(input, axis, None),
-            self.input_dtype,
-            ReduceOperationConfig::MaxAbs,
-            0.0625,
-        );
+        self.check(Op::MaxAbs);
     }
 
     pub fn test_any(&self) {
-        // Bernoulli with p ≈ 1.5/axis_len makes ~22% of reduced slices all-zero
-        // (any = 0) and the rest contain a non-zero (any = 1), so both merge
-        // outcomes are exercised instead of the trivial all-ones case `uniform`
-        // would produce. The output is u32 like the bool tensor backing callers
-        // request (u32 is the one flag storage every test runtime supports), so
-        // the in-kernel flag conversion is covered for every input dtype of the
-        // matrix.
-        let u32_dtype = u32::elem_type_native();
-        self.run_reduce_test_with(
-            |input, axis| reference_any(input, axis, None),
-            u32_dtype,
-            ReduceOperationConfig::Any,
-            0.0,
-            Distribution::Bernoulli(self.flag_probability()),
-        );
+        self.check(Op::Any);
     }
 
     pub fn test_all(&self) {
-        // Mirror of `test_any`: p ≈ 1 - 1.5/axis_len makes ~22% of slices
-        // all-ones (all = 1) and the rest contain a zero (all = 0).
-        let u32_dtype = u32::elem_type_native();
-        self.run_reduce_test_with(
-            |input, axis| reference_all(input, axis, None),
-            u32_dtype,
-            ReduceOperationConfig::All,
-            0.0,
-            Distribution::Bernoulli(1.0 - self.flag_probability()),
-        );
+        self.check(Op::All);
     }
 
-    /// Per-element probability of `1` that yields a genuine mix of 0/1 reduction
-    /// outputs for the current reduce axis length.
+    pub fn test_argmax(&self) {
+        self.check(Op::ArgMax);
+    }
+
+    pub fn test_argmin(&self) {
+        self.check(Op::ArgMin);
+    }
+
+    pub fn test_argtopk(&self, k: usize) {
+        self.check(Op::ArgTopK(k));
+    }
+
+    pub fn test_topk(&self, k: usize) {
+        self.check(Op::TopK(k));
+    }
+
+    /// The fused top-k, both outputs against the very references the separate `TopK` and
+    /// `ArgTopK` launches are checked against, so one launch has to agree with what two launches
+    /// produce.
+    pub fn test_topk_with_indices(&self, k: usize) {
+        self.check(Op::TopKWithIndices(k));
+    }
+
+    pub fn test_min_with_indices(&self) {
+        self.check(Op::MinWithIndices);
+    }
+
+    pub fn test_max_with_indices(&self) {
+        self.check(Op::MaxWithIndices);
+    }
+
+    /// Per-element probability of `1` that yields a genuine mix of 0/1 reduction outputs for the
+    /// current reduce axis length.
     fn flag_probability(&self) -> f32 {
         let axis_len = self.shape[self.axis.unwrap()].max(1) as f32;
         (1.5 / axis_len).clamp(0.0, 1.0)
     }
 
-    pub fn test_argmax(&self) {
-        let u32_dtype = u32::elem_type_native();
-        self.run_reduce_test(
-            |input, axis| reference_argmax(input, axis, None),
-            u32_dtype,
-            ReduceOperationConfig::ArgMax,
-            0.0,
-        );
-    }
-
-    pub fn test_argmin(&self) {
-        let u32_dtype = u32::elem_type_native();
-        self.run_reduce_test(
-            |input, axis| reference_argmin(input, axis, None),
-            u32_dtype,
-            ReduceOperationConfig::ArgMin,
-            0.0,
-        );
-    }
-
-    pub fn test_argtopk(&self, k: usize) {
-        let u32_dtype = u32::elem_type_native();
-        self.run_reduce_test(
-            move |input, axis| reference_argtopk(input, axis, k, None),
-            u32_dtype,
-            ReduceOperationConfig::ArgTopK(k),
-            0.0,
-        );
-    }
-
-    pub fn test_topk(&self, k: usize) {
-        self.run_reduce_test(
-            move |input, axis| reference_topk(input, axis, k, None),
-            self.input_dtype,
-            ReduceOperationConfig::TopK(k),
-            1e-7,
-        );
-    }
-
-    /// Run the fused top-k and check both outputs against the very references the
-    /// separate `TopK` and `ArgTopK` launches are checked against, so one launch
-    /// has to agree with what two launches produce.
-    pub fn test_topk_with_indices(&self, k: usize) {
-        self.run_with_indices_test(
-            ReduceOperationConfig::TopK(k),
-            move |input, axis| reference_topk(input, axis, k, None),
-            move |input, axis| reference_argtopk(input, axis, k, None),
-        );
-    }
-
-    pub fn test_min_with_indices(&self) {
-        self.run_with_indices_test(
-            ReduceOperationConfig::Min,
-            |input, axis| reference_min(input, axis, None),
-            |input, axis| reference_argmin(input, axis, None),
-        );
-    }
-
-    pub fn test_max_with_indices(&self) {
-        self.run_with_indices_test(
-            ReduceOperationConfig::Max,
-            |input, axis| reference_max(input, axis, None),
-            |input, axis| reference_argmax(input, axis, None),
-        );
-    }
-
-    /// Run the fused reduce and check both outputs against the very references the
-    /// separate values and `Arg*` launches are checked against, so one launch has
-    /// to agree with what two launches produce.
-    fn run_with_indices_test(
-        &self,
-        config: ReduceOperationConfig,
-        values_reference: impl FnOnce(&HostData, usize) -> HostData,
-        indices_reference: impl FnOnce(&HostData, usize) -> HostData,
-    ) {
-        let client = cubecl::test_device().client();
-        let axis = self.axis.unwrap();
-        let u32_dtype = u32::elem_type_native();
-
-        let input = TestInput::builder(client.clone(), self.shape.clone())
-            .dtype(self.input_dtype)
-            .layout(StridedLayout::Explicit(
-                self.stride.iter().copied().collect(),
-            ));
-        let input = match &self.custom_input {
-            Some(data) => input.custom(data.clone()),
-            None => input.random(1234, Distribution::Uniform(-1., 1.)),
-        };
-        let (input_handle, input_host) = input.generate_with_f32_host_data();
-
-        let expected_values =
-            cast_host_through_dtype(values_reference(&input_host, axis), self.input_dtype);
-        let expected_indices =
-            cast_host_through_dtype(indices_reference(&input_host, axis), u32_dtype);
-
-        let values_handle =
-            self.build_output_tensor(&client, self.input_dtype, &expected_values.shape, &config);
-        let indices_handle =
-            self.build_output_tensor(&client, u32_dtype, &expected_indices.shape, &config);
-
-        let strategy = self.strategy.clone();
-        let dtypes = ReduceWithIndicesDtypes {
-            input: self.input_dtype,
-            values: self.input_dtype,
-            indices: u32_dtype,
-            accumulation: self.accumulation_dtype,
-        };
-        let input_binding = input_handle.binding();
-        let values_binding = values_handle.clone().binding();
-        let indices_binding = indices_handle.clone().binding();
-
-        let outcome = launch_and_capture_outcome(
-            &client,
-            &[&values_handle.handle, &indices_handle.handle],
-            |c| {
-                ReduceEntry::from_env().reduce_with_indices()(
-                    c,
-                    input_binding,
-                    values_binding,
-                    indices_binding,
-                    axis,
-                    strategy,
-                    config,
-                    dtypes,
-                )
-                .into()
-            },
-        );
-
-        let outcome = match outcome {
-            ExecutionOutcome::Executed => {
-                let actual_values =
-                    HostData::from_tensor_handle(&client, values_handle, HostDataType::F32);
-                let actual_indices =
-                    HostData::from_tensor_handle(&client, indices_handle, HostDataType::F32);
-
-                // Report the values mismatch first if there is one; otherwise the
-                // indices decide the outcome. Both have to agree with the reference.
-                match assert_equals_approx(&actual_values, &expected_values, 1e-7) {
-                    ValidationResult::Pass => {
-                        assert_equals_approx(&actual_indices, &expected_indices, 0.0)
-                            .as_test_outcome()
-                    }
-                    failed => failed.as_test_outcome(),
-                }
-            }
-            ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
-        };
-        self.enforce_outcome(outcome);
-    }
-
-    fn run_reduce_test(
-        &self,
-        reference: impl FnOnce(&HostData, usize) -> HostData,
-        output_dtype: ElemType,
-        config: ReduceOperationConfig,
-        epsilon: f32,
-    ) {
-        self.run_reduce_test_with(
-            reference,
-            output_dtype,
-            config,
-            epsilon,
-            Distribution::Uniform(-1., 1.),
-        );
-    }
-
-    fn run_reduce_test_with(
-        &self,
-        reference: impl FnOnce(&HostData, usize) -> HostData,
-        output_dtype: ElemType,
-        config: ReduceOperationConfig,
-        epsilon: f32,
-        distribution: Distribution,
-    ) {
-        let client = cubecl::test_device().client();
-        let axis = self.axis.unwrap();
-
-        let input = TestInput::builder(client.clone(), self.shape.clone())
+    /// The input, as the case states it or seeded from `distribution`: its tensor, and its values
+    /// on the host.
+    fn input(&self, distribution: Distribution) -> (TensorHandle, HostData) {
+        let input = TestInput::builder(cubecl::test_device().client(), self.shape.clone())
             .dtype(self.input_dtype)
             .layout(StridedLayout::Explicit(
                 self.stride.iter().copied().collect(),
@@ -351,57 +164,7 @@ impl TestCase {
             Some(data) => input.custom(data.clone()),
             None => input.random(1234, distribution),
         };
-        let (input_handle, input_host) = input.generate_with_f32_host_data();
-
-        let expected = cast_host_through_dtype(reference(&input_host, axis), output_dtype);
-
-        let output_handle =
-            self.build_output_tensor(&client, output_dtype, &expected.shape, &config);
-
-        let strategy = self.strategy.clone();
-        let dtypes = ReduceDtypes {
-            input: self.input_dtype,
-            output: output_dtype,
-            accumulation: self.accumulation_dtype,
-        };
-        let input_binding = input_handle.binding();
-        let output_binding = output_handle.clone().binding();
-        let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-            ReduceEntry::from_env().reduce()(
-                c,
-                input_binding,
-                output_binding,
-                axis,
-                strategy,
-                config,
-                dtypes,
-            )
-            .into()
-        });
-
-        let outcome = match outcome {
-            ExecutionOutcome::Executed => {
-                let actual =
-                    HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
-                assert_equals_approx(&actual, &expected, epsilon).as_test_outcome()
-            }
-            ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
-        };
-        self.enforce_outcome(outcome);
-    }
-
-    fn enforce_outcome(&self, outcome: TestOutcome) {
-        if self.custom_input.is_some() {
-            assert!(
-                !matches!(
-                    &outcome,
-                    TestOutcome::CompileError(_)
-                        | TestOutcome::Validated(ValidationResult::Skipped(_))
-                ),
-                "expected custom reduction case to execute and validate, got {outcome:?}"
-            );
-        }
-        outcome.enforce();
+        input.generate_with_f32_host_data()
     }
 
     fn build_output_tensor(
@@ -424,6 +187,235 @@ impl TestCase {
             .layout(StridedLayout::Explicit(strides.iter().copied().collect()))
             .zeros()
             .generate_without_host_data()
+    }
+}
+
+/// A reduction a case is run through: one output, or a value and its index fused in one launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Op {
+    Sum,
+    Mean,
+    Prod,
+    Min,
+    Max,
+    MaxAbs,
+    Any,
+    All,
+    ArgMax,
+    ArgMin,
+    ArgTopK(usize),
+    TopK(usize),
+    TopKWithIndices(usize),
+    MinWithIndices,
+    MaxWithIndices,
+}
+
+impl Op {
+    /// What the kernel is told to compute.
+    fn config(self) -> ReduceOperationConfig {
+        match self {
+            Op::Sum => ReduceOperationConfig::Sum,
+            Op::Mean => ReduceOperationConfig::Mean,
+            Op::Prod => ReduceOperationConfig::Prod,
+            Op::Min | Op::MinWithIndices => ReduceOperationConfig::Min,
+            Op::Max | Op::MaxWithIndices => ReduceOperationConfig::Max,
+            Op::MaxAbs => ReduceOperationConfig::MaxAbs,
+            Op::Any => ReduceOperationConfig::Any,
+            Op::All => ReduceOperationConfig::All,
+            Op::ArgMax => ReduceOperationConfig::ArgMax,
+            Op::ArgMin => ReduceOperationConfig::ArgMin,
+            Op::ArgTopK(k) => ReduceOperationConfig::ArgTopK(k),
+            Op::TopK(k) | Op::TopKWithIndices(k) => ReduceOperationConfig::TopK(k),
+        }
+    }
+
+    /// Whether one launch writes the values and their indices.
+    fn with_indices(self) -> bool {
+        matches!(
+            self,
+            Op::TopKWithIndices(_) | Op::MinWithIndices | Op::MaxWithIndices
+        )
+    }
+
+    /// The element each output is written in: the input's for values, `u32` for indices and for
+    /// the flags of `any` and `all`, the one flag storage every test runtime supports.
+    fn output_dtypes(self, input: ElemType) -> Vec<ElemType> {
+        let index = u32::elem_type_native();
+        match self {
+            Op::Any | Op::All | Op::ArgMax | Op::ArgMin | Op::ArgTopK(_) => vec![index],
+            op if op.with_indices() => vec![input, index],
+            _ => vec![input],
+        }
+    }
+
+    /// The input's values. `any` and `all` read Bernoulli flags at `flag_probability`, so about a
+    /// fifth of the reduced slices take each merge outcome rather than the trivial one a uniform
+    /// input would give.
+    fn distribution(self, flag_probability: f32) -> Distribution {
+        match self {
+            Op::Any => Distribution::Bernoulli(flag_probability),
+            Op::All => Distribution::Bernoulli(1.0 - flag_probability),
+            _ => Distribution::Uniform(-1., 1.),
+        }
+    }
+
+    /// What each output holds, from the input's values on the host.
+    fn references(self, input: &HostData, axis: usize) -> Vec<HostData> {
+        match self {
+            Op::Sum => vec![reference_sum(input, axis, None)],
+            Op::Mean => vec![reference_mean(input, axis, None)],
+            Op::Prod => vec![reference_prod(input, axis, None)],
+            Op::Min => vec![reference_min(input, axis, None)],
+            Op::Max => vec![reference_max(input, axis, None)],
+            Op::MaxAbs => vec![reference_max_abs(input, axis, None)],
+            Op::Any => vec![reference_any(input, axis, None)],
+            Op::All => vec![reference_all(input, axis, None)],
+            Op::ArgMax => vec![reference_argmax(input, axis, None)],
+            Op::ArgMin => vec![reference_argmin(input, axis, None)],
+            Op::ArgTopK(k) => vec![reference_argtopk(input, axis, k, None)],
+            Op::TopK(k) => vec![reference_topk(input, axis, k, None)],
+            Op::TopKWithIndices(k) => vec![
+                reference_topk(input, axis, k, None),
+                reference_argtopk(input, axis, k, None),
+            ],
+            Op::MinWithIndices => vec![
+                reference_min(input, axis, None),
+                reference_argmin(input, axis, None),
+            ],
+            Op::MaxWithIndices => vec![
+                reference_max(input, axis, None),
+                reference_argmax(input, axis, None),
+            ],
+        }
+    }
+
+    /// The tolerance of the values: a sum's rounding, a product's exponential error, and nothing
+    /// for what a reduction selects or counts.
+    fn tolerance(self) -> f32 {
+        match self {
+            Op::Sum | Op::Mean | Op::Min | Op::Max | Op::MaxAbs => 0.0625,
+            Op::Prod => 1.0,
+            Op::TopK(_) | Op::TopKWithIndices(_) | Op::MinWithIndices | Op::MaxWithIndices => 1e-7,
+            Op::Any | Op::All | Op::ArgMax | Op::ArgMin | Op::ArgTopK(_) => 0.,
+        }
+    }
+}
+
+/// One case reduced by one operation.
+#[derive(Debug, Clone)]
+pub struct Reduction {
+    pub case: TestCase,
+    pub op: Op,
+}
+
+impl Reduction {
+    fn input(&self) -> (TensorHandle, HostData) {
+        self.case
+            .input(self.op.distribution(self.case.flag_probability()))
+    }
+}
+
+/// The reduce entry the environment names, against the host.
+pub struct Reduces;
+
+impl ScopeUnderTest for Reduces {
+    type Case = Reduction;
+
+    /// # Panics
+    ///
+    /// Where a case of explicit regression data is refused: it must execute.
+    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Refusal> {
+        let case = &reduction.case;
+        let (op, axis, config) = (reduction.op, case.axis.unwrap(), reduction.op.config());
+        let (input, host) = reduction.input();
+        let outputs: Vec<(ElemType, TensorHandle)> = op
+            .output_dtypes(case.input_dtype)
+            .into_iter()
+            .zip(op.references(&host, axis))
+            .map(|(dtype, reference)| {
+                let output = case.build_output_tensor(client, dtype, &reference.shape, &config);
+                (dtype, output)
+            })
+            .collect();
+        let launched = match op.with_indices() {
+            true => ReduceEntry::from_env().reduce_with_indices()(
+                client,
+                input.binding(),
+                outputs[0].1.clone().binding(),
+                outputs[1].1.clone().binding(),
+                axis,
+                case.strategy.clone(),
+                config,
+                ReduceWithIndicesDtypes {
+                    input: case.input_dtype,
+                    values: outputs[0].0,
+                    indices: outputs[1].0,
+                    accumulation: case.accumulation_dtype,
+                },
+            ),
+            false => ReduceEntry::from_env().reduce()(
+                client,
+                input.binding(),
+                outputs[0].1.clone().binding(),
+                axis,
+                case.strategy.clone(),
+                config,
+                ReduceDtypes {
+                    input: case.input_dtype,
+                    output: outputs[0].0,
+                    accumulation: case.accumulation_dtype,
+                },
+            ),
+        };
+        match launched {
+            Ok(()) => {}
+            Err(why) if case.custom_input.is_some() => {
+                panic!("{reduction:?}: a case of explicit data must execute, refused: {why:?}")
+            }
+            Err(_) => {
+                return Err(Refusal::Declined {
+                    why: "the reduce entry runs no such configuration on this device",
+                });
+            }
+        }
+        let names = match op.with_indices() {
+            true => ["values", "indices"].as_slice(),
+            false => ["output"].as_slice(),
+        };
+        Ok(names
+            .iter()
+            .zip(outputs)
+            .map(|(&name, (_, tensor))| Written {
+                name,
+                tensor,
+                host: HostDataType::F32,
+            })
+            .collect())
+    }
+
+    /// Each reference cast through its output's element, so the comparison accounts for what the
+    /// kernel loses storing to a narrower type, as an `f32` accumulator overflowing an `f16`
+    /// output.
+    fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
+        let (op, case) = (reduction.op, &reduction.case);
+        let (_, host) = reduction.input();
+        op.references(&host, case.axis.unwrap())
+            .into_iter()
+            .zip(op.output_dtypes(case.input_dtype))
+            .map(|(reference, dtype)| cast_host_through_dtype(reference, dtype))
+            .collect()
+    }
+
+    fn tolerance(&self, reduction: &Reduction) -> f32 {
+        reduction.op.tolerance()
+    }
+
+    /// The indices a fused reduction writes are exact.
+    fn tolerance_of(&self, reduction: &Reduction, name: &'static str) -> f32 {
+        match name {
+            "indices" => 0.,
+            _ => self.tolerance(reduction),
+        }
     }
 }
 

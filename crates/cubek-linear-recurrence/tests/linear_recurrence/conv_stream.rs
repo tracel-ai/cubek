@@ -4,17 +4,19 @@
 //! conv steps over a window the stream's tail seeds.
 
 use super::conv::{
-    ConvCase, EPSILON, HostOutputs, admit, case, compare_outputs, conv_or_skip, convolve_channels,
-    table, view, wave,
+    ConvCase, EPSILON, HostOutputs, WindowConvs, admit, case, compare_outputs, conv_or_skip,
+    convolve_channels, table, tolerance, view, wave,
 };
 use super::harness::{F32, activation_elements, served};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
+use cubecl::tile::launch::Refusal;
 use cubek_linear_recurrence::kernels::conv::{
     CubeQkNormedConvRoutine, GatedDeltaConvPastInputs, QkNormedConvInputs,
 };
 use cubek_linear_recurrence::kernels::refusals::QK_NORMED_CONV_NOTHING_TO_CONVOLVE;
 use cubek_std::Hardware;
+use cubek_test_utils::{HostData, ScopeUnderTest, Written};
 
 /// A stream's shape.
 #[derive(Debug, Clone)]
@@ -138,26 +140,76 @@ impl StreamCase {
     }
 }
 
+/// One conv of a stream: a case at an element, the stream laid out as `layout` lays it.
+#[derive(Debug, Clone)]
+struct StreamConv {
+    case: StreamCase,
+    element: ElemType,
+    layout: StreamLayout,
+}
+
+/// The conv of a stream against the host: its queries, keys and values. A device may decline it
+/// only by the refusal admission names.
+struct StreamConvs;
+
+impl ScopeUnderTest for StreamConvs {
+    type Case = StreamConv;
+
+    /// # Panics
+    ///
+    /// On a refusal other than the one admission names.
+    fn launch(&self, client: &Client, conv: &StreamConv) -> Result<Vec<Written>, Refusal> {
+        let hw = Hardware::from_client(client);
+        let (stream, filters) = conv.case.operands(conv.element);
+        let inputs = conv
+            .case
+            .inputs(client, &stream, &filters, conv.layout, conv.element);
+        let outputs = CubeQkNormedConvRoutine
+            .launch_on(&hw, inputs.clone())
+            .inspect_err(|why| {
+                assert_eq!(
+                    admit(&hw, inputs),
+                    Err(why.clone()),
+                    "{conv:?}: refused but admitted"
+                );
+            })?;
+        Ok(WindowConvs::written([
+            ("queries", outputs.query),
+            ("keys", outputs.key),
+            ("values", outputs.value),
+        ]))
+    }
+
+    fn reference(&self, conv: &StreamConv) -> Vec<HostData> {
+        let (stream, filters) = conv.case.operands(conv.element);
+        let want = conv.case.reference(&stream, &filters, conv.element);
+        WindowConvs::outputs(&want).to_vec()
+    }
+
+    fn tolerance(&self, conv: &StreamConv) -> f32 {
+        tolerance(conv.element) as f32
+    }
+}
+
 /// Every case at every element the device runs, over a packed stream and over one padded and
 /// starting off a whole read: the outputs match the reference.
 #[test]
 fn the_stream_conv_matches_the_reference() {
     let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
     let layouts = [StreamLayout::default(), StreamLayout { pad: 3, start: 1 }];
-    for elem in activation_elements(&client) {
+    let mut convs = Vec::new();
+    for element in activation_elements(&client) {
         for layout in layouts {
             for case in cases() {
-                let (stream, filters) = case.operands(elem);
-                let inputs = case.inputs(&client, &stream, &filters, layout, elem);
-                let what = format!("{layout:?}");
-                if let Some(outputs) = conv_or_skip(&hw, inputs, &what) {
-                    let want = case.reference(&stream, &filters, elem);
-                    compare_outputs(&client, &outputs, &want, elem, &format!("{what} {case:?}"));
-                }
+                convs.push(StreamConv {
+                    case,
+                    element,
+                    layout,
+                });
             }
         }
     }
+    StreamConvs.check(convs);
 }
 
 /// A stream of the context columns alone has nothing to convolve: the conv declines it by name.

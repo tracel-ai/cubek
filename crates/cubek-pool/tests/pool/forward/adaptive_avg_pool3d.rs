@@ -1,4 +1,5 @@
-use crate::pool::{build_output_tensor, output_host_f32, validate_test};
+use crate::pool::{PoolForward, Pooled, Seeded};
+use crate::pool::{build_output_tensor, output_host_f32};
 use cubecl::{
     ir::{ElemType, FloatKind},
     prelude::*,
@@ -9,41 +10,45 @@ use cubek_pool::{
         AdaptiveAvgPoolOptions, AvgPoolOptions, MaxPoolOptions, PoolError, PoolForwardProblem,
         PoolMode,
     },
-    eval::cpu_reference::{cpu_reference_pool, geometry::PoolGeometry},
     pool3d,
 };
+use cubek_test_utils::ScopeUnderTest;
 use cubek_test_utils::TestInput;
 
 const TOLERANCE: f32 = 1e-5;
 
 #[test]
 fn test_adaptive_avg_pool3d_global() {
-    run_case([2, 9, 11, 7, 8], [1, 1, 1], 1001);
+    PoolForward.check([Pooled::adaptive([2, 9, 11, 7, 8], [1, 1, 1], 1001)]);
 }
 
 #[test]
 fn test_adaptive_avg_pool3d_divisible_downsample_vectorized_channels() {
-    run_case([2, 6, 8, 10, 8], [3, 4, 5], 1002);
+    PoolForward.check([Pooled::adaptive([2, 6, 8, 10, 8], [3, 4, 5], 1002)]);
 }
 
 #[test]
 fn test_adaptive_avg_pool3d_non_divisible_asymmetric_odd_channels() {
-    run_case([2, 5, 7, 4, 7], [3, 4, 3], 1003);
+    PoolForward.check([Pooled::adaptive([2, 5, 7, 4, 7], [3, 4, 3], 1003)]);
 }
 
 #[test]
 fn test_adaptive_avg_pool3d_non_divisible_large_windows() {
-    run_case([1, 19, 20, 15, 8], [2, 3, 2], 1005);
+    PoolForward.check([Pooled::adaptive([1, 19, 20, 15, 8], [2, 3, 2], 1005)]);
 }
 
 #[test]
 fn test_adaptive_avg_pool3d_output_larger_than_input() {
-    run_case([1, 2, 3, 2, 5], [4, 5, 3], 1004);
+    PoolForward.check([Pooled::adaptive([1, 2, 3, 2, 5], [4, 5, 3], 1004)]);
 }
 
 #[test]
 fn test_adaptive_avg_pool3d_large_dimension_index_math() {
-    run_case([1, 100_000, 1, 1, 1], [100_000, 1, 1], 1006);
+    PoolForward.check([Pooled::adaptive(
+        [1, 100_000, 1, 1, 1],
+        [100_000, 1, 1],
+        1006,
+    )]);
 }
 
 #[test]
@@ -217,29 +222,21 @@ fn test_adaptive_avg_pool3d_f16_large_global_accumulates_in_f32() {
     assert!((actual - 1.0).abs() <= 1e-3, "expected 1, got {actual}");
 }
 
-fn run_case(input_shape: [usize; 5], output_size: [usize; 3], seed: u64) {
-    let client = cubecl::test_device().client();
-    let problem = PoolForwardProblem {
-        input_shape: Shape::from(input_shape),
-        with_indices: false,
-        mode: AdaptiveAvgPoolOptions::new(output_size).into(),
-    };
-    let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape.to_vec())
-        .uniform(seed, -1.0, 1.0)
-        .generate_with_f32_host_data();
-    let output_shape = problem.output_shape(&problem.input_shape).to_vec();
-    let expected = cpu_reference_pool(&input_data, problem.clone());
-    let dtype = input.dtype;
-
-    let output = build_output_tensor(&client, output_shape, dtype);
-    let result = pool3d(
-        &client,
-        input.binding(),
-        output.clone().binding(),
-        problem.mode,
-        dtype,
-    );
-    let actual = output_host_f32(&client, output);
-
-    validate_test(result, actual, expected, TOLERANCE);
+impl Pooled<3> {
+    /// `input_shape` pooled to `output_size` by an adaptive average, its input seeded by `seed` in
+    /// `[-1, 1)`.
+    fn adaptive(input_shape: [usize; 5], output_size: [usize; 3], seed: u64) -> Self {
+        Self {
+            problem: PoolForwardProblem {
+                input_shape: Shape::from(input_shape),
+                with_indices: false,
+                mode: AdaptiveAvgPoolOptions::new(output_size).into(),
+            },
+            input: Seeded {
+                seed,
+                inputs: -1.0..1.0,
+            },
+            tolerance: TOLERANCE,
+        }
+    }
 }

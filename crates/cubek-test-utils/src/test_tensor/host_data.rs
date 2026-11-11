@@ -83,13 +83,15 @@ impl HostDataVec {
         }
     }
 
-    /// Get the element as `f64`, losslessly upcasting `F32` data if needed.
+    /// Get the element as `f64`, losslessly upcasting `F32` and `I32` data if needed.
     /// This is the precision-preserving accessor used by the correctness
-    /// comparator so `F64` host data can be compared at full precision.
+    /// comparator so `F64` host data can be compared at full precision, and
+    /// integer outputs such as indices compared exactly.
     pub fn get_f64(&self, i: usize) -> f64 {
         match self {
             HostDataVec::F32(items) => items[i] as f64,
             HostDataVec::F64(items) => items[i],
+            HostDataVec::I32(items) => items[i] as f64,
             _ => panic!("Can't get as f64"),
         }
     }
@@ -120,6 +122,7 @@ impl HostDataVec {
         match self {
             HostDataVec::F32(items) => items.get(i).map(|&x| x as f64),
             HostDataVec::F64(items) => items.get(i).copied(),
+            HostDataVec::I32(items) => items.get(i).map(|&x| x as f64),
             _ => None,
         }
     }

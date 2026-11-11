@@ -1,17 +1,18 @@
-use super::{make_problem, run_pool_backward_test};
+use super::make_problem;
+use crate::pool::{PoolBackward, Seeded, Unpooled};
 use crate::pool::{build_output_tensor, output_host_f32};
 use cubecl::{
     ir::{ElemType, FloatKind},
     zspace::Shape,
 };
 use cubek_pool::{definition::AdaptiveAvgPoolOptions, pool2d_backward};
+use cubek_test_utils::ScopeUnderTest;
 use cubek_test_utils::TestInput;
 
 const ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE: f32 = 1e-5;
 
 #[test]
 fn test_adaptive_avg_pool2d_backward_global() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         [8, 8],
         Shape::from([2, 1, 1, 4]),
@@ -20,19 +21,18 @@ fn test_adaptive_avg_pool2d_backward_global() {
             output_size: [1, 1],
         },
     );
-    run_pool_backward_test(
-        client,
-        7890,
-        -1.0,
-        1.0,
+    PoolBackward.check([Unpooled {
         problem,
-        ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 7890,
+            inputs: -1.0..1.0,
+        },
+        tolerance: ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
+    }]);
 }
 
 #[test]
 fn test_adaptive_avg_pool2d_backward_square() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         [7, 7],
         Shape::from([1, 3, 3, 2]),
@@ -41,19 +41,18 @@ fn test_adaptive_avg_pool2d_backward_square() {
             output_size: [3, 3],
         },
     );
-    run_pool_backward_test(
-        client,
-        1357,
-        -5.0,
-        5.0,
+    PoolBackward.check([Unpooled {
         problem,
-        ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 1357,
+            inputs: -5.0..5.0,
+        },
+        tolerance: ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
+    }]);
 }
 
 #[test]
 fn test_adaptive_avg_pool2d_backward_non_square() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         [10, 10],
         Shape::from([2, 3, 5, 3]),
@@ -62,19 +61,18 @@ fn test_adaptive_avg_pool2d_backward_non_square() {
             output_size: [3, 5],
         },
     );
-    run_pool_backward_test(
-        client,
-        2468,
-        -1.0,
-        1.0,
+    PoolBackward.check([Unpooled {
         problem,
-        ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 2468,
+            inputs: -1.0..1.0,
+        },
+        tolerance: ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
+    }]);
 }
 
 #[test]
 fn test_adaptive_avg_pool2d_backward_large_input() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         [14, 14],
         Shape::from([1, 7, 7, 8]),
@@ -83,14 +81,14 @@ fn test_adaptive_avg_pool2d_backward_large_input() {
             output_size: [7, 7],
         },
     );
-    run_pool_backward_test(
-        client,
-        9753,
-        -1.0,
-        1.0,
+    PoolBackward.check([Unpooled {
         problem,
-        ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 9753,
+            inputs: -1.0..1.0,
+        },
+        tolerance: ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
+    }]);
 }
 
 /// Upsampling covers each input pixel with every output cell, so a 1x1 input pooled to 64x64
