@@ -54,7 +54,7 @@ impl HypercubeShuffleMerge for HypercubeSecondLaunchShuffle {
         );
         let partitioning = binding.launcher.partitioning_arg();
         let (queries, scale) = (problem.seq_q as u32, tensors.scale());
-        let elements = problem.work_item().kernel_elements();
+        let work_item = problem.work_item();
         match binding.cache {
             AttentionCacheBinding::Tiles { key, value } => {
                 // SAFETY: the query, keys and values are bound through the launcher, which masks
@@ -81,7 +81,7 @@ impl HypercubeShuffleMerge for HypercubeSecondLaunchShuffle {
                         microkernel,
                         shape,
                         problem.visibility,
-                        elements,
+                        work_item.operand_elements(),
                     );
                 }
                 HypercubeSecondLaunch::new(&problem, shape).launch(tensors, slots, width);
@@ -114,7 +114,7 @@ impl HypercubeShuffleMerge for HypercubeSecondLaunchShuffle {
                         microkernel,
                         shape,
                         problem.visibility,
-                        elements,
+                        work_item.kernel_elements(),
                     );
                 }
                 HypercubeSecondLaunch::new(&problem, shape).launch(tensors, slots, width);

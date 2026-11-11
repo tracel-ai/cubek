@@ -134,11 +134,14 @@ pub fn cube_staged_attention_microkernel<EA: Float, EV: Float>(
 /// Each row's logsumexp is written where the caller asks for it, by the plane that writes the row.
 ///
 /// `cube` is the region the cube owns, its walk the steps of keys or the pages of them, of which
-/// it takes the first `steps`; `out`, `logsumexp` and `query` are windowed to it.
+/// it takes the first `steps`; `out`, `logsumexp` and `query` are windowed to it. The query is
+/// read in `E` and the output written in `EO`, the keys and values in what `key` and `value`
+/// read them in.
 #[cube]
 pub fn cube_unstaged_attention_microkernel<
     EA: Float,
     E: Float,
+    EO: Float,
     N: Size,
     K: StepReads<N>,
     L: StepReads<N>,
@@ -168,7 +171,7 @@ pub fn cube_unstaged_attention_microkernel<
     );
 
     if microkernel.settings.planes_along_keys.get() == 1 {
-        planes.store_normalized::<E>(cube, out);
+        planes.store_normalized::<EO>(cube, out);
 
         #[comptime]
         match logsumexp {
@@ -190,7 +193,7 @@ pub fn cube_unstaged_attention_microkernel<
 
         for plane in cube.planes() {
             let group = plane.coord(G) * layout.planes_along_queries + plane.coord(Q);
-            plane_merge_rows_microkernel::<EA, E, N>(
+            plane_merge_rows_microkernel::<EA, EO, N>(
                 &mut slot_out,
                 &mut slot_max,
                 &mut slot_sum,
@@ -492,7 +495,7 @@ impl CubeAttentionMicrokernel {
         let mut staged_query = query.stage_for(
             &walk,
             comptime!(microkernel.query_storage(&query.space())),
-            microkernel.plane.decoded_stage(),
+            microkernel.plane.decoded_query(),
         );
 
         staged_query.copy_from(query);

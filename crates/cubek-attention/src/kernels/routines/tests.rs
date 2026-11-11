@@ -154,19 +154,30 @@ fn every_hypercube_fragment_setting_prepares() {
     }
 }
 
-/// A prompt whose query and keys are `e4m3` beside `f16` values: an FP8 score.
-fn fp8_score(queries: usize, keys: usize) -> AttentionRoutineProblem {
-    let e4m3 = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::E4M3);
+const E4M3: cubecl::ir::ElemType = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::E4M3);
+const F16: cubecl::ir::ElemType = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F16);
+
+/// A problem of `f16` queries over a cache whose keys are stored as `key` and values as `value`.
+fn cached(
+    queries: usize,
+    keys: usize,
+    key: cubecl::ir::ElemType,
+    value: cubecl::ir::ElemType,
+) -> AttentionRoutineProblem {
     let f16 = qwen(queries, keys);
     AttentionRoutineProblem {
         elements: AttentionOperands {
-            query: e4m3,
-            key: e4m3,
+            key,
+            value,
             ..f16.elements
         },
         ..f16
     }
 }
+
+/// The caches an FP8 setting stores: `e4m3` keys, `e4m3` values, and both.
+const FP8_CACHES: [(cubecl::ir::ElemType, cubecl::ir::ElemType); 3] =
+    [(E4M3, F16), (F16, E4M3), (E4M3, E4M3)];
 
 /// An RTX PRO 6000 offering the manual `mma`'s 16-bit forms and its `e4m3` one.
 fn offering_fp8() -> Hardware {
@@ -189,53 +200,91 @@ fn offering_fp8() -> Hardware {
     )
 }
 
-/// An FP8 score is the plane fragments' alone: their score on the device's `e4m3` instruction,
-/// their value on its 16-bit one. The shuffles and the unit routine, which compute in their
-/// operands' one element, decline it, and so do the fragments on a device without the `e4m3`
-/// instruction.
-#[test]
-fn an_fp8_score_is_read_by_the_plane_fragments_alone() {
-    let (hw, problem) = (offering_fp8(), fp8_score(512, 4096));
-    let e4m3 = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::E4M3);
-    let f16 = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F16);
-    let fragments = HypercubeSecondLaunchFragmentAttentionRoutine;
-    let prepared: Vec<_> = fragments
-        .settings(&hw)
+/// Whether any setting `routine` lists prepares for `problem` on `hw`.
+fn prepares<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+    routine: R,
+    hw: &Hardware,
+    problem: &AttentionRoutineProblem,
+) -> bool {
+    routine
+        .settings(hw)
         .iter()
-        .filter_map(|settings| fragments.prepare(&hw, &problem, settings).ok())
-        .collect();
-    assert!(
-        !prepared.is_empty(),
-        "no fragment setting reads an FP8 score"
-    );
-    for (blueprint, _) in &prepared {
-        let served = blueprint.microkernel.served(&problem.work_item()).elements;
-        assert_eq!((served.query, served.key, served.value), (e4m3, e4m3, f16));
-    }
+        .any(|settings| routine.prepare(hw, problem, settings).is_ok())
+}
 
-    let declines = |prepared: bool, name: &str| assert!(!prepared, "{name} reads an FP8 score");
-    let shuffle = HypercubeSecondLaunchShuffleAttentionRoutine::new();
-    declines(
-        shuffle
-            .settings(&hw)
-            .iter()
-            .any(|settings| shuffle.prepare(&hw, &problem, settings).is_ok()),
-        "the plane shuffle",
-    );
-    declines(
-        UnitAttentionRoutine.settings(&hw).iter().any(|settings| {
-            UnitAttentionRoutine
-                .prepare(&hw, &problem, settings)
-                .is_ok()
-        }),
-        "the unit routine",
-    );
+/// The reads the fragment settings that prepare for `problem` on `hw` take.
+fn fragment_reads(hw: &Hardware, problem: &AttentionRoutineProblem) -> BTreeSet<(String, String)> {
+    let fragments = HypercubeSecondLaunchFragmentAttentionRoutine;
+    fragments
+        .settings(hw)
+        .iter()
+        .filter_map(|settings| fragments.prepare(hw, problem, settings).ok())
+        .map(|(blueprint, _)| {
+            let served = blueprint.microkernel.served(&problem.work_item()).elements;
+            (format!("{:?}", served.key), format!("{:?}", served.value))
+        })
+        .collect()
+}
+
+/// Every FP8 cache is read by a prompt's table and a decode step's: the plane fragments read
+/// `e4m3` keys on the device's FP8 instruction, the query converted to it as it is staged, or
+/// widened to the query's `f16`, and `e4m3` values widened to it; the plane shuffles widen every
+/// operand into the sum as they read it. The unit routine, which computes in its operands' one
+/// element, declines them. On a device without the `e4m3` instruction the fragments widen.
+#[test]
+fn every_fp8_cache_is_read_at_a_prompt_and_at_a_decode_step() {
+    let hw = offering_fp8();
     let without = offering(devices::rtx_pro_6000(), 16);
-    declines(
-        fragments
-            .settings(&without)
-            .iter()
-            .any(|settings| fragments.prepare(&without, &problem, settings).is_ok()),
-        "the plane fragments without an e4m3 instruction",
-    );
+    let (e4m3, f16) = (format!("{E4M3:?}"), format!("{F16:?}"));
+    for (key, value) in FP8_CACHES {
+        let (prompt, decode) = (cached(512, 4096, key, value), cached(1, 4096, key, value));
+        let reads = fragment_reads(&hw, &prompt);
+        let fp8_score = reads.iter().any(|(score, _)| *score == e4m3);
+        assert_eq!(
+            fp8_score,
+            key == E4M3,
+            "{key:?} keys, {value:?} values: the fragments read {reads:?}"
+        );
+        assert!(
+            reads.iter().all(|(_, read)| *read == f16),
+            "{key:?} keys, {value:?} values: the fragments read the values at {reads:?}"
+        );
+        let widened = fragment_reads(&without, &prompt);
+        assert!(
+            !widened.is_empty() && widened.iter().all(|(score, _)| *score == f16),
+            "{key:?} keys, {value:?} values without an e4m3 instruction: {widened:?}"
+        );
+
+        for (prepared, name) in [
+            (
+                prepares(
+                    HypercubeSecondLaunchShuffleAttentionRoutine::new(),
+                    &hw,
+                    &decode,
+                ),
+                "the second-launch shuffle",
+            ),
+            (
+                prepares(
+                    HypercubeLastArrivalShuffleAttentionRoutine::new(),
+                    &hw,
+                    &decode,
+                ),
+                "the last-arrival shuffle",
+            ),
+            (
+                prepares(CubeShuffleAttentionRoutine, &hw, &decode),
+                "the cube shuffle",
+            ),
+        ] {
+            assert!(
+                prepared,
+                "{name} declines {key:?} keys beside {value:?} values"
+            );
+        }
+        assert!(
+            !prepares(UnitAttentionRoutine, &hw, &decode),
+            "the unit routine reads {key:?} keys beside {value:?} values"
+        );
+    }
 }

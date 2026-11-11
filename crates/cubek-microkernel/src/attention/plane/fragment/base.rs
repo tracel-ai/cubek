@@ -33,9 +33,12 @@ use cubek_std::{Hardware, manual_mma};
 pub struct PlaneFragmentAttentionMicrokernel {
     pub settings: PlaneFragmentAttentionMicrokernelSettings,
     /// The elements its query and keys reach the score's instruction in and its values the
-    /// value's: as stored where the device has an instruction for them, else tf32 for `f32`
-    /// ([`readings`](AttentionWorkItem::readings)).
+    /// value's ([`readings`](AttentionWorkItem::readings)): each as stored, or converted as its
+    /// stage is filled.
     pub read: AttentionRead,
+    /// The element a stage of its keys and values decodes into where one of them is converted:
+    /// the values' read element where they are, else the score's.
+    pub cache_stage: ElemType,
     /// The score's fragments: its rows by a stage's keys, walking the whole head dim.
     pub score: PlaneFragmentMicrokernel,
     /// The value's fragments: its rows by the whole value dim, walking a stage's keys.
@@ -133,6 +136,20 @@ impl PlaneFragmentAttentionMicrokernel {
         read: AttentionRead,
         settings: PlaneFragmentAttentionMicrokernelSettings,
     ) -> Vec<Self> {
+        // A stage of keys and values is filled at one element: where both are converted, they
+        // are converted to it alike.
+        let converted = |stored: ElemType, read: ElemType| stored != read;
+        let (keys_converted, values_converted) = (
+            converted(item.elements.key, read.score),
+            converted(item.elements.value, read.value),
+        );
+        if keys_converted && values_converted && read.score != read.value {
+            return Vec::new();
+        }
+        let cache_stage = match values_converted {
+            true => read.value,
+            false => read.score,
+        };
         let item = &item.read_as(read);
         let (head, value) = (item.head_dim, item.val_dim);
 
@@ -168,6 +185,7 @@ impl PlaneFragmentAttentionMicrokernel {
                 Some(Self {
                     settings,
                     read,
+                    cache_stage,
                     score: PlaneFragmentMicrokernel {
                         settings: PlaneFragmentMicrokernelSettings {
                             depth: head_steps,
@@ -399,12 +417,17 @@ impl PlaneFragmentAttentionMicrokernel {
     /// What the routines whose cubes hold it are named after.
     pub const NAME: &'static str = "fragment";
 
-    /// The element its score's instruction reads, which a stage of words decodes its query and
-    /// keys into: an `f32` operand read at tf32 is bound as its words, and a stage of it at `f32`
-    /// would be fragments the device does not offer. Its values are decoded into it too, which
-    /// only words read at one element for every operand are ([`readings`](AttentionWorkItem::readings)).
-    pub fn decoded_stage(&self) -> Option<ElemType> {
+    /// The element a stage of its query decodes into where the query is converted: the score's,
+    /// as an `f16` query multiplied with `e4m3` keys on the FP8 instruction, or an `f32` one read
+    /// at tf32, whose stage at `f32` would be fragments the device does not offer.
+    pub fn decoded_query(&self) -> Option<ElemType> {
         Some(self.read.score)
+    }
+
+    /// The element a stage of its keys and values decodes into where either is converted
+    /// ([`cache_stage`](Self::cache_stage)); one bound as stored is staged as it lies.
+    pub fn decoded_stage(&self) -> Option<ElemType> {
+        Some(self.cache_stage)
     }
 
     /// Its fragments, as its [`ScoreHolder`] cuts them. Where the score is kept in fragments they

@@ -310,7 +310,7 @@ fn cube_unstaged_attention_kernel<EA: Float, E: Float, N: Size>(
                 microkernel.region_keys(),
                 1usize,
             );
-            cube_unstaged_attention_microkernel::<EA, E, N, TileStepReads<E>, TileStepReads<E>>(
+            cube_unstaged_attention_microkernel::<EA, E, E, N, TileStepReads<E>, TileStepReads<E>>(
                 &cube,
                 &o.at(&cube),
                 &lse.clone().map(|lse| lse.at(&cube)),

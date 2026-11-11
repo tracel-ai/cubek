@@ -30,14 +30,15 @@ pub struct AttentionWorkItem {
 pub enum AttentionReading {
     /// As stored, or rounded to an element a matrix instruction takes.
     Rounded,
-    /// As stored only: a pool read through a page table is bound as stored, never as words.
+    /// The keys and values as stored only: a pool read through a page table is bound as stored,
+    /// never as words. The query, which no table places, may still be converted.
     AsStored,
 }
 
 /// The elements an attention's operands reach its two matrix instructions in: the query and the
 /// keys reach the score's in `score`; the values, and the probabilities cast to sit beside them,
-/// reach the value's in `value`. The two differ where the keys are stored narrower than the
-/// values, as an FP8 cache's keys beside 16-bit values.
+/// reach the value's in `value`. Each side of a cache may be stored in its own element, as an FP8
+/// cache's `e4m3` keys beside 16-bit values, so the two may differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AttentionRead {
     pub score: ElemType,
@@ -61,10 +62,23 @@ impl AttentionWorkItem {
         [self.sum, self.elements.query]
     }
 
+    /// The elements a kernel that reads each operand at its own element defines, in the order it
+    /// names them: the sum, the query's, the keys', the values' and the output's. A shuffle widens
+    /// each into the sum as it reads it, so an FP8 cache's `e4m3` keys sit beside 16-bit values.
+    pub fn operand_elements(&self) -> [ElemType; 5] {
+        let AttentionOperands {
+            query,
+            key,
+            value,
+            out,
+        } = self.elements;
+        [self.sum, query, key, value, out]
+    }
+
     /// Whether its query, keys and values are one element: what a microkernel that computes in
     /// its operands' element reads. An FP8 score's `e4m3` query and keys beside 16-bit values
-    /// are not, and only the plane fragments, which multiply each on its own instruction, read
-    /// them.
+    /// are not: the plane fragments multiply each on its own instruction, and the plane shuffle
+    /// widens each into the sum as it reads it.
     pub fn in_one_element(&self) -> bool {
         let AttentionOperands {
             query, key, value, ..
@@ -93,21 +107,36 @@ impl AttentionWorkItem {
         ]
     }
 
-    /// The elements its operands may reach its two matrix instructions in, the exact pair first:
-    /// as stored, and `f32` also rounded to tf32, ten bits of mantissa, the instruction an NVIDIA
-    /// GPU offers `f32` operands, the sum staying `f32`, where the reading allows it.
+    /// The elements its operands may reach its two matrix instructions in, the cache as stored
+    /// first. The score is read at the keys' element, the query converted to it as it is staged,
+    /// as an FP8 cache's keys are multiplied on the FP8 instruction; and, where the reading allows
+    /// it, at the query's, the keys widened to it. The value is read at the values' element, and,
+    /// where the reading allows it, at the query's, the values widened to the element the model
+    /// computes in. `f32` throughout is also rounded to tf32, ten bits of mantissa, the
+    /// instruction an NVIDIA GPU offers `f32` operands, the sum staying `f32`.
     pub fn readings(&self) -> impl Iterator<Item = AttentionRead> {
-        let stored = AttentionRead {
-            score: self.elements.query,
-            value: self.elements.value,
-        };
+        let AttentionOperands {
+            query, key, value, ..
+        } = self.elements;
+        let converted = self.reading == AttentionReading::Rounded;
+        let scores = [Some(key), (converted && query != key).then_some(query)];
+        let values = [Some(value), (converted && query != value).then_some(query)];
         let f32 = ElemType::Float(FloatKind::F32);
-        let rounded =
-            match stored == AttentionRead::all(f32) && self.reading == AttentionReading::Rounded {
-                true => Some(AttentionRead::all(ElemType::Float(FloatKind::TF32))),
-                false => None,
-            };
-        core::iter::once(stored).chain(rounded)
+        let tf32 = (converted
+            && AttentionRead::all(f32) == AttentionRead { score: key, value }
+            && query == f32)
+            .then(|| AttentionRead::all(ElemType::Float(FloatKind::TF32)));
+        let pairs: Vec<_> = scores
+            .into_iter()
+            .flatten()
+            .flat_map(|score| {
+                values
+                    .into_iter()
+                    .flatten()
+                    .map(move |value| AttentionRead { score, value })
+            })
+            .collect();
+        pairs.into_iter().chain(tf32)
     }
 
     /// This work item with its query and keys read in `read.score` and its values in

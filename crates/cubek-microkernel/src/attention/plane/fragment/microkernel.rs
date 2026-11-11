@@ -457,7 +457,8 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
     let mut sum = PlaneFragmentAttention::<EA, EV>::open_sum(out, bias, value, microkernel);
 
     // The query spans no key: staged once, before the walk, as the plane's own copy.
-    let mut staged_query = query.stage_for(&walk, StageStorage::Strided, decoded);
+    let mut staged_query =
+        query.stage_for(&walk, StageStorage::Strided, microkernel.decoded_query());
     staged_query.copy_from(query);
 
     sync_plane();

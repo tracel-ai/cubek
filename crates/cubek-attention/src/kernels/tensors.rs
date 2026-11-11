@@ -27,8 +27,8 @@ use cubek_std::routine::Grid;
 /// What a launch declines before preparing anything: an element the routines do not take, or
 /// operands of two elements other than an FP8 score's.
 pub const ATTENTION_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
-    why: "the microkernel attention takes f32, f16 and bf16 operands of one element, or an e4m3 \
-          query and keys beside f16 or bf16 values",
+    why: "the microkernel attention takes an f32, f16 or bf16 query, and keys and values each in \
+          one of those or in e4m3",
 };
 
 /// What a packed launch declines before preparing anything: an operand packed at a width the
@@ -243,22 +243,17 @@ impl AttentionTensors {
         Self::attention(client, queries, kv, scoring)
     }
 
-    /// The element an FP8 score's query and keys are stored in.
-    pub const FP8_SCORE: ElemType = ElemType::Float(FloatKind::E4M3);
-
-    /// The elements the values beside an FP8 score's query and keys may be stored in, which the
-    /// output takes.
-    pub const FP8_SCORE_VALUES: [ElemType; 2] = [
-        ElemType::Float(FloatKind::F16),
-        ElemType::Float(FloatKind::BF16),
-    ];
-
     /// The elements the routines are verified at.
     pub const VERIFIED: [ElemType; 3] = [
         ElemType::Float(FloatKind::F32),
         ElemType::Float(FloatKind::F16),
         ElemType::Float(FloatKind::BF16),
     ];
+
+    /// The elements a side of a cache is verified at besides [`VERIFIED`](Self::VERIFIED): an
+    /// FP8 cache's, which the routines read on the device's FP8 instruction or widen as they
+    /// stage it.
+    pub const VERIFIED_CACHE: [ElemType; 1] = [ElemType::Float(FloatKind::E4M3)];
 
     /// Float operands of one element the routines take and `client`'s device runs, `key` and
     /// `value` laid out as sequences, or as pools of pages where `pages` names them.
@@ -333,9 +328,11 @@ impl AttentionTensors {
     }
 
     /// The elements of float operands, where the routines take them and `client`'s device runs
-    /// them: one element for all three, or an FP8 score, an e4m3 query and keys beside 16-bit
-    /// values ([`FP8_SCORE_VALUES`](Self::FP8_SCORE_VALUES)), which the score multiplies on the
-    /// device's FP8 instruction and the value on its 16-bit one.
+    /// them: the query in an element the device computes in, and the keys and the values each in
+    /// one of those or in `e4m3` ([`VERIFIED_CACHE`](Self::VERIFIED_CACHE)), whatever the other
+    /// side's, where the device stores it. A routine reads each side as stored or converted as
+    /// it stages it ([`AttentionWorkItem::readings`](cubek_microkernel::attention::AttentionWorkItem::readings)),
+    /// and declines a pair it reads neither way.
     ///
     /// # Errors
     ///
@@ -346,26 +343,23 @@ impl AttentionTensors {
         key: &PlainTensor,
         value: &PlainTensor,
     ) -> Result<(), Refusal> {
-        let fp8_score = query.elem == Self::FP8_SCORE
-            && key.elem == Self::FP8_SCORE
-            && Self::FP8_SCORE_VALUES.contains(&value.elem);
-        if fp8_score {
-            // The query and the keys are only stored and read by the FP8 instruction, which the
-            // microkernel asks of the device as it prepares; the values are computed in.
+        Self::admit_element(client, query)?;
+        for side in [key, value] {
+            let verified =
+                Self::VERIFIED.contains(&side.elem) || Self::VERIFIED_CACHE.contains(&side.elem);
+            if !verified {
+                return Err(ATTENTION_ELEMENT_UNVERIFIED);
+            }
             let stored = client
                 .properties()
                 .features
-                .type_usage(Self::FP8_SCORE)
+                .type_usage(side.elem)
                 .contains(TypeUsage::Buffer);
-            return match stored && value.runs_on(client) {
-                true => Ok(()),
-                false => Err(ELEMENT_NOT_ON_DEVICE),
-            };
+            if !stored {
+                return Err(ELEMENT_NOT_ON_DEVICE);
+            }
         }
-        if query.elem != key.elem || query.elem != value.elem {
-            return Err(ATTENTION_ELEMENT_UNVERIFIED);
-        }
-        Self::admit_element(client, query)
+        Ok(())
     }
 
     /// The query's element, where the routines take it and `client`'s device runs it.
@@ -413,12 +407,9 @@ impl AttentionTensors {
         let q_shape = query.shape();
         let (batch, heads, queries) = (q_shape[0], q_shape[1], q_shape[2]);
         let value = kv.val_dim();
-        // The output is the values' weighted sum, at their element: the query's, but beside an
-        // FP8 score's e4m3 query, the 16-bit values'.
-        let out_elem = match &kv.cache {
-            AttentionCache::Float { value, .. } => value.elem,
-            AttentionCache::Packed(_) => query.elem,
-        };
+        // The output is at the query's element, the one the model computes in, whatever each
+        // side of the cache is stored in.
+        let out_elem = query.elem;
         // Dense, as every arm of the attention seam allocates it: a token's heads are one row, so
         // the caller merges them by a reshape. The views below are a factorization of these
         // strides, which a pitched allocation would invalidate.

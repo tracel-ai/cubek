@@ -31,9 +31,10 @@ pub(crate) struct AttentionCase {
     /// A mask's pattern, where the case has one: query `i` of head `h` in sequence `b` does not
     /// see key `j` where `hidden([b, h, i, j])` holds.
     pub hidden: Option<fn([usize; 4]) -> bool>,
-    /// The element the query and the keys are stored in: `f16` as the values, or `e4m3`, an FP8
-    /// score beside `f16` values.
-    pub score: FloatKind,
+    /// The element the cache stores its keys in: `f16` as the query, or `e4m3`, an FP8 cache's.
+    pub keys: FloatKind,
+    /// The element the cache stores its values in, as [`keys`](Self::keys) its keys.
+    pub values: FloatKind,
 }
 
 /// A prompt chunk of two groups of two query heads: no step of queries or keys divides it evenly.
@@ -49,7 +50,8 @@ pub(crate) const PROMPT: AttentionCase = AttentionCase {
         queries: QueryPlacement::Last,
     },
     hidden: None,
-    score: FloatKind::F16,
+    keys: FloatKind::F16,
+    values: FloatKind::F16,
 };
 
 /// A causal prompt chunk at a head dim of 128, the one a model's prefill runs: four query heads to
@@ -64,11 +66,37 @@ pub(crate) const PROMPT_WIDE: AttentionCase = AttentionCase {
     ..PROMPT
 };
 
-/// The wide prompt over an FP8 score: its query and keys stored as `e4m3` beside `f16` values.
-pub(crate) const PROMPT_WIDE_FP8_SCORE: AttentionCase = AttentionCase {
-    score: FloatKind::E4M3,
+/// A decode step at a model's head dim: one position of the wide prompt's heads.
+pub(crate) const DECODE_WIDE: AttentionCase = AttentionCase {
+    seq_q: 1,
+    visibility: AttentionVisibility::Attended,
     ..PROMPT_WIDE
 };
+
+/// `case` over each FP8 cache: `e4m3` keys, `e4m3` values, and both, beside the `f16` query.
+pub(crate) const fn fp8_caches(case: AttentionCase) -> [AttentionCase; 3] {
+    [
+        AttentionCase {
+            keys: FloatKind::E4M3,
+            ..case
+        },
+        AttentionCase {
+            values: FloatKind::E4M3,
+            ..case
+        },
+        AttentionCase {
+            keys: FloatKind::E4M3,
+            values: FloatKind::E4M3,
+            ..case
+        },
+    ]
+}
+
+/// The wide prompt over every FP8 cache.
+pub(crate) const PROMPTS_WIDE_FP8: [AttentionCase; 3] = fp8_caches(PROMPT_WIDE);
+
+/// The wide decode step over every FP8 cache.
+pub(crate) const DECODES_WIDE_FP8: [AttentionCase; 3] = fp8_caches(DECODE_WIDE);
 
 /// A single position of the same heads, which a routine walks the group of as its queries.
 pub(crate) const DECODE: AttentionCase = AttentionCase {
@@ -169,17 +197,17 @@ impl AttentionCase {
             input(
                 [self.batch, self.heads, self.seq_q, self.head_dim],
                 1,
-                self.score,
+                FloatKind::F16,
             ),
             input(
                 [self.batch, self.kv_heads, self.seq_kv, self.head_dim],
                 2,
-                self.score,
+                self.keys,
             ),
             input(
                 [self.batch, self.kv_heads, self.seq_kv, self.val_dim],
                 3,
-                FloatKind::F16,
+                self.values,
             ),
         ]
     }
@@ -256,7 +284,8 @@ impl AttentionCase {
     /// The case's tensors on `client`, asking for each query's logsumexp, under its mask where it
     /// has one, stored as `u32` cells.
     fn tensors(&self, client: &Client) -> AttentionTensors {
-        let (score, value) = (ElemType::Float(self.score), f16::elem_type_native());
+        let query = f16::elem_type_native();
+        let (keys, values) = (ElemType::Float(self.keys), ElemType::Float(self.values));
         let upload = |values: Vec<f32>, shape: Shape, element| {
             PlainTensor::of_handle(
                 TestInput::builder(client.clone(), shape)
@@ -266,9 +295,9 @@ impl AttentionCase {
             )
         };
         let [(q, q_shape), (k, k_shape), (v, v_shape)] = self.inputs();
-        let query = upload(q, Shape::new(q_shape), score);
-        let key = upload(k, Shape::new(k_shape), score);
-        let value = upload(v, Shape::new(v_shape), value);
+        let query = upload(q, Shape::new(q_shape), query);
+        let key = upload(k, Shape::new(k_shape), keys);
+        let value = upload(v, Shape::new(v_shape), values);
         let lengths = upload(vec![self.seq_kv as f32], shape![1], u32::elem_type_native());
         let tensors = AttentionTensors::new(
             client,
