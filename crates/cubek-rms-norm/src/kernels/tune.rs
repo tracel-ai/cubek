@@ -16,6 +16,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
 use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, SinkLaunchVisitor};
 use cubecl::tune::{AutotuneOutput, LocalTuner, TunableSet, local_tuner};
+use cubecl::zspace::metadata::Metadata;
 use cubecl::{self as cubecl, AutotuneKey, CubeDim, CubeTuneId};
 use cubek_matmul::kernels::tensor::{LhsOutput, PackedTensor, PlainTensor};
 use cubek_microkernel::rms_norm::GateOrder;
@@ -117,6 +118,67 @@ pub struct RmsNormCall {
     pub output_element: ElemType,
     /// The gate the rows are multiplied by, where the norm is gated.
     pub gate: Option<RmsNormGate>,
+}
+
+impl RmsNormCall {
+    /// This norm gated by `silu(gate)` as `order` says: `gate` is shaped as the input, or as the
+    /// input before [`grouped`](Self::grouped), in either order of the two calls.
+    pub fn gated(self, gate: PlainTensor, order: GateOrder) -> Self {
+        let group_size = *self
+            .input
+            .binding
+            .shape
+            .last()
+            .expect("a tensor has a last dim");
+        let tensor = match gate.binding.shape == self.input.binding.shape {
+            true => gate,
+            false => Self::regrouped(&self.client, gate, group_size),
+        };
+        Self {
+            gate: Some(RmsNormGate { tensor, order }),
+            ..self
+        }
+    }
+
+    /// This norm taken over groups of `group_size` channels, each token's row cut into
+    /// `channels / group_size` groups normalized apart: the input and the gate viewed as
+    /// `[tokens, groups, group_size]` at their own pitch, so a slice of a wider projection is read
+    /// where it lies. A tiled tensor, or one whose last stride is not 1, is copied first. The
+    /// weight is `[channels]`, a scale a channel, and the output comes back in the grouped shape.
+    ///
+    /// # Panics
+    ///
+    /// On a group size of zero or one that does not divide the channels.
+    pub fn grouped(self, group_size: usize) -> Self {
+        Self {
+            input: Self::regrouped(&self.client, self.input.clone(), group_size),
+            gate: self.gate.clone().map(|gate| RmsNormGate {
+                tensor: Self::regrouped(&self.client, gate.tensor, group_size),
+                ..gate
+            }),
+            ..self
+        }
+    }
+
+    fn regrouped(client: &Client, tensor: PlainTensor, group_size: usize) -> PlainTensor {
+        let last = tensor.binding.shape.len() - 1;
+        let tensor = match tensor.is_tiled() || tensor.binding.strides[last] != 1 {
+            true => tensor.into_contiguous(client),
+            false => tensor,
+        };
+        let channels = tensor.binding.shape[last];
+        assert!(
+            group_size > 0 && channels.is_multiple_of(group_size),
+            "groups of {group_size} channels do not divide {channels} channels"
+        );
+        let (mut shape, mut strides) = (
+            tensor.binding.shape.to_vec(),
+            tensor.binding.strides.to_vec(),
+        );
+        shape.splice(last.., [channels / group_size, group_size]);
+        strides.splice(last.., [group_size, 1]);
+        tensor.viewed(Metadata::new(shape, strides))
+    }
 }
 
 /// What an autotune's candidate hands back: the norm.
@@ -383,7 +445,7 @@ where
         R: Copy,
     {
         let tensors = RmsNormTensors::sink(call)?;
-        if tensors.problem().rows == 0 {
+        if tensors.problem().is_empty() {
             return Err(RMS_NORM_SINK_TAKES_NO_ROWS);
         }
         let prepared = self.prepare(tensors.problem())?;
@@ -403,7 +465,7 @@ where
         tensors: &RmsNormTensors<Out>,
         bind: impl FnOnce(&RmsNormBlueprint<M>, &Grid) -> RmsNormBinding<O::Operand>,
     ) -> Result<(), Refusal> {
-        if tensors.problem().rows == 0 {
+        if tensors.problem().is_empty() {
             return Ok(());
         }
         let (blueprint, grid) = self.prepare(tensors.problem())?;

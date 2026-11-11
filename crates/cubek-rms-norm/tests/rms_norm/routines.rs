@@ -23,3 +23,9 @@ fn plane_routine_matches_the_reference() {
 fn cube_routine_matches_the_reference() {
     check_routine(CubeRmsNormRoutine, Declines::AsItsMicrokernelStates);
 }
+
+/// A gate slice that starts on a read beside a dense input is read where it lies, not copied.
+#[test]
+fn an_aligned_gate_slice_is_not_copied() {
+    super::check::assert_gate_slice_is_read_in_place();
+}
