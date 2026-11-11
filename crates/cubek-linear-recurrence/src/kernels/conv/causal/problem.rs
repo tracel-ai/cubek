@@ -88,6 +88,15 @@ impl CausalConvProblem {
         Ok(())
     }
 
+    /// The extents the conv's taps run over.
+    pub(crate) fn extent(&self) -> ConvExtent {
+        ConvExtent {
+            batch: self.batch,
+            channels: self.channels,
+            taps: self.taps,
+        }
+    }
+
     pub(crate) fn work_item(&self) -> CausalConvWorkItem {
         CausalConvWorkItem {
             channels: self.channels,
@@ -172,12 +181,7 @@ impl EstimatedProblem for CausalConvProblem {
     /// Every operand once, and a handful of operations a channel a tap.
     fn demand(&self) -> Work {
         let size = self.element.size();
-        let extent = ConvExtent {
-            batch: self.batch,
-            channels: self.channels,
-            taps: self.taps,
-        };
-        let (read, written) = self.past.bytes(extent, size);
+        let (read, written) = self.past.bytes(self.extent(), size);
         let channels = self.batch * self.past.positions() * self.channels;
         Work {
             compute_ops: self.work_item().operations(channels),

@@ -1,8 +1,7 @@
 //! How the q,k,v conv places a launch and settles the width its channels bind at.
 
 use crate::kernels::conv::{
-    CausalConvBlueprint, ConvExtent, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem,
-    RingWriteBackLaunch,
+    CausalConvBlueprint, QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem, RingWriteBackLaunch,
 };
 use cubecl::tile::Levels;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
@@ -42,12 +41,7 @@ pub(super) fn prepare(
         shared_memory: microkernel.shared_memory(),
     };
     let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
-    let extent = ConvExtent {
-        batch: problem.batch,
-        channels: item.heads.conv_dim(),
-        taps: problem.taps,
-    };
-    let write_back = RingWriteBackLaunch::prepare(hw, &problem.past, extent, width)?;
+    let write_back = RingWriteBackLaunch::prepare(hw, &problem.past, problem.extent(), width)?;
     let blueprint = CausalConvBlueprint::new(microkernel, partitioning, width, write_back);
     Ok((blueprint, grid))
 }
