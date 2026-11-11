@@ -3,6 +3,9 @@
 //! `dS = P ⊙ (dO · Vᵀ − delta)`, the gradients `dQ = scale · dS · K`, `dK = scale · dSᵀ · Q` and
 //! `dV = Pᵀ · dO`.
 
+use crate::launch::attention_backward::{
+    AttentionBackwardLaunch, AttentionBackwardOperandArgs, AttentionBackwardWrites,
+};
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use cubecl::ir::{ElemType, FloatKind};
@@ -10,9 +13,6 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
 use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
-use cubek_microkernel::testing::attention_backward::{
-    AttentionBackwardLaunch, AttentionBackwardOperandArgs, AttentionBackwardWrites,
-};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};

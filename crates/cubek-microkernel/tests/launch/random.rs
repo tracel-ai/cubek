@@ -1,13 +1,6 @@
 //! The random microkernels on one work item: one unit's run of `values`, or one plane's, its lanes
 //! interleaved, each value drawn into a contiguous output.
 
-use crate::random::plane::{
-    PlaneRandomMicrokernel, PlaneRandomMicrokernelSettings, plane_random_microkernel,
-};
-use crate::random::unit::{
-    UnitRandomMicrokernel, UnitRandomMicrokernelSettings, unit_random_microkernel,
-};
-use crate::random::{Distribution, DistributionArgs, Seeds, SeedsLaunch};
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder, UnitCube};
@@ -15,6 +8,13 @@ use cubecl::tile::{
     Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::random::plane::{
+    PlaneRandomMicrokernel, PlaneRandomMicrokernelSettings, plane_random_microkernel,
+};
+use cubek_microkernel::random::unit::{
+    UnitRandomMicrokernel, UnitRandomMicrokernelSettings, unit_random_microkernel,
+};
+use cubek_microkernel::random::{Distribution, DistributionArgs, Seeds, SeedsLaunch};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 

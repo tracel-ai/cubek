@@ -1,7 +1,7 @@
 //! The hypercube reduce microkernel alone: cubes of four planes each reduce a part of the row, the
 //! last to finish merging the parts.
 
-use cubek_microkernel::testing::reduce::ReduceScope;
+use crate::launch::reduce::ReduceScope;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

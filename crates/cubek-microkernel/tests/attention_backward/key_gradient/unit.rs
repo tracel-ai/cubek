@@ -1,11 +1,11 @@
 //! The unit key gradient microkernel alone: one unit's keys, their gradient and their values' over every query.
 
+use crate::launch::attention_backward::UnitKeyGradientLaunch;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
 use cubek_microkernel::attention_backward::key_gradient::unit::{
     UnitKeyGradientMicrokernel, UnitKeyGradientMicrokernelSettings,
 };
-use cubek_microkernel::testing::attention_backward::UnitKeyGradientLaunch;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

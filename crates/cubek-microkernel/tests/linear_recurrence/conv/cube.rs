@@ -1,8 +1,8 @@
 //! The cube q|k-normed conv microkernel alone: a cube's units each a line of one key head's
 //! channels at one position, the head's queries and keys normed through shared memory.
 
+use crate::launch::linear_recurrence::conv::ConvStream;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
-use cubek_microkernel::testing::linear_recurrence::conv::ConvStream;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

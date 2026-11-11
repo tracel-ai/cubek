@@ -3,12 +3,12 @@
 //! `out[s, o]`. A hypercube's input splits the reduced axis into its parts, `input[o, p, r]` or
 //! `input[p, r, o]`, a cube a part.
 
+use crate::launch::reduce::{ReduceLaunch, ReduceScope};
 use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::{Shape, shape};
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation, ReduceWorkItem, ReduceWrites};
-use cubek_microkernel::testing::reduce::{ReduceLaunch, ReduceScope};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 

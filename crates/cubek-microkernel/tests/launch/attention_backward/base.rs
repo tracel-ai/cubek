@@ -1,15 +1,15 @@
 //! What every microkernel of attention's backward launched alone shares: one batch, one key head
 //! of `group` query heads, every key attended, and every operand as a launch argument.
 
-use crate::attention::{B, D, DV, G, KV, Q, S};
-use crate::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
 use core::fmt::Debug;
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::{Launcher, Level, Partitioning, Space, TileSpec, TileTensorLaunch};
+use cubek_microkernel::attention::{B, D, DV, G, KV, Q, S};
+use cubek_microkernel::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
 
 /// Every operand of attention's backward as a launch argument, each laid out as
-/// [`AttentionBackwardOperand::axes`](crate::attention_backward::AttentionBackwardOperand::axes)
+/// [`AttentionBackwardOperand::axes`](cubek_microkernel::attention_backward::AttentionBackwardOperand::axes)
 /// says: the forward's query, keys, values, output and logsumexp, the output's gradient, the
 /// dot products of the output with it, and the three gradients. A launch reads and writes the
 /// ones its microkernel does.
@@ -37,9 +37,6 @@ pub enum AttentionBackwardWrites {
 
 /// A gradient microkernel of attention's backward ready to launch alone over one sequence.
 pub trait AttentionBackwardLaunch: Debug {
-    /// What it attends.
-    fn item(&self) -> &AttentionBackwardWorkItem;
-
     /// The queries and the keys.
     fn seq(&self) -> [usize; 2];
 

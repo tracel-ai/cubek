@@ -1,8 +1,8 @@
 //! The cube RMS norm microkernel alone: a cube's planes each hold a run of one row, their sums met
 //! through shared memory.
 
+use crate::launch::rms_norm::RmsNormSettings;
 use cubek_microkernel::rms_norm::cube::CubeRmsNormMicrokernel;
-use cubek_microkernel::testing::rms_norm::RmsNormSettings;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::ScopeUnderTest;

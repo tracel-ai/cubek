@@ -5,14 +5,14 @@
 //! The weights are a tensor here, not a filter's: what the microkernel computes is the
 //! contraction, whatever weights it is handed.
 
-use crate::interpolate::InterpolateWorkItem;
-use crate::interpolate::cube::{
-    CubeInterpolateMicrokernel, CubeInterpolateMicrokernelSettings, cube_interpolate_microkernel,
-};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Partitioning, TileSpec, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::interpolate::InterpolateWorkItem;
+use cubek_microkernel::interpolate::cube::{
+    CubeInterpolateMicrokernel, CubeInterpolateMicrokernelSettings, cube_interpolate_microkernel,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 

@@ -4,13 +4,6 @@
 //! position. Every cube one run of a value head's columns, its units each rows of the state; the
 //! state is read from `state` and the last position's written back to it.
 
-use crate::linear_recurrence::walk::cube::{
-    CubeDeltaWalkMicrokernel, CubeWalkMicrokernelSettings, StateAccess, cube_delta_walk_microkernel,
-};
-use crate::linear_recurrence::{
-    BATCH, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceHeads,
-    RecurrenceWalkPartitioning, VALUE_FEATURE,
-};
 use cubecl::ir::FloatKind;
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
@@ -18,6 +11,13 @@ use cubecl::tile::{
     Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::linear_recurrence::walk::cube::{
+    CubeDeltaWalkMicrokernel, CubeWalkMicrokernelSettings, StateAccess, cube_delta_walk_microkernel,
+};
+use cubek_microkernel::linear_recurrence::{
+    BATCH, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceHeads,
+    RecurrenceWalkPartitioning, VALUE_FEATURE,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
@@ -140,7 +140,6 @@ impl WalkLaunch {
 /// Every cube walking its run of value columns through every position over `state`, the last
 /// position's state written back to it.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn cube_delta_walk_kernel<E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,

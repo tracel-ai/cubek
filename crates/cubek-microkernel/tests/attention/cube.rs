@@ -1,11 +1,11 @@
 //! The cube attention microkernel alone: a cube's planes over one box of queries, of shuffles
 //! reading each step's keys where they lie, or of fragments contracting the stages the cube fills.
 
+use crate::launch::attention::{AttentionElements, CubeAttentionLaunch};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings,
 };
-use cubek_microkernel::testing::attention::{AttentionElements, CubeAttentionLaunch};
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

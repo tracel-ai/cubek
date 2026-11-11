@@ -1,19 +1,19 @@
 //! The unit matmul microkernel on one unit's block of the output, the cube's only unit, walking `K`
 //! a step of its block at a time.
 
-use crate::matmul::unit::{
-    UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings, unit_registers_microkernel,
-};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::{ComputeScope, UnitCube};
 use cubecl::tile::{Partitioning, Semiring, TileTensor};
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::matmul::unit::{
+    UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings, unit_registers_microkernel,
+};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::Microkernel;
 
-use crate::matmul::MatmulMicrokernel;
+use cubek_microkernel::matmul::MatmulMicrokernel;
 
 use super::{MatmulElements, MatmulLaunch, OneCube};
 
