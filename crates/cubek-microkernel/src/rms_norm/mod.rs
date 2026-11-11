@@ -10,15 +10,19 @@
 //! need not be a plane ([`cube::CubeGroupsRmsNormMicrokernel`]).
 
 pub mod cube;
+mod gate;
 mod held_row;
 mod operand;
 mod partitioning;
 pub mod plane;
+mod row_reader;
 mod scale;
 mod work_item;
 
+pub use gate::*;
 pub use held_row::*;
 pub use operand::*;
 pub use partitioning::*;
+pub use row_reader::*;
 pub use scale::*;
 pub use work_item::*;

@@ -6,7 +6,7 @@
 use crate::kernels::{
     CubeGroupsRmsNormRoutine, CubeGroupsRmsNormRoutineSettings, CubeRmsNormRoutine,
     CubeRmsNormRoutineSettings, PlaneRmsNormRoutine, PlaneRmsNormRoutineSettings,
-    RMS_NORM_SINK_TAKES_NO_ROWS, RmsNormBinding, RmsNormBlueprint, RmsNormRoutine,
+    RMS_NORM_SINK_TAKES_NO_ROWS, RmsNormBinding, RmsNormBlueprint, RmsNormGate, RmsNormRoutine,
     RmsNormRoutineProblem, RmsNormRoutineSinkLaunch, RmsNormTensors,
 };
 use cubecl::Device;
@@ -18,6 +18,7 @@ use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, SinkLaunchVisit
 use cubecl::tune::{AutotuneOutput, LocalTuner, TunableSet, local_tuner};
 use cubecl::{self as cubecl, AutotuneKey, CubeDim, CubeTuneId};
 use cubek_matmul::kernels::tensor::{LhsOutput, PackedTensor, PlainTensor};
+use cubek_microkernel::rms_norm::GateOrder;
 use cubek_microkernel::row_store::Encoded;
 use cubek_std::Hardware;
 use cubek_std::autotune::{Autotune, CandidateIdentity, GroupPriority, Identity};
@@ -27,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// What makes two norms want the same kernel: the elements the rows are read and written in, the
-/// width and the count.
+/// gate order if any, the width and the count.
 ///
 /// The row width is **exact**: it is a `d_model` or a `head_dim`, fixed by the model config, and
 /// every owner sizes its registers by it. The row count is anchored — it is the axis a caller
@@ -37,6 +38,9 @@ pub struct RmsNormKey {
     elem: ElemType,
     /// The element the norm is written at: it changes the kernel and the width it binds at.
     output_element: ElemType,
+    /// Whether the rows are gated, and where the gate enters: it adds an operand and a pass of
+    /// arithmetic.
+    gate: Option<GateOrder>,
     /// The normalized row's width.
     dim: usize,
     #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
@@ -54,26 +58,38 @@ impl RmsNormKey {
         if self.rows <= rows || weight_a_row {
             return call.clone();
         }
-        let input = PlainTensor::zeros(
-            &call.client,
-            &[self.rows, self.dim],
-            [self.dim, 1],
-            call.input.elem,
-        );
+        let zeros = || {
+            PlainTensor::zeros(
+                &call.client,
+                &[self.rows, self.dim],
+                [self.dim, 1],
+                call.input.elem,
+            )
+        };
+        let gate = call.gate.as_ref().map(|gate| RmsNormGate {
+            tensor: zeros(),
+            order: gate.order,
+        });
         RmsNormCall {
-            input,
+            input: zeros(),
+            gate,
             ..call.clone()
         }
     }
 }
-
 /// The key of the norm `call` states.
 impl From<&RmsNormCall> for RmsNormKey {
     fn from(call: &RmsNormCall) -> Self {
         let shape = &call.input.binding.shape;
         let d = shape[shape.len() - 1];
         let rows = shape.iter().product::<usize>() / d;
-        Self::new(call.input.elem, call.output_element, d, rows)
+        Self::new(
+            call.input.elem,
+            call.output_element,
+            call.gate.as_ref().map(|gate| gate.order),
+            d,
+            rows,
+        )
     }
 }
 
@@ -81,7 +97,11 @@ impl From<&RmsNormCall> for RmsNormKey {
 /// written at its output element.
 impl From<&RmsNormKey> for RmsNormRoutineProblem {
     fn from(key: &RmsNormKey) -> Self {
-        Self::dense(key.rows, key.dim, key.elem).writing(key.output_element)
+        Self {
+            output_element: key.output_element,
+            gate: key.gate,
+            ..Self::dense(key.rows, key.dim, key.elem)
+        }
     }
 }
 
@@ -95,6 +115,8 @@ pub struct RmsNormCall {
     pub weight: PlainTensor,
     pub epsilon: f32,
     pub output_element: ElemType,
+    /// The gate the rows are multiplied by, where the norm is gated.
+    pub gate: Option<RmsNormGate>,
 }
 
 /// What an autotune's candidate hands back: the norm.
@@ -297,12 +319,7 @@ where
     ///
     /// Why this device cannot run the norm at this setting.
     pub fn launch(&self, call: &RmsNormCall) -> Result<TensorHandle, Refusal> {
-        let tensors = RmsNormTensors::new(
-            &call.client,
-            call.input.clone(),
-            call.weight.clone(),
-            call.output_element,
-        )?;
+        let tensors = RmsNormTensors::new(call)?;
         self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
             tensors
                 .bind(blueprint, grid)
@@ -319,13 +336,7 @@ where
     ///
     /// Why this device cannot run the norm at this setting, or why `out` cannot hold it.
     pub fn launch_tiled(&self, call: &RmsNormCall, out: PlainTensor) -> Result<(), Refusal> {
-        let tensors = RmsNormTensors::tiled(
-            &call.client,
-            call.input.clone(),
-            call.weight.clone(),
-            out,
-            call.output_element,
-        )?;
+        let tensors = RmsNormTensors::tiled(call, out)?;
         self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
             tensors
                 .bind(blueprint, grid)
@@ -342,13 +353,7 @@ where
     ///
     /// Why this device cannot encode the norm at this setting, or why `out` cannot hold it.
     pub fn launch_packed(&self, call: &RmsNormCall, out: PackedTensor) -> Result<(), Refusal> {
-        let tensors = RmsNormTensors::packed(
-            &call.client,
-            call.input.clone(),
-            call.weight.clone(),
-            out,
-            call.output_element,
-        )?;
+        let tensors = RmsNormTensors::packed(call, out)?;
         self.launch_on::<Encoded, _>(call, &tensors, |blueprint, grid| {
             tensors.bind(blueprint, grid)
         })
@@ -377,12 +382,7 @@ where
     where
         R: Copy,
     {
-        let tensors = RmsNormTensors::sink(
-            &call.client,
-            call.input.clone(),
-            call.weight.clone(),
-            call.output_element,
-        )?;
+        let tensors = RmsNormTensors::sink(call)?;
         if tensors.problem().rows == 0 {
             return Err(RMS_NORM_SINK_TAKES_NO_ROWS);
         }
@@ -594,9 +594,9 @@ mod tests {
     #[test]
     fn every_device_keeps_the_floor_and_a_decline_claims_nothing() {
         for key in [
-            RmsNormKey::new(F16, F16, 2560, 1),
-            RmsNormKey::new(F16, F16, 128, 512 * 24),
-            RmsNormKey::new(F16, F16, 8192, 1),
+            RmsNormKey::new(F16, F16, None, 2560, 1),
+            RmsNormKey::new(F16, F16, None, 128, 512 * 24),
+            RmsNormKey::new(F16, F16, None, 8192, 1),
         ] {
             for hw in [
                 devices::rdna_range(),
@@ -641,7 +641,7 @@ mod tests {
         }
         let hw = devices::h100();
 
-        let key = RmsNormKey::new(F16, F16, 512, 512);
+        let key = RmsNormKey::new(F16, F16, None, 512, 512);
         let (cubes, listed) = distinct(
             RmsNormRoutineCandidate::list(CubeRmsNormRoutine, &hw)
                 .iter()
@@ -652,7 +652,7 @@ mod tests {
             "{cubes} blueprints of {listed} cube settings"
         );
 
-        let key = RmsNormKey::new(F16, F16, 65536, 1);
+        let key = RmsNormKey::new(F16, F16, None, 65536, 1);
         let (groups, listed) = distinct(
             RmsNormRoutineCandidate::list(CubeGroupsRmsNormRoutine, &hw)
                 .iter()
@@ -664,13 +664,23 @@ mod tests {
         );
     }
 
-    /// What a norm is written at changes the kernel, so it splits the key.
+    /// The output element and the gate order change the kernel, so each splits the key, and the
+    /// problem a key describes carries them.
     #[test]
-    fn the_key_splits_on_the_output_element() {
-        let f32_out = RmsNormKey::new(F16, ElemType::Float(FloatKind::F32), 2560, 1);
-        assert_ne!(f32_out, RmsNormKey::new(F16, F16, 2560, 1));
-        let problem = RmsNormRoutineProblem::from(&f32_out);
-        assert_eq!(problem.output_element, ElemType::Float(FloatKind::F32));
+    fn the_key_splits_on_the_output_and_the_gate() {
+        let f32 = ElemType::Float(FloatKind::F32);
+        let plain = RmsNormKey::new(F16, F16, None, 2560, 1);
+        let widened = RmsNormKey::new(F16, f32, None, 2560, 1);
+        let before = RmsNormKey::new(F16, F16, Some(GateOrder::GateThenNorm), 2560, 1);
+        let keys = [&plain, &widened, &before];
+        for (i, key) in keys.iter().enumerate() {
+            assert!(keys[i + 1..].iter().all(|other| other != key));
+        }
+        assert_eq!(RmsNormRoutineProblem::from(&widened).output_element, f32);
+        assert_eq!(
+            RmsNormRoutineProblem::from(&before).gate,
+            Some(GateOrder::GateThenNorm)
+        );
     }
 
     /// A decode step's single row by cubes of one row falls short of the device, and a prompt's
@@ -680,9 +690,9 @@ mod tests {
         let hw = devices::strix_halo();
         let lead = RmsNormRoutineCandidate::list(PlaneRmsNormRoutine, &hw).swap_remove(0);
         assert_eq!(
-            lead.priority(&RmsNormKey::new(F16, F16, 128, 512 * 24)),
+            lead.priority(&RmsNormKey::new(F16, F16, None, 128, 512 * 24)),
             CandidatePriority::FIRST
         );
-        assert!(lead.priority(&RmsNormKey::new(F16, F16, 128, 1)) < CandidatePriority::FIRST);
+        assert!(lead.priority(&RmsNormKey::new(F16, F16, None, 128, 1)) < CandidatePriority::FIRST);
     }
 }

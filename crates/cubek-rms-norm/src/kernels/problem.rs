@@ -8,7 +8,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::Work;
 use cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE;
-use cubek_microkernel::rms_norm::{B, RmsNormOperands, RmsNormWorkItem};
+use cubek_microkernel::rms_norm::{B, GateOrder, RmsNormOperands, RmsNormWorkItem};
 use cubek_microkernel::row_store::RowStore;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
@@ -24,7 +24,8 @@ pub const RMS_NORM_OUTPUT_UNSUPPORTED: Refusal = Refusal::Declined {
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 
 /// `out[b, r] = input[b, r] / sqrt(mean(input[b, r]²) + epsilon) · weight` over `batch` entries
-/// of `rows` rows of `dim` elements, as the host describes it.
+/// of `rows` rows of `dim` elements, as the host describes it, the rows gated by `silu(gate)` where
+/// [`gate`](Self::gate) says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RmsNormRoutineProblem {
     pub batch: usize,
@@ -40,6 +41,8 @@ pub struct RmsNormRoutineProblem {
     pub start_bytes: RmsNormOperands<u64>,
     /// How the output's rows are stored.
     pub store: RowStore,
+    /// Whether the rows are gated, and where the gate enters.
+    pub gate: Option<GateOrder>,
 }
 
 impl RmsNormRoutineProblem {
@@ -50,6 +53,7 @@ impl RmsNormRoutineProblem {
             output_element: self.output_element,
             dim: self.dim,
             store: self.store,
+            gate: self.gate,
         }
     }
 
@@ -68,16 +72,21 @@ impl RmsNormRoutineProblem {
     /// How one cube walks `rows` ([`RmsNormCubeRows`]): every row read once and written once, the
     /// weight read once, in one stage held while it computes.
     pub fn cube_staging(&self, rows: RmsNormCubeRows) -> CubeStaging {
+        let gated = usize::from(self.gate.is_some());
         let stream = |elements: usize, element: ElemType| GlobalStream {
             bytes: (elements * element.size()) as u64,
             run_bytes: rows.run * element.size(),
         };
+        let mut reads = vec![
+            stream(rows.rows * self.dim, self.element),
+            stream(self.dim, self.element),
+        ];
+        if self.gate.is_some() {
+            reads.push(stream(rows.rows * self.dim, self.element));
+        }
         CubeStaging {
-            operations: (4 * rows.rows * self.dim) as f64,
-            reads: vec![
-                stream(rows.rows * self.dim, self.element),
-                stream(self.dim, self.element),
-            ],
+            operations: ((4 + 4 * gated) * rows.rows * self.dim) as f64,
+            reads,
             writes: vec![stream(rows.rows * self.dim, self.output_element)],
             stages: 1,
             stages_in_flight: 1,
@@ -99,28 +108,23 @@ impl RmsNormRoutineProblem {
             elem_alignments: RmsNormOperands {
                 input: row,
                 weight: row,
+                gate: row,
                 out: row,
             },
             start_bytes: RmsNormOperands {
                 input: 0,
                 weight: 0,
+                gate: 0,
                 out: 0,
             },
             store: RowStore::Plain,
+            gate: None,
         }
     }
 
     /// This problem, its rows stored as `store` says.
     pub fn stored(self, store: RowStore) -> Self {
         Self { store, ..self }
-    }
-
-    /// This problem, its output written at `output_element`.
-    pub fn writing(self, output_element: ElemType) -> Self {
-        Self {
-            output_element,
-            ..self
-        }
     }
 
     /// Whether `hw` runs a norm of rows of `element` written at `output_element`.
@@ -160,13 +164,14 @@ pub struct RmsNormCubeRows {
 }
 
 impl EstimatedProblem for RmsNormRoutineProblem {
-    /// Each row read once and written once, the weight read once, and four operations an element:
-    /// the square, its sum, the scale and the weight.
+    /// Each row read once, and its gate where there is one, written once, the weight read once, and
+    /// four operations an element, and four more for the silu and its product where gated.
     fn demand(&self) -> Work {
+        let gated = usize::from(self.gate.is_some());
         let elements = self.batch * self.rows * self.dim;
         Work {
-            compute_ops: 4 * elements,
-            bytes: (elements + self.dim) * self.element.size()
+            compute_ops: (4 + 4 * gated) * elements,
+            bytes: ((1 + gated) * elements + self.dim) * self.element.size()
                 + elements * self.output_element.size(),
         }
     }

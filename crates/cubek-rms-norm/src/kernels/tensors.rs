@@ -1,18 +1,21 @@
 //! How an RMS-norm launch reads its operands and binds them.
 
-use crate::kernels::{RMS_NORM_OUTPUT_UNSUPPORTED, RmsNormBlueprint, RmsNormRoutineProblem};
+use crate::kernels::{
+    RMS_NORM_OUTPUT_UNSUPPORTED, RmsNormBlueprint, RmsNormCall, RmsNormRoutineProblem,
+};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::Refusal;
+use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{
     Axis, Geometry, Launcher,
     launch::{Bound, Unbound},
 };
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{PackedRows, PackedTensor, Placement, PlainTensor, TiledRows};
-use cubek_microkernel::rms_norm::{B, D, R, RmsNormOperands};
+use cubek_microkernel::rms_norm::{B, D, GateOrder, R, RmsNormOperands};
 use cubek_microkernel::row_store::RowStore;
 use cubek_std::Hardware;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
@@ -22,6 +25,14 @@ use cubek_std::routine::Grid;
 pub const RMS_NORM_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
     why: "the microkernel RMS norm normalizes float rows",
 };
+
+/// The gate a norm multiplies its rows by, `silu(gate)`, and where it enters: a tensor of the
+/// input's shape and element.
+#[derive(Debug, Clone)]
+pub struct RmsNormGate {
+    pub tensor: PlainTensor,
+    pub order: GateOrder,
+}
 
 /// The tensors of one norm, its output among them, and the problem they state.
 ///
@@ -45,6 +56,7 @@ pub struct RmsNormTensors<Out = RmsNormOutputBuffer> {
     client: Client,
     input: PlainTensor,
     weight: RmsNormWeight,
+    gate: Option<RmsNormGate>,
     out: Out,
     problem: RmsNormRoutineProblem,
 }
@@ -54,6 +66,7 @@ impl<Out: core::fmt::Debug> core::fmt::Debug for RmsNormTensors<Out> {
         f.debug_struct("RmsNormTensors")
             .field("input", &self.input)
             .field("weight", &self.weight)
+            .field("gate", &self.gate)
             .field("out", &self.out)
             .field("problem", &self.problem)
             .finish_non_exhaustive()
@@ -74,11 +87,12 @@ pub const RMS_NORM_ROWS_IN_ENTRIES: Refusal = Refusal::Declined {
     why: "a packed or tiled RMS norm writes dense rows, one batch entry of them",
 };
 
-/// The rows and the weight as every launch reads them, before the output is decided.
+/// The rows, the weight and the gate as every launch reads them, before the output is decided.
 struct RmsNormInputs {
     client: Client,
     input: PlainTensor,
     weight: RmsNormWeight,
+    gate: Option<RmsNormGate>,
     /// The input's shape, which the output takes.
     shape: Vec<usize>,
     output_element: ElemType,
@@ -88,50 +102,79 @@ struct RmsNormInputs {
 }
 
 impl RmsNormInputs {
-    /// The rows of `input`, in batch entries where they lie, and `weight`, read as dense rows
-    /// starting on a whole read. Under a weight a row ([`RmsNormWeight::PerRow`]) each batch
-    /// entry holds the weight's rows: rows that lie in other entries are made dense and taken as
-    /// many at a time.
+    /// The rows of `call`'s input, in batch entries where they lie, its gate cut into the same
+    /// entries, and its weight, read as dense rows starting on a whole read. Under a weight a row
+    /// ([`RmsNormWeight::PerRow`]) each batch entry holds the weight's rows: rows that lie in
+    /// other entries are made dense and taken as many at a time.
     ///
     /// # Errors
     ///
     /// As [`RmsNormTensors::new`].
-    fn new(
-        client: &Client,
-        input: PlainTensor,
-        weight: PlainTensor,
-        output_element: ElemType,
-    ) -> Result<Self, Refusal> {
-        assert_eq!(input.elem, weight.elem, "the weight is the rows' element");
+    fn new(call: &RmsNormCall) -> Result<Self, Refusal> {
+        let (client, input) = (&call.client, call.input.clone());
+        assert_eq!(
+            input.elem, call.weight.elem,
+            "the weight is the rows' element"
+        );
+        if let Some(gate) = &call.gate {
+            assert_eq!(
+                gate.tensor.elem, input.elem,
+                "the gate is the rows' element"
+            );
+            assert_eq!(
+                gate.tensor.binding.shape, input.binding.shape,
+                "the gate has the rows' shape"
+            );
+        }
+        let output_element = call.output_element;
         let hw = Hardware::from_client(client);
         RmsNormRoutineProblem::admit_elements(&hw, input.elem, output_element)?;
         let read_bytes = hw.properties.io_width() as u64 / 8;
         let shape = input.binding.shape.to_vec();
         let dim = *shape.last().expect("a tensor has a last dimension");
-        let starts_on_a_read = input.start_bytes().is_multiple_of(read_bytes.max(1));
-        let input = match input.as_batched_rows(dim) {
-            Some(rows) if starts_on_a_read => rows,
-            _ => input
-                .into_dense_at(client, read_bytes)
-                .as_batched_rows(dim)
-                .expect("dense rows are one batch entry"),
+        let weight = RmsNormWeight::new(call.weight.clone().into_dense_at(client, read_bytes), dim);
+        let cut = |tensor: PlainTensor| match tensor.as_batched_rows(dim) {
+            Some(rows) if rows.start_bytes().is_multiple_of(read_bytes.max(1)) => rows,
+            _ => dense_entries(client, tensor, dim, read_bytes),
         };
-        let weight = RmsNormWeight::new(weight.into_dense_at(client, read_bytes), dim);
-        let input = match weight.rows() {
-            Some(each) if input.binding.shape[1] != each => {
-                let dense = input.into_dense_at(client, read_bytes);
-                let rows = dense.binding.shape.iter().product::<usize>() / dim;
+        let input = cut(input);
+        let gate = call.gate.as_ref().map(|gate| RmsNormGate {
+            tensor: cut(gate.tensor.clone()),
+            order: gate.order,
+        });
+        // The rows an entry holds: the weight's under a weight a row, else the multi-entry
+        // operand's, and every operand is cut to them.
+        let each = weight.rows().or_else(|| {
+            let shapes = [Some(&input), gate.as_ref().map(|gate| &gate.tensor)];
+            shapes
+                .into_iter()
+                .flatten()
+                .find(|tensor| tensor.binding.shape[0] > 1)
+                .map(|tensor| tensor.binding.shape[1])
+        });
+        let to_each = |tensor: PlainTensor| match each {
+            Some(each) if tensor.binding.shape[1] != each => {
+                let rows = match tensor.binding.shape[0] {
+                    1 => tensor,
+                    _ => dense_entries(client, tensor, dim, read_bytes),
+                };
+                let rows_in_all = rows.binding.shape[1];
                 assert!(
-                    rows.is_multiple_of(each),
-                    "a weight of {each} rows scales whole groups of rows, got {rows} rows"
+                    rows_in_all.is_multiple_of(each),
+                    "a weight of {each} rows scales whole groups of rows, got {rows_in_all} rows"
                 );
-                dense.viewed(Metadata::new(
-                    [rows / each, each, dim],
+                rows.viewed(Metadata::new(
+                    [rows_in_all / each, each, dim],
                     [each * dim, dim, 1],
                 ))
             }
-            _ => input,
+            _ => tensor,
         };
+        let input = to_each(input);
+        let gate = gate.map(|gate| RmsNormGate {
+            tensor: to_each(gate.tensor),
+            ..gate
+        });
         let [batch, rows, _] = input.binding.shape[..] else {
             unreachable!("batched rows have three dims")
         };
@@ -139,6 +182,7 @@ impl RmsNormInputs {
             client: client.clone(),
             input,
             weight,
+            gate,
             shape,
             output_element,
             batch,
@@ -180,6 +224,7 @@ impl RmsNormInputs {
             client: self.client,
             input: self.input,
             weight: self.weight,
+            gate: self.gate,
             out,
             problem,
         }
@@ -198,37 +243,45 @@ impl RmsNormInputs {
             elem_alignments: RmsNormOperands {
                 input: input.elem_alignment(),
                 weight: weight.elem_alignment(),
+                gate: self
+                    .gate
+                    .as_ref()
+                    .map_or(ElemAlignment::dense_rows(self.dim), |gate| {
+                        gate.tensor.elem_alignment()
+                    }),
                 out: out.elem_alignment,
             },
             start_bytes: RmsNormOperands {
                 input: input.start_bytes(),
                 weight: weight.start_bytes(),
+                gate: self
+                    .gate
+                    .as_ref()
+                    .map_or(0, |gate| gate.tensor.start_bytes()),
                 out: out.start_bytes,
             },
             store,
+            gate: self.gate.as_ref().map(|gate| gate.order),
         }
     }
 }
 
 impl RmsNormTensors {
-    /// The norm of `input`'s last dim, scaled by `weight`, its output allocated at
-    /// `output_element`: the input's, or `f32`.
+    /// The norm `call` states, its output allocated at the call's output element.
     ///
     /// # Errors
     ///
-    /// What [`RmsNormRoutineProblem::admit_elements`] declines.
+    /// [`RMS_NORM_ELEMENT_UNVERIFIED`], what the routines decline whatever the device,
+    /// [`RMS_NORM_OUTPUT_UNSUPPORTED`], and `ELEMENT_NOT_ON_DEVICE`: an element this device's
+    /// runtime does not run.
     ///
     /// # Panics
     ///
-    /// Operands on different devices or of different elements, a weight that is not whole rows of
+    /// Operands on different devices or of different elements, a gate not shaped as the input, a
+    /// weight that is not whole rows of
     /// the normalized dim, or a weight a row whose rows do not divide the input's: no norm at all.
-    pub fn new(
-        client: &Client,
-        input: PlainTensor,
-        weight: PlainTensor,
-        output_element: ElemType,
-    ) -> Result<Self, Refusal> {
-        let operands = RmsNormInputs::new(client, input, weight, output_element)?;
+    pub fn new(call: &RmsNormCall) -> Result<Self, Refusal> {
+        let (client, operands) = (&call.client, RmsNormInputs::new(call)?);
         let (handle, tensor) = PlainTensor::empty_contiguous(
             client,
             operands.shape.clone().into(),
@@ -252,24 +305,20 @@ impl RmsNormTensors {
     /// The three operands bound as `blueprint` states them, on `grid`: under its partitioning, at
     /// its width.
     pub fn bind<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<Bound> {
-        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
-        let out = launcher
+        let binding = self.bind_operands(blueprint, grid);
+        let out = binding
+            .launcher
             .arg(self.out.rows.binding.clone(), self.problem.output_element)
             .axes(&[B, R, D])
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
-        RmsNormBinding {
-            launcher,
-            input,
-            weight,
-            out,
-        }
+        binding.map_out(|()| out)
     }
 }
 
 impl RmsNormTensors<Geometry> {
-    /// The norm of `input`'s last dim, scaled by `weight`, handed to a sink the caller binds:
+    /// The norm `call` states, handed to a sink the caller binds:
     /// nothing is allocated, and the output is laid out as the dense `[b, r, d]` rows a buffer
     /// would hold.
     ///
@@ -280,14 +329,8 @@ impl RmsNormTensors<Geometry> {
     /// # Panics
     ///
     /// As [`RmsNormTensors::new`].
-    pub fn sink(
-        client: &Client,
-        input: PlainTensor,
-        weight: PlainTensor,
-        output_element: ElemType,
-    ) -> Result<Self, Refusal> {
-        let operands = RmsNormInputs::new(client, input, weight, output_element)?
-            .writing_the_input_element()?;
+    pub fn sink(call: &RmsNormCall) -> Result<Self, Refusal> {
+        let operands = RmsNormInputs::new(call)?.writing_the_input_element()?;
         let out = Geometry::row_major(&[operands.batch, operands.rows, operands.dim]);
         let placement = Placement::dense_rows(operands.dim);
         Ok(operands.with_out(out, placement, RowStore::Plain))
@@ -297,19 +340,15 @@ impl RmsNormTensors<Geometry> {
     /// the sink's layout rather than a buffer: its spec, and the geometry the derivation settled,
     /// which the caller's sink addresses through.
     pub fn bind<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<Unbound> {
-        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
-        let out = launcher
+        let binding = self.bind_operands(blueprint, grid);
+        let out = binding
+            .launcher
             .unbound(&self.out)
             .axes(&[B, R, D])
             .vectorize(blueprint.width)
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);
-        RmsNormBinding {
-            launcher,
-            input,
-            weight,
-            out,
-        }
+        binding.map_out(|()| out)
     }
 
     /// The sink the output is laid out as.
@@ -319,7 +358,7 @@ impl RmsNormTensors<Geometry> {
 }
 
 impl RmsNormTensors<PackedRows> {
-    /// The norm of `input`'s last dim, scaled by `weight`, encoded into `out`, a packed
+    /// The norm `call` states, encoded into `out`, a packed
     /// `[rows, dim]` matrix over a product's lhs axes the caller allocated under one level of block
     /// scales along each row. The rows are staged in each cube's shared memory, dense, and encoded
     /// from there.
@@ -333,14 +372,8 @@ impl RmsNormTensors<PackedRows> {
     /// # Panics
     ///
     /// As [`RmsNormTensors::new`], and on an `out` not shaped `[rows, dim]`.
-    pub fn packed(
-        client: &Client,
-        input: PlainTensor,
-        weight: PlainTensor,
-        out: PackedTensor,
-        output_element: ElemType,
-    ) -> Result<Self, Refusal> {
-        let operands = RmsNormInputs::new(client, input, weight, output_element)?
+    pub fn packed(call: &RmsNormCall, out: PackedTensor) -> Result<Self, Refusal> {
+        let operands = RmsNormInputs::new(call)?
             .writing_the_input_element()?
             .one_entry()?;
         let out = PackedRows::new(out, operands.rows, operands.dim)?;
@@ -355,19 +388,14 @@ impl RmsNormTensors<PackedRows> {
         blueprint: &RmsNormBlueprint<M>,
         grid: &Grid,
     ) -> RmsNormBinding<TileTensorLaunch> {
-        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
-        let out = self.out.bind(&launcher, blueprint.width);
-        RmsNormBinding {
-            launcher,
-            input,
-            weight,
-            out,
-        }
+        let binding = self.bind_operands(blueprint, grid);
+        let out = self.out.bind(&binding.launcher, blueprint.width);
+        binding.map_out(|()| out)
     }
 }
 
 impl RmsNormTensors<TiledRows> {
-    /// The norm of `input`'s last dim, scaled by `weight`, written into `out`, a float
+    /// The norm `call` states, written into `out`, a float
     /// `[rows, dim]` matrix stored in tiles the caller allocated: its rows land in its tiles as
     /// they are written, through the binding its tiling states.
     ///
@@ -379,14 +407,8 @@ impl RmsNormTensors<TiledRows> {
     /// # Panics
     ///
     /// As [`RmsNormTensors::new`].
-    pub fn tiled(
-        client: &Client,
-        input: PlainTensor,
-        weight: PlainTensor,
-        out: PlainTensor,
-        output_element: ElemType,
-    ) -> Result<Self, Refusal> {
-        let operands = RmsNormInputs::new(client, input, weight, output_element)?
+    pub fn tiled(call: &RmsNormCall, out: PlainTensor) -> Result<Self, Refusal> {
+        let operands = RmsNormInputs::new(call)?
             .writing_the_input_element()?
             .one_entry()?;
         let element = operands.input.elem;
@@ -398,14 +420,9 @@ impl RmsNormTensors<TiledRows> {
     /// The rows and the weight bound as `blueprint` states them, on `grid`, and the output over
     /// the rows and the dim, through the tiles its binding states.
     pub fn bind<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<Bound> {
-        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
-        let out = self.out.bind(&launcher, blueprint.width);
-        RmsNormBinding {
-            launcher,
-            input,
-            weight,
-            out,
-        }
+        let binding = self.bind_operands(blueprint, grid);
+        let out = self.out.bind(&binding.launcher, blueprint.width);
+        binding.map_out(|()| out)
     }
 }
 
@@ -420,13 +437,9 @@ impl<Out> RmsNormTensors<Out> {
         &self.problem
     }
 
-    /// The launcher of `blueprint`'s partitioning on `grid`, and the rows and the weight bound
-    /// under it at its width: what every output binds beside.
-    fn bind_operands<M>(
-        &self,
-        blueprint: &RmsNormBlueprint<M>,
-        grid: &Grid,
-    ) -> (Launcher, [Bound; 2]) {
+    /// The launcher of `blueprint`'s partitioning on `grid`, and the rows, the weight and the gate
+    /// bound under it at its width: what every output binds beside.
+    fn bind_operands<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<()> {
         let partitioning = &blueprint.partitioning;
         // The grid's launcher, settled over the extents on its first launch and cloned after.
         let launcher = grid.launcher(self.client(), || {
@@ -445,11 +458,16 @@ impl<Out> RmsNormTensors<Out> {
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)
         };
-        let operands = [
-            bind(&self.input, &[B, R]),
-            bind(self.weight.tensor(), self.weight.leading_axes()),
-        ];
-        (launcher, operands)
+        let input = bind(&self.input, &[B, R]);
+        let weight = bind(self.weight.tensor(), self.weight.leading_axes());
+        let gate = self.gate.as_ref().map(|gate| bind(&gate.tensor, &[B, R]));
+        RmsNormBinding {
+            launcher,
+            input,
+            weight,
+            gate,
+            out: (),
+        }
     }
 }
 
@@ -511,6 +529,8 @@ pub struct RmsNormBinding<Out> {
     pub launcher: Launcher,
     pub input: Bound,
     pub weight: Bound,
+    /// The gate, where the norm is gated.
+    pub gate: Option<Bound>,
     pub out: Out,
 }
 
@@ -521,7 +541,16 @@ impl<Out> RmsNormBinding<Out> {
             launcher: self.launcher,
             input: self.input,
             weight: self.weight,
+            gate: self.gate,
             out: f(self.out),
         }
     }
+}
+
+/// `tensor` copied into dense rows starting on a read, as `[1, rows, dim]`.
+fn dense_entries(client: &Client, tensor: PlainTensor, dim: usize, read_bytes: u64) -> PlainTensor {
+    tensor
+        .into_dense_at(client, read_bytes)
+        .as_batched_rows(dim)
+        .expect("dense rows are one batch entry")
 }

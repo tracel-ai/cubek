@@ -43,7 +43,7 @@ impl<M> RmsNormBlueprint<M> {
         mut vectorization: Vectorization<RmsNormOperand>,
     ) -> Self {
         let item = problem.work_item();
-        for operand in RmsNormOperand::ALL {
+        for &operand in RmsNormOperand::of(problem.gate) {
             vectorization.require(VectorRequirement::Aligned {
                 operand,
                 alignment: problem.elem_alignments.get(operand),

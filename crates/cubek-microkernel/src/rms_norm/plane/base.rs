@@ -1,4 +1,4 @@
-use crate::rms_norm::{HeldRowShape, RmsNormOperand, RmsNormWorkItem};
+use crate::rms_norm::{GateOrder, HeldRowShape, RmsNormOperand, RmsNormWorkItem};
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
@@ -29,6 +29,8 @@ pub struct PlaneRmsNormMicrokernel {
     /// The width the operands bind at ([`RmsNormWorkItem::width`]), which the run is checked
     /// against the lanes' registers at.
     pub width: usize,
+    /// Whether the norm is gated, and where the gate enters.
+    pub gate: Option<GateOrder>,
 }
 
 /// A plane's microkernel has nothing a measurement settles: its lanes are the device's and its
@@ -51,6 +53,7 @@ impl PlaneRmsNormMicrokernel {
             run,
             dim: item.dim,
             width: item.width(hw),
+            gate: item.gate,
         };
         (microkernel.held_row().per_unit() <= HeldRowShape::MAX_LINES_PER_UNIT)
             .then_some(microkernel)
@@ -97,7 +100,7 @@ impl Microkernel for PlaneRmsNormMicrokernel {
 
     /// Every operand along the plane's run ([`RmsNormOperand::require_along_run`]).
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<RmsNormOperand>) {
-        RmsNormOperand::require_along_run(self.run, vectorization);
+        RmsNormOperand::require_along_run(self.run, self.gate, vectorization);
     }
 
     /// Its lanes hold their share of the run in registers ([`HeldRowShape::work`]). The reads are
@@ -109,6 +112,6 @@ impl Microkernel for PlaneRmsNormMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        estimate.work = Some(self.held_row().work(self.width, item.element));
+        estimate.work = Some(self.held_row().work(self.width, item.held_element()));
     }
 }

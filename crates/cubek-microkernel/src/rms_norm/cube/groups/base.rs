@@ -1,4 +1,4 @@
-use crate::rms_norm::{HeldRowShape, RmsNormOperand, RmsNormWorkItem};
+use crate::rms_norm::{GateOrder, HeldRowShape, RmsNormOperand, RmsNormWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
@@ -27,6 +27,8 @@ pub struct CubeGroupsRmsNormMicrokernel {
     pub width: usize,
     /// How a group's units sum their partials.
     pub sum: GroupSum,
+    /// Whether the norm is gated, and where the gate enters.
+    pub gate: Option<GateOrder>,
 }
 
 /// How a group's units sum their partials into the row's sum.
@@ -153,12 +155,13 @@ impl Microkernel for CubeGroupsRmsNormMicrokernel {
             dim: item.dim,
             width: item.width(hw),
             sum: GroupSum::of(hw, units),
+            gate: item.gate,
         })
     }
 
     /// Every operand along the whole row ([`RmsNormOperand::require_along_run`]).
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<RmsNormOperand>) {
-        RmsNormOperand::require_along_run(self.dim, vectorization);
+        RmsNormOperand::require_along_run(self.dim, self.gate, vectorization);
     }
 
     /// Its units hold their share of the row in registers ([`HeldRowShape::work`]). The reads are
@@ -170,7 +173,7 @@ impl Microkernel for CubeGroupsRmsNormMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        estimate.work = Some(self.held_row().work(self.width, item.element));
+        estimate.work = Some(self.held_row().work(self.width, item.held_element()));
     }
 }
 
