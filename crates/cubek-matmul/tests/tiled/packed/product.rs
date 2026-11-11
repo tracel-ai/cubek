@@ -45,7 +45,8 @@ pub(crate) struct PackedProduct {
     k: usize,
     lhs: Stored,
     rhs: Stored,
-    /// The product on the host, computed once for every setting it is launched at.
+    /// The product on the host, computed once for every setting it is launched at: shared by the
+    /// clones of one product, and reset by a builder that changes it.
     reference: Arc<OnceLock<HostData>>,
 }
 
@@ -98,17 +99,29 @@ impl PackedProduct {
 
     /// The same product with `m` rows.
     pub(crate) fn m(self, m: usize) -> Self {
-        Self { m, ..self }
+        Self {
+            m,
+            reference: Arc::default(),
+            ..self
+        }
     }
 
     /// The same product with `n` columns.
     pub(crate) fn n(self, n: usize) -> Self {
-        Self { n, ..self }
+        Self {
+            n,
+            reference: Arc::default(),
+            ..self
+        }
     }
 
     /// The same product, `k` deep.
     pub(crate) fn k(self, k: usize) -> Self {
-        Self { k, ..self }
+        Self {
+            k,
+            reference: Arc::default(),
+            ..self
+        }
     }
 
     /// `count` `bf16` values in `[-1, 1)`.
