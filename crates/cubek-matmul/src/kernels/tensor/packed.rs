@@ -580,19 +580,28 @@ impl PackedTensor {
             // its own, bound as the `e4m3` byte it is with its sign clear, so a unit loads the byte
             // it uses rather than the word around it.
             BlockScales::Fields if self.packing().reads_scale_bytes() => {
-                let block_scales = launcher
-                    .arg(
-                        self.per_slab(self.block_scale_bytes(rows, blocks)),
-                        ElemType::Float(FloatKind::E4M3),
-                    )
-                    .gathered(
-                        self.stack_dim()
-                            .dim(scale_rows)
-                            .dim(self.dim(lined))
-                            .build()
-                            .scales_per(blocks_axis),
-                    )
-                    .vectorize(1);
+                let e4m3 = ElemType::Float(FloatKind::E4M3);
+                let scales_axes = tile_order::scales_axes(across);
+                // In the tiles tile order stores them in, where it does, stated a row a read: a
+                // statement counted in scales, which bound as bytes is counted in bytes.
+                let in_tiles = operand.tile_order().and_then(|order| {
+                    order.kernel_scales_read(self.extent(K), (across, self.extent(across)), 1)
+                });
+                let block_scales = match in_tiles {
+                    None => launcher
+                        .arg(self.per_slab(self.block_scale_bytes(rows, blocks)), e4m3)
+                        .gathered(
+                            self.stack_dim()
+                                .dim(scale_rows)
+                                .dim(self.dim(lined))
+                                .build()
+                                .scales_per(blocks_axis),
+                        ),
+                    Some(stated) => launcher
+                        .arg(self.block_scales.bound_as(stated), e4m3)
+                        .axes(&scales_axes),
+                }
+                .vectorize(1);
                 self.under_scale_bytes(words, block_scales, global)
             }
             BlockScales::Fields => {
