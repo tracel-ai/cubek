@@ -20,7 +20,7 @@ use std::sync::Arc;
 pub struct RingWriteBackLaunch {
     partitioning: CausalConvPartitioning,
     width: usize,
-    lines: ChannelBox,
+    channel_box: ChannelBox,
     grid: Grid,
 }
 
@@ -29,7 +29,7 @@ impl PartialEq for RingWriteBackLaunch {
     fn eq(&self, other: &Self) -> bool {
         self.partitioning == other.partitioning
             && self.width == other.width
-            && self.lines == other.lines
+            && self.channel_box == other.channel_box
     }
 }
 
@@ -73,7 +73,7 @@ impl RingWriteBackLaunch {
             Levels::leaf(&leaf).units_distributed(LINE_IN_BOX, units),
             &[RING_POSITION, CHANNEL_BOX],
         );
-        let lines = ChannelBox {
+        let channel_box = ChannelBox {
             units,
             channels: extent.channels,
         };
@@ -85,7 +85,7 @@ impl RingWriteBackLaunch {
         Ok(Some(Arc::new(Self {
             partitioning,
             width,
-            lines,
+            channel_box,
             grid,
         })))
     }
@@ -116,7 +116,7 @@ impl RingWriteBackLaunch {
                 valid,
                 reads.past().ring().columns,
                 launcher.partitioning_arg(),
-                self.lines,
+                self.channel_box,
                 reads.taps() - 1,
                 reads.element(),
             );

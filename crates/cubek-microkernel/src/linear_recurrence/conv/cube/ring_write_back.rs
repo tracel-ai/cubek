@@ -60,11 +60,11 @@ pub fn cube_ring_write_back_microkernel<E: Float, N: Size>(
     cube: &Region,
     tiles: &PastTiles,
     valid: &Tile,
-    #[comptime] lines: ChannelBox,
+    #[comptime] channel_box: ChannelBox,
     #[comptime] read_columns: usize,
 ) {
     let write_back = RingWriteBack::new(cube, tiles, valid, read_columns);
-    let box_lines = BoxLines::new::<N>(cube, lines);
+    let box_lines = BoxLines::new::<N>(cube, channel_box);
     for share in cube {
         let line = box_lines.line(&share);
         if box_lines.holds(line) {
