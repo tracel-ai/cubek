@@ -1,14 +1,5 @@
 //! The plane matmul microkernels on one work item.
 
-use crate::matmul::plane::{
-    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
-    PlaneShuffleMicrokernelSettings, plane_fragment_microkernel, plane_fragment_partial,
-    plane_shuffle_microkernel,
-};
-use crate::matmul::{
-    MatmulAxes, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
-    MatmulStage,
-};
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
@@ -17,6 +8,15 @@ use cubecl::tile::{
     Tile, TileTensor,
 };
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::matmul::plane::{
+    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
+    PlaneShuffleMicrokernelSettings, plane_fragment_microkernel, plane_fragment_partial,
+    plane_shuffle_microkernel,
+};
+use cubek_microkernel::matmul::{
+    MatmulAxes, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
+    MatmulStage,
+};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{Microkernel, StageRing};
@@ -142,7 +142,6 @@ impl MatmulLaunch for PlaneFragmentLaunch {
 /// The one plane walking its tile through its own stages
 /// ([`plane_fragment_staged_microkernel`]) and draining its fragments into `out`.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
@@ -186,7 +185,6 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
 /// partial is opened over `c`. A walk below the planes' level is the plane's own, so its stages
 /// are too: each plane fills a copy of its own, met on its own barriers.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 fn plane_fragment_staged_microkernel<EL: Numeric>(
     plane: &Region,
     sum: &Tile,

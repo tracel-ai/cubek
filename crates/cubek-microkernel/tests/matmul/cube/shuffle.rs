@@ -1,8 +1,8 @@
 //! The cube shuffle microkernel alone: a cube's planes take `K` in turns and meet in one accumulator.
 
+use crate::launch::matmul::{CubeShuffleLaunch, MatmulElements, WholeRows};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::cube::{CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings};
-use cubek_microkernel::testing::matmul::{CubeShuffleLaunch, MatmulElements, WholeRows};
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

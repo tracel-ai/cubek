@@ -2,17 +2,17 @@
 //! row-major `m × k`, `rhs` `k × n` row-major or its transpose and `out` `m × n`, every operand
 //! bound one element a line, and the box one cube of the microkernel's levels covers.
 
-use crate::matmul::cube::MatmulCubeSpace;
-use crate::matmul::{
-    MatmulAxes, MatmulAxesKind, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading,
-    MatmulRows, MatmulWorkItem,
-};
 use core::fmt::Debug;
 use cubecl::prelude::*;
 use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Launcher, Level, Partitioning, Space, TileSpec, TileTensorLaunch};
+use cubek_microkernel::matmul::cube::MatmulCubeSpace;
+use cubek_microkernel::matmul::{
+    MatmulAxes, MatmulAxesKind, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading,
+    MatmulRows, MatmulWorkItem,
+};
 use cubek_std::matmul_axes::{K, M, N};
 
 /// The elements of a float product: what both inputs are stored in, what it sums in and what it

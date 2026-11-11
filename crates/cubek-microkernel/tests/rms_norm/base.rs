@@ -1,12 +1,12 @@
 //! What every RMS norm microkernel computes alone: each row divided by its root mean square and
 //! scaled by the weight, `out = x / sqrt(mean(x²) + ε) · γ`.
 
+use crate::launch::RowBatch;
+use crate::launch::rms_norm::{RmsNormLaunch, RmsNormSettings};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
-use cubek_microkernel::testing::RowBatch;
-use cubek_microkernel::testing::rms_norm::{RmsNormLaunch, RmsNormSettings};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 

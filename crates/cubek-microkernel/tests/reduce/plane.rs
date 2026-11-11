@@ -1,6 +1,6 @@
 //! The plane reduce microkernel alone: a whole plane reduces its row.
 
-use cubek_microkernel::testing::reduce::ReduceScope;
+use crate::launch::reduce::ReduceScope;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

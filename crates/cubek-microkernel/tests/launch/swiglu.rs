@@ -2,15 +2,15 @@
 //! half, gated into `out = silu(gate) ⊙ up`, every cube one group running one row's run, written
 //! straight into a plain output.
 
-use crate::row_store::{CubeStage, RowStore};
-use crate::swiglu::cube::{
-    CubeSwigluMicrokernel, CubeSwigluMicrokernelSettings, cube_swiglu_microkernel,
-};
-use crate::swiglu::{D, H, R, SwigluPartitioning, SwigluWorkItem};
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::{Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::row_store::{CubeStage, RowStore};
+use cubek_microkernel::swiglu::cube::{
+    CubeSwigluMicrokernel, CubeSwigluMicrokernelSettings, cube_swiglu_microkernel,
+};
+use cubek_microkernel::swiglu::{D, H, R, SwigluPartitioning, SwigluWorkItem};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 

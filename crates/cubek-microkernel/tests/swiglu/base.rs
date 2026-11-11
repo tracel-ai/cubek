@@ -1,13 +1,13 @@
 //! What every SwiGLU microkernel computes alone: each fused row `[gate | up]` gated into
 //! `silu(gate) ⊙ up`.
 
+use crate::launch::RowBatch;
+use crate::launch::swiglu::SwigluLaunch;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
 use cubek_microkernel::swiglu::cube::CubeSwigluMicrokernelSettings;
-use cubek_microkernel::testing::RowBatch;
-use cubek_microkernel::testing::swiglu::SwigluLaunch;
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 

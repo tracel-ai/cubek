@@ -29,9 +29,6 @@ pool = []
 linear-recurrence = []
 # Where a producer of rows writes them, as computed or packed for a product's lhs.
 row-store = []
-# A launch of one microkernel on one work item, for tests: what a routine adds around it,
-# kept to the least that runs it.
-testing = []
 
 [dependencies]
 cubek-std = { workspace = true }
@@ -42,7 +39,3 @@ serde = { workspace = true }
 [dev-dependencies]
 cubek-test-utils = { workspace = true }
 half = { workspace = true }
-
-[[test]]
-name = "lib"
-required-features = ["testing"]

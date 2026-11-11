@@ -1,8 +1,8 @@
 //! The unit registers microkernel alone: each unit of a plane its own block of the output.
 
+use crate::launch::matmul::{MatmulElements, UnitRegistersLaunch};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
-use cubek_microkernel::testing::matmul::{MatmulElements, UnitRegistersLaunch};
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

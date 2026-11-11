@@ -1,38 +1,33 @@
-//! The plane attention microkernels on one work item: every query one plane's rows.
+//! The unit attention microkernel on one work item: one unit's query rows against every key, the
+//! cube's only unit.
 
-use crate::attention::plane::{
-    PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
-    plane_fragment_attention_microkernel,
-};
-use crate::attention::{
-    AttentionMicrokernel, AttentionOperands, AttentionVisibility, AttentionWorkItem, B, D, DV, G,
-    KV, Q, S, VisibleKeys,
-};
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
-use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::space::UnitCube;
 use cubecl::tile::{Launcher, Partitioning, Space, Tile, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::attention::unit::{
+    UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings, unit_attention_microkernel,
+};
+use cubek_microkernel::attention::{
+    AttentionVisibility, AttentionWorkItem, B, D, DV, G, KV, Q, S, VisibleKeys,
+};
 use cubek_std::Hardware;
-use cubek_std::microkernel::{Microkernel, StageRing};
+use cubek_std::microkernel::Microkernel;
 
 use super::{AttentionElements, AttentionLaunch};
 
-/// One plane fragment attention microkernel ready to launch on one work item: the microkernel the
-/// device picks at `settings`, over one plane's queries and `steps` stages of keys.
+/// One unit attention microkernel ready to launch on one unit's rows, `steps` steps of keys.
 #[derive(Debug, Clone)]
-pub struct PlaneFragmentAttentionLaunch {
-    pub microkernel: PlaneFragmentAttentionMicrokernel,
+pub struct UnitAttentionLaunch {
+    pub microkernel: UnitAttentionMicrokernel,
     pub item: AttentionWorkItem,
-    /// The queries and the keys.
     pub seq: [usize; 2],
-    ring: StageRing,
-    plane_width: u32,
 }
 
-impl PlaneFragmentAttentionLaunch {
-    /// The best plane fragment attention microkernel `hw` runs at `settings`, with rows of
-    /// `head_dim` in the query and key and of `val_dim` in the value, over `steps` stages of keys.
+impl UnitAttentionLaunch {
+    /// The unit attention microkernel `hw` runs at `settings`, with rows of `head_dim` in the
+    /// query and key and of `val_dim` in the value, over `steps` steps of keys.
     ///
     /// # Errors
     ///
@@ -40,31 +35,24 @@ impl PlaneFragmentAttentionLaunch {
     pub fn new(
         hw: &Hardware,
         elements: AttentionElements,
-        [head_dim, val_dim]: [usize; 2],
-        settings: &PlaneFragmentAttentionMicrokernelSettings,
+        dims: [usize; 2],
+        settings: &UnitAttentionMicrokernelSettings,
         steps: usize,
     ) -> Result<Self, Refusal> {
-        let item = elements.work_item([head_dim, val_dim]);
-        let microkernel = PlaneFragmentAttentionMicrokernel::best(hw, &item, settings)?;
-        let plane_width = hw.plane_dim()?;
-        let ring = StageRing::SINGLE.resolve(
-            hw,
-            &microkernel
-                .served(&item)
-                .stage(microkernel.seq_kv(), microkernel.key_order()),
-            plane_width as usize,
-        );
+        let item = elements.work_item(dims);
+        let microkernel = UnitAttentionMicrokernel::best(hw, &item, settings)?;
         Ok(Self {
-            seq: [microkernel.seq_q(), microkernel.seq_kv() * steps],
+            seq: [
+                microkernel.settings.seq_q.get(),
+                microkernel.seq_kv() * steps,
+            ],
             microkernel,
             item,
-            ring,
-            plane_width,
         })
     }
 }
 
-impl AttentionLaunch for PlaneFragmentAttentionLaunch {
+impl AttentionLaunch for UnitAttentionLaunch {
     fn item(&self) -> &AttentionWorkItem {
         &self.item
     }
@@ -99,45 +87,40 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
             space.clone(),
             self.microkernel
                 .tiling()
-                .walk_every(&[S])
-                .launch_planes(
+                .launch_units(
                     &[Q, G, B, KV],
-                    PlaneOrder::new(&[(Q, 1)], CubeOrder::RowMajor),
+                    UnitCube {
+                        plane_width: 1,
+                        planes: 1,
+                    },
                 )
                 .build(),
         );
         let grid = Grid::Stated {
             cube_count: partitioning.cube_count(),
-            cube_dim: partitioning.cube_dim(self.plane_width),
+            cube_dim: partitioning.cube_dim(1),
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
-        let served = self.microkernel.served(item);
-        let widths = AttentionOperands {
-            query: 1,
-            key: 1,
-            value: 1,
-            out: 1,
-        };
-        let delivery = self.microkernel.delivery(&widths, item);
         let bound = |tensor: TensorBinding, element, axes: &'static [_]| {
-            launcher.arg(tensor, element).axes(axes).vectorize(1)
+            launcher
+                .arg(tensor, element)
+                .axes(axes)
+                .vectorize(1)
+                .build()
         };
-        let query = bound(query, served.elements.query, &[B, KV, G, Q, D]).build()?;
-        let key = bound(key, served.elements.key, &[B, KV, S, D])
-            .delivery(delivery)
-            .build()?;
-        let value = bound(value, served.elements.value, &[B, KV, S, DV])
-            .delivery(delivery)
-            .build()?;
-        let out = bound(out, item.elements.out, &[B, KV, G, Q, DV]).build()?;
+        let elements = item.elements;
+        let query = bound(query, elements.query, &[B, KV, G, Q, D])?;
+        let key = bound(key, elements.key, &[B, KV, S, D])?;
+        let value = bound(value, elements.value, &[B, KV, S, DV])?;
+        let out = bound(out, elements.out, &[B, KV, G, Q, DV])?;
         let logsumexp = logsumexp
-            .map(|logsumexp| bound(logsumexp, item.sum, &[B, KV, G, Q]).build())
+            .map(|logsumexp| bound(logsumexp, item.sum, &[B, KV, G, Q]))
             .transpose()?;
         // SAFETY: every operand is bound through the launcher at the problem's own extents, the
         // keys and values are read no further than the attended length, and the kernel indexes
         // no buffer but through its tiles and the one entry of the lengths.
         unsafe {
-            plane_fragment_attention_kernel::launch_unchecked(
+            unit_attention_kernel::launch_unchecked(
                 client,
                 launcher.cube_count(),
                 launcher.cube_dim(),
@@ -152,18 +135,16 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
                 scale,
                 launcher.partitioning_arg(),
                 self.microkernel,
-                self.ring,
-                served.kernel_elements(),
+                item.sum,
             );
         }
         Ok(())
     }
 }
 
-/// The one plane running its queries through stages of its own over every key
-/// ([`plane_fragment_attention_microkernel`]).
+/// The one unit running its rows over every key.
 #[cube(launch_unchecked)]
-fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
+fn unit_attention_kernel<EA: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
@@ -174,9 +155,8 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
-    #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
-    #[comptime] ring: StageRing,
-    #[define(EA, ES)] _elements: [ElemType; 2],
+    #[comptime] microkernel: UnitAttentionMicrokernel,
+    #[define(EA)] _sum: ElemType,
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
     let q = query.tile(&partitioning);
@@ -184,12 +164,11 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     let value = value.tile(&partitioning);
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
-
-    for plane in &partitioning {
+    for unit in &partitioning {
         let visible = VisibleKeys::new(
             len,
             &ComptimeOption::new_None(),
-            &plane,
+            &unit,
             queries,
             &mask,
             AttentionVisibility::Attended,
@@ -197,21 +176,23 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
         let bias = visible.bias::<EA>(&partitioning);
-        let steps = visible.steps(&plane, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
-
-        plane_fragment_attention_microkernel::<EA, ES>(
-            &plane,
-            &o.at(&plane),
-            &lse.clone().map(|lse| lse.at(&plane)),
-            &q.at(&plane),
-            &k.at(&plane),
-            &v.at(&plane),
-            &bias.at(&plane),
+        let steps = visible.steps(
+            &unit,
+            microkernel.settings.seq_q.get(),
+            microkernel.seq_kv(),
+            1usize,
+        );
+        unit_attention_microkernel::<EA>(
+            &unit,
+            &o.at(&unit),
+            &lse.clone().map(|lse| lse.at(&unit)),
+            &q.at(&unit),
+            &k.at(&unit),
+            &v.at(&unit),
+            &bias.at(&unit),
             steps,
             EA::cast_from(scale),
             microkernel,
-            ring,
-            1usize,
         );
     }
 }

@@ -2,6 +2,8 @@
 //! reference written for what it computes alone: a folder per problem, laid out as its source, a
 //! file per microkernel.
 
+mod launch;
+
 #[cfg(feature = "attention")]
 mod attention;
 #[cfg(feature = "attention-backward")]

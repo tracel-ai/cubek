@@ -3,20 +3,20 @@
 //! cube one row across its planes, a cube of groups one row a group; every output is written
 //! straight into a plain output.
 
-use crate::rms_norm::cube::{
-    CubeGroupsRmsNormMicrokernel, CubeGroupsRmsNormMicrokernelSettings, CubeRmsNormMicrokernel,
-    CubeRmsNormMicrokernelSettings, cube_groups_rms_norm_microkernel, cube_rms_norm_microkernel,
-};
-use crate::rms_norm::plane::{
-    PlaneRmsNormMicrokernel, PlaneRmsNormMicrokernelSettings, plane_rms_norm_microkernel,
-};
-use crate::rms_norm::{B, D, R, RmsNormPartitioning, RmsNormScale, RmsNormWorkItem};
-use crate::row_store::{CubeStage, OwnerLines, RowStore};
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::rms_norm::cube::{
+    CubeGroupsRmsNormMicrokernel, CubeGroupsRmsNormMicrokernelSettings, CubeRmsNormMicrokernel,
+    CubeRmsNormMicrokernelSettings, cube_groups_rms_norm_microkernel, cube_rms_norm_microkernel,
+};
+use cubek_microkernel::rms_norm::plane::{
+    PlaneRmsNormMicrokernel, PlaneRmsNormMicrokernelSettings, plane_rms_norm_microkernel,
+};
+use cubek_microkernel::rms_norm::{B, D, R, RmsNormPartitioning, RmsNormScale, RmsNormWorkItem};
+use cubek_microkernel::row_store::{CubeStage, OwnerLines, RowStore};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
@@ -201,7 +201,6 @@ impl RmsNormLaunch {
 
 /// The one plane normalizing its row.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn plane_rms_norm_kernel<E: Float, N: Size>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,
@@ -231,7 +230,6 @@ fn plane_rms_norm_kernel<E: Float, N: Size>(
 
 /// Every cube normalizing its row across its planes, written straight into the output.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn cube_rms_norm_kernel<E: Float, N: Size>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,
@@ -262,7 +260,6 @@ fn cube_rms_norm_kernel<E: Float, N: Size>(
 
 /// Every cube normalizing its group's row, written straight into the output.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn cube_groups_rms_norm_kernel<E: Float, N: Size>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,

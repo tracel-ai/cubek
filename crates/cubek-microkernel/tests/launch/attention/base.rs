@@ -1,10 +1,10 @@
 //! What every attention microkernel launched alone shares: one batch, one head, every key
 //! attended, no mask; `out = softmax(scale · query · keyᵀ) · value` and each query's logsumexp.
 
-use crate::attention::{AttentionOperands, AttentionReading, AttentionWorkItem};
 use core::fmt::Debug;
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
+use cubek_microkernel::attention::{AttentionOperands, AttentionReading, AttentionWorkItem};
 
 /// The elements of a float attention: what the query, keys and values are stored in, what it
 /// sums in and what it writes.

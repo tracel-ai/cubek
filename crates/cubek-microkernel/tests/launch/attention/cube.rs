@@ -2,15 +2,6 @@
 //! attended. Planes of shuffles read each step's keys where they lie; planes of fragments contract
 //! stages the cube fills.
 
-use crate::attention::cube::{
-    CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings, CubeAttentionPlane,
-    cube_staged_attention_microkernel, cube_unstaged_attention_microkernel,
-};
-use crate::attention::plane::TileStepReads;
-use crate::attention::{
-    AttentionMicrokernel, AttentionOperands, AttentionVisibility, AttentionWorkItem, B, D, DV, G,
-    KV, Q, S, VisibleKeys,
-};
 use core::marker::PhantomData;
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
@@ -19,6 +10,15 @@ use cubecl::tile::{
     Launcher, Partitioning, Space, StageStorage, Tile, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::attention::cube::{
+    CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings, CubeAttentionPlane,
+    cube_staged_attention_microkernel, cube_unstaged_attention_microkernel,
+};
+use cubek_microkernel::attention::plane::TileStepReads;
+use cubek_microkernel::attention::{
+    AttentionMicrokernel, AttentionOperands, AttentionVisibility, AttentionWorkItem, B, D, DV, G,
+    KV, Q, S, VisibleKeys,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
@@ -213,7 +213,6 @@ impl AttentionLaunch for CubeAttentionLaunch {
 
 /// The one cube walking the stages it fills over every key.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -268,7 +267,6 @@ fn cube_staged_attention_kernel<EA: Float, ES: Float>(
 
 /// The one cube's planes of shuffles reading every step's keys where they lie.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn cube_unstaged_attention_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,

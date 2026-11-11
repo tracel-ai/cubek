@@ -1,5 +1,6 @@
 //! What every matmul microkernel computes alone: `out = lhs · rhs`, both row-major.
 
+use crate::launch::matmul::{MatmulElements, MatmulLaunch};
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use cubecl::ir::{ElemType, FloatKind};
@@ -7,7 +8,6 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
 use cubek_microkernel::matmul::MatmulLayout;
-use cubek_microkernel::testing::matmul::{MatmulElements, MatmulLaunch};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};

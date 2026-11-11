@@ -2,20 +2,20 @@
 //! every key into their gradient, or one unit's keys walked over every query into theirs and their
 //! values'. The cube's only unit runs it.
 
-use crate::attention::{AttentionVisibility, B, G, KV, Q, S, VisibleKeys};
-use crate::attention_backward::key_gradient::unit::{
-    UnitKeyGradientMicrokernel, UnitKeyGradientMicrokernelSettings, unit_key_gradient_microkernel,
-};
-use crate::attention_backward::query_gradient::unit::{
-    UnitQueryGradientMicrokernel, UnitQueryGradientMicrokernelSettings,
-    unit_query_gradient_microkernel,
-};
-use crate::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::UnitCube;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::attention::{AttentionVisibility, B, G, KV, Q, S, VisibleKeys};
+use cubek_microkernel::attention_backward::key_gradient::unit::{
+    UnitKeyGradientMicrokernel, UnitKeyGradientMicrokernelSettings, unit_key_gradient_microkernel,
+};
+use cubek_microkernel::attention_backward::query_gradient::unit::{
+    UnitQueryGradientMicrokernel, UnitQueryGradientMicrokernelSettings,
+    unit_query_gradient_microkernel,
+};
+use cubek_microkernel::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
@@ -58,10 +58,6 @@ impl UnitQueryGradientLaunch {
 }
 
 impl AttentionBackwardLaunch for UnitQueryGradientLaunch {
-    fn item(&self) -> &AttentionBackwardWorkItem {
-        &self.item
-    }
-
     fn seq(&self) -> [usize; 2] {
         self.seq
     }
@@ -145,10 +141,6 @@ impl UnitKeyGradientLaunch {
 }
 
 impl AttentionBackwardLaunch for UnitKeyGradientLaunch {
-    fn item(&self) -> &AttentionBackwardWorkItem {
-        &self.item
-    }
-
     fn seq(&self) -> [usize; 2] {
         self.seq
     }
@@ -205,7 +197,6 @@ impl AttentionBackwardLaunch for UnitKeyGradientLaunch {
 
 /// The one unit's queries: their dot products, then their gradient over every key.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn unit_query_gradient_kernel<EA: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -254,7 +245,6 @@ fn unit_query_gradient_kernel<EA: Float>(
 
 /// The one unit's keys: their gradient and their values' over every query.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn unit_key_gradient_kernel<EA: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,

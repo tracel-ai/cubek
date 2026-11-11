@@ -1,7 +1,7 @@
 //! The cube SwiGLU microkernel alone: each cube's group of units shares one row's run.
 
+use crate::launch::RowBatch;
 use cubek_microkernel::swiglu::cube::CubeSwigluMicrokernel;
-use cubek_microkernel::testing::RowBatch;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::ScopeUnderTest;

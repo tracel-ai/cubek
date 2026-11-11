@@ -1,10 +1,8 @@
 use crate::matmul::cube::{MatmulCubeSpace, MatmulCubeWrite};
-use crate::matmul::{
-    MatmulAxesKind, MatmulBuffers, MatmulDestination, MatmulOperand, MatmulStage, MatmulWorkItem,
-};
+use crate::matmul::{MatmulBuffers, MatmulDestination, MatmulOperand, MatmulStage, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
-use cubek_std::matmul_axes::{M, N};
+use cubek_std::matmul_axes::{MB, NB};
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 
 /// Who moves a cube microkernel's box of the output into global memory once its walk ends. The
@@ -42,8 +40,8 @@ pub enum CubeStagedTmaStoreRefusal {
     UnalignedStart,
     /// The box's edge is past what one descriptor's box holds.
     BoxPastDescriptor,
-    /// The product is a packed one's, its box stated in the blocks the packed input's scales cut
-    /// and the positions inside one, where a descriptor's box is the output's rows and columns.
+    /// The product is a packed one's whose scales cut the output's rows or columns into several
+    /// blocks, so its box is stated in more than the two axes a descriptor's box moves.
     BlockSplit,
 }
 
@@ -71,7 +69,10 @@ impl CubeStagedTmaStoreRefusal {
             Some(Self::SplitAlongK)
         } else if cube_space.batched {
             Some(Self::Batched)
-        } else if cube_space.axes_kind == MatmulAxesKind::BlockSplit {
+        } else if [MB, NB]
+            .into_iter()
+            .any(|blocks| cube_space.space.contains(blocks) && cube_space.space.extent(blocks) > 1)
+        {
             Some(Self::BlockSplit)
         } else if buffers.alignments.get(out).is_stored_piece()
             || !buffers
@@ -87,7 +88,11 @@ impl CubeStagedTmaStoreRefusal {
         {
             Some(Self::UnalignedStart)
         } else if Delivery::Tma
-            .moves(&cube_space.space.subspace(&[M, N]))
+            .moves(
+                &cube_space
+                    .space
+                    .subspace(&cube_space.axes_kind.output_axes()),
+            )
             .is_err()
         {
             Some(Self::BoxPastDescriptor)
@@ -104,7 +109,9 @@ impl CubeStagedStore {
         match self {
             Self::Fragments => 0,
             Self::Tma => {
-                stage.extent(M) * stage.extent(N) * elem_bytes + Delivery::TMA_STAGE_ALIGNMENT
+                let axes = stage.axes();
+                stage.extent(axes.m) * stage.extent(axes.n) * elem_bytes
+                    + Delivery::TMA_STAGE_ALIGNMENT
             }
         }
     }
@@ -148,7 +155,7 @@ impl From<CubeStagedTmaStoreRefusal> for Refusal {
                 "the box's edge is past what one descriptor's box holds"
             }
             CubeStagedTmaStoreRefusal::BlockSplit => {
-                "the box is stated in a packed input's scale blocks, and a descriptor's box in rows and columns"
+                "the packed inputs' scales cut the output's rows or columns into blocks, and a descriptor's box is its rows and columns"
             }
         };
         Refusal::Declined { why }

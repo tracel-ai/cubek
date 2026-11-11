@@ -1,8 +1,8 @@
 //! The cube staged microkernel alone: a cube's units fill its stages, its planes contract them.
 
+use crate::launch::matmul::{CubeStagedLaunch, MatmulElements};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::cube::{CubeStagedMicrokernel, CubeStagedMicrokernelSettings};
-use cubek_microkernel::testing::matmul::{CubeStagedLaunch, MatmulElements};
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 

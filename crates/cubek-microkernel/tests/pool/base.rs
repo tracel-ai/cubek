@@ -1,11 +1,11 @@
 //! What every max pool microkernel computes alone: each output cell the largest tap of its window
 //! that lies inside the input.
 
+use crate::launch::pool::{Channels, PoolLaunch, WindowAxis};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
-use cubek_microkernel::testing::pool::{Channels, PoolLaunch, WindowAxis};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
