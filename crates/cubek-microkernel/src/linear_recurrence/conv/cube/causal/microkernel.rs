@@ -18,7 +18,7 @@ pub fn cube_causal_conv_microkernel<E: Float, O: Float, N: Size>(
     let read_columns = microkernel.taps - 1;
     let past = PastTaps::new(cube, &tiles.past, microkernel.past, read_columns);
     let filters = CausalFilters::new(&tiles.filters, &tiles.bias, microkernel.taps);
-    let lines = BoxLines::new::<N>(cube, comptime!(microkernel.channel_box()));
+    let lines = BoxLines::new::<N>(cube, microkernel.channel_box());
     let mut output = tiles.output.flat_mut::<O, N>();
     for share in cube {
         let line = lines.line(&share);
