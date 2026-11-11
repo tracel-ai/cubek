@@ -1,17 +1,18 @@
-use super::{make_problem, run_pool_test};
+use super::make_problem;
+use crate::pool::{PoolForward, Pooled, Seeded};
 use crate::pool::{build_output_tensor, output_host_f32};
 use cubecl::{
     ir::{ElemType, FloatKind},
     zspace::Shape,
 };
 use cubek_pool::{definition::AdaptiveAvgPoolOptions, pool2d};
+use cubek_test_utils::ScopeUnderTest;
 use cubek_test_utils::TestInput;
 
 const ADAPTIVE_AVG_POOL_TOLERANCE: f32 = 1e-5;
 
 #[test]
 fn test_adaptive_avg_pool2d_global() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 7, 7, 512]),
         false,
@@ -19,19 +20,18 @@ fn test_adaptive_avg_pool2d_global() {
             output_size: [1, 1],
         },
     );
-    run_pool_test(
-        client,
-        1111,
-        -1.0,
-        1.0,
+    PoolForward.check([Pooled {
         problem,
-        ADAPTIVE_AVG_POOL_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 1111,
+            inputs: -1.0..1.0,
+        },
+        tolerance: ADAPTIVE_AVG_POOL_TOLERANCE,
+    }]);
 }
 
 #[test]
 fn test_adaptive_avg_pool2d_square_downsample() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([1, 8, 8, 4]),
         false,
@@ -39,19 +39,18 @@ fn test_adaptive_avg_pool2d_square_downsample() {
             output_size: [4, 4],
         },
     );
-    run_pool_test(
-        client,
-        2222,
-        -1.0,
-        1.0,
+    PoolForward.check([Pooled {
         problem,
-        ADAPTIVE_AVG_POOL_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 2222,
+            inputs: -1.0..1.0,
+        },
+        tolerance: ADAPTIVE_AVG_POOL_TOLERANCE,
+    }]);
 }
 
 #[test]
 fn test_adaptive_avg_pool2d_non_square() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([1, 10, 6, 8]),
         false,
@@ -59,19 +58,18 @@ fn test_adaptive_avg_pool2d_non_square() {
             output_size: [3, 2],
         },
     );
-    run_pool_test(
-        client,
-        3333,
-        -1.0,
-        1.0,
+    PoolForward.check([Pooled {
         problem,
-        ADAPTIVE_AVG_POOL_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 3333,
+            inputs: -1.0..1.0,
+        },
+        tolerance: ADAPTIVE_AVG_POOL_TOLERANCE,
+    }]);
 }
 
 #[test]
 fn test_adaptive_avg_pool2d_uneven_indices() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([1, 13, 13, 1]),
         false,
@@ -79,19 +77,18 @@ fn test_adaptive_avg_pool2d_uneven_indices() {
             output_size: [3, 3],
         },
     );
-    run_pool_test(
-        client,
-        4444,
-        0.0,
-        10.0,
+    PoolForward.check([Pooled {
         problem,
-        ADAPTIVE_AVG_POOL_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 4444,
+            inputs: 0.0..10.0,
+        },
+        tolerance: ADAPTIVE_AVG_POOL_TOLERANCE,
+    }]);
 }
 
 #[test]
 fn test_adaptive_avg_pool2d_identity() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 4, 4, 16]),
         false,
@@ -99,19 +96,18 @@ fn test_adaptive_avg_pool2d_identity() {
             output_size: [4, 4],
         },
     );
-    run_pool_test(
-        client,
-        5555,
-        -1.0,
-        1.0,
+    PoolForward.check([Pooled {
         problem,
-        ADAPTIVE_AVG_POOL_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 5555,
+            inputs: -1.0..1.0,
+        },
+        tolerance: ADAPTIVE_AVG_POOL_TOLERANCE,
+    }]);
 }
 
 #[test]
 fn test_adaptive_avg_pool2d_upsample_logic() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([1, 2, 2, 4]),
         false,
@@ -119,14 +115,14 @@ fn test_adaptive_avg_pool2d_upsample_logic() {
             output_size: [4, 4],
         },
     );
-    run_pool_test(
-        client,
-        6666,
-        -1.0,
-        1.0,
+    PoolForward.check([Pooled {
         problem,
-        ADAPTIVE_AVG_POOL_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 6666,
+            inputs: -1.0..1.0,
+        },
+        tolerance: ADAPTIVE_AVG_POOL_TOLERANCE,
+    }]);
 }
 
 /// A window of 4096 ones averages to one. An f16 accumulator stops moving at 2048, where its
