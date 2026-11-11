@@ -1,15 +1,10 @@
 use super::base::CubeQkNormedConvMicrokernel;
 use super::past_taps::PastTaps;
 use super::tiles::QkNormedConvTiles;
+use crate::activation::silu;
 use crate::linear_recurrence::{CHANNEL, HEAD_CHANNEL};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
-
-/// The logistic function.
-#[cube]
-fn sigmoid(x: f32) -> f32 {
-    1.0f32 / (1.0f32 + (-x).exp())
-}
 
 /// A key head's convolved queries then keys in shared memory, and each line's sum of squares.
 #[derive(CubeType)]
@@ -158,7 +153,7 @@ impl<N: Size> ConvolvedHead<N> {
         #[unroll]
         for lane in 0..width {
             let mixed = f32::cast_from(E::cast_from(sums.extract(lane)));
-            convolved.insert(lane, f32::cast_from(E::cast_from(mixed * sigmoid(mixed))));
+            convolved.insert(lane, f32::cast_from(E::cast_from(silu(mixed))));
         }
         convolved
     }

@@ -1,4 +1,5 @@
 use super::base::CubeSwigluMicrokernel;
+use crate::activation;
 use crate::row_store::{CubeStage, CubeStore};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -44,17 +45,11 @@ pub fn cube_swiglu_microkernel<E: Float, N: Size>(
     store.finish();
 }
 
-/// `g · sigmoid(g) · u` per element of the line, in `f32`. The elements are walked explicitly, as a
-/// packed product's unpack does, so only scalar float intrinsics are needed.
+/// `silu(g) · u` per element of the line, in `f32`.
 #[cube]
 fn gated<E: Float, N: Size>(gate: Vector<E, N>, up: Vector<E, N>) -> Vector<E, N> {
-    let mut out = Vector::<E, N>::empty();
-    #[unroll]
-    for element in 0..N::value() {
-        let g = f32::cast_from(gate.extract(element));
-        let u = f32::cast_from(up.extract(element));
-        let silu = g / (1.0 + (-g).exp());
-        out.insert(element, E::cast_from(silu * u));
-    }
-    out
+    Vector::<E, N>::cast_from(activation::gated::<N>(
+        Vector::<f32, N>::cast_from(up),
+        Vector::<f32, N>::cast_from(gate),
+    ))
 }

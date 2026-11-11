@@ -22,11 +22,13 @@ attention = ["matmul"]
 attention-backward = ["attention"]
 random = []
 reduce = []
-rms-norm = ["row-store"]
-swiglu = ["row-store"]
+rms-norm = ["row-store", "activation"]
+swiglu = ["row-store", "activation"]
 interpolate = []
 pool = []
-linear-recurrence = []
+linear-recurrence = ["activation"]
+# The scalar activations every family that gates or activates shares.
+activation = []
 # Where a producer of rows writes them, as computed or packed for a product's lhs.
 row-store = []
 # A launch of one microkernel on one work item, for tests: what a routine adds around it,
