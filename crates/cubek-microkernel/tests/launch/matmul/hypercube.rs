@@ -9,24 +9,28 @@ use cubecl::tile::{
     Launcher, Partitioning, Space, StageStorage, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
-use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::cube::CubeStagedWalk;
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
     hypercube_staged_last_arrival_microkernel,
 };
+use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::Microkernel;
 
 use super::{MatmulElements, MatmulLaunch, OneCube};
 
-/// The cubes sharing the box's `K`: three, so a box three stages deep is cut into three parts the
-/// last arrival adds up, and one a stage deep is held whole by the first run.
-const CUBES: usize = 3;
+/// The cubes sharing the boxes' stages of `K`, laid end to end. Over [`BOXES`] boxes of one stage
+/// each, two cubes hold a box whole and two walk nothing; of three, every run but one crosses from
+/// one box into the next; of five, runs of three cut both boxes unevenly.
+const CUBES: usize = 4;
 
-/// One hypercube staged microkernel ready to launch on one box, `steps` stages of `K` deep, its
-/// `K` shared by [`CUBES`] cubes.
+/// The boxes of the output, side by side along `n`.
+const BOXES: usize = 2;
+
+/// One hypercube staged microkernel ready to launch on [`BOXES`] boxes, `steps` stages of `K` deep,
+/// their stages shared by [`CUBES`] cubes.
 #[derive(Debug, Clone)]
 pub struct HypercubeStagedLaunch {
     pub microkernel: HypercubeStagedMicrokernel,
@@ -54,13 +58,15 @@ impl HypercubeStagedLaunch {
             });
         }
         let item = elements.work_item();
-        let microkernel = HypercubeStagedMicrokernel::best(hw, &item, settings)?;
-        if microkernel.cube.walk().decoded().is_some() {
-            return Err(Refusal::Declined {
-                why: "a cube that decodes its stages binds words, which this launch's plain bindings do not",
-            });
-        }
-        let placed = OneCube::new(
+        HypercubeStagedMicrokernel::admits(&item)?;
+        // A stage the fill decodes binds its input as words, which this launch's plain bindings
+        // do not: the first candidate staging its inputs as they lie, as the cube's launch takes.
+        let microkernel = HypercubeStagedMicrokernel::candidates(hw, &item, settings)
+            .find(|candidate| candidate.cube.walk().decoded().is_none())
+            .ok_or(Refusal::Declined {
+                why: "every hypercube staged candidate decodes its stages, which bind words",
+            })?;
+        let one_box = OneCube::new(
             microkernel.cube.tiling().cubes(&[M, N]).build(),
             ComputeScope::Cube,
             steps,
@@ -68,7 +74,7 @@ impl HypercubeStagedLaunch {
         let resolved = microkernel.cube.resolve(
             hw,
             &microkernel.cube.contracted(&item),
-            &placed.cube_space(),
+            &one_box.cube_space(),
         )?;
         if resolved.shared_memory > hw.shared_memory_budget() {
             return Err(Refusal::Declined {
@@ -78,14 +84,15 @@ impl HypercubeStagedLaunch {
         let microkernel = HypercubeStagedMicrokernel {
             cube: resolved.microkernel,
         };
-        let one_cube = OneCube::new(
+        let [m, n, k] = OneCube::new(
             microkernel.cube.launch_tiling().cubes(&[M, N]).build(),
             ComputeScope::Cube,
             steps,
-        );
-        let [m, n, k] = one_cube.shape;
+        )
+        .shape;
+        let shape = [m, n * BOXES, k];
         let partitioning = Partitioning::new(
-            Space::new(&[(M, m), (N, n), (K, k)]),
+            Space::new(&[(M, shape[0]), (N, shape[1]), (K, shape[2])]),
             microkernel
                 .cube
                 .launch_tiling()
@@ -98,7 +105,7 @@ impl HypercubeStagedLaunch {
             elements,
             storage: resolved.storage,
             plane_width: resolved.plane_width,
-            shape: one_cube.shape,
+            shape,
             partitioning,
         })
     }
@@ -113,6 +120,9 @@ impl MatmulLaunch for HypercubeStagedLaunch {
         self.shape
     }
 
+    /// Twice on the same arrival counters, first on zeros into an output of its own, then on
+    /// `lhs` and `rhs` into `out`: the boxes' last arrivals must leave the counters at zero, or the
+    /// second launch hands its parts on early or never.
     fn launch(
         &self,
         client: &Client,
@@ -120,13 +130,39 @@ impl MatmulLaunch for HypercubeStagedLaunch {
         rhs: TensorArg,
         out: TensorArg,
     ) -> Result<(), Refusal> {
+        let arrivals = TensorHandle::zeros(
+            client,
+            [self.partitioning.arrival_counters()],
+            u32::elem_type_native(),
+        );
+        let [m, n, k] = self.shape;
+        let rhs_dims = match self.rhs_layout() {
+            MatmulLayout::Col => [n, k],
+            _ => [k, n],
+        };
+        let [elements, input] = [self.elements.out, self.elements.input];
+        let scratch = [([m, k], input), (rhs_dims, input), ([m, n], elements)]
+            .map(|(dims, element)| TensorHandle::zeros(client, dims, element).into_arg());
+        self.dispatch(client, scratch, &arrivals)?;
+        self.dispatch(client, [lhs, rhs, out], &arrivals)
+    }
+}
+
+impl HypercubeStagedLaunch {
+    /// The kernel on `operands` (`lhs`, `rhs`, `out`), the boxes counting in at `arrivals`.
+    fn dispatch(
+        &self,
+        client: &Client,
+        operands: [TensorArg; 3],
+        arrivals: &TensorHandle,
+    ) -> Result<(), Refusal> {
         let partitioning = &self.partitioning;
         let grid = Grid::Stated {
             cube_count: partitioning.cube_count(),
             cube_dim: partitioning.cube_dim(self.plane_width),
         };
         let launcher = Launcher::new(client, partitioning.clone(), partitioning.space(), grid)?;
-        let [lhs, rhs, out] = self.elements.bound([lhs, rhs, out], self.rhs_layout());
+        let [lhs, rhs, out] = self.elements.bound(operands, self.rhs_layout());
         let slots = TensorHandle::empty(
             client,
             partitioning.arrival_slots(&[M, N]),
@@ -138,14 +174,9 @@ impl MatmulLaunch for HypercubeStagedLaunch {
             1,
             TileSpec::direct(&[M, N]),
         );
-        let arrivals = TensorHandle::zeros(
-            client,
-            [partitioning.arrival_counters()],
-            u32::elem_type_native(),
-        );
         // SAFETY: every operand is bound through the launcher at the problem's own extents, the
-        // kernel indexes no buffer but through its tiles and the arrival counter of the box, which
-        // arrives holding zero; its shared memory is its stages.
+        // kernel indexes no buffer but through its tiles and the arrival counter of each box, which
+        // holds zero; its shared memory is its stages.
         unsafe {
             hypercube_staged_kernel::launch_unchecked(
                 client,
@@ -156,7 +187,7 @@ impl MatmulLaunch for HypercubeStagedLaunch {
                 rhs,
                 out,
                 slots,
-                arrivals.into_arg().into_buffer_arg(),
+                arrivals.clone().into_arg().into_buffer_arg(),
                 launcher.partitioning_arg(),
                 self.microkernel.cube.walk(),
                 self.storage.clone(),

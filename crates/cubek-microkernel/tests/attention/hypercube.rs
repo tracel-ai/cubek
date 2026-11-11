@@ -10,7 +10,7 @@ use cubek_microkernel::attention::hypercube::{
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::attention::{Attention, AttentionSettings, DIMS};
+use crate::attention::{Attention, AttentionCase, AttentionSettings, DIMS};
 
 impl AttentionSettings for HypercubeAttentionMicrokernelSettings {
     type Microkernel = HypercubeAttentionMicrokernel;
@@ -27,19 +27,26 @@ impl AttentionSettings for HypercubeAttentionMicrokernelSettings {
 }
 
 /// Every hypercube attention microkernel of plane shuffles the test device runs, at each of its
-/// settings, over one step of keys, which one of three cubes walks, and three, which the three
-/// share; for `f16` and `f32` inputs summed in `f32` and written as read. Planes of fragments leave
-/// slots a second launch merges, not the last arrival this tests.
+/// settings, its keys shared by three cubes: one step long, where two cubes walk nothing; three,
+/// one step each; and four and five, where the runs differ in length. For `f16` and `f32` inputs
+/// summed in `f32` and written as read. Planes of fragments leave slots a second launch merges,
+/// not the last arrival this tests.
 #[test]
 fn hypercube_attention_matches_the_cpu() {
     let attention = Attention::<HypercubeAttentionMicrokernelSettings>::new(Hardware::from_client(
         &cubecl::test_device().client(),
     ));
-    let shuffles = attention.every_setting().into_iter().filter(|case| {
-        matches!(
-            case.settings.cube.plane,
-            CubeAttentionPlaneSettings::Shuffle(_)
-        )
-    });
-    attention.check(shuffles);
+    let cases: Vec<_> = attention
+        .every_setting()
+        .into_iter()
+        .filter(|case| {
+            case.steps == 1
+                && matches!(
+                    case.settings.cube.plane,
+                    CubeAttentionPlaneSettings::Shuffle(_)
+                )
+        })
+        .flat_map(|case| [1, 3, 4, 5].map(|steps| AttentionCase { steps, ..case }))
+        .collect();
+    attention.check(cases);
 }

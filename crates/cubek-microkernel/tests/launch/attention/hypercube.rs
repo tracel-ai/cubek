@@ -25,6 +25,7 @@ use cubek_microkernel::split_keys_merge::hypercube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
+use cubek_test_utils::TestInput;
 
 use super::{AttentionElements, AttentionLaunch};
 
@@ -115,6 +116,9 @@ impl AttentionLaunch for HypercubeAttentionLaunch {
         self.seq
     }
 
+    /// Twice on the same arrival counters, first on zeros of its own into outputs of its own,
+    /// then on the given operands: each box's last arrival must leave its counter at zero, or the
+    /// second launch merges early or never.
     fn launch(
         &self,
         client: &Client,
@@ -126,6 +130,72 @@ impl AttentionLaunch for HypercubeAttentionLaunch {
         lengths: TensorArg,
         scale: f32,
     ) -> Result<(), Refusal> {
+        let [queries, keys] = self.seq;
+        let item = &self.item;
+        let arrivals = TensorHandle::zeros(
+            client,
+            [queries.div_ceil(self.merge().seq_q)],
+            u32::elem_type_native(),
+        );
+        let served = self.microkernel.cube.served(item);
+        let zeros = |dims: &[usize], element| TensorHandle::zeros(client, dims.to_vec(), element);
+        let scratch = AttentionBindings {
+            query: zeros(&[1, 1, 1, queries, item.head_dim], served.elements.query).binding(),
+            key: zeros(&[1, 1, keys, item.head_dim], served.elements.key).binding(),
+            value: zeros(&[1, 1, keys, item.val_dim], served.elements.value).binding(),
+            out: zeros(&[1, 1, 1, queries, item.val_dim], item.elements.out).binding(),
+            logsumexp: logsumexp
+                .is_some()
+                .then(|| zeros(&[1, 1, 1, queries], item.sum).binding()),
+            lengths: TensorHandle::new_contiguous(
+                [1],
+                client.create_from_slice(u32::as_bytes(&[keys as u32])),
+                u32::elem_type_native(),
+            )
+            .into_arg(),
+        };
+        self.dispatch(client, scratch, scale, &arrivals)?;
+        let given = AttentionBindings {
+            query,
+            key,
+            value,
+            out,
+            logsumexp,
+            lengths,
+        };
+        self.dispatch(client, given, scale, &arrivals)
+    }
+}
+
+/// What one launch reads and writes: the operands, the outputs the box's last cube writes, and
+/// the attended length.
+struct AttentionBindings {
+    query: TensorBinding,
+    key: TensorBinding,
+    value: TensorBinding,
+    out: TensorBinding,
+    logsumexp: Option<TensorBinding>,
+    lengths: TensorArg,
+}
+
+impl HypercubeAttentionLaunch {
+    /// The kernel on `bindings`, the boxes counting in at `arrivals`, the slots holding NaN until
+    /// a cube stores its partial.
+    fn dispatch(
+        &self,
+        client: &Client,
+        bindings: AttentionBindings,
+        scale: f32,
+        arrivals: &TensorHandle,
+    ) -> Result<(), Refusal> {
+        let AttentionBindings {
+            query,
+            key,
+            value,
+            out,
+            logsumexp,
+            lengths,
+        } = bindings;
         let [queries, keys] = self.seq;
         let item = &self.item;
         let microkernel = self.microkernel;
@@ -175,18 +245,16 @@ impl AttentionLaunch for HypercubeAttentionLaunch {
             .build()?;
         let merge = self.merge();
         let slots = [1, 1, 1, queries, merge.slots.splits];
-        let slot_out = TensorHandle::empty(
-            client,
-            [slots.as_slice(), &[item.val_dim]].concat(),
-            item.sum,
-        );
-        let slot_max = TensorHandle::empty(client, slots.to_vec(), item.sum);
-        let slot_sum = TensorHandle::empty(client, slots.to_vec(), item.sum);
-        let arrivals = TensorHandle::zeros(
-            client,
-            [queries.div_ceil(merge.seq_q)],
-            u32::elem_type_native(),
-        );
+        let poisoned = |dims: Vec<usize>| {
+            let cells = dims.iter().product();
+            TestInput::builder(client.clone(), dims)
+                .dtype(item.sum)
+                .custom(vec![f32::NAN; cells])
+                .generate_without_host_data()
+        };
+        let slot_out = poisoned([slots.as_slice(), &[item.val_dim]].concat());
+        let slot_max = poisoned(slots.to_vec());
+        let slot_sum = poisoned(slots.to_vec());
         // SAFETY: every operand the cubes read is bound through the launcher at the problem's own
         // extents, the keys and values read no further than the attended length; each cube writes
         // its own slots, counts itself in at its box's counter, which arrives holding zero, and the
@@ -207,7 +275,7 @@ impl AttentionLaunch for HypercubeAttentionLaunch {
                 slot_out.into_arg(),
                 slot_max.into_arg(),
                 slot_sum.into_arg(),
-                arrivals.into_arg().into_buffer_arg(),
+                arrivals.clone().into_arg().into_buffer_arg(),
                 lengths,
                 queries as u32,
                 scale,
