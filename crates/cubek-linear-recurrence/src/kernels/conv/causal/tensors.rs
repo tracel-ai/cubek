@@ -155,6 +155,7 @@ impl ConvTensors for CausalConvTensors {
             taps: reads.taps(),
             element: reads.element(),
             output_element,
+            bias: bias.is_some(),
             past: reads.past(),
             alignments,
             start_bytes,

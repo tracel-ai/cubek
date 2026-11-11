@@ -1,8 +1,8 @@
 use super::base;
 use super::kernel::cube_causal_conv_kernel;
 use crate::kernels::conv::{
-    CausalConvBinding, CausalConvBlueprint, CausalConvPast, CausalConvProblem, CausalConvRoutine,
-    CausalConvTensors, ConvTensors,
+    CausalConvBinding, CausalConvBlueprint, CausalConvProblem, CausalConvRoutine,
+    CausalConvTensors, ConvStreams, ConvTensors,
 };
 use crate::kernels::refusals::admit_on_device;
 use cubecl::tile::launch::{Refusal, Vectorization};
@@ -65,26 +65,18 @@ impl Routine for CubeCausalConvRoutine {
     ) {
         let channels = blueprint.microkernel.units * blueprint.width;
         let (size, output_size) = (problem.element.size(), problem.output_element.size());
-        let stream = |elements: usize, run: usize, element_bytes: usize| GlobalStream {
+        let stream = |elements: usize, element_bytes: usize, run: usize| GlobalStream {
             bytes: (elements * element_bytes) as u64,
             run_bytes: run * element_bytes,
         };
-        let outputs = stream(channels, channels, output_size);
-        let filters = stream(channels * (problem.taps + 1), problem.taps, size);
-        let (reads, writes) = match problem.past {
-            CausalConvPast::Window { .. } => (
-                vec![
-                    stream(channels, channels, size),
-                    filters,
-                    stream(channels * (problem.taps - 1), channels, size),
-                ],
-                vec![stream(channels, channels, size), outputs],
-            ),
-            CausalConvPast::Prompt { .. } => (
-                vec![stream(channels * problem.taps, channels, size), filters],
-                vec![outputs],
-            ),
-        };
+        let (reads, writes) = problem.past.streams(&ConvStreams {
+            channels,
+            taps: problem.taps,
+            run: channels,
+            element_size: size,
+            filters: stream(channels * problem.filter_values(), size, problem.taps),
+            outputs: stream(channels, output_size, channels),
+        });
         estimate.staging = Some(CubeStaging {
             operations: problem.work_item().operations(channels) as f64,
             reads,
@@ -147,8 +139,8 @@ impl CausalConvRoutine<CubeCausalConvMicrokernel> for CubeCausalConvRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::conv::RingStore;
     use crate::kernels::conv::fixtures::{binding_enough, fleet};
+    use crate::kernels::conv::{CausalConvPast, RingStore};
     use core::num::NonZeroUsize;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::linear_recurrence::LINE_IN_BOX;

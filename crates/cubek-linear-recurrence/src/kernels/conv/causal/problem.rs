@@ -1,6 +1,6 @@
 //! The problem a causal conv routine computes.
 
-use crate::kernels::conv::{CausalConvPast, CubeCausalConvRoutine, admit_element};
+use crate::kernels::conv::{CausalConvPast, ConvExtent, CubeCausalConvRoutine, admit_element};
 use crate::kernels::refusals::{
     CAUSAL_CONV_BINDING_BUFFERS, CAUSAL_CONV_CHANNELS_EMPTY, CAUSAL_CONV_OUTPUT_UNSUPPORTED,
     CONV_BINDINGS_PAST_DEVICE, CONV_NOTHING_TO_CONVOLVE,
@@ -32,6 +32,8 @@ pub struct CausalConvProblem {
     pub element: ElemType,
     /// The element the convolved channels are written at: `f32`, or `element`.
     pub output_element: ElemType,
+    /// Whether the conv adds a bias a channel.
+    pub bias: bool,
     /// Where the past the taps read lives.
     pub past: CausalConvPast,
     /// The alignment of each operand's buffer in elements.
@@ -146,10 +148,22 @@ impl CausalConvProblem {
             taps,
             element,
             output_element,
+            bias: false,
             past,
             alignments,
             start_bytes: CausalConvOperandMap::splat(0),
         }
+    }
+
+    /// The problem with a bias a channel.
+    pub fn with_bias(mut self) -> Self {
+        self.bias = true;
+        self
+    }
+
+    /// Filter values a channel reads: its taps, and its bias where there is one.
+    pub(crate) fn filter_values(&self) -> usize {
+        self.taps + usize::from(self.bias)
     }
 }
 
@@ -157,15 +171,19 @@ impl EstimatedProblem for CausalConvProblem {
     /// Every operand once, and a handful of operations a channel a tap.
     fn demand(&self) -> Work {
         let size = self.element.size();
-        let channels = self.batch * self.past.positions() * self.channels;
-        let read = match self.past {
-            CausalConvPast::Window { .. } => channels * self.taps * size,
-            CausalConvPast::Prompt { .. } => channels * size,
+        let extent = ConvExtent {
+            batch: self.batch,
+            channels: self.channels,
+            taps: self.taps,
         };
-        let filters = self.channels * (self.taps + 1) * size;
+        let (read, written) = self.past.bytes(extent, size);
+        let channels = self.batch * self.past.positions() * self.channels;
         Work {
             compute_ops: self.work_item().operations(channels),
-            bytes: read + filters + channels * self.output_element.size(),
+            bytes: read
+                + self.channels * self.filter_values() * size
+                + written
+                + channels * self.output_element.size(),
         }
     }
 }
@@ -253,5 +271,14 @@ mod tests {
         assert_eq!(conv(prompt(0)).admit(&hw), Err(CONV_NOTHING_TO_CONVOLVE));
         assert_eq!(conv(window(2)).admit(&hw), Err(CONV_TAPS_PAST_RING));
         assert_eq!(conv(prompt(8)).admit(&hw), Ok(()));
+    }
+
+    /// The bias is counted in the filters' bytes only where the conv has one.
+    #[test]
+    fn the_bias_is_counted_only_where_the_conv_has_one() {
+        let without = conv(window(3));
+        let with = without.clone().with_bias();
+        let channel_bytes = without.channels * without.element.size();
+        assert_eq!(with.demand().bytes - without.demand().bytes, channel_bytes);
     }
 }
