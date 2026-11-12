@@ -380,8 +380,8 @@ fn explored_planes() -> Vec<cubek_matmul::kernels::PlaneShuffleMatmulRoutineSett
 }
 
 /// The cube shuffles `NVFP4_EXPLORE` races: each column count a unit, planes along `K`, cubes a
-/// compute unit, under either split of `K` a plane's units take, reading the weight by block, and
-/// under one transaction also as stored.
+/// compute unit, under each split of `K` a plane's units take, the planes taking `K` in runs or in
+/// turns, reading the weight by block, and under one transaction or one tile also as stored.
 fn explored() -> Vec<CubeShuffleMatmulRoutineSettings> {
     use core::num::NonZeroUsize;
     use cubek_microkernel::matmul::cube::{
@@ -389,9 +389,9 @@ fn explored() -> Vec<CubeShuffleMatmulRoutineSettings> {
     };
     use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernelSettings;
     let mut out = Vec::new();
-    for one_transaction in [false, true] {
+    for split in [0, 1, 2] {
         for columns in [1, 2, 4, 8] {
-            for planes in [16, 32] {
+            for planes in [4, 8, 16, 32] {
                 for cubes in [
                     None,
                     NonZeroUsize::new(1),
@@ -399,25 +399,32 @@ fn explored() -> Vec<CubeShuffleMatmulRoutineSettings> {
                     NonZeroUsize::new(4),
                 ] {
                     let plane = PlaneShuffleMicrokernelSettings::stepping(columns, None);
-                    let plane = match one_transaction {
-                        true => plane.one_transaction(),
-                        false => plane,
+                    let plane = match split {
+                        0 => plane,
+                        1 => plane.one_transaction(),
+                        _ => plane.one_tile(),
                     };
-                    let microkernel = CubeShuffleMicrokernelSettings::new(
-                        CubeShufflePlaneSettings::Shuffle(plane),
-                        planes,
-                    );
-                    out.push(CubeShuffleMatmulRoutineSettings {
-                        microkernel: microkernel.by_block(),
-                        cubes_per_worker: cubes,
-                    });
-                    // Under one transaction, also each load of the weight as stored, a word of
-                    // scales a turn.
-                    if one_transaction {
+                    for in_turns in [false, true] {
+                        let microkernel = CubeShuffleMicrokernelSettings::new(
+                            CubeShufflePlaneSettings::Shuffle(plane),
+                            planes,
+                        );
+                        let microkernel = match in_turns {
+                            true => microkernel.in_turns(),
+                            false => microkernel,
+                        };
                         out.push(CubeShuffleMatmulRoutineSettings {
-                            microkernel,
+                            microkernel: microkernel.by_block(),
                             cubes_per_worker: cubes,
                         });
+                        // Under a split by the transaction or the tile, also each load of the
+                        // weight as stored, a word of scales a turn.
+                        if split > 0 {
+                            out.push(CubeShuffleMatmulRoutineSettings {
+                                microkernel,
+                                cubes_per_worker: cubes,
+                            });
+                        }
                     }
                 }
             }
@@ -610,6 +617,9 @@ fn main() {
             let (ceiling, per_unit) = read_ceiling(&client, bytes);
             println!("{name} ceiling: {ceiling:.1} GB/s ({per_unit} vectors a unit)");
         }
+        // Each layout's copies and the settings that serve it, timed below round by round
+        // across both layouts, so a slower stretch of the machine falls on both alike.
+        let mut layouts = Vec::new();
         for layout in [Layout::Rows, Layout::Tiles] {
             let wanted = std::env::var("NVFP4_LAYOUT").ok();
             if wanted
@@ -656,21 +666,41 @@ fn main() {
                 }
                 continue;
             }
-            let mut best = vec![Duration::MAX; served.len()];
-            for _ in 0..env_usize("NVFP4_ROUNDS", 3) {
+            layouts.push((layout, data, served));
+        }
+        let mut best: Vec<Vec<Duration>> = layouts
+            .iter()
+            .map(|(_, _, served)| vec![Duration::MAX; served.len()])
+            .collect();
+        for _ in 0..env_usize("NVFP4_ROUNDS", 3) {
+            for (l, (_, data, served)) in layouts.iter().enumerate() {
                 for (i, (_, launch, _)) in served.iter().enumerate() {
-                    best[i] = best[i].min(time(&client, &data, launch));
+                    best[l][i] = best[l][i].min(time(&client, data, launch));
                 }
             }
+        }
+        let gbs = |t: Duration| bytes as f64 / t.as_secs_f64() / 1e9;
+        let mut fastest = Vec::new();
+        for ((layout, data, served), best) in layouts.iter().zip(&best) {
+            println!("{name} in {layout:?}:");
             for ((label, launch, err), t) in served.iter().zip(best) {
-                let host = host_time(&client, &data, launch);
+                let host = host_time(&client, data, launch);
                 println!(
                     "  {label:<60} {:>7.1} GB/s  {:>7.1} µs  host {:>6.1} µs  err {err:.1e}",
-                    bytes as f64 / t.as_secs_f64() / 1e9,
+                    gbs(*t),
                     t.as_secs_f64() * 1e6,
                     host.as_secs_f64() * 1e6
                 );
             }
+            if let Some(t) = best.iter().min() {
+                fastest.push((*layout, gbs(*t)));
+            }
+        }
+        if let [(_, rows), (_, tiles)] = fastest[..] {
+            println!(
+                "{name} best: rows {rows:.1} GB/s, tiles {tiles:.1} GB/s, tiles/rows {:.3}",
+                tiles / rows
+            );
         }
     }
 }

@@ -47,6 +47,9 @@ pub struct CubeShuffleMicrokernel {
     /// Whether it reads a packed rhs a scale block at a time
     /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)).
     pub by_block: bool,
+    /// Whether its planes take the steps along the split in turns rather than each a run of them
+    /// ([`CubeShuffleMicrokernelSettings::planes_in_turns`]).
+    pub planes_in_turns: bool,
 }
 
 /// The plane microkernel a cube shuffle's planes run.
@@ -98,6 +101,11 @@ pub struct CubeShuffleMicrokernelSettings {
     /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)): the plane's units
     /// side by side then read one run of a column a load.
     pub by_block: bool,
+    /// Whether its planes take the steps of `K` in turns, plane after plane, rather than each a
+    /// run of them: a cube's planes then read neighbouring steps at once, one run of memory a
+    /// turn where the rhs lays its steps of `K` one after another, as tile order does a strip's
+    /// tiles, rather than a piece of each plane's run far apart.
+    pub planes_in_turns: bool,
 }
 
 /// The settings of the plane microkernel a cube shuffle's planes run.
@@ -133,6 +141,7 @@ impl CubeShuffleMicrokernelSettings {
             plane,
             planes_along_k: NonZeroUsize::new(planes_along_k).unwrap(),
             by_block: false,
+            planes_in_turns: false,
         }
     }
 
@@ -141,6 +150,15 @@ impl CubeShuffleMicrokernelSettings {
     pub const fn by_block(self) -> Self {
         Self {
             by_block: true,
+            ..self
+        }
+    }
+
+    /// These settings with the planes taking the steps of `K` in turns
+    /// ([`planes_in_turns`](Self::planes_in_turns)).
+    pub const fn in_turns(self) -> Self {
+        Self {
+            planes_in_turns: true,
             ..self
         }
     }
@@ -158,34 +176,41 @@ impl CubeShuffleMicrokernelSettings {
     /// few along `K` as fill one beside the rows the rhs lays side by side, the rest a column each
     /// along `N`. In tile order block by block, where a block of every row of a tile lies
     /// together, a plane's load is then whole transactions, where `SPLIT_K`'s units, each a block
-    /// of `K` of the same columns, touch one line apiece.
+    /// of `K` of the same columns, touch one line apiece. The planes take `K`'s steps in turns,
+    /// so a cube's turn reads one run of the strip a tile-order rhs lays its tiles in.
     pub const SPLIT_K_ONE_TRANSACTION: Self = Self::new(
         CubeShufflePlaneSettings::Shuffle(
             PlaneShuffleMicrokernelSettings::stepping(1, None).one_transaction(),
         ),
         32,
     )
-    .by_block();
+    .by_block()
+    .in_turns();
 
     /// [`SPLIT_K`](Self::SPLIT_K) with each plane's units reading a stored tile whole between
     /// them, two columns a unit: in tile order block by block, where a tile's blocks of every row
     /// of it lie as one run, a plane's step is whole tiles, and a unit walks a tile's share of
     /// `K`'s turns where [`SPLIT_K_ONE_TRANSACTION`](Self::SPLIT_K_ONE_TRANSACTION)'s walks a
-    /// block of each.
+    /// block of each. The planes take `K`'s steps in turns, so a cube's turn reads one run of
+    /// whole tiles.
     pub const SPLIT_K_ONE_TILE: Self = Self::new(
         CubeShufflePlaneSettings::Shuffle(
             PlaneShuffleMicrokernelSettings::stepping(2, None).one_tile(),
         ),
         32,
     )
-    .by_block();
+    .by_block()
+    .in_turns();
 }
 
 impl core::fmt::Display for CubeShuffleMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} planes_along_k={}", self.plane, self.planes_along_k)?;
-        match self.by_block {
-            true => write!(f, " by_block"),
+        if self.by_block {
+            write!(f, " by_block")?;
+        }
+        match self.planes_in_turns {
+            true => write!(f, " in_turns"),
             false => Ok(()),
         }
     }
@@ -316,6 +341,7 @@ impl CubeShuffleMicrokernel {
                     planes_along_k,
                     meet,
                     by_block,
+                    planes_in_turns: false,
                 })
         })
     }
@@ -339,6 +365,7 @@ impl CubeShuffleMicrokernel {
                 planes_along_k: NonZeroUsize::new(target.min(windows))?,
                 meet,
                 by_block: false,
+                planes_in_turns: false,
             })
         })
     }
@@ -502,10 +529,15 @@ impl Microkernel for CubeShuffleMicrokernel {
                 (None, Some(Self::fragment_cubes(hw, item, plane, target)))
             }
         };
+        let planes_in_turns = settings.planes_in_turns;
         shuffle
             .into_iter()
             .flatten()
             .chain(fragment.into_iter().flatten())
+            .map(move |cube| Self {
+                planes_in_turns,
+                ..cube
+            })
     }
 
     /// Its planes read as the plane microkernel's: a col rhs's step down `K`, merged with the
@@ -555,8 +587,11 @@ impl Microkernel for CubeShuffleMicrokernel {
 impl core::fmt::Display for CubeShuffleMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} planes_along_k={}", self.plane, self.planes_along_k)?;
-        match self.by_block {
-            true => write!(f, " by_block"),
+        if self.by_block {
+            write!(f, " by_block")?;
+        }
+        match self.planes_in_turns {
+            true => write!(f, " in_turns"),
             false => Ok(()),
         }
     }
@@ -564,12 +599,17 @@ impl core::fmt::Display for CubeShuffleMicrokernel {
 
 impl MatmulMicrokernel for CubeShuffleMicrokernel {
     /// The levels inside one cube's run, which a routine states the cubes around: its planes'
-    /// steps through all of `K`, dealt to the planes in runs along [`split`](Self::split), so the
-    /// planes need not divide them.
+    /// steps through all of `K`, dealt to the planes along [`split`](Self::split) in runs, or in
+    /// turns ([`planes_in_turns`](Self::planes_in_turns)), so the planes need not divide them.
     fn tiling(&self) -> Levels {
-        self.plane
+        let levels = self
+            .plane
             .step_levels()
-            .planes_across(self.split(), self.planes_along_k.get())
+            .planes_across(self.split(), self.planes_along_k.get());
+        match self.planes_in_turns {
+            true => levels.interleaved(self.split()),
+            false => levels,
+        }
     }
 
     /// Its planes' orders: a float rhs's as the plane shuffle binds it, a packed rhs's
@@ -589,6 +629,8 @@ impl MatmulMicrokernel for CubeShuffleMicrokernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::matmul::{MatmulAxes, MatmulDestination, MatmulReading, MatmulRows};
+    use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
 
     /// The tensor-core plane's packed settings are listed only where the device offers its
@@ -611,6 +653,39 @@ mod tests {
                 PlaneFragmentMicrokernel::decodes_on(&hw),
                 "{hw:?}"
             );
+        }
+    }
+
+    /// Settings taking `K` in turns size cubes that do, and their levels still build: the
+    /// interleaving is the planes', over the split they share.
+    #[test]
+    fn planes_in_turns_reach_the_cubes() {
+        let f16 = ElemType::Float(FloatKind::F16);
+        let item = MatmulWorkItem {
+            elements: MatmulOperands::all(f16),
+            sum: ElemType::Float(FloatKind::F32),
+            layouts: MatmulOperands {
+                rhs: MatmulLayout::Col,
+                ..MatmulOperands::all(MatmulLayout::Row)
+            },
+            blocks: None,
+            rows: MatmulRows::Whole(1),
+            destination: MatmulDestination::Buffer,
+            axes: MatmulAxes::MNK,
+            reading: MatmulReading::AsStored,
+        };
+        let hw = devices::m2_pro();
+        for in_turns in [false, true] {
+            let settings = match in_turns {
+                true => CubeShuffleMicrokernelSettings::DEFAULT.in_turns(),
+                false => CubeShuffleMicrokernelSettings::DEFAULT,
+            };
+            let cubes: Vec<_> = CubeShuffleMicrokernel::candidates(&hw, &item, &settings).collect();
+            assert!(!cubes.is_empty());
+            for cube in cubes {
+                assert_eq!(cube.planes_in_turns, in_turns, "{cube}");
+                assert!(!cube.tiling().build().is_empty(), "{cube}");
+            }
         }
     }
 }
