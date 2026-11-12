@@ -35,18 +35,3 @@ fn every_hypercube_fragment_microkernel_reads_fp8_keys() {
     let [fp8_keys, ..] = PROMPTS_WIDE_FP8;
     forward.check(forward.at(eight_cubes, &[fp8_keys]));
 }
-
-/// The routine's first microkernel settings, on eight cubes a box, over every FP8 cache: `e4m3`
-/// values are widened to the query's `f16` as they are staged, beside `f16` keys or `e4m3` ones.
-/// The lead, a cmma fragment that reads its values through windows, declines values it would
-/// widen; the manual `mma` fragments after it read them.
-#[test]
-fn the_hypercube_fragment_routine_reads_every_fp8_cache() {
-    let forward = Forward::new(HypercubeSecondLaunchFragmentAttentionRoutine);
-    let first = forward
-        .settings()
-        .into_iter()
-        .filter(|settings| settings.cubes_along_keys.get() == 8)
-        .take(3);
-    forward.check(forward.at(first, &PROMPTS_WIDE_FP8));
-}

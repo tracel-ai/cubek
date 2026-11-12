@@ -136,16 +136,22 @@ impl PlaneFragmentAttentionMicrokernel {
         read: AttentionRead,
         settings: PlaneFragmentAttentionMicrokernelSettings,
     ) -> Vec<Self> {
-        // A stage of keys and values is filled at one element: where both are converted, they
-        // are converted to it alike.
+        // A stage of the cache converts a side it reads at another element only where each of its
+        // values is a word of its own, as an `f32` read at tf32 is: a stage of narrower values
+        // keeps their words, which every fragment load would pick apart cell by cell. Both sides
+        // converted are converted to one element alike. The query is converted ahead of the walk.
         let converted = |stored: ElemType, read: ElemType| stored != read;
         let (keys_converted, values_converted) = (
             converted(item.elements.key, read.score),
             converted(item.elements.value, read.value),
         );
-        if keys_converted && values_converted && read.score != read.value {
+        let decoded_whole = |stored: ElemType| stored.size() == u32::BITS as usize / 8;
+        let stages_whole = (!keys_converted || decoded_whole(item.elements.key))
+            && (!values_converted || decoded_whole(item.elements.value));
+        if !stages_whole || (keys_converted && values_converted && read.score != read.value) {
             return Vec::new();
         }
+        let score_converted = keys_converted || converted(item.elements.query, read.score);
         let cache_stage = match values_converted {
             true => read.value,
             false => read.score,
@@ -176,10 +182,13 @@ impl PlaneFragmentAttentionMicrokernel {
                 let head_steps = Self::steps(head, depth)?;
                 let value_steps = Self::steps(value, width)?;
                 let key_steps = Self::steps(plane_keys, value_depth)?;
-                // Only the manual `mma` holds a fragment deeper than its instruction.
+                // Only the manual `mma` holds a fragment deeper than its instruction, which it
+                // loads in lane runs: over a 16-bit instruction's fragments alone, from a stage of
+                // the query and keys as they are stored.
                 let whole_head = settings.score_depth == PlaneFragmentDepth::Stage;
                 let manual = matches!(score.instruction, PlaneFragmentInstruction::Mma { .. });
-                if whole_head && !manual {
+                let lane_runs = manual && read.score.size() == 2 && !score_converted;
+                if whole_head && !lane_runs {
                     return None;
                 }
                 Some(Self {

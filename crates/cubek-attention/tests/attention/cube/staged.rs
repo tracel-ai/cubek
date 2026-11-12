@@ -3,7 +3,7 @@
 use cubek_attention::kernels::CubeStagedAttentionRoutine;
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::attention::{Forward, PROMPT, PROMPT_WIDE, PROMPTS};
+use crate::attention::{Forward, PROMPT, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8};
 
 /// The cube staged routine's lead on every prompt case.
 #[test]
@@ -31,4 +31,13 @@ fn planes_splitting_the_keys_match_the_host() {
 fn every_cube_staged_setting_matches_the_host_at_a_head_dim_of_128() {
     let forward = Forward::new(CubeStagedAttentionRoutine);
     forward.check(forward.at_every_setting(&[PROMPT_WIDE]));
+}
+
+/// Every setting the routine lists over `e4m3` keys at a model's head dim: the score on the
+/// device's FP8 instruction, the `f16` query converted ahead.
+#[test]
+fn every_cube_staged_setting_reads_fp8_keys() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    let [fp8_keys, ..] = PROMPTS_WIDE_FP8;
+    forward.check(forward.at_every_setting(&[fp8_keys]));
 }

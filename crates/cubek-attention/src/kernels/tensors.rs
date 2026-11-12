@@ -1,5 +1,6 @@
 //! The tensors of one attention, and how a launch binds them.
 
+use crate::kernels::conversion::converted;
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
     AttentionRoutineProblem, AttentionScoring, KvSource, PAGED_PACKED_UNREAD, PackedAttentionCache,
@@ -704,14 +705,23 @@ impl AttentionTensors {
         let widths = blueprint.widths;
         let problem = self.problem();
         let read = blueprint.microkernel.served(&problem.work_item()).elements;
-        // Read at another element than the float it is stored in, an operand is bound as its u32
-        // words, each one value of that float, which its kernel's stages decode at the read
-        // element.
+        // Read at another element than the float it is stored in, an operand each of whose values
+        // is a word of its own is bound as its u32 words, which its kernel's stages decode at the
+        // read element. A query of narrower values is converted ahead, into a buffer of its own
+        // (`converted`); the microkernels read no narrower side of a cache converted.
         let words = |operand: AttentionOperand| match problem.elements.get(operand) {
-            ElemType::Float(kind) if read.get(operand) != problem.elements.get(operand) => {
+            stored @ ElemType::Float(kind)
+                if read.get(operand) != stored && stored.size() == u32::BITS as usize / 8 =>
+            {
                 Some(kind)
             }
             _ => None,
+        };
+        let converted_query =
+            read.query != problem.elements.query && words(AttentionOperand::Query).is_none();
+        let query = match converted_query {
+            true => converted(&self.client, &self.query, read.query),
+            false => self.query.clone(),
         };
         let arg = |tensor: &PlainTensor, axes: &'static [Axis], width: usize, element: ElemType| {
             launcher
@@ -751,7 +761,7 @@ impl AttentionTensors {
         };
         let query = runs(
             read_operand(
-                &self.query,
+                &query,
                 &[B, KV, G, Q, D],
                 widths.query,
                 AttentionOperand::Query,

@@ -226,61 +226,64 @@ fn fragment_reads(hw: &Hardware, problem: &AttentionRoutineProblem) -> BTreeSet<
         .collect()
 }
 
-/// Every FP8 cache is read by a prompt's table and a decode step's: the plane fragments read
-/// `e4m3` keys on the device's FP8 instruction, the query converted to it as it is staged, or
-/// widened to the query's `f16`, and `e4m3` values widened to it; the plane shuffles widen every
-/// operand into the sum as they read it. The unit routine, which computes in its operands' one
-/// element, declines them. On a device without the `e4m3` instruction the fragments widen.
+/// Every FP8 cache is read at a prompt and at a decode step. The plane fragments read `e4m3` keys
+/// on the device's FP8 instruction, the `f16` query converted ahead; they read no `e4m3` side
+/// widened, a stage of codes being words their loads would pick apart, so `e4m3` values and a
+/// device without the FP8 instruction are the plane shuffles', which widen every operand into the
+/// sum as they read it, at a prompt as at a decode step. The unit routine, which computes in its
+/// operands' one element, declines them all.
 #[test]
 fn every_fp8_cache_is_read_at_a_prompt_and_at_a_decode_step() {
     let hw = offering_fp8();
     let without = offering(devices::rtx_pro_6000(), 16);
-    let (e4m3, f16) = (format!("{E4M3:?}"), format!("{F16:?}"));
+    let e4m3 = format!("{E4M3:?}");
     for (key, value) in FP8_CACHES {
         let (prompt, decode) = (cached(512, 4096, key, value), cached(1, 4096, key, value));
         let reads = fragment_reads(&hw, &prompt);
-        let fp8_score = reads.iter().any(|(score, _)| *score == e4m3);
-        assert_eq!(
-            fp8_score,
-            key == E4M3,
-            "{key:?} keys, {value:?} values: the fragments read {reads:?}"
-        );
+        match value == F16 {
+            true => assert!(
+                !reads.is_empty() && reads.iter().all(|(score, _)| *score == e4m3),
+                "{key:?} keys, {value:?} values: the fragments read {reads:?}"
+            ),
+            false => assert!(
+                reads.is_empty(),
+                "{key:?} keys, {value:?} values: the fragments read {reads:?}"
+            ),
+        }
         assert!(
-            reads.iter().all(|(_, read)| *read == f16),
-            "{key:?} keys, {value:?} values: the fragments read the values at {reads:?}"
-        );
-        let widened = fragment_reads(&without, &prompt);
-        assert!(
-            !widened.is_empty() && widened.iter().all(|(score, _)| *score == f16),
-            "{key:?} keys, {value:?} values without an e4m3 instruction: {widened:?}"
+            fragment_reads(&without, &prompt).is_empty(),
+            "{key:?} keys, {value:?} values: the fragments widen a cache"
         );
 
-        for (prepared, name) in [
-            (
-                prepares(
-                    HypercubeSecondLaunchShuffleAttentionRoutine::new(),
-                    &hw,
-                    &decode,
+        for problem in [&prompt, &decode] {
+            for (prepared, name) in [
+                (
+                    prepares(
+                        HypercubeSecondLaunchShuffleAttentionRoutine::new(),
+                        &hw,
+                        problem,
+                    ),
+                    "the second-launch shuffle",
                 ),
-                "the second-launch shuffle",
-            ),
-            (
-                prepares(
-                    HypercubeLastArrivalShuffleAttentionRoutine::new(),
-                    &hw,
-                    &decode,
+                (
+                    prepares(
+                        HypercubeLastArrivalShuffleAttentionRoutine::new(),
+                        &hw,
+                        problem,
+                    ),
+                    "the last-arrival shuffle",
                 ),
-                "the last-arrival shuffle",
-            ),
-            (
-                prepares(CubeShuffleAttentionRoutine, &hw, &decode),
-                "the cube shuffle",
-            ),
-        ] {
-            assert!(
-                prepared,
-                "{name} declines {key:?} keys beside {value:?} values"
-            );
+                (
+                    prepares(CubeShuffleAttentionRoutine, &hw, problem),
+                    "the cube shuffle",
+                ),
+            ] {
+                assert!(
+                    prepared,
+                    "{name} declines {key:?} keys beside {value:?} values at {} queries",
+                    problem.seq_q
+                );
+            }
         }
         assert!(
             !prepares(UnitAttentionRoutine, &hw, &decode),
