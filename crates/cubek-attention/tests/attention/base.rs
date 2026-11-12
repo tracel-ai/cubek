@@ -9,7 +9,8 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::{Shape, shape};
 use cubek_attention::kernels::{
-    AttentionLaunch, AttentionScoring, AttentionTensors, OneRoutine, ScoreScale, SplitKeysAttention,
+    AttentionLaunch, AttentionScoring, AttentionTensors, DirectAttention, ScoreScale,
+    SplitKeysAttention,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
@@ -305,10 +306,10 @@ pub(crate) struct Forward<L> {
     hw: Hardware,
 }
 
-impl<R> Forward<OneRoutine<R>> {
+impl<R> Forward<DirectAttention<R>> {
     /// `routine`, which writes the attention, launched alone.
     pub(crate) fn new(routine: R) -> Self {
-        Self::of(OneRoutine(routine))
+        Self::of(DirectAttention(routine))
     }
 }
 

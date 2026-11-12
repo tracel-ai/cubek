@@ -1,7 +1,7 @@
 use crate::kernels::{
-    AttentionKernel, AttentionLaunch, AttentionTensors, HypercubeFragmentPartialAttentionRoutine,
-    HypercubeLastArrivalShuffleAttentionRoutine, HypercubeShufflePartialAttentionRoutine,
-    OneRoutine, SplitKeysAttention,
+    AttentionKernel, AttentionLaunch, AttentionTensors, DirectAttention,
+    HypercubeFragmentPartialAttentionRoutine, HypercubeLastArrivalShuffleAttentionRoutine,
+    HypercubeShufflePartialAttentionRoutine, SplitKeysAttention,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
@@ -93,7 +93,7 @@ impl HypercubeAttentionKernel {
     ) -> Result<TensorHandle, Refusal> {
         match self {
             Self::LastArrivalShuffle => {
-                OneRoutine(HypercubeLastArrivalShuffleAttentionRoutine::new())
+                DirectAttention(HypercubeLastArrivalShuffleAttentionRoutine::new())
                     .launch_lead_on(hw, tensors)
             }
             Self::SecondLaunchShuffle => SplitKeysAttention {
