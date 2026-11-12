@@ -1,5 +1,7 @@
-use super::{AttentionBackwardSpec, BenchTarget};
-use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, attention_backward};
+use super::{AttentionBackwardSpec, AttentionBackwardStrategy};
+use crate::kernels::{
+    AttentionBackwardLaunch, AttentionBackwardProblem, AttentionBackwardTensors, attention_backward,
+};
 use crate::kernels::{
     CubeStagedAttentionBackward, HypercubeAttentionBackward, PlaneFragmentAttentionBackward,
     UnitAttentionBackward,
@@ -16,7 +18,7 @@ use cubek_test_utils::{RunSamples, TestInput};
 
 /// `spec`'s backward pass in `f16`, run by `strategy` on `cubecl::TestRuntime`: the raw samples.
 pub fn bench(
-    strategy: &BenchTarget,
+    strategy: &AttentionBackwardStrategy,
     spec: &AttentionBackwardSpec,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
@@ -37,7 +39,7 @@ pub fn bench(
 
 struct AttentionBackwardBench {
     spec: AttentionBackwardSpec,
-    strategy: BenchTarget,
+    strategy: AttentionBackwardStrategy,
     device: Device,
     client: Client,
     samples: usize,
@@ -82,7 +84,7 @@ impl AttentionBackwardBench {
     }
 
     /// `strategy`'s lead setting on `tensors`.
-    fn lead<S: crate::kernels::AttentionBackwardStrategy>(
+    fn lead<S: AttentionBackwardLaunch>(
         &self,
         strategy: S,
         tensors: AttentionBackwardTensors,
@@ -118,11 +120,15 @@ impl Benchmark for AttentionBackwardBench {
     fn execute(&self, input: Self::Input) -> Result<(), String> {
         let tensors = self.tensors(input)?;
         match self.strategy {
-            BenchTarget::UnitLead => self.lead(UnitAttentionBackward, tensors),
-            BenchTarget::PlaneLead => self.lead(PlaneFragmentAttentionBackward, tensors),
-            BenchTarget::CubeLead => self.lead(CubeStagedAttentionBackward, tensors),
-            BenchTarget::HypercubeLead => self.lead(HypercubeAttentionBackward, tensors),
-            BenchTarget::Tuned => {
+            AttentionBackwardStrategy::UnitLead => self.lead(UnitAttentionBackward, tensors),
+            AttentionBackwardStrategy::PlaneLead => {
+                self.lead(PlaneFragmentAttentionBackward, tensors)
+            }
+            AttentionBackwardStrategy::CubeLead => self.lead(CubeStagedAttentionBackward, tensors),
+            AttentionBackwardStrategy::HypercubeLead => {
+                self.lead(HypercubeAttentionBackward, tensors)
+            }
+            AttentionBackwardStrategy::Tuned => {
                 attention_backward(&self.device, tensors);
                 Ok(())
             }

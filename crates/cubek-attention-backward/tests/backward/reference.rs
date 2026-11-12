@@ -5,7 +5,7 @@ use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::Shape;
-use cubek_attention_backward::kernels::AttentionBackwardStrategy;
+use cubek_attention_backward::kernels::AttentionBackwardLaunch;
 use cubek_attention_backward::{AttentionBackwardGradients, AttentionBackwardTensors};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
@@ -211,7 +211,7 @@ impl Reference {
     /// `tolerance`; skipped, and said so, where the device declines it. A launch that fails on the
     /// device fails the check: its gradients would be whatever their buffers held, which a buffer
     /// handed back by the memory pool can make look right.
-    pub fn run<S: AttentionBackwardStrategy>(
+    pub fn run<S: AttentionBackwardLaunch>(
         strategy: S,
         case: Case,
         element: ElemType,

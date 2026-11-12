@@ -2,7 +2,7 @@
 
 use crate::kernels::tune::{AttentionBackwardCandidate, AttentionBackwardKey};
 use crate::kernels::{
-    AttentionBackwardGradients, AttentionBackwardStrategy, AttentionBackwardTensors,
+    AttentionBackwardGradients, AttentionBackwardLaunch, AttentionBackwardTensors,
 };
 use crate::kernels::{
     CubeStagedAttentionBackward, HypercubeAttentionBackward, PlaneFragmentAttentionBackward,

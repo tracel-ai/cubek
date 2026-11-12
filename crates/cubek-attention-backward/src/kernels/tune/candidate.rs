@@ -1,7 +1,7 @@
 //! The candidates the backward pass's autotune races.
 
+use crate::kernels::AttentionBackwardLaunch;
 use crate::kernels::AttentionBackwardProblem;
-use crate::kernels::AttentionBackwardStrategy;
 use crate::kernels::AttentionBackwardTensors;
 use crate::kernels::tune::AttentionBackwardKey;
 use cubek_std::Hardware;
@@ -13,13 +13,13 @@ use cubek_std::autotune::{CandidatePriority, TuneCandidate, short_of_the_device}
 /// Its priority is how far the strategy's widest launch, the walk owned by the keys, falls short
 /// of filling the device ([`short_of_the_device`]).
 #[derive(Debug, Clone)]
-pub struct AttentionBackwardCandidate<S: AttentionBackwardStrategy> {
+pub struct AttentionBackwardCandidate<S: AttentionBackwardLaunch> {
     strategy: S,
     settings: S::Settings,
     hw: Hardware,
 }
 
-impl<S: AttentionBackwardStrategy + Copy> AttentionBackwardCandidate<S> {
+impl<S: AttentionBackwardLaunch + Copy> AttentionBackwardCandidate<S> {
     /// Every setting `strategy` lists on `hw`, as autotune candidates, its default first.
     pub(crate) fn list(strategy: S, hw: &Hardware) -> Vec<Self> {
         strategy
@@ -44,7 +44,7 @@ impl<S: AttentionBackwardStrategy + Copy> AttentionBackwardCandidate<S> {
     }
 }
 
-impl<S: AttentionBackwardStrategy> TuneCandidate for AttentionBackwardCandidate<S> {
+impl<S: AttentionBackwardLaunch> TuneCandidate for AttentionBackwardCandidate<S> {
     type Strategy = S::Settings;
     type Key = AttentionBackwardKey;
     type Blueprint = ();

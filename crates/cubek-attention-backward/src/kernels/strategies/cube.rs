@@ -2,12 +2,11 @@
 //! by the keys, and a cast of the keys' sums where the key walk's heads are apart.
 
 use crate::kernels::{
-    AttentionBackwardProblem, AttentionBackwardStrategy, AttentionBackwardTensors,
-    CastKeyGradientBlueprint, CastKeyGradientRoutine, CubeStagedKeyGradientBlueprint,
-    CubeStagedKeyGradientRoutine, CubeStagedKeyGradientRoutineSettings,
-    CubeStagedKeyGradientSumRoutine, CubeStagedQueryGradientBlueprint,
+    AttentionBackwardLaunch, AttentionBackwardProblem, AttentionBackwardTensors,
+    CastKeyGradientRoutine, CubeStagedKeyGradientRoutine, CubeStagedKeyGradientSumRoutine,
+    CubeStagedKeyWalkBlueprint, CubeStagedKeyWalkSettings, CubeStagedQueryGradientBlueprint,
     CubeStagedQueryGradientRoutine, CubeStagedQueryGradientRoutineSettings, KeyGradientSums,
-    KeyHeads,
+    KeyHeads, KeyHeadsBlueprint,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
@@ -61,20 +60,12 @@ impl core::fmt::Display for CubeStagedAttentionBackwardSettings {
 /// What [`CubeStagedAttentionBackward`] launches, in order: two routines with the key walk's
 /// heads together, three with them apart.
 #[derive(Debug, Clone)]
-pub enum CubeStagedAttentionBackwardBlueprint {
-    HeadsTogether {
-        queries: CubeStagedQueryGradientBlueprint,
-        keys: CubeStagedKeyGradientBlueprint,
-    },
-    HeadsApart {
-        queries: CubeStagedQueryGradientBlueprint,
-        key_sums: CubeStagedKeyGradientBlueprint,
-        /// Boxed: the variant holds one launch more than the other.
-        cast_keys: Box<CastKeyGradientBlueprint>,
-    },
+pub struct CubeStagedAttentionBackwardBlueprint {
+    pub queries: CubeStagedQueryGradientBlueprint,
+    pub keys: KeyHeadsBlueprint<CubeStagedKeyWalkBlueprint>,
 }
 
-impl AttentionBackwardStrategy for CubeStagedAttentionBackward {
+impl AttentionBackwardLaunch for CubeStagedAttentionBackward {
     type Settings = CubeStagedAttentionBackwardSettings;
     type Blueprint = CubeStagedAttentionBackwardBlueprint;
 
@@ -170,49 +161,36 @@ impl AttentionBackwardStrategy for CubeStagedAttentionBackward {
                 ring: settings.ring,
             },
         )?;
-        let keys = CubeStagedKeyGradientRoutineSettings {
+        let keys = CubeStagedKeyWalkSettings {
             microkernel: settings.key_gradient,
             ring: settings.ring,
         };
-        Ok(match settings.key_heads {
-            KeyHeads::Together => CubeStagedAttentionBackwardBlueprint::HeadsTogether {
-                queries,
-                keys: CubeStagedKeyGradientRoutine.prepare(hw, problem, &keys)?,
-            },
-            KeyHeads::Apart => {
-                let key_sums = CubeStagedKeyGradientSumRoutine.prepare(hw, problem, &keys)?;
-                CubeStagedAttentionBackwardBlueprint::HeadsApart {
-                    queries,
-                    cast_keys: Box::new(CastKeyGradientRoutine.prepare(&key_sums)),
-                    key_sums,
-                }
-            }
-        })
+        let keys = match settings.key_heads {
+            KeyHeads::Together => KeyHeadsBlueprint::Together(
+                CubeStagedKeyGradientRoutine.prepare(hw, problem, &keys)?,
+            ),
+            KeyHeads::Apart => KeyHeadsBlueprint::apart(
+                CubeStagedKeyGradientSumRoutine.prepare(hw, problem, &keys)?,
+            ),
+        };
+        Ok(CubeStagedAttentionBackwardBlueprint { queries, keys })
     }
 
     fn dispatch(&self, tensors: &AttentionBackwardTensors, blueprint: Self::Blueprint) {
-        match blueprint {
-            CubeStagedAttentionBackwardBlueprint::HeadsTogether { queries, keys } => {
-                CubeStagedQueryGradientRoutine.dispatch(tensors, &queries);
-                CubeStagedKeyGradientRoutine.dispatch(tensors, &keys);
+        CubeStagedQueryGradientRoutine.dispatch(tensors, &blueprint.queries);
+        match &blueprint.keys {
+            KeyHeadsBlueprint::Together(walk) => {
+                CubeStagedKeyGradientRoutine.dispatch(tensors, walk)
             }
-            CubeStagedAttentionBackwardBlueprint::HeadsApart {
-                queries,
-                key_sums,
-                cast_keys,
-            } => {
+            KeyHeadsBlueprint::Apart { sums: walk, cast } => {
                 let sums = KeyGradientSums::zeros(tensors);
-                CubeStagedQueryGradientRoutine.dispatch(tensors, &queries);
-                CubeStagedKeyGradientSumRoutine.dispatch(tensors, &key_sums, &sums);
-                CastKeyGradientRoutine.dispatch(tensors, &cast_keys, &sums);
+                CubeStagedKeyGradientSumRoutine.dispatch(tensors, walk, &sums);
+                CastKeyGradientRoutine.dispatch(tensors, cast, &sums);
             }
         }
     }
 
     fn widest_grid(blueprint: &Self::Blueprint) -> &Grid {
-        match blueprint {
-            CubeStagedAttentionBackwardBlueprint::HeadsTogether { keys, .. } => &keys.grid,
-            CubeStagedAttentionBackwardBlueprint::HeadsApart { key_sums, .. } => &key_sums.grid,
-        }
+        blueprint.keys.grid()
     }
 }

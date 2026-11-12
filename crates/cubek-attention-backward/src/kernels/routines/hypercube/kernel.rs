@@ -13,7 +13,7 @@ use cubek_std::microkernel::StageRing;
 /// values', and its share of the query's gradient added into `query_gradient`, which every cube
 /// that sees those queries adds into.
 #[cube(launch_unchecked)]
-pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
+pub fn hypercube_key_gradient_query_sum_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
@@ -52,11 +52,11 @@ pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
     );
 }
 
-/// [`hypercube_key_gradient_kernel`] with the group's heads split over cubes: every cube also adds
+/// [`hypercube_key_gradient_query_sum_kernel`] with the group's heads split over cubes: every cube also adds
 /// its heads' part of the keys' and values' gradients into `key_gradient` and `value_gradient`,
 /// which every cube of the key head's group adds into.
 #[cube(launch_unchecked)]
-pub fn hypercube_key_gradient_sum_kernel<ES: Float>(
+pub fn hypercube_gradient_sum_kernel<ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,

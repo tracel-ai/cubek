@@ -7,12 +7,16 @@
 //! the delta routine wrote the dot products, and casts the query's gradient out of the sum its
 //! cubes added into. Where the key walk's heads are apart, a cast of the keys' sums follows it.
 
+mod base;
 mod cube;
 mod hypercube;
+mod key_heads;
 mod plane;
 mod unit;
 
+pub use base::*;
 pub use cube::*;
 pub use hypercube::*;
+pub use key_heads::*;
 pub use plane::*;
 pub use unit::*;

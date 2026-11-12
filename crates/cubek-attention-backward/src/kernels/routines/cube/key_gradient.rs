@@ -1,7 +1,7 @@
 //! [`CubeStagedKeyGradientRoutine`]: the cube staged walk owned by the keys.
 
 use super::kernel::cube_staged_key_gradient_kernel;
-use super::{CubeStagedKeyGradientBlueprint, CubeStagedKeyGradientRoutineSettings, key_walk};
+use super::{CubeStagedKeyWalkBlueprint, CubeStagedKeyWalkSettings, key_walk};
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::S;
@@ -23,16 +23,12 @@ impl CubeStagedKeyGradientRoutine {
         &self,
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
-        settings: &CubeStagedKeyGradientRoutineSettings,
-    ) -> Result<CubeStagedKeyGradientBlueprint, Refusal> {
+        settings: &CubeStagedKeyWalkSettings,
+    ) -> Result<CubeStagedKeyWalkBlueprint, Refusal> {
         key_walk(hw, problem, settings, |tiling| Ok(tiling.cubes(&[S])))
     }
 
-    pub fn dispatch(
-        &self,
-        tensors: &AttentionBackwardTensors,
-        walk: &CubeStagedKeyGradientBlueprint,
-    ) {
+    pub fn dispatch(&self, tensors: &AttentionBackwardTensors, walk: &CubeStagedKeyWalkBlueprint) {
         let problem = tensors.problem();
         let binding = tensors.bind(walk);
         let operands = binding.operands;

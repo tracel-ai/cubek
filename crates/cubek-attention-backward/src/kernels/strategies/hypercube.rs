@@ -2,12 +2,11 @@
 //! sums it added into.
 
 use crate::kernels::{
-    AttentionBackwardProblem, AttentionBackwardStrategy, AttentionBackwardTensors,
-    CastKeyGradientBlueprint, CastKeyGradientRoutine, CastQueryGradientBlueprint,
-    CastQueryGradientRoutine, HypercubeGradientSumRoutine, HypercubeKeyGradientQuerySumBlueprint,
-    HypercubeKeyGradientQuerySumRoutine, HypercubeKeyGradientQuerySumRoutineSettings,
-    KeyGradientSums, KeyHeads, PlaneDeltaBlueprint, PlaneDeltaRoutine, PlaneDeltaRoutineSettings,
-    QueryGradientSum,
+    AttentionBackwardLaunch, AttentionBackwardProblem, AttentionBackwardTensors,
+    CastKeyGradientRoutine, CastQueryGradientBlueprint, CastQueryGradientRoutine,
+    HypercubeGradientSumRoutine, HypercubeKeyGradientQuerySumRoutine, HypercubeKeyWalkBlueprint,
+    HypercubeKeyWalkSettings, KeyGradientSums, KeyHeads, KeyHeadsBlueprint, PlaneDeltaBlueprint,
+    PlaneDeltaRoutine, PlaneDeltaRoutineSettings, QueryGradientSum,
 };
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention_backward::delta::plane::PlaneDeltaMicrokernelSettings;
@@ -58,22 +57,13 @@ impl core::fmt::Display for HypercubeAttentionBackwardSettings {
 /// What [`HypercubeAttentionBackward`] launches, in order: three routines with the key walk's
 /// heads together, four with them apart.
 #[derive(Debug, Clone)]
-pub enum HypercubeAttentionBackwardBlueprint {
-    HeadsTogether {
-        delta: PlaneDeltaBlueprint,
-        keys: HypercubeKeyGradientQuerySumBlueprint,
-        cast_queries: CastQueryGradientBlueprint,
-    },
-    HeadsApart {
-        delta: PlaneDeltaBlueprint,
-        key_sums: HypercubeKeyGradientQuerySumBlueprint,
-        /// Boxed: the variant holds one launch more than the other.
-        cast_keys: Box<CastKeyGradientBlueprint>,
-        cast_queries: CastQueryGradientBlueprint,
-    },
+pub struct HypercubeAttentionBackwardBlueprint {
+    pub delta: PlaneDeltaBlueprint,
+    pub keys: KeyHeadsBlueprint<HypercubeKeyWalkBlueprint>,
+    pub cast_queries: CastQueryGradientBlueprint,
 }
 
-impl AttentionBackwardStrategy for HypercubeAttentionBackward {
+impl AttentionBackwardLaunch for HypercubeAttentionBackward {
     type Settings = HypercubeAttentionBackwardSettings;
     type Blueprint = HypercubeAttentionBackwardBlueprint;
 
@@ -135,16 +125,18 @@ impl AttentionBackwardStrategy for HypercubeAttentionBackward {
         problem: &AttentionBackwardProblem,
         settings: &Self::Settings,
     ) -> Result<Self::Blueprint, Refusal> {
-        let keys = HypercubeKeyGradientQuerySumRoutineSettings {
+        let keys = HypercubeKeyWalkSettings {
             microkernel: settings.key_gradient,
             ring: settings.ring,
         };
         // The key walk first: it is what declines a device without atomic adds.
-        let key_walk = match settings.key_heads {
-            KeyHeads::Together => {
-                HypercubeKeyGradientQuerySumRoutine.prepare(hw, problem, &keys)?
+        let keys = match settings.key_heads {
+            KeyHeads::Together => KeyHeadsBlueprint::Together(
+                HypercubeKeyGradientQuerySumRoutine.prepare(hw, problem, &keys)?,
+            ),
+            KeyHeads::Apart => {
+                KeyHeadsBlueprint::apart(HypercubeGradientSumRoutine.prepare(hw, problem, &keys)?)
             }
-            KeyHeads::Apart => HypercubeGradientSumRoutine.prepare(hw, problem, &keys)?,
         };
         let delta = PlaneDeltaRoutine.prepare(
             hw,
@@ -153,53 +145,30 @@ impl AttentionBackwardStrategy for HypercubeAttentionBackward {
                 microkernel: settings.delta,
             },
         )?;
-        let cast_queries = CastQueryGradientRoutine.prepare(hw, &delta);
-        Ok(match settings.key_heads {
-            KeyHeads::Together => HypercubeAttentionBackwardBlueprint::HeadsTogether {
-                delta,
-                keys: key_walk,
-                cast_queries,
-            },
-            KeyHeads::Apart => HypercubeAttentionBackwardBlueprint::HeadsApart {
-                delta,
-                cast_keys: Box::new(CastKeyGradientRoutine.prepare(&key_walk)),
-                key_sums: key_walk,
-                cast_queries,
-            },
+        Ok(HypercubeAttentionBackwardBlueprint {
+            cast_queries: CastQueryGradientRoutine.prepare(hw, &delta),
+            delta,
+            keys,
         })
     }
 
     fn dispatch(&self, tensors: &AttentionBackwardTensors, blueprint: Self::Blueprint) {
         let query_sum = QueryGradientSum::zeros(tensors);
-        match blueprint {
-            HypercubeAttentionBackwardBlueprint::HeadsTogether {
-                delta,
-                keys,
-                cast_queries,
-            } => {
-                PlaneDeltaRoutine.dispatch(tensors, &delta);
-                HypercubeKeyGradientQuerySumRoutine.dispatch(tensors, &keys, &query_sum);
-                CastQueryGradientRoutine.dispatch(tensors, &cast_queries, &query_sum);
+        PlaneDeltaRoutine.dispatch(tensors, &blueprint.delta);
+        match &blueprint.keys {
+            KeyHeadsBlueprint::Together(walk) => {
+                HypercubeKeyGradientQuerySumRoutine.dispatch(tensors, walk, &query_sum)
             }
-            HypercubeAttentionBackwardBlueprint::HeadsApart {
-                delta,
-                key_sums,
-                cast_keys,
-                cast_queries,
-            } => {
+            KeyHeadsBlueprint::Apart { sums: walk, cast } => {
                 let sums = KeyGradientSums::zeros(tensors);
-                PlaneDeltaRoutine.dispatch(tensors, &delta);
-                HypercubeGradientSumRoutine.dispatch(tensors, &key_sums, &sums, &query_sum);
-                CastKeyGradientRoutine.dispatch(tensors, &cast_keys, &sums);
-                CastQueryGradientRoutine.dispatch(tensors, &cast_queries, &query_sum);
+                HypercubeGradientSumRoutine.dispatch(tensors, walk, &sums, &query_sum);
+                CastKeyGradientRoutine.dispatch(tensors, cast, &sums);
             }
         }
+        CastQueryGradientRoutine.dispatch(tensors, &blueprint.cast_queries, &query_sum);
     }
 
     fn widest_grid(blueprint: &Self::Blueprint) -> &Grid {
-        match blueprint {
-            HypercubeAttentionBackwardBlueprint::HeadsTogether { keys, .. } => &keys.grid,
-            HypercubeAttentionBackwardBlueprint::HeadsApart { key_sums, .. } => &key_sums.grid,
-        }
+        blueprint.keys.grid()
     }
 }

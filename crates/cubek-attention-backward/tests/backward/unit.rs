@@ -4,7 +4,7 @@ use super::reference::{Case, Reference};
 use core::num::NonZeroUsize;
 use cubecl::client::Client;
 use cubecl::prelude::*;
-use cubek_attention_backward::kernels::{AttentionBackwardStrategy, UnitAttentionBackward};
+use cubek_attention_backward::kernels::{AttentionBackwardLaunch, UnitAttentionBackward};
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 

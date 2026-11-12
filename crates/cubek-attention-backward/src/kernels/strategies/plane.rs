@@ -2,7 +2,7 @@
 //! the keys.
 
 use crate::kernels::{
-    AttentionBackwardProblem, AttentionBackwardStrategy, AttentionBackwardTensors,
+    AttentionBackwardLaunch, AttentionBackwardProblem, AttentionBackwardTensors,
     PlaneFragmentKeyGradientBlueprint, PlaneFragmentKeyGradientRoutine,
     PlaneFragmentKeyGradientRoutineSettings, PlaneFragmentQueryGradientBlueprint,
     PlaneFragmentQueryGradientRoutine, PlaneFragmentQueryGradientRoutineSettings,
@@ -60,7 +60,7 @@ pub struct PlaneFragmentAttentionBackwardBlueprint {
     pub keys: PlaneFragmentKeyGradientBlueprint,
 }
 
-impl AttentionBackwardStrategy for PlaneFragmentAttentionBackward {
+impl AttentionBackwardLaunch for PlaneFragmentAttentionBackward {
     type Settings = PlaneFragmentAttentionBackwardSettings;
     type Blueprint = PlaneFragmentAttentionBackwardBlueprint;
 

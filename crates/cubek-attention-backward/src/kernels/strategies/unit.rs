@@ -1,7 +1,7 @@
 //! [`UnitAttentionBackward`]: the unit walk owned by the queries, then the one owned by the keys.
 
 use crate::kernels::{
-    AttentionBackwardProblem, AttentionBackwardStrategy, AttentionBackwardTensors,
+    AttentionBackwardLaunch, AttentionBackwardProblem, AttentionBackwardTensors,
     UnitKeyGradientBlueprint, UnitKeyGradientRoutine, UnitKeyGradientRoutineSettings,
     UnitQueryGradientBlueprint, UnitQueryGradientRoutine, UnitQueryGradientRoutineSettings,
 };
@@ -56,7 +56,7 @@ pub struct UnitAttentionBackwardBlueprint {
     pub keys: UnitKeyGradientBlueprint,
 }
 
-impl AttentionBackwardStrategy for UnitAttentionBackward {
+impl AttentionBackwardLaunch for UnitAttentionBackward {
     type Settings = UnitAttentionBackwardSettings;
     type Blueprint = UnitAttentionBackwardBlueprint;
 

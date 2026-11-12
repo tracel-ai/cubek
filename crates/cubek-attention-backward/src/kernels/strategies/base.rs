@@ -1,4 +1,5 @@
-//! What a strategy of this kind states: the routines it launches, one kernel each, in order.
+//! What a strategy of this kind states ([`AttentionBackwardLaunch`]): the routines it launches,
+//! one kernel each, in order.
 
 use crate::kernels::{
     AttentionBackwardGradients, AttentionBackwardProblem, AttentionBackwardTensors,
@@ -7,13 +8,14 @@ use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
 use cubek_std::routine::Grid;
 
-/// A backward pass: routines launched in order, each one kernel, which together write the three
-/// gradients.
+/// A strategy of the backward pass: routines launched in order, each one kernel, which together
+/// write the three gradients. What a test, a benchmark row or an autotune candidate launches, as
+/// attention's forward pass launches an `AttentionLaunch`.
 ///
 /// What autotune races is a strategy at one of its settings. A setting holds each routine's, and
 /// which routines run can depend on it: the strategy's blueprint holds one routine blueprint per
 /// kernel it launches.
-pub trait AttentionBackwardStrategy {
+pub trait AttentionBackwardLaunch {
     /// The knobs a measurement settles: each routine's, and which routines run.
     type Settings: core::fmt::Debug + Clone + core::fmt::Display + PartialEq;
     /// Every routine's blueprint, in the order they launch.

@@ -11,7 +11,7 @@ use cubek_attention::kernels::{
     UnitAttentionRoutine,
 };
 use cubek_attention_backward::AttentionBackwardTensors;
-use cubek_attention_backward::kernels::{AttentionBackwardStrategy, UnitAttentionBackward};
+use cubek_attention_backward::kernels::{AttentionBackwardLaunch, UnitAttentionBackward};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;

@@ -3,7 +3,7 @@
 
 use super::reference::{Case, Reference};
 use cubecl::prelude::*;
-use cubek_attention_backward::kernels::{AttentionBackwardStrategy, HypercubeAttentionBackward};
+use cubek_attention_backward::kernels::{AttentionBackwardLaunch, HypercubeAttentionBackward};
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 

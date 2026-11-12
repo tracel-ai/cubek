@@ -4,14 +4,13 @@
 
 mod cast;
 mod cube;
+pub(crate) mod heads_apart;
 mod hypercube;
-pub(crate) mod key_heads;
 mod plane;
 mod unit;
 
 pub use cast::*;
 pub use cube::*;
 pub use hypercube::*;
-pub use key_heads::KeyHeads;
 pub use plane::*;
 pub use unit::*;

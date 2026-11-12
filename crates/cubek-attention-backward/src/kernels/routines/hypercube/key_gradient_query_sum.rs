@@ -1,10 +1,8 @@
 //! [`HypercubeKeyGradientQuerySumRoutine`]: the hypercube walk, every head of a group in one cube:
 //! the keys' gradients, and the queries' gradient as a sum.
 
-use super::kernel::hypercube_key_gradient_kernel;
-use super::{
-    HypercubeKeyGradientQuerySumBlueprint, HypercubeKeyGradientQuerySumRoutineSettings, key_walk,
-};
+use super::kernel::hypercube_key_gradient_query_sum_kernel;
+use super::{HypercubeKeyWalkBlueprint, HypercubeKeyWalkSettings, key_walk};
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, QueryGradientSum};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::S;
@@ -29,15 +27,15 @@ impl HypercubeKeyGradientQuerySumRoutine {
         &self,
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
-        settings: &HypercubeKeyGradientQuerySumRoutineSettings,
-    ) -> Result<HypercubeKeyGradientQuerySumBlueprint, Refusal> {
+        settings: &HypercubeKeyWalkSettings,
+    ) -> Result<HypercubeKeyWalkBlueprint, Refusal> {
         key_walk(hw, problem, settings, |tiling| Ok(tiling.cubes(&[S])))
     }
 
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
-        walk: &HypercubeKeyGradientQuerySumBlueprint,
+        walk: &HypercubeKeyWalkBlueprint,
         query_sum: &QueryGradientSum,
     ) {
         let problem = tensors.problem();
@@ -55,7 +53,7 @@ impl HypercubeKeyGradientQuerySumRoutine {
         // its tiles. Each plane writes only its own keys' and values' gradients, and only adds
         // into the query's gradient's sum, atomically; each cube's shared memory is its own.
         unsafe {
-            hypercube_key_gradient_kernel::launch_unchecked(
+            hypercube_key_gradient_query_sum_kernel::launch_unchecked(
                 tensors.client(),
                 walk.grid.launch.cube_count.clone(),
                 walk.grid.launch.cube_dim,

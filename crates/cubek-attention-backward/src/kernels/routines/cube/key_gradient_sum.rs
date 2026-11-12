@@ -2,8 +2,8 @@
 //! group apart.
 
 use super::kernel::cube_staged_key_gradient_sum_kernel;
-use super::{CubeStagedKeyGradientBlueprint, CubeStagedKeyGradientRoutineSettings, key_walk};
-use crate::kernels::routines::key_heads::cubes_with_heads_apart;
+use super::{CubeStagedKeyWalkBlueprint, CubeStagedKeyWalkSettings, key_walk};
+use crate::kernels::routines::heads_apart::cubes_with_heads_apart;
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, KeyGradientSums};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
@@ -27,8 +27,8 @@ impl CubeStagedKeyGradientSumRoutine {
         &self,
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
-        settings: &CubeStagedKeyGradientRoutineSettings,
-    ) -> Result<CubeStagedKeyGradientBlueprint, Refusal> {
+        settings: &CubeStagedKeyWalkSettings,
+    ) -> Result<CubeStagedKeyWalkBlueprint, Refusal> {
         key_walk(hw, problem, settings, |tiling| {
             cubes_with_heads_apart(tiling, problem.group)
         })
@@ -37,7 +37,7 @@ impl CubeStagedKeyGradientSumRoutine {
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
-        walk: &CubeStagedKeyGradientBlueprint,
+        walk: &CubeStagedKeyWalkBlueprint,
         sums: &KeyGradientSums,
     ) {
         let problem = tensors.problem();
