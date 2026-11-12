@@ -1,11 +1,8 @@
-use super::{AttentionBackwardSpec, AttentionBackwardStrategy};
+use super::{AttentionBackwardSpec, BenchTarget};
+use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, attention_backward};
 use crate::kernels::{
-    AttentionBackwardProblem, AttentionBackwardRoutine, AttentionBackwardTensors,
-    attention_backward,
-};
-use crate::kernels::{
-    CubeStagedAttentionBackwardRoutine, HypercubeAttentionBackwardRoutine,
-    PlaneFragmentAttentionBackwardRoutine, UnitAttentionBackwardRoutine,
+    CubeStagedAttentionBackward, HypercubeAttentionBackward, PlaneFragmentAttentionBackward,
+    UnitAttentionBackward,
 };
 use cubecl::benchmark::{Benchmark, ProfileDuration, TimingMethod};
 use cubecl::client::Client;
@@ -19,7 +16,7 @@ use cubek_test_utils::{RunSamples, TestInput};
 
 /// `spec`'s backward pass in `f16`, run by `strategy` on `cubecl::TestRuntime`: the raw samples.
 pub fn bench(
-    strategy: &AttentionBackwardStrategy,
+    strategy: &BenchTarget,
     spec: &AttentionBackwardSpec,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
@@ -40,7 +37,7 @@ pub fn bench(
 
 struct AttentionBackwardBench {
     spec: AttentionBackwardSpec,
-    strategy: AttentionBackwardStrategy,
+    strategy: BenchTarget,
     device: Device,
     client: Client,
     samples: usize,
@@ -84,15 +81,15 @@ impl AttentionBackwardBench {
         .map_err(|why| format!("{why:?}"))
     }
 
-    /// `routine`'s lead setting on `tensors`.
-    fn lead<R: AttentionBackwardRoutine>(
+    /// `strategy`'s lead setting on `tensors`.
+    fn lead<S: crate::kernels::AttentionBackwardStrategy>(
         &self,
-        routine: R,
+        strategy: S,
         tensors: AttentionBackwardTensors,
     ) -> Result<(), String> {
         let hw = Hardware::from_client(&self.client);
-        let lead = routine.lead(&hw);
-        routine
+        let lead = strategy.lead(&hw);
+        strategy
             .launch_on(&hw, tensors, &lead)
             .map(|_| ())
             .map_err(|why| format!("{lead} does not serve this problem: {why:?}"))
@@ -121,17 +118,11 @@ impl Benchmark for AttentionBackwardBench {
     fn execute(&self, input: Self::Input) -> Result<(), String> {
         let tensors = self.tensors(input)?;
         match self.strategy {
-            AttentionBackwardStrategy::UnitLead => self.lead(UnitAttentionBackwardRoutine, tensors),
-            AttentionBackwardStrategy::PlaneLead => {
-                self.lead(PlaneFragmentAttentionBackwardRoutine, tensors)
-            }
-            AttentionBackwardStrategy::CubeLead => {
-                self.lead(CubeStagedAttentionBackwardRoutine, tensors)
-            }
-            AttentionBackwardStrategy::HypercubeLead => {
-                self.lead(HypercubeAttentionBackwardRoutine, tensors)
-            }
-            AttentionBackwardStrategy::Tuned => {
+            BenchTarget::UnitLead => self.lead(UnitAttentionBackward, tensors),
+            BenchTarget::PlaneLead => self.lead(PlaneFragmentAttentionBackward, tensors),
+            BenchTarget::CubeLead => self.lead(CubeStagedAttentionBackward, tensors),
+            BenchTarget::HypercubeLead => self.lead(HypercubeAttentionBackward, tensors),
+            BenchTarget::Tuned => {
                 attention_backward(&self.device, tensors);
                 Ok(())
             }

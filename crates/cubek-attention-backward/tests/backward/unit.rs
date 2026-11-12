@@ -1,10 +1,10 @@
-//! The unit routine against the host's backward pass.
+//! The unit strategy against the host's backward pass.
 
 use super::reference::{Case, Reference};
 use core::num::NonZeroUsize;
 use cubecl::client::Client;
 use cubecl::prelude::*;
-use cubek_attention_backward::kernels::{AttentionBackwardRoutine, UnitAttentionBackwardRoutine};
+use cubek_attention_backward::kernels::{AttentionBackwardStrategy, UnitAttentionBackward};
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 
@@ -22,27 +22,27 @@ const CASE: Case = Case {
     hidden: None,
 };
 
-/// The routine at its lead setting on `case`, in `element`, against the host within `tolerance`.
+/// The strategy at its lead setting on `case`, in `element`, against the host within `tolerance`.
 fn run(case: Case, element: ElemType, tolerance: f64) {
     let client: Client = cubecl::test_device().client();
     let reference = Reference::new(&client, case, element);
     let hw = Hardware::from_client(&client);
-    let routine = UnitAttentionBackwardRoutine;
-    let settings = routine.lead(&hw);
-    let gradients = routine
+    let strategy = UnitAttentionBackward;
+    let settings = strategy.lead(&hw);
+    let gradients = strategy
         .launch_on(&hw, reference.tensors.clone(), &settings)
-        .expect("the unit routine runs everywhere");
+        .expect("the unit strategy runs everywhere");
     reference.check(&client, gradients, tolerance);
 }
 
 #[test]
-fn the_unit_routine_matches_the_reference() {
+fn the_unit_strategy_matches_the_reference() {
     run(CASE, f32::elem_type_native(), 1e-4);
 }
 
 /// Four query heads over two key heads: a key's gradient sums every query head of its group.
 #[test]
-fn the_unit_routine_sums_a_group_into_its_key_head() {
+fn the_unit_strategy_sums_a_group_into_its_key_head() {
     run(
         Case {
             heads: 4,
@@ -56,7 +56,7 @@ fn the_unit_routine_sums_a_group_into_its_key_head() {
 
 /// No query sees past its own position: the keys' walk starts at the first query that sees them.
 #[test]
-fn the_unit_routine_masks_causally() {
+fn the_unit_strategy_masks_causally() {
     run(
         Case {
             seq_q: 21,
@@ -72,7 +72,7 @@ fn the_unit_routine_masks_causally() {
 
 /// A sliding window bounds the keys a query sees from below too: the bias masks them.
 #[test]
-fn the_unit_routine_masks_a_sliding_window() {
+fn the_unit_strategy_masks_a_sliding_window() {
     run(
         Case {
             seq_q: 21,
@@ -88,19 +88,19 @@ fn the_unit_routine_masks_a_sliding_window() {
 }
 
 #[test]
-fn the_unit_routine_in_f16() {
+fn the_unit_strategy_in_f16() {
     run(CASE, half::f16::elem_type_native(), 3e-2);
 }
 
-/// Every setting the routine lists prepares and computes the same gradients.
+/// Every setting the strategy lists prepares and computes the same gradients.
 #[test]
 fn every_unit_setting_matches_the_reference() {
     let client: Client = cubecl::test_device().client();
     let reference = Reference::new(&client, CASE, f32::elem_type_native());
     let hw = Hardware::from_client(&client);
-    let routine = UnitAttentionBackwardRoutine;
-    for settings in routine.settings(&hw) {
-        let gradients = routine
+    let strategy = UnitAttentionBackward;
+    for settings in strategy.settings(&hw) {
+        let gradients = strategy
             .launch_on(&hw, reference.tensors.clone(), &settings)
             .unwrap_or_else(|refusal| panic!("{settings}: {refusal:?}"));
         reference.check(&client, gradients, 1e-4);

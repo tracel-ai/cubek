@@ -7,7 +7,7 @@ mod strategy;
 
 pub use benchmark::bench;
 pub use problem::{AttentionBackwardSpec, problems};
-pub use strategy::{AttentionBackwardStrategy, strategies};
+pub use strategy::{BenchTarget, strategies};
 
 use cubek_test_utils::{CatalogEntry, RunSamples};
 
@@ -15,7 +15,7 @@ pub struct Category;
 
 impl cubek_test_utils::Category for Category {
     type Problem = AttentionBackwardSpec;
-    type Strategy = AttentionBackwardStrategy;
+    type Strategy = BenchTarget;
 
     fn id(&self) -> &'static str {
         "attention_backward"
@@ -29,13 +29,13 @@ impl cubek_test_utils::Category for Category {
         problems()
     }
 
-    fn strategies(&self) -> Vec<CatalogEntry<AttentionBackwardStrategy>> {
+    fn strategies(&self) -> Vec<CatalogEntry<BenchTarget>> {
         strategies()
     }
 
     fn bench(
         &self,
-        strategy: &AttentionBackwardStrategy,
+        strategy: &BenchTarget,
         spec: &AttentionBackwardSpec,
         num_samples: usize,
     ) -> Result<RunSamples, String> {

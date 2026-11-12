@@ -1,11 +1,9 @@
-//! The cube staged routine against the host's backward pass, where the device offers it a matrix
+//! The cube staged strategy against the host's backward pass, where the device offers it a matrix
 //! instruction.
 
 use super::reference::{Case, Reference};
 use cubecl::prelude::*;
-use cubek_attention_backward::kernels::{
-    AttentionBackwardRoutine, CubeStagedAttentionBackwardRoutine,
-};
+use cubek_attention_backward::kernels::{AttentionBackwardStrategy, CubeStagedAttentionBackward};
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 
@@ -24,9 +22,9 @@ const CASE: Case = Case {
 };
 
 #[test]
-fn the_cube_routine_matches_the_reference() {
+fn the_cube_strategy_matches_the_reference() {
     Reference::run(
-        CubeStagedAttentionBackwardRoutine,
+        CubeStagedAttentionBackward,
         CASE,
         f32::elem_type_native(),
         1e-3,
@@ -36,9 +34,9 @@ fn the_cube_routine_matches_the_reference() {
 
 /// Four query heads over two key heads: a key's gradient sums every query head of its group.
 #[test]
-fn the_cube_routine_sums_a_group_into_its_key_head() {
+fn the_cube_strategy_sums_a_group_into_its_key_head() {
     Reference::run(
-        CubeStagedAttentionBackwardRoutine,
+        CubeStagedAttentionBackward,
         Case {
             heads: 4,
             batch: 2,
@@ -52,9 +50,9 @@ fn the_cube_routine_sums_a_group_into_its_key_head() {
 
 /// No query sees past its own position: the keys' walk starts at the first query that sees them.
 #[test]
-fn the_cube_routine_masks_causally() {
+fn the_cube_strategy_masks_causally() {
     Reference::run(
-        CubeStagedAttentionBackwardRoutine,
+        CubeStagedAttentionBackward,
         Case {
             seq_q: 21,
             visibility: AttentionVisibility::Causal {
@@ -69,9 +67,9 @@ fn the_cube_routine_masks_causally() {
 }
 
 #[test]
-fn the_cube_routine_in_f16() {
+fn the_cube_strategy_in_f16() {
     Reference::run(
-        CubeStagedAttentionBackwardRoutine,
+        CubeStagedAttentionBackward,
         CASE,
         half::f16::elem_type_native(),
         3e-2,
@@ -79,7 +77,7 @@ fn the_cube_routine_in_f16() {
     );
 }
 
-/// Every setting the routine lists prepares and computes the same gradients, on groups of two
+/// Every setting the strategy lists prepares and computes the same gradients, on groups of two
 /// heads, so a cube holding two heads holds a whole group, and a value dim two fragments wide.
 #[test]
 fn every_cube_setting_matches_the_reference() {
@@ -89,9 +87,9 @@ fn every_cube_setting_matches_the_reference() {
         val_dim: 16,
         ..CASE
     };
-    for settings in CubeStagedAttentionBackwardRoutine.settings(&hw) {
+    for settings in CubeStagedAttentionBackward.settings(&hw) {
         Reference::run(
-            CubeStagedAttentionBackwardRoutine,
+            CubeStagedAttentionBackward,
             case,
             f32::elem_type_native(),
             1e-3,
@@ -110,9 +108,9 @@ fn every_cube_setting_matches_the_reference_in_f16() {
         val_dim: 16,
         ..CASE
     };
-    for settings in CubeStagedAttentionBackwardRoutine.settings(&hw) {
+    for settings in CubeStagedAttentionBackward.settings(&hw) {
         Reference::run(
-            CubeStagedAttentionBackwardRoutine,
+            CubeStagedAttentionBackward,
             case,
             half::f16::elem_type_native(),
             3e-2,
@@ -138,7 +136,7 @@ fn every_held_cube_setting_masks_causally_over_several_stages_in_f16() {
         },
         ..CASE
     };
-    let held = CubeStagedAttentionBackwardRoutine
+    let held = CubeStagedAttentionBackward
         .settings(&hw)
         .into_iter()
         .filter(|settings| {
@@ -146,7 +144,7 @@ fn every_held_cube_setting_masks_causally_over_several_stages_in_f16() {
         });
     for settings in held {
         Reference::run(
-            CubeStagedAttentionBackwardRoutine,
+            CubeStagedAttentionBackward,
             case,
             half::f16::elem_type_native(),
             3e-2,

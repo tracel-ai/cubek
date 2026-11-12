@@ -11,7 +11,7 @@ use cubek_attention::kernels::{
     UnitAttentionRoutine,
 };
 use cubek_attention_backward::AttentionBackwardTensors;
-use cubek_attention_backward::kernels::{AttentionBackwardRoutine, UnitAttentionBackwardRoutine};
+use cubek_attention_backward::kernels::{AttentionBackwardStrategy, UnitAttentionBackward};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
@@ -81,10 +81,10 @@ fn the_backward_pass_reads_the_forward_it_follows() {
         case.visibility,
     )
     .expect("the forward's tensors are verified");
-    let routine = UnitAttentionBackwardRoutine;
-    let settings = routine.lead(&hw);
-    let gradients = routine
+    let strategy = UnitAttentionBackward;
+    let settings = strategy.lead(&hw);
+    let gradients = strategy
         .launch_on(&hw, backward, &settings)
-        .expect("the unit routine runs everywhere");
+        .expect("the unit strategy runs everywhere");
     reference.check(&client, gradients, 3e-2);
 }

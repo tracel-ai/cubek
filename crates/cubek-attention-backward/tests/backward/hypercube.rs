@@ -1,11 +1,9 @@
-//! The hypercube routine against the host's backward pass, where the device offers it a matrix
+//! The hypercube strategy against the host's backward pass, where the device offers it a matrix
 //! instruction and `f32` atomic adds.
 
 use super::reference::{Case, Reference};
 use cubecl::prelude::*;
-use cubek_attention_backward::kernels::{
-    AttentionBackwardRoutine, HypercubeAttentionBackwardRoutine,
-};
+use cubek_attention_backward::kernels::{AttentionBackwardStrategy, HypercubeAttentionBackward};
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 
@@ -24,9 +22,9 @@ const CASE: Case = Case {
 };
 
 #[test]
-fn the_hypercube_routine_matches_the_reference() {
+fn the_hypercube_strategy_matches_the_reference() {
     Reference::run(
-        HypercubeAttentionBackwardRoutine,
+        HypercubeAttentionBackward,
         CASE,
         f32::elem_type_native(),
         1e-3,
@@ -37,9 +35,9 @@ fn the_hypercube_routine_matches_the_reference() {
 /// Four query heads over two key heads: a key's gradient sums every query head of its group, and
 /// a query's gradient every key cube of its key head.
 #[test]
-fn the_hypercube_routine_sums_a_group_into_its_key_head() {
+fn the_hypercube_strategy_sums_a_group_into_its_key_head() {
     Reference::run(
-        HypercubeAttentionBackwardRoutine,
+        HypercubeAttentionBackward,
         Case {
             heads: 4,
             batch: 2,
@@ -54,9 +52,9 @@ fn the_hypercube_routine_sums_a_group_into_its_key_head() {
 /// No query sees past its own position: the keys' walk starts at the first query that sees them,
 /// so a query's gradient sums only the key cubes it sees.
 #[test]
-fn the_hypercube_routine_masks_causally() {
+fn the_hypercube_strategy_masks_causally() {
     Reference::run(
-        HypercubeAttentionBackwardRoutine,
+        HypercubeAttentionBackward,
         Case {
             seq_q: 21,
             visibility: AttentionVisibility::Causal {
@@ -71,9 +69,9 @@ fn the_hypercube_routine_masks_causally() {
 }
 
 #[test]
-fn the_hypercube_routine_in_f16() {
+fn the_hypercube_strategy_in_f16() {
     Reference::run(
-        HypercubeAttentionBackwardRoutine,
+        HypercubeAttentionBackward,
         CASE,
         half::f16::elem_type_native(),
         3e-2,
@@ -81,7 +79,7 @@ fn the_hypercube_routine_in_f16() {
     );
 }
 
-/// Every setting the routine lists prepares and computes the same gradients, on groups of two
+/// Every setting the strategy lists prepares and computes the same gradients, on groups of two
 /// heads and a value dim two fragments wide.
 #[test]
 fn every_hypercube_setting_matches_the_reference() {
@@ -91,9 +89,9 @@ fn every_hypercube_setting_matches_the_reference() {
         val_dim: 16,
         ..CASE
     };
-    for settings in HypercubeAttentionBackwardRoutine.settings(&hw) {
+    for settings in HypercubeAttentionBackward.settings(&hw) {
         Reference::run(
-            HypercubeAttentionBackwardRoutine,
+            HypercubeAttentionBackward,
             case,
             f32::elem_type_native(),
             1e-3,
@@ -113,9 +111,9 @@ fn every_hypercube_setting_matches_the_reference_in_f16() {
         val_dim: 16,
         ..CASE
     };
-    for settings in HypercubeAttentionBackwardRoutine.settings(&hw) {
+    for settings in HypercubeAttentionBackward.settings(&hw) {
         Reference::run(
-            HypercubeAttentionBackwardRoutine,
+            HypercubeAttentionBackward,
             case,
             half::f16::elem_type_native(),
             3e-2,
@@ -137,9 +135,9 @@ fn every_hypercube_setting_matches_the_reference_over_several_stages_in_f16() {
         val_dim: 16,
         ..CASE
     };
-    for settings in HypercubeAttentionBackwardRoutine.settings(&hw) {
+    for settings in HypercubeAttentionBackward.settings(&hw) {
         Reference::run(
-            HypercubeAttentionBackwardRoutine,
+            HypercubeAttentionBackward,
             case,
             half::f16::elem_type_native(),
             3e-2,
@@ -164,13 +162,13 @@ fn every_held_hypercube_setting_masks_causally_over_several_stages_in_f16() {
         },
         ..CASE
     };
-    let held = HypercubeAttentionBackwardRoutine
+    let held = HypercubeAttentionBackward
         .settings(&hw)
         .into_iter()
         .filter(|settings| settings.key_gradient.holds_its_score());
     for settings in held {
         Reference::run(
-            HypercubeAttentionBackwardRoutine,
+            HypercubeAttentionBackward,
             case,
             half::f16::elem_type_native(),
             3e-2,
@@ -197,7 +195,7 @@ fn every_held_hypercube_setting_splits_a_wide_head_in_f16() {
         },
         ..CASE
     };
-    let held = HypercubeAttentionBackwardRoutine
+    let held = HypercubeAttentionBackward
         .settings(&hw)
         .into_iter()
         .filter(|settings| {
@@ -206,7 +204,7 @@ fn every_held_hypercube_setting_splits_a_wide_head_in_f16() {
         });
     for settings in held {
         Reference::run(
-            HypercubeAttentionBackwardRoutine,
+            HypercubeAttentionBackward,
             case,
             half::f16::elem_type_native(),
             3e-2,

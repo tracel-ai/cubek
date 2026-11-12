@@ -1,10 +1,10 @@
-//! The plane routine against the host's backward pass, where the device offers it a matrix
+//! The plane strategy against the host's backward pass, where the device offers it a matrix
 //! instruction.
 
 use super::reference::{Case, Reference};
 use cubecl::prelude::*;
 use cubek_attention_backward::kernels::{
-    AttentionBackwardRoutine, PlaneFragmentAttentionBackwardRoutine,
+    AttentionBackwardStrategy, PlaneFragmentAttentionBackward,
 };
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
@@ -24,9 +24,9 @@ const CASE: Case = Case {
 };
 
 #[test]
-fn the_plane_routine_matches_the_reference() {
+fn the_plane_strategy_matches_the_reference() {
     Reference::run(
-        PlaneFragmentAttentionBackwardRoutine,
+        PlaneFragmentAttentionBackward,
         CASE,
         f32::elem_type_native(),
         1e-3,
@@ -36,9 +36,9 @@ fn the_plane_routine_matches_the_reference() {
 
 /// Four query heads over two key heads: a key's gradient sums every query head of its group.
 #[test]
-fn the_plane_routine_sums_a_group_into_its_key_head() {
+fn the_plane_strategy_sums_a_group_into_its_key_head() {
     Reference::run(
-        PlaneFragmentAttentionBackwardRoutine,
+        PlaneFragmentAttentionBackward,
         Case {
             heads: 4,
             batch: 2,
@@ -52,9 +52,9 @@ fn the_plane_routine_sums_a_group_into_its_key_head() {
 
 /// No query sees past its own position: the keys' walk starts at the first query that sees them.
 #[test]
-fn the_plane_routine_masks_causally() {
+fn the_plane_strategy_masks_causally() {
     Reference::run(
-        PlaneFragmentAttentionBackwardRoutine,
+        PlaneFragmentAttentionBackward,
         Case {
             seq_q: 21,
             visibility: AttentionVisibility::Causal {
@@ -69,9 +69,9 @@ fn the_plane_routine_masks_causally() {
 }
 
 #[test]
-fn the_plane_routine_in_f16() {
+fn the_plane_strategy_in_f16() {
     Reference::run(
-        PlaneFragmentAttentionBackwardRoutine,
+        PlaneFragmentAttentionBackward,
         CASE,
         half::f16::elem_type_native(),
         3e-2,
@@ -79,7 +79,7 @@ fn the_plane_routine_in_f16() {
     );
 }
 
-/// Every setting the routine lists prepares and computes the same gradients, on a value dim two
+/// Every setting the strategy lists prepares and computes the same gradients, on a value dim two
 /// fragments wide, so every grid holds more than one fragment along it.
 #[test]
 fn every_plane_setting_matches_the_reference() {
@@ -88,9 +88,9 @@ fn every_plane_setting_matches_the_reference() {
         val_dim: 16,
         ..CASE
     };
-    for settings in PlaneFragmentAttentionBackwardRoutine.settings(&hw) {
+    for settings in PlaneFragmentAttentionBackward.settings(&hw) {
         Reference::run(
-            PlaneFragmentAttentionBackwardRoutine,
+            PlaneFragmentAttentionBackward,
             case,
             f32::elem_type_native(),
             1e-3,
@@ -108,9 +108,9 @@ fn every_plane_setting_matches_the_reference_in_f16() {
         val_dim: 16,
         ..CASE
     };
-    for settings in PlaneFragmentAttentionBackwardRoutine.settings(&hw) {
+    for settings in PlaneFragmentAttentionBackward.settings(&hw) {
         Reference::run(
-            PlaneFragmentAttentionBackwardRoutine,
+            PlaneFragmentAttentionBackward,
             case,
             half::f16::elem_type_native(),
             3e-2,
@@ -121,9 +121,9 @@ fn every_plane_setting_matches_the_reference_in_f16() {
 
 /// A value dim of two fragments: the values' gradient holds a grid of its own two fragments wide.
 #[test]
-fn the_plane_routine_holds_a_wide_value_dim() {
+fn the_plane_strategy_holds_a_wide_value_dim() {
     Reference::run(
-        PlaneFragmentAttentionBackwardRoutine,
+        PlaneFragmentAttentionBackward,
         Case {
             val_dim: 16,
             ..CASE
