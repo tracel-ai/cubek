@@ -49,7 +49,7 @@ fn split_place<N: Size>(
                 + cube.coord(comptime!(split.rows[1]))
         }
     };
-    let first_line = match comptime!(layout) {
+    let first_line = match layout {
         // Along, a line holds `N` values of the row.
         ReduceLayout::Along => cube.origin(split.reduced) / N::value(),
         ReduceLayout::Across => cube.origin(split.reduced),
@@ -64,7 +64,6 @@ fn split_place<N: Size>(
 /// Every cube's part of its rows, accumulated into the carrier its operation accumulates into; the last of
 /// a box of rows' cubes merges their partials and writes the rows.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
     out: &TileTensor<'_>,
@@ -109,7 +108,6 @@ pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>
 /// Every cube's part of its rows, as [`hypercube_reduce_kernel()`] reduces it, the values written to
 /// `out` and their indices to `indices`, laid out as `out`.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_reduce_with_indices_kernel<
     In: Numeric,
     Acc: Numeric,

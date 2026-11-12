@@ -1,67 +1,9 @@
-use cubecl::{CubeType, prelude::*, std::tensor::ViewMut};
+use crate::base::random;
+use crate::kernels::RandomStrategy;
+use cubecl::prelude::*;
+use cubek_microkernel::random::Bernoulli;
 
-use crate::{OutputSlots, PrngBlueprint, PrngState, PrngStrategy, RandomFamily};
-
-use super::{PrngArgs, PrngRuntime, random, to_unit_interval_closed_open};
-
-#[derive(CubeLaunch, CubeType)]
-pub(crate) struct Bernoulli {
-    probability: f32,
-}
-
-#[derive(Debug)]
-pub(crate) struct BernoulliFamily;
-
-impl RandomFamily for BernoulliFamily {
-    type Runtime = Bernoulli;
-}
-
-#[derive(CubeType)]
-pub(crate) struct BernoulliParams<N: Size> {
-    probability: Vector<f32, N>,
-}
-
-#[cube]
-impl PrngRuntime for Bernoulli {
-    type Params<N: Size> = BernoulliParams<N>;
-
-    fn params<N: Size>(args: &Bernoulli) -> BernoulliParams<N> {
-        BernoulliParams::<N> {
-            probability: Vector::new(args.probability),
-        }
-    }
-
-    fn draw<E: Numeric, N: Size>(
-        params: &BernoulliParams<N>,
-        state: &mut PrngState<N>,
-        slots: &OutputSlots,
-        nth: usize,
-        output: &mut ViewMut<'_, Vector<E, N>, usize>,
-        #[comptime] _blueprint: PrngBlueprint,
-    ) {
-        let uniform = to_unit_interval_closed_open(state.next());
-
-        slots.write(
-            output,
-            nth,
-            Vector::cast_from(uniform.less_than(&params.probability)),
-        );
-    }
-}
-
-impl PrngArgs for Bernoulli {
-    type Args = Self;
-
-    const VECTORS_PER_DRAW: usize = 1;
-
-    fn args(self) -> BernoulliLaunch {
-        BernoulliLaunch::new(self.probability)
-    }
-}
-
-/// Samples a bernoulli distribution from an explicit seed.
-///
-/// Uses the supplied seed without accessing the global RNG.
+/// `out` filled with `1` at probability `probability` and `0` otherwise, drawn off `seed`.
 pub fn random_bernoulli(
     client: &Client,
     probability: f32,
@@ -74,7 +16,7 @@ pub fn random_bernoulli(
         probability,
         out,
         dtype,
-        PrngStrategy::Inferred,
+        RandomStrategy::Selected,
         seed,
     )
 }
@@ -84,10 +26,10 @@ pub(crate) fn random_bernoulli_with_strategy(
     probability: f32,
     out: TensorBinding,
     dtype: ElemType,
-    strategy: PrngStrategy,
+    strategy: RandomStrategy,
     seed: u64,
 ) -> Result<(), LaunchError> {
-    random::<BernoulliFamily>(
+    random(
         client,
         Bernoulli { probability },
         out,

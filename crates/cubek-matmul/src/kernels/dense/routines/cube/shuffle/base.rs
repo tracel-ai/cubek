@@ -3,6 +3,7 @@ use crate::kernels::{
     MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
+use core::num::NonZeroUsize;
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
@@ -36,22 +37,43 @@ pub struct CubeShuffleMatmulRoutine;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeShuffleMatmulRoutineSettings {
     pub microkernel: CubeShuffleMicrokernelSettings,
+    /// Cubes a compute unit the launch is capped at against a packed rhs, each cube walking a
+    /// run of the boxes of columns ([`MatmulView::persistent_partitioning`]) rather than taking
+    /// one: its lhs, the same from box to box, is read once a cube. A cube a box where `None`, and
+    /// where the device does not say how many compute units it has: the microkernel then runs
+    /// uncapped, which unlike the plane shuffle's capped launch is no other setting's kernel.
+    pub cubes_per_worker: Option<NonZeroUsize>,
 }
 
 impl CubeShuffleMatmulRoutineSettings {
     pub const DEFAULT: Self = Self {
         microkernel: CubeShuffleMicrokernelSettings::DEFAULT,
+        cubes_per_worker: None,
     };
 
     /// The lead against a packed rhs: the software planes one read a step, four planes a cube.
     pub const PACKED: Self = Self {
         microkernel: CubeShuffleMicrokernelSettings::PACKED,
+        cubes_per_worker: None,
+    };
+
+    /// The decode-step split of `K` ([`CubeShuffleMicrokernelSettings::SPLIT_K`]) on four cubes a
+    /// compute unit, each walking a run of the boxes. On a Radeon 8060S it reads NVFP4 Qwen3-8B
+    /// projections at one row at 98–100% of a row sum of the weight that reads no lhs, 4–9%
+    /// faster than the plane shuffle's capped launch.
+    pub const PACKED_SPLIT_K: Self = Self {
+        microkernel: CubeShuffleMicrokernelSettings::SPLIT_K,
+        cubes_per_worker: Some(NonZeroUsize::new(4).unwrap()),
     };
 }
 
 impl core::fmt::Display for CubeShuffleMatmulRoutineSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "cube-shuffle-matmul {}", self.microkernel)
+        write!(f, "cube-shuffle-matmul {}", self.microkernel)?;
+        match self.cubes_per_worker {
+            Some(per) => write!(f, " cubes_per_worker={per}"),
+            None => Ok(()),
+        }
     }
 }
 
@@ -69,9 +91,45 @@ impl CubeShuffleMatmulRoutine {
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeShuffleMatmulRoutineSettings> {
         CubeShuffleMicrokernel::packed_settings(hw)
             .into_iter()
-            .map(|microkernel| CubeShuffleMatmulRoutineSettings { microkernel })
+            .map(|microkernel| CubeShuffleMatmulRoutineSettings {
+                microkernel,
+                cubes_per_worker: None,
+            })
+            .chain([CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K])
             .collect()
     }
+
+    /// A setting reading the rhs a block at a time against one that reads none so
+    /// ([`Packing::by_block`]): one not in rows, or whose block scales are not `ue4m3`.
+    pub const BY_BLOCK_UNREAD: Refusal = Refusal::Declined {
+        why: "a cube shuffle reading the rhs a block at a time needs a packed rhs in rows under \
+              ue4m3 block scales whose blocks are whole reads",
+    };
+
+    /// `problem` with its packed rhs read a block at a time ([`Packing::by_block`];
+    /// [`BY_BLOCK_UNREAD`](Self::BY_BLOCK_UNREAD) where it reads none so).
+    pub fn rhs_by_block(problem: &MatmulRoutineProblem) -> Result<MatmulRoutineProblem, Refusal> {
+        let mut by_block = problem.clone();
+        let rhs = by_block
+            .packings
+            .rhs
+            .as_mut()
+            .ok_or(Self::BY_BLOCK_UNREAD)?;
+        *rhs = rhs.by_block().ok_or(Self::BY_BLOCK_UNREAD)?;
+        Ok(by_block)
+    }
+
+    /// What a float rhs declines a setting reading by block or capping its launch with: both
+    /// read a packed rhs's columns only.
+    pub const PACKED_ONLY: Refusal = Refusal::Declined {
+        why: "a cube shuffle reads by block, and caps its launch, against a packed rhs only",
+    };
+
+    /// What a batched product, whose cubes are handed batches beside boxes, declines a capped
+    /// launch with.
+    pub const CAPPED_BATCHED: Refusal = Refusal::Declined {
+        why: "a cube shuffle's capped launch walks one axis of boxes, not batches beside them",
+    };
 
     /// [`Routine::estimate`] against a float rhs: each group of units, across the cube's
     /// planes, reads the lhs's rows along the whole of `K` and the rhs's columns it owns,
@@ -137,7 +195,12 @@ impl CubeShuffleMatmulRoutine {
         let leaf = blueprint.partitioning.leaf();
         let planes = microkernel.planes_along_k.get() as u64;
         let step_k = microkernel.plane.step_depth(&leaf) as u64 * planes;
-        let columns = problem.n as u64 / grid.cubes().expect("a static grid").max(1);
+        let cubes = grid.cubes().expect("a static grid").max(1);
+        // A cube's columns, averaged over the launch: a capped launch's cube walks a run of boxes,
+        // `walks` of them, one after the other, each down the whole of `K`.
+        let columns = problem.n as u64 / cubes;
+        let box_columns = blueprint.partitioning.columns().max(1);
+        let walks = (problem.n as u64).div_ceil(box_columns).div_ceil(cubes);
         let groups = columns / microkernel.plane.columns() as u64;
         let size = |operand: MatmulOperand| item.elements.get(operand).size() as u64;
         let rhs = packing.bytes(k as usize * columns as usize) as u64;
@@ -155,9 +218,9 @@ impl CubeShuffleMatmulRoutine {
             ],
             writes: vec![GlobalStream {
                 bytes: rows * columns * size(MatmulOperand::Out),
-                run_bytes: (columns * size(MatmulOperand::Out)) as usize,
+                run_bytes: (box_columns * size(MatmulOperand::Out)) as usize,
             }],
-            stages: k.div_ceil(step_k),
+            stages: k.div_ceil(step_k) * walks,
             stages_in_flight: 1,
             drain_atomics: match microkernel.meet {
                 CubeMeet::Atomic => planes * rows * columns,
@@ -175,6 +238,9 @@ impl CubeShuffleMatmulRoutine {
         settings: &CubeShuffleMatmulRoutineSettings,
     ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
         problem.check_plain()?;
+        if settings.cubes_per_worker.is_some() || settings.microkernel.by_block {
+            return Err(Self::PACKED_ONLY);
+        }
         let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
@@ -205,17 +271,44 @@ impl CubeShuffleMatmulRoutine {
         packing: &Packing,
         settings: &CubeShuffleMatmulRoutineSettings,
     ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
+        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
+        let reread;
+        let (problem, packing) = match settings.microkernel.by_block {
+            false => (problem, packing),
+            true => {
+                reread = Self::rhs_by_block(problem)?;
+                let packing = reread.packings.rhs.as_ref().expect("re-read just above");
+                (&reread, packing)
+            }
+        };
         let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?;
         view.check_steps(hw)?;
         let item = view.work_item();
-        let microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let mut microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
         let columns = microkernel.plane.column_axis();
-        let partitioning = view.partitioning(
-            microkernel.tiling(),
-            &[columns],
-            CubeOrder::RowMajor,
-            MatmulView::ONE_CUBE_A_BOX,
-        );
+        let partitioning = match (settings.cubes_per_worker, hw.workers()) {
+            (Some(_), _) if !view.distributed_batch_axes().is_empty() => {
+                return Err(Self::CAPPED_BATCHED);
+            }
+            (Some(per), Some(workers)) => {
+                // A cube reuses its accumulator box after box, which only the slots, opened and
+                // synchronized afresh each box, do.
+                microkernel.meet = CubeMeet::InSlots;
+                let boxes = problem.n.div_ceil(microkernel.plane.columns()).max(1);
+                let cubes = (per.get() * workers as usize).min(boxes);
+                view.persistent_partitioning(
+                    microkernel.tiling(),
+                    &[columns],
+                    NonZeroUsize::new(cubes).expect("at least one box"),
+                )
+            }
+            _ => view.partitioning(
+                microkernel.tiling(),
+                &[columns],
+                CubeOrder::RowMajor,
+                MatmulView::ONE_CUBE_A_BOX,
+            ),
+        };
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
             shared_memory: microkernel.shared_memory(&item, partitioning.cells()),
@@ -238,7 +331,10 @@ impl Routine for CubeShuffleMatmulRoutine {
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         CubeShuffleMicrokernel::settings(hw)
             .into_iter()
-            .map(|microkernel| Self::Settings { microkernel })
+            .map(|microkernel| Self::Settings {
+                microkernel,
+                cubes_per_worker: None,
+            })
             .collect()
     }
 
@@ -323,6 +419,7 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
         let microkernel = blueprint.microkernel;
         let item = tensors.work_item();
         let [sum, _, _, out] = item.kernel_elements();
+        let persistent = blueprint.partitioning.shares_boxes();
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles; its shared memory is the accumulator the tile DSL sizes to the cube's run.
@@ -341,6 +438,7 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
                 microkernel.split(),
                 microkernel.planes_along_k.get(),
                 microkernel.plane.reads(&item),
+                persistent,
                 [sum, out],
             );
         }
@@ -537,6 +635,7 @@ mod tests {
                 )),
                 planes_along_k,
             ),
+            cubes_per_worker: None,
         }
     }
 

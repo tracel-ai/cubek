@@ -193,14 +193,15 @@ impl PlaneFragmentAttentionMicrokernel {
     }
 
     /// The value's instruction beside `score`, where the device offers it: the score's own
-    /// instruction where it is a cmma one, of any shape, read through the windows; else a manual
-    /// `mma` exactly as deep as the plane's `keys` a stage, which reads the plane's row of score
-    /// fragments in their registers as its `A`, on 16-bit operands, where the device's `A` lays
-    /// its cells where the accumulator does ([`Hardware::accumulator_as_a`]; a `tf32` `A` never
-    /// does). The tile reads that row as the `A` of one instruction
-    /// (`cubecl-tile`'s `accumulators_as_a`), so where the device has no instruction that deep
-    /// (Metal's `8x8x8` under a row of more than one fragment) there is none, and the `mma` score
-    /// is not offered; a cmma score, read through the windows, still is.
+    /// instruction where it is a cmma one, of any shape, read through the windows; else the
+    /// deepest manual `mma` a whole number of the score's fragments deep that the plane's `keys` a
+    /// stage divide into, on 16-bit operands, where the device's `A` lays its cells where the
+    /// accumulator does ([`Hardware::accumulator_as_a`]; a `tf32` `A` never does). Each call reads
+    /// one run of the score's fragments along the keys, in their registers, as its `A`
+    /// (`cubecl-tile`'s `accumulators_as_a`), and the value walks the plane's keys a run at a time
+    /// ([`tiling`](Self::tiling)): the deepest contracts them in the fewest calls, and a shallower
+    /// call takes as long (on an RTX PRO 6000 an `m16n8k8` runs at half the rate of an
+    /// `m16n8k16`).
     fn value_instruction(
         hw: &Hardware,
         score: PlaneFragmentInstruction,
@@ -209,17 +210,19 @@ impl PlaneFragmentAttentionMicrokernel {
         match score {
             PlaneFragmentInstruction::Cmma { .. } => Some(score),
             PlaneFragmentInstruction::Mma { shape, .. } if shape.a_type.size() == 2 => {
-                // The score's tile and elements, as deep as the plane's keys.
-                let row = |value: &MmaConfig| {
+                // The score's tile and elements, a whole number of its fragments deep, the plane's
+                // keys a whole number of its calls.
+                let run = |value: &MmaConfig| {
                     MmaConfig {
                         k: shape.k,
                         ..*value
                     } == shape
-                        && value.k as usize == keys
+                        && value.k.is_multiple_of(shape.n)
+                        && keys.is_multiple_of(value.k as usize)
                 };
 
                 hw.accumulator_as_a
-                    .then(|| manual_mma(hw).find(row))
+                    .then(|| manual_mma(hw).filter(run).max_by_key(|value| value.k))
                     .flatten()
                     .map(PlaneFragmentInstruction::mma)
             }
@@ -436,6 +439,16 @@ impl PlaneFragmentAttentionMicrokernel {
         match self.score.settings.fragment_depth {
             PlaneFragmentDepth::Instruction => self.score.settings.depth.get(),
             PlaneFragmentDepth::Stage => 1,
+        }
+    }
+
+    /// The calls the value contracts a stage's keys in, one run of the score's fragments each,
+    /// where the plane keeps its score in fragments; one where it reads the score through its
+    /// windows.
+    pub fn score_runs(&self) -> usize {
+        match self.score_holder() {
+            ScoreHolder::Fragments => self.settings.seq_kv.get() / self.score_run(),
+            ScoreHolder::Window => 1,
         }
     }
 

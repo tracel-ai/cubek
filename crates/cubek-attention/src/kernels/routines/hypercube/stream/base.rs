@@ -2,11 +2,12 @@ use super::kernel::hypercube_stream_fragment_attention_kernel;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
     AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
-    HypercubeMerge,
+    HypercubeMerge, PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Space, StageStorage};
+use cubek_microkernel::attention::cube::CubeAttentionPlane;
 use cubek_microkernel::attention::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
 };
@@ -69,6 +70,16 @@ impl HypercubeStreamFragmentAttentionRoutine {
     pub const UNSIZED: Refusal = Refusal::Declined {
         why: "the stream routine sizes its grid by the device's workers, which this device does \
               not report",
+    };
+
+    /// What it declines where a plane keeps its score in fragments and contracts a stage's keys
+    /// in more than one run of them: on an RTX PRO 6000 the two-by-eight box over two cubes a
+    /// worker never finished its launch, while the same box over one cube a worker, the cube
+    /// routine and the second-launch routine match the reference with it. Until that is
+    /// understood, this routine keeps the boxes whose value contracts a stage in one call.
+    pub const SCORE_RUNS: Refusal = Refusal::Declined {
+        why: "the stream routine keeps a plane's score in fragments only where the value \
+              contracts a stage's keys in one call",
     };
 
     /// The cubes its grid holds on `hw` at `settings`, or [`UNSIZED`](Self::UNSIZED) on a device
@@ -178,6 +189,9 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
         if let AttentionCacheLayout::Packed(_) = problem.cache {
             return Err(ATTENTION_PACKED_UNREAD);
         }
+        if problem.packed_queries {
+            return Err(PACKED_QUERIES_UNREAD);
+        }
         HypercubeMerge::LastArrival.admits(hw)?;
         let item = problem.work_item();
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
@@ -185,6 +199,11 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
             .cube
             .plane
             .reads_stage(microkernel.cube.settings.layout)?;
+        if let CubeAttentionPlane::Fragment(plane) = &microkernel.cube.plane
+            && plane.score_runs() > 1
+        {
+            return Err(Self::SCORE_RUNS);
+        }
         if microkernel.cube.page_steps.is_some() {
             return Err(Refusal::Declined {
                 why: "the stream routine's runs cross from one box's keys into the next's, which \
@@ -252,10 +271,10 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 tensors.client(),
                 grid.launch.cube_count,
                 grid.launch.cube_dim,
-                binding.query.arg(),
+                binding.query,
                 key,
                 value,
-                binding.out.arg(),
+                binding.out,
                 binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
                 slots.out.binding().into_tensor_arg(),
                 slots.max.binding().into_tensor_arg(),

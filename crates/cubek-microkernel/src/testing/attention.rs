@@ -184,7 +184,6 @@ impl PlaneFragmentAttentionLaunch {
 /// The one plane running its queries through stages of its own over every key
 /// ([`plane_fragment_attention_microkernel`]).
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -208,7 +207,14 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
 
     for plane in &partitioning {
-        let visible = VisibleKeys::new(len, &plane, queries, &mask, AttentionVisibility::Attended);
+        let visible = VisibleKeys::new(
+            len,
+            &ComptimeOption::new_None(),
+            &plane,
+            queries,
+            &mask,
+            AttentionVisibility::Attended,
+        );
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
         let bias = visible.bias::<EA>(&partitioning);

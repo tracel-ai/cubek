@@ -9,7 +9,6 @@ use cubek_microkernel::linear_recurrence::walk::cube::{
 /// from position `first_kept` on go to `kept` where the launch binds it and back to `state`
 /// otherwise; `lengths`, where bound, says which rows start from zeros.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_delta_walk_kernel<E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,

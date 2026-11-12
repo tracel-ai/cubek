@@ -556,7 +556,7 @@ fn finish<Out: Float>(
     }
     let (row, channel) = channels.div_mod(index);
     let (out_channel, tap) = taps.div_mod(row);
-    let column = if comptime!(spatial_last) {
+    let column = if spatial_last {
         channel * (partials.shape(2) / padded_channels) + tap
     } else {
         tap * padded_channels + channel

@@ -121,7 +121,7 @@ impl CubeMappingStrategy {
         let z_pos = absolute_index / z_stride;
         let xy_pos = absolute_index % z_stride;
 
-        let (x_pos, y_pos) = match comptime!(global_order) {
+        let (x_pos, y_pos) = match global_order {
             GlobalOrder::RowMajor => ((xy_pos / y_cubes as usize) as u32, xy_pos as u32 % y_cubes),
             GlobalOrder::ColMajor => (xy_pos as u32 % x_cubes, (xy_pos / x_cubes as usize) as u32),
             GlobalOrder::SwizzleRow(w) => {

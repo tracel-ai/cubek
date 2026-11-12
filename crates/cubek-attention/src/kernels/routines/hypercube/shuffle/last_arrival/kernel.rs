@@ -14,7 +14,6 @@ use cubek_microkernel::split_keys_merge::hypercube::{
 /// box, the last merging it ([`hypercube_split_keys_merge_microkernel()`]), with each query's
 /// logsumexp where the launch binds one.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -50,7 +49,14 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
 
-    let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
+    let visible = VisibleKeys::new(
+        len,
+        &ComptimeOption::new_None(),
+        &first_step,
+        queries,
+        &mask,
+        visibility,
+    );
     let steps = visible.steps(
         &first_step,
         microkernel.cube.seq_q(),
@@ -89,7 +95,6 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
 /// [`hypercube_attention_arrival_kernel`] over a packed cache, its planes decoding the keys and
 /// values as they read them ([`PackedStepReads`]).
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -125,7 +130,14 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
 
-    let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
+    let visible = VisibleKeys::new(
+        len,
+        &ComptimeOption::new_None(),
+        &first_step,
+        queries,
+        &mask,
+        visibility,
+    );
     let steps = visible.steps(
         &first_step,
         microkernel.cube.seq_q(),

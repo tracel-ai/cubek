@@ -154,6 +154,7 @@ mod tests {
             ScoreScale::standard(128),
             None,
             false,
+            false,
         )
     }
 

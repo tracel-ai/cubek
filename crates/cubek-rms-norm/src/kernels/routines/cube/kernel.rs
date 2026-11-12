@@ -8,7 +8,6 @@ use cubek_microkernel::row_store::CubeStage;
 
 /// Every cube, running its row, written out as `stage` says.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_rms_norm_kernel<E: Float, N: Size, O: Destination>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,

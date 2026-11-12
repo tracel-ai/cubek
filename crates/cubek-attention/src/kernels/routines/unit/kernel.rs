@@ -7,7 +7,6 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 /// Every unit of the launch running its rows, and writing each row's logsumexp where the launch
 /// binds one.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn unit_attention_kernel<EA: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -33,7 +32,14 @@ pub fn unit_attention_kernel<EA: Float>(
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
 
     for unit in &partitioning {
-        let visible = VisibleKeys::new(len, &unit, queries, &mask, visibility);
+        let visible = VisibleKeys::new(
+            len,
+            &ComptimeOption::new_None(),
+            &unit,
+            queries,
+            &mask,
+            visibility,
+        );
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
         let bias = visible.bias::<EA>(&partitioning);

@@ -6,9 +6,8 @@ use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 
 /// Every cube, running its run of the output, its units reading each operand as `reads` says, under
 /// the scales it carries, none where it is plain. `O` is how the output is reached: a buffer, or a
-/// sink.
+/// sink. A `persistent` launch's cubes each walk a run of the boxes rather than take one.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destination>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
@@ -19,13 +18,21 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
     #[comptime] split: Axis,
     #[comptime] planes: usize,
     #[comptime] reads: MatmulOperands<MatmulRead>,
+    #[comptime] persistent: bool,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
     let c = O::tile::<E, VO>(out, &partitioning);
 
-    for cube in &partitioning {
+    // A persistent cube's run of the boxes, whole boxes each, the cube level sharing them as one
+    // index; every other cube's one box.
+    let cubes = if persistent {
+        partitioning.walk().portion_of(1usize).regions()
+    } else {
+        partitioning.walk()
+    };
+    for cube in cubes {
         cube_shuffle_microkernel::<EA>(
             &cube,
             &c.at(&cube),

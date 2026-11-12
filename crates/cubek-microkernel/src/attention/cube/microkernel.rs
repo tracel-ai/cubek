@@ -86,7 +86,6 @@ impl<EA: Float, N: Size> CubeSlotPlanes<EA, N> for PlaneShuffleAttention<EA, N> 
 /// `steps`, each held as `storage`; `out`, `logsumexp`, `query`, `key`, `value` and `bias` are
 /// windowed to it.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_staged_attention_microkernel<EA: Float, ES: Float>(
     cube: &Region,
     out: &Tile,
@@ -137,7 +136,6 @@ pub fn cube_staged_attention_microkernel<EA: Float, ES: Float>(
 /// `cube` is the region the cube owns, its walk the steps of keys or the pages of them, of which
 /// it takes the first `steps`; `out`, `logsumexp` and `query` are windowed to it.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_unstaged_attention_microkernel<
     EA: Float,
     E: Float,
@@ -217,7 +215,6 @@ pub fn cube_unstaged_attention_microkernel<
 /// and `value` are where each step's lines come from ([`StepReads`]), `value_dim` elements of a
 /// value.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_unstaged_attention_partial_microkernel<
     EA: Float,
     E: Float,
@@ -276,7 +273,6 @@ pub fn cube_unstaged_attention_partial_microkernel<
 /// read for where the slots lie. `out` and `query`, which span no key, are windowed to the box;
 /// `key`, `value` and `bias` are read at the walk's regions, each stage of them held as `storage`.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_staged_attention_partial_microkernel<EA: Float, ES: Float>(
     staged: Walk,
     run: &Walk,
@@ -340,7 +336,6 @@ pub fn cube_staged_attention_partial_microkernel<EA: Float, ES: Float>(
 /// nothing. No cube waits on another: the merge does not depend on how the device schedules them.
 /// The walk is one, whichever end it takes, so the cube holds its stages once.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
     cube: &Region,
     first: usize,

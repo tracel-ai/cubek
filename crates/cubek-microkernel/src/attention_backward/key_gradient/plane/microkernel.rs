@@ -19,7 +19,6 @@ use cubek_std::microkernel::StageRing;
 /// own, met on `sync_plane`. Every tile is windowed to `keys`; `planes` is how many planes along
 /// the keys share the cube, which its own grids are placed under.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
     keys: &Region,
     key_gradient: &Tile,

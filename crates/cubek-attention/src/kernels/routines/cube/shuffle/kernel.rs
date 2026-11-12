@@ -11,7 +11,6 @@ use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 /// keys where they lie, over the keys its rows see, and writing each row's logsumexp where the
 /// launch binds one.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -20,6 +19,7 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
     logsumexp: ComptimeOption<&TileTensor<'static>>,
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
+    query_ends: ComptimeOption<&Tensor<u32>>,
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
@@ -43,27 +43,29 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
 
-    for cube in &partitioning {
-        let visible = VisibleKeys::new(len, &cube, queries, &mask, visibility);
-        let steps = visible.steps(
-            &cube,
-            microkernel.seq_q(),
-            microkernel.region_keys(),
-            1usize,
-        );
+    for sequence in &partitioning {
+        for cube in sequence {
+            let visible = VisibleKeys::new(len, &query_ends, &cube, queries, &mask, visibility);
+            let steps = visible.steps(
+                &cube,
+                microkernel.seq_q(),
+                microkernel.region_keys(),
+                1usize,
+            );
 
-        cube_unstaged_attention_microkernel::<EA, E, N, TileStepReads<E>, TileStepReads<E>>(
-            &cube,
-            &o.at(&cube),
-            &lse.clone().map(|lse| lse.at(&cube)),
-            &q.at(&cube),
-            &k,
-            &v,
-            &visible,
-            steps,
-            EA::cast_from(scale),
-            value_dim,
-            microkernel,
-        );
+            cube_unstaged_attention_microkernel::<EA, E, N, TileStepReads<E>, TileStepReads<E>>(
+                &cube,
+                &o.at(&cube),
+                &lse.clone().map(|lse| lse.at(&cube)),
+                &q.at(&cube),
+                &k,
+                &v,
+                &visible,
+                steps,
+                EA::cast_from(scale),
+                value_dim,
+                microkernel,
+            );
+        }
     }
 }

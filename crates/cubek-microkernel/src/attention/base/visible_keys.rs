@@ -32,15 +32,38 @@ pub struct VisibleKeys {
 impl VisibleKeys {
     /// What the queries of `owner`'s sequence and key head see: its sequence's entry of `len`,
     /// read by stride, so a single length bound at stride zero is every sequence's; `queries` of
-    /// them; and the cells of `mask`, over `[B, KV, G, Q, S]`, where there is one.
+    /// them, or, where every sequence's queries lie end to end, the count of its run of
+    /// `query_ends`, their cumulative counts; and the cells of `mask`, over `[B, KV, G, Q, S]`,
+    /// where there is one.
+    #[allow(
+        clippy::clone_on_copy,
+        reason = "the cube macro expands no dereference of a comptime option, only its clone"
+    )]
     pub fn new(
         len: &Tensor<u32>,
+        query_ends: &ComptimeOption<&Tensor<u32>>,
         owner: &Region,
         queries: u32,
         mask: &ComptimeOption<Tile>,
         #[comptime] visibility: AttentionVisibility,
     ) -> VisibleKeys {
-        let attended = len[owner.origin(B) * len.stride(0)];
+        let sequence = owner.origin(B);
+        let attended = len[sequence * len.stride(0)];
+        let queries = query_ends
+            .clone()
+            .map::<u32, _>(|ends| {
+                let mut start = 0u32;
+                if sequence > 0 {
+                    start = ends[sequence - 1];
+                }
+                ends[sequence] - start
+            })
+            .unwrap_or(queries);
+        // A box that starts past its sequence's run holds no query, so it attends no key.
+        let attended = query_ends
+            .clone()
+            .map::<u32, _>(|_| select(u32::cast_from(owner.origin(Q)) < queries, attended, 0u32))
+            .unwrap_or(attended);
         let queries_end = match visibility.queries() {
             Some(QueryPlacement::First) => queries,
             Some(QueryPlacement::Last) | None => attended,
@@ -138,7 +161,7 @@ impl VisibleKeys {
             }
         }
 
-        if comptime!(hides) {
+        if hides {
             seen = 0;
         }
 

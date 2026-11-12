@@ -1981,6 +1981,82 @@ mod base {
         );
     }
 
+    /// A W4A4 product, both inputs NVFP4 and the weight in tile order, lands by TMA on a GPU with
+    /// `sm_120`'s block-scaled instruction: the activation's words through a descriptor over its
+    /// rows, the weight's through one over its tiles, each one's scales by the copy engine. A
+    /// stage two tiles deep is refused: a tile's rows are 64 bytes and the stage's 128, so the
+    /// engine would pad each to the swizzle's span and land the box twice its bytes, past the
+    /// stage, as it did on an RTX PRO 6000 from the third stage of the walk.
+    #[test]
+    fn a_w4a4_product_lands_by_tma_at_most_one_tile_deep() {
+        use crate::kernels::select::packed::nvfp4_scheme;
+
+        let hw = devices::offering_nvfp4(devices::rtx_pro_6000());
+        let packing = |scheme: cubecl::quant::scheme::QuantScheme, axes| Packing {
+            operand: Operand::of_scheme(&scheme, K, axes).expect("NVFP4 is one block along k"),
+            scheme,
+        };
+        let problem = MatmulRoutineProblem {
+            stored_tiles: MatmulOperands {
+                rhs: Some(MatmulStoredTile {
+                    rows: 8,
+                    columns: 128,
+                }),
+                ..MatmulOperands::all(None)
+            },
+            ..MatmulRoutineProblem::packed(
+                512,
+                5120,
+                5120,
+                ElemType::Float(FloatKind::F16),
+                MatmulOperands {
+                    lhs: Some(packing(nvfp4_scheme(), [M, K])),
+                    rhs: Some(packing(tile_order::nvfp4_scheme(), [K, N])),
+                    out: None,
+                },
+            )
+        };
+        let by_tma = CubeStagedTmaMatmulRoutine.block_scaled_settings(&hw);
+        let landed = by_tma
+            .iter()
+            .filter(|settings| {
+                CubeStagedTmaMatmulRoutine
+                    .prepare(&hw, &problem, settings)
+                    .is_ok()
+            })
+            .count();
+        assert!(
+            landed > 0,
+            "no block-scaled setting lands a W4A4 product by TMA"
+        );
+        const TWO: NonZeroUsize = NonZeroUsize::new(2).unwrap();
+        let deeper = |settings: &CubeStagedTmaMatmulRoutineSettings| {
+            let mut microkernel = settings.microkernel;
+            microkernel.plane.depth = microkernel.plane.depth.saturating_mul(TWO);
+            CubeStagedTmaMatmulRoutineSettings {
+                microkernel,
+                ..*settings
+            }
+        };
+        // A stage one tile deep, doubled: two tiles, whose 128-byte rows take the 128-byte
+        // swizzle. Planes splitting `K` would make it four tiles, whose rows no swizzle spans.
+        for settings in by_tma
+            .iter()
+            .filter(|settings| settings.microkernel.planes_along_k == NonZeroUsize::MIN)
+        {
+            let two_tiles = deeper(settings);
+            if let Err(refusal) = CubeStagedTmaMatmulRoutine.prepare(&hw, &problem, &two_tiles) {
+                assert_eq!(
+                    refusal,
+                    CubeStagedTmaRefusal::TileRowsUnderSwizzle.into(),
+                    "{two_tiles}"
+                );
+            } else {
+                panic!("{two_tiles} lands a stage two tiles deep by TMA");
+            }
+        }
+    }
+
     /// Qwen3.8-27B's 48-wide gated-delta projection under W4A4: its NVFP4 activations against a
     /// weight left in `bf16`, at a prompt's rows, and the same 44 columns wide. Over the
     /// block-split space the float weight lies along `NI`, its columns, so every setting the staged

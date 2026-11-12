@@ -10,7 +10,6 @@ use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 /// ([`cube_staged_attention_partial_microkernel()`]), for a second launch to merge. The output is
 /// read for the shape of what its planes sum into.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
@@ -36,7 +35,14 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
     // once for where the slots lie.
     let run = partitioning.walk();
     let first_step = run.region(0);
-    let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
+    let visible = VisibleKeys::new(
+        len,
+        &ComptimeOption::new_None(),
+        &first_step,
+        queries,
+        &mask,
+        visibility,
+    );
 
     let q = query.tile(&partitioning);
     let k = key
