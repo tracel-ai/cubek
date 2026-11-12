@@ -1,5 +1,6 @@
 //! The unit registers microkernel alone: each unit of a plane its own block of the output.
 
+use crate::launch::Lines;
 use crate::launch::matmul::{MatmulElements, UnitRegistersLaunch};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
@@ -16,9 +17,10 @@ impl MatmulSettings for UnitRegistersMicrokernelSettings {
         &self,
         hw: &Hardware,
         elements: MatmulElements,
+        lines: Lines,
         steps: usize,
     ) -> Result<UnitRegistersLaunch, Refusal> {
-        UnitRegistersLaunch::new(hw, elements, self, steps)
+        UnitRegistersLaunch::new(hw, elements, self, lines, steps)
     }
 }
 

@@ -1,5 +1,6 @@
 //! What every matmul microkernel computes alone: `out = lhs · rhs`, both row-major.
 
+use crate::launch::Lines;
 use crate::launch::matmul::{MatmulElements, MatmulLaunch};
 use core::fmt::Debug;
 use core::marker::PhantomData;
@@ -72,15 +73,18 @@ pub(crate) trait MatmulSettings: Debug + Copy {
         &self,
         hw: &Hardware,
         elements: MatmulElements,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self::Launch, Refusal>;
 }
 
-/// A product of `elements` at `settings`, `steps` of the microkernel's step of `K` deep.
+/// A product of `elements` at `settings`, `steps` of the microkernel's step of `K` deep, its
+/// operands bound as `lines` says.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MatmulCase<S> {
     pub elements: MatmulElements,
     pub settings: S,
+    pub lines: Lines,
     pub steps: usize,
 }
 
@@ -99,7 +103,7 @@ impl<S: MatmulSettings> Matmul<S> {
     }
 
     /// Every setting the device lists, for `f16` and `f32` inputs summed in `f32`, one step of
-    /// `K` and three.
+    /// `K` and three, its operands one value a line and as wide as a routine binds them.
     pub(crate) fn every_setting(&self) -> Vec<MatmulCase<S>> {
         S::Microkernel::settings(&self.hw)
             .into_iter()
@@ -110,10 +114,13 @@ impl<S: MatmulSettings> Matmul<S> {
                         sum: F32,
                         out: F32,
                     };
-                    [1, 3].map(|steps| MatmulCase {
-                        elements,
-                        settings,
-                        steps,
+                    Lines::EVERY.into_iter().flat_map(move |lines| {
+                        [1, 3].map(|steps| MatmulCase {
+                            elements,
+                            settings,
+                            lines,
+                            steps,
+                        })
                     })
                 })
             })
@@ -125,7 +132,9 @@ impl<S: MatmulSettings> ScopeUnderTest for Matmul<S> {
     type Case = MatmulCase<S>;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
-        let launch = case.settings.launch(&self.hw, case.elements, case.steps)?;
+        let launch = case
+            .settings
+            .launch(&self.hw, case.elements, case.lines, case.steps)?;
         let [m, n, k] = launch.shape();
         let product = HostMatmul::new(launch.shape());
         let elements = launch.elements();
@@ -158,7 +167,7 @@ impl<S: MatmulSettings> ScopeUnderTest for Matmul<S> {
     fn reference(&self, case: &Self::Case) -> Vec<HostData> {
         let launch = case
             .settings
-            .launch(&self.hw, case.elements, case.steps)
+            .launch(&self.hw, case.elements, case.lines, case.steps)
             .unwrap_or_else(|why| panic!("{case:?} launched: {why:?}"));
         vec![HostMatmul::new(launch.shape()).out()]
     }

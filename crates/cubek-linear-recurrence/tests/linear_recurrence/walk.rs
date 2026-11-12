@@ -300,7 +300,7 @@ pub fn output_tolerance(element: ElemType) -> f64 {
     match element {
         F16 => 1.5e-3,
         F32 => 1e-4,
-        _ => 1.5e-2,
+        _ => 4e-3,
     }
 }
 

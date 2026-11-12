@@ -1,0 +1,45 @@
+use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::split_keys_merge::SlotBox;
+use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
+use cubek_microkernel::split_keys_merge::plane::plane_split_keys_merge_microkernel;
+
+/// A plane for every query merging the query's slots into the output, and into the query's
+/// logsumexp where the launch binds one: the query is `q = x`, head `g = y % group` of key head
+/// `kv = y / group`, batch `b = z` of the cube's position.
+#[cube(launch_unchecked)]
+pub fn plane_split_keys_merge_kernel<EA: Float, E: Float, N: Size>(
+    out: &mut Tensor<E>,
+    logsumexp: ComptimeOption<&mut Tensor<EA>>,
+    slot_out: &mut Tensor<Vector<EA, N>>,
+    slot_max: &mut Tensor<EA>,
+    slot_sum: &mut Tensor<EA>,
+    #[comptime] merge: HypercubeMergeShape,
+    #[define(EA, E)] _elements: [ElemType; 2],
+) {
+    let group = slot_max.shape(2);
+    let (batch, query_head, query) = (
+        CUBE_POS_Z as usize,
+        CUBE_POS_Y as usize,
+        CUBE_POS_X as usize,
+    );
+
+    let slot_box = SlotBox::new::<EA>(
+        slot_max,
+        batch,
+        query_head / group,
+        query_head % group,
+        query,
+        merge.seq_q,
+    );
+
+    plane_split_keys_merge_microkernel::<EA, E, N>(
+        slot_out,
+        slot_max,
+        slot_sum,
+        out,
+        logsumexp,
+        &slot_box,
+        merge.slots,
+        merge.seq_q,
+    );
+}

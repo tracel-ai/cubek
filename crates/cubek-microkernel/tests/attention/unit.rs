@@ -1,5 +1,6 @@
 //! The unit attention microkernel alone: one unit's query rows over every key.
 
+use crate::launch::Lines;
 use crate::launch::attention::{AttentionElements, UnitAttentionLaunch};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::unit::{
@@ -18,9 +19,10 @@ impl AttentionSettings for UnitAttentionMicrokernelSettings {
         &self,
         hw: &Hardware,
         elements: AttentionElements,
+        lines: Lines,
         steps: usize,
     ) -> Result<UnitAttentionLaunch, Refusal> {
-        UnitAttentionLaunch::new(hw, elements, DIMS, self, steps)
+        UnitAttentionLaunch::new(hw, elements, DIMS, self, lines, steps)
     }
 }
 

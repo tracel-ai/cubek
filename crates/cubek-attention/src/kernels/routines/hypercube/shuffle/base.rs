@@ -1,7 +1,6 @@
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionPartitioning,
-    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, HypercubeMerge,
-    PACKED_QUERIES_UNREAD, QueryOrder,
+    AttentionRoutineProblem, HypercubeMerge, PACKED_QUERIES_UNREAD, QueryOrder,
 };
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
@@ -22,9 +21,10 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Attention with several cubes owning every box of queries, every cube walking its own run of the
 /// keys: the hypercube microkernel runs a cube of plane shuffles over a cube's run, its planes
-/// along the run, each plane leaves its queries' partial in a slot of its own, and the slots are
-/// merged into the output where `M` says ([`HypercubeShuffleMerge`]). The cubes cover the queries,
-/// the heads and the runs, one batch and key head each.
+/// along the run, and each plane leaves its queries' partial in a slot of its own. Where `M` says
+/// ([`HypercubeShuffleMerge`]), the last cube of a box merges the slots into the output, or the
+/// routine stops at the slots, for the split-keys merge launched after it. The cubes cover the
+/// queries, the heads and the runs, one batch and key head each.
 ///
 /// What few queries against many keys want, a decode step's above all: a box's queries leave the
 /// device idle where only one cube walks their keys, and the cubes sharing the box read no key
@@ -34,32 +34,12 @@ pub struct HypercubeShuffleAttentionRoutine<M> {
     merge: PhantomData<M>,
 }
 
-/// Where a hypercube shuffle's partials meet: what its two routines differ in, each merge owning
-/// the kernels that leave and merge its partials.
+/// Where a hypercube shuffle's partials meet: what its two routines differ in, each owning the
+/// kernel it launches.
 pub trait HypercubeShuffleMerge: core::fmt::Debug + Copy + Eq + core::hash::Hash {
     const MERGE: HypercubeMerge;
-
-    /// Why `hw` cannot merge `problem`'s slots, shaped `shape`, this way, beyond what the merge
-    /// asks of the device ([`HypercubeMerge::admits`]).
-    ///
-    /// # Errors
-    ///
-    /// A merge the device cannot launch.
-    fn validate(
-        hw: &Hardware,
-        problem: &AttentionRoutineProblem,
-        shape: HypercubeMergeShape,
-    ) -> Result<(), Refusal>;
-
-    /// Launches the cubes over `binding`'s tiles or packed cache, and the merge of their slots,
-    /// shaped `shape`, into the output.
-    fn dispatch(
-        tensors: &AttentionTensors,
-        binding: AttentionBinding,
-        blueprint: HypercubeShuffleAttentionRoutineBlueprint,
-        grid: Grid,
-        shape: HypercubeMergeShape,
-    );
+    /// What a report calls the routine, in kebab-case.
+    const NAME: &'static str;
 }
 
 pub type HypercubeShuffleAttentionRoutineBlueprint =
@@ -100,8 +80,8 @@ impl<M: HypercubeShuffleMerge> core::fmt::Display for HypercubeShuffleAttentionR
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "hypercube-{}-shuffle-attention {} cubes_along_keys={}",
-            M::MERGE,
+            "{} {} cubes_along_keys={}",
+            M::NAME,
             self.microkernel,
             self.cubes_along_keys
         )
@@ -215,6 +195,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     /// ([`AttentionPartitioning::new`]). Declines where the device cannot merge this way, and
     /// serves a cache of any length, at any device fill: neither is a call's to decline, since an
     /// autotune key prepares its candidates at one representative for every call of its bucket.
+    /// A second launch's merge is prepared by the strategy that launches it.
     fn prepare(
         &self,
         hw: &Hardware,
@@ -241,15 +222,6 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
                 + M::MERGE.shared_memory(),
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
-        M::validate(
-            hw,
-            problem,
-            microkernel.merge_shape(
-                &item,
-                partitioning.cubes_along_keys(),
-                M::MERGE.seq_q(&microkernel),
-            ),
-        )?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(
@@ -264,19 +236,26 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     }
 }
 
-impl<M: HypercubeShuffleMerge> AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
-    for HypercubeShuffleAttentionRoutine<M>
-{
-    /// The cubes' launch and the merge `M` holds. The keys and values are tiles, or a packed cache
-    /// decoded as the planes read it.
-    fn dispatch(
+impl<M: HypercubeShuffleMerge> HypercubeShuffleAttentionRoutine<M> {
+    /// How `blueprint` lays out the slots its cubes leave for `problem`, as its merge reads them.
+    pub(crate) fn merge_shape(
         &self,
-        tensors: &AttentionTensors,
-        binding: AttentionBinding,
-        blueprint: HypercubeShuffleAttentionRoutineBlueprint,
-        grid: Grid,
+        problem: &AttentionRoutineProblem,
+        blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
+    ) -> HypercubeMergeShape {
+        blueprint.microkernel.merge_shape(
+            &problem.work_item(),
+            blueprint.partitioning.cubes_along_keys(),
+            M::MERGE.seq_q(&blueprint.microkernel),
+        )
+    }
+
+    /// Checks what both kernels bind: the plane shuffle lines every operand alike, so its tiles
+    /// share one width.
+    pub(crate) fn assert_one_width(
+        binding: &AttentionBinding,
+        blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
     ) {
-        // The plane shuffle lines every operand alike, and the kernels bind its tiles at one width.
         if let AttentionCacheBinding::Tiles { .. } = binding.cache {
             assert!(
                 blueprint.widths.key == blueprint.widths.query
@@ -284,12 +263,6 @@ impl<M: HypercubeShuffleMerge> AttentionRoutine<HypercubeAttentionMicrokernel, S
                 "the plane shuffle's operands share one width"
             );
         }
-        let shape = blueprint.microkernel.merge_shape(
-            &tensors.problem().work_item(),
-            blueprint.partitioning.cubes_along_keys(),
-            M::MERGE.seq_q(&blueprint.microkernel),
-        );
-        M::dispatch(tensors, binding, blueprint, grid, shape);
     }
 }
 
@@ -298,7 +271,7 @@ mod tests {
     use super::*;
     use crate::kernels::{
         AttentionCacheLayout, HYPERCUBE_CUBES_UNMET, HypercubeLastArrivalShuffleAttentionRoutine,
-        HypercubeSecondLaunchShuffleAttentionRoutine,
+        HypercubeShufflePartialAttentionRoutine,
     };
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::attention::{Q, S};
@@ -342,14 +315,14 @@ mod tests {
         }
     }
 
-    /// Every setting of either merge prepares, a second launch on a device whose cubes cannot meet
-    /// within a launch too.
+    /// Every setting of either routine prepares, the partial one on a device whose cubes cannot
+    /// meet within a launch too.
     #[test]
     fn every_setting_prepares() {
         let devices = [devices::m2_pro(), devices::h100()];
         assert_every_setting_prepares(HypercubeLastArrivalShuffleAttentionRoutine::new(), &devices);
         assert_every_setting_prepares(
-            HypercubeSecondLaunchShuffleAttentionRoutine::new(),
+            HypercubeShufflePartialAttentionRoutine::new(),
             &[devices::m2_pro(), devices::h100(), unmet(devices::m2_pro())],
         );
     }
@@ -360,7 +333,7 @@ mod tests {
     #[test]
     fn every_setting_serves_any_cache_length_and_fill() {
         let hw = devices::h100();
-        let routine = HypercubeSecondLaunchShuffleAttentionRoutine::new();
+        let routine = HypercubeShufflePartialAttentionRoutine::new();
         let decode = |keys| AttentionRoutineProblem::dense((1, 32, 8), (1, keys), (128, 128), F16);
         let prompt = AttentionRoutineProblem::dense((1, 32, 32), (4096, 4096), (128, 128), F16);
         for settings in routine.settings(&hw) {
@@ -392,7 +365,7 @@ mod tests {
             }
         }
         declines(HypercubeLastArrivalShuffleAttentionRoutine::new());
-        declines(HypercubeSecondLaunchShuffleAttentionRoutine::new());
+        declines(HypercubeShufflePartialAttentionRoutine::new());
     }
 
     /// The last arrival's last cube reads the others' slots within the launch, so where one cube's

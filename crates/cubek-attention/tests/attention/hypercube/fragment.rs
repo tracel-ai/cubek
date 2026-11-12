@@ -1,15 +1,15 @@
-//! The hypercube of plane fragments: each box's keys cut across its cubes, a second launch merging
-//! the partials they leave.
+//! The hypercube of plane fragments: each box's keys cut across its cubes, the split-keys merge
+//! launched after it merging the partials they leave.
 
-use cubek_attention::kernels::HypercubeSecondLaunchFragmentAttentionRoutine;
+use cubek_attention::kernels::HypercubeFragmentPartialAttentionRoutine;
 use cubek_test_utils::ScopeUnderTest;
 
 use crate::attention::{Forward, PROMPT_WIDE, PROMPTS};
 
-/// The routine's lead on every prompt case.
+/// The routine's lead, merged, on every prompt case.
 #[test]
 fn the_hypercube_fragment_routine_matches_the_host() {
-    let forward = Forward::new(HypercubeSecondLaunchFragmentAttentionRoutine);
+    let forward = Forward::split_keys(HypercubeFragmentPartialAttentionRoutine);
     forward.check(forward.at_its_lead(&PROMPTS));
 }
 
@@ -17,6 +17,6 @@ fn the_hypercube_fragment_routine_matches_the_host() {
 /// partial it leaves are each a different kernel.
 #[test]
 fn every_hypercube_fragment_setting_matches_the_host_at_a_head_dim_of_128() {
-    let forward = Forward::new(HypercubeSecondLaunchFragmentAttentionRoutine);
+    let forward = Forward::split_keys(HypercubeFragmentPartialAttentionRoutine);
     forward.check(forward.at_every_setting(&[PROMPT_WIDE]));
 }

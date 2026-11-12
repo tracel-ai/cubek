@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
-use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubecl::tile::{Launcher, Partitioning, Space, Tile, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::attention::plane::{
@@ -10,22 +10,25 @@ use cubek_microkernel::attention::plane::{
     plane_fragment_attention_microkernel,
 };
 use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperands, AttentionVisibility, AttentionWorkItem, B, D, DV, G,
-    KV, Q, S, VisibleKeys,
+    AttentionMicrokernel, AttentionVisibility, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    VisibleKeys,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{Microkernel, StageRing};
 
-use super::{AttentionElements, AttentionLaunch};
+use super::{AttentionElements, AttentionLaunch, AttentionLines};
+use crate::launch::Lines;
 
 /// One plane fragment attention microkernel ready to launch on one work item: the microkernel the
-/// device picks at `settings`, over one plane's queries and `steps` stages of keys.
+/// device picks at `settings`, over one plane's queries and `steps` stages of keys, its operands
+/// bound as `lines` says.
 #[derive(Debug, Clone)]
 pub struct PlaneFragmentAttentionLaunch {
     pub microkernel: PlaneFragmentAttentionMicrokernel,
     pub item: AttentionWorkItem,
     /// The queries and the keys.
     pub seq: [usize; 2],
+    lines: AttentionLines,
     ring: StageRing,
     plane_width: u32,
 }
@@ -42,6 +45,7 @@ impl PlaneFragmentAttentionLaunch {
         elements: AttentionElements,
         [head_dim, val_dim]: [usize; 2],
         settings: &PlaneFragmentAttentionMicrokernelSettings,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self, Refusal> {
         let item = elements.work_item([head_dim, val_dim]);
@@ -55,6 +59,7 @@ impl PlaneFragmentAttentionLaunch {
             plane_width as usize,
         );
         Ok(Self {
+            lines: AttentionLines::new(hw, lines, &item),
             seq: [microkernel.seq_q(), microkernel.seq_kv() * steps],
             microkernel,
             item,
@@ -83,6 +88,7 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
         logsumexp: Option<TensorBinding>,
         lengths: TensorArg,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         let [queries, keys] = self.seq;
         let item = &self.item;
@@ -110,28 +116,34 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
             cube_count: partitioning.cube_count(),
             cube_dim: partitioning.cube_dim(self.plane_width),
         };
+        // A cube holds one plane, so its box is the plane's.
+        let widths = self
+            .lines
+            .widths(&self.microkernel, &partitioning.box_of(ComputeScope::Plane));
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         let served = self.microkernel.served(item);
-        let widths = AttentionOperands {
-            query: 1,
-            key: 1,
-            value: 1,
-            out: 1,
-        };
         let delivery = self.microkernel.delivery(&widths, item);
-        let bound = |tensor: TensorBinding, element, axes: &'static [_]| {
-            launcher.arg(tensor, element).axes(axes).vectorize(1)
+        let bound = |tensor: TensorBinding, element, width, axes: &'static [_]| {
+            launcher.arg(tensor, element).axes(axes).vectorize(width)
         };
-        let query = bound(query, served.elements.query, &[B, KV, G, Q, D]).build()?;
-        let key = bound(key, served.elements.key, &[B, KV, S, D])
+        let query = bound(
+            query,
+            served.elements.query,
+            widths.query,
+            &[B, KV, G, Q, D],
+        )
+        .delivery(self.microkernel.query_delivery(&widths, item))
+        .build()?;
+        let key = bound(key, served.elements.key, widths.key, &[B, KV, S, D])
             .delivery(delivery)
             .build()?;
-        let value = bound(value, served.elements.value, &[B, KV, S, DV])
+        let value = bound(value, served.elements.value, widths.value, &[B, KV, S, DV])
             .delivery(delivery)
             .build()?;
-        let out = bound(out, item.elements.out, &[B, KV, G, Q, DV]).build()?;
+        let out = bound(out, item.elements.out, widths.out, &[B, KV, G, Q, DV]).build()?;
+        // A value a query, written by whoever holds its row.
         let logsumexp = logsumexp
-            .map(|logsumexp| bound(logsumexp, item.sum, &[B, KV, G, Q]).build())
+            .map(|logsumexp| bound(logsumexp, item.sum, 1, &[B, KV, G, Q]).build())
             .transpose()?;
         // SAFETY: every operand is bound through the launcher at the problem's own extents, the
         // keys and values are read no further than the attended length, and the kernel indexes
@@ -153,6 +165,7 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
                 launcher.partitioning_arg(),
                 self.microkernel,
                 self.ring,
+                visibility,
                 served.kernel_elements(),
             );
         }
@@ -176,6 +189,7 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
     #[comptime] ring: StageRing,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
@@ -192,7 +206,7 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
             &plane,
             queries,
             &mask,
-            AttentionVisibility::Attended,
+            visibility,
         );
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);

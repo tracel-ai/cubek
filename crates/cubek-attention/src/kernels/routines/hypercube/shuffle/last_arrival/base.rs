@@ -2,19 +2,18 @@ use super::kernel::{
     hypercube_attention_arrival_kernel, hypercube_attention_arrival_packed_kernel,
 };
 use crate::kernels::{
-    AttentionBinding, AttentionCacheBinding, AttentionRoutineProblem, AttentionTensors,
-    HypercubeMerge, HypercubeShuffleAttentionRoutine, HypercubeShuffleAttentionRoutineBlueprint,
+    AttentionBinding, AttentionCacheBinding, AttentionRoutine, AttentionTensors, HypercubeMerge,
+    HypercubeShuffleAttentionRoutine, HypercubeShuffleAttentionRoutineBlueprint,
     HypercubeShuffleMerge,
 };
 use cubecl::prelude::ComptimeOptionArgs;
-use cubecl::tile::launch::Refusal;
-use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
-use cubek_std::Hardware;
+use cubecl::tile::StageStorage;
+use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_std::routine::Grid;
 
 /// The hypercube shuffle merged in its own launch: every cube counts itself in at its box, and
 /// the last to arrive merges the box's slots into the output ([`HypercubeMerge::LastArrival`]).
-/// One launch, where a second launch takes two, but one plane merges a whole box.
+/// One launch, where a partial routine and its merge take two, but one plane merges a whole box.
 pub type HypercubeLastArrivalShuffleAttentionRoutine =
     HypercubeShuffleAttentionRoutine<HypercubeLastArrivalShuffle>;
 
@@ -24,26 +23,25 @@ pub struct HypercubeLastArrivalShuffle;
 
 impl HypercubeShuffleMerge for HypercubeLastArrivalShuffle {
     const MERGE: HypercubeMerge = HypercubeMerge::LastArrival;
+    const NAME: &'static str = "hypercube-last-arrival-shuffle-attention";
+}
 
-    /// Nothing beyond the device: the merge is the cubes' own.
-    fn validate(
-        _hw: &Hardware,
-        _problem: &AttentionRoutineProblem,
-        _shape: HypercubeMergeShape,
-    ) -> Result<(), Refusal> {
-        Ok(())
-    }
-
-    /// One launch, every cube leaving its partial in its slot and counting itself in at its box,
-    /// the last of a box's cubes merging the box.
+impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
+    for HypercubeLastArrivalShuffleAttentionRoutine
+{
+    /// Every cube leaving its partial in its slot and counting itself in at its box, the last of a
+    /// box's cubes merging the box. The keys and values are tiles, or a packed cache decoded as
+    /// the planes read it.
     fn dispatch(
+        &self,
         tensors: &AttentionTensors,
         binding: AttentionBinding,
         blueprint: HypercubeShuffleAttentionRoutineBlueprint,
         grid: Grid,
-        shape: HypercubeMergeShape,
     ) {
+        Self::assert_one_width(&binding, &blueprint);
         let problem = tensors.problem();
+        let shape = self.merge_shape(&problem, &blueprint);
         let microkernel = blueprint.microkernel;
         let slots = tensors.split_slots(shape.slots.splits);
         let width = blueprint.widths.query;
