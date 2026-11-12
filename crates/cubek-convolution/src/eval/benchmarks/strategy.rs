@@ -1,30 +1,31 @@
 use cubek_test_utils::CatalogEntry;
 
+use super::settings;
 use crate::{
     AcceleratedTileKind, ConvAlgorithm, Strategy, UnitStrategy, UnitTiling,
-    kernels::tiled::{ConvRoutineKind, ConvSettings, CubeStagedConvRoutine},
+    kernels::tiled::{ConvRoutineKind, ConvSettings},
 };
 
 /// The settings pinned for each cmma instruction, beside the tuned row: the base setting, two
 /// tiles of rows over two planes, one tile of rows, the narrow instruction, and a grid held whole
 /// over a map of its width. The `T8` rows refuse where the device lacks the 8x32 instruction.
 const CMMA: [ConvSettings; 6] = [
-    CubeStagedConvRoutine::F2X2_P2X2_T16,
-    CubeStagedConvRoutine::F2X2_P1X2_T16,
-    CubeStagedConvRoutine::F1X2_P1X2_T16,
-    CubeStagedConvRoutine::F1X1_P1X2_T8,
-    CubeStagedConvRoutine::F7X1_P1X2_T8,
-    CubeStagedConvRoutine::F1X1_P1X1_T8_A7,
+    settings::F2X2_P2X2_T16,
+    settings::F2X2_P1X2_T16,
+    settings::F1X2_P1X2_T16,
+    settings::F1X1_P1X2_T8,
+    settings::F7X1_P1X2_T8,
+    settings::F1X1_P1X1_T8_A7,
 ];
 
 /// The settings pinned through the manual mma: the base setting at both widths, one tile of rows,
 /// and a grid of 32 rows at one stage and at two in flight.
 const MMA: [ConvSettings; 5] = [
-    CubeStagedConvRoutine::F2X2_P2X2_T16.mma(),
-    CubeStagedConvRoutine::F2X2_P2X2_T16.mma().width_one(),
-    CubeStagedConvRoutine::F1X2_P1X2_T16.mma(),
-    CubeStagedConvRoutine::F1X2_P2X2_T16.mma(),
-    CubeStagedConvRoutine::F1X2_P2X2_T16.mma().double_ring(),
+    settings::F2X2_P2X2_T16.mma(),
+    settings::F2X2_P2X2_T16.mma().width_one(),
+    settings::F1X2_P1X2_T16.mma(),
+    settings::F1X2_P2X2_T16.mma(),
+    settings::F1X2_P2X2_T16.mma().double_ring(),
 ];
 
 /// A row of the cube staged routine, named by its strategy: the routine and, where pinned, its

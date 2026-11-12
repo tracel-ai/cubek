@@ -4,6 +4,7 @@
 use super::*;
 use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::Conv2dProblem;
+use crate::eval::benchmarks::settings;
 use crate::kernels::tiled::routines::test_support::{cmma_only, nvidia, problems};
 use crate::kernels::tiled::{CMMA_STEP_ACROSS_TAPS, ConvProblem};
 use cubecl::tile::launch::Refusal;
@@ -30,10 +31,7 @@ fn problem(name: &str) -> ConvProblem {
 #[test]
 fn cmma_declines_a_step_of_taps_and_mma_serves_it() {
     let (hw, problem) = (nvidia(), problem("few_channels_deep_filter"));
-    for settings in [
-        CubeStagedConvRoutine::F2X2_P2X2_T16,
-        CubeStagedConvRoutine::F1X2_P1X2_T16,
-    ] {
+    for settings in [settings::F2X2_P2X2_T16, settings::F1X2_P1X2_T16] {
         let prepared = ROUTINE.prepare(&hw, &problem, &settings);
         assert_eq!(prepared.err(), Some(CMMA_STEP_ACROSS_TAPS));
     }
@@ -62,8 +60,8 @@ fn only_a_cmma_output_is_masked_to_bounce() {
             .0
             .masks_out
     };
-    assert!(masks_out(CubeStagedConvRoutine::F2X2_P2X2_T16));
-    assert!(!masks_out(CubeStagedConvRoutine::F2X2_P2X2_T16.mma()));
+    assert!(masks_out(settings::F2X2_P2X2_T16));
+    assert!(!masks_out(settings::F2X2_P2X2_T16.mma()));
 }
 
 /// A split holding more planes than a cube of the device spawns is refused by name before any
@@ -71,7 +69,7 @@ fn only_a_cmma_output_is_masked_to_bounce() {
 #[test]
 fn planes_across_past_the_cube_are_refused_by_name() {
     let narrow = problem("map_7_wide");
-    let settings = CubeStagedConvRoutine::F1X1_P1X2_T8.across(7);
+    let settings = settings::F1X1_P1X2_T8.across(7);
     for (plane_width, most_units) in [(32, 256), (64, 512)] {
         let mut hw = nvidia();
         let device = topology(&mut hw);
@@ -103,7 +101,7 @@ fn data_backward(channels_out: usize) -> ConvProblem {
 #[test]
 fn a_data_backward_over_overhanging_channels_reads_one_element_wide() {
     let widths = |channels_out| {
-        let settings = CubeStagedConvRoutine::F2X2_P2X2_T16;
+        let settings = settings::F2X2_P2X2_T16;
         ROUTINE
             .prepare(&nvidia(), &data_backward(channels_out), &settings)
             .expect("cmma serves whole steps of channels")
@@ -119,7 +117,7 @@ fn a_data_backward_over_overhanging_channels_reads_one_element_wide() {
 #[test]
 fn cmma_declines_a_data_backward_step_across_taps_and_mma_serves_it() {
     let problem = data_backward(3);
-    let settings = CubeStagedConvRoutine::F2X2_P2X2_T16;
+    let settings = settings::F2X2_P2X2_T16;
     assert_eq!(
         ROUTINE.prepare(&nvidia(), &problem, &settings).err(),
         Some(CMMA_STEP_ACROSS_TAPS)

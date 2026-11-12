@@ -1,6 +1,7 @@
 use super::{ConvCandidate, ConvTuneKey};
 use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::Conv2dProblem;
+use crate::eval::benchmarks::settings;
 use crate::kernels::tiled::routines::test_support::{cmma_8x32_only, dense, nvidia};
 use crate::kernels::tiled::{ConvProblem, ConvSettings, CubeStagedConvRoutine};
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
@@ -40,10 +41,7 @@ fn a_map_56_wide_races_the_56_row_candidate_and_the_base_together() {
     let (hw, key) = (cmma_8x32_only(), key(wide_map_56()));
     let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
     let base = ConvSettings::new(8, Fragments::grid(2, 2, 1), MatmulPlaneLayout::new(2, 2));
-    assert_eq!(
-        priority(CubeStagedConvRoutine::F7X1_P1X2_T8),
-        CandidatePriority::FIRST
-    );
+    assert_eq!(priority(settings::F7X1_P1X2_T8), CandidatePriority::FIRST);
     assert_eq!(priority(base), CandidatePriority::FIRST);
 }
 
@@ -52,7 +50,7 @@ fn a_map_56_wide_races_the_56_row_candidate_and_the_base_together() {
 #[test]
 fn a_grid_short_of_half_the_device_is_in_a_lower_band() {
     let hw = cmma_8x32_only();
-    let settings = CubeStagedConvRoutine::F1X1_P1X1_T8_A7;
+    let settings = settings::F1X1_P1X1_T8_A7;
     let priority = |key| ConvCandidate::new(settings, &hw).priority(&key);
     assert!(
         priority(key(Conv2dProblem {
@@ -68,7 +66,7 @@ fn boxes_covering_twice_the_map_are_in_a_lower_band() {
     let (hw, key) = (cmma_8x32_only(), key(wide_map_56()));
     let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
     let overhanging = ConvSettings::new(8, Fragments::grid(16, 1, 1), MatmulPlaneLayout::new(1, 2));
-    assert!(priority(overhanging) < priority(CubeStagedConvRoutine::F7X1_P1X2_T8));
+    assert!(priority(overhanging) < priority(settings::F7X1_P1X2_T8));
 }
 
 /// A contraction of one stage compiles one launch at either ring, so the round keeps one; one
@@ -81,7 +79,7 @@ fn a_double_ring_over_one_stage_is_the_single_ring_launch() {
             .blueprint(key)
             .expect("the candidate prepares the key")
     };
-    let base = CubeStagedConvRoutine::F2X2_P2X2_T16;
+    let base = settings::F2X2_P2X2_T16;
     let one_stage = key(Conv2dProblem {
         input_shape: [1, 16, 8, 8],
         weight_shape: [32, 16, 1, 1],

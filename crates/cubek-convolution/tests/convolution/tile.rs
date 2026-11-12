@@ -9,7 +9,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::{Shape, Strides};
 use cubek_convolution::components::ConvolutionOperation;
-use cubek_convolution::eval::benchmarks::{Conv2dElement, Conv2dProblem, problems};
+use cubek_convolution::eval::benchmarks::{Conv2dElement, Conv2dProblem, problems, settings};
 use cubek_convolution::eval::cpu_reference::{
     HostTensor, naive_data_grad, naive_forward, naive_weight_grad,
 };
@@ -357,13 +357,13 @@ macro_rules! cube {
 
                 #[test]
                 fn through_cmma() {
-                    let setting = CubeStagedConvRoutine::F2X2_P2X2_T16;
+                    let setting = settings::F2X2_P2X2_T16;
                     check($operation, &pinned(setting), &$problem, or_dense!($($bindings)?));
                 }
 
                 #[test]
                 fn through_mma() {
-                    let setting = CubeStagedConvRoutine::F2X2_P2X2_T16;
+                    let setting = settings::F2X2_P2X2_T16;
                     check($operation, &mma(setting), &$problem, or_dense!($($bindings)?));
                 }
             })*
@@ -414,39 +414,39 @@ mod cube {
     /// A few channels make a step of taps, which cmma declines by name: only mma serves them.
     cases! {
         mma_taps, Forward;
-        channels_1: mma(CubeStagedConvRoutine::F2X2_P2X2_T16), conv(1, (1, 16), [12, 12], [3, 3], SAME);
-        large_kernel: mma(CubeStagedConvRoutine::F2X2_P2X2_T16), conv(1, (3, 16), [23, 23], [11, 11], window([4, 4], [1, 1], [1, 1]));
+        channels_1: mma(settings::F2X2_P2X2_T16), conv(1, (1, 16), [12, 12], [3, 3], SAME);
+        large_kernel: mma(settings::F2X2_P2X2_T16), conv(1, (3, 16), [23, 23], [11, 11], window([4, 4], [1, 1], [1, 1]));
     }
 
     cases! {
         mma_taps_data_grad, BackwardData;
-        filters_3: mma(CubeStagedConvRoutine::F2X2_P2X2_T16), conv(2, (32, 3), [6, 12], [3, 3], SAME);
+        filters_3: mma(settings::F2X2_P2X2_T16), conv(2, (32, 3), [6, 12], [3, 3], SAME);
     }
 
     /// Planes across the rows of a cube, over a map they overhang, in every direction.
     cases! {
         planes_across_forward, Forward;
-        via_cmma: pinned(CubeStagedConvRoutine::F1X2_P1X2_T16.across(2)), conv(2, (64, 64), [8, 7], [3, 3], SAME);
-        via_mma: mma(CubeStagedConvRoutine::F1X2_P1X2_T16.across(4)), conv(2, (64, 64), [8, 7], [3, 3], VALID);
+        via_cmma: pinned(settings::F1X2_P1X2_T16.across(2)), conv(2, (64, 64), [8, 7], [3, 3], SAME);
+        via_mma: mma(settings::F1X2_P1X2_T16.across(4)), conv(2, (64, 64), [8, 7], [3, 3], VALID);
     }
 
     cases! {
         planes_across_weight_grad, BackwardWeight;
-        via_cmma: pinned(CubeStagedConvRoutine::F1X2_P1X2_T16.across(2)), conv(2, (16, 64), [8, 9], [3, 3], SAME);
-        via_mma: mma(CubeStagedConvRoutine::F1X2_P1X2_T16.across(4)), conv(2, (16, 64), [8, 9], [3, 3], VALID);
+        via_cmma: pinned(settings::F1X2_P1X2_T16.across(2)), conv(2, (16, 64), [8, 9], [3, 3], SAME);
+        via_mma: mma(settings::F1X2_P1X2_T16.across(4)), conv(2, (16, 64), [8, 9], [3, 3], VALID);
     }
 
     cases! {
         planes_across_data_grad, BackwardData;
-        via_cmma: pinned(CubeStagedConvRoutine::F1X2_P1X2_T16.across(2)), conv(2, (32, 32), [6, 12], [3, 3], SAME);
-        via_mma: mma(CubeStagedConvRoutine::F1X2_P1X2_T16.across(4)), conv(2, (32, 32), [6, 12], [3, 3], SAME);
+        via_cmma: pinned(settings::F1X2_P1X2_T16.across(2)), conv(2, (32, 32), [6, 12], [3, 3], SAME);
+        via_mma: mma(settings::F1X2_P1X2_T16.across(4)), conv(2, (32, 32), [6, 12], [3, 3], SAME);
     }
 
     /// Whole steps read at width one, and the 56 row setting over a map it overhangs.
     cases! {
         other_settings, Forward;
-        width_one: mma(CubeStagedConvRoutine::F2X2_P2X2_T16.width_one()), conv(2, (64, 64), [9, 9], [3, 3], SAME);
-        rows_56_overhang: pinned(CubeStagedConvRoutine::F7X1_P1X2_T8), conv(1, (64, 32), [3, 60], [3, 3], SAME);
+        width_one: mma(settings::F2X2_P2X2_T16.width_one()), conv(2, (64, 64), [9, 9], [3, 3], SAME);
+        rows_56_overhang: pinned(settings::F7X1_P1X2_T8), conv(1, (64, 32), [3, 60], [3, 3], SAME);
     }
 
     cases! {

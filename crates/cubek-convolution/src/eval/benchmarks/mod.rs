@@ -10,6 +10,7 @@ mod correctness;
 pub mod depthwise;
 pub mod direct;
 mod problem;
+pub mod settings;
 mod strategy;
 
 pub use benchmark::bench;

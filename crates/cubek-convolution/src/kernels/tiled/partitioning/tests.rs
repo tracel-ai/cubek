@@ -1,8 +1,8 @@
 use super::ConvTiles;
 use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::Conv2dProblem;
+use crate::eval::benchmarks::settings;
 use crate::kernels::tiled::ConvProblem;
-use crate::kernels::tiled::routines::CubeStagedConvRoutine;
 use crate::kernels::tiled::routines::test_support::{dense, nvidia};
 use crate::launch::ConvolutionArgs;
 
@@ -10,7 +10,7 @@ const BUDGET: usize = 48 * 1024;
 
 /// The tiles of the Mma 2x2 grid on `problem`.
 fn tiles(problem: &ConvProblem) -> ConvTiles {
-    let settings = CubeStagedConvRoutine::F2X2_P2X2_T16.mma();
+    let settings = settings::F2X2_P2X2_T16.mma();
     let plane = settings
         .plane(&nvidia(), problem)
         .expect("the device offers mma");
