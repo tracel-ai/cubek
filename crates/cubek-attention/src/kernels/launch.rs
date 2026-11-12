@@ -1,17 +1,19 @@
 use crate::kernels::{
-    AttentionBinding, AttentionBlueprint, AttentionRoutineProblem, AttentionTensors,
+    AttentionBinding, AttentionBlueprint, AttentionRoutineProblem, AttentionSplitSlots,
+    AttentionTensors,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::AttentionMicrokernel;
+use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 
-/// A routine around microkernel `M`, laying out shared memory as `SM`: it prepares an
-/// [`AttentionBlueprint`] and launches it on tensors.
+/// A routine around microkernel `M`, laying out shared memory as `SM`, that writes the attention:
+/// it prepares an [`AttentionBlueprint`] and launches it on tensors.
 ///
 /// A routine states what is its own, how it places its microkernel's work items and the kernel it
-/// dispatches, and the launch around those is written once, here.
+/// dispatches. The launch around those is written once, in [`DirectAttention`].
 pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
     Routine<Problem = AttentionRoutineProblem, Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
 {
@@ -23,10 +25,23 @@ pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
         blueprint: AttentionBlueprint<M, SM>,
         grid: Grid,
     );
+}
 
-    /// The attention `tensors` state, launched on their client's device, prepared for `hw`: the
-    /// device as it reports itself, or narrowed to offer less, so a candidate further down a
-    /// microkernel's list is the one that runs.
+/// What writes the attention at each of its routine's settings: a routine alone ([`DirectAttention`]),
+/// or a partial routine then the split-keys merge
+/// ([`SplitKeysAttention`](crate::kernels::SplitKeysAttention)). What a test or a benchmark row
+/// launches, one setting at a time.
+pub trait AttentionLaunch {
+    /// The routine whose settings a launch is at: the one that writes the attention, or the
+    /// partial one, since the merge has none.
+    type Routine: Routine<Problem = AttentionRoutineProblem>;
+
+    /// The routine whose settings a launch is at.
+    fn routine(&self) -> &Self::Routine;
+
+    /// The attention `tensors` state, launched on their client's device, prepared for `hw` at
+    /// `settings`: the device as it reports itself, or narrowed to offer less, so a candidate
+    /// further down a microkernel's list is the one that runs.
     ///
     /// # Errors
     ///
@@ -35,16 +50,11 @@ pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
         &self,
         hw: &Hardware,
         tensors: AttentionTensors,
-        settings: &Self::Settings,
-    ) -> Result<TensorHandle, Refusal> {
-        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
-        let binding = tensors.bind(&blueprint, &grid);
-        self.dispatch(&tensors, binding, blueprint, grid);
-        Ok(tensors.into_out())
-    }
+        settings: &<Self::Routine as Routine>::Settings,
+    ) -> Result<TensorHandle, Refusal>;
 
     /// [`launch_on`](Self::launch_on) at the routine's lead, the first setting it lists on `hw`:
-    /// what a caller naming the routine and no setting runs.
+    /// what a caller naming no setting runs.
     ///
     /// # Errors
     ///
@@ -55,6 +65,7 @@ pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
         tensors: AttentionTensors,
     ) -> Result<TensorHandle, Refusal> {
         let lead = self
+            .routine()
             .settings(hw)
             .into_iter()
             .next()
@@ -63,13 +74,73 @@ pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
     }
 }
 
+/// The attention as routine `R` writes it directly, in one launch: no partial slots and no merge
+/// after it, as [`SplitKeysAttention`](crate::kernels::SplitKeysAttention) has.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DirectAttention<R>(pub R);
+
+impl<R, M: AttentionMicrokernel, SM> AttentionLaunch for DirectAttention<R>
+where
+    R: AttentionRoutine<M, SM> + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>,
+{
+    type Routine = R;
+
+    fn routine(&self) -> &R {
+        &self.0
+    }
+
+    fn launch_on(
+        &self,
+        hw: &Hardware,
+        tensors: AttentionTensors,
+        settings: &R::Settings,
+    ) -> Result<TensorHandle, Refusal> {
+        let (blueprint, grid) = self.0.prepare(hw, &tensors.problem(), settings)?;
+        let binding = tensors.bind(&blueprint, &grid);
+        self.0.dispatch(&tensors, binding, blueprint, grid);
+        Ok(tensors.into_out())
+    }
+}
+
+/// A routine around microkernel `M`, laying out shared memory as `SM`, that writes partial
+/// attention: the cubes sharing each box of queries walk their own runs of the keys, each leaving
+/// its queries' output, unnormalized, and their softmax state in a slot of its own.
+///
+/// It writes no output. The split-keys merge
+/// ([`PlaneSplitKeysMergeRoutine`](crate::kernels::PlaneSplitKeysMergeRoutine)) merges the slots
+/// into it, and a strategy launches the two ([`SplitKeysAttention`](crate::kernels::SplitKeysAttention)).
+pub trait PartialAttentionRoutine<M: AttentionMicrokernel, SM = ()>:
+    Routine<Problem = AttentionRoutineProblem, Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
+{
+    /// How the slots `blueprint` leaves for `problem` lie, as the merge reads them.
+    fn merge_shape(
+        &self,
+        problem: &AttentionRoutineProblem,
+        blueprint: &AttentionBlueprint<M, SM>,
+    ) -> HypercubeMergeShape;
+
+    /// The width of the lines the slots' outputs are stored at.
+    fn slot_width(&self, blueprint: &AttentionBlueprint<M, SM>) -> usize;
+
+    /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`, its partials left in
+    /// `slots`.
+    fn dispatch(
+        &self,
+        tensors: &AttentionTensors,
+        binding: AttentionBinding,
+        blueprint: AttentionBlueprint<M, SM>,
+        grid: Grid,
+        slots: &AttentionSplitSlots,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use crate::kernels::tune::key::AttentionKey;
     use crate::kernels::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::attention::AttentionMicrokernel;
+    use cubek_std::routine::Routine;
 
     use cubek_std::Hardware;
     use cubek_std::devices;
@@ -86,7 +157,7 @@ mod tests {
         assert_every_estimate_is_whole(UnitAttentionRoutine);
         assert_every_estimate_is_whole(CubeStagedAttentionRoutine);
         assert_every_estimate_is_whole(HypercubeLastArrivalShuffleAttentionRoutine::new());
-        assert_every_estimate_is_whole(HypercubeSecondLaunchShuffleAttentionRoutine::new());
+        assert_every_estimate_is_whole(HypercubeShufflePartialAttentionRoutine::new());
     }
 
     /// An M2 Pro offering the square `8×8×8` instruction for `f16` and `f32` summed in `f32`.
@@ -125,9 +196,14 @@ mod tests {
         })
     }
 
-    fn assert_every_estimate_is_whole<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
-        routine: R,
-    ) {
+    fn assert_every_estimate_is_whole<M, SM, R>(routine: R)
+    where
+        R: Routine<
+                Problem = AttentionRoutineProblem,
+                Microkernel = M,
+                Blueprint = AttentionBlueprint<M, SM>,
+            >,
+    {
         let hw = &m2_pro();
         let mut prepared = 0;
         for settings in routine.settings(hw) {
