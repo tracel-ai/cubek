@@ -23,6 +23,7 @@ use cubek_microkernel::matmul::cube::{
     CubeStagedMicrokernelSettings, CubeStagedResolved, CubeStagedStore, CubeStagedTmaRefusal,
     CubeStagedTmaStoreRefusal, MatmulCubeSpace, MatmulCubeWrite,
 };
+use cubek_microkernel::matmul::plane::PlaneFragmentInstruction;
 use cubek_microkernel::matmul::{
     MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulWorkItem,
 };
@@ -71,18 +72,50 @@ impl<'a> CubeStagedPlacement<'a> {
         let item = view.work_item();
         CubeStagedMicrokernel::admits(&item)?;
         let by_units = fill.delivery == CubeStagedDelivery::Copy;
-        let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
-            .find(|candidate| {
+        let mut candidates = CubeStagedMicrokernel::candidates(hw, &item, settings)
+            .filter(|candidate| {
                 by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
             })
-            .ok_or(Refusal::Declined {
-                why: CubeStagedMicrokernel::decline(settings),
-            })?;
-        let microkernel = CubeStagedMicrokernel {
-            fill,
-            store,
-            ..microkernel
-        };
+            .map(|candidate| CubeStagedMicrokernel {
+                fill,
+                store,
+                ..candidate
+            });
+        let first = candidates.next().ok_or(Refusal::Declined {
+            why: CubeStagedMicrokernel::decline(settings),
+        })?;
+        let placed = Self::place(hw, problem, view, item, cube_order, first)?;
+        // The largest matrix instruction comes first. Where its stages outgrow the device's shared
+        // memory, the next matrix instruction whose stages fit, never the software one, which a
+        // matrix instruction outruns; with none, the first, which the grid then refuses.
+        let budget = hw.shared_memory_budget();
+        if placed.resolved.shared_memory <= budget {
+            return Ok(placed);
+        }
+        let smaller = candidates
+            .filter(|candidate| {
+                !matches!(
+                    candidate.plane.instruction,
+                    PlaneFragmentInstruction::Registers { .. }
+                )
+            })
+            .filter_map(|candidate| {
+                Self::place(hw, problem, view, item, cube_order, candidate).ok()
+            })
+            .find(|smaller| smaller.resolved.shared_memory <= budget);
+        Ok(smaller.unwrap_or(placed))
+    }
+
+    /// `microkernel` placed one cube a box over `problem` in `cube_order` and resolved.
+    fn place(
+        hw: &Hardware,
+        problem: &'a MatmulRoutineProblem,
+        view: MatmulView<'a>,
+        item: MatmulWorkItem,
+        cube_order: CubeOrder,
+        microkernel: CubeStagedMicrokernel,
+    ) -> Result<Self, Refusal> {
+        let store = microkernel.store;
         if microkernel.walk().decoded().is_some() {
             view.check_steps(hw)?;
         }

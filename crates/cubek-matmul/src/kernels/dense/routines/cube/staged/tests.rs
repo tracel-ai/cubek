@@ -1365,6 +1365,35 @@ mod base {
         assert_eq!(blueprint.microkernel.scratch, Scratch::None);
     }
 
+    /// Where the largest matrix instruction's stages outgrow the shared memory, a smaller one
+    /// whose stages fit stands in; where none fits, the routine still declines.
+    #[test]
+    fn a_smaller_instruction_stands_in_where_the_largest_outgrows_the_shared_memory() {
+        let large = MmaConfig {
+            m: 32,
+            n: 32,
+            k: 32,
+            ..SHAPE
+        };
+        let prepared = |bytes| {
+            let mut hw = devices::offering_cmma(devices::strix_halo(), [large, SHAPE]);
+            devices::topology(&mut hw).max_shared_memory_size = bytes;
+            let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
+            CubeStagedMatmulRoutine.prepare(&hw, &problem(), &settings)
+        };
+        let instruction = |shape| PlaneFragmentInstruction::Cmma { shape };
+        let (blueprint, grid) = prepared(1 << 20).expect("the largest instruction fits a megabyte");
+        assert_eq!(blueprint.microkernel.plane.instruction, instruction(large));
+        let (blueprint, smaller) =
+            prepared(grid.shared_memory - 1).expect("the smaller instruction fits");
+        assert_eq!(blueprint.microkernel.plane.instruction, instruction(SHAPE));
+        assert!(smaller.shared_memory < grid.shared_memory);
+        assert!(matches!(
+            prepared(1024),
+            Err(Refusal::SharedMemoryPastDevice { .. })
+        ));
+    }
+
     #[test]
     fn declines_a_cube_past_the_shared_memory() {
         let hw = {
