@@ -18,9 +18,9 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Partial attention, with several cubes owning every box of queries, every cube walking its own
 /// run of the keys: each cube stages its run's keys and values once for its plane fragments, on a
-/// square matrix instruction, and each plane leaves its rows undivided in a slot of its own, its
+/// square matrix instruction, and each plane leaves its queries undivided in a slot of its own, its
 /// softmax state beside them. It writes no output: the split-keys merge launched after it merges
-/// the slots into the output, a plane a row. The cubes cover the queries, the heads and the runs,
+/// the slots into the output, a plane a query of a head. The cubes cover the queries, the heads and the runs,
 /// one batch and key head each.
 ///
 /// What a long prompt's few boxes against many keys want: a cube a box would leave the device
