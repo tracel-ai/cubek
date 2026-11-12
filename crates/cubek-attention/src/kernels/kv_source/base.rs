@@ -35,10 +35,18 @@ pub const PAGED_PACKED_UNREAD: Refusal = Refusal::Declined {
     why: "the packed attention reads a packed cache laid out as sequences, not in pages",
 };
 
+/// What an attention routine declines where a packed cache is stated under per-tensor scales: its
+/// keys and values are read under the norms it stores.
+pub const SCALED_PACKED_UNREAD: Refusal = Refusal::Declined {
+    why: "a packed cache is read under the norms it stores, not under per-tensor scales",
+};
+
 /// The keys and values an attention reads, and where each sequence's positions lie in them.
 ///
-/// Three independent choices, each of which combines with the others:
+/// Four independent choices, each of which combines with the others:
 /// - what is stored, the [`cache`](Self::cache): float keys and values, or a packed cache;
+/// - what each stored side is multiplied by, the [`scales`](Self::scales): nothing, or one scale
+///   over all its keys or all its values;
 /// - where a position lies, the [`pages`](Self::pages): along each sequence's own positions, or in
 ///   pools of pages a table names;
 /// - which positions a sequence reads, the [`blocks`](Self::blocks): every attended one, or the
@@ -57,6 +65,29 @@ pub struct KvSource {
     /// The blocks each sequence reads, in order. `None` where a sequence reads every position its
     /// length attends.
     pub blocks: Option<KeyBlocks>,
+    /// The scale each side of a float cache is stored under.
+    pub scales: CacheScales,
+}
+
+/// The one scale each side of a float cache is stored under, over the whole tensor: the keys the
+/// attention reads are the stored keys times [`key`](Self::key), its values the stored values
+/// times [`value`](Self::value), as an FP8 cache quantized per tensor stores them. The routines
+/// read the stored keys and values as they lie and apply each scale once, to the sums it enters.
+#[derive(Debug, Clone, Default)]
+pub struct CacheScales {
+    /// The one-element `f32` tensor every key is multiplied by. `None` where the keys are read as
+    /// stored.
+    pub key: Option<PlainTensor>,
+    /// The one-element `f32` tensor every value is multiplied by. `None` where the values are read
+    /// as stored.
+    pub value: Option<PlainTensor>,
+}
+
+impl CacheScales {
+    /// Whether either side is stored under a scale.
+    pub fn any(&self) -> bool {
+        self.key.is_some() || self.value.is_some()
+    }
 }
 
 /// The blocks of consecutive positions each sequence reads, in order: its keys are the blocks' keys
@@ -93,6 +124,7 @@ impl KvSource {
             cache,
             pages: None,
             blocks: None,
+            scales: CacheScales::default(),
         }
     }
 
@@ -111,6 +143,12 @@ impl KvSource {
             blocks: Some(KeyBlocks { table, size }),
             ..self
         }
+    }
+
+    /// The same source, each side of its float cache stored under its scale of `scales`
+    /// ([`scales`](Self::scales)).
+    pub fn scaled(self, scales: CacheScales) -> Self {
+        Self { scales, ..self }
     }
 
     /// This source read as pools of pages of one block each, where it lists blocks, `visibility`
@@ -157,6 +195,7 @@ impl KvSource {
                 value: value.view,
             },
             blocks: None,
+            scales: self.scales,
         })
     }
 
@@ -276,9 +315,10 @@ mod tests {
     use cubek_std::Hardware;
     use cubek_test_utils::{HostData, HostDataType, TestInput, ValidationResult};
 
-    /// A packed cache in pages, and blocks of keys listed over a packed cache, at a causal
-    /// visibility or straddling a page, are each declined by the one entry, before any routine is
-    /// launched; the same queries and keys read contiguously, or as listed blocks, are admitted.
+    /// A packed cache in pages or under per-tensor scales, and blocks of keys listed over a packed
+    /// cache, at a causal visibility or straddling a page, are each declined by the one entry,
+    /// before any routine is launched; the same queries and keys read contiguously, as listed
+    /// blocks, or under per-tensor scales, are admitted.
     #[test]
     fn the_entry_declines_what_no_routine_reads() {
         let client: Client = cubecl::test_device().client();
@@ -342,6 +382,16 @@ mod tests {
         };
         let bits = KvBitWidths { key: 4, value: 4 };
         let packed = PackedAttentionCache::new(operand(), operand(), bits, None);
+        let scales = || CacheScales {
+            key: Some(tensor(&[1], f32)),
+            value: Some(tensor(&[1], f32)),
+        };
+        assert_eq!(attention(dense(), float().scaled(scales())), None);
+        let scaled_packed = KvSource::new(AttentionCache::Packed(packed.clone())).scaled(scales());
+        assert_eq!(
+            attention(dense(), scaled_packed),
+            Some(SCALED_PACKED_UNREAD)
+        );
         let paged_packed =
             KvSource::new(AttentionCache::Packed(packed.clone())).paged(tensor(&[1, 2], u32));
         assert_eq!(attention(dense(), paged_packed), Some(PAGED_PACKED_UNREAD));
