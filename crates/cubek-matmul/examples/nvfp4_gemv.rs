@@ -12,6 +12,10 @@
 //! `NVFP4_M` sets the rows (1), `NVFP4_ROUNDS` the rounds (3), `NVFP4_SHAPE` keeps one shape,
 //! `NVFP4_ONLY` keeps the settings whose name contains it, `NVFP4_LAYOUT` keeps the weight in
 //! `rows` or in `tiles`, the tile order a load stores it in on this device (both).
+//! `NVFP4_N` and `NVFP4_K` time one shape of their own in place of the four.
+//! `NVFP4_EXPLORE` races, in place of the cube shuffle's packed settings, a grid of cube shuffles
+//! reading the weight by block: columns a unit, planes along `K`, cubes a compute unit, and how
+//! a plane's units split `K`.
 
 use std::time::Duration;
 
@@ -25,7 +29,10 @@ use cubecl::tile::kind::Field;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
-use cubek_matmul::kernels::{CubeShuffleMatmulRoutine, MatmulRoutine, PlaneShuffleMatmulRoutine};
+use cubek_matmul::kernels::{
+    CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, MatmulRoutine,
+    PlaneShuffleMatmulRoutine,
+};
 use cubek_matmul::tiled::storage;
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
@@ -297,7 +304,11 @@ fn candidates<'a>(hw: &'a Hardware, client: &'a Client) -> Vec<(String, Launch<'
         });
         out.push((settings.to_string(), launch));
     }
-    for settings in CubeShuffleMatmulRoutine.packed_settings(hw) {
+    let cube_settings = match std::env::var_os("NVFP4_EXPLORE") {
+        Some(_) => explored(),
+        None => CubeShuffleMatmulRoutine.packed_settings(hw),
+    };
+    for settings in cube_settings {
         let launch: Launch<'a> = Box::new(move |d: &Device| {
             CubeShuffleMatmulRoutine
                 .launch_into(
@@ -311,6 +322,53 @@ fn candidates<'a>(hw: &'a Hardware, client: &'a Client) -> Vec<(String, Launch<'
                 .map_err(|e| format!("{e:?}"))
         });
         out.push((settings.to_string(), launch));
+    }
+    out
+}
+
+/// The cube shuffles `NVFP4_EXPLORE` races: each column count a unit, planes along `K`, cubes a
+/// compute unit, under either split of `K` a plane's units take, reading the weight by block, and
+/// under one transaction also as stored.
+fn explored() -> Vec<CubeShuffleMatmulRoutineSettings> {
+    use core::num::NonZeroUsize;
+    use cubek_microkernel::matmul::cube::{
+        CubeShuffleMicrokernelSettings, CubeShufflePlaneSettings,
+    };
+    use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernelSettings;
+    let mut out = Vec::new();
+    for one_transaction in [false, true] {
+        for columns in [1, 2, 4, 8] {
+            for planes in [16, 32] {
+                for cubes in [
+                    None,
+                    NonZeroUsize::new(1),
+                    NonZeroUsize::new(2),
+                    NonZeroUsize::new(4),
+                ] {
+                    let plane = PlaneShuffleMicrokernelSettings::stepping(columns, None);
+                    let plane = match one_transaction {
+                        true => plane.one_transaction(),
+                        false => plane,
+                    };
+                    let microkernel = CubeShuffleMicrokernelSettings::new(
+                        CubeShufflePlaneSettings::Shuffle(plane),
+                        planes,
+                    );
+                    out.push(CubeShuffleMatmulRoutineSettings {
+                        microkernel: microkernel.by_block(),
+                        cubes_per_worker: cubes,
+                    });
+                    // Under one transaction, also each load of the weight as stored, a word of
+                    // scales a turn.
+                    if one_transaction {
+                        out.push(CubeShuffleMatmulRoutineSettings {
+                            microkernel,
+                            cubes_per_worker: cubes,
+                        });
+                    }
+                }
+            }
+        }
     }
     out
 }
@@ -375,18 +433,118 @@ fn env_usize(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+mod probe {
+    use cubecl::prelude::*;
+    use cubecl::std::tensor::layout::linear::{LinearView, LinearViewMut};
+    use cubecl::{self as cubecl, cube};
+
+    /// Every unit sums `per_unit` vectors of `input`, its own position and every `output.shape()`
+    /// after it, and writes the sum: a read of the whole input and nothing else, the most a kernel
+    /// reading these bytes could reach.
+    #[cube(launch, address_type = "dynamic")]
+    pub fn read_every_vector<E: Numeric, N: Size>(
+        input: LinearView<'_, Vector<E, N>>,
+        mut output: LinearViewMut<'_, Vector<E, N>>,
+        #[comptime] per_unit: usize,
+        #[define(E)] _dtype: ElemType,
+    ) {
+        if !output.is_in_bounds(ABSOLUTE_POS) {
+            terminate!();
+        }
+        let units = output.shape();
+        let mut sum = Vector::<E, N>::cast_from(0u32);
+        #[unroll]
+        for i in 0..per_unit {
+            let vector = ABSOLUTE_POS + i * units;
+            if input.is_in_bounds(vector) {
+                sum += input.read(vector);
+            }
+        }
+        output.write(ABSOLUTE_POS, sum);
+    }
+}
+
+/// The best read of `bytes` bytes, cold, over copies laid end to end past the last-level cache,
+/// at each count of 16-byte vectors a unit: the ceiling a product reading them meets.
+fn read_ceiling(client: &Client, bytes: usize) -> (f64, usize) {
+    use cubecl::prelude::*;
+    use cubecl::std::tensor::layout::linear::linear_view;
+    let words = bytes.div_ceil(16) * 4;
+    let copies = ROTATION.div_ceil(bytes).max(2);
+    let inputs: Vec<TensorHandle> = (0..copies)
+        .map(|_| tensor(client, &vec![1u8; words * 4], [1, words], WORD))
+        .collect();
+    let vector_size = 4;
+    let mut best = (0.0, 0);
+    for per_unit in [1, 2, 4, 8, 16] {
+        let units = (words / vector_size).div_ceil(per_unit);
+        let output = tensor(
+            client,
+            &vec![0u8; units * vector_size * 4],
+            [1, units * vector_size],
+            WORD,
+        );
+        let cube_dim = CubeDim::new_1d(256);
+        let cube_count = CubeCount::Static(units.div_ceil(256) as u32, 1, 1);
+        let launch = |input: &TensorHandle| {
+            probe::read_every_vector::launch(
+                client,
+                cube_count.clone(),
+                cube_dim,
+                input.required_address_type(),
+                vector_size,
+                linear_view(input.clone().binding()),
+                linear_view(output.clone().binding()),
+                per_unit,
+                WORD,
+            )
+        };
+        for input in &inputs {
+            launch(input);
+        }
+        block_on(client.sync()).expect("sync");
+        let launches = (400 / copies).max(4) * copies;
+        let mut fastest = Duration::MAX;
+        for _ in 0..env_usize("NVFP4_ROUNDS", 3) {
+            let ((), duration) = client
+                .profile(
+                    || {
+                        for i in 0..launches {
+                            launch(&inputs[i % copies]);
+                        }
+                    },
+                    "read ceiling",
+                )
+                .expect("profile");
+            let ticks = block_on(duration.resolve()).expect("device ticks");
+            fastest = fastest.min(ticks.duration() / launches as u32);
+        }
+        let gbs = bytes as f64 / fastest.as_secs_f64() / 1e9;
+        if gbs > best.0 {
+            best = (gbs, per_unit);
+        }
+    }
+    best
+}
+
 fn main() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
     let only_shape = std::env::var("NVFP4_SHAPE").ok();
     let only = std::env::var("NVFP4_ONLY").ok();
     // Qwen3-8B's projections as a decode step reads them, `[out, in]`.
-    for (name, n, k) in [
-        ("qkv", 6144, 4096),
-        ("o", 4096, 4096),
-        ("gate/up", 24576, 4096),
-        ("down", 4096, 12288),
-    ] {
+    // `NVFP4_N` and `NVFP4_K` together time one shape of their own instead, named `custom`.
+    let custom = env_usize("NVFP4_N", 0) * env_usize("NVFP4_K", 0) > 0;
+    let shapes = match custom {
+        true => vec![("custom", env_usize("NVFP4_N", 0), env_usize("NVFP4_K", 0))],
+        false => vec![
+            ("qkv", 6144, 4096),
+            ("o", 4096, 4096),
+            ("gate/up", 24576, 4096),
+            ("down", 4096, 12288),
+        ],
+    };
+    for (name, n, k) in shapes {
         if only_shape.as_deref().is_some_and(|s| s != name) {
             continue;
         }
@@ -394,6 +552,8 @@ fn main() {
         let host = Host::new(m, n, k);
         let bytes = n * k / 2 + n * k / BLOCK;
         let copies = ROTATION.div_ceil(bytes).max(2);
+        let (ceiling, per_unit) = read_ceiling(&client, bytes);
+        println!("{name} ceiling: {ceiling:.1} GB/s ({per_unit} vectors a unit)");
         for layout in [Layout::Rows, Layout::Tiles] {
             let wanted = std::env::var("NVFP4_LAYOUT").ok();
             if wanted
