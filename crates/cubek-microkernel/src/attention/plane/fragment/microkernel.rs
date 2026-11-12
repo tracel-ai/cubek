@@ -12,16 +12,16 @@ use cubek_std::microkernel::StageRing;
 /// its rows' outputs in fragments held across the walk, its score where the microkernel keeps it,
 /// and the softmax state of its rows, kept where the score is.
 #[derive(CubeType)]
-pub struct PlaneFragmentAttention<EA: Float, ES: Float> {
+pub struct PlaneFragmentAttention<EA: Float, EV: Float> {
     sum: Tile,
     score: StageScore,
     /// The softmax state of every plane's rows: what the cube merges where its planes split the
     /// same rows' keys ([`OnlineSoftmax::normalizer`]).
     pub(crate) softmax: OnlineSoftmax<EA>,
     query: Tile,
-    /// The element the keys and values are staged at, which the probabilities are cast to.
+    /// The element the values are read in, which the probabilities are cast to.
     #[cube(comptime)]
-    staged: PhantomData<ES>,
+    probabilities: PhantomData<EV>,
     #[cube(comptime)]
     microkernel: PlaneFragmentAttentionMicrokernel,
     /// The planes its walker lays it over, along each axis: what the score's own grid is placed
@@ -31,7 +31,7 @@ pub struct PlaneFragmentAttention<EA: Float, ES: Float> {
 }
 
 #[cube]
-impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
+impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
     /// Every plane's rows over `walk` before any key: its score placed by the walk, and its sum
     /// opened at zero on `out`, the output it is shaped by, against `value` and the score's
     /// probabilities. `query` is staged, and `planes` the planes its walker lays it over along
@@ -44,14 +44,14 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
         #[comptime] planes: Vec<(Axis, usize)>,
     ) -> Self {
-        let score = StageScore::open::<EA, ES>(walk, query, microkernel);
+        let score = StageScore::open::<EA, EV>(walk, query, microkernel);
         let softmax = score.softmax::<EA>(microkernel.seq_q());
-        PlaneFragmentAttention::<EA, ES> {
+        PlaneFragmentAttention::<EA, EV> {
             sum: Self::open_sum(out, &score, value, microkernel),
             score,
             softmax,
             query: query.clone(),
-            staged: PhantomData,
+            probabilities: PhantomData,
             microkernel,
             planes,
         }
@@ -62,7 +62,7 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
     /// scaled by `scale`.
     pub fn step(&mut self, plane: &Region, keys: &Tile, values: &Tile, visible: &Tile, scale: EA) {
         let mut sum = self.sum.at(plane);
-        self.score.at(plane).step::<EA, ES>(
+        self.score.at(plane).step::<EA, EV>(
             plane,
             &mut sum,
             &mut self.softmax,
@@ -424,7 +424,7 @@ impl StageScore {
 /// windowed to `rows`; `planes` is how many planes along the queries share the cube, which a score
 /// read through windows is placed under.
 #[cube]
-pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
+pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
     rows: &Region,
     out: &Tile,
     logsumexp: &ComptimeOption<Tile>,
@@ -441,14 +441,15 @@ pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
     let walk = rows.walk().range(0, steps);
     let decoded = microkernel.decoded_stage();
     // The query spans no key: staged once, before the walk, as the plane's own copy.
-    let mut staged_query = query.stage_for(&walk, StageStorage::Strided, decoded);
+    let mut staged_query =
+        query.stage_for(&walk, StageStorage::Strided, microkernel.decoded_query());
     staged_query.copy_from(query);
 
     sync_plane();
 
-    let score = StageScore::open::<EA, ES>(&walk, &staged_query, microkernel);
+    let score = StageScore::open::<EA, EV>(&walk, &staged_query, microkernel);
     let mut softmax = score.softmax::<EA>(microkernel.seq_q());
-    let mut sum = PlaneFragmentAttention::<EA, ES>::open_sum(out, &score, value, microkernel);
+    let mut sum = PlaneFragmentAttention::<EA, EV>::open_sum(out, &score, value, microkernel);
 
     let in_flight = ring.stages_in_flight.get();
     let mut stages = Stages::smem(&walk, key, value, StageStorage::Strided, in_flight, decoded);
@@ -456,7 +457,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
     stages.walk(walk, ring.prefetch, |slot, stage| {
         let bias_stage = bias.at(stage);
         slot.consume(|key, value| {
-            score.step::<EA, ES>(
+            score.step::<EA, EV>(
                 stage,
                 &mut sum,
                 &mut softmax,

@@ -1,7 +1,7 @@
 //! The operands of one float attention as autotune measures them: the key a call is tuned under,
 //! and the inputs a round measures on in its place.
 
-use crate::kernels::tune::key::AttentionKey;
+use crate::kernels::tune::key::{AttentionKey, AttentionKeyElements};
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionCache, AttentionQueries, AttentionRoutineProblem,
     AttentionScoring, AttentionTensors, KvSource,
@@ -232,11 +232,15 @@ impl AttentionTuneInputs {
         }
     }
 
-    /// The key of this call's heads, element and scoring, `queries` positions over `keys`.
+    /// The key of this call's heads, elements and scoring, `queries` positions over `keys`.
     fn key_of(&self, queries: usize, keys: usize) -> AttentionKey {
         let (heads, head_dim) = self.heads_and_dim();
         AttentionKey::new(
-            self.query.elem,
+            AttentionKeyElements {
+                query: self.query.elem,
+                key: self.key.elem,
+                value: self.value.elem,
+            },
             heads,
             self.kv_heads(),
             head_dim,
@@ -306,8 +310,8 @@ impl AttentionTuneInputs {
         }
     }
 
-    /// Zero keys and values of `batch` sequences, `positions` each, of this call's element and
-    /// key heads, laid out as `key` says: one buffer per operand, or pools of pages of the key's
+    /// Zero keys and values of `batch` sequences, `positions` each, of this call's elements, each
+    /// side its own, and key heads, laid out as `key` says: one buffer per operand, or pools of pages of the key's
     /// page size read through a table of their own, each sequence's pages in order.
     fn zero_keys(
         &self,
@@ -315,15 +319,16 @@ impl AttentionTuneInputs {
         positions: usize,
         batch: usize,
     ) -> (PlainTensor, PlainTensor, Option<PlainTensor>) {
-        let (client, elem) = (&self.client, self.key.elem);
+        let client = &self.client;
         let (kv_heads, head_dim) = (self.kv_heads(), key.head_dim());
-        let zeros = |shape: [usize; 4]| {
+        let zeros = |shape: [usize; 4], elem| {
             PlainTensor::zeros(client, &shape, row_major_contiguous_strides(shape), elem)
         };
+        let (keys, values) = (self.key.elem, self.value.elem);
         match key.page_size() {
             None => {
                 let shape = [batch, kv_heads, positions, head_dim];
-                (zeros(shape), zeros(shape), None)
+                (zeros(shape, keys), zeros(shape, values), None)
             }
             Some(page_size) => {
                 let width = positions.div_ceil(page_size);
@@ -331,8 +336,8 @@ impl AttentionTuneInputs {
                 let shape = [count, kv_heads, page_size, head_dim];
                 let table: Vec<u32> = (0..count as u32).collect();
                 (
-                    zeros(shape),
-                    zeros(shape),
+                    zeros(shape, keys),
+                    zeros(shape, values),
                     Some(PlainTensor::of_u32s(client, &[batch, width], &table)),
                 )
             }
@@ -633,6 +638,64 @@ mod tests {
             let key = decode.key_of(1, 2217);
             let round = AttentionTuneInputs::one_query_representative(&key, &decode);
             assert_eq!(round.keys(), AttentionKey::CACHE_PREFIX);
+        }
+
+        /// **Each side of a cache is keyed and measured at its own element.** A chunk and a decode
+        /// step over `f16` keys and values, over `e4m3` keys beside `f16` values, and over both
+        /// `e4m3`, tune under three keys: a winner over one reads the others' operands differently
+        /// or not at all. Each round measures every side at the element its call reads it at.
+        #[test]
+        fn each_side_of_a_cache_is_keyed_and_measured_at_its_own_element() {
+            let e4m3 = ElemType::Float(FloatKind::E4M3);
+            let client = client();
+            let (heads, kv_heads, head_dim) = HEADS;
+            let over = |queries: usize, key: ElemType, value: ElemType| {
+                let zeros = |shape: [usize; 4], elem| {
+                    PlainTensor::zeros(&client, &shape, row_major_contiguous_strides(shape), elem)
+                };
+                let cache = [1, kv_heads, 4096, head_dim];
+                let lengths = PlainTensor::of_u32s(&client, &[1], &[queries as u32]);
+                let visibility = AttentionVisibility::new(queries > 1, None, QueryPlacement::Last);
+                AttentionTuneInputs::new(
+                    &client,
+                    zeros([1, heads, queries, head_dim], F16),
+                    zeros(cache, key),
+                    zeros(cache, value),
+                    None,
+                    lengths,
+                    None,
+                    AttentionScoring::standard(visibility, head_dim),
+                )
+                .expect("an even group of float elements")
+            };
+            for queries in [1, 512] {
+                let caches = [(F16, F16), (e4m3, F16), (e4m3, e4m3)].map(|(key, value)| {
+                    let inputs = over(queries, key, value);
+                    let (keyed, round) = match queries {
+                        1 => {
+                            let keyed = inputs.one_query_key();
+                            let round =
+                                AttentionTuneInputs::one_query_representative(&keyed, &inputs);
+                            (keyed, round)
+                        }
+                        _ => {
+                            let keyed = inputs.many_queries_key();
+                            let round =
+                                AttentionTuneInputs::many_queries_representative(&keyed, &inputs);
+                            (keyed, round)
+                        }
+                    };
+                    assert_eq!(
+                        (round.query.elem, round.key.elem, round.value.elem),
+                        (F16, key, value),
+                        "{queries} queries: the round measures another cache"
+                    );
+                    keyed
+                });
+                assert_ne!(caches[0], caches[1], "{queries} queries");
+                assert_ne!(caches[1], caches[2], "{queries} queries");
+                assert_ne!(caches[0], caches[2], "{queries} queries");
+            }
         }
 
         /// **Both contractions, and nothing between them.** A roofline that counted one would be

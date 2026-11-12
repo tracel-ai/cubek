@@ -5,6 +5,7 @@ mod fragment {
     use super::super::*;
     use crate::kernels::{AttentionRoutineProblem, QueryOrder};
     use cubecl::tile::launch::{Delivery, Refusal};
+    use cubek_microkernel::attention::AttentionRead;
     use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
     use cubek_microkernel::matmul::cube::CubeStagedDelivery;
     use cubek_microkernel::matmul::plane::PlaneFragmentDepth;
@@ -138,7 +139,10 @@ mod fragment {
         let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
             panic!("the routine runs plane fragments")
         };
-        assert_eq!(plane.read, ElemType::Float(FloatKind::TF32));
+        assert_eq!(
+            plane.read,
+            AttentionRead::all(ElemType::Float(FloatKind::TF32))
+        );
         assert_eq!(
             (plane.score.tile_extent(S), plane.score.settings.depth.get()),
             (16, 128 / 8)
