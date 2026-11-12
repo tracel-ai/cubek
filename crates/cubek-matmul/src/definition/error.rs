@@ -1,4 +1,7 @@
-use cubecl::{CubeCount, CubeDim, VectorizationError, ir::ElemType, server::LaunchError};
+use cubecl::{
+    CubeCount, CubeDim, VectorizationError, client::Client, features::Plane, ir::ElemType,
+    server::LaunchError,
+};
 use cubek_std::{InvalidConfigError, MatrixLayout};
 use std::fmt::{Debug, Display};
 
@@ -21,6 +24,16 @@ impl From<LaunchError> for MatmulSetupError {
     fn from(value: LaunchError) -> Self {
         Self::Launch(value)
     }
+}
+
+/// Refuse a plane of several units on a device without plane operations.
+pub fn require_plane_ops(client: &Client, plane_dim: usize) -> Result<(), MatmulSetupError> {
+    if plane_dim > 1 && !client.properties().features.plane.contains(Plane::Ops) {
+        return Err(MatmulSetupError::Unavailable(
+            MatmulAvailabilityError::PlaneOpsUnavailable,
+        ));
+    }
+    Ok(())
 }
 
 /// A specific feature required for matmul is not available in the current runtime or hardware.
