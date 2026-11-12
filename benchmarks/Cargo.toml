@@ -25,6 +25,7 @@ cpu-reference = [
     "cubek-matmul/cpu-reference",
     "cubek-interpolate/cpu-reference",
     "cubek-pool/cpu-reference",
+    "cubek-prefix-scan/cpu-reference",
     "cubek-convolution/cpu-reference",
     "cubek-fft/cpu-reference",
     "cubek-reduce/cpu-reference",
@@ -53,6 +54,7 @@ cubek-linear-recurrence = { workspace = true, default-features = true, features 
 cubek-interpolate = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-matmul = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-pool = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-prefix-scan = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-random = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-reduce = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-std = { workspace = true, default-features = true, features = ["benchmarks"] }
@@ -92,6 +94,10 @@ name = "interpolate_cpu"
 [[bench]]
 harness = false
 name = "pool"
+
+[[bench]]
+harness = false
+name = "prefix_scan"
 
 [[bench]]
 harness = false

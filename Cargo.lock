@@ -348,6 +348,7 @@ dependencies = [
  "cubek-linear-recurrence",
  "cubek-matmul",
  "cubek-pool",
+ "cubek-prefix-scan",
  "cubek-random",
  "cubek-reduce",
  "cubek-std",
@@ -1525,6 +1526,19 @@ dependencies = [
  "cubek-pool",
  "cubek-std",
  "cubek-test-utils",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "cubek-prefix-scan"
+version = "0.4.0-pre.2"
+dependencies = [
+ "cubecl",
+ "cubecl-common",
+ "cubek-prefix-scan",
+ "cubek-std",
+ "cubek-test-utils",
+ "serde",
  "thiserror 2.0.21",
 ]
 
