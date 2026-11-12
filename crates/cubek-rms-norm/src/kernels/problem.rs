@@ -1,7 +1,6 @@
 //! The problem a routine computes.
 
 use crate::kernels::RMS_NORM_ELEMENT_UNVERIFIED;
-use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Space;
 use cubecl::tile::launch::Refusal;
@@ -18,7 +17,7 @@ use cubek_std::routine::EstimatedProblem;
 /// or `f32`, or at `f32` into anything but a buffer: a packed, tiled or sink output holds the
 /// input's element.
 pub const RMS_NORM_OUTPUT_UNSUPPORTED: Refusal = Refusal::Declined {
-    why: "the RMS norm writes a buffer at f32 or the input's element, else the input's",
+    why: "the RMS norm writes f32 or the input's element into a buffer it allocates, and the input's element into any other output",
 };
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -151,13 +150,10 @@ impl RmsNormRoutineProblem {
         if output_element != element && output_element != F32 {
             return Err(RMS_NORM_OUTPUT_UNSUPPORTED);
         }
-        for element in [element, output_element] {
-            let usage = hw.properties.features.type_usage(element);
-            if !usage.is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer) {
-                return Err(ELEMENT_NOT_ON_DEVICE);
-            }
+        match hw.runs(element) && hw.runs(output_element) {
+            true => Ok(()),
+            false => Err(ELEMENT_NOT_ON_DEVICE),
         }
-        Ok(())
     }
 
     /// Whether `hw` runs this problem's elements and its output's store: an output written at
@@ -201,6 +197,7 @@ impl EstimatedProblem for RmsNormRoutineProblem {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use cubecl::features::TypeUsage;
     use cubecl::ir::UIntKind;
     use cubek_std::devices;
 

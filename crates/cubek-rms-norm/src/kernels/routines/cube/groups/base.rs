@@ -19,6 +19,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Whether `hw` runs the norm `problem` states: what a caller asks before it falls back to composed
 /// ops. The floor serves every float row on every device, so this is the elements and the store.
+/// A tiled or sink output is known only at launch, which declines an `f32` output into one.
 ///
 /// # Errors
 ///
