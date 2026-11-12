@@ -9,9 +9,17 @@ use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 
 /// Every cube running the cube microkernel on its box with planes of shuffles, each reading its
 /// keys where they lie, over the keys its rows see, and writing each row's logsumexp where the
-/// launch binds one.
+/// launch binds one. Each operand is read in its own element and widened into the sum, `EA`:
+/// the query in `EQ`, the keys in `EK`, the values in `EV`; the output is written in `EO`.
 #[cube(launch_unchecked)]
-pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
+pub fn cube_shuffle_attention_kernel<
+    EA: Float,
+    EQ: Float,
+    EK: Float,
+    EV: Float,
+    EO: Float,
+    N: Size,
+>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
@@ -26,16 +34,16 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
     #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] value_dim: usize,
     #[comptime] visibility: AttentionVisibility,
-    #[define(EA, E)] _elements: [ElemType; 2],
+    #[define(EA, EQ, EK, EV, EO)] _elements: [ElemType; 5],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
 
     let q = query.tile(&partitioning);
-    let k = TileStepReads::<E> {
+    let k = TileStepReads::<EK> {
         tile: key.tile(&partitioning),
         element: PhantomData,
     };
-    let v = TileStepReads::<E> {
+    let v = TileStepReads::<EV> {
         tile: value.tile(&partitioning),
         element: PhantomData,
     };
@@ -53,7 +61,14 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
                 1usize,
             );
 
-            cube_unstaged_attention_microkernel::<EA, E, N, TileStepReads<E>, TileStepReads<E>>(
+            cube_unstaged_attention_microkernel::<
+                EA,
+                EQ,
+                EO,
+                N,
+                TileStepReads<EK>,
+                TileStepReads<EV>,
+            >(
                 &cube,
                 &o.at(&cube),
                 &lse.clone().map(|lse| lse.at(&cube)),

@@ -1,6 +1,6 @@
 use crate::attention::plane::{InstructionShape, PlaneFragmentAttentionMicrokernelSettings};
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
 };
 use crate::matmul::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
@@ -32,10 +32,13 @@ use cubek_std::{Hardware, manual_mma};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentAttentionMicrokernel {
     pub settings: PlaneFragmentAttentionMicrokernelSettings,
-    /// The element its query, keys and values reach the instruction in: as stored where the
-    /// device has an instruction for it, else tf32 for `f32`
-    /// ([`readings`](AttentionWorkItem::readings)).
-    pub read: ElemType,
+    /// The elements its query and keys reach the score's instruction in and its values the
+    /// value's ([`readings`](AttentionWorkItem::readings)): each as stored, or converted as its
+    /// stage is filled.
+    pub read: AttentionRead,
+    /// The element a stage of its keys and values decodes into where one of them is converted:
+    /// the values' read element where they are, else the score's.
+    pub cache_stage: ElemType,
     /// The score's fragments: its rows by a stage's keys, walking the whole head dim.
     pub score: PlaneFragmentMicrokernel,
     /// The value's fragments: its rows by the whole value dim, walking a stage's keys.
@@ -116,18 +119,35 @@ impl PlaneFragmentAttentionMicrokernel {
     }
 
     /// The value as the shared microkernel is handed it: out of probabilities cast to the
-    /// operands' element, which its fragments load beside the values.
+    /// values' element, which its fragments load beside the values.
     fn value_item(item: &AttentionWorkItem) -> MatmulWorkItem {
-        item.value(item.elements.query)
+        item.value(item.elements.value)
     }
 
     /// [`candidates`](Microkernel::candidates) with the operands read in `read`.
     fn reading(
         hw: &Hardware,
         item: &AttentionWorkItem,
-        read: ElemType,
+        read: AttentionRead,
         settings: PlaneFragmentAttentionMicrokernelSettings,
     ) -> Vec<Self> {
+        // A stage of the cache converts a side it reads at another element as it fills, as an
+        // `f32` read at tf32 or `e4m3` values read at `f16` are: its fragments load the values it
+        // decodes. Both sides converted so are converted to one element alike.
+        let converted = |stored: ElemType, read: ElemType| stored != read;
+        let (keys_converted, values_converted) = (
+            converted(item.elements.key, read.score),
+            converted(item.elements.value, read.value),
+        );
+        if keys_converted && values_converted && read.score != read.value {
+            return Vec::new();
+        }
+        let score_converted =
+            converted(item.elements.key, read.score) || converted(item.elements.query, read.score);
+        let cache_stage = match values_converted {
+            true => read.value,
+            false => read.score,
+        };
         let item = &item.read_as(read);
         let (head, value) = (item.head_dim, item.val_dim);
 
@@ -147,20 +167,25 @@ impl PlaneFragmentAttentionMicrokernel {
             .filter_map(move |score| {
                 let [_, (_, keys), (_, depth)] = score.instruction.shape();
                 let plane_keys = settings.seq_kv.get() * keys;
-                let value_instruction = Self::value_instruction(hw, score.instruction, plane_keys)?;
+                let value_instruction =
+                    Self::value_instruction(hw, score.instruction, read.value, plane_keys)?;
                 let [_, (_, width), (_, value_depth)] = value_instruction.shape();
                 let head_steps = Self::steps(head, depth)?;
                 let value_steps = Self::steps(value, width)?;
                 let key_steps = Self::steps(plane_keys, value_depth)?;
-                // Only the manual `mma` holds a fragment deeper than its instruction.
+                // Only the manual `mma` holds a fragment deeper than its instruction, which it
+                // loads in lane runs: over a 16-bit instruction's fragments alone, from a stage of
+                // the query and keys as they are stored.
                 let whole_head = settings.score_depth == PlaneFragmentDepth::Stage;
                 let manual = matches!(score.instruction, PlaneFragmentInstruction::Mma { .. });
-                if whole_head && !manual {
+                let lane_runs = manual && read.score.size() == 2 && !score_converted;
+                if whole_head && !lane_runs {
                     return None;
                 }
                 Some(Self {
                     settings,
                     read,
+                    cache_stage,
                     score: PlaneFragmentMicrokernel {
                         settings: PlaneFragmentMicrokernelSettings {
                             depth: head_steps,
@@ -186,11 +211,14 @@ impl PlaneFragmentAttentionMicrokernel {
             .collect()
     }
 
-    /// The value's instruction beside `score`, where the device offers it: the score's own
-    /// instruction where it is a cmma one, of any shape, read through the windows; else the
-    /// deepest manual `mma` a whole number of the score's fragments deep that the plane's `keys` a
-    /// stage divide into, on 16-bit operands, where the device's `A` lays its cells where the
-    /// accumulator does ([`Hardware::accumulator_as_a`]; a `tf32` `A` never does). Each call reads
+    /// The value's instruction beside `score`, where the device offers it, its operands of
+    /// `value`: the score's own instruction where it is a cmma one of any shape on operands of
+    /// `value`, read through the windows; else the deepest manual `mma` on 16-bit operands of
+    /// `value` of the score's tile and accumulator, a whole number of the score's fragments deep,
+    /// that the plane's `keys` a stage divide into, where the device's `A` lays its cells where the
+    /// accumulator does ([`Hardware::accumulator_as_a`]; a `tf32` `A` never does). The score's
+    /// accumulator is laid out by its tile alone, so a score on narrower operands, as an FP8
+    /// cache's keys, still hands its fragments on as the value's `A` once cast. Each call reads
     /// one run of the score's fragments along the keys, in their registers, as its `A`
     /// (`cubecl-tile`'s `accumulators_as_a`), and the value walks the plane's keys a run at a time
     /// ([`tiling`](Self::tiling)): the deepest contracts them in the fewest calls, and a shallower
@@ -199,20 +227,23 @@ impl PlaneFragmentAttentionMicrokernel {
     fn value_instruction(
         hw: &Hardware,
         score: PlaneFragmentInstruction,
+        value: ElemType,
         keys: usize,
     ) -> Option<PlaneFragmentInstruction> {
         match score {
-            PlaneFragmentInstruction::Cmma { .. } => Some(score),
-            PlaneFragmentInstruction::Mma { shape, .. } if shape.a_type.size() == 2 => {
-                // The score's tile and elements, a whole number of its fragments deep, the plane's
-                // keys a whole number of its calls.
-                let run = |value: &MmaConfig| {
+            PlaneFragmentInstruction::Cmma { shape } if shape.a_type == value => Some(score),
+            PlaneFragmentInstruction::Mma { shape, .. } if value.size() == 2 => {
+                // The score's tile and accumulator on the values' element, a whole number of its
+                // fragments deep, the plane's keys a whole number of its calls.
+                let run = |candidate: &MmaConfig| {
                     MmaConfig {
-                        k: shape.k,
-                        ..*value
-                    } == shape
-                        && value.k.is_multiple_of(shape.n)
-                        && keys.is_multiple_of(value.k as usize)
+                        a_type: value,
+                        b_type: value,
+                        k: candidate.k,
+                        ..shape
+                    } == *candidate
+                        && candidate.k.is_multiple_of(shape.n)
+                        && keys.is_multiple_of(candidate.k as usize)
                 };
 
                 hw.accumulator_as_a
@@ -221,7 +252,9 @@ impl PlaneFragmentAttentionMicrokernel {
                     .map(PlaneFragmentInstruction::mma)
             }
 
-            PlaneFragmentInstruction::Mma { .. } | PlaneFragmentInstruction::Wgmma { .. } => None,
+            PlaneFragmentInstruction::Cmma { .. }
+            | PlaneFragmentInstruction::Mma { .. }
+            | PlaneFragmentInstruction::Wgmma { .. } => None,
         }
     }
 
@@ -379,10 +412,17 @@ impl PlaneFragmentAttentionMicrokernel {
     /// What the routines whose cubes hold it are named after.
     pub const NAME: &'static str = "fragment";
 
-    /// The element its instruction reads: an `f32` operand read at tf32 is bound as its words,
-    /// and a stage of it at `f32` would be fragments the device does not offer.
+    /// The element a stage of its query decodes into where the query is converted: the score's,
+    /// as an `f16` query multiplied with `e4m3` keys on the FP8 instruction, or an `f32` one read
+    /// at tf32, whose stage at `f32` would be fragments the device does not offer.
+    pub fn decoded_query(&self) -> Option<ElemType> {
+        Some(self.read.score)
+    }
+
+    /// The element a stage of its keys and values decodes into where either is converted
+    /// ([`cache_stage`](Self::cache_stage)); one bound as stored is staged as it lies.
     pub fn decoded_stage(&self) -> Option<ElemType> {
-        Some(self.read)
+        Some(self.cache_stage)
     }
 
     /// Its fragments, as its [`ScoreHolder`] cuts them. Where the score is kept in fragments they
@@ -464,7 +504,7 @@ impl PlaneFragmentAttentionMicrokernel {
         let bounced = self
             .value
             .scratch_bytes(&Self::value_item(item), self.settings.scratch);
-        cells * (item.sum.size() + item.elements.query.size()) + bounced
+        cells * (item.sum.size() + item.elements.value.size()) + bounced
     }
 
     /// The tile one fragment of the score reads of the staged query: one batch, one head of keys
@@ -498,24 +538,30 @@ impl PlaneFragmentAttentionMicrokernel {
                 self.block_edge(
                     self.score.leaf_extent(MatmulDim::K),
                     self.score.settings.depth.get(),
+                    self.read.score,
                 ),
             ),
             (
                 DV,
-                self.block_edge(self.out_edge(), self.value.settings.along_n.get()),
+                self.block_edge(
+                    self.out_edge(),
+                    self.value.settings.along_n.get(),
+                    self.read.value,
+                ),
             ),
         ]
     }
 
-    /// A stage block's edge along a dim its fragments take `steps` steps of `step` elements along:
-    /// the fewest steps whose row spans [`BLOCK_ROW_BYTES`], else the whole dim. A block one
-    /// fragment wide holds a sliver of each source row, which the copy brings a few bytes at a
-    /// time, splitting sectors and lines; a whole line a row is fetched in whole sectors, and a
-    /// swizzle permutes its chunks within it. On an RTX PRO 6000, a 6016 by 8192 causal `f16`
-    /// prompt (32/8 heads, head dim 128) on eight planes a cube takes 2392 µs with 32-byte rows and
-    /// 2047 µs with 128 on two-by-four boxes, 2143 and 1884 µs on one-by-four boxes.
-    fn block_edge(&self, step: usize, steps: usize) -> usize {
-        let row = step * self.read.size();
+    /// A stage block's edge along a dim its fragments take `steps` steps of `step` elements of
+    /// `element` along: the fewest steps whose row spans [`BLOCK_ROW_BYTES`], else the whole dim.
+    /// A block one fragment wide holds a sliver of each source row, which the copy brings a few
+    /// bytes at a time, splitting sectors and lines; a whole line a row is fetched in whole
+    /// sectors, and a swizzle permutes its chunks within it. On an RTX PRO 6000, a 6016 by 8192
+    /// causal `f16` prompt (32/8 heads, head dim 128) on eight planes a cube takes 2392 µs with
+    /// 32-byte rows and 2047 µs with 128 on two-by-four boxes, 2143 and 1884 µs on one-by-four
+    /// boxes.
+    fn block_edge(&self, step: usize, steps: usize, element: ElemType) -> usize {
+        let row = step * element.size();
         (1..=steps)
             .filter(|count| steps.is_multiple_of(*count))
             .find(|count| count * row >= BLOCK_ROW_BYTES)

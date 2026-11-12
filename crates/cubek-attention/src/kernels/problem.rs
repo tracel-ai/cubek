@@ -287,7 +287,7 @@ mod tests {
     use crate::kernels::test_support::{offering, qwen};
     use crate::kernels::*;
 
-    use cubek_microkernel::attention::S;
+    use cubek_microkernel::attention::{AttentionRead, S};
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::routine::Routine;
@@ -366,7 +366,10 @@ mod tests {
             ..f32
         };
         assert_eq!(f32.work_item().readings().count(), 2);
-        assert_eq!(paged.work_item().readings().collect::<Vec<_>>(), [F32]);
+        assert_eq!(
+            paged.work_item().readings().collect::<Vec<_>>(),
+            [AttentionRead::all(F32)]
+        );
     }
 
     /// A cube whose planes read keys where they lie walks a paged cache a page at a time only

@@ -71,9 +71,10 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
 
     /// Its microkernel's settings over plane fragments
     /// ([`HypercubeAttentionMicrokernelSettings::listed`]) on eight cubes a box, then four and
-    /// sixteen.
+    /// sixteen, then seven, ten and thirteen: counts that are no power of two, which may fill the
+    /// device's last wave of boxes where a power of two leaves it mostly idle.
     fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
-        [8, 4, 16]
+        [8, 4, 16, 7, 10, 13]
             .into_iter()
             .flat_map(|cubes| {
                 HypercubeAttentionMicrokernelSettings::FRAGMENT
@@ -198,9 +199,10 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         let shape = self.merge_shape(&problem, &blueprint);
         let microkernel = blueprint.microkernel;
         let (key, value) = binding.cache.into_tiles();
-        // Its planes keep their sums in the first and read the stage in the last; they leave
+        // Its planes keep their sums in the first, read the query and the keys' stage in the
+        // second and cast their probabilities to the values' element in the last; they leave
         // their rows in the slots, and the output is read for its shape alone.
-        let [sum, _, staged] = microkernel
+        let [sum, _, staged, probabilities] = microkernel
             .served(&problem.work_item())
             .served_kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads of a tile the
@@ -228,7 +230,7 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 shape,
                 problem.visibility,
                 blueprint.shared_memory.clone(),
-                [sum, staged],
+                [sum, staged, probabilities],
             );
         }
     }
