@@ -1,6 +1,6 @@
 //! The devices and problems the family's host-side tests run against.
 
-use crate::kernels::tune::key::AttentionKey;
+use crate::kernels::tune::key::{AttentionKey, AttentionKeyElements};
 use crate::kernels::{AttentionRoutineProblem, AttentionVisibility, QueryPlacement, ScoreScale};
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
@@ -34,7 +34,7 @@ pub(crate) fn qwen(queries: usize, keys: usize) -> AttentionRoutineProblem {
     let f16 = ElemType::Float(FloatKind::F16);
     let visibility = AttentionVisibility::new(queries > 1, None, QueryPlacement::Last);
     let key = AttentionKey::new(
-        f16,
+        AttentionKeyElements::one(f16),
         32,
         8,
         128,

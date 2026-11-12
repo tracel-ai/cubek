@@ -65,7 +65,7 @@ pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
 
 #[cfg(test)]
 mod tests {
-    use crate::kernels::tune::key::AttentionKey;
+    use crate::kernels::tune::key::{AttentionKey, AttentionKeyElements};
     use crate::kernels::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
@@ -108,7 +108,7 @@ mod tests {
         [(512, 512, true), (1, 4096, false)].map(|(queries, keys, causal)| {
             let visibility = AttentionVisibility::new(causal, None, QueryPlacement::Last);
             let key = AttentionKey::new(
-                F16,
+                AttentionKeyElements::one(F16),
                 32,
                 8,
                 128,

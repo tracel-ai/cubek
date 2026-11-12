@@ -115,6 +115,7 @@ mod tests {
     use super::*;
     use crate::kernels::CubeStagedAttentionRoutine;
     use crate::kernels::UnitAttentionRoutine;
+    use crate::kernels::tune::key::AttentionKeyElements;
     use crate::kernels::{AttentionVisibility, QueryPlacement, ScoreScale};
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
@@ -141,7 +142,7 @@ mod tests {
     /// dim 128, one batch.
     fn key(heads: usize, kv_heads: usize, seq: usize) -> AttentionKey {
         AttentionKey::new(
-            F16,
+            AttentionKeyElements::one(F16),
             heads,
             kv_heads,
             128,
