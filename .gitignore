@@ -34,3 +34,5 @@ tags
 
 # Claude artifacts
 .claude
+# rocprofv3 output
+.rocprofv3/

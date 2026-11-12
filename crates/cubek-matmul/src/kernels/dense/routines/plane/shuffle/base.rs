@@ -130,6 +130,8 @@ impl PlaneShuffleMatmulRoutine {
             on(Block::stepping(2, None), 4),
             on(Block::stepping(2, Some(2)), 1),
             on(Block::stepping(4, Some(2)), 8),
+            on(Block::ONE_READ_ONE_TRANSACTION, 4),
+            on(Block::stepping(1, None).one_tile(), 4),
         ]
     }
 

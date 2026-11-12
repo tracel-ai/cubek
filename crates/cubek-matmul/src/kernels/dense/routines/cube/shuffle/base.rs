@@ -1,4 +1,4 @@
-use super::cube_shuffle_matmul_kernel;
+use super::{LoadingSchedule, cube_shuffle_matmul_kernel};
 use crate::kernels::{
     MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, MatmulView,
@@ -56,15 +56,6 @@ impl CubeShuffleMatmulRoutineSettings {
         microkernel: CubeShuffleMicrokernelSettings::PACKED,
         cubes_per_worker: None,
     };
-
-    /// The decode-step split of `K` ([`CubeShuffleMicrokernelSettings::SPLIT_K`]) on four cubes a
-    /// compute unit, each walking a run of the boxes. On a Radeon 8060S it reads NVFP4 Qwen3-8B
-    /// projections at one row at 98–100% of a row sum of the weight that reads no lhs, 4–9%
-    /// faster than the plane shuffle's capped launch.
-    pub const PACKED_SPLIT_K: Self = Self {
-        microkernel: CubeShuffleMicrokernelSettings::SPLIT_K,
-        cubes_per_worker: Some(NonZeroUsize::new(4).unwrap()),
-    };
 }
 
 impl core::fmt::Display for CubeShuffleMatmulRoutineSettings {
@@ -85,7 +76,8 @@ impl CubeShuffleMatmulRoutine {
     const STAGES_IN_FLIGHT: u32 = 1;
 
     /// The settings worth racing against a packed rhs
-    /// ([`CubeShuffleMicrokernel::packed_settings`]): what the packed few-rows table races, and
+    /// ([`CubeShuffleMicrokernel::packed_settings`]), then the loading schedules measured fastest
+    /// ([`LoadingSchedule::MEASURED`]): what the packed few-rows table races, and
     /// what a caller naming the routine and no setting runs against a packed rhs, in this
     /// order.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeShuffleMatmulRoutineSettings> {
@@ -95,15 +87,16 @@ impl CubeShuffleMatmulRoutine {
                 microkernel,
                 cubes_per_worker: None,
             })
-            .chain([CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K])
+            .chain(LoadingSchedule::MEASURED.map(LoadingSchedule::settings))
             .collect()
     }
 
     /// A setting reading the rhs a block at a time against one that reads none so
-    /// ([`Packing::by_block`]): one not in rows, or whose block scales are not `ue4m3`.
+    /// ([`Packing::by_block`]): block scales that are not `ue4m3`, blocks that are no whole
+    /// number of reads in rows, or tiles whose block is not the scheme's.
     pub const BY_BLOCK_UNREAD: Refusal = Refusal::Declined {
-        why: "a cube shuffle reading the rhs a block at a time needs a packed rhs in rows under \
-              ue4m3 block scales whose blocks are whole reads",
+        why: "a cube shuffle reading the rhs a block at a time needs ue4m3 block scales, and \
+              blocks that are whole reads in rows or the tiles' own block in tile order",
     };
 
     /// `problem` with its packed rhs read a block at a time ([`Packing::by_block`];

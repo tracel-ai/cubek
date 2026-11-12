@@ -115,6 +115,24 @@ impl PlaneShuffleMicrokernelSettings {
         }
     }
 
+    /// These settings with as few units along `K` as fill one memory transaction, the rest of
+    /// the plane along `N` ([`PlaneShuffleKSplit::OneTransaction`]).
+    pub const fn one_transaction(self) -> Self {
+        Self {
+            k_split: PlaneShuffleKSplit::OneTransaction,
+            ..self
+        }
+    }
+
+    /// These settings with as many units along `K` as read one stored tile of a packed rhs whole,
+    /// the rest of the plane along `N` ([`PlaneShuffleKSplit::OneTile`]).
+    pub const fn one_tile(self) -> Self {
+        Self {
+            k_split: PlaneShuffleKSplit::OneTile,
+            ..self
+        }
+    }
+
     /// Units side by side along `M` for `rows` rows on a plane `plane_width` wide: as many as
     /// leave each unit [`rows_per_unit`](Self::rows_per_unit), dividing both the rows and the
     /// plane, and one where a unit holds every row.
@@ -153,11 +171,19 @@ pub enum PlaneShuffleKSplit {
     /// as one transaction holds a column's step; a row rhs's run along `N`, where the units
     /// beside each other already fill it, so it takes one.
     OneTransaction,
+    /// As many units as read one stored tile of a packed rhs between them, beside the rows it
+    /// lays side by side, and the rest of the plane along `N`: where tile order lays a tile as one
+    /// contiguous run, a plane's load is the whole tile, every transaction of it coalesced and in
+    /// flight at once, and each unit walks a tile's share of `K`'s steps. Sizes no plane where no
+    /// tile lies so, nor against a float rhs, where it would be
+    /// [`OneTransaction`](Self::OneTransaction) again.
+    OneTile,
 }
 
 impl PlaneShuffleKSplit {
     /// Units along `K` on `hw`, a plane `plane_width` units wide, for a block `depth` reads deep of
-    /// `item`'s rhs: a divisor of the plane, since the rest of it lies along `N`.
+    /// `item`'s rhs: a divisor of the plane, since the rest of it lies along `N`. Against a float
+    /// rhs, which [`OneTile`](Self::OneTile) sizes no plane for, it is one transaction's.
     pub fn units(
         self,
         hw: &Hardware,
@@ -169,10 +195,10 @@ impl PlaneShuffleKSplit {
             depth.get() * hw.vector_ceiling(item.elements.rhs) * item.elements.rhs.size();
         let wanted = match (self, item.layouts.rhs) {
             (Self::WholePlane, _) => plane_width,
-            (Self::OneTransaction, MatmulLayout::Col) => {
+            (Self::OneTransaction | Self::OneTile, MatmulLayout::Col) => {
                 hw.transaction_bytes() / column_step_bytes.max(1)
             }
-            (Self::OneTransaction, MatmulLayout::Row | MatmulLayout::Strided) => 1,
+            (Self::OneTransaction | Self::OneTile, MatmulLayout::Row | MatmulLayout::Strided) => 1,
         };
         (1..=wanted.clamp(1, plane_width))
             .rev()
@@ -186,6 +212,7 @@ impl core::fmt::Display for PlaneShuffleKSplit {
         f.write_str(match self {
             Self::WholePlane => "whole-plane",
             Self::OneTransaction => "one-transaction",
+            Self::OneTile => "one-tile",
         })
     }
 }
