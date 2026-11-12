@@ -171,11 +171,12 @@ pub enum PlaneShuffleKSplit {
     /// as one transaction holds a column's step; a row rhs's run along `N`, where the units
     /// beside each other already fill it, so it takes one.
     OneTransaction,
-    /// As many units as read one stored tile of a packed rhs whole between them, beside the rows
-    /// it lays side by side, and the rest of the plane along `N`: where tile order lays a tile's
-    /// blocks of every row of it as one run, a plane's step is whole tiles and each unit takes a
-    /// tile's share of `K`'s turns. Sizes no plane where no tile lies so, nor against a float
-    /// rhs, where it would be [`OneTransaction`](Self::OneTransaction) again.
+    /// As many units as read one stored tile of a packed rhs between them, beside the rows it
+    /// lays side by side, and the rest of the plane along `N`: where tile order lays a tile as one
+    /// contiguous run, a plane's load is the whole tile, every transaction of it coalesced and in
+    /// flight at once, and each unit walks a tile's share of `K`'s steps. Sizes no plane where no
+    /// tile lies so, nor against a float rhs, where it would be
+    /// [`OneTransaction`](Self::OneTransaction) again.
     OneTile,
 }
 

@@ -206,12 +206,13 @@ impl PlaneShuffleMicrokernel {
     /// deeper than a word of scales is declined. The whole share splits `K`
     /// ([`WholePlane`](PlaneShuffleKSplit::WholePlane)), or as few units as fill one memory
     /// transaction beside the rows the rhs lays side by side, the rest along `N`
-    /// ([`OneTransaction`](PlaneShuffleKSplit::OneTransaction)): in rows, a transaction's worth of
-    /// reads down a column; block by block in tile order, where a block of every row of a tile
-    /// lies together, as few as that leaves. Or as many as read a stored tile whole
-    /// ([`OneTile`](PlaneShuffleKSplit::OneTile)), where tile order lays one as a single run, so
-    /// a unit takes a tile's share of `K`'s turns rather than a block of each. Settings stating
-    /// another depth, or a tile where none lies so, size none.
+    /// ([`OneTransaction`](PlaneShuffleKSplit::OneTransaction)), so each load coalesces: in rows,
+    /// a transaction's worth of reads down a column; block by block in tile order, where a block
+    /// of every row of a tile lies together, as few as that leaves. Or as many as read a stored
+    /// tile whole ([`OneTile`](PlaneShuffleKSplit::OneTile)), where tile order lays one as a
+    /// single run, so a load is the tile's transactions at once and a unit walks a tile's share of
+    /// `K`'s steps rather than every block. Settings stating another depth, or a tile where none
+    /// lies so, size none.
     fn packed_steps(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -244,8 +245,8 @@ impl PlaneShuffleMicrokernel {
         let groups_along_n = shared / units_along_k;
         let one_step_a_turn = wanted.is_some()
             && settings.depth == NonZeroUsize::MIN
-            // A whole plane walks `K` with every unit it can spread, as it always has; the splits
-            // that put the rest of the plane along `N` need groups that fill it.
+            // A whole plane walks `K` with every unit it can spread; the splits that put the rest
+            // of the plane along `N` need groups that fill it.
             && (settings.k_split == PlaneShuffleKSplit::WholePlane
                 || shared.is_multiple_of(units_along_k))
             && operand

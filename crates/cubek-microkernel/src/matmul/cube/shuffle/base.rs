@@ -47,8 +47,8 @@ pub struct CubeShuffleMicrokernel {
     /// Whether it reads a packed rhs a scale block at a time
     /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)).
     pub by_block: bool,
-    /// Whether its planes take the steps along the split in turns rather than each a run of them
-    /// ([`CubeShuffleMicrokernelSettings::planes_in_turns`]).
+    /// Whether its planes take the steps along the split cyclically rather than each a run of
+    /// them ([`CubeShuffleMicrokernelSettings::planes_in_turns`]).
     pub planes_in_turns: bool,
 }
 
@@ -101,10 +101,12 @@ pub struct CubeShuffleMicrokernelSettings {
     /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)): the plane's units
     /// side by side then read one run of a column a load.
     pub by_block: bool,
-    /// Whether its planes take the steps of `K` in turns, plane after plane, rather than each a
-    /// run of them: a cube's planes then read neighbouring steps at once, one run of memory a
-    /// turn where the rhs lays its steps of `K` one after another, as tile order does a strip's
-    /// tiles, rather than a piece of each plane's run far apart.
+    /// Whether its `P` planes take the steps of `K` cyclically, plane `p` the steps `p`, `p + P`,
+    /// `p + 2P`…, rather than each a contiguous run of them. Each plane's loads coalesce the same
+    /// either way; what changes is what the cube reads at once: `P` neighbouring steps, one
+    /// contiguous run of memory where the rhs lays its steps of `K` one after another, as tile
+    /// order lays a strip's tiles, rather than `P` pieces a run apart. The bytes and the
+    /// transactions are the same; their locality in DRAM is what differs.
     pub planes_in_turns: bool,
 }
 
@@ -172,12 +174,13 @@ impl CubeShuffleMicrokernelSettings {
     )
     .by_block();
 
-    /// [`SPLIT_K`](Self::SPLIT_K) with each plane's units placed by the memory transaction: as
-    /// few along `K` as fill one beside the rows the rhs lays side by side, the rest a column each
-    /// along `N`. In tile order block by block, where a block of every row of a tile lies
-    /// together, a plane's load is then whole transactions, where `SPLIT_K`'s units, each a block
-    /// of `K` of the same columns, touch one line apiece. The planes take `K`'s steps in turns,
-    /// so a cube's turn reads one run of the strip a tile-order rhs lays its tiles in.
+    /// [`SPLIT_K`](Self::SPLIT_K) with each plane's loads coalesced against tile order block by
+    /// block, where one block of every row of a tile lies together: as few units along `K` as
+    /// fill one transaction beside the rows the rhs lays side by side, the rest a column each
+    /// along `N`. `SPLIT_K`'s units, each a block of `K` of the same columns, would each touch a
+    /// line of their own there. With one unit along `K`, a unit walks every block of its columns,
+    /// one load in flight. Its planes take `K`'s steps cyclically
+    /// ([`planes_in_turns`](Self::planes_in_turns)).
     pub const SPLIT_K_ONE_TRANSACTION: Self = Self::new(
         CubeShufflePlaneSettings::Shuffle(
             PlaneShuffleMicrokernelSettings::stepping(1, None).one_transaction(),
@@ -187,12 +190,12 @@ impl CubeShuffleMicrokernelSettings {
     .by_block()
     .in_turns();
 
-    /// [`SPLIT_K`](Self::SPLIT_K) with each plane's units reading a stored tile whole between
-    /// them, two columns a unit: in tile order block by block, where a tile's blocks of every row
-    /// of it lie as one run, a plane's step is whole tiles, and a unit walks a tile's share of
-    /// `K`'s turns where [`SPLIT_K_ONE_TRANSACTION`](Self::SPLIT_K_ONE_TRANSACTION)'s walks a
-    /// block of each. The planes take `K`'s steps in turns, so a cube's turn reads one run of
-    /// whole tiles.
+    /// [`SPLIT_K`](Self::SPLIT_K) with each plane's units reading one stored tile between them,
+    /// two columns a unit: in tile order block by block a tile is one contiguous run, so a
+    /// plane's load is the tile's coalesced transactions in flight at once, and a unit walks a
+    /// tile's share of `K`'s steps where
+    /// [`SPLIT_K_ONE_TRANSACTION`](Self::SPLIT_K_ONE_TRANSACTION)'s walks every block. Its planes
+    /// take `K`'s steps cyclically ([`planes_in_turns`](Self::planes_in_turns)).
     pub const SPLIT_K_ONE_TILE: Self = Self::new(
         CubeShufflePlaneSettings::Shuffle(
             PlaneShuffleMicrokernelSettings::stepping(2, None).one_tile(),
@@ -545,7 +548,8 @@ impl Microkernel for CubeShuffleMicrokernel {
                 )),
                 None,
             ),
-            // Tensor-core planes split `K` in windows sized for runs: in turns they size none.
+            // Tensor-core planes split `K` in windows sized for contiguous runs: taken cyclically
+            // they size none.
             CubeShufflePlaneSettings::Fragment(_) if settings.planes_in_turns => (None, None),
             CubeShufflePlaneSettings::Fragment(plane) => {
                 (None, Some(Self::fragment_cubes(hw, item, plane, target)))
@@ -615,8 +619,9 @@ impl core::fmt::Display for CubeShuffleMicrokernel {
 
 impl MatmulMicrokernel for CubeShuffleMicrokernel {
     /// The levels inside one cube's run, which a routine states the cubes around: its planes'
-    /// steps through all of `K`, dealt to the planes along [`split`](Self::split) in runs, or in
-    /// turns ([`planes_in_turns`](Self::planes_in_turns)), so the planes need not divide them.
+    /// steps through all of `K`, dealt to the planes along [`split`](Self::split) in contiguous
+    /// runs, or cyclically ([`planes_in_turns`](Self::planes_in_turns)), so the planes need not
+    /// divide them.
     fn tiling(&self) -> Levels {
         let levels = self
             .plane
@@ -672,7 +677,7 @@ mod tests {
         }
     }
 
-    /// Settings taking `K` in turns size cubes that do, and their levels still build: the
+    /// Settings taking `K` cyclically size cubes that do, and their levels still build: the
     /// interleaving is the planes', over the split they share.
     #[test]
     fn planes_in_turns_reach_the_cubes() {

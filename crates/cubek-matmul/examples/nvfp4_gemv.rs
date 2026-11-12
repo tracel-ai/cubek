@@ -215,8 +215,7 @@ impl Device {
 enum Layout {
     /// Each column's words and scales down `k`, as a checkpoint stores them.
     Rows,
-    /// The tile order a load stores the weight in on this device, its scales beside it, as
-    /// Metabolic's `into_tile_order` lays it out.
+    /// The tile order a load stores the weight in on this device, its scales beside it.
     Tiles,
 }
 
@@ -233,35 +232,23 @@ fn in_tile_order(
 ) -> PackedTensor {
     use cubecl::prelude::TensorBinding;
     use cubecl::zspace::metadata::Metadata;
-    use cubek_matmul::kernels::tensor::PackedTensor as Packed;
 
     // The same bytes stated over `[k, n]`, its words down `k`: the statement tile order stores.
     let scheme = tile_order::nvfp4_scheme();
-    // `NVFP4_STAGGER=0` lays the strips back to back, as a load did before it staggered them;
-    // `NVFP4_STAGGER=<bytes>` staggers them by an odd number of that many bytes in place of a
-    // transaction.
-    // `NVFP4_TILE_WORDS=block|row` lays the tiles in that word order in place of this device's.
     let words_order = match std::env::var("NVFP4_TILE_WORDS").as_deref() {
         Ok("block") => TileWords::BlockByBlock,
         Ok("row") => TileWords::RowByRow,
         _ => storage::tile_words(hw),
     };
-    let laid = || {
-        tile_order::TileOrder::laid(&scheme, words_order, (64, 16)).expect("NVFP4 is tile order")
-    };
-    let stagger_bytes = match env_usize("NVFP4_STAGGER", usize::MAX) {
-        usize::MAX => hw.transaction_bytes(),
-        bytes => bytes,
-    };
-    let order = match stagger_bytes {
-        0 => laid().for_matrix(k, n),
-        bytes => laid()
-            .staggered(
-                cubecl::tile::layout::Stagger::new(bytes * 8, 8)
-                    .expect("a byte divides the stagger"),
-            )
-            .for_matrix(k, n),
-    };
+    let laid =
+        tile_order::TileOrder::laid(&scheme, words_order, (64, 16)).expect("NVFP4 is tile order");
+    let order = match env_usize("NVFP4_STAGGER", hw.transaction_bytes()) {
+        0 => laid,
+        bytes => laid.staggered(
+            cubecl::tile::layout::Stagger::new(bytes * 8, 8).expect("a byte divides the stagger"),
+        ),
+    }
+    .for_matrix(k, n);
     let words_per_load = hw.load_values(WORD);
     let blocks = k / BLOCK;
     let bound = |handle: cubecl::server::Handle, meta: Metadata| TensorBinding {
@@ -311,8 +298,9 @@ fn in_tile_order(
     let matrix = tile_order::matrix_values(&values.metadata);
     let sized = [(K, k), (N, n)];
     let operand = Operand::of_scheme(&scheme, K, [K, N]).expect("one block along k");
-    let operand = Packed::read_in_tiles(hw, sized, operand, &matrix).expect("read in its tiles");
-    Packed::new(
+    let operand =
+        PackedTensor::read_in_tiles(hw, sized, operand, &matrix).expect("read in its tiles");
+    PackedTensor::new(
         PlainTensor::new(bound(values.handle, matrix), WORD),
         scales,
         global,
@@ -375,13 +363,8 @@ fn explored_planes() -> Vec<cubek_matmul::kernels::PlaneShuffleMatmulRoutineSett
     use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernelSettings;
     let mut out = Vec::new();
     for columns in [1, 2, 4] {
-        for split in [0, 1, 2] {
-            let plane = PlaneShuffleMicrokernelSettings::stepping(columns, None);
-            let microkernel = match split {
-                0 => plane,
-                1 => plane.one_transaction(),
-                _ => plane.one_tile(),
-            };
+        let plane = PlaneShuffleMicrokernelSettings::stepping(columns, None);
+        for microkernel in [plane, plane.one_transaction(), plane.one_tile()] {
             for planes in [1, 2, 4, 8] {
                 for planes_per_worker in [None, NonZeroUsize::new(16), NonZeroUsize::new(32)] {
                     out.push(cubek_matmul::kernels::PlaneShuffleMatmulRoutineSettings {
@@ -404,9 +387,13 @@ fn explored() -> Vec<CubeShuffleMatmulRoutineSettings> {
     use cubek_microkernel::matmul::cube::{
         CubeShuffleMicrokernelSettings, CubeShufflePlaneSettings,
     };
-    use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernelSettings;
+    use cubek_microkernel::matmul::plane::{PlaneShuffleKSplit, PlaneShuffleMicrokernelSettings};
     let mut out = Vec::new();
-    for split in [0, 1, 2] {
+    for split in [
+        PlaneShuffleKSplit::WholePlane,
+        PlaneShuffleKSplit::OneTransaction,
+        PlaneShuffleKSplit::OneTile,
+    ] {
         for columns in [1, 2, 4, 8] {
             for planes in [4, 8, 16, 32] {
                 for cubes in [
@@ -415,28 +402,22 @@ fn explored() -> Vec<CubeShuffleMatmulRoutineSettings> {
                     NonZeroUsize::new(2),
                     NonZeroUsize::new(4),
                 ] {
-                    let plane = PlaneShuffleMicrokernelSettings::stepping(columns, None);
-                    let plane = match split {
-                        0 => plane,
-                        1 => plane.one_transaction(),
-                        _ => plane.one_tile(),
+                    let plane = PlaneShuffleMicrokernelSettings {
+                        k_split: split,
+                        ..PlaneShuffleMicrokernelSettings::stepping(columns, None)
                     };
-                    for in_turns in [false, true] {
-                        let microkernel = CubeShuffleMicrokernelSettings::new(
-                            CubeShufflePlaneSettings::Shuffle(plane),
-                            planes,
-                        );
-                        let microkernel = match in_turns {
-                            true => microkernel.in_turns(),
-                            false => microkernel,
-                        };
+                    let in_runs = CubeShuffleMicrokernelSettings::new(
+                        CubeShufflePlaneSettings::Shuffle(plane),
+                        planes,
+                    );
+                    for microkernel in [in_runs, in_runs.in_turns()] {
                         out.push(CubeShuffleMatmulRoutineSettings {
                             microkernel: microkernel.by_block(),
                             cubes_per_worker: cubes,
                         });
                         // Under a split by the transaction or the tile, also each load of the
                         // weight as stored, a word of scales a turn.
-                        if split > 0 {
+                        if split != PlaneShuffleKSplit::WholePlane {
                             out.push(CubeShuffleMatmulRoutineSettings {
                                 microkernel,
                                 cubes_per_worker: cubes,
@@ -609,12 +590,13 @@ fn main() {
     let hw = Hardware::from_client(&client);
     let only_shape = std::env::var("NVFP4_SHAPE").ok();
     let only = std::env::var("NVFP4_ONLY").ok();
+    let only_layout = std::env::var("NVFP4_LAYOUT").ok();
+    let profile = std::env::var_os("NVFP4_PROFILE").is_some();
     // Qwen3-8B's projections as a decode step reads them, `[out, in]`.
     // `NVFP4_N` and `NVFP4_K` together time one shape of their own instead, named `custom`.
-    let custom = env_usize("NVFP4_N", 0) * env_usize("NVFP4_K", 0) > 0;
-    let shapes = match custom {
-        true => vec![("custom", env_usize("NVFP4_N", 0), env_usize("NVFP4_K", 0))],
-        false => vec![
+    let shapes = match (env_usize("NVFP4_N", 0), env_usize("NVFP4_K", 0)) {
+        (n, k) if n > 0 && k > 0 => vec![("custom", n, k)],
+        _ => vec![
             ("qkv", 6144, 4096),
             ("o", 4096, 4096),
             ("gate/up", 24576, 4096),
@@ -629,7 +611,6 @@ fn main() {
         let host = Host::new(m, n, k);
         let bytes = n * k / 2 + n * k / BLOCK;
         let copies = ROTATION.div_ceil(bytes).max(2);
-        let profile = std::env::var_os("NVFP4_PROFILE").is_some();
         if !profile {
             let (ceiling, per_unit) = read_ceiling(&client, bytes);
             println!("{name} ceiling: {ceiling:.1} GB/s ({per_unit} vectors a unit)");
@@ -638,8 +619,7 @@ fn main() {
         // across both layouts, so a slower stretch of the machine falls on both alike.
         let mut layouts = Vec::new();
         for layout in [Layout::Rows, Layout::Tiles] {
-            let wanted = std::env::var("NVFP4_LAYOUT").ok();
-            if wanted
+            if only_layout
                 .as_deref()
                 .is_some_and(|w| !format!("{layout:?}").eq_ignore_ascii_case(w))
             {
