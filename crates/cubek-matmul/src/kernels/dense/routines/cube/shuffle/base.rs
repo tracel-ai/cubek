@@ -3,7 +3,6 @@ use crate::kernels::{
     MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
-use crate::tiled::storage::tile_words;
 use core::num::NonZeroUsize;
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
@@ -16,7 +15,6 @@ use cubek_microkernel::matmul::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Packing;
-use cubek_std::layout::tile_order::TileWords;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
@@ -105,11 +103,8 @@ impl CubeShuffleMatmulRoutine {
     /// The settings worth racing against a packed rhs
     /// ([`CubeShuffleMicrokernel::packed_settings`]): what the packed few-rows table races, and
     /// what a caller naming the routine and no setting runs against a packed rhs, in this
-    /// order. The split reading a tile whole only where `hw` stores its tiles block by block
-    /// ([`tile_words`]): against tiles laid row by row, or rows, it sizes nothing.
+    /// order.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeShuffleMatmulRoutineSettings> {
-        let one_tile = (tile_words(hw) == TileWords::BlockByBlock)
-            .then_some(CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K_ONE_TILE);
         CubeShuffleMicrokernel::packed_settings(hw)
             .into_iter()
             .map(|microkernel| CubeShuffleMatmulRoutineSettings {
@@ -119,8 +114,8 @@ impl CubeShuffleMatmulRoutine {
             .chain([
                 CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K,
                 CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K_ONE_TRANSACTION,
+                CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K_ONE_TILE,
             ])
-            .chain(one_tile)
             .collect()
     }
 
