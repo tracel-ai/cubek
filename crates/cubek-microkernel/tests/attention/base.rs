@@ -77,11 +77,16 @@ impl HostAttention {
         1.0 / (self.dims[0] as f32).sqrt()
     }
 
-    /// Whether `query` sees `key` under `visibility`, every key attended: the rule
+    /// Whether `query` sees `key` under `visibility`, over `seq` queries and keys: the rule
     /// [`VisibleKeys`](cubek_microkernel::attention::VisibleKeys) states, the queries' end the
     /// keys' where they are the last positions and their own count where they are the first.
-    pub(crate) fn sees(&self, visibility: AttentionVisibility, query: usize, key: usize) -> bool {
-        let [queries, keys] = self.seq;
+    pub(crate) fn sees(
+        seq: [usize; 2],
+        visibility: AttentionVisibility,
+        query: usize,
+        key: usize,
+    ) -> bool {
+        let [queries, keys] = seq;
         let queries_end = match visibility.queries() {
             Some(QueryPlacement::First) => queries,
             Some(QueryPlacement::Last) | None => keys,
@@ -97,10 +102,13 @@ impl HostAttention {
         }
     }
 
-    /// Whether some query sees no key under `visibility`: its output is no attention's.
-    pub(crate) fn hides_every_key_from_a_query(&self, visibility: AttentionVisibility) -> bool {
-        let [queries, keys] = self.seq;
-        (0..queries).any(|query| (0..keys).all(|key| !self.sees(visibility, query, key)))
+    /// Whether some query of `seq` sees no key under `visibility`: its output is no attention's.
+    pub(crate) fn hides_every_key_from_a_query(
+        seq: [usize; 2],
+        visibility: AttentionVisibility,
+    ) -> bool {
+        let [queries, keys] = seq;
+        (0..queries).any(|query| (0..keys).all(|key| !Self::sees(seq, visibility, query, key)))
     }
 
     /// The output over `[B, KV, G, Q, DV]`, and the logsumexp over `[B, KV, G, Q]`, each query
@@ -112,7 +120,9 @@ impl HostAttention {
         let mut out = vec![0.0; queries * val];
         let mut logsumexp = vec![0.0; queries];
         for i in 0..queries {
-            let seen: Vec<usize> = (0..keys).filter(|&j| self.sees(visibility, i, j)).collect();
+            let seen: Vec<usize> = (0..keys)
+                .filter(|&j| Self::sees(self.seq, visibility, i, j))
+                .collect();
             let scores: Vec<f32> = seen
                 .iter()
                 .map(|&j| {
@@ -235,7 +245,7 @@ impl<S: AttentionSettings> ScopeUnderTest for Attention<S> {
         let [queries, keys] = launch.seq();
         let [head, val] = DIMS;
         let attention = HostAttention::new(launch.seq(), DIMS);
-        if attention.hides_every_key_from_a_query(case.visibility) {
+        if HostAttention::hides_every_key_from_a_query(launch.seq(), case.visibility) {
             return Err(Refusal::Declined {
                 why: "a query sees no key, so no attention defines its output",
             });
