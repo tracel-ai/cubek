@@ -17,9 +17,9 @@
 //! the tiles' words in that order in place of this device's.
 //! `NVFP4_PROFILE` launches each setting once a copy and times nothing, for a profiler.
 //! `NVFP4_N` and `NVFP4_K` time one shape of their own in place of the four.
-//! `NVFP4_EXPLORE` races, in place of the cube shuffle's packed settings, a grid of cube shuffles
-//! reading the weight by block: columns a unit, planes along `K`, cubes a compute unit, and how
-//! a plane's units split `K`; `NVFP4_EXPLORE=planes` also races a grid of plane shuffles.
+//! `NVFP4_EXPLORE` races, in place of the cube shuffle's packed settings, every loading schedule
+//! it can run (`LoadingSchedule::space`); `NVFP4_EXPLORE=planes` also races a grid of plane
+//! shuffles.
 
 use std::time::Duration;
 
@@ -34,7 +34,7 @@ use cubecl::zspace::Shape;
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{
-    CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, MatmulRoutine,
+    CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, LoadingSchedule, MatmulRoutine,
     PlaneShuffleMatmulRoutine,
 };
 use cubek_matmul::tiled::storage;
@@ -379,56 +379,12 @@ fn explored_planes() -> Vec<cubek_matmul::kernels::PlaneShuffleMatmulRoutineSett
     out
 }
 
-/// The cube shuffles `NVFP4_EXPLORE` races: each column count a unit, planes along `K`, cubes a
-/// compute unit, under each split of `K` a plane's units take, the planes taking `K` in runs or in
-/// turns, reading the weight by block, and under one transaction or one tile also as stored.
+/// The cube shuffles `NVFP4_EXPLORE` races: every loading schedule the cube shuffle can run
+/// ([`LoadingSchedule::space`]).
 fn explored() -> Vec<CubeShuffleMatmulRoutineSettings> {
-    use core::num::NonZeroUsize;
-    use cubek_microkernel::matmul::cube::{
-        CubeShuffleMicrokernelSettings, CubeShufflePlaneSettings,
-    };
-    use cubek_microkernel::matmul::plane::{PlaneShuffleKSplit, PlaneShuffleMicrokernelSettings};
-    let mut out = Vec::new();
-    for split in [
-        PlaneShuffleKSplit::WholePlane,
-        PlaneShuffleKSplit::OneTransaction,
-        PlaneShuffleKSplit::OneTile,
-    ] {
-        for columns in [1, 2, 4, 8] {
-            for planes in [4, 8, 16, 32] {
-                for cubes in [
-                    None,
-                    NonZeroUsize::new(1),
-                    NonZeroUsize::new(2),
-                    NonZeroUsize::new(4),
-                ] {
-                    let plane = PlaneShuffleMicrokernelSettings {
-                        k_split: split,
-                        ..PlaneShuffleMicrokernelSettings::stepping(columns, None)
-                    };
-                    let in_runs = CubeShuffleMicrokernelSettings::new(
-                        CubeShufflePlaneSettings::Shuffle(plane),
-                        planes,
-                    );
-                    for microkernel in [in_runs, in_runs.in_turns()] {
-                        out.push(CubeShuffleMatmulRoutineSettings {
-                            microkernel: microkernel.by_block(),
-                            cubes_per_worker: cubes,
-                        });
-                        // Under a split by the transaction or the tile, also each load of the
-                        // weight as stored, a word of scales a turn.
-                        if split != PlaneShuffleKSplit::WholePlane {
-                            out.push(CubeShuffleMatmulRoutineSettings {
-                                microkernel,
-                                cubes_per_worker: cubes,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-    out
+    LoadingSchedule::space()
+        .map(LoadingSchedule::settings)
+        .collect()
 }
 
 fn read_f16(client: &Client, handle: &TensorHandle) -> Vec<f64> {

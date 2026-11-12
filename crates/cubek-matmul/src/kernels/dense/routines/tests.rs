@@ -186,7 +186,7 @@ mod cube_shuffle {
     #[test]
     fn the_split_k_reads_nvfp4_alone() {
         let hw = devices::m2_pro();
-        let settings = crate::kernels::CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K;
+        let settings = crate::kernels::LoadingSchedule::SPLIT_K.settings();
         for (name, problem) in problems(1) {
             let prepared = CubeShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
             assert_eq!(

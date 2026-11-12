@@ -1,4 +1,4 @@
-use super::cube_shuffle_matmul_kernel;
+use super::{LoadingSchedule, cube_shuffle_matmul_kernel};
 use crate::kernels::{
     MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, MatmulView,
@@ -56,31 +56,6 @@ impl CubeShuffleMatmulRoutineSettings {
         microkernel: CubeShuffleMicrokernelSettings::PACKED,
         cubes_per_worker: None,
     };
-
-    /// The decode-step split of `K` ([`CubeShuffleMicrokernelSettings::SPLIT_K`]) on four cubes a
-    /// compute unit, each walking a run of the boxes. On a Radeon 8060S it reads NVFP4 Qwen3-8B
-    /// projections at one row at 98–100% of a row sum of the weight that reads no lhs, 4–9%
-    /// faster than the plane shuffle's capped launch.
-    pub const PACKED_SPLIT_K: Self = Self {
-        microkernel: CubeShuffleMicrokernelSettings::SPLIT_K,
-        cubes_per_worker: Some(NonZeroUsize::new(4).unwrap()),
-    };
-
-    /// [`PACKED_SPLIT_K`](Self::PACKED_SPLIT_K) with its planes' units placed by the memory
-    /// transaction ([`CubeShuffleMicrokernelSettings::SPLIT_K_ONE_TRANSACTION`]): the split for a
-    /// weight in tile order block by block.
-    pub const PACKED_SPLIT_K_ONE_TRANSACTION: Self = Self {
-        microkernel: CubeShuffleMicrokernelSettings::SPLIT_K_ONE_TRANSACTION,
-        cubes_per_worker: Some(NonZeroUsize::new(4).unwrap()),
-    };
-
-    /// The split by block with its planes' units each reading a stored tile whole between them
-    /// ([`CubeShuffleMicrokernelSettings::SPLIT_K_ONE_TILE`]), its cubes uncapped: the split for a
-    /// weight in tile order, in either word order. Sizes nothing against a weight in rows.
-    pub const PACKED_SPLIT_K_ONE_TILE: Self = Self {
-        microkernel: CubeShuffleMicrokernelSettings::SPLIT_K_ONE_TILE,
-        cubes_per_worker: None,
-    };
 }
 
 impl core::fmt::Display for CubeShuffleMatmulRoutineSettings {
@@ -101,7 +76,8 @@ impl CubeShuffleMatmulRoutine {
     const STAGES_IN_FLIGHT: u32 = 1;
 
     /// The settings worth racing against a packed rhs
-    /// ([`CubeShuffleMicrokernel::packed_settings`]): what the packed few-rows table races, and
+    /// ([`CubeShuffleMicrokernel::packed_settings`]), then the loading schedules measured fastest
+    /// ([`LoadingSchedule::MEASURED`]): what the packed few-rows table races, and
     /// what a caller naming the routine and no setting runs against a packed rhs, in this
     /// order.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeShuffleMatmulRoutineSettings> {
@@ -111,11 +87,7 @@ impl CubeShuffleMatmulRoutine {
                 microkernel,
                 cubes_per_worker: None,
             })
-            .chain([
-                CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K,
-                CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K_ONE_TRANSACTION,
-                CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K_ONE_TILE,
-            ])
+            .chain(LoadingSchedule::MEASURED.map(LoadingSchedule::settings))
             .collect()
     }
 

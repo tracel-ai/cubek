@@ -164,46 +164,6 @@ impl CubeShuffleMicrokernelSettings {
             ..self
         }
     }
-
-    /// The decode-step split of `K`: a packed rhs read a block at a time, a unit eight columns,
-    /// every plane of the cube one turn of `K`, up to thirty-two planes: each load a plane issues
-    /// is one run of a column, and every unit holds the lhs for its one block of `K`.
-    pub const SPLIT_K: Self = Self::new(
-        CubeShufflePlaneSettings::Shuffle(PlaneShuffleMicrokernelSettings::stepping(8, None)),
-        32,
-    )
-    .by_block();
-
-    /// [`SPLIT_K`](Self::SPLIT_K) with each plane's loads coalesced against tile order block by
-    /// block, where one block of every row of a tile lies together: as few units along `K` as
-    /// fill one transaction beside the rows the rhs lays side by side, the rest a column each
-    /// along `N`. `SPLIT_K`'s units, each a block of `K` of the same columns, would each touch a
-    /// line of their own there. With one unit along `K`, a unit walks every block of its columns,
-    /// one load in flight. Its planes take `K`'s steps cyclically
-    /// ([`planes_in_turns`](Self::planes_in_turns)).
-    pub const SPLIT_K_ONE_TRANSACTION: Self = Self::new(
-        CubeShufflePlaneSettings::Shuffle(
-            PlaneShuffleMicrokernelSettings::stepping(1, None).one_transaction(),
-        ),
-        32,
-    )
-    .by_block()
-    .in_turns();
-
-    /// [`SPLIT_K`](Self::SPLIT_K) with each plane's units reading one stored tile between them,
-    /// two columns a unit: tile order lays a tile as one contiguous run, so a plane's load is
-    /// the tile's coalesced transactions in flight at once, and a unit walks a
-    /// tile's share of `K`'s steps where
-    /// [`SPLIT_K_ONE_TRANSACTION`](Self::SPLIT_K_ONE_TRANSACTION)'s walks every block. Its planes
-    /// take `K`'s steps cyclically ([`planes_in_turns`](Self::planes_in_turns)).
-    pub const SPLIT_K_ONE_TILE: Self = Self::new(
-        CubeShufflePlaneSettings::Shuffle(
-            PlaneShuffleMicrokernelSettings::stepping(2, None).one_tile(),
-        ),
-        32,
-    )
-    .by_block()
-    .in_turns();
 }
 
 impl core::fmt::Display for CubeShuffleMicrokernelSettings {

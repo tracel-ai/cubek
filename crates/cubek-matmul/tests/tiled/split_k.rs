@@ -8,7 +8,7 @@ use cubecl::prelude::*;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{
-    CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, MatmulRoutine,
+    CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, LoadingSchedule, MatmulRoutine,
 };
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
@@ -21,7 +21,7 @@ const BF16_TOLERANCE: f32 = 1e-2;
 /// One, three and eight rows against NVFP4 weights whose `K` takes three to twenty-four planes,
 /// their columns a whole number of eight-column boxes or not: every product answers the
 /// dequantized one, its planes taking `K` in runs or in turns
-/// ([`PACKED_SPLIT_K_ONE_TRANSACTION`](CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K_ONE_TRANSACTION)),
+/// ([`LoadingSchedule::ONE_TRANSACTION`]),
 /// where a turn the planes do not fill is the last. Before a read could take two words, the words
 /// were bound a read a stored word, so a read of a block stepped its rows twice as far and read
 /// past the weight. Skipped on a device where the settings do not prepare, one committing to no
@@ -29,8 +29,8 @@ const BF16_TOLERANCE: f32 = 1e-2;
 #[test]
 fn the_split_k_answers_a_decode_step() {
     for settings in [
-        CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K,
-        CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K_ONE_TRANSACTION,
+        LoadingSchedule::SPLIT_K.settings(),
+        LoadingSchedule::ONE_TRANSACTION.settings(),
     ] {
         split_k_answers_a_decode_step(&settings);
     }
