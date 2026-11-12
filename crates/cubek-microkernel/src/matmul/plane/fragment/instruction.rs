@@ -125,7 +125,7 @@ impl PlaneFragmentInstruction {
     ///
     /// Measured on an L4 for a weight gradient's `f32` col lhs at tf32: staged in the product's
     /// order, a unit reads one value at a time across the lhs's lines, and the cmma candidates
-    /// lost to the software instruction a plane once ran.
+    /// lose to the unit routines.
     pub fn orders(self, layouts: MatmulOperands<MatmulLayout>) -> MatmulOperands<BindingOrder> {
         let lhs = match (self, layouts.lhs) {
             (Self::Cmma { .. } | Self::Mma { .. }, MatmulLayout::Col) => {

@@ -4,7 +4,8 @@ use cubecl::tile::space::ComputeScope;
 /// The steps a plane holds along `m` and `n`, and how many steps of `K` it walks per stage, each
 /// step the fewest calls of the instruction every load fills whole
 /// ([`MatmulStep`](crate::matmul::MatmulStep)). The instruction is not a setting: the tile layer
-/// picks it for the product ([`Instruction::for_accumulator`](cubecl::tile::Instruction::for_accumulator)).
+/// picks it for the product
+/// ([`Instruction::for_accumulator`](cubecl::tile::Instruction::for_accumulator)).
 ///
 /// A warpgroup MMA holds one instruction a plane group, `along_n` times its form's granularity
 /// wide: there `along_m` is one, and the steps along `n` size the instruction rather than a grid of
