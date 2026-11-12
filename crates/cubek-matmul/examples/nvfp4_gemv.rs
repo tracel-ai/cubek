@@ -14,6 +14,7 @@
 //! `NVFP4_LAYOUT` keeps the weight in `rows` or in `tiles`, the tile order a load stores it in on
 //! this device (both). `NVFP4_STAGGER` lays the tiles' strips back to back (`0`) or an odd
 //! number of that many bytes apart, in place of a transaction.
+//! `NVFP4_PROFILE` launches each setting once a copy and times nothing, for a profiler.
 //! `NVFP4_N` and `NVFP4_K` time one shape of their own in place of the four.
 //! `NVFP4_EXPLORE` races, in place of the cube shuffle's packed settings, a grid of cube shuffles
 //! reading the weight by block: columns a unit, planes along `K`, cubes a compute unit, and how
@@ -604,8 +605,11 @@ fn main() {
         let host = Host::new(m, n, k);
         let bytes = n * k / 2 + n * k / BLOCK;
         let copies = ROTATION.div_ceil(bytes).max(2);
-        let (ceiling, per_unit) = read_ceiling(&client, bytes);
-        println!("{name} ceiling: {ceiling:.1} GB/s ({per_unit} vectors a unit)");
+        let profile = std::env::var_os("NVFP4_PROFILE").is_some();
+        if !profile {
+            let (ceiling, per_unit) = read_ceiling(&client, bytes);
+            println!("{name} ceiling: {ceiling:.1} GB/s ({per_unit} vectors a unit)");
+        }
         for layout in [Layout::Rows, Layout::Tiles] {
             let wanted = std::env::var("NVFP4_LAYOUT").ok();
             if wanted
@@ -639,6 +643,18 @@ fn main() {
                     }
                     Err(why) => println!("  {label:<60} declined: {why}"),
                 }
+            }
+            // `NVFP4_PROFILE`: each served setting launched once a copy, cold, and nothing timed:
+            // the launches a profiler counts.
+            if profile {
+                for (label, launch, _) in &served {
+                    for d in &data {
+                        launch(d).expect("launched once already");
+                    }
+                    block_on(client.sync()).expect("sync");
+                    println!("  {label} profiled over {} copies", data.len());
+                }
+                continue;
             }
             let mut best = vec![Duration::MAX; served.len()];
             for _ in 0..env_usize("NVFP4_ROUNDS", 3) {
