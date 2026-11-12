@@ -88,7 +88,7 @@ pub fn launch_ref<const N_SPATIAL: usize>(
         Strategy::Unit(strategy) => {
             return unit::launch(*strategy, client, inputs, args, dtypes);
         }
-        Strategy::Tile { routine, settings } => {
+        Strategy::Tile(routine) => {
             let window = args
                 .two_dimensional()
                 .ok_or(Refusal::from(ConvDeclined::NotTwoDimensional))?;
@@ -120,7 +120,7 @@ pub fn launch_ref<const N_SPATIAL: usize>(
                 }
             };
             let hw = Hardware::from_client(client);
-            return Ok(routine.launch_on(&hw, tensors, settings.as_ref())?);
+            return Ok(routine.launch_on(&hw, tensors)?);
         }
     };
 

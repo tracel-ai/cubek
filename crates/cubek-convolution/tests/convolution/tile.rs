@@ -14,9 +14,8 @@ use cubek_convolution::eval::cpu_reference::{
     HostTensor, naive_data_grad, naive_forward, naive_weight_grad,
 };
 use cubek_convolution::kernels::tiled::{
-    CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED, CONV_SETTINGS_NOT_TUNED,
-    CONV_SETTINGS_NOT_UNIT, CONV_WGMMA_UNSERVED, ConvCandidate, ConvDeclined, ConvRoles,
-    ConvRoutineKind, ConvSettings, CubeStagedConvRoutine,
+    CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED, ConvCandidate,
+    ConvDeclined, ConvRoles, ConvRoutineKind, ConvSettings, CubeStagedConvRoutine,
 };
 use cubek_convolution::{ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref};
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
@@ -88,10 +87,7 @@ fn conv32(
 }
 
 fn pinned(settings: ConvSettings) -> Strategy {
-    Strategy::Tile {
-        routine: ConvRoutineKind::CubeStaged,
-        settings: Some(settings),
-    }
+    Strategy::Tile(ConvRoutineKind::CubeStaged(Some(settings)))
 }
 
 /// `settings` over the manual mma instruction.
@@ -101,18 +97,12 @@ fn mma(settings: ConvSettings) -> Strategy {
 
 /// The unit registers routine, which reads every operand from global memory.
 fn unit_registers() -> Strategy {
-    Strategy::Tile {
-        routine: ConvRoutineKind::UnitRegisters,
-        settings: None,
-    }
+    Strategy::Tile(ConvRoutineKind::UnitRegisters)
 }
 
 /// The setting the autotune finds fastest.
 fn tuned() -> Strategy {
-    Strategy::Tile {
-        routine: ConvRoutineKind::Tuned,
-        settings: None,
-    }
+    Strategy::Tile(ConvRoutineKind::Tuned)
 }
 
 /// How an operand's buffer holds its logical NHWC values.

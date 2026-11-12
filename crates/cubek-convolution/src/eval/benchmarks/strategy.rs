@@ -30,25 +30,24 @@ const MMA: [ConvSettings; 5] = [
 /// A row of the cube staged routine, named by its strategy: the routine and, where pinned, its
 /// settings. Without settings it is the tuned launch, which floors on the unit routine.
 fn cube_staged(settings: Option<ConvSettings>) -> CatalogEntry<Strategy> {
-    let routine = match settings {
-        Some(_) => ConvRoutineKind::CubeStaged,
-        None => ConvRoutineKind::Tuned,
+    let (routine, label) = match settings {
+        Some(settings) => (
+            ConvRoutineKind::CubeStaged(Some(settings)),
+            format!("Cube staged / {settings}"),
+        ),
+        None => (
+            ConvRoutineKind::Tuned,
+            "Tuned: cube staged settings the device offers, the unit routine where none serves"
+                .to_string(),
+        ),
     };
-    let strategy = Strategy::Tile { routine, settings };
-    let label = match settings {
-        Some(settings) => format!("Cube staged / {settings}"),
-        None => "Tuned: cube staged settings the device offers, the unit routine where none serves"
-            .to_string(),
-    };
+    let strategy = Strategy::Tile(routine);
     CatalogEntry::new(strategy.to_string(), label, strategy)
 }
 
 /// The unit routine of the tile convolution at the settings it derives from the device.
 fn unit_registers() -> CatalogEntry<Strategy> {
-    let strategy = Strategy::Tile {
-        routine: ConvRoutineKind::UnitRegisters,
-        settings: None,
-    };
+    let strategy = Strategy::Tile(ConvRoutineKind::UnitRegisters);
     CatalogEntry::new(
         strategy.to_string(),
         "Unit registers, at the device's settings",

@@ -1,7 +1,4 @@
-use super::{
-    CONV_SETTINGS_NOT_TUNED, CONV_SETTINGS_NOT_UNIT, CubeStagedConvRoutine,
-    UnitRegistersConvRoutine,
-};
+use super::{CubeStagedConvRoutine, UnitRegistersConvRoutine};
 use crate::kernels::tiled::{ConvRoutine, ConvSettings, ConvTensors, launch_tuned};
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
@@ -10,8 +7,8 @@ use cubek_std::Hardware;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConvRoutineKind {
     /// [`CubeStagedConvRoutine`] at the setting named, or at the first of its settings that serves
-    /// the convolution.
-    CubeStaged,
+    /// the convolution where none is.
+    CubeStaged(Option<ConvSettings>),
     /// The setting the autotune finds fastest among those [`CubeStagedConvRoutine`] lists, and
     /// [`UnitRegistersConvRoutine`] where none of them serves the convolution.
     Tuned,
@@ -22,7 +19,8 @@ pub enum ConvRoutineKind {
 impl core::fmt::Display for ConvRoutineKind {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::CubeStaged => write!(f, "cube_staged"),
+            Self::CubeStaged(None) => write!(f, "cube_staged"),
+            Self::CubeStaged(Some(settings)) => write!(f, "cube_staged_{settings}"),
             Self::Tuned => write!(f, "tuned"),
             Self::UnitRegisters => write!(f, "unit_registers"),
         }
@@ -30,32 +28,23 @@ impl core::fmt::Display for ConvRoutineKind {
 }
 
 impl ConvRoutineKind {
-    /// `tensors` launched on `hw` by this routine at `settings`, or at the setting it finds where
-    /// none is named. Nothing is launched where the output is empty.
+    /// `tensors` launched on `hw` by this routine, at the setting it names or finds. Nothing is
+    /// launched where the output is empty.
     ///
     /// # Errors
     ///
     /// Why the routine declines the convolution on `hw`.
-    pub fn launch_on(
-        &self,
-        hw: &Hardware,
-        tensors: ConvTensors,
-        settings: Option<&ConvSettings>,
-    ) -> Result<(), Refusal> {
+    pub fn launch_on(&self, hw: &Hardware, tensors: ConvTensors) -> Result<(), Refusal> {
         if tensors.is_empty() {
             return Ok(());
         }
-        match (self, settings) {
-            (Self::CubeStaged, Some(settings)) => {
+        match self {
+            Self::CubeStaged(Some(settings)) => {
                 CubeStagedConvRoutine.launch_on(hw, tensors, settings)
             }
-            (Self::CubeStaged, None) => CubeStagedConvRoutine.launch_first_served(hw, tensors),
-            (Self::Tuned, None) => launch_tuned(hw, tensors),
-            (Self::Tuned, Some(_)) => Err(CONV_SETTINGS_NOT_TUNED),
-            (Self::UnitRegisters, Some(_)) => Err(CONV_SETTINGS_NOT_UNIT),
-            (Self::UnitRegisters, None) => {
-                UnitRegistersConvRoutine.launch_first_served(hw, tensors)
-            }
+            Self::CubeStaged(None) => CubeStagedConvRoutine.launch_first_served(hw, tensors),
+            Self::Tuned => launch_tuned(hw, tensors),
+            Self::UnitRegisters => UnitRegistersConvRoutine.launch_first_served(hw, tensors),
         }
     }
 }

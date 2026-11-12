@@ -11,14 +11,3 @@ pub const CONV_INSTRUCTION_UNOFFERED: Refusal = Refusal::Declined {
 pub const CONV_WGMMA_UNSERVED: Refusal = Refusal::Declined {
     why: "a warpgroup MMA reads its stages as the TMA engine lands them",
 };
-
-/// What a launch is declined with where it pins a cube staged setting on the unit registers
-/// routine, whose settings are its own.
-pub const CONV_SETTINGS_NOT_UNIT: Refusal = Refusal::Declined {
-    why: "the unit registers routine takes none of the cube staged settings",
-};
-
-/// What a launch is declined with where it pins a setting on the autotune, which chooses its own.
-pub const CONV_SETTINGS_NOT_TUNED: Refusal = Refusal::Declined {
-    why: "the tuned routine chooses its setting, so it takes none",
-};
