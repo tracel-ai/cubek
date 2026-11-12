@@ -23,6 +23,19 @@ pub(crate) enum Needs {
     Byte,
 }
 
+impl Needs {
+    /// Whether the runtime holds what this names.
+    pub(crate) fn held(&self, client: &Client) -> bool {
+        match self {
+            Needs::Nothing => true,
+            Needs::Byte => {
+                i8::supported_uses(client).contains(TypeUsage::Conversion)
+                    && u8::supported_uses(client).contains(TypeUsage::Conversion)
+            }
+        }
+    }
+}
+
 /// One round trip: `input` of `shape` under `scheme`, calibrated to `scales` (and to `global`, for
 /// a two-level scheme), written back in `out`, which must reconstruct as `expected`.
 #[derive(Debug, Clone)]
@@ -73,13 +86,7 @@ impl RoundTrip {
 
     /// Whether the runtime holds what the round trip needs.
     fn held(&self, client: &Client) -> bool {
-        match self.needs {
-            Needs::Nothing => true,
-            Needs::Byte => {
-                i8::supported_uses(client).contains(TypeUsage::Conversion)
-                    && u8::supported_uses(client).contains(TypeUsage::Conversion)
-            }
-        }
+        self.needs.held(client)
     }
 }
 

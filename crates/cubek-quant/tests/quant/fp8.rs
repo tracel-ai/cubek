@@ -12,7 +12,7 @@
 //! conversion happen there — but the *scaling* ahead of it is shared, and a quantizer that rounded
 //! to whole numbers first would land on the integer grid however faithful the conversion after it.
 
-use cubecl::{features::TypeUsage, prelude::*, zspace::shape};
+use cubecl::{prelude::*, zspace::shape};
 use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 
 use super::harness::{dequantize, f32_tensor, quantize};
@@ -104,19 +104,6 @@ fn magnitudes_past_the_maximum_saturate() {
     Quantized.check([RoundTrip::at_unit_scale(packed, &data, &saturated)]);
 }
 
-/// Whether this runtime can hold a natively stored fp8 value, which is the same question the
-/// launch asks before it dispatches: an 8-bit float is a byte wherever there is one at all, and a
-/// backend with no 8-bit scalar type has nowhere to put one. WGSL is such a backend — it packs fp8
-/// four values to a `u32` — so these tests sit out there, as the `ue8m0` ones in `fp4.rs` do.
-fn native_store_is_addressable() -> bool {
-    let client = cubecl::test_device().client();
-    if i8::supported_uses(&client).contains(TypeUsage::Conversion) {
-        return true;
-    }
-    println!("no 8-bit type on this runtime, a natively stored fp8 value has nowhere to live");
-    false
-}
-
 /// The native store, where the value is written as an fp8 element rather than as a field in a
 /// word. Nothing in the packed tests reaches this path — it takes its own kernel — and the scaling
 /// ahead of the conversion is what these fix: a quantizer that rounded to whole numbers first would
@@ -143,7 +130,9 @@ fn e5m2_code_points_survive_a_native_round_trip() {
 /// how it happened to be stored.
 #[test]
 fn the_native_and_packed_stores_agree() {
-    if !native_store_is_addressable() {
+    // An 8-bit float is a byte wherever there is one at all; WGSL has none and packs fp8 four
+    // values to a `u32`, so a natively stored value has nowhere to live there.
+    if !Needs::Byte.held(&cubecl::test_device().client()) {
         return;
     }
 
