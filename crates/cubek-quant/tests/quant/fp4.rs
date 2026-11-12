@@ -9,7 +9,7 @@
 //! cannot represent, and leaves an `int4` clamped to ±6 wearing fp4's name. That degradation is
 //! what these tests exist to catch: it raises no error and costs accuracy on every weight.
 
-use cubecl::{client::Client, features::TypeUsage, prelude::*, zspace::shape};
+use cubecl::{prelude::*, zspace::shape};
 use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 
 use super::harness::{dequantize, f32_tensor, quantize};
@@ -186,25 +186,13 @@ mod mx {
         }
     }
 
-    /// Whether this runtime can hold a `ue8m0` scale at all.
-    ///
-    /// The scale is read one at a time, and an 8-bit float is a byte on every backend that has
-    /// one — the software codec converts it, but something has to *address* it. WGSL has no 8-bit
-    /// type, so it packs fp8 four values to a `u32` and a scalar has no representation there; the
-    /// `ue4m3` test in `two_level.rs` sits out the same backends for the same reason.
-    fn addressable(client: &Client) -> bool {
-        if u8::supported_uses(client).contains(TypeUsage::Conversion) {
-            return true;
-        }
-        println!("no 8-bit type on this runtime, a ue8m0 scale has nowhere to live");
-        false
-    }
-
     /// Round trip one block at `scale`, which the codec stores as `ue8m0` and may round up.
     /// `None` where the runtime cannot address the scale.
     fn round_trip_at(scale: f32, data: &[f32]) -> Option<Vec<f32>> {
         let client = cubecl::test_device().client();
-        if !addressable(&client) {
+        // The scale is read one at a time and something has to address it: WGSL has no 8-bit
+        // type, so a `ue8m0` scale has no representation there.
+        if !Needs::Byte.held(&client) {
             return None;
         }
         let shape = shape![1, MX_BLOCK];

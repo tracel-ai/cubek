@@ -67,7 +67,7 @@ fn packed_autotune(problem: &MatmulProblem, hw: &Hardware) -> MatmulAutotune {
 /// Float inputs are read by the kernel the strategy chooses. Packed inputs under schemes the
 /// kernels stream are read as they are stored by the plane shuffle at one row, by the kernel a
 /// pin names, and by autotune's candidates, past a decode's rows on the block-scaled tensor cores
-/// where those read both inputs ([`packed_autotune`]); elsewhere they are decoded first
+/// where those read both inputs (`packed_autotune`); elsewhere they are decoded first
 /// and read by the kernel the strategy chooses for float inputs. Where a packed input's scheme is
 /// one no kernel here reads, the framework dequantizes the packed inputs first. Which input is
 /// packed never matters.

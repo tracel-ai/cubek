@@ -16,21 +16,23 @@ use cubek_microkernel::attention::cube::{
 };
 use cubek_microkernel::attention::plane::TileStepReads;
 use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperands, AttentionVisibility, AttentionWorkItem, B, D, DV, G,
-    KV, Q, S, VisibleKeys,
+    AttentionMicrokernel, AttentionVisibility, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    VisibleKeys,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
-use super::{AttentionElements, AttentionLaunch};
+use super::{AttentionElements, AttentionLaunch, AttentionLines};
+use crate::launch::Lines;
 
 /// One cube attention microkernel ready to launch on one cube's box of queries, `steps` of its
-/// steps of keys.
+/// steps of keys, its operands bound as `lines` says.
 #[derive(Debug, Clone)]
 pub struct CubeAttentionLaunch {
     pub microkernel: CubeAttentionMicrokernel,
     pub item: AttentionWorkItem,
     pub seq: [usize; 2],
+    lines: AttentionLines,
     storage: StageStorage,
     plane_width: u32,
 }
@@ -48,6 +50,7 @@ impl CubeAttentionLaunch {
         elements: AttentionElements,
         dims: [usize; 2],
         settings: &CubeAttentionMicrokernelSettings,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self, Refusal> {
         let item = elements.work_item(dims);
@@ -78,6 +81,7 @@ impl CubeAttentionLaunch {
             });
         }
         Ok(Self {
+            lines: AttentionLines::new(hw, lines, &item),
             microkernel,
             item,
             seq,
@@ -106,6 +110,7 @@ impl AttentionLaunch for CubeAttentionLaunch {
         logsumexp: Option<TensorBinding>,
         lengths: TensorArg,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         let [queries, keys] = self.seq;
         let item = &self.item;
@@ -137,28 +142,33 @@ impl AttentionLaunch for CubeAttentionLaunch {
             cube_count: partitioning.cube_count(),
             cube_dim: partitioning.cube_dim(self.plane_width),
         };
+        let widths = self
+            .lines
+            .widths(&microkernel, &partitioning.box_of(ComputeScope::Cube));
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         let served = microkernel.served(item);
-        let widths = AttentionOperands {
-            query: 1,
-            key: 1,
-            value: 1,
-            out: 1,
-        };
         let delivery = microkernel.delivery(&widths, item);
-        let bound = |tensor: TensorBinding, element, axes: &'static [_]| {
-            launcher.arg(tensor, element).axes(axes).vectorize(1)
+        let bound = |tensor: TensorBinding, element, width, axes: &'static [_]| {
+            launcher.arg(tensor, element).axes(axes).vectorize(width)
         };
-        let query = bound(query, served.elements.query, &[B, KV, G, Q, D]).build()?;
-        let key = bound(key, served.elements.key, &[B, KV, S, D])
+        let query = bound(
+            query,
+            served.elements.query,
+            widths.query,
+            &[B, KV, G, Q, D],
+        )
+        .delivery(microkernel.query_delivery(&widths, item))
+        .build()?;
+        let key = bound(key, served.elements.key, widths.key, &[B, KV, S, D])
             .delivery(delivery)
             .build()?;
-        let value = bound(value, served.elements.value, &[B, KV, S, DV])
+        let value = bound(value, served.elements.value, widths.value, &[B, KV, S, DV])
             .delivery(delivery)
             .build()?;
-        let out = bound(out, item.elements.out, &[B, KV, G, Q, DV]).build()?;
+        let out = bound(out, item.elements.out, widths.out, &[B, KV, G, Q, DV]).build()?;
+        // A value a query, written by whoever holds its row.
         let logsumexp = logsumexp
-            .map(|logsumexp| bound(logsumexp, item.sum, &[B, KV, G, Q]).build())
+            .map(|logsumexp| bound(logsumexp, item.sum, 1, &[B, KV, G, Q]).build())
             .transpose()?;
         let logsumexp = logsumexp.map(|logsumexp| logsumexp.arg()).into();
         let no_mask = Option::<TileTensorLaunch>::None.into();
@@ -184,13 +194,15 @@ impl AttentionLaunch for CubeAttentionLaunch {
                     launcher.partitioning_arg(),
                     microkernel,
                     self.storage.clone(),
+                    visibility,
                     served.kernel_elements(),
                 ),
                 CubeAttentionPlane::Shuffle(_) => cube_unstaged_attention_kernel::launch_unchecked(
                     client,
                     launcher.cube_count(),
                     launcher.cube_dim(),
-                    1,
+                    // The plane shuffle lines every operand alike.
+                    widths.query,
                     query.arg(),
                     key.arg(),
                     value.arg(),
@@ -203,6 +215,7 @@ impl AttentionLaunch for CubeAttentionLaunch {
                     launcher.partitioning_arg(),
                     microkernel,
                     item.val_dim,
+                    visibility,
                     item.kernel_elements(),
                 ),
             }
@@ -226,6 +239,7 @@ fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     partitioning: Partitioning,
     #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] storage: StageStorage,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
@@ -242,7 +256,7 @@ fn cube_staged_attention_kernel<EA: Float, ES: Float>(
                 &cube,
                 queries,
                 &mask,
-                AttentionVisibility::Attended,
+                visibility,
             );
             let k = key.within(S, 0, visible.attended as usize);
             let v = value.within(S, 0, visible.attended as usize);
@@ -280,6 +294,7 @@ fn cube_unstaged_attention_kernel<EA: Float, E: Float, N: Size>(
     partitioning: Partitioning,
     #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] value_dim: usize,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
@@ -302,7 +317,7 @@ fn cube_unstaged_attention_kernel<EA: Float, E: Float, N: Size>(
                 &cube,
                 queries,
                 &mask,
-                AttentionVisibility::Attended,
+                visibility,
             );
             let steps = visible.steps(
                 &cube,

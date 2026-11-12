@@ -2,9 +2,7 @@
 
 #[cfg(feature = "multi-level")]
 mod complex;
-mod harness;
-
-mod auto;
+mod matmul;
 #[cfg(feature = "multi-level")]
 mod multi_level;
 #[cfg(feature = "tiled")]
