@@ -193,8 +193,8 @@ impl PlaneFragmentMicrokernel {
 
     /// The planes against a float rhs: every matrix instruction this device offers for the
     /// item's elements that the tile layer picks for a plane's fragment of its shape
-    /// ([`Instruction::for_accumulator`]), the fragment API's first, each the one that contracts the most
-    /// per call first ([`candidates`](Microkernel::candidates)). The warpgroup MMA alone where
+    /// ([`Instruction::for_accumulator`]), the fragment API's first, each the one that contracts
+    /// the most per call first ([`candidates`](Microkernel::candidates)). The warpgroup MMA alone where
     /// the settings deal the tiles to warpgroups. None where the device offers no matrix
     /// instruction for the elements: a plane holds a fragment.
     fn float_candidates(
@@ -931,8 +931,9 @@ mod tests {
     }
 
     /// A plane at its default settings contracts through the instruction the tile layer picks for
-    /// a drained sum at its fragment's shape ([`Instruction::for_accumulator`]), on every mocked device and
-    /// float element, and refuses where the tile layer picks none: a plane holds a fragment.
+    /// a drained sum at its fragment's shape ([`Instruction::for_accumulator`]), on every mocked
+    /// device and float element, and refuses where the tile layer picks none at any shape the
+    /// device offers: a plane holds a fragment.
     #[test]
     fn a_plane_takes_the_tiles_pick_or_refuses() {
         use cubecl::tile::FragmentSource;
@@ -974,20 +975,19 @@ mod tests {
                 );
                 let Ok(plane) = plane else {
                     let values = FragmentSource::Values(input);
-                    let any = [(8, 8, 8), (16, 16, 16), (16, 8, 16), (16, 16, 8)]
-                        .into_iter()
-                        .any(|(m, n, k)| {
-                            Instruction::for_accumulator(
-                                &hw.properties,
-                                &hw.target,
-                                ComputeScope::Plane,
-                                values,
-                                values,
-                                f32,
-                                [m, n, k],
-                            )
-                            .is_some()
-                        });
+                    let matmul = &hw.properties.features.matmul;
+                    let any = matmul.cmma.iter().chain(&matmul.mma).any(|shape| {
+                        Instruction::for_accumulator(
+                            &hw.properties,
+                            &hw.target,
+                            ComputeScope::Plane,
+                            values,
+                            values,
+                            f32,
+                            [shape.m, shape.n, shape.k].map(|extent| extent as usize),
+                        )
+                        .is_some()
+                    });
                     assert!(!any, "{name}, {kind:?}: refused, though the tile picks one");
                     continue;
                 };
