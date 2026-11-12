@@ -130,7 +130,8 @@ impl PlaneShuffleMatmulRoutine {
             on(Block::stepping(2, None), 4),
             on(Block::stepping(2, Some(2)), 1),
             on(Block::stepping(4, Some(2)), 8),
-            on(Block::stepping(1, None).one_transaction(), 4),
+            on(Block::ONE_READ_ONE_TRANSACTION, 4),
+            on(Block::stepping(1, None).one_tile(), 4),
         ]
     }
 
@@ -693,7 +694,9 @@ mod tests {
             .expect("an rhs lined along an axis")
             .work_item();
             let plane_width = 32;
-            PlaneShuffleKSplit::OneTransaction.units(&hw, &item, depth, plane_width)
+            PlaneShuffleKSplit::OneTransaction
+                .units(&hw, &item, depth, plane_width)
+                .expect("one transaction sizes a float rhs")
         };
         let reads = |count| NonZeroUsize::new(count).unwrap();
         let f32 = ElemType::Float(FloatKind::F32);

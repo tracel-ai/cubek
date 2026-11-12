@@ -166,6 +166,19 @@ impl CubeShuffleMicrokernelSettings {
         32,
     )
     .by_block();
+
+    /// [`SPLIT_K`](Self::SPLIT_K) with each plane's units reading a stored tile whole between
+    /// them, two columns a unit: in tile order block by block, where a tile's blocks of every row
+    /// of it lie as one run, a plane's step is whole tiles, and a unit walks a tile's share of
+    /// `K`'s turns where [`SPLIT_K_ONE_TRANSACTION`](Self::SPLIT_K_ONE_TRANSACTION)'s walks a
+    /// block of each.
+    pub const SPLIT_K_ONE_TILE: Self = Self::new(
+        CubeShufflePlaneSettings::Shuffle(
+            PlaneShuffleMicrokernelSettings::stepping(2, None).one_tile(),
+        ),
+        32,
+    )
+    .by_block();
 }
 
 impl core::fmt::Display for CubeShuffleMicrokernelSettings {

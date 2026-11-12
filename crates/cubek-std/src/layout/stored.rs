@@ -547,6 +547,20 @@ impl Operand {
         }
     }
 
+    /// Reads down `axis` that one stored tile holds of a row, where tile order lays a tile's
+    /// blocks of every row of it as one run
+    /// ([`TileWords::BlockByBlock`](crate::layout::tile_order::TileWords::BlockByBlock)): as many
+    /// units along `axis` as this, beside [`rows_side_by_side`](Self::rows_side_by_side), read the
+    /// tile whole. One otherwise.
+    pub fn reads_down_a_tile(&self, axis: Axis) -> usize {
+        match self.tiles {
+            Some(order) if order.words() == TileWords::BlockByBlock && axis == K => {
+                (order.tile().0 / self.read.extent(axis).max(1)).max(1)
+            }
+            Some(_) | None => 1,
+        }
+    }
+
     /// How `units` spread `axis` between them, stated from the leaf up.
     ///
     /// A grouped axis is distributed by the scales: each unit takes the blocks one

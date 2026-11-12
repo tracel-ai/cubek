@@ -208,7 +208,10 @@ impl PlaneShuffleMicrokernel {
     /// transaction beside the rows the rhs lays side by side, the rest along `N`
     /// ([`OneTransaction`](PlaneShuffleKSplit::OneTransaction)): in rows, a transaction's worth of
     /// reads down a column; block by block in tile order, where a block of every row of a tile
-    /// lies together, as few as that leaves. Settings stating another depth size none.
+    /// lies together, as few as that leaves. Or as many as read a stored tile whole
+    /// ([`OneTile`](PlaneShuffleKSplit::OneTile)), where tile order lays one as a single run, so
+    /// a unit takes a tile's share of `K`'s turns rather than a block of each. Settings stating
+    /// another depth, or a tile where none lies so, size none.
     fn packed_steps(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -219,23 +222,28 @@ impl PlaneShuffleMicrokernel {
         let operand = space.operand(MatmulOperand::Rhs);
         let step = MatmulStep::new(hw, space.operands(), item.elements);
         let (depth, columns_a_step) = (step.along(K), step.along(N));
-        let wanted = match settings.k_split {
-            PlaneShuffleKSplit::WholePlane => shared,
-            PlaneShuffleKSplit::OneTransaction => {
-                let read_bytes = space
-                    .packings
-                    .rhs
-                    .map_or(WORD_BYTES, |packing| {
-                        packing.values_bytes(operand.read_values())
-                    })
-                    .max(1);
-                let side_by_side = read_bytes * operand.rows_side_by_side(N);
-                (hw.transaction_bytes() / side_by_side).clamp(1, shared)
-            }
+        let one_transaction = || {
+            let read_bytes = space
+                .packings
+                .rhs
+                .map_or(WORD_BYTES, |packing| {
+                    packing.values_bytes(operand.read_values())
+                })
+                .max(1);
+            hw.transaction_bytes() / (read_bytes * operand.rows_side_by_side(N))
         };
-        let units_along_k = operand.units_distributing(K, space.k, wanted);
+        let wanted = match settings.k_split {
+            PlaneShuffleKSplit::WholePlane => Some(shared),
+            PlaneShuffleKSplit::OneTransaction => Some(one_transaction().clamp(1, shared)),
+            PlaneShuffleKSplit::OneTile => match operand.reads_down_a_tile(K) {
+                1 => None,
+                tile => Some(tile.max(one_transaction()).clamp(1, shared)),
+            },
+        };
+        let units_along_k = operand.units_distributing(K, space.k, wanted.unwrap_or(1));
         let groups_along_n = shared / units_along_k;
-        let one_step_a_turn = settings.depth == NonZeroUsize::MIN
+        let one_step_a_turn = wanted.is_some()
+            && settings.depth == NonZeroUsize::MIN
             && shared.is_multiple_of(units_along_k)
             && operand
                 .grouping(K, space.k)
@@ -477,7 +485,10 @@ impl Microkernel for PlaneShuffleMicrokernel {
         match item.blocks {
             None => {
                 let units_along_k = settings.k_split.units(hw, item, settings.depth, shared);
-                vec![sized(units_along_k, None)]
+                units_along_k
+                    .map(|units_along_k| sized(units_along_k, None))
+                    .into_iter()
+                    .collect::<Vec<_>>()
             }
             Some(space) => Self::packed_steps(hw, item, settings, space, shared)
                 .map(|(units_along_k, blocks)| sized(units_along_k, Some(blocks)))
@@ -627,14 +638,19 @@ mod tests {
     /// `rows` rows against a `4096 × 4096` NVFP4 rhs in tile order, read at four words a load:
     /// values a block down `k` a read, scales a word of four blocks.
     fn tile_order(rows: usize) -> MatmulWorkItem {
+        tile_order_in(rows, tile_order::TileWords::RowByRow, (128, 8))
+    }
+
+    /// [`tile_order`] with its tiles' words in `words` order, each tile `tile` values `(k, rows)`.
+    fn tile_order_in(
+        rows: usize,
+        words: tile_order::TileWords,
+        tile: (usize, usize),
+    ) -> MatmulWorkItem {
         let rhs = Operand::packed(K, 8, K, cubek_std::NVFP4_BLOCK, 4)
             .in_tile_order(
-                tile_order::TileOrder::laid(
-                    &tile_order::nvfp4_scheme(),
-                    tile_order::TileWords::RowByRow,
-                    (128, 8),
-                )
-                .expect("NVFP4 is tile order"),
+                tile_order::TileOrder::laid(&tile_order::nvfp4_scheme(), words, tile)
+                    .expect("NVFP4 is tile order"),
                 N,
                 4,
             )
@@ -724,6 +740,36 @@ mod tests {
         for plane in planes {
             assert!(plane.units_along_k < plane.plane_width(), "{plane}");
             assert!(plane.groups_along_n > 1, "{plane}");
+        }
+    }
+
+    /// A tile's worth of units along `K` against a packed rhs laid block by block, whose 64-deep
+    /// tiles each lie as one run: four units along `K`, each read two rows of one block, read the
+    /// tile whole between them with the plane's other units beside them along `N`.
+    #[test]
+    fn one_tile_reads_a_block_by_block_tile_whole() {
+        let settings = PlaneShuffleMicrokernelSettings::stepping(1, None).one_tile();
+        let item = tile_order_in(1, tile_order::TileWords::BlockByBlock, (64, 16));
+        let planes: Vec<_> =
+            PlaneShuffleMicrokernel::candidates(&devices::m2_pro(), &item, &settings).collect();
+        assert!(!planes.is_empty());
+        for plane in planes {
+            assert_eq!(plane.units_along_k, 4, "{plane}");
+            assert_eq!(plane.groups_along_n, 8, "{plane}");
+        }
+    }
+
+    /// No tile lies as one run row by row, nor in rows, nor in a float rhs: one tile sizes no
+    /// plane there, where it would be one transaction again.
+    #[test]
+    fn one_tile_sizes_nothing_where_no_tile_is_one_run() {
+        let hw = devices::m2_pro();
+        let settings = PlaneShuffleMicrokernelSettings::stepping(1, None).one_tile();
+        for item in [tile_order(1), item(1)] {
+            assert_eq!(
+                PlaneShuffleMicrokernel::candidates(&hw, &item, &settings).count(),
+                0
+            );
         }
     }
 }

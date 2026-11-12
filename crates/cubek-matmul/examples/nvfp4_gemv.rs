@@ -10,7 +10,7 @@
 //! ```
 //!
 //! `NVFP4_M` sets the rows (1), `NVFP4_ROUNDS` the rounds (3), `NVFP4_SHAPE` keeps one shape,
-//! `NVFP4_ONLY` keeps the settings whose name contains it, `NVFP4_LAYOUT` keeps the weight in
+//! `NVFP4_ONLY` keeps the settings whose name contains it (or any of its `|`-separated parts), `NVFP4_LAYOUT` keeps the weight in
 //! `rows` or in `tiles`, the tile order a load stores it in on this device (both).
 //! `NVFP4_N` and `NVFP4_K` time one shape of their own in place of the four.
 //! `NVFP4_EXPLORE` races, in place of the cube shuffle's packed settings, a grid of cube shuffles
@@ -573,7 +573,10 @@ fn main() {
             // Each setting that launches, and how far its output is from the reference.
             let mut served = Vec::new();
             for (label, launch) in candidates(&hw, &client) {
-                if only.as_deref().is_some_and(|o| !label.contains(o)) {
+                if only
+                    .as_deref()
+                    .is_some_and(|o| !o.split('|').any(|o| label.contains(o)))
+                {
                     continue;
                 }
                 match launch(&data[0]) {
