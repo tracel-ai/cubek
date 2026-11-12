@@ -5,7 +5,6 @@ use cubecl::client::Client;
 use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::server::Handle;
-use cubecl::tile::launch::Refusal;
 
 pub const F32: ElemType = ElemType::Float(FloatKind::F32);
 pub const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -23,13 +22,6 @@ pub fn elements(client: &Client) -> Vec<ElemType> {
                 .is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer)
         })
         .collect()
-}
-
-/// The elements of `elements` the conv is verified at: bf16 they decline by name.
-pub fn activation_elements(client: &Client) -> Vec<ElemType> {
-    let mut elements = elements(client);
-    elements.retain(|elem| *elem != BF16);
-    elements
 }
 
 /// `value` rounded to what `elem` holds.
@@ -55,37 +47,5 @@ pub fn read(client: &Client, handle: Handle, elem: ElemType) -> Vec<f32> {
             .map(|b| f32::from_le_bytes(*b))
             .collect(),
         other => panic!("{other:?} is not read back"),
-    }
-}
-
-/// `values` uploaded as `elem` holds them: each rounded to it.
-pub fn upload(client: &Client, values: &[f32], elem: ElemType) -> Handle {
-    let bytes: Vec<u8> = match elem {
-        F16 => (values.iter())
-            .flat_map(|&x| half::f16::from_f32(x).to_bits().to_le_bytes())
-            .collect(),
-        BF16 => (values.iter())
-            .flat_map(|&x| half::bf16::from_f32(x).to_bits().to_le_bytes())
-            .collect(),
-        F32 => values.iter().flat_map(|x| x.to_le_bytes()).collect(),
-        other => panic!("{other:?} is not uploaded"),
-    };
-    client.create_from_slice(&bytes)
-}
-
-/// What a launch left, or `None` where this device declines it by the very refusal admission
-/// names: a device short of bindings serves less, and a test of what it serves skips the rest.
-pub fn served<T>(
-    what: &str,
-    launched: Result<T, Refusal>,
-    admitted: impl FnOnce() -> Result<(), Refusal>,
-) -> Option<T> {
-    match launched {
-        Ok(outputs) => Some(outputs),
-        Err(why) => {
-            eprintln!("skipped, the device declines {what}: {why:?}");
-            assert_eq!(admitted(), Err(why), "{what}");
-            None
-        }
     }
 }

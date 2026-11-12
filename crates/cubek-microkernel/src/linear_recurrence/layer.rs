@@ -31,19 +31,4 @@ impl RecurrenceHeads {
     pub fn value_heads(&self) -> usize {
         self.key_heads * self.heads_per_group
     }
-
-    /// Channels of the `q|k|v` stream the conv mixes.
-    pub fn conv_dim(&self) -> usize {
-        self.key_heads * self.channels_per_key_head()
-    }
-
-    /// Channels before the values: every key head's queries, then keys.
-    pub fn key_dim(&self) -> usize {
-        self.key_heads * self.key_features
-    }
-
-    /// Channels one key head owns: its query and key, and its value heads' values.
-    pub fn channels_per_key_head(&self) -> usize {
-        2 * self.key_features + self.heads_per_group * self.value_features
-    }
 }
