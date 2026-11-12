@@ -129,55 +129,68 @@ impl HostBackward {
             .collect()
     }
 
-    /// The gradients `writes` names, as their microkernel writes them.
-    fn gradients(&self, writes: AttentionBackwardWrites) -> Vec<HostData> {
+    /// `dQ = scale · dS · K`, `[q, d]`, as its microkernel writes it.
+    fn query_gradient(&self) -> HostData {
+        let [queries, keys] = self.seq;
+        let head = DIMS[0];
+        let scale = Self::scale() as f64;
+        let d_s = self.score_gradient();
+        let d_q = (0..queries * head)
+            .map(|at| {
+                let (i, d) = (at / head, at % head);
+                let sum: f64 = (0..keys)
+                    .map(|j| d_s[i * keys + j] * self.key[j * head + d] as f64)
+                    .sum();
+                (scale * sum) as f32
+            })
+            .collect();
+        HostData::row_major(HostDataVec::F32(d_q), shape![1, 1, 1, queries, head])
+    }
+
+    /// `dK = scale · dSᵀ · Q` and `dV = Pᵀ · dO`, `[s, d]` and `[s, dv]`, as their microkernel
+    /// writes them.
+    fn key_gradients(&self) -> [HostData; 2] {
         let [queries, keys] = self.seq;
         let [head, val] = DIMS;
         let scale = Self::scale() as f64;
         let d_s = self.score_gradient();
-        let host =
-            |values: Vec<f64>| HostDataVec::F32(values.into_iter().map(|x| x as f32).collect());
+        let d_k = (0..keys * head)
+            .map(|at| {
+                let (j, d) = (at / head, at % head);
+                let sum: f64 = (0..queries)
+                    .map(|i| d_s[i * keys + j] * self.query[i * head + d] as f64)
+                    .sum();
+                (scale * sum) as f32
+            })
+            .collect();
+        let d_v = (0..keys * val)
+            .map(|at| {
+                let (j, d) = (at / val, at % val);
+                let sum: f64 = (0..queries)
+                    .map(|i| {
+                        self.probabilities[i * keys + j] * self.out_gradient[i * val + d] as f64
+                    })
+                    .sum();
+                sum as f32
+            })
+            .collect();
+        [
+            HostData::row_major(HostDataVec::F32(d_k), shape![1, 1, keys, head]),
+            HostData::row_major(HostDataVec::F32(d_v), shape![1, 1, keys, val]),
+        ]
+    }
+
+    /// The gradients `writes` names, as their microkernel writes them.
+    fn gradients(&self, writes: AttentionBackwardWrites) -> Vec<HostData> {
         match writes {
-            AttentionBackwardWrites::Queries => {
-                let d_q = (0..queries * head)
-                    .map(|at| {
-                        let (i, d) = (at / head, at % head);
-                        scale
-                            * (0..keys)
-                                .map(|j| d_s[i * keys + j] * self.key[j * head + d] as f64)
-                                .sum::<f64>()
-                    })
-                    .collect();
-                vec![
-                    HostData::row_major(host(d_q), shape![1, 1, 1, queries, head]),
-                    HostData::row_major(HostDataVec::F32(self.delta()), shape![1, 1, 1, queries]),
-                ]
-            }
-            AttentionBackwardWrites::Keys => {
-                let d_k = (0..keys * head)
-                    .map(|at| {
-                        let (j, d) = (at / head, at % head);
-                        scale
-                            * (0..queries)
-                                .map(|i| d_s[i * keys + j] * self.query[i * head + d] as f64)
-                                .sum::<f64>()
-                    })
-                    .collect();
-                let d_v = (0..keys * val)
-                    .map(|at| {
-                        let (j, d) = (at / val, at % val);
-                        (0..queries)
-                            .map(|i| {
-                                self.probabilities[i * keys + j]
-                                    * self.out_gradient[i * val + d] as f64
-                            })
-                            .sum::<f64>()
-                    })
-                    .collect();
-                vec![
-                    HostData::row_major(host(d_k), shape![1, 1, keys, head]),
-                    HostData::row_major(host(d_v), shape![1, 1, keys, val]),
-                ]
+            AttentionBackwardWrites::Queries => vec![
+                self.query_gradient(),
+                HostData::row_major(HostDataVec::F32(self.delta()), shape![1, 1, 1, self.seq[0]]),
+            ],
+            AttentionBackwardWrites::Keys => self.key_gradients().into(),
+            AttentionBackwardWrites::KeysAndQuerySum => {
+                let [key_gradient, value_gradient] = self.key_gradients();
+                vec![key_gradient, value_gradient, self.query_gradient()]
             }
         }
     }
@@ -270,12 +283,20 @@ impl<S: BackwardSettings> ScopeUnderTest for Backward<S> {
         };
         let element = case.element;
         let empty = |len: usize, shape, element| tensor(vec![-7.0; len], shape, element);
-        let query_gradient = empty(queries * head, shape![1, 1, 1, queries, head], element);
+        let query_gradient = match launch.writes() {
+            // A sum only adds: it arrives holding zero.
+            AttentionBackwardWrites::KeysAndQuerySum => tensor(
+                vec![0.0; queries * head],
+                shape![1, 1, 1, queries, head],
+                F32,
+            ),
+            _ => empty(queries * head, shape![1, 1, 1, queries, head], element),
+        };
         let key_gradient = empty(keys * head, shape![1, 1, keys, head], element);
         let value_gradient = empty(keys * val, shape![1, 1, keys, val], element);
         let delta = match launch.writes() {
             AttentionBackwardWrites::Queries => empty(queries, shape![1, 1, 1, queries], F32),
-            AttentionBackwardWrites::Keys => tensor(delta, shape![1, 1, 1, queries], F32),
+            _ => tensor(delta, shape![1, 1, 1, queries], F32),
         };
         let arg =
             |tensor: &cubecl::std::tensor::TensorHandle| tensor.clone().binding().into_tensor_arg();
@@ -309,6 +330,11 @@ impl<S: BackwardSettings> ScopeUnderTest for Backward<S> {
             AttentionBackwardWrites::Keys => vec![
                 written("key_gradient", key_gradient),
                 written("value_gradient", value_gradient),
+            ],
+            AttentionBackwardWrites::KeysAndQuerySum => vec![
+                written("key_gradient", key_gradient),
+                written("value_gradient", value_gradient),
+                written("query_gradient", query_gradient),
             ],
         })
     }
