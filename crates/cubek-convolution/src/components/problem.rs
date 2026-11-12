@@ -4,8 +4,9 @@ use cubecl::{
 };
 use cubek_matmul::definition::{AccumulatorOperand, MatmulGlobalElems, MatmulProblem};
 use cubek_std::MatrixLayout;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum ConvolutionOperation {
     Forward,
     BackwardData,

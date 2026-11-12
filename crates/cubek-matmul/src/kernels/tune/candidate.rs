@@ -10,9 +10,8 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::matmul_axes::{K, M, N};
-use cubek_std::routine::{PreparedLaunches, Routine};
+use cubek_std::routine::{Routine, RoutineCandidate};
 use cubek_std::{Hardware, Instructions, manual_mma};
-use std::sync::Arc;
 
 /// One candidate of a matmul autotune's autotune: a float routine at one of its settings,
 /// prepared for the device the autotune is built for.
@@ -23,37 +22,26 @@ use std::sync::Arc;
 /// the prepared launch's cube box is the block a setting asks for.
 #[derive(Debug, Clone)]
 pub struct MatmulRoutineCandidate<R: Routine> {
-    routine: R,
-    settings: R::Settings,
-    hw: Hardware,
-    /// The launches this candidate prepared, shared by its clones: they launch the same routine
-    /// at the same setting on the same device.
-    prepared: Arc<PreparedLaunches<R>>,
+    candidate: RoutineCandidate<R>,
 }
 
 impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        routine
-            .settings(hw)
+        RoutineCandidate::list(routine, hw)
             .into_iter()
-            .map(|settings| Self {
-                routine,
-                settings,
-                hw: hw.clone(),
-                prepared: Arc::default(),
-            })
+            .map(|candidate| Self { candidate })
             .collect()
     }
 
     /// The setting this candidate launches the routine at.
     pub fn settings(&self) -> &R::Settings {
-        &self.settings
+        self.candidate.settings()
     }
 
     /// The routine this candidate launches.
     pub fn routine(&self) -> R {
-        self.routine
+        self.candidate.routine()
     }
 
     /// `call`'s product by this candidate's routine at its setting, or the reason it did not run:
@@ -75,7 +63,7 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
         ListedFor::Float
             .admits(call.product())
             .map_err(|refusal| format!("{refusal:?}"))?;
-        let settings = &self.settings;
+        let settings = self.settings();
         let destination = call.destination;
         let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
         let tensors = match &destination {
@@ -89,10 +77,9 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
             None => MatmulTensors::new(&call.client, lhs, rhs, R::ROWS_KIND),
         };
         let launched = tensors.and_then(|tensors| {
-            let (blueprint, grid) =
-                self.prepared
-                    .prepare(&self.routine, &self.hw, &tensors.problem(), settings)?;
-            self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
+            let (blueprint, grid) = self.candidate.prepare(&tensors.problem())?;
+            self.routine()
+                .dispatch_into_buffer(&tensors, blueprint, grid);
             Ok(match destination {
                 Some(destination) => destination,
                 None => tensors
@@ -127,11 +114,7 @@ where
     /// packing: what a packed key's product becomes once its inputs are decoded.
     pub fn prepared_float(&self, key: &MatmulTuneKey) -> Option<(MatmulBlueprint<M, SM>, CubeDim)> {
         let problem = MatmulRoutineProblem::from(&key.shape());
-        let (blueprint, grid) = self
-            .routine
-            .prepare(&self.hw, &problem, &self.settings)
-            .ok()?;
-        Some((blueprint, grid.launch.cube_dim))
+        self.candidate.launch_of(&problem)
     }
 
     /// Where the output block one cube of `prepared` covers places it on `key`'s extents on `hw`;
@@ -169,14 +152,14 @@ where
     type Blueprint = (R::Blueprint, CubeDim);
 
     fn strategy(&self) -> &R::Settings {
-        &self.settings
+        self.candidate.settings()
     }
 
     /// Where the output block one cube of the prepared launch covers places it on the key's
     /// extents; last where the routine declines the problem, which it then does at launch before
     /// compiling anything.
     fn priority(&self, key: &MatmulTuneKey) -> CandidatePriority {
-        Self::ranked(&self.hw, key, self.prepared(key))
+        Self::ranked(self.candidate.hardware(), key, self.prepared(key))
     }
 
     fn blueprint(&self, key: &MatmulTuneKey) -> Option<Self::Blueprint> {

@@ -78,7 +78,7 @@ impl UnitRegistersMicrokernel {
     /// sum over a 512-wide value dim, walks its cells at runtime.
     pub fn tile_instruction(&self) -> Instruction {
         Instruction::Registers {
-            config: RegisterBlock::new(UNIT_REGISTERS as usize),
+            config: Self::register_block(),
         }
     }
 
@@ -89,8 +89,23 @@ impl UnitRegistersMicrokernel {
     /// `tile_instruction`.
     pub fn drained_instruction(&self) -> Instruction {
         Instruction::Registers {
-            config: RegisterBlock::new(UNIT_REGISTERS as usize).partials(),
+            config: Self::register_block().partials(),
         }
+    }
+
+    /// The block alone, `rows × columns` of the output with every contracted axis left whole, for
+    /// a contraction the leaf walks itself: a gathered operand's taps, which a register
+    /// accumulator cannot step.
+    pub fn block_tiling(&self) -> Levels {
+        let [rows, columns, _] = self.extents();
+        let MatmulAxes { m, n, .. } = self.axes;
+        Levels::leaf(&[(m, rows), (n, columns)])
+    }
+
+    /// The register block a memory window is accumulated under: unrolled while its cells fit a
+    /// unit's registers.
+    pub fn register_block() -> RegisterBlock {
+        RegisterBlock::new(UNIT_REGISTERS as usize)
     }
 
     /// The extent along `dim` of one step of the block.

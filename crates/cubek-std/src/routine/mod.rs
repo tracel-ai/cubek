@@ -34,11 +34,13 @@
 //! expects on it, and the refusal's message is the whole deliverable.
 
 mod base;
+mod candidate;
 mod grid;
 mod launch_settings;
 mod prepared;
 
 pub use base::*;
+pub use candidate::*;
 pub use grid::*;
 pub use launch_settings::*;
 pub use prepared::*;

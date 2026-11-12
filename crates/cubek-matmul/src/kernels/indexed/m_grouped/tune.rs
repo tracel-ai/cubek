@@ -15,7 +15,7 @@ use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
-use crate::kernels::tune::{ListedFor, Listing, Product, first_served};
+use crate::kernels::tune::{ListedFor, Listing, Product};
 use crate::kernels::{
     CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings,
     MatmulRoutine, PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
@@ -29,6 +29,7 @@ use cubecl_common::device::Device;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::{Autotune, GroupPriority};
+use cubek_std::routine::{ROUTINE_LISTS_NO_SETTING, first_served};
 use serde::{Deserialize, Serialize};
 
 /// What makes two grouped products want the same launch: the stack's shape and layout, as
@@ -104,7 +105,7 @@ pub fn launch_tuned_padded(
         .map(|floor| tensors.served_by(&hw, &PlaneShuffleMatmulRoutine, &floor.settings));
     let cube_staged = Listing::admitted(&floors.cube_staged, stack)
         .map(|floor| tensors.served_by(&hw, &CubeStagedMatmulRoutine, &floor.settings));
-    first_served(plane_shuffle.chain(cube_staged))?;
+    first_served(plane_shuffle.chain(cube_staged), ROUTINE_LISTS_NO_SETTING)?;
 
     // Named rather than `module_path!()`, so the cached winners stay this autotune's wherever the
     // code lives; a cached winner is an index into the candidate list.

@@ -7,3 +7,6 @@ pub mod forward;
 
 /// Explicit convolution-window lowering
 pub mod im2col;
+
+/// Convolution as a tile contraction over a gathered input
+pub mod tiled;

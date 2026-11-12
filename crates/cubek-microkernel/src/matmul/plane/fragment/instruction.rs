@@ -100,6 +100,17 @@ impl PlaneFragmentInstruction {
         }
     }
 
+    /// Whether this is the matrix instruction `transport` reaches. The software instruction is
+    /// reached through none.
+    pub fn reached_through(self, transport: PlaneFragmentTransport) -> bool {
+        matches!(
+            (self, transport),
+            (Self::Cmma { .. }, PlaneFragmentTransport::Cmma)
+                | (Self::Mma { .. }, PlaneFragmentTransport::Mma)
+                | (Self::Wgmma { .. }, PlaneFragmentTransport::Wgmma)
+        )
+    }
+
     /// Planes that issue one instruction together: a warpgroup's
     /// `WARPGROUP_PLANES`, one elsewhere. The warpgroup MMA runs only
     /// where planes are [`WARPGROUP_PLANE_UNITS`](Self::WARPGROUP_PLANE_UNITS) wide

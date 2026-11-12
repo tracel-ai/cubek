@@ -12,6 +12,7 @@ pub mod extended;
 pub mod full;
 pub mod im2col;
 mod split;
+pub mod tile;
 pub mod unit;
 
 pub mod launcher_strategy;

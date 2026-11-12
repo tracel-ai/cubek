@@ -49,7 +49,7 @@ impl Case {
             in_w: self.size,
             channels: self.c_in,
             out_channels: self.c_out,
-            args: args.clone(),
+            args,
             kernel_size: [self.kh, self.kw],
         };
 

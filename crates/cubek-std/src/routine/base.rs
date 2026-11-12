@@ -17,6 +17,26 @@ pub const ROUTINE_LISTS_NO_SETTING: Refusal = Refusal::Declined {
     why: "the routine lists no setting on this device",
 };
 
+/// The first of `attempts` that is `Ok`, the rest never run; where none is, the last refusal, or
+/// `none` where there are no attempts.
+///
+/// # Errors
+///
+/// The last refusal, or `none`.
+pub fn first_served<T>(
+    attempts: impl IntoIterator<Item = Result<T, Refusal>>,
+    none: Refusal,
+) -> Result<T, Refusal> {
+    let mut declined = none;
+    for attempt in attempts {
+        match attempt {
+            Ok(served) => return Ok(served),
+            Err(why) => declined = why,
+        }
+    }
+    Err(declined)
+}
+
 /// A whole kernel written around one microkernel.
 pub trait Routine {
     /// The problem, as the host describes it.
@@ -71,14 +91,12 @@ pub trait Routine {
         hw: &Hardware,
         problem: &Self::Problem,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let mut declined = ROUTINE_LISTS_NO_SETTING;
-        for settings in self.settings(hw) {
-            match self.prepare(hw, problem, &settings) {
-                Ok(prepared) => return Ok(prepared),
-                Err(why) => declined = why,
-            }
-        }
-        Err(declined)
+        first_served(
+            self.settings(hw)
+                .iter()
+                .map(|settings| self.prepare(hw, problem, settings)),
+            ROUTINE_LISTS_NO_SETTING,
+        )
     }
 
     /// Set in `estimate` the parts this routine owns of the kernel `blueprint` and `grid` describe
