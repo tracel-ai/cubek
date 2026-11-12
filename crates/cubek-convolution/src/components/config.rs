@@ -94,11 +94,9 @@ impl<M: GlobalConfig> ConvGemmConfig for ConvolutionConfig<M> {
 
     fn check_spatial_bounds(&self) -> bool {
         let spatial_dims = self.params.dimensionality.num_dims();
-        let mut has_padding = false;
-        for i in 0..spatial_dims {
-            has_padding |= self.params.padding[i] != 0;
-        }
-        has_padding
+        self.params.padding[..spatial_dims]
+            .iter()
+            .any(|&padding| padding != 0)
     }
 
     fn params(&self) -> ConvolutionParams {
