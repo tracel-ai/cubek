@@ -392,7 +392,16 @@ impl CubeStagedMicrokernel {
         let (storage, stage_layout) = match fill.delivery {
             CubeStagedDelivery::Tma => (landed, None),
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => {
-                let layout = instruction.stage_layout(self.stage_layout)?;
+                // A packed input's stages keep the instruction's padded blocks: laid in whole
+                // rows, a cube reads them back as zeros.
+                let packed = item.blocks.is_some() || self.walk().decoded().is_some();
+                let setting = match (self.stage_layout, packed, instruction) {
+                    (None, true, PlaneFragmentInstruction::Cmma { .. }) => {
+                        Some(StageLayout::PaddedBlocks)
+                    }
+                    (setting, ..) => setting,
+                };
+                let layout = instruction.stage_layout(setting)?;
                 (self.plane.stage_storage(layout, stage), Some(layout))
             }
         };

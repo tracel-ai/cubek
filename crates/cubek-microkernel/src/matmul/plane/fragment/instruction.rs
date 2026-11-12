@@ -205,8 +205,11 @@ impl PlaneFragmentInstruction {
     ///
     /// Both matrix instructions' own keep the rows a fragment load reads at once on distinct
     /// banks, each the way its transport can read. `cmma` reads a tile off a pointer and a stride,
-    /// so its rows are padded by a chunk: a padded row is still a run a stride from the next. The
-    /// manual `mma` hands every row its own address, so its rows' chunks are swizzled instead,
+    /// so its rows are padded by a chunk: a padded row is still a run a stride from the next. Its
+    /// stage is laid in whole rows rather than in the instruction's tiles: a copy then fills each
+    /// row as one run, and on sm_120 every autotune winner reads 1.04 to 1.23x faster for it
+    /// (median 1.14x over 32 LLM projection shapes, none slower) with the tuner's pick unchanged.
+    /// The manual `mma` hands every row its own address, so its rows' chunks are swizzled instead,
     /// which spends no shared memory.
     ///
     /// Measured against padding: an L4's shared loads go from conflicted to conflict-free at a
@@ -225,7 +228,7 @@ impl PlaneFragmentInstruction {
             (Self::Registers { .. }, _) => Ok(StageLayout::Strided),
             (Self::Cmma { .. }, Some(StageLayout::SwizzledBlocks)) => Err(SWIZZLED_STAGE_UNREAD),
             (_, Some(layout)) => Ok(layout),
-            (Self::Cmma { .. }, None) => Ok(StageLayout::PaddedBlocks),
+            (Self::Cmma { .. }, None) => Ok(StageLayout::PaddedRows),
             (Self::Mma { .. } | Self::Wgmma { .. }, None) => Ok(StageLayout::SwizzledBlocks),
         }
     }

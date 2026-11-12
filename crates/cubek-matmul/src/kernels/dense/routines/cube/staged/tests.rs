@@ -252,9 +252,9 @@ mod base {
         }
     }
 
-    /// The deep box on eight planes stages 40 KB padded: a second stage in flight is past a core
-    /// of 64 KB of shared memory, one stage with its next waiting in registers is not, and a core
-    /// of 128 KB holds either, which is why both are listed.
+    /// The deep box on eight planes stages 40 KB in padded blocks: a second stage in flight is
+    /// past a core of 64 KB of shared memory, one stage with its next waiting in registers is not,
+    /// and a core of 128 KB holds either, which is why both are listed.
     #[test]
     fn the_deep_box_rings_one_stage_where_two_outgrow_the_shared_memory() {
         let count = |n: usize| NonZeroUsize::new(n).unwrap();
@@ -267,6 +267,7 @@ mod base {
                     ..microkernel.plane
                 };
                 microkernel.ring = ring;
+                microkernel.stage_layout = Some(StageLayout::PaddedBlocks);
             })
         };
         let one_stage = deep(StageRing::SINGLE_THROUGH_REGISTERS);
@@ -1445,14 +1446,14 @@ mod base {
     }
 
     /// A padded stage holds its cells and one 16-byte chunk after every block row, a line of
-    /// `f16` on this device being 16 bytes too: the default's stage, a `128 × 16` lhs and a
-    /// `16 × 256` rhs, is 12 KB of cells and 128 + 256 rows of 16-byte blocks, whichever order the
-    /// rhs binds in. In order or swizzled, the same stage holds its cells alone. The default's own,
-    /// staged for `cmma` here, is the padded one.
+    /// `f16` on this device being 16 bytes too. The default's stage for `cmma` here lies in whole
+    /// padded rows, a `128 × 16` lhs and a `16 × 256` rhs: 12 KB of cells and a chunk after each
+    /// of the lhs's 128 rows and the rhs's rows as it binds, 16 along `K` or 256 along `N`. In
+    /// order or swizzled, the same stage holds its cells alone.
     #[test]
     fn a_stage_counts_a_chunk_after_every_block_row_only_when_padded() {
         let hw = offering(devices::strix_halo());
-        for problem in [problem(), col_rhs()] {
+        for (problem, rhs_rows) in [(problem(), 16), (col_rhs(), 256)] {
             let (blueprint, _) = CubeStagedMatmulRoutine
                 .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
                 .expect("the default prepares");
@@ -1471,7 +1472,10 @@ mod base {
                     blueprint.microkernel.plane.orders,
                 )
             };
-            assert_eq!(bytes(&tiled(RowChunks::Padded)), 12288 + (128 + 256) * 16);
+            assert_eq!(
+                bytes(&tiled(RowChunks::Padded)),
+                12288 + (128 + rhs_rows) * 16
+            );
             assert_eq!(bytes(&tiled(RowChunks::InOrder)), 12288);
             assert_eq!(bytes(&tiled(RowChunks::Swizzled)), 12288);
             assert_eq!(
