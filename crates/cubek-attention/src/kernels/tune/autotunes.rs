@@ -12,9 +12,9 @@ use crate::kernels::tune::AttentionTuneInputs;
 use crate::kernels::tune::key::AttentionKey;
 use crate::kernels::{
     AttentionLaunch, AttentionRoutineCandidate, CubeShuffleAttentionRoutine,
-    CubeStagedAttentionRoutine, HypercubeFragmentPartialAttentionRoutine,
+    CubeStagedAttentionRoutine, DirectAttention, HypercubeFragmentPartialAttentionRoutine,
     HypercubeLastArrivalShuffleAttentionRoutine, HypercubeShufflePartialAttentionRoutine,
-    HypercubeStreamFragmentAttentionRoutine, OneRoutine, UnitAttentionRoutine,
+    HypercubeStreamFragmentAttentionRoutine, UnitAttentionRoutine,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tune::{LocalTuner, Tunable, TunableSet, local_tuner};
@@ -216,7 +216,7 @@ fn one_query(
 fn unit_lead(hw: &Hardware) -> Tunable<AttentionKey, AttentionTuneInputs, ()> {
     let hw = hw.clone();
     Tunable::new("unit-attention-lead", move |inputs: AttentionTuneInputs| {
-        OneRoutine(UnitAttentionRoutine)
+        DirectAttention(UnitAttentionRoutine)
             .launch_lead_on(&hw, inputs.tensors)
             .map(|_| ())
             .map_err(|why| format!("the unit routine's lead does not serve this problem: {why:?}"))

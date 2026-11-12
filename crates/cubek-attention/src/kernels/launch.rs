@@ -13,7 +13,7 @@ use cubek_std::routine::{Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 /// it prepares an [`AttentionBlueprint`] and launches it on tensors.
 ///
 /// A routine states what is its own, how it places its microkernel's work items and the kernel it
-/// dispatches. The launch around those is written once, in [`OneRoutine`].
+/// dispatches. The launch around those is written once, in [`DirectAttention`].
 pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
     Routine<Problem = AttentionRoutineProblem, Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
 {
@@ -27,7 +27,7 @@ pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
     );
 }
 
-/// What writes the attention at each of its routine's settings: a routine alone ([`OneRoutine`]),
+/// What writes the attention at each of its routine's settings: a routine alone ([`DirectAttention`]),
 /// or a partial routine then the split-keys merge
 /// ([`SplitKeysAttention`](crate::kernels::SplitKeysAttention)). What a test or a benchmark row
 /// launches, one setting at a time.
@@ -74,11 +74,12 @@ pub trait AttentionLaunch {
     }
 }
 
-/// The attention as routine `R` writes it, launched alone.
+/// The attention as routine `R` writes it directly, in one launch: no partial slots and no merge
+/// after it, as [`SplitKeysAttention`](crate::kernels::SplitKeysAttention) has.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct OneRoutine<R>(pub R);
+pub struct DirectAttention<R>(pub R);
 
-impl<R, M: AttentionMicrokernel, SM> AttentionLaunch for OneRoutine<R>
+impl<R, M: AttentionMicrokernel, SM> AttentionLaunch for DirectAttention<R>
 where
     R: AttentionRoutine<M, SM> + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>,
 {

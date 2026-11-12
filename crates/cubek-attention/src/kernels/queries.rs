@@ -128,7 +128,7 @@ mod tests {
         let launches: [(&str, Launch); 3] = [
             ("cube staged", &|client, queries, kv, scoring| {
                 lead(
-                    OneRoutine(CubeStagedAttentionRoutine),
+                    DirectAttention(CubeStagedAttentionRoutine),
                     client,
                     queries,
                     kv,
@@ -137,7 +137,7 @@ mod tests {
             }),
             ("cube shuffle", &|client, queries, kv, scoring| {
                 lead(
-                    OneRoutine(CubeShuffleAttentionRoutine),
+                    DirectAttention(CubeShuffleAttentionRoutine),
                     client,
                     queries,
                     kv,
