@@ -52,6 +52,11 @@ impl SlotStore {
         &self.store
     }
 
+    /// The positions each row has advanced.
+    pub fn lengths(&self) -> &PlainTensor {
+        &self.lengths
+    }
+
     /// The rows the tables place.
     pub fn rows(&self) -> usize {
         self.slots.shape().dims::<1>()[0]
