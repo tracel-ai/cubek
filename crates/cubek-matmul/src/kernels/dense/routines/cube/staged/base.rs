@@ -72,9 +72,9 @@ impl<'a> CubeStagedPlacement<'a> {
         CubeStagedMicrokernel::admits(&item)?;
         let by_units = fill.delivery == CubeStagedDelivery::Copy;
         // An operand the TMA engine lands is read in the instruction the tile layer picks for
-        // landed operands, so there the planes take the first candidate it picks, and none where
-        // it picks none: the kernel's sum would contract through another instruction than the
-        // one the plan sized. Elsewhere the candidates are already the tile's picks.
+        // landed operands, so there the planes take the first candidate it picks. Where it picks
+        // none of them, as for packed codes, which this check states as plain values, and
+        // elsewhere, the first candidate.
         let landed = fill.delivery == CubeStagedDelivery::Tma;
         let tiles_pick = |candidate: &CubeStagedMicrokernel| {
             let plane = &candidate.plane;
@@ -90,11 +90,16 @@ impl<'a> CubeStagedPlacement<'a> {
             );
             picked == Some(plane.tile_instruction())
         };
-        let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
+        let candidates: Vec<_> = CubeStagedMicrokernel::candidates(hw, &item, settings)
             .filter(|candidate| {
                 by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
             })
-            .find(|candidate| !landed || tiles_pick(candidate))
+            .collect();
+        let microkernel = candidates
+            .iter()
+            .find(|candidate| landed && tiles_pick(candidate))
+            .or(candidates.first())
+            .copied()
             .ok_or(Refusal::Declined {
                 why: CubeStagedMicrokernel::decline(settings),
             })?;
