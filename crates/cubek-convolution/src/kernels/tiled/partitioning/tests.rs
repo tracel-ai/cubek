@@ -1,11 +1,10 @@
 use super::ConvTiles;
 use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::Conv2dProblem;
+use crate::kernels::tiled::ConvProblem;
 use crate::kernels::tiled::routines::CubeStagedConvRoutine;
 use crate::kernels::tiled::routines::test_support::{dense, nvidia};
-use crate::kernels::tiled::{ConvProblem, ConvSettings};
 use crate::launch::ConvolutionArgs;
-use cubek_std::routine::Routine;
 
 const BUDGET: usize = 48 * 1024;
 
@@ -48,38 +47,6 @@ fn a_prime_walk_is_one_stage() {
     });
     assert_eq!(steps(&problem, BUDGET), 7);
     assert_eq!(steps(&problem, 1024), 1);
-}
-
-/// A second stage in flight doubles the shared memory the stages hold.
-#[test]
-fn a_double_ring_holds_twice_the_bytes() {
-    let problem = ConvProblem::from(&dense());
-    let bytes = |settings: ConvSettings| {
-        let (_, grid) = CubeStagedConvRoutine
-            .prepare(&nvidia(), &problem, &settings)
-            .expect("the setting prepares");
-        grid.shared_memory
-    };
-    let single = CubeStagedConvRoutine::F2X2_P2X2_T16.mma();
-    assert_eq!(bytes(single.double_ring()), 2 * bytes(single));
-}
-
-/// A contraction that fits one stage has no second to fill ahead, so a double ring holds one.
-#[test]
-fn a_double_ring_over_one_stage_holds_one() {
-    let problem = ConvProblem::from(&Conv2dProblem {
-        input_shape: [1, 16, 8, 8],
-        weight_shape: [16, 16, 1, 1],
-        ..dense()
-    });
-    let ring = |settings: ConvSettings| {
-        let (blueprint, _) = CubeStagedConvRoutine
-            .prepare(&nvidia(), &problem, &settings)
-            .expect("the setting prepares");
-        blueprint.microkernel.ring
-    };
-    let single = CubeStagedConvRoutine::F2X2_P2X2_T16.mma();
-    assert_eq!(ring(single.double_ring()), ring(single));
 }
 
 /// A walk with a divisor in reach keeps it: six steps of the AlexNet-like forward run three

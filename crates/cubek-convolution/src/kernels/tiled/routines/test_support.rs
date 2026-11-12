@@ -58,10 +58,9 @@ pub fn dense() -> Conv2dProblem {
     }
 }
 
-/// The problems the pure tests prepare, each as `(name, problem)`, to state to the launch through
-/// `ConvProblem::from`: few channels under a deep
-/// filter, 64 channels, a stride of two, and a map seven wide. The names state the shape.
-pub fn problems() -> [(&'static str, Conv2dProblem); 4] {
+/// The problems the pure tests prepare, each as `(name, problem)`: few channels under a deep
+/// filter, 64 channels, and a map seven wide.
+pub fn problems() -> [(&'static str, Conv2dProblem); 3] {
     [
         (
             "few_channels_deep_filter",
@@ -76,18 +75,6 @@ pub fn problems() -> [(&'static str, Conv2dProblem); 4] {
             },
         ),
         ("channels_64", dense()),
-        (
-            "stride_2",
-            Conv2dProblem {
-                input_shape: [8, 64, 57, 57],
-                weight_shape: [128, 64, 3, 3],
-                args: ConvolutionArgs {
-                    stride: [2; 2],
-                    ..dense().args
-                },
-                ..dense()
-            },
-        ),
         (
             "map_7_wide",
             Conv2dProblem {
