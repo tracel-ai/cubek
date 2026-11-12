@@ -1,5 +1,6 @@
 //! The plane fragment microkernel alone: one plane walks its tile through its own stages.
 
+use crate::launch::Lines;
 use crate::launch::matmul::{MatmulElements, PlaneFragmentLaunch};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::plane::{
@@ -18,9 +19,10 @@ impl MatmulSettings for PlaneFragmentMicrokernelSettings {
         &self,
         hw: &Hardware,
         elements: MatmulElements,
+        lines: Lines,
         steps: usize,
     ) -> Result<PlaneFragmentLaunch, Refusal> {
-        PlaneFragmentLaunch::new(hw, elements, self, steps)
+        PlaneFragmentLaunch::new(hw, elements, self, lines, steps)
     }
 }
 

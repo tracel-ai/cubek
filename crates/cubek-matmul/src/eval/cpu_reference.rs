@@ -8,8 +8,8 @@
 use cubecl::{prelude::*, std::tensor::TensorHandle};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataVec, Progress, StridedLayout, TestInput, ValidationResult,
-    assert_equals_approx, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataVec, Progress, StridedLayout, TestInput,
+    launch_and_capture_outcome,
 };
 
 use crate::{
@@ -131,35 +131,6 @@ fn seed_inputs(
     problem.rhs_strides = rhs.strides().clone();
 
     (lhs, lhs_data, rhs, rhs_data, out, problem)
-}
-
-/// Mirror of [`assert_equals_approx`] for tests that want a non-panicking
-/// version. Same signature as the existing `assert_result` test helper.
-pub fn assert_result(
-    lhs: &HostData,
-    rhs: &HostData,
-    problem: &MatmulProblem,
-    client: &Client,
-    out: TensorHandle,
-    dtypes: MatmulElems,
-) -> ValidationResult {
-    let epsilon = matmul_epsilon(&dtypes, 500.);
-    assert_result_with_epsilon(lhs, rhs, problem, client, out, dtypes, epsilon)
-}
-
-/// Same as [`assert_result`] but with an explicit epsilon.
-pub fn assert_result_with_epsilon(
-    lhs: &HostData,
-    rhs: &HostData,
-    problem: &MatmulProblem,
-    client: &Client,
-    out: TensorHandle,
-    _dtypes: MatmulElems,
-    epsilon: f32,
-) -> ValidationResult {
-    let expected = matmul_cpu_reference(lhs, rhs, problem, None);
-    let actual = HostData::from_tensor_handle(client, out, problem.global_dtypes.out.into());
-    assert_equals_approx(&actual, &expected, epsilon)
 }
 
 /// Default per-dtype epsilon × safety factor.

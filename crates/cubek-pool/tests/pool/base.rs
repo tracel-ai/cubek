@@ -172,11 +172,16 @@ impl Seeded {
         }
     }
 
-    /// A zeroed tensor of `shape` in `dtype`, for a case's output.
-    fn zeroed(client: &Client, shape: &[usize], dtype: ElemType) -> TensorHandle {
+    /// A case's output of `shape` in `dtype`, poisoned: NaN for values, an index no window
+    /// reaches for indices, so a cell the pool never writes fails the comparison.
+    fn poisoned(client: &Client, shape: &[usize], dtype: ElemType) -> TensorHandle {
+        let poison = match dtype {
+            ElemType::Float(_) => f32::NAN,
+            _ => 77_777.0,
+        };
         TestInput::builder(client.clone(), shape.to_vec())
             .dtype(dtype)
-            .zeros()
+            .custom(vec![poison; shape.iter().product()])
             .generate_without_host_data()
     }
 }
@@ -222,11 +227,11 @@ where
     fn launch(&self, client: &Client, case: &Pooled<N>) -> Result<Vec<Written>, Refusal> {
         let (input, _) = case.input.of(&case.problem.input_shape);
         let shape = case.output_shape();
-        let output = Seeded::zeroed(client, &shape, input.dtype);
+        let output = Seeded::poisoned(client, &shape, input.dtype);
         let indices = case
             .problem
             .with_indices
-            .then(|| Seeded::zeroed(client, &shape, INDICES));
+            .then(|| Seeded::poisoned(client, &shape, INDICES));
         Entries::forward(
             client,
             &input,
@@ -257,6 +262,14 @@ where
 
     fn tolerance(&self, case: &Pooled<N>) -> f32 {
         case.tolerance
+    }
+
+    /// The argmax a max pool writes is exact.
+    fn tolerance_of(&self, case: &Pooled<N>, name: &'static str) -> f32 {
+        match name {
+            "indices" => 0.,
+            _ => case.tolerance,
+        }
     }
 }
 
@@ -308,11 +321,11 @@ where
         let grad_shape = case.problem.out_grad_shape.to_vec();
         let (input, _) = case.input.of(&input_shape);
         let (out_grad, _) = case.input.next().of(&grad_shape);
-        let in_grad = Seeded::zeroed(client, &input_shape, input.dtype);
+        let in_grad = Seeded::poisoned(client, &input_shape, input.dtype);
         let mode = case.problem.mode.clone();
         let indices = case.problem.with_indices.then(|| {
-            let indices = Seeded::zeroed(client, &grad_shape, INDICES);
-            let pooled = Seeded::zeroed(client, &grad_shape, input.dtype);
+            let indices = Seeded::poisoned(client, &grad_shape, INDICES);
+            let pooled = Seeded::poisoned(client, &grad_shape, input.dtype);
             Entries::forward(client, &input, &pooled, Some(&indices), mode.clone())
                 .unwrap_or_else(|why| panic!("{case:?}: the forward pool refused: {why:?}"));
             indices
@@ -349,5 +362,13 @@ where
 
     fn tolerance(&self, case: &Unpooled<N>) -> f32 {
         case.tolerance
+    }
+
+    /// The argmax a max pool writes is exact.
+    fn tolerance_of(&self, case: &Unpooled<N>, name: &'static str) -> f32 {
+        match name {
+            "indices" => 0.,
+            _ => case.tolerance,
+        }
     }
 }
