@@ -191,8 +191,8 @@ impl CubeShuffleMicrokernelSettings {
     .in_turns();
 
     /// [`SPLIT_K`](Self::SPLIT_K) with each plane's units reading one stored tile between them,
-    /// two columns a unit: in tile order block by block a tile is one contiguous run, so a
-    /// plane's load is the tile's coalesced transactions in flight at once, and a unit walks a
+    /// two columns a unit: tile order lays a tile as one contiguous run, so a plane's load is
+    /// the tile's coalesced transactions in flight at once, and a unit walks a
     /// tile's share of `K`'s steps where
     /// [`SPLIT_K_ONE_TRANSACTION`](Self::SPLIT_K_ONE_TRANSACTION)'s walks every block. Its planes
     /// take `K`'s steps cyclically ([`planes_in_turns`](Self::planes_in_turns)).

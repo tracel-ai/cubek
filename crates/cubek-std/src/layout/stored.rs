@@ -546,15 +546,12 @@ impl Operand {
         }
     }
 
-    /// Reads down `axis` that one stored tile holds of a row, where tile order lays a tile's
-    /// blocks of every row of it as one run ([`TileWords::BlockByBlock`]): as many units along
-    /// `axis` as this, beside [`rows_side_by_side`](Self::rows_side_by_side), read the tile whole.
-    /// One otherwise.
+    /// Reads down `K` that one stored tile holds of a row. Tile order lays each tile as one run,
+    /// its words block by block or row by row: as many units along `K` as this, the rest of a
+    /// plane across the tile's rows, read the tile whole. One in rows, where no tile is stored.
     pub fn reads_down_a_tile(&self, axis: Axis) -> usize {
         match self.tiles {
-            Some(order) if order.words() == TileWords::BlockByBlock && axis == K => {
-                (order.tile().0 / self.read.extent(axis).max(1)).max(1)
-            }
+            Some(order) if axis == K => (order.tile().0 / self.read.extent(axis).max(1)).max(1),
             Some(_) | None => 1,
         }
     }

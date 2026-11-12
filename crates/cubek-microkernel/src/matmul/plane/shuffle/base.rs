@@ -236,9 +236,11 @@ impl PlaneShuffleMicrokernel {
         let wanted = match settings.k_split {
             PlaneShuffleKSplit::WholePlane => Some(shared),
             PlaneShuffleKSplit::OneTransaction => Some(one_transaction().clamp(1, shared)),
+            // A tile's reads down `K`, whichever order its words lie in: one transaction's
+            // would cut a row-by-row tile's 32-byte rows into pieces of several tiles.
             PlaneShuffleKSplit::OneTile => match operand.reads_down_a_tile(K) {
                 1 => None,
-                tile => Some(tile.max(one_transaction()).clamp(1, shared)),
+                tile => Some(tile.clamp(1, shared)),
             },
         };
         let units_along_k = operand.units_distributing(K, space.k, wanted.unwrap_or(1));
@@ -762,17 +764,29 @@ mod tests {
         }
     }
 
-    /// No tile lies as one run row by row, nor in rows, nor in a float rhs: one tile sizes no
-    /// plane there, where it would be one transaction again.
+    /// A tile laid row by row is one run too, each row's blocks one after another: one tile reads
+    /// it whole, a few units along `K` beside the plane's others along its rows.
     #[test]
-    fn one_tile_sizes_nothing_where_no_tile_is_one_run() {
-        let hw = devices::m2_pro();
+    fn one_tile_reads_a_row_by_row_tile_whole() {
         let settings = PlaneShuffleMicrokernelSettings::stepping(1, None).one_tile();
-        for item in [tile_order(1), item(1)] {
-            assert_eq!(
-                PlaneShuffleMicrokernel::candidates(&hw, &item, &settings).count(),
-                0
-            );
+        let item = tile_order_in(1, tile_order::TileWords::RowByRow, (64, 16));
+        let planes: Vec<_> =
+            PlaneShuffleMicrokernel::candidates(&devices::m2_pro(), &item, &settings).collect();
+        assert!(!planes.is_empty());
+        for plane in planes {
+            assert!(plane.units_along_k > 1, "{plane}");
+            assert!(plane.groups_along_n > 1, "{plane}");
         }
+    }
+
+    /// A float rhs has no stored tiles: one tile sizes no plane there, where it would be one
+    /// transaction again.
+    #[test]
+    fn one_tile_sizes_nothing_against_a_float_rhs() {
+        let settings = PlaneShuffleMicrokernelSettings::stepping(1, None).one_tile();
+        assert_eq!(
+            PlaneShuffleMicrokernel::candidates(&devices::m2_pro(), &item(1), &settings).count(),
+            0
+        );
     }
 }
