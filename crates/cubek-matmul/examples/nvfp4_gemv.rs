@@ -10,12 +10,14 @@
 //! ```
 //!
 //! `NVFP4_M` sets the rows (1), `NVFP4_ROUNDS` the rounds (3), `NVFP4_SHAPE` keeps one shape,
-//! `NVFP4_ONLY` keeps the settings whose name contains it (or any of its `|`-separated parts), `NVFP4_LAYOUT` keeps the weight in
-//! `rows` or in `tiles`, the tile order a load stores it in on this device (both).
+//! `NVFP4_ONLY` keeps the settings whose name contains it or any of its `|`-separated parts,
+//! `NVFP4_LAYOUT` keeps the weight in `rows` or in `tiles`, the tile order a load stores it in on
+//! this device (both). `NVFP4_STAGGER` lays the tiles' strips back to back (`0`) or an odd
+//! number of that many bytes apart, in place of a transaction.
 //! `NVFP4_N` and `NVFP4_K` time one shape of their own in place of the four.
 //! `NVFP4_EXPLORE` races, in place of the cube shuffle's packed settings, a grid of cube shuffles
 //! reading the weight by block: columns a unit, planes along `K`, cubes a compute unit, and how
-//! a plane's units split `K`.
+//! a plane's units split `K`; `NVFP4_EXPLORE=planes` also races a grid of plane shuffles.
 
 use std::time::Duration;
 
@@ -233,7 +235,25 @@ fn in_tile_order(
 
     // The same bytes stated over `[k, n]`, its words down `k`: the statement tile order stores.
     let scheme = tile_order::nvfp4_scheme();
-    let order = storage::tile_order_on(hw, &scheme, (64, 16), (k, n)).expect("NVFP4 is tile order");
+    // `NVFP4_STAGGER=0` lays the strips back to back, as a load did before it staggered them;
+    // `NVFP4_STAGGER=<bytes>` staggers them by an odd number of that many bytes in place of a
+    // transaction.
+    let laid = || {
+        tile_order::TileOrder::laid(&scheme, storage::tile_words(hw), (64, 16))
+            .expect("NVFP4 is tile order")
+    };
+    let order = match env_usize("NVFP4_STAGGER", usize::MAX) {
+        0 => laid().for_matrix(k, n),
+        usize::MAX => {
+            storage::tile_order_on(hw, &scheme, (64, 16), (k, n)).expect("NVFP4 is tile order")
+        }
+        bytes => laid()
+            .staggered(
+                cubecl::tile::layout::Stagger::new(bytes * 8, 8)
+                    .expect("a byte divides the stagger"),
+            )
+            .for_matrix(k, n),
+    };
     let words_per_load = hw.load_values(WORD);
     let blocks = k / BLOCK;
     let bound = |handle: cubecl::server::Handle, meta: Metadata| TensorBinding {
@@ -289,7 +309,11 @@ type Launch<'a> = Box<dyn Fn(&Device) -> Result<(), String> + Send + Sync + 'a>;
 
 fn candidates<'a>(hw: &'a Hardware, client: &'a Client) -> Vec<(String, Launch<'a>)> {
     let mut out: Vec<(String, Launch<'a>)> = Vec::new();
-    for settings in PlaneShuffleMatmulRoutine.packed_settings() {
+    let plane_settings = match std::env::var("NVFP4_EXPLORE").as_deref() {
+        Ok("planes") => explored_planes(),
+        _ => PlaneShuffleMatmulRoutine.packed_settings(),
+    };
+    for settings in plane_settings {
         let launch: Launch<'a> = Box::new(move |d: &Device| {
             PlaneShuffleMatmulRoutine
                 .launch_into(
@@ -322,6 +346,34 @@ fn candidates<'a>(hw: &'a Hardware, client: &'a Client) -> Vec<(String, Launch<'
                 .map_err(|e| format!("{e:?}"))
         });
         out.push((settings.to_string(), launch));
+    }
+    out
+}
+
+/// The plane shuffles `NVFP4_EXPLORE=planes` races beside the cube shuffles' grid: columns a
+/// unit, planes a cube and planes a compute unit, under each split of `K` a plane's units take.
+fn explored_planes() -> Vec<cubek_matmul::kernels::PlaneShuffleMatmulRoutineSettings> {
+    use core::num::NonZeroUsize;
+    use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernelSettings;
+    let mut out = Vec::new();
+    for columns in [1, 2, 4] {
+        for split in [0, 1, 2] {
+            let plane = PlaneShuffleMicrokernelSettings::stepping(columns, None);
+            let microkernel = match split {
+                0 => plane,
+                1 => plane.one_transaction(),
+                _ => plane.one_tile(),
+            };
+            for planes in [1, 2, 4, 8] {
+                for planes_per_worker in [None, NonZeroUsize::new(16), NonZeroUsize::new(32)] {
+                    out.push(cubek_matmul::kernels::PlaneShuffleMatmulRoutineSettings {
+                        microkernel,
+                        planes: NonZeroUsize::new(planes).unwrap(),
+                        planes_per_worker,
+                    });
+                }
+            }
+        }
     }
     out
 }
