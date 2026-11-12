@@ -705,14 +705,16 @@ impl AttentionTensors {
         let widths = blueprint.widths;
         let problem = self.problem();
         let read = blueprint.microkernel.served(&problem.work_item()).elements;
-        // Read at another element than the float it is stored in, an operand each of whose values
-        // is a word of its own is bound as its u32 words, which its kernel's stages decode at the
-        // read element. An operand of narrower values is converted ahead, into a buffer of its
-        // own (`converted`), and bound as it is read: a stage of narrower values keeps their
-        // words, which every fragment load would pick apart.
+        // Read at another element than the float it is stored in, a side of the cache is bound as
+        // its u32 words, which its kernel's stages decode at the read element as they fill: the
+        // cache is read once a launch, where it lies. The query is too where each of its values is
+        // a word of its own; a query of narrower values, read once a cube, is converted ahead into
+        // a buffer of its own (`converted`) and bound as it is read.
         let words = |operand: AttentionOperand| match problem.elements.get(operand) {
             stored @ ElemType::Float(kind)
-                if read.get(operand) != stored && stored.size() == u32::BITS as usize / 8 =>
+                if read.get(operand) != stored
+                    && (operand != AttentionOperand::Query
+                        || stored.size() == u32::BITS as usize / 8) =>
             {
                 Some(kind)
             }
@@ -774,13 +776,15 @@ impl AttentionTensors {
             .expect(ADMITTED_PLAN_RUNS)
             .arg(),
         );
-        // The keys and values move into their stages as the microkernel says, unless they are
-        // bound as words its stages decode, which pass through the units' registers.
-        let delivery = match words(AttentionOperand::Key).or(words(AttentionOperand::Value)) {
+        // Each side of the cache moves into its stage as the microkernel says, unless it is bound
+        // as words its stage decodes, which pass through the units' registers: the other side
+        // keeps its copy, and the stages meet on a barrier where the two differ.
+        let planned = blueprint
+            .microkernel
+            .delivery(&widths, &problem.work_item());
+        let delivery = |operand: AttentionOperand| match words(operand) {
             Some(_) => Delivery::SyncPerUnit,
-            None => blueprint
-                .microkernel
-                .delivery(&widths, &problem.work_item()),
+            None => planned,
         };
         let cache = match &self.kv.cache {
             AttentionCache::Float { key, value } => {
@@ -795,7 +799,7 @@ impl AttentionTensors {
                                   width: usize,
                                   operand: AttentionOperand| {
                     let arg = read_operand(tensor, axes, width, operand)
-                        .delivery(delivery)
+                        .delivery(delivery(operand))
                         .build()
                         .expect(ADMITTED_PLAN_RUNS)
                         .arg();

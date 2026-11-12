@@ -136,18 +136,13 @@ impl PlaneFragmentAttentionMicrokernel {
         read: AttentionRead,
         settings: PlaneFragmentAttentionMicrokernelSettings,
     ) -> Vec<Self> {
-        // A stage of the cache converts a side it reads at another element where each of its
-        // values is a word of its own, as an `f32` read at tf32 is; both sides converted so are
-        // converted to one element alike. A side of narrower values is converted ahead of the
-        // walk, as the query is, into a buffer of its own read as it lies: a stage of narrower
-        // values keeps their words, which every fragment load would pick apart cell by cell.
+        // A stage of the cache converts a side it reads at another element as it fills, as an
+        // `f32` read at tf32 or `e4m3` values read at `f16` are: its fragments load the values it
+        // decodes. Both sides converted so are converted to one element alike.
         let converted = |stored: ElemType, read: ElemType| stored != read;
-        let staged = |stored: ElemType, read: ElemType| {
-            converted(stored, read) && stored.size() == u32::BITS as usize / 8
-        };
         let (keys_converted, values_converted) = (
-            staged(item.elements.key, read.score),
-            staged(item.elements.value, read.value),
+            converted(item.elements.key, read.score),
+            converted(item.elements.value, read.value),
         );
         if keys_converted && values_converted && read.score != read.value {
             return Vec::new();
