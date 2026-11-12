@@ -2,11 +2,13 @@ use cubecl::tile::launch::Destination;
 use cubecl::tile::{Axis, Instruction, Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeMeet, cube_shuffle_microkernel};
+use cubek_microkernel::matmul::plane::PlaneShuffleFetch;
 use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 
 /// Every cube, running its run of the output, its units reading each operand as `reads` says, under
 /// the scales it carries, none where it is plain. `O` is how the output is reached: a buffer, or a
-/// sink. A `persistent` launch's cubes each walk a run of the boxes rather than take one.
+/// sink. A `persistent` launch's cubes each walk a run of the boxes rather than take one. Each
+/// step's reads are loaded as `fetch` says.
 #[cube(launch_unchecked)]
 pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destination>(
     lhs: &TileTensor<'_>,
@@ -18,6 +20,7 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
     #[comptime] split: Axis,
     #[comptime] planes: usize,
     #[comptime] reads: MatmulOperands<MatmulRead>,
+    #[comptime] fetch: PlaneShuffleFetch,
     #[comptime] persistent: bool,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
@@ -43,6 +46,7 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
             split,
             planes,
             reads,
+            fetch,
         );
     }
     O::finish::<E>(out);

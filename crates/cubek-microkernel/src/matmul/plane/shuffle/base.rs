@@ -4,11 +4,12 @@ use crate::matmul::{
     MatmulOperands, MatmulRows, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
+use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, RegisterBlock};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::{Spread, Walked};
+use cubek_std::layout::stored::{Packing, Spread, Walked};
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
@@ -72,6 +73,43 @@ pub struct PlaneShuffleMicrokernel {
     /// The rhs's scale blocks and the step a unit moves in, where it is packed; none for a
     /// float rhs.
     pub blocks: Option<PlaneShuffleBlocks>,
+    /// When a unit loads what a step of `K` reads: a step ahead wherever it can hold those reads
+    /// undecoded ([`PlaneShuffleFetch::of`]).
+    pub fetch: PlaneShuffleFetch,
+}
+
+/// When a plane's units load what a step of `K` reads. Not a setting: a memory-bound walk keeps
+/// the next step's loads in flight wherever its units can hold them, so the operands decide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PlaneShuffleFetch {
+    /// As the step contracts: each read loaded, decoded and multiplied in turn.
+    InStep,
+    /// A step ahead: the next step's reads loaded into registers, undecoded, before this step
+    /// decodes and multiplies what it holds (`Tile::mma_prefetched`).
+    StepAhead,
+}
+
+impl PlaneShuffleFetch {
+    /// How a product packed as `packings` says is fetched: a step ahead for a packed rhs whose
+    /// block scales are bytes read a word at a time, beside a float lhs, which a unit holds as
+    /// the words it loads; in the step for anything else, a float rhs among them, and a packed rhs
+    /// read a scale byte at a time, whose scale no register holds undecoded.
+    pub fn of(packings: &MatmulOperands<Option<Packing>>) -> Self {
+        let byte_scales = |packing: &Packing| {
+            packing
+                .scheme
+                .block_scale()
+                .is_some_and(|scale| ElemType::from_scale_dtype(scale.dtype).size_bits() == 8)
+        };
+        // EXPERIMENT, not for merge: `CUBEK_IN_STEP` keeps every walk in the step.
+        if std::env::var_os("CUBEK_IN_STEP").is_some() {
+            return Self::InStep;
+        }
+        match (&packings.lhs, &packings.rhs) {
+            (None, Some(rhs)) if byte_scales(rhs) && !rhs.reads_scale_bytes() => Self::StepAhead,
+            _ => Self::InStep,
+        }
+    }
 }
 
 /// A packed rhs as the plane shuffle reads it: its blocks, and the step a unit's columns and its
@@ -460,6 +498,9 @@ impl Microkernel for PlaneShuffleMicrokernel {
         let units_along_m = settings.units_along_m(rows, plane_width);
         // The plane's share left by the units along `M`, for the units along `K` and `N`.
         let shared = plane_width / units_along_m;
+        let fetch = item.blocks.map_or(PlaneShuffleFetch::InStep, |space| {
+            PlaneShuffleFetch::of(&space.packings)
+        });
         let sized = |units_along_k: usize, blocks| Self {
             settings: *settings,
             rows: rows / units_along_m,
@@ -473,6 +514,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
             },
             axes: item.axes,
             blocks,
+            fetch,
         };
         match item.blocks {
             None => {

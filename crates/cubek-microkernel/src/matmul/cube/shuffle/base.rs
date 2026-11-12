@@ -1,7 +1,7 @@
 use crate::matmul::cube::MatmulCubeSpace;
 use crate::matmul::plane::{
-    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
-    PlaneShuffleMicrokernelSettings,
+    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleFetch,
+    PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
 };
 use crate::matmul::{
     MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead, MatmulWorkItem,
@@ -390,6 +390,15 @@ impl CubeShufflePlane {
         match self {
             CubeShufflePlane::Shuffle(plane) => plane.tile_instruction(),
             CubeShufflePlane::Fragment(plane) => plane.tile_instruction(),
+        }
+    }
+
+    /// When the plane's units load a step's reads: as the software plane's operands decide
+    /// ([`PlaneShuffleFetch::of`]), in the step for the tensor-core one.
+    pub fn fetch(&self) -> PlaneShuffleFetch {
+        match self {
+            CubeShufflePlane::Shuffle(plane) => plane.fetch,
+            CubeShufflePlane::Fragment(_) => PlaneShuffleFetch::InStep,
         }
     }
 
