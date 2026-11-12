@@ -38,7 +38,7 @@ pub enum HypercubeMerge {
     LastArrival,
     /// By a second launch, the split-keys merge
     /// ([`PlaneSplitKeysMergeRoutine`](crate::kernels::PlaneSplitKeysMergeRoutine)), one plane a
-    /// row: every row is merged at once, and no cube counts itself in anywhere. The routine
+    /// query of a head: every query is merged at once, and no cube counts itself in anywhere. The routine
     /// leaves its partials, and a strategy launches the merge after it.
     SecondLaunch,
 }

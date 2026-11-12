@@ -392,16 +392,16 @@ mod packed_lhs {
                 );
             }
         }
-        // The decode names a packed matrix's axes `K` and `N`: the `[m, k]` input's rows are its
-        // `N`, a product of one row.
-        let rows = 512;
+        // The decode names a packed matrix's axes `K` and `N`: the `[m, k]` input's `m` is its `N`,
+        // in a product whose own `m` is one.
+        let m = 512;
         let decode = MatmulRoutineProblem::packed(
             1,
-            rows,
+            m,
             4096,
             F16,
             MatmulOperands {
-                rhs: packed_lhs(rows).packings.lhs,
+                rhs: packed_lhs(m).packings.lhs,
                 ..MatmulOperands::all(None)
             },
         );
@@ -411,7 +411,7 @@ mod packed_lhs {
                 .is_ok(),
             "the decode declines the packed lhs"
         );
-        let dense = MatmulRoutineProblem::dense(rows, 2048, 4096, F16);
+        let dense = MatmulRoutineProblem::dense(m, 2048, 4096, F16);
         assert!(
             CubeStagedMatmulRoutine
                 .settings(&hw)
