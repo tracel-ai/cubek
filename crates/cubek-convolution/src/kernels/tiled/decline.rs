@@ -8,6 +8,8 @@ pub enum ConvDecline {
     Bias,
     /// A weight or weight gradient whose channels are not the input's.
     Groups,
+    /// A convolution over no spatial dim.
+    NoSpatialDim,
     /// Operands that are not 2D NHWC tensors and a `[co, kh, kw, ci]` weight or weight gradient,
     /// or arguments of another dimension.
     NotTwoDimensional,
@@ -58,6 +60,7 @@ impl ConvDecline {
             Self::Groups => {
                 "the tiled convolution contracts every input channel, so it has no groups"
             }
+            Self::NoSpatialDim => "the tiled convolution has at least one spatial dimension",
             Self::NotTwoDimensional => {
                 "the tiled convolution reads 2D NHWC tensors and a [co, kh, kw, ci] weight"
             }

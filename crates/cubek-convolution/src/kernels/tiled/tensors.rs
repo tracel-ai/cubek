@@ -117,9 +117,9 @@ impl ConvTensors {
         {
             return Err(ConvDecline::NotTwoDimensional.into());
         }
-        let roles = ConvRoles::of(operation)?;
+        let roles = ConvRoles::of(operation, window.len())?;
         let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);
-        let channels = |axis| (axis == roles.inner.lhs).then_some(input.shape[3]);
+        let channels = |axis| (axis == roles.inner.lhs).then_some(input.shape[roles.dims + 1]);
         let checks = [
             (CI, ConvDecline::Groups, channels(CI)),
             (CO, ConvDecline::OutChannels, channels(CO)),
@@ -158,7 +158,7 @@ impl ConvTensors {
         if problem.spatial.iter().any(steps_zero) {
             return Err(ConvDecline::WindowStepZero.into());
         }
-        let roles = ConvRoles::of(self.operation)?;
+        let roles = ConvRoles::of(self.operation, self.window.len())?;
         let states_output = |dim: &ConvDim| {
             let (input, output) = roles.gather.window_ends(dim);
             dim.window.output(input, dim.kernel) == output
@@ -183,10 +183,7 @@ impl ConvTensors {
     /// that built them read each dim through those views.
     pub fn problem(&self) -> ConvProblem {
         let start = |tensor: &TensorBinding| tensor.handle.offset_start.unwrap_or(0);
-        let shape = |tensor: &TensorBinding| {
-            let dims: &[usize] = &tensor.shape;
-            [dims[0], dims[1], dims[2], dims[3]]
-        };
+        let shape = |tensor: &TensorBinding| tensor.shape.to_vec();
         ConvProblem::from_views(
             self.operation,
             &self.window,
@@ -238,7 +235,7 @@ impl ConvTensors {
             .vectorize(widths.lhs);
         // A box that overhangs a gathered axis reads past the input even where every real output
         // position reads inside it.
-        let inside = problem.reads_inside() && !partitioning.overhangs_gathered();
+        let inside = problem.reads_inside() && !partitioning.overhangs_gathered(&roles);
         let input = match inside {
             true => input,
             false => input.boundary(BoundaryPolicy::Every(Boundary::Zero)),
@@ -252,10 +249,9 @@ impl ConvTensors {
             .axes(&roles.free.in_order())
             .vectorize(widths.out)
             .build()?;
-        let masked = roles
-            .free
-            .in_order()
-            .map(|axis| (axis == roles.axes().m).then_some(Boundary::Zero));
+        let masked: Vec<_> = (roles.free.in_order().into_iter())
+            .map(|axis| (axis == roles.axes().m).then_some(Boundary::Zero))
+            .collect();
         out.spec = match blueprint.masks_out && !out.spec.is_checked() {
             true => out.spec.boundaries(&masked),
             false => out.spec,

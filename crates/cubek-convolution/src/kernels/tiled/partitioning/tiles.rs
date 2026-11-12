@@ -28,7 +28,7 @@ impl From<&PlaneFragmentInstruction> for InstructionShape {
 }
 
 /// The cuts a routine states over the output's rows and columns, and over the contraction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConvTiles {
     roles: ConvRoles,
     instruction: InstructionShape,
@@ -195,7 +195,7 @@ impl ConvTiles {
             ])
             .walk_every(&self.roles.contracted.in_order())
             .cubes(&[axes.n, axes.m, self.roles.free.across])
-            .batches(&[self.roles.free.batch])
+            .batches(&self.roles.free.outer)
             .build()
     }
 

@@ -39,10 +39,16 @@ impl CubeStagedConvTuneKey {
     /// positions across) than the device spawns, which settings may then disagree on within one
     /// bucket.
     fn batch(problem: &ConvProblem, hw: &Hardware) -> usize {
-        let roles = problem.roles();
+        let free = problem.roles().free;
         let bucket = problem.batch.next_power_of_two();
-        let rides_grid = roles.free.batch == B;
-        let cubes = bucket.saturating_mul(problem.extent(roles.free.across));
+        let grid = || free.outer.iter().chain([&free.across]);
+        let rides_grid = grid().any(|&axis| axis == B);
+        let cubes = grid()
+            .map(|&axis| match axis == B {
+                true => bucket,
+                false => problem.extent(axis),
+            })
+            .fold(1, usize::saturating_mul);
         let most_cubes = hw.properties.hardware.max_cube_count.2 as usize;
         match rides_grid && cubes > most_cubes {
             true => problem.batch,

@@ -68,16 +68,16 @@ impl Conv2dProblem {
 impl From<&Conv2dProblem> for ConvProblem {
     fn from(problem: &Conv2dProblem) -> Self {
         let roles =
-            ConvRoles::of(problem.operation).expect("the host states no transposed forward");
-        let [lhs, rhs, out] = problem.shapes();
+            ConvRoles::of(problem.operation, 2).expect("the host states no transposed forward");
+        let [lhs, rhs, out] = problem.shapes().map(|shape| shape.to_vec());
         let shapes = MatmulOperands { lhs, rhs, out };
         Self::from_views(
             problem.operation,
             &problem.args.dims(),
-            roles.views(shapes),
+            roles.views(&shapes),
             MatmulOperands::all(problem.element.elem_type()),
             ElemType::Float(FloatKind::F32),
-            roles.dense_alignments(shapes),
+            roles.dense_alignments(&shapes),
             MatmulOperands::all(0),
         )
     }

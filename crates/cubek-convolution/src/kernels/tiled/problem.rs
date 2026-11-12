@@ -16,10 +16,6 @@ use serde::{Deserialize, Serialize};
 pub const B: Axis = Axis(0);
 pub const CO: Axis = Axis(1);
 pub const CI: Axis = Axis(2);
-pub const OH: Axis = out(0);
-pub const OW: Axis = out(1);
-pub const RH: Axis = tap(0);
-pub const RW: Axis = tap(1);
 
 /// The output axis of spatial dim `dim`.
 pub const fn out(dim: usize) -> Axis {
@@ -29,6 +25,29 @@ pub const fn out(dim: usize) -> Axis {
 /// The tap axis of spatial dim `dim`, which the window slides along with [`out`].
 pub const fn tap(dim: usize) -> Axis {
     Axis(4 + 2 * dim as u8)
+}
+
+/// What an axis of the space measures.
+enum ConvAxis {
+    Batch,
+    ChannelsOut,
+    ChannelsIn,
+    Out(usize),
+    Tap(usize),
+}
+
+impl ConvAxis {
+    /// The measure of `axis`, a label [`B`], [`CO`], [`CI`], [`out`] or [`tap`] made.
+    fn of(axis: Axis) -> Self {
+        match axis {
+            B => Self::Batch,
+            CO => Self::ChannelsOut,
+            CI => Self::ChannelsIn,
+            Axis(label) if label >= 3 && label % 2 == 1 => Self::Out(usize::from(label - 3) / 2),
+            Axis(label) if label >= 3 => Self::Tap(usize::from(label - 4) / 2),
+            _ => panic!("{axis:?} is not an axis of a convolution"),
+        }
+    }
 }
 
 /// One spatial dim of a convolution: the extents it reads and writes along it and the window
@@ -79,26 +98,26 @@ impl ConvProblem {
     pub fn from_views(
         operation: ConvolutionOperation,
         window: &[SpatialWindow],
-        views: MatmulOperands<[usize; 4]>,
+        views: MatmulOperands<Vec<usize>>,
         elements: MatmulOperands<ElemType>,
         sum: ElemType,
         alignments: MatmulOperands<ElemAlignment>,
         start_bytes: MatmulOperands<u64>,
     ) -> Self {
-        let lhs = views.lhs;
-        let extents = ConvRoles::of(operation)
+        let extents = ConvRoles::of(operation, window.len())
             .expect("a problem is stated by tensors that were checked")
             .extents;
+        let (kernel, out) = (extents.kernel.read(&views), extents.out.read(&views));
         Self {
             operation,
-            batch: lhs[0],
+            batch: views.lhs[0],
             channels_in: extents.channels_in.read(&views),
             channels_out: extents.channels_out.read(&views),
             spatial: (0..window.len())
                 .map(|dim| ConvDim {
-                    gathered: lhs[dim + 1],
-                    kernel: extents.kernel[dim].read(&views),
-                    out: extents.out[dim].read(&views),
+                    gathered: views.lhs[dim + 1],
+                    kernel: kernel[dim],
+                    out: out[dim],
                     window: window[dim],
                 })
                 .collect(),
@@ -116,7 +135,8 @@ impl ConvProblem {
     /// On a transposed forward, which [`ConvTensors`](super::ConvTensors) refuses before any
     /// problem is stated.
     pub fn roles(&self) -> ConvRoles {
-        ConvRoles::of(self.operation).expect("a problem is stated by tensors that were checked")
+        ConvRoles::of(self.operation, self.spatial.len())
+            .expect("a problem is stated by tensors that were checked")
     }
 
     /// What every microkernel of this problem is handed, each operand's layout as its buffer
@@ -134,22 +154,29 @@ impl ConvProblem {
         }
     }
 
-    /// The seven axes of the contraction, in the order the operation lists them.
+    /// The axes of the contraction, in the order the operation lists them.
     pub fn space(&self) -> Space {
-        Space::new(&self.roles().space.map(|axis| (axis, self.extent(axis))))
+        let axes: Vec<_> = (self.roles().space.into_iter())
+            .map(|axis| (axis, self.extent(axis)))
+            .collect();
+        Space::new(&axes)
+    }
+
+    /// The cells of the output's outer axes: the boxes of the output that a launch hands out one
+    /// to each of its batches.
+    pub fn outer_extent(&self) -> usize {
+        let outer = self.roles().free.outer;
+        outer.into_iter().map(|axis| self.extent(axis)).product()
     }
 
     /// What `axis` measures in this problem.
     pub fn extent(&self, axis: Axis) -> usize {
-        match axis {
-            B => self.batch,
-            OH => self.spatial[0].out,
-            OW => self.spatial[1].out,
-            CO => self.channels_out,
-            RH => self.spatial[0].kernel,
-            RW => self.spatial[1].kernel,
-            CI => self.channels_in,
-            _ => panic!("{axis:?} is not an axis of a convolution"),
+        match ConvAxis::of(axis) {
+            ConvAxis::Batch => self.batch,
+            ConvAxis::ChannelsOut => self.channels_out,
+            ConvAxis::ChannelsIn => self.channels_in,
+            ConvAxis::Out(dim) => self.spatial[dim].out,
+            ConvAxis::Tap(dim) => self.spatial[dim].kernel,
         }
     }
 
@@ -175,21 +202,21 @@ impl ConvProblem {
             || self.spatial.iter().any(|dim| dim.window.padding > 0)
     }
 
-    /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: an NHWC buffer whose
-    /// two spatial dims are each addressed by an output axis and a tap axis. The data backward
-    /// reads the gradient the other way round, at stride 1.
+    /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: a channels last
+    /// buffer whose spatial dims are each addressed by an output axis and a tap axis. The data
+    /// backward reads the gradient the other way round, at stride 1.
     pub fn input_projection(&self) -> Projection {
         let roles = self.roles();
-        let [[oh, rh], [ow, rw]] = ConvRoles::SPATIAL;
-        Projection::new(
-            &roles.lhs,
-            &[
-                PhysicalAxisMap::of(B),
-                roles.gather.map(&self.spatial[0].window, oh, rh),
-                roles.gather.map(&self.spatial[1].window, ow, rw),
-                PhysicalAxisMap::of(roles.inner.lhs),
-            ],
-        )
+        let spatial = roles
+            .spatial()
+            .zip(&self.spatial)
+            .map(|([out, tap], dim)| roles.gather.map(&dim.window, out, tap));
+        let maps: Vec<_> = [PhysicalAxisMap::of(B)]
+            .into_iter()
+            .chain(spatial)
+            .chain([PhysicalAxisMap::of(roles.inner.lhs)])
+            .collect();
+        Projection::new(&roles.lhs, &maps)
     }
 
     /// Whether every position the window reads lies in the input, so no read needs a check of its
@@ -223,5 +250,44 @@ impl EstimatedProblem for ConvProblem {
             },
         }
         .work()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eval::benchmarks::{Conv2dElement, Conv2dProblem};
+    use crate::launch::ConvolutionArgs;
+    use ConvolutionOperation::{BackwardData, BackwardWeight, Forward};
+
+    /// Each operation reads the batch, the channels and the spatial extents from the dims of its
+    /// own operands: the data backward gathers the output gradient and writes the input's shape.
+    #[test]
+    fn extents_come_from_the_views_each_operation_states() {
+        for operation in [Forward, BackwardWeight, BackwardData] {
+            let problem = ConvProblem::from(&Conv2dProblem {
+                input_shape: [2, 3, 10, 8],
+                weight_shape: [5, 3, 3, 2],
+                args: ConvolutionArgs {
+                    stride: [1; 2],
+                    padding: [0; 2],
+                    dilation: [1; 2],
+                },
+                operation,
+                element: Conv2dElement::F32,
+            });
+            let spatial: Vec<_> = (problem.spatial.iter())
+                .map(|dim| (dim.gathered, dim.kernel, dim.out))
+                .collect();
+            let expected = match operation {
+                BackwardData => [(8, 3, 10), (7, 2, 8)],
+                Forward | BackwardWeight | ConvolutionOperation::ForwardTransposed => {
+                    [(10, 3, 8), (8, 2, 7)]
+                }
+            };
+            let channels = (problem.batch, problem.channels_in, problem.channels_out);
+            assert_eq!(channels, (2, 3, 5), "{operation:?}");
+            assert_eq!(spatial, expected, "{operation:?}");
+        }
     }
 }

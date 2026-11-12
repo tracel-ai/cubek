@@ -136,9 +136,8 @@ impl UnitRegistersConvRoutine {
         };
         // The resolved rows, which a work item holding its rows whole sets apart from the settings'.
         let columns = microkernel.settings.columns.get() * blocks;
-        let launch_tiles = tiles.count()
-            * problem.extent(axes.n).div_ceil(columns)
-            * problem.extent(roles.free.batch);
+        let launch_tiles =
+            tiles.count() * problem.extent(axes.n).div_ceil(columns) * problem.outer_extent();
         PlaneDeal::of(hw.unit_dispatch(), tiles, launch_tiles, planes)
     }
 
@@ -165,7 +164,7 @@ impl UnitRegistersConvRoutine {
     /// The axes the planes are laid over, and the extent of each as the launch reads it: a plane
     /// past the end of one has nothing to do.
     fn bounds(problem: &ConvProblem) -> (Vec<Axis>, SequenceArg<usize>) {
-        let axes = problem.roles().plane_axes().to_vec();
+        let axes = problem.roles().plane_axes();
         let mut extents = SequenceArg::new();
         for &axis in &axes {
             extents.push(problem.extent(axis));

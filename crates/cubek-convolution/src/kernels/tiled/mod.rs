@@ -26,7 +26,7 @@ pub(crate) use binding::ConvBinding;
 pub(crate) use blueprint::TileConvBlueprint;
 pub(crate) use launch::ConvRoutine;
 pub(crate) use partitioning::{ConvPartitioning, ConvTiles, InstructionShape};
-pub(crate) use problem::{B, CI, CO, ConvDim, ConvProblem, OH, OW, RH, RW};
+pub(crate) use problem::{B, CI, CO, ConvDim, ConvProblem, out, tap};
 pub(crate) use roles::{ConvGather, ConvRoles};
 pub(crate) use routines::{CubeStagedConvRoutine, UnitRegistersConvRoutine};
 pub(crate) use staging::ConvStaging;

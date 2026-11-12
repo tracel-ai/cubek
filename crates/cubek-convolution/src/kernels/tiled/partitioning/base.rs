@@ -126,11 +126,8 @@ impl ConvPartitioning {
 
     /// Whether the tiles overhang an axis the window gathers the input over, where a read past
     /// the real extents lands off the input whatever the padding.
-    pub fn overhangs_gathered(&self) -> bool {
-        ConvRoles::SPATIAL
-            .as_flattened()
-            .iter()
-            .any(|&axis| self.overhangs(axis))
+    pub fn overhangs_gathered(&self, roles: &ConvRoles) -> bool {
+        roles.spatial().flatten().any(|axis| self.overhangs(axis))
     }
 
     /// How the stages hold their cells.
@@ -213,7 +210,7 @@ impl ConvPartitioning {
         let covered: usize = (0..3).map(|axis| boxes[axis] * cuts[axis]).product();
         let work: usize = extents.iter().product();
         let wasteful = covered >= 2 * work.max(1);
-        let cubes = boxes.iter().product::<usize>() * problem.extent(roles.free.batch);
+        let cubes = boxes.iter().product::<usize>() * problem.outer_extent();
         let idle = hw
             .cubes_to_fill(units_per_cube as u32)
             .is_some_and(|wanted| wanted as usize > 2 * cubes.max(1));

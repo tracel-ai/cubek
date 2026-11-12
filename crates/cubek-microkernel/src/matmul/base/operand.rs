@@ -53,6 +53,17 @@ pub struct MatmulOperands<T> {
     pub out: T,
 }
 
+impl<T> MatmulOperands<T> {
+    /// The value of `operand`, where `T` is not `Copy`.
+    pub fn get_ref(&self, operand: MatmulOperand) -> &T {
+        match operand {
+            MatmulOperand::Lhs => &self.lhs,
+            MatmulOperand::Rhs => &self.rhs,
+            MatmulOperand::Out => &self.out,
+        }
+    }
+}
+
 impl<T: Copy> MatmulOperands<T> {
     /// `value` for every operand.
     pub fn all(value: T) -> Self {
@@ -64,11 +75,7 @@ impl<T: Copy> MatmulOperands<T> {
     }
 
     pub fn get(&self, operand: MatmulOperand) -> T {
-        match operand {
-            MatmulOperand::Lhs => self.lhs,
-            MatmulOperand::Rhs => self.rhs,
-            MatmulOperand::Out => self.out,
-        }
+        *self.get_ref(operand)
     }
 
     /// These values with `operand`'s replaced by `value`.
