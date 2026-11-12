@@ -1,9 +1,10 @@
-//! A 2D convolution as one tile contraction over a gathered input: the forward, the weight
-//! gradient and the data gradient share one space and one projection of the input, with the roles
-//! of the axes moved ([`ConvolutionOperation`]). The data gradient is at stride 1 only.
+//! A convolution over any number of spatial dims as one tile contraction over a gathered input:
+//! the forward, the weight gradient and the data gradient share one space and one projection of
+//! the input, with the roles of the axes moved ([`ConvolutionOperation`]). The data gradient is at
+//! stride 1 only.
 //!
-//! Activations are NHWC and the weight and its gradient `[co, kh, kw, ci]`. The routines in
-//! `routines` are what runs, one folder per scope.
+//! Activations are channels last and the weight and its gradient `[co, taps.., ci]`. The routines
+//! in `routines` are what runs, one folder per scope.
 
 mod binding;
 mod blueprint;

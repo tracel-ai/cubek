@@ -111,11 +111,12 @@ impl ConvTensors {
         let (InputBinding::Normal(input, _), InputBinding::Normal(rhs, _)) = (input, rhs) else {
             return Err(ConvDecline::Quantized.into());
         };
+        let rank = window.len() + 2;
         if [&input, &rhs, &out]
             .iter()
-            .any(|tensor| tensor.shape.len() != 4)
+            .any(|tensor| tensor.shape.len() != rank)
         {
-            return Err(ConvDecline::NotTwoDimensional.into());
+            return Err(ConvDecline::RankMismatch.into());
         }
         let roles = ConvRoles::of(operation, window.len())?;
         let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);

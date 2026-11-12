@@ -5,7 +5,6 @@
 //! dispatches to the per-operation helper based on `ConvolutionInputs`.
 
 use cubecl::client::Client;
-use cubecl::tile::launch::Refusal;
 use cubek_matmul::{
     definition::MatmulElems,
     multi_level::{
@@ -29,7 +28,7 @@ use crate::{
     components::ConvSetupError,
     kernels::{
         backward_data, backward_weight, forward,
-        tiled::{ConvDecline, ConvRoutineKind, ConvTensors},
+        tiled::{ConvRoutineKind, ConvTensors},
     },
     launch::{
         ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy, strategy::AcceleratedTileKind,
@@ -65,9 +64,6 @@ fn launch_tile<const N_SPATIAL: usize>(
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError> {
     let window = &args.dims();
-    if N_SPATIAL != 2 {
-        return Err(Refusal::from(ConvDecline::NotTwoDimensional).into());
-    }
     let tensors = match inputs {
         ConvolutionInputs::Forward {
             input,

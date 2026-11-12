@@ -10,9 +10,9 @@ pub enum ConvDecline {
     Groups,
     /// A convolution over no spatial dim.
     NoSpatialDim,
-    /// Operands that are not 2D NHWC tensors and a `[co, kh, kw, ci]` weight or weight gradient,
-    /// or arguments of another dimension.
-    NotTwoDimensional,
+    /// Operands whose rank is not two more than the arguments' spatial dims: channels last
+    /// activations and a `[co, taps.., ci]` weight or weight gradient.
+    RankMismatch,
     /// An operand that is quantized, whose scales the binding would drop.
     Quantized,
     /// The gradient of the input at a stride above 1, which reads the output gradient only at
@@ -61,8 +61,8 @@ impl ConvDecline {
                 "the tiled convolution contracts every input channel, so it has no groups"
             }
             Self::NoSpatialDim => "the tiled convolution has at least one spatial dimension",
-            Self::NotTwoDimensional => {
-                "the tiled convolution reads 2D NHWC tensors and a [co, kh, kw, ci] weight"
+            Self::RankMismatch => {
+                "the tiled convolution reads channels last tensors and a [co, taps.., ci] weight, one dim per spatial dimension of its arguments"
             }
             Self::Quantized => {
                 "the tiled convolution reads float operands, a quantized one would lose its scales"
