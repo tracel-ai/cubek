@@ -8,7 +8,9 @@ use cubecl::client::Client;
 use cubek_matmul::{
     definition::MatmulElems,
     multi_level::{
-        components::tile::TileMatmulKind, definition::BatchMatmulBlueprint, routines::TilingArgs,
+        components::tile::TileMatmulKind,
+        definition::BatchMatmulBlueprint,
+        routines::{PlaneTilingBlueprintOptions, TilingArgs},
     },
     routine::BlueprintStrategy,
 };
@@ -60,11 +62,16 @@ pub fn launch_ref<const N_SPATIAL: usize>(
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError> {
-    let (algorithm, tile_kind, forced_matmul) = match strategy {
+    let (algorithm, tile_kind, forced_matmul, plane_tiling) = match strategy {
         Strategy::Inferred {
             algorithm,
             tile_kind,
-        } => (*algorithm, *tile_kind, None),
+        } => (*algorithm, *tile_kind, None, None),
+        Strategy::InferredTiled {
+            algorithm,
+            tile_kind,
+            tiling,
+        } => (*algorithm, *tile_kind, None, Some(tiling.clone())),
         Strategy::Forced {
             algorithm,
             blueprint,
@@ -78,7 +85,7 @@ pub fn launch_ref<const N_SPATIAL: usize>(
             // For Forced, tile_kind is encoded inside the matmul blueprint, so
             // the explicit tile_kind here is unused; we pass Cmma as a benign
             // default (it gets overwritten by the forced blueprint).
-            (*algorithm, AcceleratedTileKind::Cmma, Some(matmul))
+            (*algorithm, AcceleratedTileKind::Cmma, Some(matmul), None)
         }
         Strategy::Unit(strategy) => {
             return unit::launch(*strategy, client, inputs, args, dtypes);
@@ -95,6 +102,7 @@ pub fn launch_ref<const N_SPATIAL: usize>(
     dispatch_routine::<N_SPATIAL>(
         algorithm,
         tile_kind,
+        plane_tiling,
         forced_matmul,
         client,
         inputs,
@@ -109,6 +117,7 @@ pub fn launch_ref<const N_SPATIAL: usize>(
 fn dispatch_routine<const N_SPATIAL: usize>(
     algorithm: ConvAlgorithm,
     tile_kind: AcceleratedTileKind,
+    plane_tiling: Option<PlaneTilingBlueprintOptions>,
     forced_matmul: Option<BatchMatmulBlueprint>,
     client: &Client,
     inputs: ConvolutionInputs,
@@ -122,6 +131,7 @@ fn dispatch_routine<const N_SPATIAL: usize>(
             inputs,
             args,
             kind,
+            plane_tiling,
             forced_matmul,
             dtypes,
         ),
@@ -130,6 +140,7 @@ fn dispatch_routine<const N_SPATIAL: usize>(
             inputs,
             args,
             kind,
+            plane_tiling,
             forced_matmul,
             dtypes,
         ),
@@ -138,6 +149,7 @@ fn dispatch_routine<const N_SPATIAL: usize>(
             inputs,
             args,
             kind,
+            plane_tiling,
             forced_matmul,
             dtypes,
         ),
@@ -146,6 +158,7 @@ fn dispatch_routine<const N_SPATIAL: usize>(
             inputs,
             args,
             kind,
+            plane_tiling,
             forced_matmul,
             dtypes,
         ),
@@ -154,6 +167,7 @@ fn dispatch_routine<const N_SPATIAL: usize>(
             inputs,
             args,
             kind,
+            plane_tiling,
             forced_matmul,
             dtypes,
         ),
@@ -162,6 +176,7 @@ fn dispatch_routine<const N_SPATIAL: usize>(
             inputs,
             args,
             kind,
+            plane_tiling,
             forced_matmul,
             dtypes,
         ),
@@ -179,6 +194,7 @@ fn dispatch_inputs<const N_SPATIAL: usize, Rt: Routine<Blueprint = BatchMatmulBl
     inputs: ConvolutionInputs,
     args: ConvolutionArgs<N_SPATIAL>,
     tile_matmul: TileMatmulKind,
+    plane_tiling: Option<PlaneTilingBlueprintOptions>,
     forced_matmul: Option<BatchMatmulBlueprint>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
@@ -188,7 +204,8 @@ where
         + backward_weight::args::ConcreteArgs<Rt::MatmulRoutine>,
     Rt::Strategy: TilingArgs,
 {
-    let blueprint_strategy = build_blueprint_strategy::<Rt>(tile_matmul, forced_matmul);
+    let blueprint_strategy =
+        build_blueprint_strategy::<Rt>(tile_matmul, plane_tiling, forced_matmul);
 
     match inputs {
         ConvolutionInputs::Forward {
@@ -240,6 +257,7 @@ where
 /// requested tile-matmul kind.
 fn build_blueprint_strategy<Rt: Routine<Blueprint = BatchMatmulBlueprint>>(
     tile_matmul: TileMatmulKind,
+    plane_tiling: Option<PlaneTilingBlueprintOptions>,
     forced_matmul: Option<BatchMatmulBlueprint>,
 ) -> BlueprintStrategy<Rt::MatmulRoutine>
 where
@@ -250,6 +268,9 @@ where
         None => {
             let mut s = <Rt::MatmulRoutine as cubek_std::legacy::Routine>::Strategy::default();
             s.set_tile_matmul(tile_matmul);
+            if let Some(options) = plane_tiling {
+                s.set_plane_tiling(options);
+            }
             BlueprintStrategy::Inferred(s)
         }
     }
