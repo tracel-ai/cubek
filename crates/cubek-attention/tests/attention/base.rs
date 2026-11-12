@@ -10,8 +10,8 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::{Shape, shape};
 use cubek_attention::kernels::{
-    AttentionLaunch, AttentionScoring, AttentionTensors, DirectAttention, ScoreScale,
-    SplitKeysAttention,
+    AttentionCache, AttentionLaunch, AttentionQueries, AttentionScoring, AttentionTensors,
+    CacheScales, DirectAttention, KvSource, ScoreScale, SplitKeysAttention,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
@@ -38,7 +38,24 @@ pub(crate) struct AttentionCase {
     pub keys: FloatKind,
     /// The element the cache stores its values in, as [`keys`](Self::keys) its keys.
     pub values: FloatKind,
+    /// The one scale each side of the cache is stored under, where it has them: the attention
+    /// reads the stored keys and values times their side's scale.
+    pub scales: Option<KvScales>,
 }
+
+/// The scale over every key, and the one over every value, a cache quantized per tensor is
+/// stored under.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct KvScales {
+    pub key: f32,
+    pub value: f32,
+}
+
+/// Scales of a cache quantized per tensor: neither is 1, and the keys' is not the values'.
+pub(crate) const PER_TENSOR: KvScales = KvScales {
+    key: 0.37,
+    value: 2.5,
+};
 
 /// A prompt chunk of two groups of two query heads: no step of queries or keys divides it evenly.
 pub(crate) const PROMPT: AttentionCase = AttentionCase {
@@ -55,6 +72,7 @@ pub(crate) const PROMPT: AttentionCase = AttentionCase {
     hidden: None,
     keys: FloatKind::F16,
     values: FloatKind::F16,
+    scales: None,
 };
 
 /// A causal prompt chunk at a head dim of 128, the one a model's prefill runs: four query heads to
@@ -100,6 +118,27 @@ pub(crate) const PROMPTS_WIDE_FP8: [AttentionCase; 3] = fp8_caches(PROMPT_WIDE);
 
 /// The wide decode step over every FP8 cache.
 pub(crate) const DECODES_WIDE_FP8: [AttentionCase; 3] = fp8_caches(DECODE_WIDE);
+
+/// `case` over a cache quantized per tensor ([`PER_TENSOR`]): `e4m3` keys and values, and `f16`
+/// ones, each side under its own scale.
+pub(crate) const fn per_tensor_caches(case: AttentionCase) -> [AttentionCase; 2] {
+    let scales = Some(PER_TENSOR);
+    [
+        AttentionCase {
+            keys: FloatKind::E4M3,
+            values: FloatKind::E4M3,
+            scales,
+            ..case
+        },
+        AttentionCase { scales, ..case },
+    ]
+}
+
+/// The wide prompt over a cache quantized per tensor.
+pub(crate) const PROMPTS_WIDE_PER_TENSOR: [AttentionCase; 2] = per_tensor_caches(PROMPT_WIDE);
+
+/// The wide decode step over a cache quantized per tensor.
+pub(crate) const DECODES_WIDE_PER_TENSOR: [AttentionCase; 2] = per_tensor_caches(DECODE_WIDE);
 
 /// A single position of the same heads, which a routine walks the group of as its queries.
 pub(crate) const DECODE: AttentionCase = AttentionCase {
@@ -216,7 +255,8 @@ impl AttentionCase {
     }
 
     /// The output `[b, q, h, dv]` and the logsumexp `[b, h, q]` on the host, in `f64`, from the
-    /// inputs as the device holds them. A query that sees no key writes zeros.
+    /// inputs as the device holds them, the keys and values times their side's scale. A query
+    /// that sees no key writes zeros.
     fn reference(&self) -> [HostData; 2] {
         let Self {
             batch,
@@ -231,6 +271,14 @@ impl AttentionCase {
         let group = heads / kv_heads;
         let [(q, _), (k, _), (v, _)] = self.inputs();
         let scale = self.scale();
+        let KvScales {
+            key: key_scale,
+            value: value_scale,
+        } = self.scales.unwrap_or(KvScales {
+            key: 1.0,
+            value: 1.0,
+        });
+        let (key_scale, value_scale) = (key_scale as f64, value_scale as f64);
         let mut out = vec![0f32; batch * seq_q * heads * val_dim];
         let mut logsumexp = vec![0f32; batch * heads * seq_q];
         for b in 0..batch {
@@ -246,7 +294,7 @@ impl AttentionCase {
                                 query
                                     .iter()
                                     .zip(key)
-                                    .map(|(x, y)| *x as f64 * *y as f64)
+                                    .map(|(x, y)| *x as f64 * *y as f64 * key_scale)
                                     .sum::<f64>()
                                     * scale
                             })
@@ -268,6 +316,7 @@ impl AttentionCase {
                             .map(|(j, s)| {
                                 (s - max).exp()
                                     * v[((b * kv_heads + kv) * seq_kv + j) * val_dim + c] as f64
+                                    * value_scale
                             })
                             .sum();
                         out[((b * seq_q + i) * heads + h) * val_dim + c] = match total > 0.0 {
@@ -284,8 +333,8 @@ impl AttentionCase {
         ]
     }
 
-    /// The case's tensors on `client`, asking for each query's logsumexp, under its mask where it
-    /// has one, stored as `u32` cells.
+    /// The case's tensors on `client`, asking for each query's logsumexp, its cache under its
+    /// scales and the scores under its mask where it has them, the mask stored as `u32` cells.
     fn tensors(&self, client: &Client) -> AttentionTensors {
         let query = f16::elem_type_native();
         let (keys, values) = (ElemType::Float(self.keys), ElemType::Float(self.values));
@@ -302,12 +351,18 @@ impl AttentionCase {
         let key = upload(k, Shape::new(k_shape), keys);
         let value = upload(v, Shape::new(v_shape), values);
         let lengths = upload(vec![self.seq_kv as f32], shape![1], u32::elem_type_native());
-        let tensors = AttentionTensors::new(
+        let scale = |scale: f32| upload(vec![scale], shape![1], f32::elem_type_native());
+        let scales = match self.scales {
+            Some(KvScales { key, value }) => CacheScales {
+                key: Some(scale(key)),
+                value: Some(scale(value)),
+            },
+            None => CacheScales::default(),
+        };
+        let tensors = AttentionTensors::attention(
             client,
-            query,
-            key,
-            value,
-            lengths,
+            AttentionQueries::Dense { query, lengths },
+            KvSource::new(AttentionCache::Float { key, value }).scaled(scales),
             AttentionScoring {
                 visibility: self.visibility,
                 scale: ScoreScale::Custom(self.scale() as f32),

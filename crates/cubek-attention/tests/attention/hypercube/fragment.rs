@@ -4,7 +4,7 @@
 use cubek_attention::kernels::HypercubeFragmentPartialAttentionRoutine;
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::attention::{Forward, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8};
+use crate::attention::{Forward, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8, PROMPTS_WIDE_PER_TENSOR};
 
 /// The routine's lead, merged, on every prompt case.
 #[test]
@@ -34,4 +34,17 @@ fn every_hypercube_fragment_microkernel_reads_every_fp8_cache() {
         .into_iter()
         .filter(|settings| settings.cubes_along_keys.get() == 8);
     forward.check(forward.at(eight_cubes, &PROMPTS_WIDE_FP8));
+}
+
+/// Every microkernel setting the routine lists, on eight cubes a box, over a cache quantized per
+/// tensor at a model's head dim: each cube's partial output leaves under the values' scale, its
+/// max and sum under none, so the merge reads them as any other.
+#[test]
+fn every_hypercube_fragment_microkernel_reads_a_cache_quantized_per_tensor() {
+    let forward = Forward::split_keys(HypercubeFragmentPartialAttentionRoutine);
+    let eight_cubes = forward
+        .settings()
+        .into_iter()
+        .filter(|settings| settings.cubes_along_keys.get() == 8);
+    forward.check(forward.at(eight_cubes, &PROMPTS_WIDE_PER_TENSOR));
 }
