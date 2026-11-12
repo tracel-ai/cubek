@@ -4,6 +4,7 @@
 //! engines refuse, which each routine checks between [`CubeStagedPlacement::new`] and
 //! [`CubeStagedPlacement::prepare`].
 
+use super::block_scaled::ADDRESSING_REGISTERS;
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::{
     CubeStagedMatmulRoutine, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
@@ -23,14 +24,15 @@ use cubek_microkernel::matmul::cube::{
     CubeStagedMicrokernelSettings, CubeStagedResolved, CubeStagedStore, CubeStagedTmaRefusal,
     CubeStagedTmaStoreRefusal, MatmulCubeSpace, MatmulCubeWrite,
 };
+use cubek_microkernel::matmul::plane::PlaneFragmentInstruction;
 use cubek_microkernel::matmul::{
     MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulWorkItem,
 };
-use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, KB, KI, MI, N, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid};
+use cubek_std::{Hardware, UNIT_REGISTERS};
 
 /// The cube routines' blueprint: how a stage its microkernel walks holds its cells is the one
 /// layout of shared memory that depends on the problem; the rest is the microkernel's.
@@ -71,18 +73,85 @@ impl<'a> CubeStagedPlacement<'a> {
         let item = view.work_item();
         CubeStagedMicrokernel::admits(&item)?;
         let by_units = fill.delivery == CubeStagedDelivery::Copy;
-        let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
-            .find(|candidate| {
+        let candidates: Vec<_> = CubeStagedMicrokernel::candidates(hw, &item, settings)
+            .filter(|candidate| {
                 by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
             })
-            .ok_or(Refusal::Declined {
-                why: CubeStagedMicrokernel::decline(settings),
-            })?;
-        let microkernel = CubeStagedMicrokernel {
-            fill,
-            store,
-            ..microkernel
+            .map(|candidate| CubeStagedMicrokernel {
+                fill,
+                store,
+                ..candidate
+            })
+            .collect();
+        let (first, others) = candidates.split_first().ok_or(Refusal::Declined {
+            why: CubeStagedMicrokernel::decline(settings),
+        })?;
+        let placed = Self::place(hw, problem, view, item, cube_order, *first)?;
+        // The largest matrix instruction comes first. Where its stages outgrow the device's shared
+        // memory, or its plane the registers a unit holds, the next matrix instruction that fits,
+        // never the software one, which a matrix instruction outruns; with none, the first, which
+        // the grid then refuses where it outgrows the shared memory.
+        let fits = |placed: &Self| placed.fits(hw, &candidates);
+        if fits(&placed) {
+            return Ok(placed);
+        }
+        let smaller = others
+            .iter()
+            .filter(|candidate| {
+                !matches!(
+                    candidate.plane.instruction,
+                    PlaneFragmentInstruction::Registers { .. }
+                )
+            })
+            .filter_map(|candidate| {
+                Self::place(hw, problem, view, item, cube_order, *candidate).ok()
+            })
+            .find(fits);
+        Ok(smaller.unwrap_or(placed))
+    }
+
+    /// Whether this placement's stages fit the device's shared memory and, where its instruction
+    /// is larger than the smallest of its kind among `candidates`, its plane the registers a unit
+    /// holds: its [`registers_per_unit`] beside the compiler's addressing, within
+    /// [`UNIT_REGISTERS`]. A plane's grid counts instruction steps, so a larger instruction holds
+    /// as many more accumulators: on Metal, sixteen 32x32 tensor-op destinations a SIMD group
+    /// spill, where sixteen 8x8 simdgroup matrices do not. The smallest instruction of each kind
+    /// keeps the settings as they are.
+    ///
+    /// [`registers_per_unit`]: cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel::registers_per_unit
+    fn fits(&self, hw: &Hardware, candidates: &[CubeStagedMicrokernel]) -> bool {
+        if self.resolved.shared_memory > hw.shared_memory_budget() {
+            return false;
+        }
+        let plane = &self.resolved.microkernel.plane;
+        let steps = |instruction: PlaneFragmentInstruction| {
+            instruction
+                .shape()
+                .iter()
+                .map(|(_, extent)| extent)
+                .product::<usize>()
         };
+        let kind = core::mem::discriminant(&plane.instruction);
+        let larger = candidates
+            .iter()
+            .map(|candidate| candidate.plane.instruction)
+            .filter(|instruction| core::mem::discriminant(instruction) == kind)
+            .any(|instruction| steps(instruction) < steps(plane.instruction));
+        let registers =
+            plane.registers_per_unit(&self.contracted, self.resolved.plane_width as usize);
+        !larger || registers + ADDRESSING_REGISTERS <= UNIT_REGISTERS
+    }
+
+    /// `microkernel` placed one cube a box over `problem` in `cube_order` and resolved.
+    fn place(
+        hw: &Hardware,
+        problem: &'a MatmulRoutineProblem,
+        view: MatmulView<'a>,
+        item: MatmulWorkItem,
+        cube_order: CubeOrder,
+        microkernel: CubeStagedMicrokernel,
+    ) -> Result<Self, Refusal> {
+        let store = microkernel.store;
         if microkernel.walk().decoded().is_some() {
             view.check_steps(hw)?;
         }
