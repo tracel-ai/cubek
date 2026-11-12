@@ -61,21 +61,52 @@ pub trait ScopeUnderTest {
         }
     }
 
+    /// [`check`](Self::check), where at least one case must launch: a test guarding a launch that
+    /// was once refused fails where every case is refused, unless every refusal is a cube larger
+    /// than the device holds (the CPU runtime's few units), which skips the test.
+    #[track_caller]
+    fn check_some(&self, cases: impl IntoIterator<Item = Self::Case>) {
+        let client = cubecl::test_device().client();
+        let mut refused = Vec::new();
+        let mut launched = 0;
+        for case in cases {
+            match self.attempt(&client, &case) {
+                Ok(outcome) => {
+                    launched += 1;
+                    outcome.enforce();
+                }
+                Err(why) => refused.push(why),
+            }
+        }
+        if launched > 0 {
+            return;
+        }
+        let past_device = |why: &Refusal| matches!(why, Refusal::CubePastDevice { .. });
+        match !refused.is_empty() && refused.iter().all(past_device) {
+            true => TestOutcome::Validated(ValidationResult::Skipped(
+                "every case asks for a cube larger than this device holds".to_string(),
+            ))
+            .enforce(),
+            false => panic!("no case launched; refused: {refused:?}"),
+        }
+    }
+
     /// The outcome of one case, its failure naming the case and the output.
     #[track_caller]
     fn outcome(&self, client: &Client, case: &Self::Case) -> TestOutcome {
-        let written = match self.launch(client, case) {
-            Ok(written) => written,
-            Err(why) => {
-                return TestOutcome::Validated(ValidationResult::Skipped(format!(
-                    "{case:?}: {why:?}"
-                )));
-            }
-        };
+        self.attempt(client, case).unwrap_or_else(|why| {
+            TestOutcome::Validated(ValidationResult::Skipped(format!("{case:?}: {why:?}")))
+        })
+    }
+
+    /// The outcome of one case the scope launched, or why it refused the case.
+    #[track_caller]
+    fn attempt(&self, client: &Client, case: &Self::Case) -> Result<TestOutcome, Refusal> {
+        let written = self.launch(client, case)?;
         let handles: Vec<_> = written.iter().map(|output| &output.tensor.handle).collect();
         if let ExecutionOutcome::CompileError(why) = ExecutionOutcome::of_outputs(client, &handles)
         {
-            return TestOutcome::CompileError(format!("{case:?}: {why}"));
+            return Ok(TestOutcome::CompileError(format!("{case:?}: {why}")));
         }
         let reference = self.reference(case);
         assert_eq!(
@@ -90,14 +121,14 @@ pub trait ScopeUnderTest {
             match assert_equals_approx(&got, &want, tolerance) {
                 ValidationResult::Pass => {}
                 ValidationResult::Fail(why) => {
-                    return TestOutcome::Validated(ValidationResult::Fail(named(why)));
+                    return Ok(TestOutcome::Validated(ValidationResult::Fail(named(why))));
                 }
                 ValidationResult::Error(why) => {
-                    return TestOutcome::Validated(ValidationResult::Error(named(why)));
+                    return Ok(TestOutcome::Validated(ValidationResult::Error(named(why))));
                 }
-                skipped => return TestOutcome::Validated(skipped),
+                skipped => return Ok(TestOutcome::Validated(skipped)),
             }
         }
-        TestOutcome::Validated(ValidationResult::Pass)
+        Ok(TestOutcome::Validated(ValidationResult::Pass))
     }
 }
