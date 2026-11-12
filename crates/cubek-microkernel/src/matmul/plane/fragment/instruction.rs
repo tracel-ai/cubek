@@ -125,7 +125,7 @@ impl PlaneFragmentInstruction {
     ///
     /// Measured on an L4 for a weight gradient's `f32` col lhs at tf32: staged in the product's
     /// order, a unit reads one value at a time across the lhs's lines, and the cmma candidates
-    /// lost to the software instruction a plane once ran.
+    /// lose to the unit routines.
     pub fn orders(self, layouts: MatmulOperands<MatmulLayout>) -> MatmulOperands<BindingOrder> {
         let lhs = match (self, layouts.lhs) {
             (Self::Cmma { .. } | Self::Mma { .. }, MatmulLayout::Col) => {
@@ -197,9 +197,9 @@ impl PlaneFragmentInstruction {
     /// lands them, its rows along `rows`, and one of every batch axis in `batches`. The manual
     /// `mma`'s rows swizzled as the descriptor swizzles them, which keeps the rows a fragment load
     /// reads at once on distinct banks as its own [`stage_layout`](Self::stage_layout) does;
-    /// `cmma`'s in order, since a box lands no padding; the software instruction's as the operand
-    /// lies, as ever. The plane group MMA's swizzled as the manual `mma`'s are: a row one swizzle
-    /// span long lies as the instruction's descriptor reads it.
+    /// `cmma`'s in order, since a box lands no padding. The plane group MMA's swizzled as the
+    /// manual `mma`'s are: a row one swizzle span long lies as the instruction's descriptor reads
+    /// it.
     pub fn landed_stage_storage(
         self,
         batches: &[Axis],

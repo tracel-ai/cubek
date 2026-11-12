@@ -16,8 +16,13 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 /// rows do not see, past a shorter sequence's keys or under a causal mask, are walked by no one,
 /// so every run but the last holds the same steps whatever the keys. A cube whose run is empty
 /// touches no box and leaves at once.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "the query and keys' stage element is defined from them at launch, which the kernel \
+              is compiled for"
+)]
 #[cube(launch_unchecked)]
-pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float>(
+pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float, EV: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
@@ -36,7 +41,7 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     #[comptime] splits: usize,
     #[comptime] visibility: AttentionVisibility,
     #[comptime] storage: StageStorage,
-    #[define(EA, E, ES)] _elements: [ElemType; 3],
+    #[define(EA, E, ES, EV)] _elements: [ElemType; 4],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
 
@@ -85,7 +90,7 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
         }
 
         let run = cube.walk().range(from, taken);
-        cube_staged_attention_shared_microkernel::<EA, ES, E>(
+        cube_staged_attention_shared_microkernel::<EA, EV, E>(
             &cube,
             from,
             taken,

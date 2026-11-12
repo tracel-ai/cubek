@@ -8,8 +8,13 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 /// Every cube running the cube microkernel on its box with planes that read its stage, held as
 /// `storage`, over the keys its rows see, and writing each row's logsumexp where the launch binds
 /// one.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "the query and keys' stage element is defined from them at launch, which the kernel \
+              is compiled for"
+)]
 #[cube(launch_unchecked)]
-pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
+pub fn cube_staged_attention_kernel<EA: Float, ES: Float, EV: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
@@ -24,7 +29,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] storage: StageStorage,
     #[comptime] visibility: AttentionVisibility,
-    #[define(EA, ES)] _elements: [ElemType; 2],
+    #[define(EA, ES, EV)] _elements: [ElemType; 3],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
 
@@ -43,7 +48,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
             let bias = visible.step_bias::<EA>(&partitioning, &cube);
             let steps = visible.steps(&cube, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
 
-            cube_staged_attention_microkernel::<EA, ES>(
+            cube_staged_attention_microkernel::<EA, EV>(
                 &cube,
                 &o.at(&cube),
                 &lse.clone().map(|lse| lse.at(&cube)),

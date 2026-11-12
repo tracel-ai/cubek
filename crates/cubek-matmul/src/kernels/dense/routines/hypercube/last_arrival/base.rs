@@ -388,7 +388,7 @@ mod tests {
                 along_m: NonZeroUsize::MIN,
                 along_n: NonZeroUsize::new(16).unwrap(),
                 depth: NonZeroUsize::new(4).unwrap(),
-                holder: ComputeScope::PLANE_GROUP,
+                holder: ComputeScope::MMA_PLANE_GROUP,
                 ..cube.plane
             },
             ring: StageRing::DOUBLE,
