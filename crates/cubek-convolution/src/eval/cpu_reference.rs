@@ -182,7 +182,7 @@ fn host_tensor(data: &HostData) -> Result<HostTensor<'_>, String> {
     match &data.data {
         HostDataVec::F32(values) => Ok(HostTensor {
             values,
-            dims: [0, 1, 2, 3].map(|axis| data.shape[axis]),
+            dims: &data.shape,
         }),
         _ => Err("the host reference reads f32 operands".to_string()),
     }
@@ -455,120 +455,159 @@ impl From<&ConvSpec> for ConvGeometry {
     }
 }
 
-/// A host tensor as the naive references read it: its values and its four dims, NHWC but for a
-/// weight and its gradient, which are `[co, kh, kw, ci]`.
+/// A host tensor as the naive references read it: its values and its dims, channels last but for
+/// a weight and its gradient, which are `[co, taps.., ci]`.
 #[derive(Debug, Clone, Copy)]
 pub struct HostTensor<'a> {
     pub values: &'a [f32],
-    pub dims: [usize; 4],
+    pub dims: &'a [usize],
 }
 
-/// `out[b, y, x, co] = sum over ky, kx, ci of input[b, y*s + ky*d - p, x*s + kx*d - p, ci] *
-/// weight[co, ky, kx, ci]`, the taps that land outside the input skipped.
-pub fn naive_forward(input: HostTensor, weight: HostTensor, args: &ConvolutionArgs<2>) -> Vec<f32> {
-    let [n, h, w, c] = input.dims;
-    let [co, kh, kw, _] = weight.dims;
-    let [window_h, window_w] = args.dims();
-    let (oh, ow) = (window_h.output(h, kh), window_w.output(w, kw));
-    let mut out = vec![0.0; n * oh * ow * co];
-    for b in 0..n {
-        for y in 0..oh {
-            for x in 0..ow {
-                for o in 0..co {
-                    let mut sum = 0.0;
-                    for ky in 0..kh {
-                        for kx in 0..kw {
-                            let (iy, ix) = (window_h.position(y, ky), window_w.position(x, kx));
-                            if iy < 0 || ix < 0 || iy >= h as isize || ix >= w as isize {
-                                continue;
-                            }
-                            for i in 0..c {
-                                let at = ((b * h + iy as usize) * w + ix as usize) * c + i;
-                                sum += input.values[at]
-                                    * weight.values[((o * kh + ky) * kw + kx) * c + i];
-                            }
-                        }
+/// The multi-index `flat` names in a row-major box of `extents`.
+fn unravel(mut flat: usize, extents: &[usize]) -> Vec<usize> {
+    let mut index = vec![0; extents.len()];
+    for (at, &extent) in index.iter_mut().zip(extents).rev() {
+        *at = flat % extent;
+        flat /= extent;
+    }
+    index
+}
+
+/// The row-major offset of the cell a window reads, at the positions of each spatial dim, `None`
+/// where one lands outside `extents`.
+fn within(extents: &[usize], positions: impl Iterator<Item = isize>) -> Option<usize> {
+    extents
+        .iter()
+        .zip(positions)
+        .try_fold(0, |flat, (&extent, at)| {
+            let at = usize::try_from(at).ok().filter(|&at| at < extent)?;
+            Some(flat * extent + at)
+        })
+}
+
+/// `out[b, o.., co] = sum over taps, ci of input[b, o * stride + tap * dilation - padding.., ci] *
+/// weight[co, tap.., ci]`, the taps that land outside the input skipped.
+pub fn naive_forward<const N: usize>(
+    input: HostTensor,
+    weight: HostTensor,
+    args: &ConvolutionArgs<N>,
+) -> Vec<f32> {
+    let windows = args.dims();
+    let (batches, channels) = (input.dims[0], input.dims[N + 1]);
+    let (gathered, kernel) = (&input.dims[1..=N], &weight.dims[1..=N]);
+    let filters = weight.dims[0];
+    let out: Vec<usize> = (0..N)
+        .map(|dim| windows[dim].output(gathered[dim], kernel[dim]))
+        .collect();
+    let (cells, taps, inputs) = (
+        out.iter().product::<usize>(),
+        kernel.iter().product::<usize>(),
+        gathered.iter().product::<usize>(),
+    );
+    let mut result = vec![0.0; batches * cells * filters];
+    for b in 0..batches {
+        for cell in 0..cells {
+            let at = unravel(cell, &out);
+            for o in 0..filters {
+                let mut sum = 0.0;
+                for tap in 0..taps {
+                    let at_tap = unravel(tap, kernel);
+                    let positions = (0..N).map(|dim| windows[dim].position(at[dim], at_tap[dim]));
+                    let Some(read) = within(gathered, positions) else {
+                        continue;
+                    };
+                    for i in 0..channels {
+                        sum += input.values[(b * inputs + read) * channels + i]
+                            * weight.values[(o * taps + tap) * channels + i];
                     }
-                    out[((b * oh + y) * ow + x) * co + o] = sum;
                 }
+                result[(b * cells + cell) * filters + o] = sum;
             }
         }
     }
-    out
+    result
 }
 
-/// `weight_grad[co, rh, rw, ci] = sum over b, oh, ow of input[b, oh*s + rh*d - p, ow*s + rw*d - p,
-/// ci] * out_grad[b, oh, ow, co]`, the taps that land outside the input skipped.
-pub fn naive_weight_grad(
+/// `weight_grad[co, tap.., ci] = sum over b, o.. of input[b, o * stride + tap * dilation -
+/// padding.., ci] * out_grad[b, o.., co]`, the taps that land outside the input skipped.
+pub fn naive_weight_grad<const N: usize>(
     input: HostTensor,
     out_grad: HostTensor,
-    kernel: [usize; 2],
-    args: &ConvolutionArgs<2>,
+    kernel: [usize; N],
+    args: &ConvolutionArgs<N>,
 ) -> Vec<f32> {
-    let [n, h, w, c] = input.dims;
-    let [_, oh, ow, co] = out_grad.dims;
-    let [window_h, window_w] = args.dims();
-    let mut grad = vec![0.0; co * kernel[0] * kernel[1] * c];
-    for o in 0..co {
-        for ky in 0..kernel[0] {
-            for kx in 0..kernel[1] {
-                for i in 0..c {
-                    let mut sum = 0.0;
-                    for b in 0..n {
-                        for y in 0..oh {
-                            for x in 0..ow {
-                                let (iy, ix) = (window_h.position(y, ky), window_w.position(x, kx));
-                                if iy < 0 || ix < 0 || iy >= h as isize || ix >= w as isize {
-                                    continue;
-                                }
-                                let at = ((b * h + iy as usize) * w + ix as usize) * c + i;
-                                sum += input.values[at]
-                                    * out_grad.values[((b * oh + y) * ow + x) * co + o];
-                            }
-                        }
+    let windows = args.dims();
+    let (batches, channels) = (input.dims[0], input.dims[N + 1]);
+    let (gathered, out) = (&input.dims[1..=N], &out_grad.dims[1..=N]);
+    let filters = out_grad.dims[N + 1];
+    let (cells, taps, inputs) = (
+        out.iter().product::<usize>(),
+        kernel.iter().product::<usize>(),
+        gathered.iter().product::<usize>(),
+    );
+    let mut grad = vec![0.0; filters * taps * channels];
+    for o in 0..filters {
+        for tap in 0..taps {
+            let at_tap = unravel(tap, &kernel);
+            for i in 0..channels {
+                let mut sum = 0.0;
+                for b in 0..batches {
+                    for cell in 0..cells {
+                        let at = unravel(cell, out);
+                        let positions =
+                            (0..N).map(|dim| windows[dim].position(at[dim], at_tap[dim]));
+                        let Some(read) = within(gathered, positions) else {
+                            continue;
+                        };
+                        sum += input.values[(b * inputs + read) * channels + i]
+                            * out_grad.values[(b * cells + cell) * filters + o];
                     }
-                    grad[((o * kernel[0] + ky) * kernel[1] + kx) * c + i] = sum;
                 }
+                grad[(o * taps + tap) * channels + i] = sum;
             }
         }
     }
     grad
 }
 
-/// `in_grad[b, y, x, ci] = sum over co, ky, kx of out_grad[b, gy, gx, co] * weights[co, ky, kx,
-/// ci]` over the output positions `g` whose window reads input `y` at tap `k`, that is
-/// `g * stride = y + padding - k * dilation`; the others are skipped.
-pub fn naive_data_grad(
+/// `in_grad[b, p.., ci] = sum over co, taps of out_grad[b, g.., co] * weights[co, tap.., ci]`
+/// over the output positions `g` whose window reads input `p` at `tap`, that is
+/// `g * stride = p + padding - tap * dilation`; the others are skipped.
+pub fn naive_data_grad<const N: usize>(
     out_grad: HostTensor,
     weights: HostTensor,
-    [h, w]: [usize; 2],
-    args: &ConvolutionArgs<2>,
+    input: [usize; N],
+    args: &ConvolutionArgs<N>,
 ) -> Vec<f32> {
-    let [n, oh, ow, co] = out_grad.dims;
-    let [_, kh, kw, c] = weights.dims;
-    let mut grad = vec![0.0; n * h * w * c];
-    for b in 0..n {
-        for y in 0..h {
-            for x in 0..w {
-                for i in 0..c {
-                    let mut sum = 0.0;
-                    for ky in 0..kh {
-                        for kx in 0..kw {
-                            let (Some(gy), Some(gx)) = (
-                                output_reading(args, 0, y, ky, oh),
-                                output_reading(args, 1, x, kx, ow),
-                            ) else {
-                                continue;
-                            };
-                            for o in 0..co {
-                                let at = ((b * oh + gy) * ow + gx) * co + o;
-                                sum += out_grad.values[at]
-                                    * weights.values[((o * kh + ky) * kw + kx) * c + i];
-                            }
-                        }
+    let (batches, filters) = (out_grad.dims[0], out_grad.dims[N + 1]);
+    let (out, kernel) = (&out_grad.dims[1..=N], &weights.dims[1..=N]);
+    let channels = weights.dims[N + 1];
+    let (cells, taps, inputs) = (
+        out.iter().product::<usize>(),
+        kernel.iter().product::<usize>(),
+        input.iter().product::<usize>(),
+    );
+    let mut grad = vec![0.0; batches * inputs * channels];
+    for b in 0..batches {
+        for position in 0..inputs {
+            let at = unravel(position, &input);
+            for i in 0..channels {
+                let mut sum = 0.0;
+                for tap in 0..taps {
+                    let at_tap = unravel(tap, kernel);
+                    let read = out.iter().enumerate().try_fold(0, |flat, (dim, &extent)| {
+                        let at = output_reading(args, dim, at[dim], at_tap[dim], extent)?;
+                        Some(flat * extent + at)
+                    });
+                    let Some(read) = read else {
+                        continue;
+                    };
+                    for o in 0..filters {
+                        sum += out_grad.values[(b * cells + read) * filters + o]
+                            * weights.values[(o * taps + tap) * channels + i];
                     }
-                    grad[((b * h + y) * w + x) * c + i] = sum;
                 }
+                grad[(b * inputs + position) * channels + i] = sum;
             }
         }
     }
@@ -577,8 +616,8 @@ pub fn naive_data_grad(
 
 /// The output position along spatial `dim` whose window, at tap `tap`, reads input position `pos`
 /// of an output `extent` long, if there is one.
-fn output_reading(
-    args: &ConvolutionArgs<2>,
+fn output_reading<const N: usize>(
+    args: &ConvolutionArgs<N>,
     dim: usize,
     pos: usize,
     tap: usize,
