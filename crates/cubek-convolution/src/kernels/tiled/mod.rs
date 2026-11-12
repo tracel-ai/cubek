@@ -17,14 +17,20 @@ mod staging;
 mod tensors;
 mod tune;
 
-pub use binding::*;
-pub use blueprint::*;
-pub use declined::*;
-pub use launch::*;
-pub use partitioning::*;
-pub use problem::*;
-pub use roles::*;
-pub use routines::*;
-pub use staging::*;
-pub use tensors::*;
-pub use tune::*;
+pub use declined::ConvDeclined;
+pub use problem::ConvProblem;
+pub use roles::{CMMA_STEP_ACROSS_TAPS, ConvContractedAxes, ConvFreeAxes, ConvRoles};
+pub use routines::{
+    CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED, ConvRoutineKind, ConvSettings, ConvVectors,
+    CubeStagedConvRoutine, UnitBlock, UnitRegistersConvRoutine, UnitRegistersConvSettings,
+};
+pub use tensors::ConvTensors;
+pub use tune::ConvCandidate;
+
+pub(crate) use binding::ConvBinding;
+pub(crate) use blueprint::TileConvBlueprint;
+pub(crate) use launch::ConvRoutine;
+pub(crate) use partitioning::{ConvPartitioning, ConvTiles, InstructionShape};
+pub(crate) use problem::{B, CI, CO, OH, OW, RH, RW};
+pub(crate) use staging::ConvStaging;
+pub(crate) use tune::launch_tuned;

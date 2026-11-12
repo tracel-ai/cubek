@@ -6,5 +6,4 @@ mod settings;
 mod tests;
 
 pub use base::*;
-pub use block::{BlockDepth, BlockForm};
 pub use settings::*;

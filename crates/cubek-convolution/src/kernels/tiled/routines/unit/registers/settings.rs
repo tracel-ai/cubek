@@ -8,7 +8,7 @@ use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnitBlock {
     /// The largest block the device's registers hold for the form the problem's input gives it
-    /// ([`BlockForm::largest_block`](super::BlockForm::largest_block)).
+    /// ([`BlockForm::largest_block`](super::block::BlockForm::largest_block)).
     Largest,
     /// One cell.
     OneCell,
@@ -24,7 +24,7 @@ impl core::fmt::Display for UnitBlock {
 }
 
 /// How a unit's block is chosen and how the planes that own the blocks are laid out. The block's
-/// depth is the device's ([`BlockDepth`](super::BlockDepth)).
+/// depth is the device's ([`BlockDepth`](super::block::BlockDepth)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitRegistersConvSettings {
     pub block: UnitBlock,
