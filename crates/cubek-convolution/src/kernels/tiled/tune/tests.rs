@@ -10,7 +10,7 @@ use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::routine::Routine;
 
 fn key(problem: Conv2dProblem) -> ConvTuneKey {
-    ConvTuneKey::from(&ConvProblem::from(&problem))
+    ConvTuneKey::of(&ConvProblem::from(&problem), &nvidia())
 }
 
 /// `WIDE` batches of a map 56 wide, held by a few rows.
@@ -101,7 +101,10 @@ fn a_key_holds_the_width_a_view_start_leaves() {
     let aligned = ConvProblem::from(&dense());
     let mut shifted = aligned.clone();
     shifted.start_bytes.lhs = 2;
-    let (aligned_key, shifted_key) = (ConvTuneKey::from(&aligned), ConvTuneKey::from(&shifted));
+    let (aligned_key, shifted_key) = (
+        ConvTuneKey::of(&aligned, &hw),
+        ConvTuneKey::of(&shifted, &hw),
+    );
     assert_ne!(aligned_key, shifted_key);
     for (problem, key) in [(&aligned, &aligned_key), (&shifted, &shifted_key)] {
         for settings in ConvCandidate::list(&hw) {

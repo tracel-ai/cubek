@@ -181,43 +181,38 @@ impl ConvTensors {
 
     /// The problem these tensors state.
     pub fn problem(&self) -> ConvProblem {
-        let (input, rhs, out) = (&self.input.shape, &self.rhs.shape, &self.out.shape);
-        let (channels_in, channels_out, kernel, out_extent) = match self.operation {
-            ConvolutionOperation::Forward => (input[3], rhs[0], [rhs[1], rhs[2]], [out[1], out[2]]),
-            ConvolutionOperation::BackwardWeight => {
-                (input[3], out[3], [out[0], out[1]], [rhs[1], rhs[2]])
-            }
-            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
-                (out[3], input[3], [rhs[0], rhs[1]], [out[1], out[2]])
-            }
-        };
         let start = |tensor: &TensorBinding| tensor.handle.offset_start.unwrap_or(0);
-        ConvProblem {
-            operation: self.operation,
-            batch: input[0],
-            channels_in,
-            gathered: [input[1], input[2]],
-            channels_out,
-            kernel,
-            out: out_extent,
-            window: self.window,
-            elements: MatmulOperands {
+        let shape = |tensor: &TensorBinding| {
+            let dims: &[usize] = &tensor.shape;
+            [dims[0], dims[1], dims[2], dims[3]]
+        };
+        ConvProblem::from_views(
+            self.operation,
+            self.window,
+            MatmulOperands {
+                lhs: shape(&self.input),
+                rhs: shape(&self.rhs),
+                out: shape(&self.out),
+            },
+            MatmulOperands {
                 lhs: self.dtypes.lhs_global,
                 rhs: self.dtypes.rhs_global,
                 out: self.dtypes.acc_global,
             },
-            sum: self.dtypes.acc_register,
-            alignments: MatmulOperands {
-                lhs: ElemAlignment::from(&self.input),
-                rhs: ElemAlignment::from(&self.rhs),
-                out: ElemAlignment::from(&self.out),
-            },
-            start_bytes: MatmulOperands {
-                lhs: start(&self.input),
-                rhs: start(&self.rhs),
-                out: start(&self.out),
-            },
-        }
+            self.dtypes.acc_register,
+            (
+                MatmulOperands {
+                    lhs: ElemAlignment::from(&self.input),
+                    rhs: ElemAlignment::from(&self.rhs),
+                    out: ElemAlignment::from(&self.out),
+                },
+                MatmulOperands {
+                    lhs: start(&self.input),
+                    rhs: start(&self.rhs),
+                    out: start(&self.out),
+                },
+            ),
+        )
     }
 
     /// These tensors of `problem` bound under the launcher `grid` spawns for `blueprint`, each

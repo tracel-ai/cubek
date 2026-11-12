@@ -197,6 +197,16 @@ impl ConvRoles {
         }
     }
 
+    /// `shapes`, the operation's operands in their own layouts, as each is viewed through the roles
+    /// ([`Self::rhs_view`], [`Self::out_view`]).
+    pub fn views(&self, shapes: MatmulOperands<[usize; 4]>) -> MatmulOperands<[usize; 4]> {
+        MatmulOperands {
+            lhs: shapes.lhs,
+            rhs: self.rhs_dims.map(|dim| shapes.rhs[dim]),
+            out: self.out_dims.map(|dim| shapes.out[dim]),
+        }
+    }
+
     /// The alignments of dense buffers of `shapes`, laid out as the operation's tensors are, once
     /// the rhs and the output are viewed through the roles ([`Self::rhs_view`],
     /// [`Self::out_view`]).

@@ -1,6 +1,6 @@
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
-use cubek_std::routine::{ROUTINE_LISTS_NO_SETTING, Routine, first_served};
+use cubek_std::routine::{Routine, first_served_on_floor};
 
 use crate::kernels::indexed::routed::RoutedMatmulTensors;
 use crate::kernels::tune::{ListedFor, Listing, Product};
@@ -43,10 +43,7 @@ impl RoutedFloors {
             .map(|floor| tensors.served_by(hw, &CubeStagedMatmulRoutine, &floor.settings));
         let unit_registers = Listing::admitted(&self.unit_registers, stack)
             .map(|floor| tensors.served_by(hw, &UnitRegistersMatmulRoutine, &floor.settings));
-        first_served(
-            plane_shuffle.chain(cube_staged).chain(unit_registers),
-            ROUTINE_LISTS_NO_SETTING,
-        )
+        first_served_on_floor(plane_shuffle.chain(cube_staged).chain(unit_registers))
     }
 
     pub(crate) const LISTED: Self = Self {

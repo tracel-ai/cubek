@@ -98,6 +98,7 @@ impl ConvPartitioning {
         }
     }
 
+    /// The partitioning the tile engine places the kernel's cubes and planes by.
     pub fn tile_partitioning(&self) -> &Partitioning {
         &self.partitioning
     }

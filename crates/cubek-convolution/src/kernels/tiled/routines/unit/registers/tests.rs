@@ -72,22 +72,7 @@ fn catalog_entry(name: &str) -> (ConvProblem, Conv2dProblem) {
 #[test]
 fn units_sweeping_every_cube_take_a_core_each() {
     let (problem, _) = catalog_entry("cpu_3x3_c64_56");
-    for (cores, sweep) in [
-        (
-            32,
-            UnitSweep {
-                most: 25,
-                least: 24,
-            },
-        ),
-        (
-            16,
-            UnitSweep {
-                most: 49,
-                least: 49,
-            },
-        ),
-    ] {
+    for cores in [32, 16] {
         let hw = cpu(cores, cores);
         assert_eq!(
             hw.unit_dispatch(),
@@ -97,7 +82,6 @@ fn units_sweeping_every_cube_take_a_core_each() {
         );
         let units = units_of(&first_served(&hw, &problem), &problem);
         assert_eq!(units, cores as usize);
-        assert_eq!(UnitSweep::of(units, 784), sweep, "{cores} cores");
     }
 }
 
@@ -134,22 +118,6 @@ fn a_gpu_keeps_the_fewest_cubes() {
             across: 2
         }
     );
-}
-
-/// Tiles a unit sweeps over the whole launch: the most any unit does, and the least.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct UnitSweep {
-    most: usize,
-    least: usize,
-}
-
-impl UnitSweep {
-    fn of(units: usize, tiles: usize) -> Self {
-        Self {
-            most: tiles.div_ceil(units),
-            least: tiles / units,
-        }
-    }
 }
 
 fn first_served(

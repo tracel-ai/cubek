@@ -37,6 +37,29 @@ pub fn first_served<T>(
     Err(declined)
 }
 
+/// [`first_served`] over attempts that always hold a floor, whose refusal is the answer where no
+/// attempt serves.
+///
+/// # Errors
+///
+/// The last refusal.
+///
+/// # Panics
+///
+/// On no attempt.
+pub fn first_served_on_floor<T>(
+    attempts: impl IntoIterator<Item = Result<T, Refusal>>,
+) -> Result<T, Refusal> {
+    let mut declined = None;
+    for attempt in attempts {
+        match attempt {
+            Ok(served) => return Ok(served),
+            Err(why) => declined = Some(why),
+        }
+    }
+    Err(declined.expect("a floor is listed for every kind of stack"))
+}
+
 /// A whole kernel written around one microkernel.
 pub trait Routine {
     /// The problem, as the host describes it.

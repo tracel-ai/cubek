@@ -77,6 +77,7 @@ impl Routine for CubeStagedConvRoutine {
             CubeStagedDepth::Steps,
             MatmulOperands::AS_BOUND,
         );
+        // A cmma fragment's store is only correct through scratch here, so its output bounces.
         let bounces = microkernel.bounces_masked_output();
         let staging = match bounces {
             true => ConvStaging::Bounced,

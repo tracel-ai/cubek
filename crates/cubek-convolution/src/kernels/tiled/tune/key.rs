@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Every extent is exact, since a model has few layer shapes and anchoring would merge layers that
 /// want different settings, except the batch: a caller varies it freely, so it is anchored to the
 /// power of two above it. The widths are how wide each operand's alignment, and its view's start,
-/// lets it be read.
+/// lets it be read, the output's excepted: the cube staged routine writes it one element at a time.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct ConvTuneKey {
     operation: ConvolutionOperation,
@@ -30,13 +30,11 @@ pub struct ConvTuneKey {
     channels_in: usize,
     channels_out: usize,
     window: ConvolutionArgs<2>,
-    widths: MatmulOperands<usize>,
+    lhs_width: usize,
+    rhs_width: usize,
 }
 
 impl ConvTuneKey {
-    /// The most cubes a grid holds along its third dimension.
-    const MOST_Z_CUBES: usize = u16::MAX as usize;
-
     /// The widest width a key tells apart is two to this power: a wider alignment shares the key.
     const MOST_WIDTH_POWER: u32 = 5;
 
@@ -44,12 +42,13 @@ impl ConvTuneKey {
     /// batches would put more cubes along the grid's third dimension (the batches beside the
     /// positions across) than the device spawns, which settings may then disagree on within one
     /// bucket.
-    fn batch(problem: &ConvProblem) -> usize {
+    fn batch(problem: &ConvProblem, hw: &Hardware) -> usize {
         let roles = problem.roles();
         let bucket = problem.batch.next_power_of_two();
         let rides_grid = roles.free.batch == B;
         let cubes = bucket.saturating_mul(problem.extent(roles.free.across));
-        match rides_grid && cubes > Self::MOST_Z_CUBES {
+        let most_cubes = hw.properties.hardware.max_cube_count.2 as usize;
+        match rides_grid && cubes > most_cubes {
             true => problem.batch,
             false => bucket,
         }
@@ -94,18 +93,14 @@ impl ConvTuneKey {
     }
 }
 
-impl From<&ConvProblem> for ConvTuneKey {
-    fn from(problem: &ConvProblem) -> Self {
-        let widths = MatmulOperands {
-            lhs: Self::width(
-                problem.alignments.lhs,
-                Self::start(problem, MatmulOperand::Lhs),
-            ),
-            rhs: Self::width(
-                problem.alignments.rhs,
-                Self::start(problem, MatmulOperand::Rhs),
-            ),
-            out: Self::width(problem.alignments.out, ElemAlignment::at_start(0, 1)),
+impl ConvTuneKey {
+    /// The key of `problem` on `hw`.
+    pub(super) fn of(problem: &ConvProblem, hw: &Hardware) -> Self {
+        let width = |operand| {
+            Self::width(
+                problem.alignments.get(operand),
+                Self::start(problem, operand),
+            )
         };
         Self {
             operation: problem.operation,
@@ -113,14 +108,15 @@ impl From<&ConvProblem> for ConvTuneKey {
             rhs: problem.elements.rhs,
             out: problem.elements.out,
             sum: problem.sum,
-            batch: Self::batch(problem),
+            batch: Self::batch(problem, hw),
             gathered: problem.gathered,
             out_extent: problem.out,
             kernel: problem.kernel,
             channels_in: problem.channels_in,
             channels_out: problem.channels_out,
             window: problem.window,
-            widths,
+            lhs_width: width(MatmulOperand::Lhs),
+            rhs_width: width(MatmulOperand::Rhs),
         }
     }
 }
@@ -129,7 +125,11 @@ impl From<&ConvProblem> for ConvTuneKey {
 /// their buffers' starts.
 impl From<&ConvTuneKey> for ConvProblem {
     fn from(key: &ConvTuneKey) -> Self {
-        let alignments = key.widths.map(|_, width| ElemAlignment::dense_rows(width));
+        let alignments = MatmulOperands {
+            lhs: ElemAlignment::dense_rows(key.lhs_width),
+            rhs: ElemAlignment::dense_rows(key.rhs_width),
+            out: ElemAlignment::dense_rows(1),
+        };
         Self {
             operation: key.operation,
             batch: key.batch,

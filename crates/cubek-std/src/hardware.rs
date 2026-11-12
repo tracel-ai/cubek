@@ -232,11 +232,12 @@ impl Hardware {
     /// The vector registers a kernel may keep live, as `elem`s fill them: the runtime's count, or
     /// [`ASSUMED_VECTOR_REGISTERS`] where it states none.
     pub fn vector_registers(&self, elem: ElemType) -> VectorRegisters {
-        let mut hardware = self.properties.hardware.clone();
-        hardware
-            .vector_register_count
-            .get_or_insert(ASSUMED_VECTOR_REGISTERS);
-        VectorRegisters::new(&hardware, elem.size()).expect("a register count is stated")
+        let hardware = &self.properties.hardware;
+        VectorRegisters::new(hardware, elem.size()).unwrap_or_else(|| {
+            let mut assumed = hardware.clone();
+            assumed.vector_register_count = Some(ASSUMED_VECTOR_REGISTERS);
+            VectorRegisters::new(&assumed, elem.size()).expect("a register count is stated")
+        })
     }
 
     /// The widest vector this device reads `elem` in: its IO width over the element's, capped by

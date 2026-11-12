@@ -3,8 +3,7 @@ use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::Conv2dProblem;
 use crate::eval::benchmarks::settings;
 use crate::kernels::tiled::ConvProblem;
-use crate::kernels::tiled::routines::test_support::{dense, nvidia};
-use crate::launch::ConvolutionArgs;
+use crate::kernels::tiled::routines::test_support::{dense, few_channels_deep_filter, nvidia};
 
 const BUDGET: usize = 48 * 1024;
 
@@ -26,15 +25,7 @@ fn steps(problem: &ConvProblem, budget: usize) -> usize {
 
 /// The forward of three channels under an 11 wide filter at stride four, six steps of eight.
 fn alexnet_like() -> ConvProblem {
-    ConvProblem::from(&Conv2dProblem {
-        input_shape: [8, 3, 227, 227],
-        weight_shape: [64, 3, 11, 11],
-        args: ConvolutionArgs {
-            stride: [4; 2],
-            ..dense().args
-        },
-        ..dense()
-    })
+    ConvProblem::from(&few_channels_deep_filter())
 }
 
 /// A weight backward whose walk is seven steps of eight, a prime count, takes it whole as one

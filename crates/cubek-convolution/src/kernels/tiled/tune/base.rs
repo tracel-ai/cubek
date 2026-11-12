@@ -44,7 +44,7 @@ pub fn launch_tuned(hw: &Hardware, tensors: ConvTensors) -> Result<(), Refusal> 
         let (list, hw) = (list.clone(), hw.clone());
         move || candidates(list.clone(), hw.clone())
     });
-    let key = ConvTuneKey::from(&tensors.problem());
+    let key = ConvTuneKey::of(&tensors.problem(), hw);
     let serves = |candidates: &mut dyn Iterator<Item = &ConvCandidate>| {
         let attempts = candidates.map(|candidate| candidate.serves(&tensors));
         first_served(attempts, ROUTINE_LISTS_NO_SETTING).is_ok()
@@ -86,9 +86,10 @@ pub(super) fn candidates(
     list: Arc<[ConvCandidate]>,
     hw: Hardware,
 ) -> TunableSet<ConvTuneKey, ConvTensors, (), CandidateIdentity<ConvSettings>> {
+    let keyed = hw.clone();
     let mut autotune =
         Autotune::<ConvTuneKey, ConvTensors, (), CandidateIdentity<ConvSettings>>::new(
-            |tensors: &ConvTensors| ConvTuneKey::from(&tensors.problem()),
+            move |tensors: &ConvTensors| ConvTuneKey::of(&tensors.problem(), &keyed),
         );
     let tile = autotune.group("tile", GroupPriority::DEFAULT);
     let floor = (list.clone(), hw.clone());

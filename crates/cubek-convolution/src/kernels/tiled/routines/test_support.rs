@@ -58,22 +58,24 @@ pub fn dense() -> Conv2dProblem {
     }
 }
 
+/// The forward of three channels under an 11 wide filter at stride four, the AlexNet-like layer.
+pub fn few_channels_deep_filter() -> Conv2dProblem {
+    Conv2dProblem {
+        input_shape: [8, 3, 227, 227],
+        weight_shape: [64, 3, 11, 11],
+        args: ConvolutionArgs {
+            stride: [4; 2],
+            ..dense().args
+        },
+        ..dense()
+    }
+}
+
 /// The problems the pure tests prepare, each as `(name, problem)`: few channels under a deep
 /// filter, 64 channels, and a map seven wide.
 pub fn problems() -> [(&'static str, Conv2dProblem); 3] {
     [
-        (
-            "few_channels_deep_filter",
-            Conv2dProblem {
-                input_shape: [8, 3, 227, 227],
-                weight_shape: [64, 3, 11, 11],
-                args: ConvolutionArgs {
-                    stride: [4; 2],
-                    ..dense().args
-                },
-                ..dense()
-            },
-        ),
+        ("few_channels_deep_filter", few_channels_deep_filter()),
         ("channels_64", dense()),
         (
             "map_7_wide",

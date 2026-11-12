@@ -67,34 +67,18 @@ impl Conv2dProblem {
 /// starts, summing in `f32`.
 impl From<&Conv2dProblem> for ConvProblem {
     fn from(problem: &Conv2dProblem) -> Self {
-        let [batch, channels_in, h, w] = problem.input_shape;
-        let [channels_out, _, kh, kw] = problem.weight_shape;
-        let [oh, ow] = problem.out_extent();
         let roles =
             ConvRoles::of(problem.operation).expect("the host states no transposed forward");
         let [lhs, rhs, out] = problem.shapes();
-        let (gathered, out_extent) = match problem.operation {
-            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
-                ([oh, ow], [h, w])
-            }
-            ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
-                ([h, w], [oh, ow])
-            }
-        };
-        Self {
-            operation: problem.operation,
-            batch,
-            channels_in,
-            gathered,
-            channels_out,
-            kernel: [kh, kw],
-            out: out_extent,
-            window: problem.args,
-            elements: MatmulOperands::all(problem.element.elem_type()),
-            sum: ElemType::Float(FloatKind::F32),
-            alignments: roles.dense_alignments(MatmulOperands { lhs, rhs, out }),
-            start_bytes: MatmulOperands::all(0),
-        }
+        let shapes = MatmulOperands { lhs, rhs, out };
+        Self::from_views(
+            problem.operation,
+            problem.args,
+            roles.views(shapes),
+            MatmulOperands::all(problem.element.elem_type()),
+            ElemType::Float(FloatKind::F32),
+            (roles.dense_alignments(shapes), MatmulOperands::all(0)),
+        )
     }
 }
 

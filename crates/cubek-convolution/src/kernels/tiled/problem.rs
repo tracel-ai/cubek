@@ -46,6 +46,43 @@ pub struct ConvProblem {
 }
 
 impl ConvProblem {
+    /// The problem of `operation` over operands whose shapes, as the roles view them
+    /// ([`ConvRoles::views`]), are `views`.
+    pub fn from_views(
+        operation: ConvolutionOperation,
+        window: ConvolutionArgs<2>,
+        views: MatmulOperands<[usize; 4]>,
+        elements: MatmulOperands<ElemType>,
+        sum: ElemType,
+        buffers: (MatmulOperands<ElemAlignment>, MatmulOperands<u64>),
+    ) -> Self {
+        let MatmulOperands { lhs, rhs, out } = views;
+        let (channels_in, channels_out, kernel, out_extent) = match operation {
+            ConvolutionOperation::Forward => (lhs[3], rhs[0], [rhs[1], rhs[2]], [out[1], out[2]]),
+            ConvolutionOperation::BackwardWeight => {
+                (lhs[3], out[3], [out[0], out[1]], [rhs[1], rhs[2]])
+            }
+            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
+                (out[3], lhs[3], [rhs[0], rhs[1]], [out[1], out[2]])
+            }
+        };
+        let (alignments, start_bytes) = buffers;
+        Self {
+            operation,
+            batch: lhs[0],
+            channels_in,
+            gathered: [lhs[1], lhs[2]],
+            channels_out,
+            kernel,
+            out: out_extent,
+            window,
+            elements,
+            sum,
+            alignments,
+            start_bytes,
+        }
+    }
+
     /// The roles the operation gives the axes of the space.
     ///
     /// # Panics
@@ -108,12 +145,8 @@ impl ConvProblem {
 
     /// Whether a position can read before the input's start.
     pub fn underflows(&self) -> bool {
-        match self.operation {
-            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => true,
-            ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
-                self.window.padding.iter().any(|&padding| padding > 0)
-            }
-        }
+        self.operation == ConvolutionOperation::BackwardData
+            || self.window.padding.iter().any(|&padding| padding > 0)
     }
 
     /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: an NHWC buffer whose
@@ -123,12 +156,8 @@ impl ConvProblem {
         let roles = self.roles();
         let window = &self.window;
         let along = |out, tap, dim| match self.operation {
-            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
-                window.gradient_position_map(dim, out, tap)
-            }
-            ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
-                window.position_map(dim, out, tap)
-            }
+            ConvolutionOperation::BackwardData => window.gradient_position_map(dim, out, tap),
+            _ => window.position_map(dim, out, tap),
         };
         Projection::new(
             &roles.lhs,
