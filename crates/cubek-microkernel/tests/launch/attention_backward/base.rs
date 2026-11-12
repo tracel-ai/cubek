@@ -7,7 +7,7 @@ use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::{
     Axis, Launcher, Level, Partitioning, Space, StageStorage, TileSpec, TileTensorLaunch,
 };
-use cubek_microkernel::attention::{B, D, DV, G, KV, Q, S};
+use cubek_microkernel::attention::{AttentionVisibility, B, D, DV, G, KV, Q, S};
 use cubek_microkernel::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{StageRing, StagedOperand};
@@ -50,7 +50,7 @@ pub trait AttentionBackwardLaunch: Debug {
     /// The gradients it writes.
     fn writes(&self) -> AttentionBackwardWrites;
 
-    /// Its gradients from `args` at `scale`.
+    /// Its gradients from `args` at `scale`, each query over the keys `visibility` lets it see.
     ///
     /// # Errors
     ///
@@ -60,6 +60,7 @@ pub trait AttentionBackwardLaunch: Debug {
         client: &Client,
         args: AttentionBackwardOperandArgs,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal>;
 }
 

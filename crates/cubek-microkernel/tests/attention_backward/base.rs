@@ -1,8 +1,10 @@
 //! What every gradient microkernel of attention's backward computes alone, for one sequence of one
-//! head: with `P = softmax(scale · Q · Kᵀ)` read back from the logsumexp, `delta = Σ_dv dO ⊙ O`,
+//! head, each query over the keys a visibility lets it see: with `P = softmax(scale · Q · Kᵀ)` over
+//! those keys, zero at the others, read back from the logsumexp, `delta = Σ_dv dO ⊙ O`,
 //! `dS = P ⊙ (dO · Vᵀ − delta)`, the gradients `dQ = scale · dS · K`, `dK = scale · dSᵀ · Q` and
 //! `dV = Pᵀ · dO`.
 
+use crate::attention::{HIDING, HostAttention};
 use crate::launch::attention_backward::{
     AttentionBackwardLaunch, AttentionBackwardOperandArgs, AttentionBackwardWrites,
 };
@@ -12,6 +14,7 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
+use cubek_microkernel::attention::AttentionVisibility;
 use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
@@ -24,9 +27,10 @@ pub(crate) const F32: ElemType = ElemType::Float(FloatKind::F32);
 /// The rows of the query and key, and of the value.
 const DIMS: [usize; 2] = [32, 32];
 
-/// Attention's backward on the host over `seq` queries and keys of one head: the forward's
-/// operands, small values exact in `f16`, its output rounded to `element` as a forward would
-/// write it, the output's gradient, and what each gradient is.
+/// Attention's backward on the host over `seq` queries and keys of one head, each query over the
+/// keys `visibility` lets it see: the forward's operands, small values exact in `f16`, its output
+/// rounded to `element` as a forward would write it, the output's gradient, and what each
+/// gradient is.
 struct HostBackward {
     seq: [usize; 2],
     query: Vec<f32>,
@@ -40,7 +44,7 @@ struct HostBackward {
 }
 
 impl HostBackward {
-    fn new(seq: [usize; 2], element: ElemType) -> Self {
+    fn new(seq: [usize; 2], element: ElemType, visibility: AttentionVisibility) -> Self {
         let [queries, keys] = seq;
         let [head, val] = DIMS;
         let values = |len: usize, modulo: usize, offset: f32| -> Vec<f32> {
@@ -59,12 +63,16 @@ impl HostBackward {
         let mut logsumexp = vec![0.0f32; queries];
         let mut out = vec![0.0f32; queries * val];
         for i in 0..queries {
+            // A key the query does not see scores minus infinity: its probability is zero.
             let scores: Vec<f64> = (0..keys)
-                .map(|j| {
-                    scale
-                        * (0..head)
-                            .map(|d| query[i * head + d] as f64 * key[j * head + d] as f64)
-                            .sum::<f64>()
+                .map(|j| match HostAttention::sees(seq, visibility, i, j) {
+                    true => {
+                        scale
+                            * (0..head)
+                                .map(|d| query[i * head + d] as f64 * key[j * head + d] as f64)
+                                .sum::<f64>()
+                    }
+                    false => f64::NEG_INFINITY,
                 })
                 .collect();
             let max = scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -212,11 +220,13 @@ pub(crate) trait BackwardSettings: Debug + Copy {
     ) -> Result<Self::Launch, Refusal>;
 }
 
-/// A backward of `element` at `settings`, `steps` of the microkernel's walk long.
+/// A backward of `element` at `settings`, `steps` of the microkernel's walk long, each query over
+/// the keys `visibility` lets it see.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BackwardCase<S> {
     pub element: ElemType,
     pub settings: S,
+    pub visibility: AttentionVisibility,
     pub steps: usize,
 }
 
@@ -249,18 +259,27 @@ impl<S: BackwardSettings> Backward<S> {
     }
 
     /// Every setting the device lists, for a forward in `f16` and in `f32`, one step of the walk
-    /// and three.
+    /// and three, every key attended; then, at each setting, `f32` over three steps under each
+    /// visibility that hides keys ([`HIDING`]).
     pub(crate) fn every_setting(&self) -> Vec<BackwardCase<S>> {
         S::Microkernel::settings(&self.hw)
             .into_iter()
             .flat_map(|settings| {
-                [F16, F32].into_iter().flat_map(move |element| {
+                let attended = [F16, F32].into_iter().flat_map(move |element| {
                     [1, 3].map(|steps| BackwardCase {
                         element,
                         settings,
+                        visibility: AttentionVisibility::Attended,
                         steps,
                     })
-                })
+                });
+                let hiding = HIDING.map(|visibility| BackwardCase {
+                    element: F32,
+                    settings,
+                    visibility,
+                    steps: 3,
+                });
+                attended.chain(hiding)
             })
             .collect()
     }
@@ -273,7 +292,12 @@ impl<S: BackwardSettings> ScopeUnderTest for Backward<S> {
         let launch = case.settings.launch(&self.hw, case.item(), case.steps)?;
         let [queries, keys] = launch.seq();
         let [head, val] = DIMS;
-        let host = HostBackward::new(launch.seq(), case.element);
+        if HostAttention::hides_every_key_from_a_query(launch.seq(), case.visibility) {
+            return Err(Refusal::Declined {
+                why: "a query sees no key, so no attention defines its gradients",
+            });
+        }
+        let host = HostBackward::new(launch.seq(), case.element, case.visibility);
         let delta = host.delta();
         let tensor = |values: Vec<f32>, shape, element| {
             TestInput::builder(client.clone(), shape)
@@ -316,7 +340,7 @@ impl<S: BackwardSettings> ScopeUnderTest for Backward<S> {
             key_gradient: arg(&key_gradient),
             value_gradient: arg(&value_gradient),
         };
-        launch.launch(client, args, HostBackward::scale())?;
+        launch.launch(client, args, HostBackward::scale(), case.visibility)?;
         let written = |name, tensor| Written {
             name,
             tensor,
@@ -344,7 +368,7 @@ impl<S: BackwardSettings> ScopeUnderTest for Backward<S> {
             .settings
             .launch(&self.hw, case.item(), case.steps)
             .unwrap_or_else(|why| panic!("{case:?} launched: {why:?}"));
-        HostBackward::new(launch.seq(), case.element).gradients(launch.writes())
+        HostBackward::new(launch.seq(), case.element, case.visibility).gradients(launch.writes())
     }
 
     /// The device's `exp`, and an `f16` forward's rounding of what the gradients read and write.

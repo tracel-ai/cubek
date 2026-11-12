@@ -88,6 +88,7 @@ impl AttentionBackwardLaunch for HypercubeKeyGradientLaunch {
         client: &Client,
         args: AttentionBackwardOperandArgs,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         use AttentionBackwardOperand as Operand;
         let sequence = OneSequence {
@@ -131,6 +132,7 @@ impl AttentionBackwardLaunch for HypercubeKeyGradientLaunch {
                 launcher.partitioning_arg(),
                 self.microkernel,
                 self.ring,
+                visibility,
                 [self.item.sum, self.item.element],
             );
         }
@@ -157,6 +159,7 @@ fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
     partitioning: Partitioning,
     #[comptime] microkernel: HypercubeKeyGradientMicrokernel,
     #[comptime] ring: StageRing,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let (q, k, v) = (
@@ -171,7 +174,7 @@ fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
         value_gradient.tile(&partitioning),
     );
     let d_q = query_gradient.tile(&partitioning);
-    let visible = VisibleKeys::of_keys(keys, queries, AttentionVisibility::Attended);
+    let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
     for cube in &partitioning {
         let first_step = visible.first_query_step(&cube, microkernel.seq_q());

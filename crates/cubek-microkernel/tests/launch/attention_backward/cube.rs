@@ -79,6 +79,7 @@ impl AttentionBackwardLaunch for CubeQueryGradientLaunch {
         client: &Client,
         args: AttentionBackwardOperandArgs,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         use AttentionBackwardOperand as Operand;
         let sequence = OneSequence {
@@ -115,6 +116,7 @@ impl AttentionBackwardLaunch for CubeQueryGradientLaunch {
                 launcher.partitioning_arg(),
                 self.microkernel,
                 self.ring,
+                visibility,
                 [self.item.sum, self.item.element],
             );
         }
@@ -178,6 +180,7 @@ impl AttentionBackwardLaunch for CubeKeyGradientLaunch {
         client: &Client,
         args: AttentionBackwardOperandArgs,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         use AttentionBackwardOperand as Operand;
         let sequence = OneSequence {
@@ -214,6 +217,7 @@ impl AttentionBackwardLaunch for CubeKeyGradientLaunch {
                 launcher.partitioning_arg(),
                 self.microkernel,
                 self.ring,
+                visibility,
                 [self.item.sum, self.item.element],
             );
         }
@@ -238,6 +242,7 @@ fn cube_query_gradient_kernel<EA: Float, ES: Float>(
     partitioning: Partitioning,
     #[comptime] microkernel: CubeQueryGradientMicrokernel,
     #[comptime] ring: StageRing,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let (q, k, v) = (
@@ -248,7 +253,7 @@ fn cube_query_gradient_kernel<EA: Float, ES: Float>(
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let d_q = query_gradient.tile(&partitioning);
-    let visible = VisibleKeys::of_keys(keys, queries, AttentionVisibility::Attended);
+    let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.bias::<EA>(&partitioning);
     for cube in &partitioning {
         let steps = visible.steps(&cube, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
@@ -288,6 +293,7 @@ fn cube_key_gradient_kernel<EA: Float, ES: Float>(
     partitioning: Partitioning,
     #[comptime] microkernel: CubeKeyGradientMicrokernel,
     #[comptime] ring: StageRing,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let (q, k, v) = (
@@ -301,7 +307,7 @@ fn cube_key_gradient_kernel<EA: Float, ES: Float>(
         key_gradient.tile(&partitioning),
         value_gradient.tile(&partitioning),
     );
-    let visible = VisibleKeys::of_keys(keys, queries, AttentionVisibility::Attended);
+    let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
     let no_share = ComptimeOption::new_None();
     for cube in &partitioning {
