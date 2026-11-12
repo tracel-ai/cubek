@@ -78,7 +78,7 @@ impl PlaneSplitKeysMergeRoutine {
                 slots.max.binding().into_tensor_arg(),
                 slots.sum.binding().into_tensor_arg(),
                 blueprint.merge,
-                tensors.problem().work_item().kernel_elements(),
+                tensors.problem().work_item().written_elements(),
             );
         }
     }

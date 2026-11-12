@@ -52,7 +52,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         );
         let partitioning = binding.launcher.partitioning_arg();
         let (queries, scale) = (problem.seq_q as u32, tensors.scale());
-        let elements = problem.work_item().kernel_elements();
+        let work_item = problem.work_item();
         let arrivals = tensors.box_arrivals(microkernel.cube.seq_q());
         match binding.cache {
             AttentionCacheBinding::Tiles { key, value } => {
@@ -86,7 +86,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                         microkernel,
                         shape,
                         problem.visibility,
-                        elements,
+                        work_item.operand_elements(),
                     );
                 }
             }
@@ -120,7 +120,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                         microkernel,
                         shape,
                         problem.visibility,
-                        elements,
+                        work_item.kernel_elements(),
                     );
                 }
             }
