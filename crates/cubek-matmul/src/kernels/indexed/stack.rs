@@ -1,6 +1,7 @@
 //! A stacked rhs: slabs laid end to end along one axis of a product, as the routed and grouped
 //! products read it.
 
+use crate::kernels::MATMUL_SCALED_RHS_ALONE;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use cubecl::client::Client;
 use cubecl::tile::Axis;
@@ -94,6 +95,7 @@ impl SlabAxis {
                 let view = SlabView::new(stack, slabs, self);
                 Ok(StoredTensor::Plain(view.slabs_of(stack)))
             }
+            StoredTensor::Scaled(_) => Err(MATMUL_SCALED_RHS_ALONE),
         }
     }
 }

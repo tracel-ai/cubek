@@ -8,7 +8,7 @@ use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{
     MatmulBuffers, MatmulDestination, MatmulDim, MatmulLayout, MatmulOperand, MatmulOperands,
-    MatmulStoredTile,
+    MatmulRead, MatmulStoredTile,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{BlockScales, Packing};
@@ -55,6 +55,9 @@ pub struct MatmulRoutineProblem {
     /// How each operand is stored where it is packed: its words, its scales and their scheme.
     /// `None` for a float operand, read as stored.
     pub packings: MatmulOperands<Option<Packing>>,
+    /// The element of the float scale the rhs is multiplied by as its stage is filled, where the
+    /// product has one. A weighting of `K`, unrelated to a quantization scale.
+    pub rhs_scale: Option<ElemType>,
     /// The table an input reads one entry of per batch, where the product has one: which slab of
     /// a stacked rhs a batch contracts against, or the run of `K` it sums.
     pub index: Option<MatmulIndex>,
@@ -123,6 +126,18 @@ impl MatmulRoutineProblem {
         }
     }
 
+    /// Checks no input is scaled: what a routine whose fill applies no scale declines first.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_SCALED_UNREAD`], for a scaled input.
+    pub fn check_unscaled(&self) -> Result<(), Refusal> {
+        match self.rhs_scale {
+            None => Ok(()),
+            Some(_) => Err(MATMUL_SCALED_UNREAD),
+        }
+    }
+
     /// Checks no input reads a table: what a routine whose kernel walks no indexed input
     /// declines first.
     ///
@@ -133,6 +148,19 @@ impl MatmulRoutineProblem {
         match self.index {
             None => Ok(()),
             Some(_) => Err(MATMUL_INDEX_UNREAD),
+        }
+    }
+
+    /// `reads` with a scaled rhs read dequantized, at the element its stage holds or else its own:
+    /// the stage of an input a scale multiplies is filled by units applying it, not landed as it
+    /// lies.
+    pub fn reads(&self, reads: MatmulOperands<MatmulRead>) -> MatmulOperands<MatmulRead> {
+        match (self.rhs_scale, reads.rhs) {
+            (Some(_), MatmulRead::AsBound) => MatmulOperands {
+                rhs: MatmulRead::Dequantized(self.elements.rhs),
+                ..reads
+            },
+            _ => reads,
         }
     }
 
@@ -245,6 +273,7 @@ impl MatmulRoutineProblem {
             stored_tiles: MatmulOperands::all(None),
             destination: out.destination,
             packings: MatmulOperands::all(None),
+            rhs_scale: None,
             index: None,
         }
     }
@@ -273,6 +302,7 @@ impl MatmulRoutineProblem {
             // A launch the table times allocates its output.
             destination: MatmulDestination::Buffer,
             packings: MatmulOperands::all(None),
+            rhs_scale: None,
             index: None,
         }
     }
@@ -377,6 +407,7 @@ impl MatmulRoutineProblem {
             stored_tiles: MatmulOperands::all(None),
             destination: MatmulDestination::Buffer,
             packings,
+            rhs_scale: None,
             index: None,
         }
     }
@@ -497,6 +528,31 @@ impl EstimatedProblem for MatmulRoutineProblem {
 /// routines read.
 pub const MATMUL_PACKED_UNREAD: Refusal = Refusal::Declined {
     why: "this routine reads float operands; a packed one runs on the packed routines",
+};
+
+/// What a routine whose fill applies no scale declines: a scaled input, which the cube staged
+/// routine whose units fill the stages reads.
+pub const MATMUL_SCALED_UNREAD: Refusal = Refusal::Declined {
+    why: "this routine's fill applies no scale; a scaled input runs on the cube staged routine \
+          whose units fill its stages",
+};
+
+/// What a launch over a scaled lhs declines: only an rhs is read under a scale.
+pub const MATMUL_SCALED_LHS_UNREAD: Refusal = Refusal::Declined {
+    why: "only an rhs is read under a scale; an lhs is read as stored",
+};
+
+/// What a product reading a table, or whose other input is packed, declines of a scaled rhs: the
+/// cube staged routine applies a scale over dense float inputs alone.
+pub const MATMUL_SCALED_RHS_ALONE: Refusal = Refusal::Declined {
+    why: "a scaled rhs reads no table and sits beside no packed input",
+};
+
+/// What a fill an engine delivers declines: a scaled input, whose stage the cube's units fill, so
+/// each value is multiplied by its scale on its way in, synchronously.
+pub const MATMUL_SCALED_UNREAD_BY_ENGINE: Refusal = Refusal::Declined {
+    why: "a copy engine or a tensor map lands each stage as it lies, and a scaled input is \
+          multiplied by its scale as the cube's units fill its stage",
 };
 
 /// What a routine whose kernel walks no indexed input declines: a product whose inputs read a

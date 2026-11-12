@@ -196,6 +196,7 @@ impl Routine for PlaneDequantizeMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        problem.check_unscaled()?;
         let alone = Self::alone(problem);
         let PlaneShufflePackedPlacement {
             microkernel,

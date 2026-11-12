@@ -7,8 +7,9 @@
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::{
     CubeStagedMatmulRoutine, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
-    MATMUL_PACKED_WALK_PAST_K, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
-    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_PACKED_WALK_PAST_K, MATMUL_SCALED_UNREAD_BY_ENGINE, MatmulBinding, MatmulBlueprint,
+    MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem, MatmulTensors,
+    MatmulView,
 };
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{
@@ -59,6 +60,8 @@ impl<'a> CubeStagedPlacement<'a> {
     /// is drained into ([`CubeStagedTmaStoreRefusal`]).
     /// A stage an engine fills lands as it lies, so there a float product's planes read their
     /// stages undecoded, never rounded by the units on the way in.
+    /// A scaled rhs is filled by the units alone, as stored, its stage multiplied by its scale
+    /// as it is loaded ([`MATMUL_SCALED_UNREAD_BY_ENGINE`] for an engine).
     pub(crate) fn new(
         hw: &Hardware,
         problem: &'a MatmulRoutineProblem,
@@ -71,16 +74,22 @@ impl<'a> CubeStagedPlacement<'a> {
         let item = view.work_item();
         CubeStagedMicrokernel::admits(&item)?;
         let by_units = fill.delivery == CubeStagedDelivery::Copy;
+        let scaled = problem.rhs_scale.is_some();
+        if scaled && !(by_units && store == CubeStagedStore::Fragments) {
+            return Err(MATMUL_SCALED_UNREAD_BY_ENGINE);
+        }
         // An operand the TMA engine lands is read in the instruction the tile layer picks for
         // landed operands: the planes take the first candidate whose sum it opens, as it opens it.
         let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
             .filter(|candidate| {
-                by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
+                let as_stored = candidate.walk().decoded().is_none();
+                (by_units || item.blocks.is_some() || as_stored) && (!scaled || as_stored)
             })
             .find_map(|candidate| {
                 CubeStagedMicrokernel {
                     fill,
                     store,
+                    reads: problem.reads(candidate.reads),
                     ..candidate
                 }
                 .summed(hw, &item)
@@ -326,6 +335,7 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
             blueprint.microkernel.plane.orders,
         ),
     };
+    let scale = tensors.bind_scale(&binding.launcher);
     // SAFETY: every operand is bound through the launcher, which masks the reads and writes
     // of a tile the problem's edge cuts short, or by a descriptor, whose copies fill what lies
     // past the operand with zeros and whose stores leave what lies past it unwritten; the
@@ -341,6 +351,7 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
                 out_width,
                 lhs,
                 rhs,
+                scale.into(),
                 O::arg(binding.out),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel.walk(),
@@ -356,6 +367,7 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
                 out_width,
                 lhs,
                 rhs,
+                scale.into(),
                 tensors.tma_output(&stage),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel.walk(),

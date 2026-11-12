@@ -234,6 +234,7 @@ impl Routine for UnitRegistersMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_plain()?;
+        problem.check_unscaled()?;
         let view = MatmulView::new(problem, UnitRegistersMatmulRoutine::ROWS_KIND)?;
         let microkernel =
             UnitRegistersMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;

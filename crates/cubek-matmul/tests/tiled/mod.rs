@@ -7,6 +7,7 @@ mod hypercube;
 mod indexed;
 mod packed;
 mod plane;
+mod scaled;
 mod storage;
 mod strategy;
 mod unit;

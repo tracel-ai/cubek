@@ -5,6 +5,7 @@
 //! in the seam's `problem` and each case's folder. This one holds only what the cross-kernel
 //! choice turns on.
 
+use cubecl::ir::ElemType;
 use cubecl::quant::scheme::QuantScheme;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use serde::{Deserialize, Serialize};
@@ -73,7 +74,7 @@ impl MatmulProblem {
             .into_iter()
             .filter_map(|input| match self.operands.get(input) {
                 OperandKind::Quantized(scheme) => Some((input, scheme)),
-                OperandKind::Float => None,
+                OperandKind::Float | OperandKind::Scaled(_) => None,
             })
     }
 
@@ -109,4 +110,7 @@ pub enum OperandKind {
     /// kernel's plan serves the
     /// problem on the device are the selector's to ask.
     Quantized(QuantScheme),
+    /// Float values multiplied by a scale tensor of this element as a stage is filled, which only
+    /// the routines whose fill applies it serve. The element is a different kernel's, so it keys.
+    Scaled(ElemType),
 }

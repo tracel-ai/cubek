@@ -54,7 +54,7 @@ impl MatmulCall {
             // The rows lie along the lhs's second-to-last axis.
             StoredTensor::Plain(lhs) => (lhs.binding.shape.len().checked_sub(2))
                 .and_then(|rows| lhs.zeros_grown(&call.client, rows, key.m)),
-            StoredTensor::Packed(_) => None,
+            StoredTensor::Packed(_) | StoredTensor::Scaled(_) => None,
         };
         // A grown lhs makes a product of another shape than the caller's buffer, so the round's
         // launches allocate their own.

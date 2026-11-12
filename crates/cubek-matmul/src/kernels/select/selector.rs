@@ -200,7 +200,7 @@ fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bo
             let block = operand.scale(K)?;
             Some((scheme, block, block * operand.scales_per_word()))
         }
-        OperandKind::Quantized(_) | OperandKind::Float => None,
+        OperandKind::Quantized(_) | OperandKind::Float | OperandKind::Scaled(_) => None,
     };
     let (Some((lhs, lhs_block, lhs_word)), Some((rhs, rhs_block, rhs_word))) =
         (input(MatmulOperand::Lhs), input(MatmulOperand::Rhs))

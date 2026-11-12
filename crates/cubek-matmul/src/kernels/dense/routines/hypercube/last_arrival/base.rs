@@ -201,6 +201,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_unindexed()?;
+        problem.check_unscaled()?;
         let view = MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         if item

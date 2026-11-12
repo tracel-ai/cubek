@@ -231,6 +231,7 @@ impl CubeShuffleMatmulRoutine {
         settings: &CubeShuffleMatmulRoutineSettings,
     ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
         problem.check_plain()?;
+        problem.check_unscaled()?;
         if settings.cubes_per_worker.is_some() || settings.microkernel.by_block {
             return Err(Self::PACKED_ONLY);
         }
@@ -391,6 +392,7 @@ impl Routine for CubeShuffleMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_unindexed()?;
+        problem.check_unscaled()?;
         match &problem.packings.rhs {
             Some(packing) => self.prepare_packed(hw, problem, packing, settings),
             None => self.prepare_float(hw, problem, settings),
