@@ -45,6 +45,10 @@ pub fn copy_casted(client: &Client, original: TensorHandle, target_type: ElemTyp
         &strides![1],
         0,
     );
+    // A view starting partway into its buffer reads vectors that begin at its own offset.
+    let start = original.handle.offset_start.unwrap_or(0) as usize;
+    let aligned_bytes = 1_usize << start.trailing_zeros().min(usize::BITS - 1);
+    let vector_size = vector_size.min((aligned_bytes / original.dtype.size()).max(1));
 
     let working_units: u32 = num_elems as u32 / vector_size as u32;
     let cube_dim = CubeDim::new(client, working_units as usize);

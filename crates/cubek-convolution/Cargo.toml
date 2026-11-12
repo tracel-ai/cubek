@@ -28,7 +28,8 @@ cpu-reference = ["dep:cubek-test-utils", "cubek-matmul/cpu-reference"]
 benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 
 [dependencies]
-cubek-matmul = { workspace = true, features = ["multi-level"] }
+cubek-matmul = { workspace = true, features = ["multi-level", "tiled"] }
+cubek-microkernel = { workspace = true, features = ["std", "matmul"] }
 cubek-std = { workspace = true }
 cubek-test-utils = { workspace = true, optional = true }
 
@@ -41,7 +42,7 @@ half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 
 [dev-dependencies]
-cubek-convolution = { path = ".", features = ["cpu-reference"] }
+cubek-convolution = { path = ".", features = ["benchmarks"] }
 cubek-test-utils = { workspace = true }
 
 cubecl = { workspace = true, features = ["test-runtime"] }

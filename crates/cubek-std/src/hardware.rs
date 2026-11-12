@@ -10,7 +10,9 @@ use cubecl::{
     CubeDim,
     client::Client,
     features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig, Tma},
-    ir::{DeviceProperties, ElemType, FloatKind, OpaqueType, TargetProperties, Type},
+    ir::{
+        DeviceProperties, ElemType, FloatKind, OpaqueType, TargetProperties, Type, VectorRegisters,
+    },
     quant::scheme::{QuantMode, QuantScheme, QuantValue},
     tile::BlockScaledOperands,
 };
@@ -43,6 +45,17 @@ pub const GPU_TRANSACTION_BYTES: usize = 128;
 /// A CPU's transaction is its cache line: 64 bytes on every x86 and Apple core a CPU runtime
 /// runs on.
 pub const CPU_CACHE_LINE_BYTES: usize = 64;
+
+/// How a device runs a launch's units, which decides what a cube's layout of units is judged by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnitDispatch {
+    /// Each of `cores` runs one unit of every cube in turn, as a CPU runtime's threads do, so a
+    /// launch lasts as long as its busiest unit. They are physical cores: the runtime gives a
+    /// launch's first units one core each before it reaches a core's second hardware thread.
+    Sweeping { cores: usize },
+    /// The cubes are spread over the device's workers, each run by its own units, as on a GPU.
+    Spread,
+}
 
 impl Hardware {
     /// The device `properties` describe, compiling for `target`.
@@ -99,13 +112,31 @@ impl Hardware {
     ///
     /// [`plane_dim`](Self::plane_dim)'s, for a fabricated width or a range.
     pub fn plane_size(&self) -> Result<u32, Refusal> {
-        let hardware = &self.properties.hardware;
-        let single_unit = !self.properties.features.plane.contains(Plane::Ops)
-            && hardware.plane_size_min == 1
-            && hardware.plane_size_max == 1;
-        match single_unit {
+        match self.single_unit_planes() {
             true => Ok(1),
             false => self.plane_dim(),
+        }
+    }
+
+    /// Whether a plane is a single unit: a committed width of one and no plane operations.
+    fn single_unit_planes(&self) -> bool {
+        let hardware = &self.properties.hardware;
+        !self.properties.features.plane.contains(Plane::Ops)
+            && hardware.plane_size_min == 1
+            && hardware.plane_size_max == 1
+    }
+
+    /// How the device runs a launch's units: single-unit planes on a device that counts CPU cores
+    /// are swept by its physical cores, or by every core it counts where it states no physical
+    /// ones.
+    pub fn unit_dispatch(&self) -> UnitDispatch {
+        let hardware = &self.properties.hardware;
+        let cores = hardware.num_cpu_physical_cores.or(hardware.num_cpu_cores);
+        match (self.single_unit_planes(), cores) {
+            (true, Some(cores)) => UnitDispatch::Sweeping {
+                cores: cores.max(1) as usize,
+            },
+            _ => UnitDispatch::Spread,
         }
     }
 
@@ -189,6 +220,24 @@ impl Hardware {
     /// How many values of `elem` one load instruction holds: what a step counts its loads in.
     pub fn load_values(&self, elem: ElemType) -> usize {
         (self.properties.hardware.load_width as usize / elem.size_bits().max(1)).max(1)
+    }
+
+    /// How many values of `elem` one vector register holds: a load's, a register being as wide
+    /// as a load, within the widest vector the device takes.
+    pub fn register_values(&self, elem: ElemType) -> usize {
+        self.load_values(elem)
+            .min(self.properties.hardware.max_vector_size.max(1))
+    }
+
+    /// The vector registers a kernel may keep live, as `elem`s fill them: the runtime's count, or
+    /// [`ASSUMED_VECTOR_REGISTERS`] where it states none.
+    pub fn vector_registers(&self, elem: ElemType) -> VectorRegisters {
+        let hardware = &self.properties.hardware;
+        VectorRegisters::new(hardware, elem.size()).unwrap_or_else(|| {
+            let mut assumed = hardware.clone();
+            assumed.vector_register_count = Some(ASSUMED_VECTOR_REGISTERS);
+            VectorRegisters::new(&assumed, elem.size()).expect("a register count is stated")
+        })
     }
 
     /// The widest vector this device reads `elem` in: its IO width over the element's, capped by
@@ -529,6 +578,10 @@ pub const TMA_ALIGNMENT_BYTES: usize = 16;
 /// (`MatmulStep::filled_by_tma` in cubek-matmul).
 pub const TMA_ROW_BYTES: usize = 64;
 
+/// Vector registers assumed of a device that states no count: the sixteen every x86 CPU names,
+/// the fewest a CPU runtime reports.
+pub const ASSUMED_VECTOR_REGISTERS: u32 = 16;
+
 /// 32-bit registers one unit addresses before a kernel spills to memory: NVIDIA's 255. The NVFP4
 /// settings read it, which a device offers only with NVIDIA's block-scaled instruction, and a unit's
 /// register block unrolls no more cells than it.
@@ -572,6 +625,7 @@ mod tests {
             max_cube_dim: (1024, 1024, 1024),
             num_streaming_multiprocessors: num_cpu_cores.is_none().then_some(19),
             num_cpu_cores,
+            num_cpu_physical_cores: None,
             last_level_cache_size: None,
             num_tensor_cores: None,
             min_tensor_cores_dim: None,
@@ -605,6 +659,29 @@ mod tests {
             n,
             k,
         }
+    }
+
+    /// A device that states no register count has the assumed one, and a stated count is read as
+    /// it is, in registers of the element's width.
+    #[test]
+    fn vector_registers_read_the_stated_count_or_assume_one() {
+        let f32 = ElemType::Float(FloatKind::F32);
+        let mut hw = devices::cpu_12();
+        let assumed = hw.vector_registers(f32);
+        assert_eq!(assumed.count(), ASSUMED_VECTOR_REGISTERS as usize);
+        assert_eq!(assumed.registers_for(4), 1);
+        assert_eq!(assumed.registers_for(8), 2);
+        devices::topology(&mut hw).vector_register_count = Some(32);
+        assert_eq!(hw.vector_registers(f32).count(), 32);
+    }
+
+    /// A vector register holds as many values as a load, within the widest vector.
+    #[test]
+    fn a_register_holds_a_load_within_the_widest_vector() {
+        let hw = device(32, 32, true, None);
+        assert_eq!(hw.register_values(ElemType::Float(FloatKind::F64)), 2);
+        assert_eq!(hw.register_values(ElemType::Float(FloatKind::F32)), 4);
+        assert_eq!(hw.register_values(ElemType::Float(FloatKind::F16)), 4);
     }
 
     /// Runs start an odd number of transactions apart: a power-of-two pitch takes one
@@ -671,6 +748,26 @@ mod tests {
         assert_eq!(
             gpu.cubes_to_fill(32).unwrap(),
             gpu.cubes_to_fill(256).unwrap() * 8
+        );
+    }
+
+    /// Single-unit planes on a device counting CPU cores are swept by its physical cores, or by
+    /// every core where it states no physical ones; planes with operations are spread, as on a GPU.
+    #[test]
+    fn single_unit_planes_are_swept_by_the_physical_cores() {
+        let mut cpu = device(1, 1, false, Some(32));
+        assert_eq!(cpu.unit_dispatch(), UnitDispatch::Sweeping { cores: 32 });
+        Arc::make_mut(&mut cpu.properties)
+            .hardware
+            .num_cpu_physical_cores = Some(16);
+        assert_eq!(cpu.unit_dispatch(), UnitDispatch::Sweeping { cores: 16 });
+        assert_eq!(
+            device(1, 1, true, Some(32)).unit_dispatch(),
+            UnitDispatch::Spread
+        );
+        assert_eq!(
+            device(32, 32, true, None).unit_dispatch(),
+            UnitDispatch::Spread
         );
     }
 

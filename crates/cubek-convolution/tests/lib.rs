@@ -1,3 +1,3 @@
-#![allow(unused, clippy::upper_case_acronyms)]
+#![allow(clippy::upper_case_acronyms)]
 
 mod convolution;

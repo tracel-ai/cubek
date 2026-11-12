@@ -41,22 +41,6 @@ impl UnitRegistersMatmulRoutine {
             .expect("the unit routine distributes its blocks to a plane's units")
     }
 
-    /// Blocks along `n` per plane. A one-unit plane (CPU runtime) takes the largest divisor of
-    /// `n / columns` up to `setting`, so no plane's row overhangs `n` and masks its accesses.
-    /// Wider planes keep `setting`, since fewer blocks would idle their units, as does an `n`
-    /// that `columns` does not divide.
-    fn fitted_blocks_per_plane(
-        setting: usize,
-        n: usize,
-        columns: usize,
-        plane_width: u32,
-    ) -> usize {
-        match plane_width == 1 && n.is_multiple_of(columns) {
-            true => divisor_at_most(n / columns, setting),
-            false => setting,
-        }
-    }
-
     /// The width [`prepare`](Routine::prepare) launches a plane at, beside `planes`
     /// others in a cube.
     pub fn plane_width(hw: &Hardware, planes: usize) -> u32 {
@@ -98,6 +82,19 @@ impl UnitRegistersMatmulRoutineSettings {
         blocks_per_plane: NonZeroUsize::new(32).unwrap(),
         cube_order: CubeOrder::RowMajor,
     };
+
+    /// Blocks along `n` per plane. A one-unit plane (CPU runtime) takes the largest divisor of
+    /// `n / columns` up to the setting, so no plane's row overhangs `n` and masks its accesses.
+    /// Wider planes keep the setting, since fewer blocks would idle their units, as does an `n`
+    /// that `columns` does not divide.
+    pub fn fitted_blocks_per_plane(&self, n: usize, plane_width: u32) -> usize {
+        let columns = self.microkernel.columns.get();
+        let setting = self.blocks_per_plane.get();
+        match plane_width == 1 && n.is_multiple_of(columns) {
+            true => divisor_at_most(n / columns, setting),
+            false => setting,
+        }
+    }
 
     /// Settings for a CPU runtime, where a plane is one unit on one core. Tuned for a col rhs.
     ///
@@ -239,12 +236,7 @@ impl Routine for UnitRegistersMatmulRoutine {
             UnitRegistersMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
         let planes = settings.planes;
         let plane_width = Self::plane_width(hw, planes.count());
-        let blocks_per_plane = Self::fitted_blocks_per_plane(
-            settings.blocks_per_plane.get(),
-            problem.n,
-            settings.microkernel.columns.get(),
-            plane_width,
-        );
+        let blocks_per_plane = settings.fitted_blocks_per_plane(problem.n, plane_width);
         let partitioning = view.plane_partitioning(
             microkernel.tiling().units_distributed(N, blocks_per_plane),
             &[M, N],
@@ -455,37 +447,33 @@ mod tests {
         assert_eq!(blueprint.widths.lhs, blueprint.widths.rhs);
     }
 
+    /// The CPU settings with the block two columns wide and 32 blocks to a plane.
+    fn two_columns() -> UnitRegistersMatmulRoutineSettings {
+        let defaults = UnitRegistersMatmulRoutineSettings::DEFAULT;
+        UnitRegistersMatmulRoutineSettings {
+            microkernel: UnitRegistersMicrokernelSettings {
+                columns: NonZeroUsize::new(2).unwrap(),
+                ..defaults.microkernel
+            },
+            ..defaults
+        }
+    }
+
     #[test]
     fn a_one_unit_plane_takes_a_count_that_divides_n() {
+        let settings = two_columns();
         // 816 = 2^4·3·17 and 136 = 2^3·17 blocks of width 2.
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 1632, 2, 1),
-            24
-        );
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 272, 2, 1),
-            17
-        );
+        assert_eq!(settings.fitted_blocks_per_plane(1632, 1), 24);
+        assert_eq!(settings.fitted_blocks_per_plane(272, 1), 17);
         // A divisor is kept; an `n` of fewer blocks than `setting` takes all of them.
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 1024, 2, 1),
-            32
-        );
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 32, 2, 1),
-            16
-        );
+        assert_eq!(settings.fitted_blocks_per_plane(1024, 1), 32);
+        assert_eq!(settings.fitted_blocks_per_plane(32, 1), 16);
     }
 
     #[test]
     fn a_wider_plane_or_a_ragged_n_keeps_the_setting() {
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 1632, 2, 32),
-            32
-        );
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 1633, 2, 1),
-            32
-        );
+        let settings = two_columns();
+        assert_eq!(settings.fitted_blocks_per_plane(1632, 32), 32);
+        assert_eq!(settings.fitted_blocks_per_plane(1633, 1), 32);
     }
 }

@@ -5,6 +5,7 @@
 //! dispatches to the per-operation helper based on `ConvolutionInputs`.
 
 use cubecl::client::Client;
+use cubecl::tile::launch::Refusal;
 use cubek_matmul::{
     definition::MatmulElems,
     multi_level::{
@@ -12,6 +13,7 @@ use cubek_matmul::{
     },
     routine::BlueprintStrategy,
 };
+use cubek_std::Hardware;
 
 use crate::{components::ConvolutionOperation, definition::ConvBlueprint};
 
@@ -25,7 +27,10 @@ fn blueprint_operation(blueprint: &ConvBlueprint) -> ConvolutionOperation {
 
 use crate::{
     components::ConvSetupError,
-    kernels::{backward_data, backward_weight, forward},
+    kernels::{
+        backward_data, backward_weight, forward,
+        tiled::{ConvDeclined, ConvTensors},
+    },
     launch::{
         ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy, strategy::AcceleratedTileKind,
         unit,
@@ -82,6 +87,40 @@ pub fn launch_ref<const N_SPATIAL: usize>(
         }
         Strategy::Unit(strategy) => {
             return unit::launch(*strategy, client, inputs, args, dtypes);
+        }
+        Strategy::Tile(routine) => {
+            let window = args
+                .two_dimensional()
+                .ok_or(Refusal::from(ConvDeclined::NotTwoDimensional))?;
+            let tensors = match inputs {
+                ConvolutionInputs::Forward {
+                    input,
+                    weight,
+                    bias,
+                    out,
+                } => ConvTensors::forward(client, input, weight, bias, out, window, dtypes)?,
+                ConvolutionInputs::BackwardWeight {
+                    input,
+                    out_grad,
+                    weight_grad,
+                } => ConvTensors::backward_weight(
+                    client,
+                    input,
+                    out_grad,
+                    weight_grad,
+                    window,
+                    dtypes,
+                )?,
+                ConvolutionInputs::BackwardData {
+                    out_grad,
+                    weights,
+                    in_grad,
+                } => {
+                    ConvTensors::backward_data(client, out_grad, weights, in_grad, window, dtypes)?
+                }
+            };
+            let hw = Hardware::from_client(client);
+            return Ok(routine.launch_on(&hw, tensors)?);
         }
     };
 

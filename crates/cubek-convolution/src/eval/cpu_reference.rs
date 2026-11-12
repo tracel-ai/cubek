@@ -22,27 +22,44 @@ use crate::{
     launch_ref,
 };
 
-/// Run `strategy` against the conv problem with seeded inputs and return its
-/// output as a [`HostData`].
+/// Run `strategy` against `operation` over `spec`'s geometry with seeded operands and return its
+/// output as a [`HostData`]: the forward's activation, the weight gradient or the data gradient.
 pub fn strategy_result(
     client: Client,
     spec: ConvSpec,
+    operation: ConvolutionOperation,
     strategy: Strategy,
     dtypes: MatmulElems,
-    seed_lhs: u64,
-    seed_rhs: u64,
+    seeds: [u64; 2],
 ) -> Result<HostData, String> {
-    let inputs = seed_inputs(&client, &spec, &dtypes, seed_lhs, seed_rhs);
+    let inputs = seed_inputs(&client, &spec, operation, &dtypes, seeds)?;
     let out_handle = inputs.out.clone();
 
     let outcome = launch_and_capture_outcome(&client, &[&out_handle.handle], |c| {
-        let conv_inputs = ConvolutionInputs::Forward {
-            input: InputBinding::new(inputs.input.clone().binding(), dtypes.lhs_global),
-            weight: InputBinding::new(inputs.weight.clone().binding(), dtypes.rhs_global),
-            bias: None,
-            out: out_handle.clone().binding(),
+        let lhs = InputBinding::new(inputs.lhs.clone().binding(), dtypes.lhs_global);
+        let rhs = InputBinding::new(inputs.rhs.clone().binding(), dtypes.rhs_global);
+        let out = out_handle.clone().binding();
+        let conv_inputs = match operation {
+            ConvolutionOperation::Forward | ConvolutionOperation::ForwardTransposed => {
+                ConvolutionInputs::Forward {
+                    input: lhs,
+                    weight: rhs,
+                    bias: None,
+                    out,
+                }
+            }
+            ConvolutionOperation::BackwardWeight => ConvolutionInputs::BackwardWeight {
+                input: lhs,
+                out_grad: rhs,
+                weight_grad: out,
+            },
+            ConvolutionOperation::BackwardData => ConvolutionInputs::BackwardData {
+                out_grad: lhs,
+                weights: rhs,
+                in_grad: out,
+            },
         };
-        match launch_ref::<2>(&strategy, c, conv_inputs, spec.args.clone(), dtypes.clone()) {
+        match launch_ref::<2>(&strategy, c, conv_inputs, spec.args, dtypes.clone()) {
             Ok(()) => ExecutionOutcome::Executed,
             Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
         }
@@ -59,23 +76,46 @@ pub fn strategy_result(
 }
 
 /// CPU-only counterpart to [`strategy_result`]: generate the same seeded
-/// inputs, run the naive CPU convolution, return the result as a [`HostData`].
+/// operands, run the naive CPU convolution of `operation`, return the result as a [`HostData`].
 pub fn cpu_reference_result(
     client: Client,
     spec: ConvSpec,
+    operation: ConvolutionOperation,
     dtypes: MatmulElems,
-    seed_lhs: u64,
-    seed_rhs: u64,
+    seeds: [u64; 2],
     progress: Option<&Progress>,
 ) -> Result<HostData, String> {
-    let inputs = seed_inputs(&client, &spec, &dtypes, seed_lhs, seed_rhs);
-    let problem = build_problem(&spec, &dtypes, &inputs);
-    Ok(conv_cpu_reference(
-        &inputs.input_data,
-        &inputs.weight_data,
-        &problem,
-        progress,
-    ))
+    let inputs = seed_inputs(&client, &spec, operation, &dtypes, seeds)?;
+    let args = &spec.args;
+    let lhs_host = host_tensor(&inputs.lhs_data)?;
+    let rhs_host = host_tensor(&inputs.rhs_data)?;
+    let values = match operation {
+        ConvolutionOperation::Forward => {
+            let problem = build_problem(&spec, &dtypes, &inputs);
+            return Ok(conv_cpu_reference(
+                &inputs.lhs_data,
+                &inputs.rhs_data,
+                &problem,
+                progress,
+            ));
+        }
+        ConvolutionOperation::BackwardWeight => {
+            naive_weight_grad(lhs_host, rhs_host, spec.kernel_size, args)
+        }
+        ConvolutionOperation::BackwardData => {
+            naive_data_grad(lhs_host, rhs_host, [spec.in_h, spec.in_w], args)
+        }
+        ConvolutionOperation::ForwardTransposed => {
+            return Err("the host states no transposed forward".to_string());
+        }
+    };
+    let shape = spec.shapes(operation)[2].clone();
+    let strides = StridedLayout::RowMajor.compute_strides(&shape);
+    Ok(HostData {
+        data: HostDataVec::F32(values),
+        shape,
+        strides,
+    })
 }
 
 /// Number of output writes [`conv_cpu_reference`] will produce for `problem`.
@@ -84,7 +124,7 @@ pub fn conv_cpu_reference_total(problem: &ConvolutionProblem) -> u64 {
     (problem.batches * problem.out_shape[0] * problem.out_shape[1] * problem.n) as u64
 }
 
-/// All the parameters needed to specify a 2D forward convolution problem,
+/// All the parameters needed to specify a 2D convolution problem,
 /// independent of the seed/input data.
 #[derive(Clone, Debug)]
 pub struct ConvSpec {
@@ -99,22 +139,41 @@ pub struct ConvSpec {
 
 impl ConvSpec {
     pub fn out_h(&self) -> usize {
-        let [s_h, _] = self.args.stride;
-        let [p_h, _] = self.args.padding;
-        let [d_h, _] = self.args.dilation;
-        let k_h = self.kernel_size[0];
-        (self.in_h + 2 * p_h - d_h * (k_h - 1) - 1) / s_h + 1
+        self.out()[0]
     }
 
     pub fn out_w(&self) -> usize {
-        let [_, s_w] = self.args.stride;
-        let [_, p_w] = self.args.padding;
-        let [_, d_w] = self.args.dilation;
-        let k_w = self.kernel_size[1];
-        (self.in_w + 2 * p_w - d_w * (k_w - 1) - 1) / s_w + 1
+        self.out()[1]
     }
 
-    /// Evaluates this convolution on the host, plus `bias`; the weight's input channels set the groups.
+    fn out(&self) -> [usize; 2] {
+        self.args.output([self.in_h, self.in_w], self.kernel_size)
+    }
+
+    /// The shapes of `operation`'s lhs, rhs and out, the weight and its gradient `[co, kh, kw, ci]`
+    /// and the rest NHWC: the input, the weight and the output of a forward; the input, the output
+    /// gradient and the weight gradient of a weight backward; the output gradient, the weight and
+    /// the input gradient of a data backward.
+    fn shapes(&self, operation: ConvolutionOperation) -> [Shape; 3] {
+        let input = shape![self.batches, self.in_h, self.in_w, self.channels];
+        let weight = shape![
+            self.out_channels,
+            self.kernel_size[0],
+            self.kernel_size[1],
+            self.channels
+        ];
+        let out_grad = shape![self.batches, self.out_h(), self.out_w(), self.out_channels];
+        match operation {
+            ConvolutionOperation::Forward => [input, weight, out_grad],
+            ConvolutionOperation::BackwardWeight => [input, out_grad, weight],
+            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
+                [out_grad, weight, input]
+            }
+        }
+    }
+
+    /// Evaluates this convolution on the host, plus `bias`; the weight's input channels set the
+    /// groups.
     pub fn cpu_reference(
         &self,
         input: &HostData,
@@ -126,36 +185,43 @@ impl ConvSpec {
     }
 }
 
+fn host_tensor(data: &HostData) -> Result<HostTensor<'_>, String> {
+    match &data.data {
+        HostDataVec::F32(values) => Ok(HostTensor {
+            values,
+            dims: [0, 1, 2, 3].map(|axis| data.shape[axis]),
+        }),
+        _ => Err("the host reference reads f32 operands".to_string()),
+    }
+}
+
+/// The operands of an operation by the role they play: the lhs, the rhs and the zeroed output.
 struct SeededInputs {
-    input: TensorHandle,
-    input_data: HostData,
-    weight: TensorHandle,
-    weight_data: HostData,
+    lhs: TensorHandle,
+    lhs_data: HostData,
+    rhs: TensorHandle,
+    rhs_data: HostData,
     out: TensorHandle,
 }
 
 fn seed_inputs(
     client: &Client,
     spec: &ConvSpec,
+    operation: ConvolutionOperation,
     dtypes: &MatmulElems,
-    seed_lhs: u64,
-    seed_rhs: u64,
-) -> SeededInputs {
-    let input_shape: Shape = shape![spec.batches, spec.in_h, spec.in_w, spec.channels];
-    let weight_shape: Shape = shape![
-        spec.out_channels,
-        spec.kernel_size[0],
-        spec.kernel_size[1],
-        spec.channels
-    ];
-    let out_shape: Shape = shape![spec.batches, spec.out_h(), spec.out_w(), spec.out_channels];
+    [seed_lhs, seed_rhs]: [u64; 2],
+) -> Result<SeededInputs, String> {
+    if operation == ConvolutionOperation::ForwardTransposed {
+        return Err("the host states no transposed forward".to_string());
+    }
+    let [lhs_shape, rhs_shape, out_shape] = spec.shapes(operation);
 
-    let (input, input_data) = TestInput::builder(client.clone(), input_shape)
+    let (lhs, lhs_data) = TestInput::builder(client.clone(), lhs_shape)
         .dtype(dtypes.lhs_global)
         .uniform(seed_lhs, -1., 1.)
         .generate_with_f32_host_data();
 
-    let (weight, weight_data) = TestInput::builder(client.clone(), weight_shape)
+    let (rhs, rhs_data) = TestInput::builder(client.clone(), rhs_shape)
         .dtype(dtypes.rhs_global)
         .uniform(seed_rhs, -1., 1.)
         .generate_with_f32_host_data();
@@ -165,13 +231,13 @@ fn seed_inputs(
         .zeros()
         .generate_without_host_data();
 
-    SeededInputs {
-        input,
-        input_data,
-        weight,
-        weight_data,
+    Ok(SeededInputs {
+        lhs,
+        lhs_data,
+        rhs,
+        rhs_data,
         out,
-    }
+    })
 }
 
 fn build_problem(
@@ -191,8 +257,8 @@ fn build_problem(
     let lhs_layout = MatrixLayout::RowMajor;
     let rhs_layout = MatrixLayout::RowMajor;
 
-    let lhs_strides = inputs.input.strides().clone();
-    let rhs_strides = inputs.weight.strides().clone();
+    let lhs_strides = inputs.lhs.strides().clone();
+    let rhs_strides = inputs.rhs.strides().clone();
     let _: &Strides = &lhs_strides;
 
     ConvolutionProblem {
@@ -384,4 +450,122 @@ impl From<&ConvSpec> for ConvGeometry {
             dilation: spec.args.dilation,
         }
     }
+}
+
+/// A host tensor as the naive references read it: its values and its four dims, NHWC but for a
+/// weight and its gradient, which are `[co, kh, kw, ci]`.
+#[derive(Clone, Copy)]
+pub struct HostTensor<'a> {
+    pub values: &'a [f32],
+    pub dims: [usize; 4],
+}
+
+/// `out[b, y, x, co] = sum over ky, kx, ci of input[b, y*s + ky*d - p, x*s + kx*d - p, ci] *
+/// weight[co, ky, kx, ci]`, the taps that land outside the input skipped.
+pub fn naive_forward(input: HostTensor, weight: HostTensor, args: &ConvolutionArgs<2>) -> Vec<f32> {
+    let [n, h, w, c] = input.dims;
+    let [co, kh, kw, _] = weight.dims;
+    let [oh, ow] = args.output([h, w], [kh, kw]);
+    let mut out = vec![0.0; n * oh * ow * co];
+    for b in 0..n {
+        for y in 0..oh {
+            for x in 0..ow {
+                for o in 0..co {
+                    let mut sum = 0.0;
+                    for ky in 0..kh {
+                        for kx in 0..kw {
+                            let (iy, ix) = (args.position(0, y, ky), args.position(1, x, kx));
+                            if iy < 0 || ix < 0 || iy >= h as isize || ix >= w as isize {
+                                continue;
+                            }
+                            for i in 0..c {
+                                let at = ((b * h + iy as usize) * w + ix as usize) * c + i;
+                                sum += input.values[at]
+                                    * weight.values[((o * kh + ky) * kw + kx) * c + i];
+                            }
+                        }
+                    }
+                    out[((b * oh + y) * ow + x) * co + o] = sum;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `weight_grad[co, rh, rw, ci] = sum over b, oh, ow of input[b, oh*s + rh*d - p, ow*s + rw*d - p,
+/// ci] * out_grad[b, oh, ow, co]`, the taps that land outside the input skipped.
+pub fn naive_weight_grad(
+    input: HostTensor,
+    out_grad: HostTensor,
+    kernel: [usize; 2],
+    args: &ConvolutionArgs<2>,
+) -> Vec<f32> {
+    let [n, h, w, c] = input.dims;
+    let [_, oh, ow, co] = out_grad.dims;
+    let mut grad = vec![0.0; co * kernel[0] * kernel[1] * c];
+    for o in 0..co {
+        for ky in 0..kernel[0] {
+            for kx in 0..kernel[1] {
+                for i in 0..c {
+                    let mut sum = 0.0;
+                    for b in 0..n {
+                        for y in 0..oh {
+                            for x in 0..ow {
+                                let (iy, ix) = (args.position(0, y, ky), args.position(1, x, kx));
+                                if iy < 0 || ix < 0 || iy >= h as isize || ix >= w as isize {
+                                    continue;
+                                }
+                                let at = ((b * h + iy as usize) * w + ix as usize) * c + i;
+                                sum += input.values[at]
+                                    * out_grad.values[((b * oh + y) * ow + x) * co + o];
+                            }
+                        }
+                    }
+                    grad[((o * kernel[0] + ky) * kernel[1] + kx) * c + i] = sum;
+                }
+            }
+        }
+    }
+    grad
+}
+
+/// `in_grad[b, y, x, ci] = sum over co, ky, kx of out_grad[b, gy, gx, co] * weights[co, ky, kx,
+/// ci]` where `g = y + padding - tap * dilation`, the positions outside the gradient skipped.
+pub fn naive_data_grad(
+    out_grad: HostTensor,
+    weights: HostTensor,
+    [h, w]: [usize; 2],
+    args: &ConvolutionArgs<2>,
+) -> Vec<f32> {
+    let [n, oh, ow, co] = out_grad.dims;
+    let [_, kh, kw, c] = weights.dims;
+    let mut grad = vec![0.0; n * h * w * c];
+    for b in 0..n {
+        for y in 0..h {
+            for x in 0..w {
+                for i in 0..c {
+                    let mut sum = 0.0;
+                    for ky in 0..kh {
+                        for kx in 0..kw {
+                            let (gy, gx) = (
+                                args.gradient_position(0, y, ky),
+                                args.gradient_position(1, x, kx),
+                            );
+                            if gy < 0 || gx < 0 || gy >= oh as isize || gx >= ow as isize {
+                                continue;
+                            }
+                            for o in 0..co {
+                                let at = ((b * oh + gy as usize) * ow + gx as usize) * co + o;
+                                sum += out_grad.values[at]
+                                    * weights.values[((o * kh + ky) * kw + kx) * c + i];
+                            }
+                        }
+                    }
+                    grad[((b * h + y) * w + x) * c + i] = sum;
+                }
+            }
+        }
+    }
+    grad
 }

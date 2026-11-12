@@ -249,7 +249,7 @@ fn check_weight_gradient<const N: usize>(
                     binding(&input),
                     binding(&grad),
                     output.clone().binding(),
-                    args.clone(),
+                    args,
                     AcceleratedSplitStrategy {
                         tile_kind: AcceleratedTileKind::Mma,
                         column_order,
