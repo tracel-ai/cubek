@@ -685,7 +685,7 @@ impl PlaneFragmentMicrokernel {
 
     /// The plane group MMA for `item` at `settings`, where every rule it runs under holds: the
     /// device offers its form and a bulk tensor copy to land its stages; its planes are as wide as
-    /// a plane group's ([`PlaneFragmentInstruction::PLANE_GROUP_PLANE_UNITS`]); the rhs lies
+    /// a plane group's ([`PlaneFragmentInstruction::plane_group_plane_units`]); the rhs lies
     /// `{n, k}`, as both operands must, K-major; the settings hold one step along `m`, a form
     /// `along_n` granules wide the form spans, and a stage of `depth` steps of `K` whose rows, each
     /// operand's, are one 32, 64 or 128-byte swizzle span, which the instruction's descriptors
@@ -715,7 +715,7 @@ impl PlaneFragmentMicrokernel {
             )
         };
         let runs = hw.bulk_tensor_copy()
-            && hw.plane_dim() == Ok(PlaneFragmentInstruction::PLANE_GROUP_PLANE_UNITS as u32)
+            && hw.plane_dim() == Ok(PlaneFragmentInstruction::plane_group_plane_units() as u32)
             && item.layouts.rhs == MatmulLayout::Col
             && settings.along_m.get() == 1
             && config.supports_n(n as u32)
