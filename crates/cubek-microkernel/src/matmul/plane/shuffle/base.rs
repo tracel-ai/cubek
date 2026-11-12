@@ -244,7 +244,10 @@ impl PlaneShuffleMicrokernel {
         let groups_along_n = shared / units_along_k;
         let one_step_a_turn = wanted.is_some()
             && settings.depth == NonZeroUsize::MIN
-            && shared.is_multiple_of(units_along_k)
+            // A whole plane walks `K` with every unit it can spread, as it always has; the splits
+            // that put the rest of the plane along `N` need groups that fill it.
+            && (settings.k_split == PlaneShuffleKSplit::WholePlane
+                || shared.is_multiple_of(units_along_k))
             && operand
                 .grouping(K, space.k)
                 .is_none_or(|block| depth == block * operand.scales_per_word())
@@ -483,12 +486,11 @@ impl Microkernel for PlaneShuffleMicrokernel {
             blocks,
         };
         match item.blocks {
+            // One tile reads a packed rhs's stored tiles, which a float rhs has none of.
+            None if settings.k_split == PlaneShuffleKSplit::OneTile => Vec::new(),
             None => {
                 let units_along_k = settings.k_split.units(hw, item, settings.depth, shared);
-                units_along_k
-                    .map(|units_along_k| sized(units_along_k, None))
-                    .into_iter()
-                    .collect::<Vec<_>>()
+                vec![sized(units_along_k, None)]
             }
             Some(space) => Self::packed_steps(hw, item, settings, space, shared)
                 .map(|(units_along_k, blocks)| sized(units_along_k, Some(blocks)))

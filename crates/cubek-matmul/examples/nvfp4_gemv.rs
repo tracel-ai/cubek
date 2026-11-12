@@ -13,7 +13,8 @@
 //! `NVFP4_ONLY` keeps the settings whose name contains it or any of its `|`-separated parts,
 //! `NVFP4_LAYOUT` keeps the weight in `rows` or in `tiles`, the tile order a load stores it in on
 //! this device (both). `NVFP4_STAGGER` lays the tiles' strips back to back (`0`) or an odd
-//! number of that many bytes apart, in place of a transaction.
+//! number of that many bytes apart, in place of a transaction. `NVFP4_TILE_WORDS=block|row` lays
+//! the tiles' words in that order in place of this device's.
 //! `NVFP4_PROFILE` launches each setting once a copy and times nothing, for a profiler.
 //! `NVFP4_N` and `NVFP4_K` time one shape of their own in place of the four.
 //! `NVFP4_EXPLORE` races, in place of the cube shuffle's packed settings, a grid of cube shuffles
@@ -39,7 +40,7 @@ use cubek_matmul::kernels::{
 use cubek_matmul::tiled::storage;
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
-use cubek_std::layout::tile_order;
+use cubek_std::layout::tile_order::{self, TileWords};
 use cubek_std::matmul_axes::{K, N};
 use half::f16;
 
@@ -239,15 +240,21 @@ fn in_tile_order(
     // `NVFP4_STAGGER=0` lays the strips back to back, as a load did before it staggered them;
     // `NVFP4_STAGGER=<bytes>` staggers them by an odd number of that many bytes in place of a
     // transaction.
-    let laid = || {
-        tile_order::TileOrder::laid(&scheme, storage::tile_words(hw), (64, 16))
-            .expect("NVFP4 is tile order")
+    // `NVFP4_TILE_WORDS=block|row` lays the tiles in that word order in place of this device's.
+    let words_order = match std::env::var("NVFP4_TILE_WORDS").as_deref() {
+        Ok("block") => TileWords::BlockByBlock,
+        Ok("row") => TileWords::RowByRow,
+        _ => storage::tile_words(hw),
     };
-    let order = match env_usize("NVFP4_STAGGER", usize::MAX) {
+    let laid = || {
+        tile_order::TileOrder::laid(&scheme, words_order, (64, 16)).expect("NVFP4 is tile order")
+    };
+    let stagger_bytes = match env_usize("NVFP4_STAGGER", usize::MAX) {
+        usize::MAX => hw.transaction_bytes(),
+        bytes => bytes,
+    };
+    let order = match stagger_bytes {
         0 => laid().for_matrix(k, n),
-        usize::MAX => {
-            storage::tile_order_on(hw, &scheme, (64, 16), (k, n)).expect("NVFP4 is tile order")
-        }
         bytes => laid()
             .staggered(
                 cubecl::tile::layout::Stagger::new(bytes * 8, 8)
@@ -276,28 +283,38 @@ fn in_tile_order(
         order.values_storage(N, words_per_load),
     )
     .expect("the values tile");
-    // The scales, `[n, k/block]`, a byte each, counted in scales over words.
-    let tiled_scales = storage::tile(
-        client,
-        bound(
-            client.create_from_slice(scales),
-            Metadata::new([n, blocks], [blocks, 1]),
-        ),
-        &tile_order::scales_axes(N),
-        WORD,
-        Some(Field::of_scale(ScaleDtype::UE4M3)),
-        order
-            .scales_storage(N, order.rows_a_load(N, words_per_load))
-            .expect("block by block, the scales lie in tiles"),
-    )
-    .expect("the scales tile");
+    // The scales, `[n, k/block]`, a byte each: in tiles of their own block by block, counted in
+    // scales over words, and in the rows they are packed in row by row.
+    let scales = match order.scales_storage(N, order.rows_a_load(N, words_per_load)) {
+        Some(storage) => {
+            let tiled = storage::tile(
+                client,
+                bound(
+                    client.create_from_slice(scales),
+                    Metadata::new([n, blocks], [blocks, 1]),
+                ),
+                &tile_order::scales_axes(N),
+                WORD,
+                Some(Field::of_scale(ScaleDtype::UE4M3)),
+                storage,
+            )
+            .expect("the scales tile");
+            PlainTensor::new(bound(tiled.handle, *tiled.metadata), WORD)
+        }
+        None => PlainTensor::of_handle(tensor(
+            client,
+            scales,
+            [n, blocks],
+            ElemType::from_scale_dtype(ScaleDtype::UE4M3),
+        )),
+    };
     let matrix = tile_order::matrix_values(&values.metadata);
     let sized = [(K, k), (N, n)];
     let operand = Operand::of_scheme(&scheme, K, [K, N]).expect("one block along k");
     let operand = Packed::read_in_tiles(hw, sized, operand, &matrix).expect("read in its tiles");
     Packed::new(
         PlainTensor::new(bound(values.handle, matrix), WORD),
-        PlainTensor::new(bound(tiled_scales.handle, *tiled_scales.metadata), WORD),
+        scales,
         global,
         scheme,
         operand,

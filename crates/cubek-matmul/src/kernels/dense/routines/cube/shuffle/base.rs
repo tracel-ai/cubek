@@ -3,6 +3,7 @@ use crate::kernels::{
     MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
+use crate::tiled::storage::tile_words;
 use core::num::NonZeroUsize;
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
@@ -15,6 +16,7 @@ use cubek_microkernel::matmul::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Packing;
+use cubek_std::layout::tile_order::TileWords;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
@@ -103,8 +105,11 @@ impl CubeShuffleMatmulRoutine {
     /// The settings worth racing against a packed rhs
     /// ([`CubeShuffleMicrokernel::packed_settings`]): what the packed few-rows table races, and
     /// what a caller naming the routine and no setting runs against a packed rhs, in this
-    /// order.
+    /// order. The split reading a tile whole only where `hw` stores its tiles block by block
+    /// ([`tile_words`]): against tiles laid row by row, or rows, it sizes nothing.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeShuffleMatmulRoutineSettings> {
+        let one_tile = (tile_words(hw) == TileWords::BlockByBlock)
+            .then_some(CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K_ONE_TILE);
         CubeShuffleMicrokernel::packed_settings(hw)
             .into_iter()
             .map(|microkernel| CubeShuffleMatmulRoutineSettings {
@@ -114,16 +119,17 @@ impl CubeShuffleMatmulRoutine {
             .chain([
                 CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K,
                 CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K_ONE_TRANSACTION,
-                CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K_ONE_TILE,
             ])
+            .chain(one_tile)
             .collect()
     }
 
     /// A setting reading the rhs a block at a time against one that reads none so
-    /// ([`Packing::by_block`]): one not in rows, or whose block scales are not `ue4m3`.
+    /// ([`Packing::by_block`]): block scales that are not `ue4m3`, blocks that are no whole
+    /// number of reads in rows, or tiles whose block is not the scheme's.
     pub const BY_BLOCK_UNREAD: Refusal = Refusal::Declined {
-        why: "a cube shuffle reading the rhs a block at a time needs a packed rhs in rows under \
-              ue4m3 block scales whose blocks are whole reads",
+        why: "a cube shuffle reading the rhs a block at a time needs ue4m3 block scales, and \
+              blocks that are whole reads in rows or the tiles' own block in tile order",
     };
 
     /// `problem` with its packed rhs read a block at a time ([`Packing::by_block`];

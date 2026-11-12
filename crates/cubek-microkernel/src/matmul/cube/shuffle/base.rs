@@ -205,15 +205,33 @@ impl CubeShuffleMicrokernelSettings {
 
 impl core::fmt::Display for CubeShuffleMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} planes_along_k={}", self.plane, self.planes_along_k)?;
-        if self.by_block {
-            write!(f, " by_block")?;
-        }
-        match self.planes_in_turns {
-            true => write!(f, " in_turns"),
-            false => Ok(()),
-        }
+        cube_label(
+            f,
+            &self.plane,
+            self.planes_along_k,
+            self.by_block,
+            self.planes_in_turns,
+        )
     }
+}
+
+/// The label a cube shuffle's settings and the microkernel they size share, so a filter on one
+/// matches the other.
+fn cube_label(
+    f: &mut core::fmt::Formatter<'_>,
+    plane: &dyn core::fmt::Display,
+    planes_along_k: NonZeroUsize,
+    by_block: bool,
+    planes_in_turns: bool,
+) -> core::fmt::Result {
+    write!(f, "{plane} planes_along_k={planes_along_k}")?;
+    if by_block {
+        write!(f, " by_block")?;
+    }
+    if planes_in_turns {
+        write!(f, " in_turns")?;
+    }
+    Ok(())
 }
 
 impl core::fmt::Display for CubeShufflePlaneSettings {
@@ -317,6 +335,7 @@ impl CubeShuffleMicrokernel {
         settings: &PlaneShuffleMicrokernelSettings,
         target: usize,
         by_block: bool,
+        planes_in_turns: bool,
     ) -> impl Iterator<Item = Self> {
         let col_weight = item.layouts.rhs == MatmulLayout::Col;
         let meet = CubeMeet::of(hw);
@@ -341,7 +360,7 @@ impl CubeShuffleMicrokernel {
                     planes_along_k,
                     meet,
                     by_block,
-                    planes_in_turns: false,
+                    planes_in_turns,
                 })
         })
     }
@@ -522,22 +541,20 @@ impl Microkernel for CubeShuffleMicrokernel {
                     plane,
                     target,
                     settings.by_block,
+                    settings.planes_in_turns,
                 )),
                 None,
             ),
+            // Tensor-core planes split `K` in windows sized for runs: in turns they size none.
+            CubeShufflePlaneSettings::Fragment(_) if settings.planes_in_turns => (None, None),
             CubeShufflePlaneSettings::Fragment(plane) => {
                 (None, Some(Self::fragment_cubes(hw, item, plane, target)))
             }
         };
-        let planes_in_turns = settings.planes_in_turns;
         shuffle
             .into_iter()
             .flatten()
             .chain(fragment.into_iter().flatten())
-            .map(move |cube| Self {
-                planes_in_turns,
-                ..cube
-            })
     }
 
     /// Its planes read as the plane microkernel's: a col rhs's step down `K`, merged with the
@@ -586,14 +603,13 @@ impl Microkernel for CubeShuffleMicrokernel {
 /// Its planes' microkernel, and how many share a run.
 impl core::fmt::Display for CubeShuffleMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} planes_along_k={}", self.plane, self.planes_along_k)?;
-        if self.by_block {
-            write!(f, " by_block")?;
-        }
-        match self.planes_in_turns {
-            true => write!(f, " in_turns"),
-            false => Ok(()),
-        }
+        cube_label(
+            f,
+            &self.plane,
+            self.planes_along_k,
+            self.by_block,
+            self.planes_in_turns,
+        )
     }
 }
 

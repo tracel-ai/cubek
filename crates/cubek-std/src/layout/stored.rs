@@ -541,7 +541,7 @@ impl Operand {
     pub fn rows_side_by_side(&self, across: Axis) -> usize {
         match self.tiles {
             Some(order) if order.words() == TileWords::BlockByBlock => {
-                order.tile().1 / self.read.extent(across).max(1)
+                (order.tile().1 / self.read.extent(across).max(1)).max(1)
             }
             Some(_) | None => 1,
         }

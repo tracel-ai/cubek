@@ -181,29 +181,28 @@ pub enum PlaneShuffleKSplit {
 
 impl PlaneShuffleKSplit {
     /// Units along `K` on `hw`, a plane `plane_width` units wide, for a block `depth` reads deep of
-    /// `item`'s rhs: a divisor of the plane, since the rest of it lies along `N`. `None` for
-    /// [`OneTile`](Self::OneTile), which reads a packed rhs's tiles and no float one.
+    /// `item`'s rhs: a divisor of the plane, since the rest of it lies along `N`. Against a float
+    /// rhs, which [`OneTile`](Self::OneTile) sizes no plane for, it is one transaction's.
     pub fn units(
         self,
         hw: &Hardware,
         item: &MatmulWorkItem,
         depth: NonZeroUsize,
         plane_width: usize,
-    ) -> Option<usize> {
+    ) -> usize {
         let column_step_bytes =
             depth.get() * hw.vector_ceiling(item.elements.rhs) * item.elements.rhs.size();
         let wanted = match (self, item.layouts.rhs) {
             (Self::WholePlane, _) => plane_width,
-            (Self::OneTransaction, MatmulLayout::Col) => {
+            (Self::OneTransaction | Self::OneTile, MatmulLayout::Col) => {
                 hw.transaction_bytes() / column_step_bytes.max(1)
             }
-            (Self::OneTransaction, MatmulLayout::Row | MatmulLayout::Strided) => 1,
-            (Self::OneTile, _) => return None,
+            (Self::OneTransaction | Self::OneTile, MatmulLayout::Row | MatmulLayout::Strided) => 1,
         };
         (1..=wanted.clamp(1, plane_width))
             .rev()
             .find(|units| plane_width.is_multiple_of(*units))
-            .or(Some(1))
+            .unwrap_or(1)
     }
 }
 

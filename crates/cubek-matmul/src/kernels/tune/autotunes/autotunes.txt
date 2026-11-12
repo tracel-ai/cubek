@@ -4,12 +4,12 @@ many-rows: 176 candidates, checksum b7e13814fe0982dd99ee97d14c662122
 block-scaled: 3 candidates, checksum f91978759d2067db91858e48e344aac7
 
 # h100
-few-rows: 83 candidates, checksum 3f5eed949378304a00534eb2485f9a4c
+few-rows: 81 candidates, checksum 7e05386611cf3f693b971e3bfc9df3de
 many-rows: 218 candidates, checksum 1d224b54d326a4c47d01014a4545e70
 block-scaled: 3 candidates, checksum f91978759d2067db91858e48e344aac7
 
 # h100 with nvfp4
-few-rows: 83 candidates, checksum 3f5eed949378304a00534eb2485f9a4c
+few-rows: 81 candidates, checksum 7e05386611cf3f693b971e3bfc9df3de
 many-rows: 218 candidates, checksum 1d224b54d326a4c47d01014a4545e70
 block-scaled: 21 candidates, checksum bf7cde511a51487fe61bb94c5ecabb6c
 

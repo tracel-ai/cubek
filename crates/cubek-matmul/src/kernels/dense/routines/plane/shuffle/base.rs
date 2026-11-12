@@ -694,9 +694,7 @@ mod tests {
             .expect("an rhs lined along an axis")
             .work_item();
             let plane_width = 32;
-            PlaneShuffleKSplit::OneTransaction
-                .units(&hw, &item, depth, plane_width)
-                .expect("one transaction sizes a float rhs")
+            PlaneShuffleKSplit::OneTransaction.units(&hw, &item, depth, plane_width)
         };
         let reads = |count| NonZeroUsize::new(count).unwrap();
         let f32 = ElemType::Float(FloatKind::F32);
