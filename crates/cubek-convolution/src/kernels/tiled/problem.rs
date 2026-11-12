@@ -13,12 +13,22 @@ use cubek_microkernel::matmul::{
 use cubek_std::routine::EstimatedProblem;
 
 pub const B: Axis = Axis(0);
-pub const OH: Axis = Axis(1);
-pub const OW: Axis = Axis(2);
-pub const CO: Axis = Axis(3);
-pub const RH: Axis = Axis(4);
-pub const RW: Axis = Axis(5);
-pub const CI: Axis = Axis(6);
+pub const CO: Axis = Axis(1);
+pub const CI: Axis = Axis(2);
+pub const OH: Axis = out(0);
+pub const OW: Axis = out(1);
+pub const RH: Axis = tap(0);
+pub const RW: Axis = tap(1);
+
+/// The output axis of spatial dim `dim`.
+pub const fn out(dim: usize) -> Axis {
+    Axis(3 + 2 * dim as u8)
+}
+
+/// The tap axis of spatial dim `dim`, which the window slides along with [`out`].
+pub const fn tap(dim: usize) -> Axis {
+    Axis(4 + 2 * dim as u8)
+}
 
 /// A convolution with no groups and no bias, as the host describes it. Operands are read as a
 /// matmul's: the input is the lhs.
