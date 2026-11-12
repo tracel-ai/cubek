@@ -194,8 +194,8 @@ impl PlaneFragmentMicrokernel {
     /// The planes against a float rhs: every matrix instruction this device offers for the
     /// item's elements that the tile layer picks for a plane's fragment of its shape
     /// ([`Instruction::for_accumulator`]), the fragment API's first, each the one that contracts
-    /// the most per call first ([`candidates`](Microkernel::candidates)). The warpgroup MMA alone where
-    /// the settings deal the tiles to warpgroups. None where the device offers no matrix
+    /// the most per call first ([`candidates`](Microkernel::candidates)). The warpgroup MMA alone
+    /// where the settings deal the tiles to warpgroups. None where the device offers no matrix
     /// instruction for the elements: a plane holds a fragment.
     fn float_candidates(
         hw: &Hardware,
@@ -670,7 +670,8 @@ impl Microkernel for PlaneFragmentMicrokernel {
     type Operand = MatmulOperand;
     type CubeSpace = ();
 
-    const DECLINE: &'static str = "the plane microkernel's software instruction runs everywhere";
+    const DECLINE: &'static str = "the plane microkernel runs where the device offers a matrix \
+         instruction for the product's elements, at a plane width it commits to";
 
     /// The default grid, then one deeper and larger, and two smaller ones, which hold fewer
     /// registers and leave more planes room.
@@ -731,10 +732,9 @@ impl Microkernel for PlaneFragmentMicrokernel {
             .filter(Self::lays_its_rows)
     }
 
-    /// The leaf a unit reads is one instruction's tile of each operand, or the unit's block of the
-    /// software instruction: it reads the lhs in stretches of the leaf's `k` and the rhs in
-    /// stretches of the leaf's extent along the axis its tiles lie along. It writes only its
-    /// accumulator; the drain into the output is its walker's.
+    /// The leaf a unit reads is one instruction's tile of each operand: it reads the lhs in
+    /// stretches of the leaf's `k` and the rhs in stretches of the leaf's extent along the axis its
+    /// tiles lie along. It writes only its accumulator; the drain into the output is its walker's.
     ///
     /// Nothing against a packed rhs: every width follows from its packing.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {
@@ -777,8 +777,7 @@ impl core::fmt::Display for PlaneFragmentMicrokernel {
 impl MatmulMicrokernel for PlaneFragmentMicrokernel {
     /// The levels inside one plane's tile, which a routine states the rest of the partitioning
     /// around: the steps of `K` it walks through one stage, and below them the instructions the
-    /// plane holds — a grid of fragments, one matrix instruction each, or each unit's block of the
-    /// software instruction's cells, one cell of every instruction it holds.
+    /// plane holds, a grid of fragments, one matrix instruction each.
     fn tiling(&self) -> Levels {
         self.tiling_levels(&[], &[])
     }
