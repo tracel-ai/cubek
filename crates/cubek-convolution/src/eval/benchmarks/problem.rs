@@ -73,7 +73,7 @@ impl From<&Conv2dProblem> for ConvProblem {
         let shapes = MatmulOperands { lhs, rhs, out };
         Self::from_views(
             problem.operation,
-            problem.args.dims().to_vec(),
+            &problem.args.dims(),
             roles.views(shapes),
             MatmulOperands::all(problem.element.elem_type()),
             ElemType::Float(FloatKind::F32),

@@ -1,4 +1,6 @@
-use super::{B, CI, CO, ConvBinding, ConvDecline, ConvProblem, ConvRoles, TileConvBlueprint};
+use super::{
+    B, CI, CO, ConvBinding, ConvDecline, ConvDim, ConvProblem, ConvRoles, TileConvBlueprint,
+};
 use crate::components::ConvolutionOperation;
 use crate::launch::SpatialWindow;
 use cubecl::client::Client;
@@ -149,23 +151,21 @@ impl ConvTensors {
     /// yields.
     fn check_window(&self) -> Result<(), Refusal> {
         let problem = self.problem();
-        if problem.kernel.contains(&0) {
+        if problem.spatial.iter().any(|dim| dim.kernel == 0) {
             return Err(ConvDecline::KernelEmpty.into());
         }
-        let window = &self.window;
-        if window
-            .iter()
-            .any(|window| window.stride == 0 || window.dilation == 0)
-        {
+        let steps_zero = |dim: &ConvDim| dim.window.stride == 0 || dim.window.dilation == 0;
+        if problem.spatial.iter().any(steps_zero) {
             return Err(ConvDecline::WindowStepZero.into());
         }
         let roles = ConvRoles::of(self.operation)?;
-        let (input, output) = roles.gather.window_ends(problem.gathered, problem.out);
-        let mismatch = roles.extent_mismatch;
-        let yielded = (0..2).map(|dim| window[dim].output(input[dim], problem.kernel[dim]));
-        match yielded.eq(output) {
+        let states_output = |dim: &ConvDim| {
+            let (input, output) = roles.gather.window_ends(dim);
+            dim.window.output(input, dim.kernel) == output
+        };
+        match problem.spatial.iter().all(states_output) {
             true => Ok(()),
-            false => Err(mismatch.into()),
+            false => Err(roles.extent_mismatch.into()),
         }
     }
 
@@ -189,7 +189,7 @@ impl ConvTensors {
         };
         ConvProblem::from_views(
             self.operation,
-            self.window.clone(),
+            &self.window,
             MatmulOperands {
                 lhs: shape(&self.input),
                 rhs: shape(&self.rhs),

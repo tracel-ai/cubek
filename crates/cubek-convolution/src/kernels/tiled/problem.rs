@@ -1,6 +1,6 @@
 use super::{ConvGather, ConvRoles};
 use crate::components::ConvolutionOperation;
-use crate::definition::Conv2dCost;
+use crate::definition::ConvCost;
 use crate::launch::SpatialWindow;
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::{ElemAlignment, PhysicalAxisMap};
@@ -11,6 +11,7 @@ use cubek_microkernel::matmul::{
     MatmulDestination, MatmulOperands, MatmulReading, MatmulRows, MatmulWorkItem,
 };
 use cubek_std::routine::EstimatedProblem;
+use serde::{Deserialize, Serialize};
 
 pub const B: Axis = Axis(0);
 pub const CO: Axis = Axis(1);
@@ -30,6 +31,28 @@ pub const fn tap(dim: usize) -> Axis {
     Axis(4 + 2 * dim as u8)
 }
 
+/// One spatial dim of a convolution: the extents it reads and writes along it and the window
+/// between them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ConvDim {
+    /// The extent of the gathered operand: the input, or the output gradient in the data backward.
+    pub gathered: usize,
+    pub kernel: usize,
+    /// The output's extent.
+    pub out: usize,
+    pub window: SpatialWindow,
+}
+
+impl ConvDim {
+    /// Whether every position the window reads lies in the gathered operand, so no read needs a
+    /// check of its own.
+    pub fn reads_inside(&self) -> bool {
+        let last = self.out.saturating_sub(1) * self.window.stride
+            + self.kernel.saturating_sub(1) * self.window.dilation;
+        self.window.padding == 0 && last < self.gathered
+    }
+}
+
 /// A convolution with no groups and no bias, as the host describes it. Operands are read as a
 /// matmul's: the input is the lhs.
 #[derive(Debug, Clone, PartialEq)]
@@ -37,15 +60,9 @@ pub struct ConvProblem {
     pub operation: ConvolutionOperation,
     pub batch: usize,
     pub channels_in: usize,
-    /// The spatial extent of the gathered operand: the input, or the output gradient in the data
-    /// backward.
-    pub gathered: [usize; 2],
     pub channels_out: usize,
-    pub kernel: [usize; 2],
-    /// The output's spatial extent.
-    pub out: [usize; 2],
-    /// The window of each spatial dim.
-    pub window: Vec<SpatialWindow>,
+    /// The extents and the window of each spatial dim.
+    pub spatial: Vec<ConvDim>,
     /// The element each operand is stored in.
     pub elements: MatmulOperands<ElemType>,
     /// The element the contraction sums in.
@@ -61,7 +78,7 @@ impl ConvProblem {
     /// ([`ConvRoles::views`]), are `views`.
     pub fn from_views(
         operation: ConvolutionOperation,
-        window: Vec<SpatialWindow>,
+        window: &[SpatialWindow],
         views: MatmulOperands<[usize; 4]>,
         elements: MatmulOperands<ElemType>,
         sum: ElemType,
@@ -76,11 +93,15 @@ impl ConvProblem {
             operation,
             batch: lhs[0],
             channels_in: extents.channels_in.read(&views),
-            gathered: [lhs[1], lhs[2]],
             channels_out: extents.channels_out.read(&views),
-            kernel: extents.kernel.map(|at| at.read(&views)),
-            out: extents.out.map(|at| at.read(&views)),
-            window,
+            spatial: (0..window.len())
+                .map(|dim| ConvDim {
+                    gathered: lhs[dim + 1],
+                    kernel: extents.kernel[dim].read(&views),
+                    out: extents.out[dim].read(&views),
+                    window: window[dim],
+                })
+                .collect(),
             elements,
             sum,
             alignments,
@@ -122,11 +143,11 @@ impl ConvProblem {
     pub fn extent(&self, axis: Axis) -> usize {
         match axis {
             B => self.batch,
-            OH => self.out[0],
-            OW => self.out[1],
+            OH => self.spatial[0].out,
+            OW => self.spatial[1].out,
             CO => self.channels_out,
-            RH => self.kernel[0],
-            RW => self.kernel[1],
+            RH => self.spatial[0].kernel,
+            RW => self.spatial[1].kernel,
             CI => self.channels_in,
             _ => panic!("{axis:?} is not an axis of a convolution"),
         }
@@ -151,7 +172,7 @@ impl ConvProblem {
     /// Whether a position can read before the input's start.
     pub fn underflows(&self) -> bool {
         self.roles().gather == ConvGather::Gradient
-            || self.window.iter().any(|window| window.padding > 0)
+            || self.spatial.iter().any(|dim| dim.window.padding > 0)
     }
 
     /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: an NHWC buffer whose
@@ -159,14 +180,13 @@ impl ConvProblem {
     /// reads the gradient the other way round, at stride 1.
     pub fn input_projection(&self) -> Projection {
         let roles = self.roles();
-        let window = &self.window;
         let [[oh, rh], [ow, rw]] = ConvRoles::SPATIAL;
         Projection::new(
             &roles.lhs,
             &[
                 PhysicalAxisMap::of(B),
-                roles.gather.map(&window[0], oh, rh),
-                roles.gather.map(&window[1], ow, rw),
+                roles.gather.map(&self.spatial[0].window, oh, rh),
+                roles.gather.map(&self.spatial[1].window, ow, rw),
                 PhysicalAxisMap::of(roles.inner.lhs),
             ],
         )
@@ -175,26 +195,25 @@ impl ConvProblem {
     /// Whether every position the window reads lies in the input, so no read needs a check of its
     /// own.
     pub fn reads_inside(&self) -> bool {
-        self.roles().gather == ConvGather::Window
-            && (0..2).all(|dim| {
-                let window = &self.window[dim];
-                let last = (self.out[dim].saturating_sub(1)) * window.stride
-                    + self.kernel[dim].saturating_sub(1) * window.dilation;
-                window.padding == 0 && last < self.gathered[dim]
-            })
+        self.roles().gather == ConvGather::Window && self.spatial.iter().all(ConvDim::reads_inside)
     }
 }
 
 impl EstimatedProblem for ConvProblem {
     fn demand(&self) -> Work {
         // The data backward is the forward convolution of the gradient's shape over the input's.
-        let (spatial_in, spatial_out) = self.roles().gather.window_ends(self.gathered, self.out);
-        Conv2dCost {
+        let gather = self.roles().gather;
+        let (spatial_in, spatial_out) = self
+            .spatial
+            .iter()
+            .map(|dim| gather.window_ends(dim))
+            .unzip();
+        ConvCost {
             batch: self.batch,
             channels_in: self.channels_in,
             spatial_in,
             channels_out: self.channels_out,
-            kernel: self.kernel,
+            kernel: self.spatial.iter().map(|dim| dim.kernel).collect(),
             spatial_out,
             bias_elems: 0,
             elems: MatmulGlobalElems {

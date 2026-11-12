@@ -1,6 +1,5 @@
 use crate::components::ConvolutionOperation;
-use crate::kernels::tiled::{B, ConvProblem};
-use crate::launch::SpatialWindow;
+use crate::kernels::tiled::{B, ConvDim, ConvProblem};
 use cubecl::ir::ElemType;
 use cubecl::throughput::{MemoryAccess, compute_throughput_key};
 use cubecl::tile::layout::ElemAlignment;
@@ -24,12 +23,9 @@ pub struct CubeStagedConvTuneKey {
     pub out: ElemType,
     pub sum: ElemType,
     pub batch: usize,
-    pub gathered: [usize; 2],
-    pub out_extent: [usize; 2],
-    pub kernel: [usize; 2],
     pub channels_in: usize,
     pub channels_out: usize,
-    pub window: Vec<SpatialWindow>,
+    pub spatial: Vec<ConvDim>,
     pub lhs_width: usize,
     pub rhs_width: usize,
 }
@@ -109,12 +105,9 @@ impl CubeStagedConvTuneKey {
             out: problem.elements.out,
             sum: problem.sum,
             batch: Self::batch(problem, hw),
-            gathered: problem.gathered,
-            out_extent: problem.out,
-            kernel: problem.kernel,
             channels_in: problem.channels_in,
             channels_out: problem.channels_out,
-            window: problem.window.clone(),
+            spatial: problem.spatial.clone(),
             lhs_width: width(MatmulOperand::Lhs),
             rhs_width: width(MatmulOperand::Rhs),
         }
@@ -134,11 +127,8 @@ impl From<&CubeStagedConvTuneKey> for ConvProblem {
             operation: key.operation,
             batch: key.batch,
             channels_in: key.channels_in,
-            gathered: key.gathered,
             channels_out: key.channels_out,
-            kernel: key.kernel,
-            out: key.out_extent,
-            window: key.window.clone(),
+            spatial: key.spatial.clone(),
             elements: MatmulOperands {
                 lhs: key.lhs,
                 rhs: key.rhs,

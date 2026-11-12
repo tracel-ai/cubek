@@ -3,7 +3,7 @@ use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples, clie
 
 use cubek_matmul::definition::MatmulGlobalElems;
 
-use crate::definition::Conv2dCost;
+use crate::definition::ConvCost;
 
 use crate::Strategy;
 
@@ -53,13 +53,13 @@ impl cubek_test_utils::Category for Category {
         let [n, c_in, h_in, w_in] = problem.input_shape;
         let [c_out, _, k_h, k_w] = problem.weight_shape;
 
-        let cost = Conv2dCost {
+        let cost = ConvCost {
             batch: n,
             channels_in: c_in,
-            spatial_in: [h_in, w_in],
+            spatial_in: vec![h_in, w_in],
             channels_out: c_out,
-            kernel: [k_h, k_w],
-            spatial_out: problem.out_extent(),
+            kernel: vec![k_h, k_w],
+            spatial_out: problem.out_extent().to_vec(),
             bias_elems: 0,
             elems: MatmulGlobalElems {
                 lhs: dtype,

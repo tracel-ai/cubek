@@ -2,7 +2,7 @@ use super::{CubeStagedConvCandidate, CubeStagedConvTuneKey, candidates};
 use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::settings;
 use crate::eval::benchmarks::{Conv2dElement, Conv2dProblem};
-use crate::kernels::tiled::routines::test_support::{cmma_8x32_only, dense, nvidia};
+use crate::kernels::tiled::routines::test_support::{cmma_8x32_only, dense, nvidia, problems};
 use crate::kernels::tiled::{
     ConvProblem, CubeStagedConvRoutine, CubeStagedConvSettings, UnitRegistersConvRoutine,
 };
@@ -129,6 +129,20 @@ fn a_key_holds_the_width_a_view_start_leaves() {
                 .map(|(blueprint, grid)| (blueprint, grid.launch.cube_dim));
             assert_eq!(real, settings.blueprint(key), "{}", settings.settings());
         }
+    }
+}
+
+/// The problem a key describes is keyed as the key is.
+#[test]
+fn a_key_describes_a_problem_keyed_as_itself() {
+    let hw = nvidia();
+    for (name, problem) in problems() {
+        let key = CubeStagedConvTuneKey::of(&ConvProblem::from(&problem), &hw);
+        assert_eq!(
+            CubeStagedConvTuneKey::of(&ConvProblem::from(&key), &hw),
+            key,
+            "{name}"
+        );
     }
 }
 

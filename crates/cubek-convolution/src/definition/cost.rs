@@ -6,26 +6,26 @@ use cubecl::{
 };
 use cubek_matmul::definition::{MatmulCost, MatmulGlobalElems};
 
-/// Minimal representation of a 2D convolution's cost: the shapes it moves and
-/// the element types it moves them in.
+/// Minimal representation of a convolution's cost over any number of spatial
+/// dims: the shapes it moves and the element types it moves them in.
 #[derive(Debug, Clone)]
-pub struct Conv2dCost {
+pub struct ConvCost {
     /// Batch, input channels, and the input's spatial extent.
     pub batch: usize,
     pub channels_in: usize,
-    pub spatial_in: [usize; 2],
+    pub spatial_in: Vec<usize>,
     /// Output channels and the filter's spatial extent.
     pub channels_out: usize,
-    pub kernel: [usize; 2],
+    pub kernel: Vec<usize>,
     /// The output's spatial extent, which stride, padding and dilation decide.
-    pub spatial_out: [usize; 2],
+    pub spatial_out: Vec<usize>,
     /// Elements of the bias, zero when the convolution has none.
     pub bias_elems: usize,
     /// Global element types of the operands.
     pub elems: MatmulGlobalElems,
 }
 
-impl Conv2dCost {
+impl ConvCost {
     /// The implicit gemm this convolution is: one output pixel per row, one
     /// output channel per column, contracting over the filter's input window.
     ///
@@ -33,14 +33,11 @@ impl Conv2dCost {
     /// filter rather than the unfolded matrices, so only the compute comes
     /// from here.
     fn gemm(&self) -> MatmulCost {
-        let [h_out, w_out] = self.spatial_out;
-        let [k_h, k_w] = self.kernel;
-
         MatmulCost {
             batches: 1,
-            m: self.batch * h_out * w_out,
+            m: self.batch * self.spatial_out.iter().product::<usize>(),
             n: self.channels_out,
-            k: self.channels_in * k_h * k_w,
+            k: self.channels_in * self.kernel.iter().product::<usize>(),
             elems: self.elems.clone(),
         }
     }
@@ -68,13 +65,11 @@ impl Conv2dCost {
     /// re-read every overlapping window, which is the implementation's choice
     /// rather than the convolution's cost.
     pub fn traffic(&self) -> (usize, usize) {
-        let [h_in, w_in] = self.spatial_in;
-        let [h_out, w_out] = self.spatial_out;
-        let [k_h, k_w] = self.kernel;
+        let positions = |extent: &[usize]| extent.iter().product::<usize>();
 
-        let input = self.batch * self.channels_in * h_in * w_in;
-        let filter = self.channels_out * self.channels_in * k_h * k_w;
-        let output = self.batch * self.channels_out * h_out * w_out;
+        let input = self.batch * self.channels_in * positions(&self.spatial_in);
+        let filter = self.channels_out * self.channels_in * positions(&self.kernel);
+        let output = self.batch * self.channels_out * positions(&self.spatial_out);
 
         (
             input * self.elems.lhs.size()
@@ -95,7 +90,7 @@ impl Conv2dCost {
 
 /// Minimal representation of a depthwise convolution's cost. Each channel has
 /// its own filter and contracts over nothing else, so this is not the implicit
-/// gemm [`Conv2dCost`] describes.
+/// gemm [`ConvCost`] describes.
 #[derive(Debug, Clone, Copy)]
 pub struct DepthwiseCost {
     pub batch: usize,
@@ -157,16 +152,16 @@ mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
 
-    fn cost() -> Conv2dCost {
+    fn cost() -> ConvCost {
         let f16 = ElemType::Float(FloatKind::F16);
 
-        Conv2dCost {
+        ConvCost {
             batch: 2,
             channels_in: 3,
-            spatial_in: [8, 8],
+            spatial_in: vec![8, 8],
             channels_out: 4,
-            kernel: [3, 3],
-            spatial_out: [6, 6],
+            kernel: vec![3, 3],
+            spatial_out: vec![6, 6],
             bias_elems: 0,
             elems: MatmulGlobalElems {
                 lhs: f16,
