@@ -19,11 +19,8 @@ mod tune;
 
 pub use declined::ConvDeclined;
 pub use partitioning::CMMA_STEP_ACROSS_TAPS;
-pub use problem::ConvProblem;
-pub use roles::{ConvContractedAxes, ConvExtents, ConvFreeAxes, ConvGather, ConvRoles, ViewDim};
 pub use routines::{
-    CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED, ConvRoutineKind, ConvSettings, ConvVectors,
-    CubeStagedConvRoutine, UnitBlock, UnitRegistersConvRoutine, UnitRegistersConvSettings,
+    CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED, ConvRoutineKind, ConvSettings,
 };
 pub use tensors::ConvTensors;
 pub use tune::ConvCandidate;
@@ -32,6 +29,8 @@ pub(crate) use binding::ConvBinding;
 pub(crate) use blueprint::TileConvBlueprint;
 pub(crate) use launch::ConvRoutine;
 pub(crate) use partitioning::{ConvPartitioning, ConvTiles, InstructionShape};
-pub(crate) use problem::{B, CI, CO, OH, OW, RH, RW};
+pub(crate) use problem::{B, CI, CO, ConvProblem, OH, OW, RH, RW};
+pub(crate) use roles::{ConvGather, ConvRoles};
+pub(crate) use routines::{CubeStagedConvRoutine, UnitRegistersConvRoutine};
 pub(crate) use staging::ConvStaging;
 pub(crate) use tune::launch_tuned;
