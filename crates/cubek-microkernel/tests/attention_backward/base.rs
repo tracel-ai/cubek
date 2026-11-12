@@ -260,7 +260,9 @@ impl<S: BackwardSettings> Backward<S> {
 
     /// Every setting the device lists, for a forward in `f16` and in `f32`, one step of the walk
     /// and three, every key attended; then, at each setting, `f32` over three steps under each
-    /// visibility that hides keys ([`HIDING`]).
+    /// visibility that hides keys ([`HIDING`]) and still shows every query a key. A walk owned by
+    /// the keys holds more queries than keys, so under causal with the queries last its first
+    /// queries see none: no attention is defined there.
     pub(crate) fn every_setting(&self) -> Vec<BackwardCase<S>> {
         S::Microkernel::settings(&self.hw)
             .into_iter()
@@ -273,12 +275,24 @@ impl<S: BackwardSettings> Backward<S> {
                         steps,
                     })
                 });
-                let hiding = HIDING.map(|visibility| BackwardCase {
-                    element: F32,
-                    settings,
-                    visibility,
-                    steps: 3,
-                });
+                let hiding = HIDING
+                    .map(|visibility| BackwardCase {
+                        element: F32,
+                        settings,
+                        visibility,
+                        steps: 3,
+                    })
+                    .into_iter()
+                    .filter(
+                        |case| match case.settings.launch(&self.hw, case.item(), case.steps) {
+                            Ok(launch) => !HostAttention::hides_every_key_from_a_query(
+                                launch.seq(),
+                                case.visibility,
+                            ),
+                            // The refusal shows when the case runs.
+                            Err(_) => true,
+                        },
+                    );
                 attended.chain(hiding)
             })
             .collect()
@@ -292,11 +306,6 @@ impl<S: BackwardSettings> ScopeUnderTest for Backward<S> {
         let launch = case.settings.launch(&self.hw, case.item(), case.steps)?;
         let [queries, keys] = launch.seq();
         let [head, val] = DIMS;
-        if HostAttention::hides_every_key_from_a_query(launch.seq(), case.visibility) {
-            return Err(Refusal::Declined {
-                why: "a query sees no key, so no attention defines its gradients",
-            });
-        }
         let host = HostBackward::new(launch.seq(), case.element, case.visibility);
         let delta = host.delta();
         let tensor = |values: Vec<f32>, shape, element| {
