@@ -135,6 +135,22 @@ fn a_batch_is_keyed_exactly_only_where_it_fills_the_grid() {
     assert_ne!(batched(1200), batched(1201));
 }
 
+/// The grid limit is the device's: a device spawning few cubes along the third dimension keys a
+/// small batch exactly.
+#[test]
+fn a_batch_is_keyed_by_the_device_grid_limit() {
+    let mut hw = nvidia();
+    topology(&mut hw).max_cube_count.2 = 64;
+    let batched = |batch| {
+        let problem = Conv2dProblem {
+            input_shape: [batch, 64, 58, 58],
+            ..dense()
+        };
+        ConvTuneKey::of(&ConvProblem::from(&problem), &hw)
+    };
+    assert_ne!(batched(5), batched(7));
+}
+
 /// A weight backward's batch is contracted, never a grid axis, so it is bucketed however large.
 #[test]
 fn a_contracted_batch_is_keyed_by_its_bucket() {
@@ -193,9 +209,10 @@ fn an_f32_problem_without_f32_instructions_floors_on_the_unit_routine() {
         ..dense()
     };
     let key = key(problem.clone());
+    let list = ConvCandidate::list(&hw);
+    assert!(!list.is_empty());
     assert!(
-        ConvCandidate::list(&hw)
-            .iter()
+        list.iter()
             .all(|candidate| candidate.blueprint(&key).is_none())
     );
     assert!(floor_serves(&hw, &problem));

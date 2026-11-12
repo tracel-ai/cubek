@@ -179,7 +179,8 @@ impl ConvTensors {
         &self.client
     }
 
-    /// The problem these tensors state.
+    /// The problem these tensors state. Their shapes are already the roles' views, as the checks
+    /// that built them read each dim through those views.
     pub fn problem(&self) -> ConvProblem {
         let start = |tensor: &TensorBinding| tensor.handle.offset_start.unwrap_or(0);
         let shape = |tensor: &TensorBinding| {
@@ -200,18 +201,16 @@ impl ConvTensors {
                 out: self.dtypes.acc_global,
             },
             self.dtypes.acc_register,
-            (
-                MatmulOperands {
-                    lhs: ElemAlignment::from(&self.input),
-                    rhs: ElemAlignment::from(&self.rhs),
-                    out: ElemAlignment::from(&self.out),
-                },
-                MatmulOperands {
-                    lhs: start(&self.input),
-                    rhs: start(&self.rhs),
-                    out: start(&self.out),
-                },
-            ),
+            MatmulOperands {
+                lhs: ElemAlignment::from(&self.input),
+                rhs: ElemAlignment::from(&self.rhs),
+                out: ElemAlignment::from(&self.out),
+            },
+            MatmulOperands {
+                lhs: start(&self.input),
+                rhs: start(&self.rhs),
+                out: start(&self.out),
+            },
         )
     }
 

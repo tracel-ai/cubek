@@ -77,7 +77,8 @@ impl From<&Conv2dProblem> for ConvProblem {
             roles.views(shapes),
             MatmulOperands::all(problem.element.elem_type()),
             ElemType::Float(FloatKind::F32),
-            (roles.dense_alignments(shapes), MatmulOperands::all(0)),
+            roles.dense_alignments(shapes),
+            MatmulOperands::all(0),
         )
     }
 }

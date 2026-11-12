@@ -47,6 +47,7 @@ fn only_a_device_with_no_plane_instruction_leaves_the_default_to_the_unit_routin
 #[test]
 fn every_operation_prepares_at_each_block_setting_on_a_cpu_runtime() {
     let hw = cpu(12, 12);
+    assert!(!ROUTINE.settings(&hw).is_empty());
     for operation in [
         ConvolutionOperation::Forward,
         ConvolutionOperation::BackwardData,

@@ -57,7 +57,7 @@ pub fn first_served_on_floor<T>(
             Err(why) => declined = Some(why),
         }
     }
-    Err(declined.expect("a floor is listed for every kind of stack"))
+    Err(declined.expect("attempts that hold a floor are never empty"))
 }
 
 /// A whole kernel written around one microkernel.

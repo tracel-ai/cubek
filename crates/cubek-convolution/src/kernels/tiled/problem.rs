@@ -54,7 +54,8 @@ impl ConvProblem {
         views: MatmulOperands<[usize; 4]>,
         elements: MatmulOperands<ElemType>,
         sum: ElemType,
-        buffers: (MatmulOperands<ElemAlignment>, MatmulOperands<u64>),
+        alignments: MatmulOperands<ElemAlignment>,
+        start_bytes: MatmulOperands<u64>,
     ) -> Self {
         let MatmulOperands { lhs, rhs, out } = views;
         let (channels_in, channels_out, kernel, out_extent) = match operation {
@@ -66,7 +67,6 @@ impl ConvProblem {
                 (out[3], lhs[3], [rhs[0], rhs[1]], [out[1], out[2]])
             }
         };
-        let (alignments, start_bytes) = buffers;
         Self {
             operation,
             batch: lhs[0],
@@ -145,8 +145,12 @@ impl ConvProblem {
 
     /// Whether a position can read before the input's start.
     pub fn underflows(&self) -> bool {
-        self.operation == ConvolutionOperation::BackwardData
-            || self.window.padding.iter().any(|&padding| padding > 0)
+        match self.operation {
+            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => true,
+            ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
+                self.window.padding.iter().any(|&padding| padding > 0)
+            }
+        }
     }
 
     /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: an NHWC buffer whose
@@ -156,8 +160,12 @@ impl ConvProblem {
         let roles = self.roles();
         let window = &self.window;
         let along = |out, tap, dim| match self.operation {
-            ConvolutionOperation::BackwardData => window.gradient_position_map(dim, out, tap),
-            _ => window.position_map(dim, out, tap),
+            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
+                window.gradient_position_map(dim, out, tap)
+            }
+            ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
+                window.position_map(dim, out, tap)
+            }
         };
         Projection::new(
             &roles.lhs,
