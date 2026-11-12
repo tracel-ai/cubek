@@ -6,7 +6,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::ops::matmul::MmaIo;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{Axis, BlockScaledOperands, Instruction, MmaOperands, StageStorage};
-use cubecl::wgmma::WARPGROUP_UNITS;
+use cubecl::wgmma::PLANE_GROUP_UNITS;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{ArithmeticInstruction, SWIZZLED_STAGE_UNREAD, StageLayout};
 use cubek_std::{BlockScaledMma, Hardware};
@@ -31,7 +31,7 @@ pub enum PlaneFragmentInstruction {
         shape: MmaConfig,
         operands: MmaOperands,
     },
-    /// The device's warpgroup MMA (Hopper's `wgmma.mma_async`): a group of four planes contracts
+    /// The device's plane group MMA (Hopper's `wgmma.mma_async`): a group of four planes contracts
     /// one `64 × n` tile together, `config.k` of `K` a step, reading both operands straight out
     /// of a stage the TMA engine landed, and accumulating asynchronously. `n` is the plane
     /// microkernel's columns times the form's granularity.
@@ -39,11 +39,11 @@ pub enum PlaneFragmentInstruction {
 }
 
 impl PlaneFragmentInstruction {
-    /// Planes one warpgroup is made of, which issue its MMA together.
-    pub(crate) const WARPGROUP_PLANES: usize = 4;
+    /// Planes one plane group is made of, which issue its MMA together.
+    pub(crate) const PLANE_GROUP_PLANES: usize = 4;
 
-    /// Units in each plane of a warpgroup: the only plane width its MMA runs at.
-    pub const WARPGROUP_PLANE_UNITS: usize = WARPGROUP_UNITS / Self::WARPGROUP_PLANES;
+    /// Units in each plane of a plane group: the only plane width its MMA runs at.
+    pub const PLANE_GROUP_PLANE_UNITS: usize = PLANE_GROUP_UNITS / Self::PLANE_GROUP_PLANES;
 
     /// The instruction's `m × n × k` laid with its rows along `rows`: its own where they lie
     /// along `m`, its rows' and columns' edges exchanged where they lie along `n`.
@@ -71,13 +71,13 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// Planes that issue one instruction together: a warpgroup's
-    /// `WARPGROUP_PLANES`, one elsewhere. The warpgroup MMA runs only
-    /// where planes are [`WARPGROUP_PLANE_UNITS`](Self::WARPGROUP_PLANE_UNITS) wide
+    /// Planes that issue one instruction together: a plane group's
+    /// `PLANE_GROUP_PLANES`, one elsewhere. The plane group MMA runs only
+    /// where planes are [`PLANE_GROUP_PLANE_UNITS`](Self::PLANE_GROUP_PLANE_UNITS) wide
     /// ([`PlaneFragmentMicrokernel`](super::PlaneFragmentMicrokernel)'s candidates).
     pub fn planes(self) -> usize {
         match self {
-            Self::Wgmma { .. } => Self::WARPGROUP_PLANES,
+            Self::Wgmma { .. } => Self::PLANE_GROUP_PLANES,
             Self::Cmma { .. } | Self::Mma { .. } => 1,
         }
     }
@@ -120,7 +120,7 @@ impl PlaneFragmentInstruction {
 
     /// The order this instruction reads operands laid out as `layouts` in: a col operand in its
     /// buffer's order where the fragment loads it col-major, so the stage is filled along the
-    /// operand's own lines. Both matrix transports load `A` and `B` either way; a warpgroup MMA
+    /// operand's own lines. Both matrix transports load `A` and `B` either way; a plane group MMA
     /// loads only `B` col-major. The others as the product names them.
     ///
     /// Measured on an L4 for a weight gradient's `f32` col lhs at tf32: staged in the product's
@@ -198,7 +198,7 @@ impl PlaneFragmentInstruction {
     /// `mma`'s rows swizzled as the descriptor swizzles them, which keeps the rows a fragment load
     /// reads at once on distinct banks as its own [`stage_layout`](Self::stage_layout) does;
     /// `cmma`'s in order, since a box lands no padding; the software instruction's as the operand
-    /// lies, as ever. The warpgroup MMA's swizzled as the manual `mma`'s are: a row one swizzle
+    /// lies, as ever. The plane group MMA's swizzled as the manual `mma`'s are: a row one swizzle
     /// span long lies as the instruction's descriptor reads it.
     pub fn landed_stage_storage(
         self,

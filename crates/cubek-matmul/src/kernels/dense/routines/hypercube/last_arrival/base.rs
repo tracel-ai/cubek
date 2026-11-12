@@ -356,11 +356,11 @@ mod tests {
         )
     }
 
-    /// A setting asking for the warpgroup MMA declines, on a device and product it runs on: the
+    /// A setting asking for the plane group MMA declines, on a device and product it runs on: the
     /// hypercube's cubes fill their stages by their units, which never land the swizzled rows its
     /// descriptors read.
     #[test]
-    fn declines_the_warpgroup_mma() {
+    fn declines_the_plane_group_mma() {
         use cubecl::features::{WgmmaConfig, WgmmaElems};
         use cubek_std::microkernel::StageRing;
 
@@ -388,7 +388,7 @@ mod tests {
                 along_m: NonZeroUsize::MIN,
                 along_n: NonZeroUsize::new(16).unwrap(),
                 depth: NonZeroUsize::new(4).unwrap(),
-                holder: ComputeScope::WARPGROUP,
+                holder: ComputeScope::PLANE_GROUP,
                 ..cube.plane
             },
             ring: StageRing::DOUBLE,

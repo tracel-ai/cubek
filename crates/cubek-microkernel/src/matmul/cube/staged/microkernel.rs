@@ -116,8 +116,8 @@ impl CubeStagedWalk {
     /// each a lap ahead and do nothing else, and the rest walk them contracting, then drain. The
     /// two meet only on each slot's barriers, which is why no fragment bounces there: a scratch's
     /// cube barriers are ones the filling planes never reach. The ring's own walk has every plane
-    /// fill, so the contracting planes walk the slots themselves; a warpgroup MMA's stage is freed
-    /// only once the reads it issued complete ([`Stages::consume_async`]).
+    /// fill, so the contracting planes walk the slots themselves; a plane group MMA's stage is
+    /// freed only once the reads it issued complete ([`Stages::consume_async`]).
     ///
     /// `boxed`: `c` is stored by the TMA engine, out of a box in shared memory declared once the
     /// walk has freed the ring, so it takes the stages' bytes rather than its own; the whole cube
@@ -161,12 +161,12 @@ impl CubeStagedWalk {
             Role::Compute => {
                 let instruction = sum.sum_instruction();
                 if comptime!(instruction == Instruction::Wgmma) {
-                    let issue = WarpgroupStages {
+                    let issue = PlaneGroupStages {
                         sum: sum.clone(),
                         walk,
                     };
 
-                    stages.consume_async::<WarpgroupStages>(&run, &issue);
+                    stages.consume_async::<PlaneGroupStages>(&run, &issue);
                 } else {
                     for lap in 0..laps {
                         #[unroll]
@@ -302,18 +302,18 @@ pub fn cube_staged_sum_microkernel(
     stages.free();
 }
 
-/// What a cube's compute planes issue on each stage of a warpgroup MMA's walk: every plane
+/// What a cube's compute planes issue on each stage of a plane group MMA's walk: every plane
 /// group's MMAs of the stage into `sum`, whose completion frees the stage once they are done with
 /// it ([`Stages::consume_async`]).
 #[derive(CubeType)]
-struct WarpgroupStages {
+struct PlaneGroupStages {
     sum: Tile,
     #[cube(comptime)]
     walk: CubeStagedWalk,
 }
 
 #[cube]
-impl AsyncStage for WarpgroupStages {
+impl AsyncStage for PlaneGroupStages {
     fn issue(&self, region: &Region, lhs: &Tile, rhs: &Tile) -> Pending<()> {
         let sum_stage = self.sum.at(region);
         CubeStagedWalk::contract_stage(region, &sum_stage, lhs, rhs, self.walk);

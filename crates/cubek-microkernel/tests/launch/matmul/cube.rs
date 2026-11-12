@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Axis, Partitioning, RegisterBlock, StageStorage, TileTensor};
+use cubecl::tile::{Axis, Partitioning, SoftwareMatmul, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings, CubeStagedMicrokernel,
@@ -122,7 +122,7 @@ fn cube_shuffle_kernel<EA: Numeric, E: Numeric>(
     rhs: &TileTensor<'_>,
     out: &TileTensor<'_>,
     partitioning: Partitioning,
-    #[comptime] block: Option<RegisterBlock>,
+    #[comptime] block: Option<SoftwareMatmul>,
     #[comptime] meet: CubeMeet,
     #[comptime] split: Axis,
     #[comptime] planes: usize,

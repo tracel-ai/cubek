@@ -35,7 +35,7 @@
 //! Only meaningful on a GPU: `plane_size == 1` on CPU collapses every strategy to `seq_k`.
 
 use cubecl::tile::{
-    Axis, Launcher, Levels, Partitioning, RegisterBlock, Semiring, Space, TileTensor, launch::Grid,
+    Axis, Launcher, Levels, Partitioning, Semiring, SoftwareMatmul, Space, TileTensor, launch::Grid,
 };
 use cubecl::{
     CubeCount, CubeDim,
@@ -52,7 +52,7 @@ use cubek_test_utils::{
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no unit
 /// fan-out. Held fixed across mappings so the numbers compare the partitioning, not the
 /// instruction.
-const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
+const REGISTER_BLOCK: SoftwareMatmul = SoftwareMatmul::new(64);
 
 /// The kernel under test for the one-level mappings: this cube's region, contracted whole at
 /// the leaf. The mapping is the only variable.

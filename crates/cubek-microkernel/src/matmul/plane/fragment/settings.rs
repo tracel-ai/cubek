@@ -12,7 +12,7 @@ use cubecl::tile::space::ComputeScope;
 /// A resolved [`PlaneFragmentMicrokernel`](super::PlaneFragmentMicrokernel) states the same
 /// fields in its own instruction's calls: the box cut into fragments.
 ///
-/// A warpgroup MMA holds one instruction a plane group, `along_n` times its form's granularity
+/// A plane group MMA holds one instruction a plane group, `along_n` times its form's granularity
 /// wide: there `along_m` is one, and the steps along `n` size the instruction rather than a grid of
 /// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -21,9 +21,9 @@ pub struct PlaneFragmentMicrokernelSettings {
     pub along_n: NonZeroUsize,
     pub depth: NonZeroUsize,
     /// Who holds each of the plane's tiles: the plane itself, or a plane group the tiles are
-    /// dealt to whole. A warpgroup ([`ComputeScope::WARPGROUP`]) holds its tile in the warpgroup
-    /// MMA, which the tile layer picks for it: a routine of its own, whose stages only the TMA
-    /// engine lands.
+    /// dealt to whole. A plane group ([`ComputeScope::PLANE_GROUP`]) holds its tile in the plane
+    /// group MMA, which the tile layer picks for it: a routine of its own, whose stages only the
+    /// TMA engine lands.
     pub holder: ComputeScope,
     /// How deep along `K` each of its fragments is ([`PlaneFragmentDepth`]).
     pub fragment_depth: PlaneFragmentDepth,

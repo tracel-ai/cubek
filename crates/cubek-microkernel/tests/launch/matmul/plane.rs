@@ -4,7 +4,7 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubecl::tile::{
-    Launcher, Partitioning, Region, RegisterBlock, Scratch, Semiring, Space, StageStorage, Stages,
+    Launcher, Partitioning, Region, Scratch, Semiring, SoftwareMatmul, Space, StageStorage, Stages,
     Tile, TileTensor,
 };
 use cubecl::{self as cubecl, cube};
@@ -293,7 +293,7 @@ fn plane_shuffle_kernel<EA: Numeric, E: Numeric>(
     rhs: &TileTensor<'_>,
     out: &TileTensor<'_>,
     partitioning: Partitioning,
-    #[comptime] block: RegisterBlock,
+    #[comptime] block: SoftwareMatmul,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let a = lhs.tile(&partitioning);

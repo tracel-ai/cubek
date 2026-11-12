@@ -5,7 +5,7 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Levels, RegisterBlock};
+use cubecl::tile::{Axis, Levels, SoftwareMatmul};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{Spread, Walked};
@@ -362,8 +362,8 @@ impl PlaneShuffleMicrokernel {
     }
 
     /// The register block a plane's sum opens as: all of one unit's accumulator.
-    pub fn block(&self) -> RegisterBlock {
-        RegisterBlock::new(self.accumulator_scalars())
+    pub fn block(&self) -> SoftwareMatmul {
+        SoftwareMatmul::new(self.accumulator_scalars())
     }
 }
 

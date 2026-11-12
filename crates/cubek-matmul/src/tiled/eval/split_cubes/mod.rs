@@ -23,7 +23,7 @@
 
 use crate::definition::{MatmulCost, MatmulGlobalElems};
 use cubecl::tile::{
-    Launcher, Levels, Monoid, Partitioning, Projection, RegisterBlock, Semiring, Space, TileSpec,
+    Launcher, Levels, Monoid, Partitioning, Projection, Semiring, SoftwareMatmul, Space, TileSpec,
     TileTensor, TileTensorLaunch,
     launch::{AccumulateArg, AccumulateArgLaunch, Grid},
     layout::PhysicalAxisMap,
@@ -43,7 +43,7 @@ use cubek_test_utils::{
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
-const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
+const REGISTER_BLOCK: SoftwareMatmul = SoftwareMatmul::new(64);
 
 /// Columns each cube owns. Held at one so the mappings differ only in what they do with `K`.
 const COLS: usize = 1;

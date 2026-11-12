@@ -8,7 +8,7 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Levels, RegisterBlock, Space};
+use cubecl::tile::{Axis, Levels, SoftwareMatmul, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, blocked};
@@ -374,7 +374,7 @@ impl CubeShufflePlane {
 
     /// The register block the plane's sum opens as; `None` where it holds fragments, whose
     /// instruction the tile layer picks.
-    pub fn block(&self) -> Option<RegisterBlock> {
+    pub fn block(&self) -> Option<SoftwareMatmul> {
         match self {
             CubeShufflePlane::Shuffle(plane) => Some(plane.block()),
             CubeShufflePlane::Fragment(_) => None,

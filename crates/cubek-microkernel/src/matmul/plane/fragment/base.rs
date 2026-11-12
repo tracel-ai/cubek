@@ -222,8 +222,8 @@ impl PlaneFragmentMicrokernel {
     /// the most per call first ([`candidates`](Microkernel::candidates)), each cutting the same box:
     /// the settings' grid of the device's [`matrix_unit`](Self::matrix_unit), so the instruction
     /// the tile picks never changes what a setting means. An instruction that does not cut the box
-    /// in whole steps ([`MatmulStep`]) is not a candidate. The warpgroup MMA alone where the
-    /// settings deal the tiles to warpgroups. None where the device offers no matrix instruction
+    /// in whole steps ([`MatmulStep`]) is not a candidate. The plane group MMA alone where the
+    /// settings deal the tiles to plane groups. None where the device offers no matrix instruction
     /// for the elements: a plane holds a fragment.
     fn float_candidates(
         hw: &Hardware,
@@ -283,7 +283,7 @@ impl PlaneFragmentMicrokernel {
             picked == Some(instruction.tile_instruction())
         };
         let instructions: Vec<_> = match settings.holder {
-            ComputeScope::WARPGROUP => Self::wgmma(hw, item, &settings).into_iter().collect(),
+            ComputeScope::PLANE_GROUP => Self::wgmma(hw, item, &settings).into_iter().collect(),
             _ => cmma
                 .chain(mma)
                 .filter(|_| committed)
@@ -297,7 +297,7 @@ impl PlaneFragmentMicrokernel {
             .filter_map(move |instruction| {
                 let [(_, m), (_, n), (_, k)] = instruction.shape_along(settings.rows_along);
                 let step = step.clone().under(Space::new(&[(M, m), (N, n), (K, k)]));
-                // The warpgroup MMA's settings size its one instruction, not a grid of units.
+                // The plane group MMA's settings size its one instruction, not a grid of units.
                 let (along_m, along_n, depth) = match (instruction, tile) {
                     (PlaneFragmentInstruction::Wgmma { .. }, _) => {
                         (settings.along_m, settings.along_n, settings.depth)
@@ -679,13 +679,13 @@ impl PlaneFragmentMicrokernel {
         }
     }
 
-    /// The warpgroup MMA for `item` at `settings`, where every rule it runs under holds: the device
-    /// offers its form and a bulk tensor copy to land its stages; its planes are as wide as a
-    /// warpgroup's ([`PlaneFragmentInstruction::WARPGROUP_PLANE_UNITS`]); the rhs lies `{n, k}`, as
-    /// both operands must, K-major; the settings hold one step along `m`, a form `along_n` granules
-    /// wide the form spans, and a stage of `depth` steps of `K` whose rows, each operand's, are one
-    /// 32, 64 or 128-byte swizzle span, which the instruction's descriptors read. The cube walking
-    /// it adds what only its fill decides
+    /// The plane group MMA for `item` at `settings`, where every rule it runs under holds: the
+    /// device offers its form and a bulk tensor copy to land its stages; its planes are as wide as
+    /// a plane group's ([`PlaneFragmentInstruction::PLANE_GROUP_PLANE_UNITS`]); the rhs lies
+    /// `{n, k}`, as both operands must, K-major; the settings hold one step along `m`, a form
+    /// `along_n` granules wide the form spans, and a stage of `depth` steps of `K` whose rows, each
+    /// operand's, are one 32, 64 or 128-byte swizzle span, which the instruction's descriptors
+    /// read. The cube walking it adds what only its fill decides
     /// ([`CubeStagedMicrokernel::resolve`](crate::matmul::cube::CubeStagedMicrokernel::resolve)).
     fn wgmma(
         hw: &Hardware,
@@ -711,7 +711,7 @@ impl PlaneFragmentMicrokernel {
             )
         };
         let runs = hw.bulk_tensor_copy()
-            && hw.plane_dim() == Ok(PlaneFragmentInstruction::WARPGROUP_PLANE_UNITS as u32)
+            && hw.plane_dim() == Ok(PlaneFragmentInstruction::PLANE_GROUP_PLANE_UNITS as u32)
             && item.layouts.rhs == MatmulLayout::Col
             && settings.along_m.get() == 1
             && config.supports_n(n as u32)
@@ -763,8 +763,8 @@ impl Microkernel for PlaneFragmentMicrokernel {
     /// contracts the most per call first; none where the device offers none, as a plane holds a
     /// fragment. A matrix instruction spreads its fragment across the plane, so it is offered only
     /// where the device commits to one plane width. Where the settings deal the tiles to
-    /// warpgroups, the warpgroup MMA alone, where it runs. Against a packed rhs, the planes that
-    /// decode it as they load, at the grids
+    /// plane groups, the plane group MMA alone, where it runs. Against a packed rhs, the planes
+    /// that decode it as they load, at the grids
     /// [`windowed`](PlaneFragmentMicrokernelSettings::windowed) names, narrowed until their columns
     /// close `n`.
     fn candidates(
