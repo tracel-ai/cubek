@@ -327,6 +327,10 @@ impl PlaneFragmentMicrokernel {
 
     /// The instruction's calls of `extent` each that cut `edge` of a box, where they cut it in
     /// whole steps of `calls` of them.
+    ///
+    /// A division, against "multiply, never divide": cubek guesses here the instruction the tile
+    /// will pick, to lay the plane's fragments out for it. It goes once the tile cuts the plane's
+    /// tile into the calls of the instruction it picks itself.
     fn calls_cutting(edge: usize, extent: usize, calls: usize) -> Option<NonZeroUsize> {
         let step = extent * calls;
         NonZeroUsize::new(edge / extent).filter(|_| edge.is_multiple_of(step))
