@@ -372,11 +372,11 @@ impl CubeShufflePlane {
         }
     }
 
-    /// The register block the plane's sum opens as; `None` where it holds fragments, whose
+    /// The software matmul the plane's sum opens as; `None` where it holds fragments, whose
     /// instruction the tile layer picks.
-    pub fn block(&self) -> Option<SoftwareMatmul> {
+    pub fn software_matmul(&self) -> Option<SoftwareMatmul> {
         match self {
-            CubeShufflePlane::Shuffle(plane) => Some(plane.block()),
+            CubeShufflePlane::Shuffle(plane) => Some(plane.software_matmul()),
             CubeShufflePlane::Fragment(_) => None,
         }
     }

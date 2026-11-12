@@ -14,7 +14,7 @@ use cubecl::tile::{Axis, Level, Levels, Partitioning, Scratch};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
-/// A box of queries of one head a plane owns: their dot product of the output with its gradient,
+/// The queries of one head a plane owns: their dot product of the output with its gradient,
 /// then, a stage of keys at a time, their scores in the plane's window, the probabilities read
 /// back there from each query's logsumexp, the gradient against them in another window, the
 /// gradient against the scores cast for the fragments to load, and the query's gradient in
@@ -37,8 +37,8 @@ pub struct PlaneQueryGradientMicrokernel {
     pub query_gradient: PlaneFragmentMicrokernel,
 }
 
-/// The box a plane holds along the queries and along a stage of keys, in units of the device's
-/// matrix unit for the operands ([`PlaneFragmentMicrokernel::matrix_unit`]), how much of
+/// The shape of the tile a plane holds along the queries and along a stage of keys, in units of the
+/// device's matrix unit for the operands ([`PlaneFragmentMicrokernel::matrix_unit`]), how much of
 /// the query's gradient its scale bounces through shared memory at once, and where it keeps the
 /// score ([`ScoreHolder`]): in windows of shared memory, read through cmma, or in its own manual
 /// `mma` fragments. The instruction is not a setting: it follows from where the score is held.
@@ -166,7 +166,7 @@ impl PlaneQueryGradientMicrokernel {
     }
 
     /// `product`'s own levels below the walker's planes, `planes` its counts: its fragments, its
-    /// rows by its columns by the steps of its contraction, so the plane's box spans the
+    /// rows by its columns by the steps of its contraction, so the plane's tile spans the
     /// contraction whole, as the operands' windows do.
     fn grid_levels(product: PlaneFragmentMicrokernel, planes: &[(Axis, usize)]) -> Vec<Level> {
         let [(_, m), (_, n), (_, k)] = product.instruction.shape();
@@ -203,11 +203,11 @@ impl PlaneQueryGradientMicrokernel {
         }
     }
 
-    /// Whether `instruction` runs a box under `settings`: a cmma one where they keep the score in
-    /// windows; a manual `mma` of 16-bit operands as deep as two of its fragments are wide where
-    /// they keep it in fragments and the device reads an accumulator as an `A`, so the query's
-    /// gradient reads the score's gradient, a run of two fragments along the stage's keys, cast in
-    /// place.
+    /// Whether `instruction` runs a plane's tile under `settings`: a cmma one where they keep the
+    /// score in windows; a manual `mma` of 16-bit operands as deep as two of its fragments are wide
+    /// where they keep it in fragments and the device reads an accumulator as an `A`, so the
+    /// query's gradient reads the score's gradient, a run of two fragments along the stage's keys,
+    /// cast in place.
     fn serves(
         hw: &Hardware,
         settings: PlaneQueryGradientMicrokernelSettings,

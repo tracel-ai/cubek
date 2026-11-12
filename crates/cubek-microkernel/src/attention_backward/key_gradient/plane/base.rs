@@ -14,7 +14,7 @@ use cubecl::tile::{Axis, Level, Levels, Partitioning, Scratch};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
-/// A box of keys of one key head a plane owns: for each head of the group, a stage of queries at a
+/// The keys of one key head a plane owns: for each head of the group, a stage of queries at a
 /// time, their scores keys first in the plane's window, the probabilities read back there from
 /// each query's logsumexp and cast for the fragments to load, the gradient against them in another
 /// window, cast in turn; the values' and the keys' gradients in fragments held across every stage
@@ -41,7 +41,7 @@ pub struct PlaneKeyGradientMicrokernel {
     pub key_gradient: PlaneFragmentMicrokernel,
 }
 
-/// The instructions a plane's box holds along the keys and along a stage of queries, how much of
+/// The instructions a plane's tile holds along the keys and along a stage of queries, how much of
 /// the keys' gradient its scale bounces through shared memory at once, and where it keeps the
 /// score ([`ScoreHolder`]): in windows of shared memory, read through cmma, or in its own manual
 /// `mma` fragments. The instruction is not a setting: it follows from where the score is held.
@@ -218,10 +218,10 @@ impl PlaneKeyGradientMicrokernel {
         }
     }
 
-    /// Whether `instruction` runs a box under `settings`: a cmma one where they keep the score in
-    /// windows; a manual `mma` of 16-bit operands as deep as two of its fragments are wide where
-    /// they keep it in fragments and the device reads an accumulator as an `A`, so the gradients
-    /// read the score's fragments, a run of two along the stage's queries, cast in place.
+    /// Whether `instruction` runs a plane's tile under `settings`: a cmma one where they keep the
+    /// score in windows; a manual `mma` of 16-bit operands as deep as two of its fragments are wide
+    /// where they keep it in fragments and the device reads an accumulator as an `A`, so the
+    /// gradients read the score's fragments, a run of two along the stage's queries, cast in place.
     fn serves(
         hw: &Hardware,
         settings: PlaneKeyGradientMicrokernelSettings,

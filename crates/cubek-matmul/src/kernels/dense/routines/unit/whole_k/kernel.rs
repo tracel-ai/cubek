@@ -21,8 +21,12 @@ pub fn unit_whole_k_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
     for plane in &partitioning {
         for unit in plane {
             let (c, a, b) = (c.at(&unit), a.at(&unit), b.at(&unit));
-            let mut sum =
-                c.register_accumulator::<EA>(&a, &b, microkernel.block(), Semiring::SUM_PROD);
+            let mut sum = c.register_accumulator::<EA>(
+                &a,
+                &b,
+                microkernel.software_matmul(),
+                Semiring::SUM_PROD,
+            );
 
             sum.zero();
             for step in &unit {

@@ -361,8 +361,8 @@ impl PlaneShuffleMicrokernel {
         self.rows * self.columns() * cell
     }
 
-    /// The register block a plane's sum opens as: all of one unit's accumulator.
-    pub fn block(&self) -> SoftwareMatmul {
+    /// The software matmul a plane's sum opens as: all of one unit's accumulator.
+    pub fn software_matmul(&self) -> SoftwareMatmul {
         SoftwareMatmul::new(self.accumulator_scalars())
     }
 }

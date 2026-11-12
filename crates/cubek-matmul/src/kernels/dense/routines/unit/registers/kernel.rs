@@ -25,7 +25,7 @@ pub fn unit_registers_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destin
             let mut sum = c.register_accumulator::<EA>(
                 &a,
                 &b,
-                microkernel.drained_block(),
+                microkernel.drained_software_matmul(),
                 Semiring::SUM_PROD,
             );
 

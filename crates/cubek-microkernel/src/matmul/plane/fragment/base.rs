@@ -194,8 +194,8 @@ impl PlaneFragmentMicrokernel {
     /// The matrix unit `hw` offers a product of `lhs` by `rhs` summed in `sum`: the instruction
     /// that contracts the most per call, the squarest among those that contract as much
     /// ([`largest_first`](Instructions::largest_first)), over both of the device's sets. A float
-    /// plane's settings count their box in it: `8 × 8 × 8` on an M2, `16 × 16 × 16` for `f16` on
-    /// NVIDIA and `16 × 16 × 8` for its tf32. `None` where the device offers none.
+    /// plane's settings count their tile's shape in it: `8 × 8 × 8` on an M2, `16 × 16 × 16` for
+    /// `f16` on NVIDIA and `16 × 16 × 8` for its tf32. `None` where the device offers none.
     pub fn matrix_unit(
         hw: &Hardware,
         lhs: ElemType,
@@ -219,12 +219,12 @@ impl PlaneFragmentMicrokernel {
     /// The planes against a float rhs: every matrix instruction this device offers for the
     /// item's elements that the tile layer picks for a plane's fragment of its shape
     /// ([`Instruction::for_accumulator`]), the fragment API's first, each the one that contracts
-    /// the most per call first ([`candidates`](Microkernel::candidates)), each cutting the same box:
-    /// the settings' grid of the device's [`matrix_unit`](Self::matrix_unit), so the instruction
-    /// the tile picks never changes what a setting means. An instruction that does not cut the box
-    /// in whole steps ([`MatmulStep`]) is not a candidate. The plane group MMA alone where the
-    /// settings deal the tiles to plane groups. None where the device offers no matrix instruction
-    /// for the elements: a plane holds a fragment.
+    /// the most per call first ([`candidates`](Microkernel::candidates)), each cutting the same
+    /// tile: the settings' grid of the device's [`matrix_unit`](Self::matrix_unit), so the
+    /// instruction the tile picks never changes what a setting means. An instruction that does not
+    /// cut the tile in whole steps ([`MatmulStep`]) is not a candidate. The plane group MMA alone
+    /// where the settings deal the tiles to plane groups. None where the device offers no matrix
+    /// instruction for the elements: a plane holds a fragment.
     fn float_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -249,10 +249,10 @@ impl PlaneFragmentMicrokernel {
             .map(PlaneFragmentInstruction::mma);
         let settings = *settings;
         let step = MatmulStep::new(hw, MatmulOperands::all(Operand::plain()), item.elements);
-        // The box one plane holds, in elements along `M`, `N` and `K`: the settings' grid of the
-        // unit's steps, the fewest of its calls every load fills whole. Its rows lie along the
-        // axis the settings lay the instruction's rows along, so the unit's edges are exchanged
-        // where they lie along `n`.
+        // The shape of the tile one plane holds, in elements along `M`, `N` and `K`: the settings'
+        // grid of the unit's steps, the fewest of its calls every load fills whole. Its rows lie
+        // along the axis the settings lay the instruction's rows along, so the unit's edges are
+        // exchanged where they lie along `n`.
         let tile = Self::matrix_unit(hw, lhs, rhs, sum).map(|[m, n, k]| {
             let (m, n) = match settings.rows_along {
                 PlaneFragmentRowsAlong::M => (m, n),
@@ -268,7 +268,7 @@ impl PlaneFragmentMicrokernel {
         let tiles_pick = move |instruction: &PlaneFragmentInstruction| {
             let [(_, m), (_, n), (_, k)] = instruction.shape_along(settings.rows_along);
             let depth = match (settings.fragment_depth, tile) {
-                (PlaneFragmentDepth::Stage, Some([_, _, box_k])) => box_k,
+                (PlaneFragmentDepth::Stage, Some([_, _, shape_k])) => shape_k,
                 _ => k,
             };
             let picked = Instruction::for_accumulator(
@@ -302,10 +302,10 @@ impl PlaneFragmentMicrokernel {
                     (PlaneFragmentInstruction::Wgmma { .. }, _) => {
                         (settings.along_m, settings.along_n, settings.depth)
                     }
-                    (_, Some([box_m, box_n, box_k])) => (
-                        Self::calls_cutting(box_m, m, step.calls(M))?,
-                        Self::calls_cutting(box_n, n, step.calls(N))?,
-                        Self::calls_cutting(box_k, k, step.calls(K))?,
+                    (_, Some([shape_m, shape_n, shape_k])) => (
+                        Self::calls_cutting(shape_m, m, step.calls(M))?,
+                        Self::calls_cutting(shape_n, n, step.calls(N))?,
+                        Self::calls_cutting(shape_k, k, step.calls(K))?,
                     ),
                     (_, None) => return None,
                 };
@@ -325,8 +325,8 @@ impl PlaneFragmentMicrokernel {
             })
     }
 
-    /// The instruction's calls of `extent` each that cut `edge` of a box, where they cut it in
-    /// whole steps of `calls` of them.
+    /// The instruction's calls of `extent` each that cut `edge` of a plane's tile, where they cut
+    /// it in whole steps of `calls` of them.
     fn calls_cutting(edge: usize, extent: usize, calls: usize) -> Option<NonZeroUsize> {
         let step = extent * calls;
         NonZeroUsize::new(edge / extent).filter(|_| edge.is_multiple_of(step))
@@ -964,7 +964,7 @@ mod tests {
         }
     }
 
-    /// Rows along `n` exchange the instruction's edges along `m` and `n`, so a plane's box and its
+    /// Rows along `n` exchange the instruction's edges along `m` and `n`, so a plane's tile and its
     /// stages' tiles follow: a `16 × 8` instruction is eight rows of the product by sixteen of its
     /// columns.
     #[test]
@@ -1064,13 +1064,13 @@ mod tests {
         }
     }
 
-    /// A setting is one box on a device whichever instruction cuts it: on an H100 offering `f16`
-    /// three cmma forms and the manual `16 × 8 × 16`, every candidate at the default's four by
-    /// four units of `16 × 16 × 16` holds `64 × 64` of the output and walks `16` of `K` a stage,
+    /// A setting is one tile shape on a device whichever instruction cuts it: on an H100 offering
+    /// `f16` three cmma forms and the manual `16 × 8 × 16`, every candidate at the default's four
+    /// by four units of `16 × 16 × 16` holds `64 × 64` of the output and walks `16` of `K` a stage,
     /// each in its own instruction's fragments. A unit that an instruction does not cut whole is
-    /// not that instruction's: `8 × 32` cuts no box one unit high.
+    /// not that instruction's: `8 × 32` cuts no tile one unit high.
     #[test]
-    fn every_instruction_cuts_the_box_the_setting_names() {
+    fn every_instruction_cuts_the_tile_the_setting_names() {
         use cubek_std::devices;
 
         let (f16, f32) = (
@@ -1110,7 +1110,7 @@ mod tests {
             PlaneFragmentMicrokernel::matrix_unit(&hw, f16, f16, f32),
             Some([16, 16, 16])
         );
-        let boxes = |settings: &PlaneFragmentMicrokernelSettings| -> Vec<_> {
+        let tiles = |settings: &PlaneFragmentMicrokernelSettings| -> Vec<_> {
             PlaneFragmentMicrokernel::candidates(&hw, &item, settings)
                 .map(|plane| {
                     let [(_, m), (_, n), (_, k)] = plane.instruction.shape();
@@ -1118,12 +1118,12 @@ mod tests {
                 })
                 .collect()
         };
-        let default = boxes(&PlaneFragmentMicrokernelSettings::DEFAULT);
+        let default = tiles(&PlaneFragmentMicrokernelSettings::DEFAULT);
         assert_eq!(default.len(), 4, "{default:?}");
         for (instruction, tile) in default {
             assert_eq!(tile, [64, 64, 16], "{instruction:?}");
         }
-        let one_unit = boxes(&PlaneFragmentMicrokernelSettings::grid(1, 1, 1));
+        let one_unit = tiles(&PlaneFragmentMicrokernelSettings::grid(1, 1, 1));
         assert!(
             one_unit
                 .iter()

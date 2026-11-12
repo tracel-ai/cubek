@@ -1,16 +1,17 @@
 use core::num::NonZeroUsize;
 use cubecl::tile::space::ComputeScope;
 
-/// The box a plane holds along `m` and `n`, and how deep along `K` it walks per stage, in units:
-/// steps of the device's matrix unit for the product's elements, its largest square instruction
-/// ([`PlaneFragmentMicrokernel::matrix_unit`](super::PlaneFragmentMicrokernel::matrix_unit)),
-/// each the fewest calls of it every load fills whole
-/// ([`MatmulStep`](crate::matmul::MatmulStep)). So a setting is one box in elements on a device,
-/// whichever instruction cuts it. The instruction is not a setting: the tile layer picks it for
-/// the product ([`Instruction::for_accumulator`](cubecl::tile::Instruction::for_accumulator)).
+/// The shape of the tile a plane holds along `m` and `n`, and how deep along `K` it walks per
+/// stage, in units: steps of the device's matrix unit for the product's elements, its largest
+/// square instruction
+/// ([`PlaneFragmentMicrokernel::matrix_unit`](super::PlaneFragmentMicrokernel::matrix_unit)), each
+/// the fewest calls of it every load fills whole ([`MatmulStep`](crate::matmul::MatmulStep)). So a
+/// setting is one tile shape in elements on a device, whichever instruction cuts it. The
+/// instruction is not a setting: the tile layer picks it for the product
+/// ([`Instruction::for_accumulator`](cubecl::tile::Instruction::for_accumulator)).
 ///
 /// A resolved [`PlaneFragmentMicrokernel`](super::PlaneFragmentMicrokernel) states the same
-/// fields in its own instruction's calls: the box cut into fragments.
+/// fields in its own instruction's calls: the tile cut into fragments.
 ///
 /// A plane group MMA holds one instruction a plane group, `along_n` times its form's granularity
 /// wide: there `along_m` is one, and the steps along `n` size the instruction rather than a grid of

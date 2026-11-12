@@ -274,7 +274,7 @@ impl MatmulLaunch for PlaneShuffleLaunch {
                 rhs,
                 out,
                 launcher.partitioning_arg(),
-                self.microkernel.block(),
+                self.microkernel.software_matmul(),
                 [self.elements.sum, self.elements.out],
             );
         }

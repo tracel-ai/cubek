@@ -2,12 +2,12 @@ use crate::matmul::plane::PlaneFragmentDepth;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 
-/// The box a plane holds along the queries and along a stage of keys, in units of the device's
-/// matrix unit for the operands
+/// The shape of the tile a plane holds along the queries and along a stage of keys, in units of the
+/// device's matrix unit for the operands
 /// ([`matrix_unit`](crate::matmul::plane::PlaneFragmentMicrokernel::matrix_unit)), how much of its
 /// output a correction bounces through shared memory at once, and where it keeps the score. The
 /// instruction is not a setting: the tile layer picks it where the score is held, and it cuts the
-/// same box whichever it is.
+/// same tile whichever it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentAttentionMicrokernelSettings {
     pub seq_q: NonZeroUsize,

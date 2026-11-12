@@ -95,7 +95,7 @@ impl MatmulLaunch for CubeShuffleLaunch {
                 rhs,
                 out,
                 launcher.partitioning_arg(),
-                microkernel.plane.block(),
+                microkernel.plane.software_matmul(),
                 microkernel.meet,
                 microkernel.split(),
                 microkernel.planes_along_k.get(),
