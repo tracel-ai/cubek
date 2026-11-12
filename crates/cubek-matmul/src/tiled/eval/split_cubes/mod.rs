@@ -43,7 +43,7 @@ use cubek_test_utils::{
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
-const REGISTER_BLOCK: SoftwareMatmul = SoftwareMatmul::new(64);
+const SOFTWARE_MATMUL: SoftwareMatmul = SoftwareMatmul::new(64);
 
 /// Columns each cube owns. Held at one so the mappings differ only in what they do with `K`.
 const COLS: usize = 1;
@@ -58,7 +58,7 @@ fn plain_matmul(a: &TileTensor<'_>, b: &TileTensor<'_>, c: &TileTensor<'_>, spac
     for region in space {
         let mut c_cube = c
             .at(&region)
-            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+            .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
         c_cube.mm(&a.at(&region), &b.at(&region));
     }
 }
@@ -80,7 +80,7 @@ fn atomic_matmul<E: Numeric>(
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
         let mut acc =
-            c_cube.register_accumulator::<E>(&a_cube, &b_cube, REGISTER_BLOCK, Semiring::SUM_PROD);
+            c_cube.register_accumulator::<E>(&a_cube, &b_cube, SOFTWARE_MATMUL, Semiring::SUM_PROD);
         acc.mma(&a_cube, &b_cube);
         c_cube.copy_cast_from(&acc);
     }
@@ -104,7 +104,7 @@ fn atomic_matmul_units<E: Numeric>(
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
         let acc =
-            c_cube.register_accumulator::<E>(&a_cube, &b_cube, REGISTER_BLOCK, Semiring::SUM_PROD);
+            c_cube.register_accumulator::<E>(&a_cube, &b_cube, SOFTWARE_MATMUL, Semiring::SUM_PROD);
         for unit in cube {
             let mut acc_unit = acc.at(&unit);
             acc_unit.mma(&a_cube.at(&unit), &b_cube.at(&unit));
