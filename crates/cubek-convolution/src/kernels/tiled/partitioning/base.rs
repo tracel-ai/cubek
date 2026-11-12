@@ -1,5 +1,5 @@
 use super::{ConvBlock, ConvTiles};
-use crate::kernels::tiled::{ConvProblem, ConvRoles, OH, OW, RH, RW};
+use crate::kernels::tiled::{ConvProblem, ConvRoles};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::space::PlaneOrder;
@@ -127,9 +127,10 @@ impl ConvPartitioning {
     /// Whether the tiles overhang an axis the window gathers the input over, where a read past
     /// the real extents lands off the input whatever the padding.
     pub fn overhangs_gathered(&self) -> bool {
-        [OH, OW, RH, RW]
-            .into_iter()
-            .any(|axis| self.overhangs(axis))
+        ConvRoles::SPATIAL
+            .as_flattened()
+            .iter()
+            .any(|&axis| self.overhangs(axis))
     }
 
     /// How the stages hold their cells.

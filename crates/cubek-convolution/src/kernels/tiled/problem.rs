@@ -1,4 +1,4 @@
-use super::ConvRoles;
+use super::{ConvGather, ConvRoles};
 use crate::components::ConvolutionOperation;
 use crate::definition::Conv2dCost;
 use crate::launch::ConvolutionArgs;
@@ -57,24 +57,18 @@ impl ConvProblem {
         alignments: MatmulOperands<ElemAlignment>,
         start_bytes: MatmulOperands<u64>,
     ) -> Self {
-        let MatmulOperands { lhs, rhs, out } = views;
-        let (channels_in, channels_out, kernel, out_extent) = match operation {
-            ConvolutionOperation::Forward => (lhs[3], rhs[0], [rhs[1], rhs[2]], [out[1], out[2]]),
-            ConvolutionOperation::BackwardWeight => {
-                (lhs[3], out[3], [out[0], out[1]], [rhs[1], rhs[2]])
-            }
-            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
-                (out[3], lhs[3], [rhs[0], rhs[1]], [out[1], out[2]])
-            }
-        };
+        let lhs = views.lhs;
+        let extents = ConvRoles::of(operation)
+            .expect("a problem is stated by tensors that were checked")
+            .extents;
         Self {
             operation,
             batch: lhs[0],
-            channels_in,
+            channels_in: extents.channels_in.read(&views),
             gathered: [lhs[1], lhs[2]],
-            channels_out,
-            kernel,
-            out: out_extent,
+            channels_out: extents.channels_out.read(&views),
+            kernel: extents.kernel.map(|at| at.read(&views)),
+            out: extents.out.map(|at| at.read(&views)),
             window,
             elements,
             sum,
@@ -145,12 +139,8 @@ impl ConvProblem {
 
     /// Whether a position can read before the input's start.
     pub fn underflows(&self) -> bool {
-        match self.operation {
-            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => true,
-            ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
-                self.window.padding.iter().any(|&padding| padding > 0)
-            }
-        }
+        self.roles().gather == ConvGather::Gradient
+            || self.window.padding.iter().any(|&padding| padding > 0)
     }
 
     /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: an NHWC buffer whose
@@ -159,20 +149,13 @@ impl ConvProblem {
     pub fn input_projection(&self) -> Projection {
         let roles = self.roles();
         let window = &self.window;
-        let along = |out, tap, dim| match self.operation {
-            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
-                window.gradient_position_map(dim, out, tap)
-            }
-            ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
-                window.position_map(dim, out, tap)
-            }
-        };
+        let [[oh, rh], [ow, rw]] = ConvRoles::SPATIAL;
         Projection::new(
             &roles.lhs,
             &[
                 PhysicalAxisMap::of(B),
-                along(OH, RH, 0),
-                along(OW, RW, 1),
+                roles.gather.map(window, 0, oh, rh),
+                roles.gather.map(window, 1, ow, rw),
                 PhysicalAxisMap::of(roles.inner.lhs),
             ],
         )
@@ -181,7 +164,7 @@ impl ConvProblem {
     /// Whether every position the window reads lies in the input, so no read needs a check of its
     /// own.
     pub fn reads_inside(&self) -> bool {
-        self.operation != ConvolutionOperation::BackwardData
+        self.roles().gather == ConvGather::Window
             && (0..2).all(|dim| {
                 let window = &self.window;
                 let last = (self.out[dim].saturating_sub(1)) * window.stride[dim]
@@ -194,12 +177,7 @@ impl ConvProblem {
 impl EstimatedProblem for ConvProblem {
     fn demand(&self) -> Work {
         // The data backward is the forward convolution of the gradient's shape over the input's.
-        let (spatial_in, spatial_out) = match self.operation {
-            ConvolutionOperation::BackwardData => (self.out, self.gathered),
-            ConvolutionOperation::Forward
-            | ConvolutionOperation::BackwardWeight
-            | ConvolutionOperation::ForwardTransposed => (self.gathered, self.out),
-        };
+        let (spatial_in, spatial_out) = self.roles().gather.window_ends(self.gathered, self.out);
         Conv2dCost {
             batch: self.batch,
             channels_in: self.channels_in,

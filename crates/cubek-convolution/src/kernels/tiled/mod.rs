@@ -18,8 +18,9 @@ mod tensors;
 mod tune;
 
 pub use declined::ConvDeclined;
+pub use partitioning::CMMA_STEP_ACROSS_TAPS;
 pub use problem::ConvProblem;
-pub use roles::{CMMA_STEP_ACROSS_TAPS, ConvContractedAxes, ConvFreeAxes, ConvRoles};
+pub use roles::{ConvContractedAxes, ConvExtents, ConvFreeAxes, ConvGather, ConvRoles, ViewDim};
 pub use routines::{
     CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED, ConvRoutineKind, ConvSettings, ConvVectors,
     CubeStagedConvRoutine, UnitBlock, UnitRegistersConvRoutine, UnitRegistersConvSettings,

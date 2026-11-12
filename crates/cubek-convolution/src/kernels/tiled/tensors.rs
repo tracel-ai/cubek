@@ -150,19 +150,9 @@ impl ConvTensors {
         if window.stride.contains(&0) || window.dilation.contains(&0) {
             return Err(ConvDeclined::WindowStepZero.into());
         }
-        let (input, output, mismatch) = match self.operation {
-            ConvolutionOperation::Forward => {
-                (problem.gathered, problem.out, ConvDeclined::ForwardExtent)
-            }
-            ConvolutionOperation::BackwardWeight => (
-                problem.gathered,
-                problem.out,
-                ConvDeclined::WeightGradExtent,
-            ),
-            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
-                (problem.out, problem.gathered, ConvDeclined::DataGradExtent)
-            }
-        };
+        let roles = ConvRoles::of(self.operation)?;
+        let (input, output) = roles.gather.window_ends(problem.gathered, problem.out);
+        let mismatch = roles.extent_mismatch;
         match window.output(input, problem.kernel) == output {
             true => Ok(()),
             false => Err(mismatch.into()),

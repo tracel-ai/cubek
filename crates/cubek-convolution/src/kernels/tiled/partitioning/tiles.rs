@@ -55,10 +55,7 @@ impl ConvTiles {
         let instruction = InstructionShape::from(&plane.instruction);
         let step = ConvStep::new(problem, instruction.depth);
         let cmma = matches!(plane.instruction, PlaneFragmentInstruction::Cmma { .. });
-        if cmma
-            && step.beside() > 1
-            && let Some(refusal) = problem.roles().cmma_step_declined()
-        {
+        if cmma && let Some(refusal) = step.cmma_declined(&problem.roles()) {
             return Err(refusal);
         }
         let mut tiles = Self {

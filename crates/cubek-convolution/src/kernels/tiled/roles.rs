@@ -1,17 +1,13 @@
 use super::{B, CI, CO, ConvDeclined, OH, OW, RH, RW};
 use crate::components::ConvolutionOperation;
+use crate::launch::ConvolutionArgs;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::Axis;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
+use cubecl::tile::layout::PhysicalAxisMap;
 use cubecl::zspace::{Shape, Strides};
 use cubek_microkernel::matmul::{MatmulAxes, MatmulLayout, MatmulOperand, MatmulOperands};
-
-/// What a cmma instruction is declined with where a step of the contraction holds several taps
-/// beside the channels, which are fewer than the instruction's depth.
-pub const CMMA_STEP_ACROSS_TAPS: Refusal = Refusal::Declined {
-    why: "cmma steps through the channels alone, and a step of taps beside fewer channels than the instruction's depth is not one its fragments are loaded for",
-};
 
 /// The output's axes by the part each plays. The batch and the one across take a tile each of a
 /// cube or a plane, after the rows and the columns.
@@ -46,6 +42,67 @@ impl ConvContractedAxes {
     }
 }
 
+/// How the gathered input's positions are addressed from an output axis and a tap axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConvGather {
+    /// The window of a convolution: `out * stride + tap * dilation - padding`.
+    Window,
+    /// The window read backward, at stride 1: `out + padding - tap * dilation`, which falls before
+    /// the input's start at the first positions whatever the padding.
+    Gradient,
+}
+
+impl ConvGather {
+    /// The map of spatial `dim` of `window` over the axes `out` and `tap`.
+    pub fn map(
+        self,
+        window: &ConvolutionArgs<2>,
+        dim: usize,
+        out: Axis,
+        tap: Axis,
+    ) -> PhysicalAxisMap {
+        match self {
+            Self::Window => window.position_map(dim, out, tap),
+            Self::Gradient => window.gradient_position_map(dim, out, tap),
+        }
+    }
+
+    /// `(gathered, out)` as the window's input and output extents.
+    pub fn window_ends(self, gathered: [usize; 2], out: [usize; 2]) -> ([usize; 2], [usize; 2]) {
+        match self {
+            Self::Window => (gathered, out),
+            Self::Gradient => (out, gathered),
+        }
+    }
+}
+
+/// One dim of one operand's view, where a problem reads an extent from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewDim {
+    operand: MatmulOperand,
+    dim: usize,
+}
+
+impl ViewDim {
+    const fn at(operand: MatmulOperand, dim: usize) -> Self {
+        Self { operand, dim }
+    }
+
+    /// The extent of this dim in `views`.
+    pub fn read(self, views: &MatmulOperands<[usize; 4]>) -> usize {
+        views.get(self.operand)[self.dim]
+    }
+}
+
+/// Where each extent of a problem lives in the operands' views.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConvExtents {
+    pub channels_in: ViewDim,
+    pub channels_out: ViewDim,
+    pub kernel: [ViewDim; 2],
+    pub out: [ViewDim; 2],
+}
+
 /// Which axis of the space plays which part in an operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConvRoles {
@@ -65,8 +122,11 @@ pub struct ConvRoles {
     pub out_dims: [usize; 4],
     /// The axis each operand's buffer is contiguous along: the one its vectors run along.
     pub inner: MatmulOperands<Axis>,
-    /// Whether a cmma step may hold cells of the second contracted axis beside the first.
-    pub cmma_beside: bool,
+    /// How the gathered input is addressed.
+    pub gather: ConvGather,
+    pub extents: ConvExtents,
+    /// What the window's extents are declined with where they do not yield the output's.
+    pub extent_mismatch: ConvDeclined,
 }
 
 impl ConvRoles {
@@ -92,7 +152,20 @@ impl ConvRoles {
             rhs: CI,
             out: CO,
         },
-        cmma_beside: false,
+        gather: ConvGather::Window,
+        extents: ConvExtents {
+            channels_in: ViewDim::at(MatmulOperand::Lhs, 3),
+            channels_out: ViewDim::at(MatmulOperand::Rhs, 0),
+            kernel: [
+                ViewDim::at(MatmulOperand::Rhs, 1),
+                ViewDim::at(MatmulOperand::Rhs, 2),
+            ],
+            out: [
+                ViewDim::at(MatmulOperand::Out, 1),
+                ViewDim::at(MatmulOperand::Out, 2),
+            ],
+        },
+        extent_mismatch: ConvDeclined::ForwardExtent,
     };
 
     const WEIGHT_BACKWARD: Self = Self {
@@ -117,7 +190,20 @@ impl ConvRoles {
             rhs: CO,
             out: CI,
         },
-        cmma_beside: true,
+        gather: ConvGather::Window,
+        extents: ConvExtents {
+            channels_in: ViewDim::at(MatmulOperand::Lhs, 3),
+            channels_out: ViewDim::at(MatmulOperand::Out, 3),
+            kernel: [
+                ViewDim::at(MatmulOperand::Out, 0),
+                ViewDim::at(MatmulOperand::Out, 1),
+            ],
+            out: [
+                ViewDim::at(MatmulOperand::Rhs, 1),
+                ViewDim::at(MatmulOperand::Rhs, 2),
+            ],
+        },
+        extent_mismatch: ConvDeclined::WeightGradExtent,
     };
 
     const DATA_BACKWARD: Self = Self {
@@ -142,7 +228,20 @@ impl ConvRoles {
             rhs: CI,
             out: CI,
         },
-        cmma_beside: false,
+        gather: ConvGather::Gradient,
+        extents: ConvExtents {
+            channels_in: ViewDim::at(MatmulOperand::Out, 3),
+            channels_out: ViewDim::at(MatmulOperand::Lhs, 0),
+            kernel: [
+                ViewDim::at(MatmulOperand::Rhs, 0),
+                ViewDim::at(MatmulOperand::Rhs, 1),
+            ],
+            out: [
+                ViewDim::at(MatmulOperand::Out, 1),
+                ViewDim::at(MatmulOperand::Out, 2),
+            ],
+        },
+        extent_mismatch: ConvDeclined::DataGradExtent,
     };
 
     /// The roles `operation` gives the axes of the space.
@@ -159,17 +258,14 @@ impl ConvRoles {
         }
     }
 
-    /// The refusal a cmma step of two contracted axes meets, or `None` where the operation's
-    /// roles allow one: the weight backward's, which walks output positions through cmma.
-    pub fn cmma_step_declined(&self) -> Option<Refusal> {
-        (!self.cmma_beside).then_some(CMMA_STEP_ACROSS_TAPS)
-    }
+    /// The spatial `[out, tap]` axis pairs, one per spatial dim of the gathered input.
+    pub const SPATIAL: [[Axis; 2]; 2] = [[OH, RH], [OW, RW]];
 
     /// The axis a kernel leaves to its launch: the batch, which no vectorization or overhang
     /// decision reads. A batch that is a gathered tap axis (the weight backward's) stays compiled
     /// in, since the tile DSL's gather reads the extents of the axes it gathers over at expansion.
     pub fn dynamic(&self) -> Option<Axis> {
-        let gathered = [OH, OW, RH, RW].contains(&self.free.batch);
+        let gathered = Self::SPATIAL.as_flattened().contains(&self.free.batch);
         (!gathered).then_some(self.free.batch)
     }
 
@@ -285,4 +381,19 @@ fn permuted(mut tensor: TensorBinding, dims: [usize; 4]) -> Result<TensorBinding
     tensor.shape = Shape::from(dims.map(|dim| tensor.shape[dim]).to_vec());
     tensor.strides = Strides::new(&dims.map(|dim| tensor.strides[dim]));
     Ok(tensor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A transposed forward is no operation of the tiled convolution, which states it as the data
+    /// backward at a stride.
+    #[test]
+    fn the_transposed_forward_is_refused_by_name() {
+        assert_eq!(
+            ConvRoles::of(ConvolutionOperation::ForwardTransposed),
+            Err(ConvDeclined::Transposed.into())
+        );
+    }
 }

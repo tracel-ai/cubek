@@ -15,7 +15,7 @@ use cubek_convolution::eval::cpu_reference::{
 };
 use cubek_convolution::kernels::tiled::{
     CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED, ConvCandidate,
-    ConvDeclined, ConvRoles, ConvRoutineKind, ConvSettings,
+    ConvDeclined, ConvRoutineKind, ConvSettings,
 };
 use cubek_convolution::{ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref};
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
@@ -658,16 +658,6 @@ refusals! {
     data_grad_weights_of_no_taps: BackwardData, false, [[1, 6, 6, 32], [32, 0, 3, 64], [1, 6, 6, 64]], SAME => ConvDeclined::KernelEmpty;
     data_grad_of_no_filters: BackwardData, false, [[1, 6, 6, 0], [0, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDeclined::ContractionEmpty;
     data_grad_dilation_of_zero: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], window([1, 1], [1, 1], [0, 1]) => ConvDeclined::WindowStepZero;
-}
-
-/// A transposed forward is no operation of the tiled convolution, which states it as the data
-/// backward at a stride.
-#[test]
-fn the_transposed_forward_is_refused_by_name() {
-    assert_eq!(
-        ConvRoles::of(ConvolutionOperation::ForwardTransposed),
-        Err(ConvDeclined::Transposed.into())
-    );
 }
 
 /// An output with no element has nothing to compute: the launch returns and writes nowhere, as
