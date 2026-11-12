@@ -1,15 +1,15 @@
-//! The hypercube of plane fragments: each box's keys cut across its cubes, a second launch merging
-//! the partials they leave.
+//! The hypercube of plane fragments: each box's keys cut across its cubes, the split-keys merge
+//! launched after it merging the partials they leave.
 
-use cubek_attention::kernels::HypercubeSecondLaunchFragmentAttentionRoutine;
+use cubek_attention::kernels::HypercubeFragmentPartialAttentionRoutine;
 use cubek_test_utils::ScopeUnderTest;
 
 use crate::attention::{Forward, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8};
 
-/// The routine's lead on every prompt case.
+/// The routine's lead, merged, on every prompt case.
 #[test]
 fn the_hypercube_fragment_routine_matches_the_host() {
-    let forward = Forward::new(HypercubeSecondLaunchFragmentAttentionRoutine);
+    let forward = Forward::split_keys(HypercubeFragmentPartialAttentionRoutine);
     forward.check(forward.at_its_lead(&PROMPTS));
 }
 
@@ -17,17 +17,17 @@ fn the_hypercube_fragment_routine_matches_the_host() {
 /// partial it leaves are each a different kernel.
 #[test]
 fn every_hypercube_fragment_setting_matches_the_host_at_a_head_dim_of_128() {
-    let forward = Forward::new(HypercubeSecondLaunchFragmentAttentionRoutine);
+    let forward = Forward::split_keys(HypercubeFragmentPartialAttentionRoutine);
     forward.check(forward.at_every_setting(&[PROMPT_WIDE]));
 }
 
 /// Every microkernel setting the routine lists, on eight cubes a box, over every FP8 cache at a
 /// model's head dim: `e4m3` keys multiplied on the device's FP8 instruction, the query converted
-/// ahead, or widened ahead to the query's `f16`; `e4m3` values widened ahead to it. The cubes a box
-/// splits over change the merge, not the score, so one count stands for them.
+/// ahead, or widened to the query's `f16` by their stage; `e4m3` values widened to it by theirs.
+/// The cubes a box splits over change the merge, not the score, so one count stands for them.
 #[test]
 fn every_hypercube_fragment_microkernel_reads_every_fp8_cache() {
-    let forward = Forward::new(HypercubeSecondLaunchFragmentAttentionRoutine);
+    let forward = Forward::split_keys(HypercubeFragmentPartialAttentionRoutine);
     let eight_cubes = forward
         .settings()
         .into_iter()

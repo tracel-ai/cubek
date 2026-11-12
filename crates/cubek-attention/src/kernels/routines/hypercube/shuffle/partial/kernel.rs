@@ -8,9 +8,9 @@ use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 
 /// Every cube walking its run of its box over the keys its queries see, its planes reading the
-/// keys and values from tiles, leaving its partial in its slot for a second launch to merge. Each
+/// keys and values from tiles, leaving its partial in its slot for the split-keys merge. Each
 /// operand is read in its own element and widened into the sum, `EA`: the query in `EQ`, the keys
-/// in `EK`, the values in `EV`. The output, which the second launch writes, is not read here.
+/// in `EK`, the values in `EV`. The output, which the merge writes, is not read here.
 #[cube(launch_unchecked)]
 #[allow(
     clippy::extra_unused_type_parameters,

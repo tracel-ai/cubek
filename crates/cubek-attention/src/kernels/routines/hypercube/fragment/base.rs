@@ -1,9 +1,8 @@
 use super::kernel::hypercube_fragment_attention_kernel;
-use crate::kernels::routines::hypercube::merge::HypercubeSecondLaunch;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
-    HypercubeMerge, PACKED_QUERIES_UNREAD, QueryOrder,
+    AttentionPartitioning, AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors,
+    HypercubeMerge, PACKED_QUERIES_UNREAD, PartialAttentionRoutine, QueryOrder,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
@@ -12,31 +11,33 @@ use cubek_microkernel::attention::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand};
+use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
-/// Attention with several cubes owning every box of queries, every cube walking its own run of the
-/// keys: each cube stages its run's keys and values once for its plane fragments, on a square
-/// matrix instruction, each plane leaves its rows undivided in a slot of its own, its softmax
-/// state beside them, and a second launch merges the slots into the output, a plane a row. The
-/// cubes cover the queries, the heads and the runs, one batch and key head each.
+/// Partial attention, with several cubes owning every box of queries, every cube walking its own
+/// run of the keys: each cube stages its run's keys and values once for its plane fragments, on a
+/// square matrix instruction, and each plane leaves its queries undivided in a slot of its own, its
+/// softmax state beside them. It writes no output: the split-keys merge launched after it merges
+/// the slots into the output, a plane a query of a head. The cubes cover the queries, the heads and the runs,
+/// one batch and key head each.
 ///
 /// What a long prompt's few boxes against many keys want: a cube a box would leave the device
-/// idle. Its cubes merge by a second launch alone, since a merge on the last arrival writes the
+/// idle. Its cubes have no merge of their own on the last arrival, since that merge writes the
 /// output through a binding its planes read as a tile.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct HypercubeSecondLaunchFragmentAttentionRoutine;
+pub struct HypercubeFragmentPartialAttentionRoutine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HypercubeSecondLaunchFragmentAttentionRoutineSettings {
+pub struct HypercubeFragmentPartialAttentionRoutineSettings {
     pub microkernel: HypercubeAttentionMicrokernelSettings,
     /// Cubes sharing one box, each on its own run of the keys: part of the partitioning, which
     /// distributes it whatever the keys ([`AttentionPartitioning::new`]).
     pub cubes_along_keys: NonZeroUsize,
 }
 
-impl HypercubeSecondLaunchFragmentAttentionRoutineSettings {
+impl HypercubeFragmentPartialAttentionRoutineSettings {
     /// Its microkernel's default on eight cubes a box.
     pub const DEFAULT: Self = Self {
         microkernel: HypercubeAttentionMicrokernelSettings::FRAGMENT,
@@ -44,28 +45,28 @@ impl HypercubeSecondLaunchFragmentAttentionRoutineSettings {
     };
 }
 
-impl core::fmt::Display for HypercubeSecondLaunchFragmentAttentionRoutineSettings {
+impl core::fmt::Display for HypercubeFragmentPartialAttentionRoutineSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "hypercube-second-launch-fragment-attention {} cubes_along_keys={}",
+            "hypercube-fragment-partial-attention {} cubes_along_keys={}",
             self.microkernel, self.cubes_along_keys
         )
     }
 }
 
-pub type HypercubeSecondLaunchFragmentAttentionRoutineBlueprint =
+pub type HypercubeFragmentPartialAttentionRoutineBlueprint =
     AttentionBlueprint<HypercubeAttentionMicrokernel, StageStorage>;
 
 /// The width its planes store their slots' lines at: one element, as the windows their sums
 /// drain through serve them.
 const SLOT_WIDTH: usize = 1;
 
-impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
+impl Routine for HypercubeFragmentPartialAttentionRoutine {
     type Problem = AttentionRoutineProblem;
     type Microkernel = HypercubeAttentionMicrokernel;
-    type Settings = HypercubeSecondLaunchFragmentAttentionRoutineSettings;
-    type Blueprint = HypercubeSecondLaunchFragmentAttentionRoutineBlueprint;
+    type Settings = HypercubeFragmentPartialAttentionRoutineSettings;
+    type Blueprint = HypercubeFragmentPartialAttentionRoutineBlueprint;
     type Partitioning = AttentionPartitioning;
 
     /// Its microkernel's settings over plane fragments
@@ -103,7 +104,7 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
     fn estimate(
         &self,
         problem: &AttentionRoutineProblem,
-        blueprint: &HypercubeSecondLaunchFragmentAttentionRoutineBlueprint,
+        blueprint: &HypercubeFragmentPartialAttentionRoutineBlueprint,
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
@@ -117,10 +118,10 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
 
     /// The best hypercube of plane fragments at the settings, its settings' cubes on every box
     /// whatever the keys ([`AttentionPartitioning::new`]), each holding its planes along the keys
-    /// and the shared memory its microkernel asks for, its stages held as its planes read them;
-    /// merged by a second launch, that launch checked against the device too. Serves a cache of
-    /// any length, at any device fill: neither is a call's to decline, since an autotune key
-    /// prepares its candidates at one representative for every call of its bucket.
+    /// and the shared memory its microkernel asks for, its stages held as its planes read them.
+    /// Serves a cache of any length, at any device fill: neither is a call's to decline, since an
+    /// autotune key prepares its candidates at one representative for every call of its bucket.
+    /// The merge after it is prepared by the strategy that launches it.
     fn prepare(
         &self,
         hw: &Hardware,
@@ -152,12 +153,6 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
             shared_memory: microkernel.shared_memory(hw, &item, &storage),
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
-        let shape = microkernel.merge_shape(
-            &item,
-            partitioning.cubes_along_keys(),
-            HypercubeMerge::SecondLaunch.seq_q(&microkernel),
-        );
-        HypercubeSecondLaunch::new(problem, shape).validate(hw)?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(
@@ -172,27 +167,38 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
     }
 }
 
-impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
-    for HypercubeSecondLaunchFragmentAttentionRoutine
+impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
+    for HypercubeFragmentPartialAttentionRoutine
 {
-    /// Two launches: every plane leaves its partial in its slot, then a plane for every row
-    /// merges the row's slots into the output.
+    fn merge_shape(
+        &self,
+        problem: &AttentionRoutineProblem,
+        blueprint: &HypercubeFragmentPartialAttentionRoutineBlueprint,
+    ) -> HypercubeMergeShape {
+        blueprint.microkernel.merge_shape(
+            &problem.work_item(),
+            blueprint.partitioning.cubes_along_keys(),
+            HypercubeMerge::SecondLaunch.seq_q(&blueprint.microkernel),
+        )
+    }
+
+    fn slot_width(&self, _blueprint: &HypercubeFragmentPartialAttentionRoutineBlueprint) -> usize {
+        SLOT_WIDTH
+    }
+
+    /// Every plane leaving its partial in its slot.
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
         binding: AttentionBinding,
-        blueprint: HypercubeSecondLaunchFragmentAttentionRoutineBlueprint,
+        blueprint: HypercubeFragmentPartialAttentionRoutineBlueprint,
         grid: Grid,
+        slots: &AttentionSplitSlots,
     ) {
-        let microkernel = blueprint.microkernel;
         let problem = tensors.problem();
+        let shape = self.merge_shape(&problem, &blueprint);
+        let microkernel = blueprint.microkernel;
         let (key, value) = binding.cache.into_tiles();
-        let shape = microkernel.merge_shape(
-            &problem.work_item(),
-            blueprint.partitioning.cubes_along_keys(),
-            HypercubeMerge::SecondLaunch.seq_q(&microkernel),
-        );
-        let slots = tensors.split_slots(shape.slots.splits);
         // Its planes keep their sums in the first, read the query and the keys' stage in the
         // second and cast their probabilities to the values' element in the last; they leave
         // their rows in the slots, and the output is read for its shape alone.
@@ -227,6 +233,5 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 [sum, staged, probabilities],
             );
         }
-        HypercubeSecondLaunch::new(&problem, shape).launch(tensors, slots, SLOT_WIDTH);
     }
 }

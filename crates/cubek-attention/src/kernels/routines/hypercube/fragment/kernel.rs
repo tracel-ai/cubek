@@ -7,7 +7,7 @@ use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 
 /// Every cube walking its run of its box with plane fragments that read its stage, over the keys
 /// its queries see, each plane leaving its partial in its slot
-/// ([`cube_staged_attention_partial_microkernel()`]), for a second launch to merge. The output is
+/// ([`cube_staged_attention_partial_microkernel()`]), for the split-keys merge. The output is
 /// read for the shape of what its planes sum into.
 #[allow(
     clippy::extra_unused_type_parameters,
