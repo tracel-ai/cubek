@@ -1,4 +1,3 @@
-use core::marker::PhantomData;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
@@ -41,14 +40,8 @@ pub fn hypercube_attention_partial_kernel<
     #[define(EA, EQ, EK, EV, EO)] _elements: [ElemType; 5],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
-    let key = TileStepReads::<EK> {
-        tile: key.tile(&partitioning),
-        element: PhantomData,
-    };
-    let value = TileStepReads::<EV> {
-        tile: value.tile(&partitioning),
-        element: PhantomData,
-    };
+    let key = TileStepReads::<EK>::new(&key.tile(&partitioning));
+    let value = TileStepReads::<EV>::new(&value.tile(&partitioning));
 
     // The cube level's walk: this cube's run of the steps, or pages, of keys.
     let run = partitioning.walk();

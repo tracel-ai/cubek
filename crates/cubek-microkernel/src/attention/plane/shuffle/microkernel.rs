@@ -231,7 +231,9 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
     /// issued before any is used, a key past the attended ones reading nothing; the team sums
     /// each key's partial dots against each row, takes the step's scores into its rows' max and
     /// sum once, and adds the values they weigh into its lines of the output, rescaled to the new
-    /// max. A key a row does not see weighs nothing. `plane` is its region of one step of the walk.
+    /// max. A key a row does not see weighs nothing. Each side's per-tensor scale, which its lines
+    /// are read without, is applied once a sum: the keys' to every score, the values' to every
+    /// weight a value is added under, never to the rows' max and sum. `plane` is its region of one step of the walk.
     pub fn step<K: StepReads<N>, L: StepReads<N>>(
         &mut self,
         plane: &Region,
@@ -265,6 +267,8 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
 
         let key_reads = keys.load(plane, &walk, head_lines);
         let value_reads = values.load(plane, &walk, value_lines);
+        let score_scale = scale * EA::cast_from(keys.per_tensor_scale());
+        let value_scale = EA::cast_from(values.per_tensor_scale());
 
         // The scores of the step's keys against each row, taken into the row's running max and
         // sum: a key's dot is each unit's lines summed in its team.
@@ -296,7 +300,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                 scores[c] = team_share
                     .reduce::<Vector<EA, W1>>(Vector::cast_from(partial), Monoid::Sum)
                     .extract(0usize)
-                    * scale;
+                    * score_scale;
             }
 
             let before = self.max[r];
@@ -313,7 +317,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             for c in 0..in_flight {
                 let seen = visible.sees(head, query, (first_key + c * teams + team) as u32);
                 let weight = select(seen, (scores[c] - after).exp(), EA::from_int(0));
-                weights[r * in_flight + c] = weight;
+                weights[r * in_flight + c] = weight * value_scale;
                 added += weight;
             }
 

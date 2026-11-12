@@ -13,6 +13,11 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// at each score's own coordinates. Each step is taken into the rows by `unit_attention_step`,
 /// then the rows are normalized and drained into `out`, and each row's logsumexp written where the
 /// caller asks for it.
+///
+/// The per-tensor scale each side is stored under is taken out of it by the sum it enters
+/// ([`Tile::factor`]) and applied once: the keys' to every score the softmax reads, the values' to
+/// the output as it drains. The probabilities are contracted with the values from the score's
+/// registers, which read the values as they lie.
 #[cube]
 pub fn unit_attention_microkernel<EA: Float>(
     rows: &Region,
@@ -29,6 +34,7 @@ pub fn unit_attention_microkernel<EA: Float>(
     let value_block = microkernel.value.block();
     let mut sum = out.register_accumulator::<EA>(bias, value, value_block, Semiring::SUM_PROD);
     sum.zero();
+    let (value, value_factor) = value.factor(&sum);
 
     let mut softmax = OnlineSoftmax::<EA>::along(bias, S);
 
@@ -47,7 +53,7 @@ pub fn unit_attention_microkernel<EA: Float>(
     }
 
     sum.along(DV).mul(&softmax.recip_l());
-    sum.drained_into(out);
+    sum.scaled(&value_factor).drained_into(out);
 
     #[comptime]
     match logsumexp {
@@ -62,7 +68,8 @@ pub fn unit_attention_microkernel<EA: Float>(
 ///
 /// `step` is the unit's region of the step, its walk the score's walk through `D`, one step of the
 /// whole head dim, which holds the step's keys whole for the value too; `sum`, `query`, `key`,
-/// `value` and `bias` are windowed to it, wherever the keys and values lie.
+/// `value` and `bias` are windowed to it, wherever the keys and values lie. The keys' per-tensor
+/// scale is taken out by the score's sum, which the softmax reads under it.
 #[cube]
 pub(crate) fn unit_attention_step<EA: Float>(
     step: &Region,
@@ -78,12 +85,13 @@ pub(crate) fn unit_attention_step<EA: Float>(
     let score_block = microkernel.score.block();
     let mut score = bias.register_accumulator::<EA>(query, key, score_block, Semiring::SUM_PROD);
     score.zero();
+    let (key, key_factor) = key.factor(&score);
 
     for depth in step.walk() {
-        unit_registers_microkernel(&depth, &score, query, key);
+        unit_registers_microkernel(&depth, &score, query, &key);
     }
 
-    let correction = softmax.step(&score, bias, scale);
+    let correction = softmax.step(&score.scaled(&key_factor), bias, scale);
     sum.along(DV).mul(&correction);
 
     // A tile's clone is a handle to the same cells: the shared microkernel adds into the sum

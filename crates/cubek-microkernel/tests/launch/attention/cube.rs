@@ -2,7 +2,6 @@
 //! attended. Planes of shuffles read each step's keys where they lie; planes of fragments contract
 //! stages the cube fills.
 
-use core::marker::PhantomData;
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::space::ComputeScope;
@@ -299,14 +298,8 @@ fn cube_unstaged_attention_kernel<EA: Float, E: Float, N: Size>(
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
     let q = query.tile(&partitioning);
-    let k = TileStepReads::<E> {
-        tile: key.tile(&partitioning),
-        element: PhantomData,
-    };
-    let v = TileStepReads::<E> {
-        tile: value.tile(&partitioning),
-        element: PhantomData,
-    };
+    let k = TileStepReads::<E>::new(&key.tile(&partitioning));
+    let v = TileStepReads::<E>::new(&value.tile(&partitioning));
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
     for sequence in &partitioning {

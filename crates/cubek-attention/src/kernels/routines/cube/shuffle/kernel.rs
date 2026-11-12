@@ -1,4 +1,3 @@
-use core::marker::PhantomData;
 use cubecl::tile::{Partitioning, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::{
@@ -39,14 +38,8 @@ pub fn cube_shuffle_attention_kernel<
     let mask = mask.map(|mask| mask.tile(&partitioning));
 
     let q = query.tile(&partitioning);
-    let k = TileStepReads::<EK> {
-        tile: key.tile(&partitioning),
-        element: PhantomData,
-    };
-    let v = TileStepReads::<EV> {
-        tile: value.tile(&partitioning),
-        element: PhantomData,
-    };
+    let k = TileStepReads::<EK>::new(&key.tile(&partitioning));
+    let v = TileStepReads::<EV>::new(&value.tile(&partitioning));
 
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
