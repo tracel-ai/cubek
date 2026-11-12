@@ -112,18 +112,18 @@ impl CubeAttentionMicrokernelSettings {
 
     /// A star off `lead`: each larger box of fragments, each count of heads, two and four planes
     /// along a head's queries, each other ring of stages and layout of a stage, the whole grid
-    /// bounced at once, and one head a cube with eight and sixteen fragments along its keys, or with two, four and eight planes
-    /// along them, so a step reaches the hundreds of keys, with the default's others; then the
-    /// larger boxes again in swizzled tiles, which a plane keeping its score in fragments reads
-    /// without bank conflicts and a cmma plane declines, the one-by-eight box among them also on
-    /// two planes along a head's queries, and the one-by-two box on two heads and two planes along
-    /// their queries; then the lead's box with its score the whole head dim deep; then the
-    /// one-by-four box on two slots the copy engine fills, over two and four heads; then eight
-    /// planes a cube, four heads by two planes along their queries, on the boxes and rings a long
-    /// causal prompt runs fastest on; then the one-by-two box of the four-plane split on two and
-    /// three slots the copy engine fills. The wide steps hold one head because a step's stages and the
-    /// heads' windows share one budget; one that still does not fit the device's shared memory
-    /// declines there.
+    /// bounced at once, and one head a cube with eight and sixteen fragments along its keys, or
+    /// with two, four and eight planes along them, so a step reaches the hundreds of keys, with the
+    /// default's others; then the larger boxes again in swizzled tiles, which a plane keeping its
+    /// score in fragments reads without bank conflicts and a cmma plane declines, the one-by-eight
+    /// box among them also on two planes along a head's queries, and the one-by-two box on two
+    /// heads and two planes along their queries; then the lead's box with its score the whole head
+    /// dim deep; then the one-by-four box on two slots the copy engine fills, over two and four
+    /// heads; then eight planes a cube, four heads by two planes along their queries, on the boxes
+    /// and rings a long causal prompt runs fastest on; then the one-by-two box of the four-plane
+    /// split on two and three slots the copy engine fills. The wide steps hold one head because a
+    /// step's stages and the heads' windows share one budget; one that still does not fit the
+    /// device's shared memory declines there.
     fn fragments_listed(lead: Self, plane: PlaneFragmentAttentionMicrokernelSettings) -> Vec<Self> {
         let count = |count: usize| NonZeroUsize::new(count).unwrap();
         let with = move |plane| Self {
