@@ -6,6 +6,14 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// memory window, whose leaf walks every contracted axis itself: a register accumulator cannot
 /// step a gathered operand. A plane whose box starts past the output on any bounded axis does
 /// nothing.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
+#[allow(
+    clippy::needless_range_loop,
+    reason = "the index also reads the extents, a runtime sequence"
+)]
 #[cube(launch_unchecked)]
 pub fn unit_registers_conv_kernel<EA: Numeric, EL: Numeric>(
     input: &TileTensor<'_>,
@@ -24,7 +32,7 @@ pub fn unit_registers_conv_kernel<EA: Numeric, EL: Numeric>(
     for plane in &partitioning {
         let mut inside = true;
         #[unroll]
-        for i in 0..comptime!(bounded.len()) {
+        for i in 0..bounded.len() {
             let axis = comptime!(bounded[i]);
             inside = inside && plane.origin(axis) < *extents.index(i);
         }
