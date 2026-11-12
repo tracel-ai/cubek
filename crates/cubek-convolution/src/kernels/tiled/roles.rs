@@ -231,7 +231,7 @@ impl ConvRoles {
         gather: ConvGather::Gradient,
         extents: ConvExtents {
             channels_in: ViewDim::at(MatmulOperand::Out, 3),
-            channels_out: ViewDim::at(MatmulOperand::Lhs, 0),
+            channels_out: ViewDim::at(MatmulOperand::Lhs, 3),
             kernel: [
                 ViewDim::at(MatmulOperand::Rhs, 0),
                 ViewDim::at(MatmulOperand::Rhs, 1),
