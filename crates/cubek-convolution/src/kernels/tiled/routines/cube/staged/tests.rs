@@ -6,10 +6,12 @@ use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::Conv2dProblem;
 use crate::eval::benchmarks::settings;
 use crate::kernels::tiled::routines::test_support::{cmma_only, nvidia, problems};
-use crate::kernels::tiled::{CMMA_STEP_ACROSS_TAPS, ConvProblem};
+use crate::kernels::tiled::{CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED, ConvProblem};
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::matmul::plane::PlaneFragmentInstruction;
+use cubek_microkernel::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentTransport};
 use cubek_std::devices::topology;
+use cubek_std::microkernel::KernelEstimate;
+use cubek_std::routine::EstimatedProblem;
 use cubek_std::routine::Routine;
 
 const ROUTINE: CubeStagedConvRoutine = CubeStagedConvRoutine;
@@ -127,4 +129,68 @@ fn cmma_declines_a_data_backward_step_across_taps_and_mma_serves_it() {
             .prepare(&nvidia(), &problem, &settings.mma())
             .is_ok()
     );
+}
+
+/// The catalog problems as the launch states them.
+fn staged_problems() -> Vec<(&'static str, ConvProblem)> {
+    problems()
+        .into_iter()
+        .map(|(name, problem)| (name, ConvProblem::from(&problem)))
+        .collect()
+}
+
+/// The refusals the routine states for a setting its device lists: a step of taps through cmma, an
+/// instruction the device lacks, and a stage past the device's shared memory.
+fn named(refusal: &Refusal) -> bool {
+    *refusal == CMMA_STEP_ACROSS_TAPS
+        || *refusal == CONV_INSTRUCTION_UNOFFERED
+        || matches!(refusal, Refusal::SharedMemoryPastDevice { .. })
+}
+
+/// Every listed setting prepares each problem or is declined by name, only cmma meets the step of
+/// taps, and some setting serves each problem.
+#[test]
+fn every_setting_prepares_or_declines_by_name() {
+    let hw = nvidia();
+    for (name, problem) in staged_problems() {
+        for settings in ROUTINE.settings(&hw) {
+            let Err(refusal) = ROUTINE.prepare(&hw, &problem, &settings) else {
+                continue;
+            };
+            assert!(named(&refusal), "{settings} on {name}: {refusal:?}");
+            if refusal == CMMA_STEP_ACROSS_TAPS {
+                let transport = settings.microkernel.plane.transport;
+                assert_eq!(transport, PlaneFragmentTransport::Cmma, "{settings}");
+            }
+        }
+        assert!(
+            ROUTINE.prepare_first_served(&hw, &problem).is_ok(),
+            "no setting serves {name}"
+        );
+    }
+}
+
+/// A cube's estimate holds the staging its partitioning places, and the cubes perform at least
+/// what the problem asks.
+#[test]
+fn every_setting_estimates_whole() {
+    let hw = nvidia();
+    let mut prepared = 0;
+    for settings in ROUTINE.settings(&hw) {
+        for (name, problem) in staged_problems() {
+            let Ok((blueprint, grid)) = ROUTINE.prepare(&hw, &problem, &settings) else {
+                continue;
+            };
+            prepared += 1;
+            let mut estimate = KernelEstimate::from(&grid);
+            ROUTINE.estimate(&problem, &blueprint, &grid, &mut estimate);
+            let staging = estimate.staging.as_ref().expect("a staging");
+            assert!(estimate.work.is_some(), "{settings} on {name}: no work");
+            assert!(!staging.reads.is_empty(), "{settings} on {name}");
+            let performed = staging.operations * estimate.cubes.expect("a static grid") as f64;
+            let useful = problem.demand().compute_ops as f64;
+            assert!(performed >= useful, "{settings} on {name}");
+        }
+    }
+    assert!(prepared > 0, "no setting prepares here");
 }

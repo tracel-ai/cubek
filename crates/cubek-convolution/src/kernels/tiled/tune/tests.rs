@@ -1,12 +1,16 @@
-use super::{ConvCandidate, ConvTuneKey};
+use super::{ConvCandidate, ConvTuneKey, candidates};
 use crate::components::ConvolutionOperation;
-use crate::eval::benchmarks::Conv2dProblem;
 use crate::eval::benchmarks::settings;
+use crate::eval::benchmarks::{Conv2dElement, Conv2dProblem};
 use crate::kernels::tiled::routines::test_support::{cmma_8x32_only, dense, nvidia};
-use crate::kernels::tiled::{ConvProblem, ConvSettings, CubeStagedConvRoutine};
+use crate::kernels::tiled::{
+    ConvProblem, ConvSettings, CubeStagedConvRoutine, UnitRegistersConvRoutine,
+};
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings as Fragments;
+use cubek_std::Hardware;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
+use cubek_std::devices::topology;
 use cubek_std::routine::Routine;
 
 fn key(problem: Conv2dProblem) -> ConvTuneKey {
@@ -142,4 +146,57 @@ fn a_contracted_batch_is_keyed_by_its_bucket() {
         })
     };
     assert_eq!(batched(1200), batched(1201));
+}
+
+/// The list and the set raced over it come out the same every time they are built, so the
+/// autotune's checksum is stable.
+#[test]
+fn the_list_and_its_set_are_built_in_one_order() {
+    let hw = nvidia();
+    let names = |list: &[ConvCandidate]| {
+        list.iter()
+            .map(|candidate| candidate.settings().to_string())
+            .collect::<Vec<_>>()
+    };
+    let (first, second) = (ConvCandidate::list(&hw), ConvCandidate::list(&hw));
+    assert_eq!(names(&first), names(&second));
+    let checksum =
+        |list: Vec<ConvCandidate>| candidates(list.into(), hw.clone()).compute_checksum();
+    assert_eq!(checksum(first), checksum(second));
+}
+
+/// Whether the unit routine, the floor under every tuned launch, serves `problem` on `hw`.
+fn floor_serves(hw: &Hardware, problem: &Conv2dProblem) -> bool {
+    UnitRegistersConvRoutine
+        .prepare_first_served(hw, &ConvProblem::from(problem))
+        .is_ok()
+}
+
+/// A device whose plane width is a range lists nothing to race, so the tuned launch floors on the
+/// unit routine.
+#[test]
+fn a_ranged_plane_width_floors_the_tuned_launch_on_the_unit_routine() {
+    let mut hw = nvidia();
+    let device = topology(&mut hw);
+    (device.plane_size_min, device.plane_size_max) = (32, 64);
+    assert!(ConvCandidate::list(&hw).is_empty());
+    assert!(floor_serves(&hw, &dense()));
+}
+
+/// An element the device has no matrix instruction for leaves every listed setting declining the
+/// key, so the tuned launch floors on the unit routine.
+#[test]
+fn an_f32_problem_without_f32_instructions_floors_on_the_unit_routine() {
+    let hw = nvidia();
+    let problem = Conv2dProblem {
+        element: Conv2dElement::F32,
+        ..dense()
+    };
+    let key = key(problem.clone());
+    assert!(
+        ConvCandidate::list(&hw)
+            .iter()
+            .all(|candidate| candidate.blueprint(&key).is_none())
+    );
+    assert!(floor_serves(&hw, &problem));
 }

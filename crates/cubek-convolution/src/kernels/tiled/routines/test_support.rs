@@ -8,8 +8,8 @@ use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
 use cubek_std::{Hardware, devices};
 
-pub const F16: ElemType = ElemType::Float(FloatKind::F16);
-pub const F32: ElemType = ElemType::Float(FloatKind::F32);
+const F16: ElemType = ElemType::Float(FloatKind::F16);
+const F32: ElemType = ElemType::Float(FloatKind::F32);
 
 fn shape(element: ElemType, (m, n, k): (u32, u32, u32)) -> MmaConfig {
     MmaConfig {

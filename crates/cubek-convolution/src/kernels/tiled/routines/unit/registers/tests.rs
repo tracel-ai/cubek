@@ -1,16 +1,28 @@
 //! Pure tests for the unit registers routine: the decisions a correctness run cannot see.
 
+use super::block::{BlockDepth, BlockForm};
 use super::*;
 use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::{Conv2dElement, Conv2dProblem, problems};
 use crate::kernels::tiled::routines::test_support::{dense, nvidia};
 use crate::kernels::tiled::{ConvProblem, CubeStagedConvRoutine, TileConvBlueprint};
+use cubecl::ir::{ElemType, FloatKind};
 use cubek_microkernel::matmul::unit::UnitRegistersMicrokernel;
 use cubek_std::devices;
 use cubek_std::routine::Routine;
 use cubek_std::{Hardware, UnitDispatch};
 
 const ROUTINE: UnitRegistersConvRoutine = UnitRegistersConvRoutine;
+
+/// One image of `f32` through `operation`, over the map and channels the tests share.
+fn on(operation: ConvolutionOperation) -> ConvProblem {
+    ConvProblem::from(&Conv2dProblem {
+        operation,
+        input_shape: [1, 64, 58, 58],
+        element: Conv2dElement::F32,
+        ..dense()
+    })
+}
 
 /// A `f32` layer of one image over a 9 wide map: `channels_in` channels to 16 under a 3 wide
 /// filter.
@@ -29,6 +41,77 @@ fn layer(operation: ConvolutionOperation, channels_in: usize) -> ConvProblem {
 fn only_a_device_with_no_plane_instruction_leaves_the_default_to_the_unit_routine() {
     assert!(CubeStagedConvRoutine.settings(&cpu(12, 12)).is_empty());
     assert!(!CubeStagedConvRoutine.settings(&nvidia()).is_empty());
+}
+
+/// Every operation prepares at each block setting, at the block its form gives that setting.
+#[test]
+fn every_operation_prepares_at_each_block_setting_on_a_cpu_runtime() {
+    let hw = cpu(12, 12);
+    for operation in [
+        ConvolutionOperation::Forward,
+        ConvolutionOperation::BackwardData,
+        ConvolutionOperation::BackwardWeight,
+    ] {
+        let problem = on(operation);
+        let form = BlockForm::of(&problem.roles());
+        for settings in ROUTINE.settings(&hw) {
+            let (blueprint, _) = ROUTINE
+                .prepare(&hw, &problem, &settings)
+                .unwrap_or_else(|refusal| panic!("{operation:?} at {settings}: {refusal:?}"));
+            let block = (
+                blueprint.microkernel.rows,
+                blueprint.microkernel.settings.columns.get(),
+            );
+            let expected = form.size(settings.block, &hw, problem.sum);
+            assert_eq!(block, expected, "{operation:?} at {settings}");
+        }
+    }
+}
+
+/// The block's depth is one vector register of the sums: four `f32` on 128-bit registers, eight
+/// on 256, sixteen on 512, and half as many `f64`.
+#[test]
+fn the_block_depth_is_one_register_of_the_sums() {
+    let f32_sums = on(ConvolutionOperation::Forward);
+    let f64_sums = ConvProblem {
+        sum: ElemType::Float(FloatKind::F64),
+        ..f32_sums.clone()
+    };
+    for (load_width, f32_depth) in [(128, 4), (256, 8), (512, 16)] {
+        let mut hw = cpu(12, 12);
+        devices::topology(&mut hw).load_width = load_width;
+        assert_eq!(BlockDepth::of(&hw), BlockDepth::OneRegister);
+        let depth = |problem: &ConvProblem| BlockDepth::of(&hw).size(&hw, problem);
+        assert_eq!(depth(&f32_sums), f32_depth);
+        assert_eq!(depth(&f64_sums), f32_depth / 2);
+    }
+}
+
+/// The largest block follows the registers the device keeps live: a dot block holds fewer cells
+/// than an outer one, `f64` sums cost two registers each, and more registers hold more columns.
+#[test]
+fn the_largest_blocks_follow_the_registers_the_device_keeps_live() {
+    let f32 = Conv2dElement::F32.elem_type();
+    let f64 = ElemType::Float(FloatKind::F64);
+    let mut hw = cpu(12, 12);
+    assert_eq!(BlockForm::Dot.largest_block(&hw, f32), (4, 2));
+    assert_eq!(BlockForm::Outer.largest_block(&hw, f32), (4, 8));
+    assert_eq!(BlockForm::Dot.largest_block(&hw, f64), (4, 2));
+    assert_eq!(BlockForm::Outer.largest_block(&hw, f64), (4, 4));
+    devices::topology(&mut hw).vector_register_count = Some(32);
+    assert_eq!(BlockForm::Dot.largest_block(&hw, f32), (4, 4));
+    assert_eq!(BlockForm::Outer.largest_block(&hw, f32), (4, 16));
+}
+
+/// A forward reads its rhs along the channels as wide as its input, and writes its output a value
+/// at a time.
+#[test]
+fn a_forward_reads_its_rhs_as_wide_as_its_input() {
+    let hw = cpu(12, 12);
+    let blueprint = first_served(&hw, &on(ConvolutionOperation::Forward));
+    assert!(blueprint.widths.lhs > 1);
+    assert_eq!(blueprint.widths.rhs, blueprint.widths.lhs);
+    assert_eq!(blueprint.widths.out, 1);
 }
 
 /// An input vector not dividing the rows is narrowed to one that does, never declined.
