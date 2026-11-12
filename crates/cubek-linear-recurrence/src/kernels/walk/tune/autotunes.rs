@@ -10,8 +10,8 @@ use crate::kernels::refusals::admit_on_device;
 use crate::kernels::walk::tune::RecurrenceWalkCandidate;
 use crate::kernels::walk::tune::key::RecurrenceWalkKey;
 use crate::kernels::walk::{
-    CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings, RECURRENCE_WALK_ELEMENT,
-    RecurrenceWalkInputs, RecurrenceWalkOutputs, RecurrenceWalkProblem, RecurrenceWalkStateInputs,
+    CubeWalkRoutine, CubeWalkRoutineSettings, RECURRENCE_WALK_ELEMENT, RecurrenceWalkInputs,
+    RecurrenceWalkOutputs, RecurrenceWalkProblem, RecurrenceWalkRoutine, RecurrenceWalkStateInputs,
     RecurrenceWalkStateKind,
 };
 use cubecl::ir::ElemType;
@@ -20,11 +20,14 @@ use cubecl::tune::{LocalTuner, Tunable, local_tuner};
 use cubecl::{CubeTuneId, Device};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
+use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use cubek_std::Hardware;
 use cubek_std::autotune::{Autotune, GroupPriority};
+use cubek_std::routine::Routine;
 
-/// The walk of `inputs` through the autotune on `device`. `microkernel` is the priority of the
-/// cube routine's group; under it sits the floor, which serves every admitted problem.
+/// The walk of `inputs` through the autotune of its update rule on `device`. `microkernel` is the
+/// priority of the cube routine's group; under it sits the floor, which serves every admitted
+/// problem.
 ///
 /// # Panics
 ///
@@ -35,12 +38,45 @@ pub fn launch_tuned(
     inputs: RecurrenceWalkInputs,
     microkernel: GroupPriority,
 ) -> RecurrenceWalkOutputs {
-    let client = inputs.client.clone();
-    static TUNER: LocalTuner<RecurrenceWalkKey, CubeTuneId> = local_tuner!("delta-walk");
+    match inputs.update.rule() {
+        UpdateRule::Delta => {
+            static TUNER: LocalTuner<RecurrenceWalkKey, CubeTuneId> = local_tuner!("delta-walk");
+            race(&TUNER, CubeWalkRoutine::DELTA, device, inputs, microkernel)
+        }
+        UpdateRule::Additive => {
+            static TUNER: LocalTuner<RecurrenceWalkKey, CubeTuneId> = local_tuner!("additive-walk");
+            race(
+                &TUNER,
+                CubeWalkRoutine::ADDITIVE,
+                device,
+                inputs,
+                microkernel,
+            )
+        }
+    }
+}
 
+/// The settings of `routine` raced on `inputs` through `tuner`, over its floor.
+fn race<R, M>(
+    tuner: &'static LocalTuner<RecurrenceWalkKey, CubeTuneId>,
+    routine: R,
+    device: &Device,
+    inputs: RecurrenceWalkInputs,
+    microkernel: GroupPriority,
+) -> RecurrenceWalkOutputs
+where
+    R: RecurrenceWalkRoutine<M>
+        + Routine<Settings = CubeWalkRoutineSettings>
+        + Copy
+        + Send
+        + Sync
+        + 'static,
+    M: PartialEq + Send + Sync + 'static,
+{
+    let client = inputs.client.clone();
     let id = CubeTuneId::new(&client, device);
     let hw = Hardware::from_client(&client);
-    let tunables = TUNER.init(&id, move || {
+    let tunables = tuner.init(&id, move || {
         let mut table =
             Autotune::<RecurrenceWalkKey, RecurrenceWalkInputs, RecurrenceWalkOutputs>::measured_on(
                 |inputs: &RecurrenceWalkInputs| RecurrenceWalkKey::from(inputs),
@@ -48,35 +84,31 @@ pub fn launch_tuned(
                 measured,
             );
         let group = table.group("microkernel", microkernel);
-        let floor = RecurrenceWalkCandidate::new(
-            CubeDeltaWalkRoutine,
-            CubeDeltaWalkRoutineSettings::FLOOR,
-            &hw,
-        );
+        let floor = RecurrenceWalkCandidate::new(routine, CubeWalkRoutineSettings::FLOOR, &hw);
         table
             .prioritized(
                 &group,
-                RecurrenceWalkCandidate::list(CubeDeltaWalkRoutine, &hw),
+                RecurrenceWalkCandidate::list(routine, &hw),
                 RecurrenceWalkCandidate::run,
             )
             // The floor, which every admitted problem prepares: taking `microkernel` out of the
             // table stops the family being measured, not being served.
             .floor(Tunable::new(
-                "cube-delta-walk-floor",
+                &format!("{}-floor", routine.name()),
                 move |inputs: RecurrenceWalkInputs| floor.run(inputs),
             ))
             .finish()
     });
 
-    TUNER.execute(&id, &client, tunables, inputs)
+    tuner.execute(&id, &client, tunables, inputs)
 }
 
-/// Whether the table serves a layer of `heads` with its states laid out as `state` and the output
-/// written at `output_element` on `hw`: the inputs are `f32`, the output is a plain float the walk
-/// is verified at (a packed one is declined, for the caller to unpack) that the device runs, and
-/// the problem is admitted, which includes the floor preparing it at one sequence and one
-/// position. An `Ok` is the guarantee that [`launch_tuned`] runs the layer, whichever candidate
-/// wins, for as many sequences and positions as the device's grid holds.
+/// Whether the table of `rule` serves a layer of `heads` with its states laid out as `state` and
+/// the output written at `output_element` on `hw`: the inputs are `f32`, the output is a plain
+/// float the walk is verified at (a packed one is declined, for the caller to unpack) that the
+/// device runs, and the problem is admitted, which includes the floor preparing it at one sequence
+/// and one position. An `Ok` is the guarantee that [`launch_tuned`] runs the layer, whichever
+/// candidate wins, for as many sequences and positions as the device's grid holds.
 ///
 /// # Errors
 ///
@@ -87,13 +119,15 @@ pub fn launch_tuned(
 pub fn serves(
     hw: &Hardware,
     heads: RecurrenceHeads,
+    rule: UpdateRule,
     state: RecurrenceWalkStateKind,
     output_element: ElemType,
 ) -> Result<(), Refusal> {
     RecurrenceWalkProblem::admit_output(output_element)?;
     admit_on_device(hw, [RECURRENCE_WALK_ELEMENT, output_element])?;
     let state = state.layout();
-    RecurrenceWalkProblem::dense(1, state.kept().get(), heads, output_element, state).admit(hw)
+    RecurrenceWalkProblem::dense(1, state.kept().get(), heads, rule, output_element, state)
+        .admit(hw)
 }
 
 /// What a round runs on: the call's inputs, but for a walk in a store's slots, whose store is
@@ -105,7 +139,7 @@ fn measured(_key: &RecurrenceWalkKey, inputs: &RecurrenceWalkInputs) -> Recurren
     };
     let client = &inputs.client;
     let [_, heads, key_features, value_features] = store.shape().dims::<4>();
-    let rows = inputs.decay.shape().dims::<3>()[0];
+    let rows = inputs.rates.shape().dims::<4>()[0];
     let table = |entry: &dyn Fn(usize) -> u32| {
         let entries: Vec<u32> = (0..rows).map(entry).collect();
         PlainTensor::of_u32s(client, &[rows], &entries)
@@ -167,23 +201,40 @@ mod tests {
         }
     }
 
-    /// The floor is served wherever the problem is admitted, and a device that binds too few
-    /// buffers declines it by name.
+    /// The floor of each rule is served wherever the problem is admitted, and a device that binds
+    /// too few buffers declines the problem it cannot bind by name: of the devices that bind eight,
+    /// the owned delta walk is served, the slots delta walk and both additive walks are not.
     #[test]
     fn the_table_serves_what_admission_admits() {
         let h100 = running(devices::h100(), &[F32, F16]);
-        for state in [owned(), RecurrenceWalkStateKind::Slots] {
-            assert_eq!(serves(&h100, heads(), state, F32), Ok(()));
-            assert_eq!(serves(&h100, heads(), state, F16), Ok(()));
-            for hw in [
-                devices::wgpu_no_subgroups(),
-                devices::rdna_range(),
-                devices::strix_halo(),
+        for rule in [UpdateRule::Delta, UpdateRule::Additive] {
+            for state in [owned(), RecurrenceWalkStateKind::Slots] {
+                assert_eq!(serves(&h100, heads(), rule, state, F32), Ok(()));
+                assert_eq!(serves(&h100, heads(), rule, state, F16), Ok(()));
+            }
+        }
+        for hw in [
+            devices::wgpu_no_subgroups(),
+            devices::rdna_range(),
+            devices::strix_halo(),
+        ] {
+            assert_eq!(hw.properties.hardware.max_bindings, 8, "{hw:?}");
+            let hw = running(hw, &[F32, F16]);
+            let served = |rule, state| serves(&hw, heads(), rule, state, F32);
+            let slots = RecurrenceWalkStateKind::Slots;
+            assert_ne!(
+                served(UpdateRule::Delta, owned()),
+                Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE)
+            );
+            for (rule, state) in [
+                (UpdateRule::Delta, slots),
+                (UpdateRule::Additive, owned()),
+                (UpdateRule::Additive, slots),
             ] {
                 assert_eq!(
-                    serves(&running(hw.clone(), &[F32, F16]), heads(), state, F32),
+                    served(rule, state),
                     Err(RECURRENCE_WALK_BINDINGS_PAST_DEVICE),
-                    "{hw:?}"
+                    "{rule:?} {state:?}"
                 );
             }
         }
@@ -194,14 +245,17 @@ mod tests {
     #[test]
     fn an_element_the_device_does_not_run_is_declined() {
         let no_f16 = running(devices::h100(), &[F32]);
-        assert_eq!(serves(&no_f16, heads(), owned(), F32), Ok(()));
         assert_eq!(
-            serves(&no_f16, heads(), owned(), F16),
+            serves(&no_f16, heads(), UpdateRule::Delta, owned(), F32),
+            Ok(())
+        );
+        assert_eq!(
+            serves(&no_f16, heads(), UpdateRule::Delta, owned(), F16),
             Err(ELEMENT_NOT_ON_DEVICE)
         );
         let no_f32 = running(devices::h100(), &[F16]);
         assert_eq!(
-            serves(&no_f32, heads(), owned(), F16),
+            serves(&no_f32, heads(), UpdateRule::Delta, owned(), F16),
             Err(ELEMENT_NOT_ON_DEVICE)
         );
     }
@@ -214,7 +268,13 @@ mod tests {
             ..heads()
         };
         assert_eq!(
-            serves(&running(devices::h100(), &[F32]), heads, owned(), F32),
+            serves(
+                &running(devices::h100(), &[F32]),
+                heads,
+                UpdateRule::Delta,
+                owned(),
+                F32
+            ),
             Err(RECURRENCE_WALK_HEADS_EMPTY)
         );
     }
@@ -226,6 +286,7 @@ mod tests {
             serves(
                 &running(devices::h100(), &[F32]),
                 heads(),
+                UpdateRule::Delta,
                 owned(),
                 ElemType::UInt(UIntKind::U32)
             ),

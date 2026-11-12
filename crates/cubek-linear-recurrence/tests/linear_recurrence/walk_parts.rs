@@ -9,10 +9,11 @@ use cubecl::bytes::Bytes;
 use cubecl::tile::{Partitioning, Region, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_linear_recurrence::kernels::walk::{
-    CubeDeltaWalkRoutine, CubeDeltaWalkRoutineSettings, RecurrenceWalkTensors,
+    CubeWalkRoutine, CubeWalkRoutineSettings, RecurrenceWalkTensors,
 };
+use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use cubek_microkernel::linear_recurrence::walk::cube::{
-    CubeDeltaWalkMicrokernel, HeldState, UnitPartials,
+    CubeWalkMicrokernelSettings, HeldState, HeldStateShape, Partials, RowRead, RowUpdate, UnitSum,
 };
 use cubek_microkernel::linear_recurrence::{KEY_FEATURE, POSITION, RecurrenceHeads, VALUE_FEATURE};
 use cubek_std::Hardware;
@@ -23,25 +24,28 @@ fn partial_of(unit: usize, run: usize, position: usize, sum: usize, column: usiz
     0.5 * (unit * 7 + column + run * 3 + position) as f32 + 1.0 - 0.75 * (sum * (column + 1)) as f32
 }
 
-/// Every unit of every run fills its partials as the twin above says, meets in both sums at each
-/// of `positions`, and leaves what it holds in `dump`: the first sum's columns, then the second's.
+/// Every unit of every run fills its partials as the twin above says, meets in `sums_a_position`
+/// sums at each of `positions`, and leaves what it holds in `dump`: the first sum's columns, then
+/// the second's.
 #[cube(launch_unchecked)]
-fn unit_partials_probe<N: Size>(
+fn partials_probe<N: Size>(
     dump: &mut [f32],
-    #[comptime] microkernel: CubeDeltaWalkMicrokernel,
+    #[comptime] shape: HeldStateShape,
     #[comptime] runs: usize,
+    #[comptime] sums_a_position: usize,
     positions: u32,
 ) {
     let width = N::value();
-    let columns = microkernel.columns;
+    let columns = shape.columns();
     let parts = comptime!(columns / width);
-    let units = microkernel.units;
+    let units = shape.units();
     let (unit, run) = (UNIT_POS_X as usize, UNIT_POS_Y as usize);
-    let mut partials = UnitPartials::<N>::new(run, unit, runs, microkernel);
+    let mut unit_sum = UnitSum::<N>::new(run, unit, runs, shape);
+    let mut partials = Partials::<N>::new(shape);
     for position in 0..positions as usize {
-        let base = ((position * runs + run) * units + unit) * (2 * columns);
+        let base = ((position * runs + run) * units + unit) * (sums_a_position * columns);
         #[unroll]
-        for sum in 0..2usize {
+        for sum in 0..sums_a_position {
             partials.clear();
             #[unroll]
             for part in 0..parts {
@@ -57,7 +61,7 @@ fn unit_partials_probe<N: Size>(
                 }
                 partials.add(part, line);
             }
-            partials.sum(sum);
+            unit_sum.sum(&mut partials);
             #[unroll]
             for part in 0..parts {
                 #[unroll]
@@ -70,14 +74,16 @@ fn unit_partials_probe<N: Size>(
     }
 }
 
-/// Unit counts of a power of two, at lines as wide as the run's columns and narrower, meeting in both sums over several positions: each unit holds the sum of its run's
+/// Unit counts of a power of two, at lines as wide as the run's columns and narrower, meeting in
+/// one sum and in two a position over many positions: each unit holds the sum of its run's
 /// partials, and a sum never reads another's.
 #[test]
-fn unit_partials_sum_like_the_host() {
+fn partials_sum_like_the_host() {
     let client = cubecl::test_device().client();
-    let hardware = Hardware::from_client(&client).properties.hardware.clone();
+    let hw = Hardware::from_client(&client);
+    let hardware = hw.properties.hardware.clone();
     let runs = 2usize;
-    let positions = 3usize;
+    let positions = 17usize;
     for units in [1usize, 2, 4, 8, 16] {
         if units * runs > hardware.max_units_per_cube as usize
             || units > hardware.max_cube_dim.0 as usize
@@ -87,48 +93,56 @@ fn unit_partials_sum_like_the_host() {
             continue;
         }
         for (columns, width) in [(1usize, 1usize), (2, 2), (4, 4), (4, 2), (4, 1)] {
-            let microkernel = CubeDeltaWalkMicrokernel {
-                units,
-                rows: columns,
-                columns,
-            };
-            let stride = 2 * columns;
-            let len = positions * runs * units * stride;
-            let dump = client.create(Bytes::from_elems(vec![f32::NAN; len]));
-            // SAFETY: each unit writes its own `stride` floats of `dump`, within `len`.
-            unsafe {
-                unit_partials_probe::launch_unchecked(
-                    &client,
-                    CubeCount::Static(1, 1, 1),
-                    CubeDim::new_2d(units as u32, runs as u32),
-                    width,
-                    BufferArg::from_raw_parts(dump.clone(), len),
-                    microkernel,
-                    runs,
-                    positions as u32,
-                );
-            }
-            let got = read(&client, dump, F32);
-            for position in 0..positions {
-                for run in 0..runs {
-                    let expected: Vec<f64> = (0..stride)
-                        .map(|at| {
-                            let (sum, column) = (at / columns, at % columns);
-                            (0..units)
-                                .map(|u| partial_of(u, run, position, sum, column) as f64)
-                                .sum()
-                        })
-                        .collect();
-                    for unit in 0..units {
-                        let base = ((position * runs + run) * units + unit) * stride;
-                        assert_close(
-                            got[base..base + stride].to_vec(),
-                            &expected,
-                            &format!(
-                                "units={units} columns={columns} width={width} \
-                                 position {position} run {run} unit {unit}"
-                            ),
-                        );
+            for sums_a_position in [1usize, 2] {
+                let heads = RecurrenceHeads {
+                    key_heads: 1,
+                    heads_per_group: 1,
+                    key_features: units * columns,
+                    value_features: columns,
+                };
+                let shape =
+                    HeldStateShape::new(&hw, &heads, &CubeWalkMicrokernelSettings::new(columns))
+                        .expect("the device holds the units the probe skips none of");
+                let stride = sums_a_position * columns;
+                let len = positions * runs * units * stride;
+                let dump = client.create(Bytes::from_elems(vec![f32::NAN; len]));
+                // SAFETY: each unit writes its own `stride` floats of `dump`, within `len`.
+                unsafe {
+                    partials_probe::launch_unchecked(
+                        &client,
+                        CubeCount::Static(1, 1, 1),
+                        CubeDim::new_2d(units as u32, runs as u32),
+                        width,
+                        BufferArg::from_raw_parts(dump.clone(), len),
+                        shape,
+                        runs,
+                        sums_a_position,
+                        positions as u32,
+                    );
+                }
+                let got = read(&client, dump, F32);
+                for position in 0..positions {
+                    for run in 0..runs {
+                        let expected: Vec<f64> = (0..stride)
+                            .map(|at| {
+                                let (sum, column) = (at / columns, at % columns);
+                                (0..units)
+                                    .map(|u| partial_of(u, run, position, sum, column) as f64)
+                                    .sum()
+                            })
+                            .collect();
+                        for unit in 0..units {
+                            let base = ((position * runs + run) * units + unit) * stride;
+                            assert_close(
+                                got[base..base + stride].to_vec(),
+                                &expected,
+                                &format!(
+                                    "units={units} columns={columns} width={width} \
+                                     sums={sums_a_position} position {position} run {run} \
+                                     unit {unit}"
+                                ),
+                            );
+                        }
                     }
                 }
             }
@@ -144,7 +158,8 @@ fn probe_delta(column: usize) -> f64 {
 }
 
 /// One cube's runs load their state, leave each unit's recall and answer partials of the first
-/// position in `dump`, write a fixed delta, and keep the states.
+/// position in `dump`, write a fixed delta, and keep the states; a second load of the state then
+/// decays and writes that delta in one pass, and leaves its answer.
 #[cube]
 fn held_state_part<N: Size>(
     cube: &Region,
@@ -154,26 +169,34 @@ fn held_state_part<N: Size>(
     kept: &Tile,
     dump: &mut [f32],
     first_kept: usize,
-    #[comptime] microkernel: CubeDeltaWalkMicrokernel,
+    #[comptime] shape: HeldStateShape,
     #[comptime] runs: usize,
 ) {
     let width = N::value();
-    let columns = microkernel.columns;
+    let columns = shape.columns();
     let parts = comptime!(columns / width);
-    let units = microkernel.units;
+    let units = shape.units();
     let mut write = Array::<Vector<f32, N>>::new(parts);
     for run in cube {
         for unit in run.walk() {
             let slot = unit.coord(KEY_FEATURE);
-            let mut partials =
-                UnitPartials::<N>::new(run.coord(VALUE_FEATURE), slot, runs, microkernel);
-            let mut held = HeldState::<N>::load(&state.at(&unit), false, microkernel);
+            let _unit_sum = UnitSum::<N>::new(run.coord(VALUE_FEATURE), slot, runs, shape);
+            let mut partials = Partials::<N>::new(shape);
+            let mut held = HeldState::<N>::load(&state.at(&unit), false, shape);
             let origin = unit.origin(VALUE_FEATURE);
             for step in unit.walk() {
                 let position = step.coord(POSITION);
                 let (keys, queries) = (key.at(&step), query.at(&step));
-                let base = (origin / columns * units + slot) * (2 * columns);
-                held.decay_and_recall(&keys, PROBE_DECAY, &mut partials);
+                let base = (origin / columns * units + slot) * (3 * columns);
+                held.pass(
+                    &keys,
+                    &queries,
+                    PROBE_DECAY,
+                    &write,
+                    &mut partials,
+                    RowUpdate::Decay,
+                    RowRead::Keys,
+                );
                 if position == 0 {
                     #[unroll]
                     for part in 0..parts {
@@ -195,13 +218,39 @@ fn held_state_part<N: Size>(
                     }
                     write[part] = line;
                 }
-                held.write_and_answer(&keys, &queries, &write, &mut partials);
+                held.pass(
+                    &keys,
+                    &queries,
+                    PROBE_DECAY,
+                    &write,
+                    &mut partials,
+                    RowUpdate::Write,
+                    RowRead::Queries,
+                );
                 if position == 0 {
                     #[unroll]
                     for part in 0..parts {
                         #[unroll]
                         for lane in 0..width {
                             dump[base + columns + part * width + lane] =
+                                partials.get(part).extract(lane);
+                        }
+                    }
+                    let mut fused = HeldState::<N>::load(&state.at(&unit), false, shape);
+                    fused.pass(
+                        &keys,
+                        &queries,
+                        PROBE_DECAY,
+                        &write,
+                        &mut partials,
+                        RowUpdate::DecayWrite,
+                        RowRead::Queries,
+                    );
+                    #[unroll]
+                    for part in 0..parts {
+                        #[unroll]
+                        for lane in 0..width {
+                            dump[base + 2 * columns + part * width + lane] =
                                 partials.get(part).extract(lane);
                         }
                     }
@@ -223,7 +272,7 @@ fn held_state_probe<N: Size>(
     dump: &mut [f32],
     first_kept: usize,
     partitioning: Partitioning,
-    #[comptime] microkernel: CubeDeltaWalkMicrokernel,
+    #[comptime] shape: HeldStateShape,
     #[comptime] runs: usize,
 ) {
     let query = query.tile(&partitioning);
@@ -239,15 +288,15 @@ fn held_state_probe<N: Size>(
             &kept.at(&cube),
             dump,
             first_kept,
-            microkernel,
+            shape,
             runs,
         );
     }
 }
 
-/// Heads whose key rows the last units overhang, a prime head, and a wide one: every unit's partials of
-/// the first position, before and after the write, and the states the walk keeps, against the
-/// host.
+/// Heads whose key rows the last units overhang, a prime head, and a wide one: every unit's
+/// partials of the first position, before and after the write and after the fused decay and
+/// write, and the states the walk keeps, against the host.
 #[test]
 fn held_state_recalls_answers_and_writes_like_the_host() {
     let client = cubecl::test_device().client();
@@ -263,15 +312,16 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
                 value_features,
             },
             kept: 3,
+            rule: UpdateRule::Delta,
             masked: vec![],
         };
         for settings in [
-            CubeDeltaWalkRoutineSettings::FLOOR,
-            CubeDeltaWalkRoutineSettings::DEFAULT,
+            CubeWalkRoutineSettings::FLOOR,
+            CubeWalkRoutineSettings::DEFAULT,
         ] {
             let o = case.operands();
             let tensors = RecurrenceWalkTensors::new(case.inputs(&client, &o, F32)).unwrap();
-            let prepared = CubeDeltaWalkRoutine.prepare(&hw, tensors.problem(), &settings);
+            let prepared = CubeWalkRoutine::DELTA.prepare(&hw, tensors.problem(), &settings);
             let (blueprint, grid) = match prepared {
                 Ok(prepared) => prepared,
                 Err(why) => {
@@ -280,11 +330,11 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
                     continue;
                 }
             };
-            let microkernel = blueprint.microkernel;
-            let columns = microkernel.columns;
+            let shape = blueprint.microkernel.shape;
+            let columns = shape.columns();
             let runs = value_features / columns;
-            let stride = 2 * columns;
-            let len = runs * microkernel.units * stride;
+            let stride = 3 * columns;
+            let len = runs * shape.units() * stride;
             let dump = client.create(Bytes::from_elems(vec![f32::NAN; len]));
             let binding = tensors.bind(&blueprint, &grid);
             let kept = binding.kept.expect("the case owns its states");
@@ -303,18 +353,17 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
                     BufferArg::from_raw_parts(dump.clone(), len),
                     tensors.problem().first_kept(),
                     binding.launcher.partitioning_arg(),
-                    microkernel,
+                    shape,
                     blueprint.runs,
                 );
             }
-            let what = format!("{settings} {microkernel} {case:?}");
+            let what = format!("{settings} {shape} {case:?}");
             let got = read(&client, dump, F32);
             let (k0, q0) = (&o.key[..key_features], &o.query[..key_features]);
             let state = |r: usize, column: usize| o.state[r * value_features + column] as f64;
             for run in 0..runs {
-                for unit in 0..microkernel.units {
-                    let rows =
-                        unit * microkernel.rows..((unit + 1) * microkernel.rows).min(key_features);
+                for unit in 0..shape.units() {
+                    let rows = unit * shape.rows()..((unit + 1) * shape.rows()).min(key_features);
                     let mut expected = vec![0.0f64; stride];
                     for c in 0..columns {
                         let column = run * columns + c;
@@ -323,9 +372,10 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
                             expected[c] += decayed * k0[r] as f64;
                             let written = decayed + k0[r] as f64 * probe_delta(column);
                             expected[columns + c] += written * q0[r] as f64;
+                            expected[2 * columns + c] += written * q0[r] as f64;
                         }
                     }
-                    let base = (run * microkernel.units + unit) * stride;
+                    let base = (run * shape.units() + unit) * stride;
                     assert_close(
                         got[base..base + stride].to_vec(),
                         &expected,

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RecurrenceHeads {
     pub key_heads: usize,
-    /// Value heads reading each key head. Mamba2's `ngroups` is `key_heads`, not this.
+    /// Value heads reading each key head. A state space model's groups are the key heads.
     pub heads_per_group: usize,
     /// The state's rows: the width of a query and a key.
     pub key_features: usize,

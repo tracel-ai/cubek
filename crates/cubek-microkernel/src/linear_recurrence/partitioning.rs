@@ -4,7 +4,7 @@ use cubecl::tile::{Axis, Levels, Partitioning, Space};
 pub const BATCH: Axis = Axis(0);
 /// A position of the sequence: the axis the recurrence walks, one step at a time.
 pub const POSITION: Axis = Axis(1);
-/// A key head, which `heads_per_group` value heads read. Mamba2's `ngroups` is the count of these.
+/// A key head, which `heads_per_group` value heads read: a selective state space model's group.
 pub const KEY_HEAD: Axis = Axis(2);
 /// A value head's place among the `heads_per_group` heads reading one key head: value head
 /// `key_head * heads_per_group + place`.
@@ -30,6 +30,9 @@ pub const HEAD_CHANNEL: Axis = Axis(11);
 /// A position of a stream the conv reads by tap: its context columns first, so a stream is
 /// `taps - 1` positions longer than the positions it convolves, and no level cuts it.
 pub const STREAM_POSITION: Axis = Axis(12);
+/// The two rates of a position and value head, the log of its decay at 0 and its strength at 1: no
+/// level cuts it.
+pub const RATE: Axis = Axis(13);
 
 /// How the walk places its microkernel's runs over a problem: a cube for every box of value
 /// columns of one head of one sequence, and inside the cube's box the levels the routine and its

@@ -5,6 +5,7 @@ use crate::kernels::walk::{
     RecurrenceWalkProblem, RecurrenceWalkTensors,
 };
 use cubecl::tile::launch::Refusal;
+use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 
@@ -13,6 +14,12 @@ use cubek_std::routine::{Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 pub trait RecurrenceWalkRoutine<M>:
     Routine<Problem = RecurrenceWalkProblem, Microkernel = M, Blueprint = RecurrenceWalkBlueprint<M>>
 {
+    /// What the routine's candidates and floor are named after in a tuning table.
+    fn name(&self) -> &'static str;
+
+    /// The update rule the routine walks.
+    fn rule(&self) -> UpdateRule;
+
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`.
     fn dispatch(
         &self,

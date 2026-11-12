@@ -10,14 +10,14 @@ use cubek_std::Hardware;
 
 /// The width the operands bind at on `hw`: to the requirements enqueued in `vectorization`, the
 /// binding adds its own, each operand's buffer alignment and where its view starts. The operands
-/// then bind at the widest width this device reads their elements in that they all admit; the decay
-/// and the strength, one scalar a position, at one.
+/// then bind at the widest width this device reads their elements in that they all admit; the
+/// rates, two scalars a position, at one.
 pub fn settled_width(
     hw: &Hardware,
     problem: &RecurrenceWalkProblem,
     mut vectorization: Vectorization<RecurrenceWalkOperand>,
 ) -> usize {
-    for &operand in problem.state.operands() {
+    for operand in problem.operands() {
         let element = operand_element(operand, problem);
         vectorization.require(VectorRequirement::Aligned {
             operand,

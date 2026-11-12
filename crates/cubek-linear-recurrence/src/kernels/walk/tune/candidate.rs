@@ -2,8 +2,8 @@
 
 use crate::kernels::walk::tune::key::RecurrenceWalkKey;
 use crate::kernels::walk::{
-    RecurrenceWalkBlueprint, RecurrenceWalkInputs, RecurrenceWalkOutputs, RecurrenceWalkProblem,
-    RecurrenceWalkRoutine, RecurrenceWalkTensors,
+    RecurrenceWalkBlueprint, RecurrenceWalkInputs, RecurrenceWalkOutputs, RecurrenceWalkRoutine,
+    RecurrenceWalkTensors,
 };
 use cubecl::CubeDim;
 use cubecl::tile::launch::Refusal;
@@ -76,7 +76,7 @@ where
     /// round, and may never be launched.
     fn prepared(&self, key: &RecurrenceWalkKey) -> Option<(RecurrenceWalkBlueprint<M>, Grid)> {
         self.routine
-            .prepare(&self.hw, &RecurrenceWalkProblem::from(key), &self.settings)
+            .prepare(&self.hw, &key.problem(self.routine.rule()), &self.settings)
             .ok()
     }
 
@@ -88,10 +88,19 @@ where
     }
 }
 
-/// The candidate's name: its setting's, which is what a persisted winner is checksummed by.
-impl<R: Routine<Settings: core::fmt::Display>> core::fmt::Display for RecurrenceWalkCandidate<R> {
+/// The candidate's name: its routine's and its setting's, which is what a persisted winner is
+/// checksummed by.
+impl<R, M> core::fmt::Display for RecurrenceWalkCandidate<R>
+where
+    R: RecurrenceWalkRoutine<M>
+        + Routine<
+            Microkernel = M,
+            Blueprint = RecurrenceWalkBlueprint<M>,
+            Settings: core::fmt::Display,
+        >,
+{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.settings.fmt(f)
+        write!(f, "{} {}", self.routine.name(), self.settings)
     }
 }
 

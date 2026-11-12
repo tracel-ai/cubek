@@ -14,17 +14,18 @@ use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
-use cubek_microkernel::linear_recurrence::walk::RecurrenceWalkOperandMap;
+use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperandMap, UpdateRule};
 use cubek_microkernel::linear_recurrence::{
-    BATCH, HEAD_IN_GROUP, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, RecurrenceHeads, STORE_SLOT,
-    VALUE_FEATURE,
+    BATCH, HEAD_IN_GROUP, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, RATE, RecurrenceHeads,
+    STORE_SLOT, VALUE_FEATURE,
 };
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
 /// The inputs of a walk, as a caller hands them: the queries and keys `[batch, positions,
 /// key_heads, key_features]`, the values `[batch, positions, value_heads, value_features]`, the
-/// decay and the strength `[batch, positions, value_heads]`, and the states
-/// ([`RecurrenceWalkStateInputs`]), `value_heads` a multiple of `key_heads`. All are `f32`. Each is
+/// rates `[batch, positions, value_heads, 2]` (the log decay, then the strength), the states
+/// ([`RecurrenceWalkStateInputs`]), and the update rule with what only it reads
+/// ([`UpdateRuleInputs`]), `value_heads` a multiple of `key_heads`. All are `f32`. Each is
 /// read where it lies, its rows padded or its view starting partway into a buffer included, the
 /// innermost axis of the wide ones contiguous; a padded row or a start off a whole read narrows the
 /// lines the walk reads.
@@ -35,11 +36,40 @@ pub struct RecurrenceWalkInputs {
     pub query: PlainTensor,
     pub key: PlainTensor,
     pub value: PlainTensor,
-    pub decay: PlainTensor,
-    pub strength: PlainTensor,
+    pub rates: PlainTensor,
     pub state: RecurrenceWalkStateInputs,
+    /// The update rule, and what only it reads.
+    pub update: UpdateRuleInputs,
     /// The element the output is written at: the activations'.
     pub output_element: ElemType,
+}
+
+/// The update rule a walk follows, and the operands only it binds: a delta walk cannot carry a skip
+/// and an additive one cannot lack it.
+#[derive(Debug, Clone)]
+pub enum UpdateRuleInputs {
+    Delta,
+    /// The weight of each value head's value in what a position reads, `[value_heads]`, `f32`.
+    Additive {
+        skip: PlainTensor,
+    },
+}
+
+impl UpdateRuleInputs {
+    /// The rule the inputs state.
+    pub fn rule(&self) -> UpdateRule {
+        match self {
+            Self::Delta => UpdateRule::Delta,
+            Self::Additive { .. } => UpdateRule::Additive,
+        }
+    }
+
+    fn skip(&self) -> Option<&PlainTensor> {
+        match self {
+            Self::Delta => None,
+            Self::Additive { skip } => Some(skip),
+        }
+    }
 }
 
 /// The states a walk resumes from, and where it leaves them.
@@ -89,9 +119,9 @@ impl core::fmt::Debug for RecurrenceWalkInputs {
             .field("query", &self.query)
             .field("key", &self.key)
             .field("value", &self.value)
-            .field("decay", &self.decay)
-            .field("strength", &self.strength)
+            .field("rates", &self.rates)
             .field("state", &self.state)
+            .field("update", &self.update)
             .field("output_element", &self.output_element)
             .finish()
     }
@@ -147,8 +177,8 @@ pub struct RecurrenceWalkTensors {
     query: PlainTensor,
     key: PlainTensor,
     value: PlainTensor,
-    decay: PlainTensor,
-    strength: PlainTensor,
+    rates: PlainTensor,
+    update: UpdateRuleTensors,
     out_view: PlainTensor,
     states: StateTensors,
     out: TensorHandle,
@@ -162,8 +192,8 @@ pub struct RecurrenceWalkBinding {
     pub query: TileTensorLaunch,
     pub key: TileTensorLaunch,
     pub value: TileTensorLaunch,
-    pub decay: TileTensorLaunch,
-    pub strength: TileTensorLaunch,
+    pub rates: TileTensorLaunch,
+    pub update: UpdateRuleBinding,
     pub out: TileTensorLaunch,
     /// The states a walk reads: the state tensor, or the store placed by the slot table.
     pub state: TileTensorLaunch,
@@ -171,6 +201,52 @@ pub struct RecurrenceWalkBinding {
     pub kept: Option<TileTensorLaunch>,
     /// The positions each sequence has walked, in a store's slots.
     pub lengths: Option<TileTensorLaunch>,
+}
+
+/// What the update rule binds beyond what every walk does, as [`UpdateRuleInputs`] states it.
+// Built once a launch and consumed by it, so the larger variant costs one copy of a binding.
+#[allow(clippy::large_enum_variant)]
+pub enum UpdateRuleBinding {
+    Delta,
+    /// Each value head's skip.
+    Additive {
+        skip: TileTensorLaunch,
+    },
+}
+
+/// [`UpdateRuleInputs`] viewed as the kernel reads them.
+#[derive(Clone)]
+enum UpdateRuleTensors {
+    Delta,
+    Additive { skip: PlainTensor },
+}
+
+impl UpdateRuleTensors {
+    fn rule(&self) -> UpdateRule {
+        match self {
+            Self::Delta => UpdateRule::Delta,
+            Self::Additive { .. } => UpdateRule::Additive,
+        }
+    }
+
+    fn skip(&self) -> Option<&PlainTensor> {
+        match self {
+            Self::Delta => None,
+            Self::Additive { skip } => Some(skip),
+        }
+    }
+
+    fn bind(
+        &self,
+        bind: impl Fn(&PlainTensor, &'static [Axis], usize) -> TileTensorLaunch,
+    ) -> UpdateRuleBinding {
+        match self {
+            Self::Delta => UpdateRuleBinding::Delta,
+            Self::Additive { skip } => UpdateRuleBinding::Additive {
+                skip: bind(skip, &[KEY_HEAD, HEAD_IN_GROUP], 1),
+            },
+        }
+    }
 }
 
 impl StateTensors {
@@ -278,9 +354,9 @@ impl RecurrenceWalkTensors {
             query,
             key,
             value,
-            decay,
-            strength,
+            rates,
             state,
+            update,
             output_element,
         } = inputs;
         RecurrenceWalkProblem::admit_output(output_element)?;
@@ -288,7 +364,10 @@ impl RecurrenceWalkTensors {
             RecurrenceWalkStateInputs::Owned { state, .. } => state,
             RecurrenceWalkStateInputs::Slots { store, .. } => store,
         };
-        for tensor in [&query, &key, &value, &decay, &strength, states] {
+        for tensor in [&query, &key, &value, &rates, states]
+            .into_iter()
+            .chain(update.skip())
+        {
             RecurrenceWalkProblem::admit_operand(tensor.elem)?;
         }
         if !query.runs_on(&client) {
@@ -308,11 +387,13 @@ impl RecurrenceWalkTensors {
             [batch, positions, key_heads, key_features]
         );
         assert_eq!(value.shape().dims::<4>()[..2], [batch, positions]);
-        assert_eq!(decay.shape().dims::<3>(), [batch, positions, value_heads]);
         assert_eq!(
-            strength.shape().dims::<3>(),
-            [batch, positions, value_heads]
+            rates.shape().dims::<4>(),
+            [batch, positions, value_heads, 2]
         );
+        if let Some(skip) = update.skip() {
+            assert_eq!(skip.shape().dims::<1>(), [value_heads]);
+        }
         assert!(
             key_heads > 0 && value_heads.is_multiple_of(key_heads),
             "{value_heads} value heads are not grouped under {key_heads} key heads"
@@ -388,39 +469,47 @@ impl RecurrenceWalkTensors {
                 )
             }
         };
-        let (value, decay, strength, out_view) = (
+        let update = match update {
+            UpdateRuleInputs::Delta => UpdateRuleTensors::Delta,
+            UpdateRuleInputs::Additive { skip } => UpdateRuleTensors::Additive {
+                skip: grouped(&skip, 0),
+            },
+        };
+        let (value, rates, out_view) = (
             grouped(&value, 2),
-            grouped(&decay, 2),
-            grouped(&strength, 2),
+            grouped(&rates, 2),
             grouped(&out_view, 2),
         );
         let problem = RecurrenceWalkProblem {
             batch,
             positions,
             heads,
+            rule: update.rule(),
             output_element,
             state: layout,
             alignments: RecurrenceWalkOperandMap {
                 query: query.elem_alignment(),
                 key: key.elem_alignment(),
                 value: value.elem_alignment(),
-                decay: decay.elem_alignment(),
-                strength: strength.elem_alignment(),
+                rates: rates.elem_alignment(),
                 state: states.state().elem_alignment(),
                 out: out_view.elem_alignment(),
                 kept: states
                     .kept()
+                    .map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
+                skip: update
+                    .skip()
                     .map_or(ElemAlignment::ONE, PlainTensor::elem_alignment),
             },
             start_bytes: RecurrenceWalkOperandMap {
                 query: query.start_bytes(),
                 key: key.start_bytes(),
                 value: value.start_bytes(),
-                decay: decay.start_bytes(),
-                strength: strength.start_bytes(),
+                rates: rates.start_bytes(),
                 state: states.state().start_bytes(),
                 out: out_view.start_bytes(),
                 kept: states.kept().map_or(0, PlainTensor::start_bytes),
+                skip: update.skip().map_or(0, PlainTensor::start_bytes),
             },
         };
         Ok(Self {
@@ -428,8 +517,8 @@ impl RecurrenceWalkTensors {
             query,
             key,
             value,
-            decay,
-            strength,
+            rates,
+            update,
             out_view,
             states,
             out,
@@ -458,7 +547,7 @@ impl RecurrenceWalkTensors {
     }
 
     /// Every operand bound as `blueprint` states it, on `grid`: under its partitioning, at its
-    /// width, the decay and the strength a scalar at a time.
+    /// width, the rates a scalar at a time.
     pub fn bind<M>(
         &self,
         blueprint: &RecurrenceWalkBlueprint<M>,
@@ -489,10 +578,9 @@ impl RecurrenceWalkTensors {
                 &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
                 width,
             ),
-            decay: bind(&self.decay, &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP], 1),
-            strength: bind(
-                &self.strength,
-                &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP],
+            rates: bind(
+                &self.rates,
+                &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP, RATE],
                 1,
             ),
             out: bind(
@@ -500,6 +588,7 @@ impl RecurrenceWalkTensors {
                 &[BATCH, POSITION, KEY_HEAD, HEAD_IN_GROUP, VALUE_FEATURE],
                 width,
             ),
+            update: self.update.bind(bind),
             state,
             kept,
             lengths,

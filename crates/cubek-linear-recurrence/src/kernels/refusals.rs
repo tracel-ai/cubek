@@ -21,36 +21,33 @@ pub(crate) fn admit_on_device(hw: &Hardware, elements: [ElemType; 2]) -> Result<
     Ok(())
 }
 
-/// The buffers a walk needs a device to bind: one for each of its 8 operands, and one for the
-/// metadata buffer some runtimes bind beside them.
-pub const RECURRENCE_WALK_BINDING_BUFFERS: u32 = 8 + 1;
-
-/// The buffers a walk in a store's slots needs a device to bind: the seven operands it shares with
-/// the owned walk, the slot table and the lengths table, and the metadata buffer.
-pub const RECURRENCE_WALK_SLOTS_BINDING_BUFFERS: u32 = 9 + 1;
+/// What a routine declines a problem with that states the update rule of the other routine.
+pub const RECURRENCE_WALK_RULE_NOT_SERVED: Refusal = Refusal::Declined {
+    why: "the routine walks the other update rule",
+};
 
 /// What admission declines a problem with when it describes no head: a walk needs a key row and a
 /// value column to work on.
 pub const RECURRENCE_WALK_HEADS_EMPTY: Refusal = Refusal::Declined {
-    why: "the delta walk needs a key head, a value head, a key feature and a value feature",
+    why: "the walk needs a key head, a value head, a key feature and a value feature",
 };
 
 /// What admission declines a device with that binds fewer buffers to a kernel than the walk's
 /// launch does.
 pub const RECURRENCE_WALK_BINDINGS_PAST_DEVICE: Refusal = Refusal::Declined {
-    why: "the delta walk binds more buffers than the device binds to one kernel",
+    why: "the walk binds more buffers than the device binds to one kernel",
 };
 
 /// What admission declines an operand with that is not a plain float, a packed activation
 /// included: the walk reads floats, so a caller falls back to unpacking above it.
 pub const RECURRENCE_WALK_ELEMENT_NOT_FLOAT: Refusal = Refusal::Declined {
-    why: "the delta walk reads plain float operands, not packed or integer ones",
+    why: "the walk reads plain float operands, not packed or integer ones",
 };
 
 /// What admission declines a float with that the walk is not verified at: an input that is not
 /// `f32`, or an output that is not `f32`, `f16` or `bf16`.
 pub const RECURRENCE_WALK_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
-    why: "the delta walk reads f32 inputs and writes f32, f16 or bf16 outputs",
+    why: "the walk reads f32 inputs and writes f32, f16 or bf16 outputs",
 };
 
 /// The buffers a conv over a window needs a device to bind: one for each of its 7 operands, the

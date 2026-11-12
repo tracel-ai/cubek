@@ -4,15 +4,16 @@ use crate::kernels::walk::{RecurrenceWalkInputs, RecurrenceWalkProblem, Recurren
 use cubecl::AutotuneKey;
 use cubecl::ir::ElemType;
 use cubek_microkernel::linear_recurrence::RecurrenceHeads;
+use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use serde::{Deserialize, Serialize};
 
 /// What makes two walks want the same kernel.
 ///
-/// The heads, the output element and the states' layout are exact: a model's config fixes the
-/// heads and the element, and the kernel compiles the widths and the count of kept states, which a
-/// cache's ring fixes. The sequences and the positions are anchored, being the axes a caller
-/// varies. A store's slot count is no part of it: the kernel leaves the slots dynamic and a round
-/// measures on a scratch store of its rows.
+/// The heads, the output element and the states' layout are exact: a model's
+/// config fixes the heads and the element, and the kernel compiles the widths and the count of kept
+/// states, which a cache's ring fixes. The sequences and the positions are anchored, being the axes
+/// a caller varies. A store's slot count is no part of it: the kernel leaves the slots dynamic and
+/// a round measures on a scratch store of its rows.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct RecurrenceWalkKey {
     heads: RecurrenceHeads,
@@ -44,15 +45,17 @@ impl From<&RecurrenceWalkInputs> for RecurrenceWalkKey {
     }
 }
 
-/// The problem a key describes, at its buckets' sequences and positions: dense operands.
-impl From<&RecurrenceWalkKey> for RecurrenceWalkProblem {
-    fn from(key: &RecurrenceWalkKey) -> Self {
-        Self::dense(
-            key.batch,
-            key.positions,
-            key.heads,
-            key.output_element,
-            key.state.layout(),
+impl RecurrenceWalkKey {
+    /// The problem of `rule` the key describes, at its buckets' sequences and positions: dense
+    /// operands. The key holds no rule, since each rule is tuned in a table of its own.
+    pub fn problem(&self, rule: UpdateRule) -> RecurrenceWalkProblem {
+        RecurrenceWalkProblem::dense(
+            self.batch,
+            self.positions,
+            self.heads,
+            rule,
+            self.output_element,
+            self.state.layout(),
         )
     }
 }

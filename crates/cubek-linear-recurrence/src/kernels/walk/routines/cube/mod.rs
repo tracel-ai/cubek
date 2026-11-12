@@ -2,5 +2,7 @@
 
 mod base;
 mod kernel;
+mod routine;
 
-pub use base::*;
+pub use base::CubeWalkRoutineSettings;
+pub use routine::*;
