@@ -2,8 +2,12 @@
 
 use crate::kernels::tune::AttentionTuneInputs;
 use crate::kernels::tune::key::AttentionKey;
-use crate::kernels::{AttentionBlueprint, AttentionRoutine, AttentionRoutineProblem};
+use crate::kernels::{
+    AttentionBlueprint, AttentionRoutine, AttentionRoutineProblem, PartialAttentionRoutine,
+    SplitKeysAttention,
+};
 use cubecl::CubeDim;
+use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
@@ -12,7 +16,8 @@ use cubek_std::routine::{Grid, PreparedLaunches, Routine};
 use std::sync::Arc;
 
 /// One candidate of an attention autotune: a routine of this kind at one of its
-/// settings, prepared for the device the autotune is built for.
+/// settings, prepared for the device the autotune is built for. A partial routine's candidate
+/// launches it merged by a second launch ([`launch_split_keys`](Self::launch_split_keys)).
 ///
 /// Its priority is the attention family's one term, how far the prepared launch's grid falls
 /// short of filling the device ([`short_of_the_device`]).
@@ -62,10 +67,50 @@ where
                 let binding = tensors.bind(&blueprint, &grid);
                 self.routine.dispatch(&tensors, binding, blueprint, grid);
             })
-            .map_err(|why| {
-                let settings = &self.settings;
-                format!("{settings} does not serve this problem: {why:?}")
-            })
+            .map_err(|why| self.declines(why))
+    }
+}
+
+impl<R, M: AttentionMicrokernel, SM> AttentionRoutineCandidate<R>
+where
+    R: PartialAttentionRoutine<M, SM>
+        + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
+        + Copy,
+{
+    /// The attention `inputs` state, written into their output by this candidate's partial
+    /// routine at its setting, then the split-keys merge ([`SplitKeysAttention`]), on the device
+    /// the candidate was listed for, the partial routine's launch prepared once a problem
+    /// ([`PreparedLaunches`]), or why it did not run.
+    pub fn launch_split_keys(&self, inputs: AttentionTuneInputs) -> Result<(), String> {
+        let tensors = inputs.tensors;
+        let problem = tensors.problem();
+        let split = SplitKeysAttention {
+            partial: self.routine,
+        };
+        let (blueprint, grid) = self
+            .prepared
+            .prepare(&self.routine, &self.hw, &problem, &self.settings)
+            .map_err(|why| self.declines(why))?;
+        let merge = split
+            .merge(&self.hw, &problem, &blueprint)
+            .map_err(|why| self.declines(why))?;
+        split.dispatch(&tensors, blueprint, grid, merge);
+        Ok(())
+    }
+}
+
+impl<R, M: AttentionMicrokernel, SM> AttentionRoutineCandidate<R>
+where
+    R: Routine<
+            Problem = AttentionRoutineProblem,
+            Microkernel = M,
+            Blueprint = AttentionBlueprint<M, SM>,
+        >,
+{
+    /// What a launch reports where the routine declines its problem.
+    fn declines(&self, why: Refusal) -> String {
+        let settings = &self.settings;
+        format!("{settings} does not serve this problem: {why:?}")
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
@@ -80,7 +125,11 @@ where
 
 impl<R, M: AttentionMicrokernel, SM: PartialEq> TuneCandidate for AttentionRoutineCandidate<R>
 where
-    R: AttentionRoutine<M, SM> + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>,
+    R: Routine<
+            Problem = AttentionRoutineProblem,
+            Microkernel = M,
+            Blueprint = AttentionBlueprint<M, SM>,
+        >,
 {
     type Strategy = R::Settings;
     type Key = AttentionKey;

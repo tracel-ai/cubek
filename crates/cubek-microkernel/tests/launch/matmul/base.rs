@@ -1,19 +1,23 @@
 //! What every matmul microkernel launched alone shares: `out = lhs · rhs` over one cube's box, `lhs`
 //! row-major `m × k`, `rhs` `k × n` row-major or its transpose and `out` `m × n`, every operand
-//! bound one element a line, and the box one cube of the microkernel's levels covers.
+//! bound one element a line or as wide as a routine binds it, and the box one cube of the
+//! microkernel's levels covers.
 
 use core::fmt::Debug;
 use cubecl::prelude::*;
 use cubecl::tile::kind::Boundary;
-use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
+use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Launcher, Level, Partitioning, Space, TileSpec, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::MatmulCubeSpace;
 use cubek_microkernel::matmul::{
-    MatmulAxes, MatmulAxesKind, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading,
-    MatmulRows, MatmulWorkItem,
+    MatmulAxes, MatmulAxesKind, MatmulDestination, MatmulLayout, MatmulOperand, MatmulOperands,
+    MatmulReading, MatmulRows, MatmulWorkItem,
 };
+use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
+
+use crate::launch::Lines;
 
 /// The elements of a float product: what both inputs are stored in, what it sums in and what it
 /// writes.
@@ -25,6 +29,31 @@ pub struct MatmulElements {
 }
 
 impl MatmulElements {
+    /// The element each operand is stored in.
+    pub fn stored(&self) -> MatmulOperands<ElemType> {
+        MatmulOperands {
+            lhs: self.input,
+            rhs: self.input,
+            out: self.out,
+        }
+    }
+
+    /// The width each operand binds at as `lines` says, `vectorization` holding what the
+    /// microkernel, and the launch walking it, require of them.
+    pub fn widths(
+        &self,
+        hw: &Hardware,
+        lines: Lines,
+        vectorization: &Vectorization<MatmulOperand>,
+    ) -> MatmulOperands<usize> {
+        let stored = self.stored();
+        stored.map(|operand, _| {
+            lines.width(operand, vectorization, |member| {
+                hw.vector_ceiling(stored.get(member))
+            })
+        })
+    }
+
     /// A float product of row-major inputs into a buffer, its tiles cut by the launch.
     pub fn work_item(&self) -> MatmulWorkItem {
         self.work_item_of(MatmulRows::Tiled, MatmulLayout::Row)
@@ -33,11 +62,7 @@ impl MatmulElements {
     /// [`work_item`](Self::work_item) with its rows held as `rows` says and its rhs laid as `rhs`.
     pub fn work_item_of(&self, rows: MatmulRows, rhs: MatmulLayout) -> MatmulWorkItem {
         MatmulWorkItem {
-            elements: MatmulOperands {
-                lhs: self.input,
-                rhs: self.input,
-                out: self.out,
-            },
+            elements: self.stored(),
             sum: self.sum,
             layouts: MatmulOperands {
                 lhs: MatmulLayout::Row,
@@ -149,28 +174,29 @@ impl OneCube {
 
 impl MatmulElements {
     /// `lhs`, `rhs` and `out` bound over `[m, k]`, `[k, n]` (or `[n, k]`, as `rhs_layout` says)
-    /// and `[m, n]`, one element a line, the reads and writes past the problem masked.
+    /// and `[m, n]`, each `widths` values a line, the reads and writes past the problem masked.
     pub(crate) fn bound(
         &self,
         [lhs, rhs, out]: [TensorArg; 3],
         rhs_layout: MatmulLayout,
+        widths: MatmulOperands<usize>,
     ) -> [TileTensorLaunch; 3] {
         let rhs_axes: &[_] = match rhs_layout {
             MatmulLayout::Col => &[N, K],
             _ => &[K, N],
         };
-        let bound = |arg, element, axes: &[_]| {
+        let bound = |arg, element, width, axes: &[_]| {
             TileTensorLaunch::new(
                 arg,
                 element,
-                1,
+                width,
                 TileSpec::direct(axes).boundary(BoundaryPolicy::Every(Boundary::Zero)),
             )
         };
         [
-            bound(lhs, self.input, &[M, K]),
-            bound(rhs, self.input, rhs_axes),
-            bound(out, self.out, &[M, N]),
+            bound(lhs, self.input, widths.lhs, &[M, K]),
+            bound(rhs, self.input, widths.rhs, rhs_axes),
+            bound(out, self.out, widths.out, &[M, N]),
         ]
     }
 }

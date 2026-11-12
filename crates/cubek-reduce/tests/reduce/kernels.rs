@@ -120,11 +120,12 @@ fn rows_along(values: &[f32], shape: &[usize], axis: usize) -> Vec<Vec<f32>> {
 
 /// Small whole numbers, so every sum is exact; some ties and zeros, and a NaN rare enough that
 /// most rows, even long ones, hold none and check their numbers; for a product,
-/// `±1`, `2` and `0.5`, as many of each so that a long row's product stays exact and finite.
+/// `±1`, `2` and `0.5` on a cycle of seven, prime to every extent here so no row repeats one
+/// value, with as many `2` as `0.5` so that a long row's product stays exact and finite.
 fn values(len: usize, product: bool) -> Vec<f32> {
     (0..len)
         .map(|i| match (product, i % 97) {
-            (true, _) => [1.0, -1.0, 2.0, 0.5, 1.0][i % 5],
+            (true, _) => [1.0, -1.0, 2.0, 0.5, 1.0, 2.0, 0.5][i % 7],
             (false, _) if i % 9973 == 13 => f32::NAN,
             (false, 29 | 30) => 9.0,
             (false, 50) => 0.0,

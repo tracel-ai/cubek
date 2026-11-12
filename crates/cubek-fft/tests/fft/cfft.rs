@@ -1,18 +1,11 @@
-use cubecl::{ir::ElemType, prelude::Scalar, std::tensor::TensorHandle};
-use cubek_fft::{CfftBindings, FftMode, cfft, cfft_launch_any_size};
+use cubecl::prelude::Scalar;
+use cubek_fft::{FftMode, cfft};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, TestInput, TestOutcome,
-    ValidationResult, assert_equals_approx, launch_and_capture_outcome,
+    HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, ValidationResult,
+    assert_equals_approx,
 };
 
-fn empty_tensor(
-    client: &cubecl::client::Client,
-    shape: Vec<usize>,
-    dtype: ElemType,
-) -> TensorHandle {
-    let elems = shape.iter().product::<usize>();
-    TensorHandle::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
-}
+use crate::fft::{CfftRoundTrip, CfftRoundTripLaunch};
 
 /// Scale every element of an f32 `HostData` by `factor`.
 fn scaled(mut host: HostData, factor: f32) -> HostData {
@@ -34,89 +27,21 @@ fn combine_re_im(re: ValidationResult, im: ValidationResult) -> ValidationResult
     }
 }
 
-/// Forward then inverse along `dim` recovers the input scaled by `n` (the
-/// transform is unnormalized in both directions).
-fn cfft_roundtrip_case(signal_shape: Vec<usize>, dim: usize) {
-    let client = cubecl::test_device().client();
-    let dtype = f32::elem_type_native();
-    let n = signal_shape[dim] as f32;
-
-    let (input_re, input_re_data) = TestInput::builder(client.clone(), signal_shape.clone())
-        .dtype(dtype)
-        .uniform(42, -1., 1.)
-        .generate_with_f32_host_data();
-    let (input_im, input_im_data) = TestInput::builder(client.clone(), signal_shape.clone())
-        .dtype(dtype)
-        .uniform(7, -1., 1.)
-        .generate_with_f32_host_data();
-
-    let spectrum_re = empty_tensor(&client, signal_shape.clone(), dtype);
-    let spectrum_im = empty_tensor(&client, signal_shape.clone(), dtype);
-    let recovered_re = empty_tensor(&client, signal_shape.clone(), dtype);
-    let recovered_im = empty_tensor(&client, signal_shape.clone(), dtype);
-
-    let spectrum_re_out = spectrum_re.handle.clone();
-    let spectrum_im_out = spectrum_im.handle.clone();
-
-    let forward = CfftBindings {
-        input_re: input_re.binding(),
-        input_im: input_im.binding(),
-        output_re: spectrum_re.clone().binding(),
-        output_im: spectrum_im.clone().binding(),
-    };
-    let inverse = CfftBindings {
-        input_re: spectrum_re.binding(),
-        input_im: spectrum_im.binding(),
-        output_re: recovered_re.clone().binding(),
-        output_im: recovered_im.clone().binding(),
-    };
-
-    let outcome = launch_and_capture_outcome(
-        &client,
-        &[
-            &spectrum_re_out,
-            &spectrum_im_out,
-            &recovered_re.handle,
-            &recovered_im.handle,
-        ],
-        |c| {
-            if let Err(e) = cfft_launch_any_size(c, forward, dim, dtype, FftMode::Forward) {
-                return ExecutionOutcome::CompileError(format!("forward launch failed: {e}"));
-            }
-            cfft_launch_any_size(c, inverse, dim, dtype, FftMode::Inverse).into()
-        },
-    );
-
-    match outcome {
-        ExecutionOutcome::Executed => {
-            let actual_re = HostData::from_tensor_handle(&client, recovered_re, HostDataType::F32);
-            let actual_im = HostData::from_tensor_handle(&client, recovered_im, HostDataType::F32);
-            let expected_re = scaled(input_re_data, n);
-            let expected_im = scaled(input_im_data, n);
-            combine_re_im(
-                assert_equals_approx(&actual_re, &expected_re, 1e-2),
-                assert_equals_approx(&actual_im, &expected_im, 1e-2),
-            )
-            .as_test_outcome()
-        }
-        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
-    }
-    .enforce();
-}
-
+/// Forward then inverse along an axis recovers the input scaled by its length: the transform is
+/// unnormalized both ways.
 #[test]
 fn cfft_roundtrip_axis_last() {
-    cfft_roundtrip_case([1, 8].to_vec(), 1);
+    CfftRoundTripLaunch.check([CfftRoundTrip::of(&[1, 8], 1)]);
 }
 
 #[test]
 fn cfft_roundtrip_axis_1_strided() {
-    cfft_roundtrip_case([2, 8, 3].to_vec(), 1);
+    CfftRoundTripLaunch.check([CfftRoundTrip::of(&[2, 8, 3], 1)]);
 }
 
 #[test]
 fn cfft_roundtrip_axis_0_strided() {
-    cfft_roundtrip_case([16, 2].to_vec(), 0);
+    CfftRoundTripLaunch.check([CfftRoundTrip::of(&[16, 2], 0)]);
 }
 
 // Batched cases: several windows transformed in one launch, every element
@@ -124,12 +49,12 @@ fn cfft_roundtrip_axis_0_strided() {
 // concurrent cubes, which corrupts all but one window.
 #[test]
 fn cfft_roundtrip_batched() {
-    cfft_roundtrip_case([5, 16].to_vec(), 1);
+    CfftRoundTripLaunch.check([CfftRoundTrip::of(&[5, 16], 1)]);
 }
 
 #[test]
 fn cfft_roundtrip_batched_larger() {
-    cfft_roundtrip_case([4, 64].to_vec(), 1);
+    CfftRoundTripLaunch.check([CfftRoundTrip::of(&[4, 64], 1)]);
 }
 
 #[test]

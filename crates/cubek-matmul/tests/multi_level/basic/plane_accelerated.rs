@@ -6,69 +6,20 @@
 
 use cubecl::prelude::*;
 use cubek_matmul::{
-    definition::{MatmulElems, MatmulProblem},
-    launch::launch_ref,
+    definition::MatmulElems,
     multi_level::{Strategy as MultiLevel, definition::adjust_dtypes},
 };
-use cubek_std::InputBinding;
-use cubek_test_utils::{
-    ExecutionOutcome, TestInput, TestOutcome, ValidationResult, launch_and_capture_outcome,
-};
+use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
 
-use crate::harness::{
-    assert_result, client, f16_elems, f32_elems, rect, square, test_matmul_strategy,
-};
-
-/// Binary fractions survive TF32 conversion, so these layout tests keep the f32 tolerance.
-fn run_exact_f32(client: Client, problem: MatmulProblem) -> TestOutcome {
-    let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
-        .dtype(problem.global_dtypes.lhs)
-        .custom(
-            (0..problem.lhs_shape.num_elements())
-                .map(|index| ((index % 17) as f32 - 8.) / 8.)
-                .collect(),
-        )
-        .generate_with_f32_host_data();
-    let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
-        .dtype(problem.global_dtypes.rhs)
-        .custom(
-            (0..problem.rhs_shape.num_elements())
-                .map(|index| (((index * 3 + 1) % 17) as f32 - 8.) / 8.)
-                .collect(),
-        )
-        .generate_with_f32_host_data();
-    let out = TestInput::builder(client.clone(), problem.out_shape.clone())
-        .dtype(problem.global_dtypes.out)
-        .uniform(4242, 10., 100.)
-        .generate_without_host_data();
-    let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-    let strategy = MultiLevel::SimpleCyclicCmma(Default::default()).into();
-    let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
-        launch_ref(
-            &strategy,
-            c,
-            InputBinding::Normal(lhs.binding(), problem.global_dtypes.lhs),
-            InputBinding::Normal(rhs.binding(), problem.global_dtypes.rhs),
-            out.clone().binding(),
-            &mut dtypes,
-        )
-        .into()
-    });
-    match outcome {
-        ExecutionOutcome::Executed => {
-            assert_result(&lhs_data, &rhs_data, &problem, &client, out, dtypes).as_test_outcome()
-        }
-        ExecutionOutcome::CompileError(error) => TestOutcome::CompileError(error),
-    }
-}
+use crate::matmul::{ByStrategy, Declines, F16, F32, Product};
 
 #[test]
 fn simple_cyclic_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SimpleCyclicCmma(Default::default()).into(),
+    let routine = ByStrategy::new(
+        MultiLevel::SimpleCyclicCmma(Default::default()),
+        Declines::AsItStates,
     );
+    routine.check([Product::of(F16).m(256).n(256).k(256)]);
 }
 
 /// A small f32 problem runs rather than declining: a routine that runs at 37 rows also runs at 32,
@@ -77,7 +28,7 @@ fn simple_cyclic_cmma() {
 /// can offer cmma for narrower types only: Vulkan on NVIDIA has f16 and bf16 but no f32 or tf32.
 #[test]
 fn simple_cyclic_cmma_runs_a_small_f32_problem() {
-    let client = client();
+    let client = cubecl::test_device().client();
     let mut dtypes = MatmulElems::from_single_dtype(f32::elem_type_native());
     adjust_dtypes(&client, &mut dtypes, true);
     let offered = client.properties().features.matmul.cmma.iter().any(|cfg| {
@@ -92,56 +43,56 @@ fn simple_cyclic_cmma_runs_a_small_f32_problem() {
         .enforce();
         return;
     }
-    let outcome = run_exact_f32(client, rect(32, 32, 64, f32_elems()));
-    assert!(
-        matches!(outcome, TestOutcome::Validated(ValidationResult::Pass)),
-        "expected the matmul to execute and validate, got {outcome:?}"
+    let cmma = ByStrategy::new(
+        MultiLevel::SimpleCyclicCmma(Default::default()),
+        Declines::Never,
     );
+    cmma.check([Product::of(F32).m(32).n(32).k(64).in_eighths()]);
 }
 
 #[test]
 fn simple_cyclic_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SimpleCyclicMma(Default::default()).into(),
+    let routine = ByStrategy::new(
+        MultiLevel::SimpleCyclicMma(Default::default()),
+        Declines::AsItStates,
     );
+    routine.check([Product::of(F16).m(256).n(256).k(256)]);
 }
 
 #[test]
 fn double_cyclic_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleCyclicCmma(Default::default()).into(),
+    let routine = ByStrategy::new(
+        MultiLevel::DoubleCyclicCmma(Default::default()),
+        Declines::AsItStates,
     );
+    routine.check([Product::of(F16).m(256).n(256).k(256)]);
 }
 
 #[test]
 fn double_cyclic_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleCyclicMma(Default::default()).into(),
+    let routine = ByStrategy::new(
+        MultiLevel::DoubleCyclicMma(Default::default()),
+        Declines::AsItStates,
     );
+    routine.check([Product::of(F16).m(256).n(256).k(256)]);
 }
 
 #[test]
 fn specialized_cyclic_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SpecializedCyclicCmma(Default::default()).into(),
+    let routine = ByStrategy::new(
+        MultiLevel::SpecializedCyclicCmma(Default::default()),
+        Declines::AsItStates,
     );
+    routine.check([Product::of(F16).m(256).n(256).k(256)]);
 }
 
 #[test]
 fn specialized_cyclic_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SpecializedCyclicMma(Default::default()).into(),
+    let routine = ByStrategy::new(
+        MultiLevel::SpecializedCyclicMma(Default::default()),
+        Declines::AsItStates,
     );
+    routine.check([Product::of(F16).m(256).n(256).k(256)]);
 }
 
 /// The specialized routine loads on its load-only planes whatever load flows a forced blueprint
@@ -160,8 +111,8 @@ fn specialized_cyclic_cmma_runs_a_forced_blueprint_with_default_load_flows() {
         routine::BlueprintStrategy,
     };
 
-    let client = client();
-    let problem = square(256, f16_elems());
+    let client = cubecl::test_device().client();
+    let product = Product::of(F16).m(256).n(256).k(256);
     let tiling_scheme = TilingScheme::builder()
         .with_tile_size((16, 16, 16).into())
         .with_partition_size(PartitionSize { m: 1, n: 1, k: 1 })
@@ -172,41 +123,47 @@ fn specialized_cyclic_cmma_runs_a_forced_blueprint_with_default_load_flows() {
         TileMatmulKind::Cmma,
         tiling_scheme,
         client.properties().hardware.plane_size_max,
-        &problem,
+        &product.problem(),
     )
     .partition_buffering(PartitionBuffering::Single)
     .build();
-    test_matmul_strategy(
-        client,
-        problem,
-        MultiLevel::SpecializedCyclicCmma(BlueprintStrategy::Forced(blueprint)).into(),
+    let forced = ByStrategy::new(
+        MultiLevel::SpecializedCyclicCmma(BlueprintStrategy::Forced(blueprint)),
+        Declines::AsItStates,
     );
+    forced.check([product]);
 }
 
 #[test]
 fn ordered_double_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::OrderedDoubleCmma(Default::default()).into(),
+    let routine = ByStrategy::new(
+        MultiLevel::OrderedDoubleCmma(Default::default()),
+        Declines::AsItStates,
     );
+    routine.check([Product::of(F16).m(256).n(256).k(256)]);
 }
 
 #[test]
 fn ordered_double_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::OrderedDoubleMma(Default::default()).into(),
+    let routine = ByStrategy::new(
+        MultiLevel::OrderedDoubleMma(Default::default()),
+        Declines::AsItStates,
     );
+    routine.check([Product::of(F16).m(256).n(256).k(256)]);
 }
 
 #[test]
 fn simple_cyclic_cmma_small_k_and_partial_line_width_rows_stay_correct() {
-    use crate::harness::{f32_elems, rect};
+    let cmma = ByStrategy::new(
+        MultiLevel::SimpleCyclicCmma(Default::default()),
+        Declines::AsItStates,
+    );
+    let products = [
+        Product::of(F32).m(382).n(10).k(1).in_eighths(),
+        Product::of(F32).m(382).n(10).k(3).in_eighths(),
+        Product::of(F32).m(4096).n(14).k(5).in_eighths(),
+    ];
     for _ in 0..20 {
-        for (m, n, k) in [(382, 10, 1), (382, 10, 3), (4096, 14, 5)] {
-            run_exact_f32(client(), rect(m, n, k, f32_elems())).enforce();
-        }
+        cmma.check(products.clone());
     }
 }

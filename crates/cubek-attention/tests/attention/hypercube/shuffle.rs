@@ -1,17 +1,17 @@
 //! The hypercubes of planes of shuffles: each box's keys cut across its cubes, the partials merged
-//! by a second launch or by the box's last arrival.
+//! by the box's last arrival, or by the split-keys merge launched after the partial routine.
 
 use cubek_attention::kernels::{
-    HypercubeLastArrivalShuffleAttentionRoutine, HypercubeSecondLaunchShuffleAttentionRoutine,
+    HypercubeLastArrivalShuffleAttentionRoutine, HypercubeShufflePartialAttentionRoutine,
 };
 use cubek_test_utils::ScopeUnderTest;
 
 use crate::attention::{DECODES, Forward};
 
-/// The second launch's lead on every decode case.
+/// The partial routine's lead, merged by a second launch, on every decode case.
 #[test]
-fn the_second_launch_routine_matches_the_host() {
-    let forward = Forward::new(HypercubeSecondLaunchShuffleAttentionRoutine::new());
+fn the_partial_routine_merged_matches_the_host() {
+    let forward = Forward::split_keys(HypercubeShufflePartialAttentionRoutine::new());
     forward.check(forward.at_its_lead(&DECODES));
 }
 

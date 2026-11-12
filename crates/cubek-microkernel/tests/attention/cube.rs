@@ -1,6 +1,7 @@
 //! The cube attention microkernel alone: a cube's planes over one box of queries, of shuffles
 //! reading each step's keys where they lie, or of fragments contracting the stages the cube fills.
 
+use crate::launch::Lines;
 use crate::launch::attention::{AttentionElements, CubeAttentionLaunch};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::cube::{
@@ -19,9 +20,10 @@ impl AttentionSettings for CubeAttentionMicrokernelSettings {
         &self,
         hw: &Hardware,
         elements: AttentionElements,
+        lines: Lines,
         steps: usize,
     ) -> Result<CubeAttentionLaunch, Refusal> {
-        CubeAttentionLaunch::new(hw, elements, DIMS, self, steps)
+        CubeAttentionLaunch::new(hw, elements, DIMS, self, lines, steps)
     }
 }
 

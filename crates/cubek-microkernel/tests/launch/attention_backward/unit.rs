@@ -71,6 +71,7 @@ impl AttentionBackwardLaunch for UnitQueryGradientLaunch {
         client: &Client,
         args: AttentionBackwardOperandArgs,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         use AttentionBackwardOperand as Operand;
         let sequence = OneSequence {
@@ -105,6 +106,7 @@ impl AttentionBackwardLaunch for UnitQueryGradientLaunch {
                 scale,
                 launcher.partitioning_arg(),
                 self.microkernel,
+                visibility,
                 self.item.sum,
             );
         }
@@ -154,6 +156,7 @@ impl AttentionBackwardLaunch for UnitKeyGradientLaunch {
         client: &Client,
         args: AttentionBackwardOperandArgs,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         use AttentionBackwardOperand as Operand;
         let sequence = OneSequence {
@@ -188,6 +191,7 @@ impl AttentionBackwardLaunch for UnitKeyGradientLaunch {
                 scale,
                 launcher.partitioning_arg(),
                 self.microkernel,
+                visibility,
                 self.item.sum,
             );
         }
@@ -211,6 +215,7 @@ fn unit_query_gradient_kernel<EA: Float>(
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitQueryGradientMicrokernel,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA)] _sum: ElemType,
 ) {
     let (q, k, v) = (
@@ -221,7 +226,7 @@ fn unit_query_gradient_kernel<EA: Float>(
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let d_q = query_gradient.tile(&partitioning);
-    let visible = VisibleKeys::of_keys(keys, queries, AttentionVisibility::Attended);
+    let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.bias::<EA>(&partitioning);
     for unit in &partitioning {
         let steps = visible.steps(&unit, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
@@ -259,6 +264,7 @@ fn unit_key_gradient_kernel<EA: Float>(
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitKeyGradientMicrokernel,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA)] _sum: ElemType,
 ) {
     let (q, k, v) = (
@@ -272,7 +278,7 @@ fn unit_key_gradient_kernel<EA: Float>(
         key_gradient.tile(&partitioning),
         value_gradient.tile(&partitioning),
     );
-    let visible = VisibleKeys::of_keys(keys, queries, AttentionVisibility::Attended);
+    let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
     for unit in &partitioning {
         let first_step = visible.first_query_step(&unit, microkernel.seq_q());
