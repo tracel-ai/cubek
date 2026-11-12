@@ -136,7 +136,12 @@ impl ConvSpec {
     }
 
     fn out(&self) -> [usize; 2] {
-        self.args.output([self.in_h, self.in_w], self.kernel_size)
+        let [window_h, window_w] = self.args.dims();
+        let [kh, kw] = self.kernel_size;
+        [
+            window_h.output(self.in_h, kh),
+            window_w.output(self.in_w, kw),
+        ]
     }
 
     /// The shapes of `operation`'s lhs, rhs and out, the weight and its gradient `[co, kh, kw, ci]`
@@ -463,7 +468,8 @@ pub struct HostTensor<'a> {
 pub fn naive_forward(input: HostTensor, weight: HostTensor, args: &ConvolutionArgs<2>) -> Vec<f32> {
     let [n, h, w, c] = input.dims;
     let [co, kh, kw, _] = weight.dims;
-    let [oh, ow] = args.output([h, w], [kh, kw]);
+    let [window_h, window_w] = args.dims();
+    let (oh, ow) = (window_h.output(h, kh), window_w.output(w, kw));
     let mut out = vec![0.0; n * oh * ow * co];
     for b in 0..n {
         for y in 0..oh {
@@ -472,7 +478,7 @@ pub fn naive_forward(input: HostTensor, weight: HostTensor, args: &ConvolutionAr
                     let mut sum = 0.0;
                     for ky in 0..kh {
                         for kx in 0..kw {
-                            let (iy, ix) = (args.position(0, y, ky), args.position(1, x, kx));
+                            let (iy, ix) = (window_h.position(y, ky), window_w.position(x, kx));
                             if iy < 0 || ix < 0 || iy >= h as isize || ix >= w as isize {
                                 continue;
                             }
@@ -501,6 +507,7 @@ pub fn naive_weight_grad(
 ) -> Vec<f32> {
     let [n, h, w, c] = input.dims;
     let [_, oh, ow, co] = out_grad.dims;
+    let [window_h, window_w] = args.dims();
     let mut grad = vec![0.0; co * kernel[0] * kernel[1] * c];
     for o in 0..co {
         for ky in 0..kernel[0] {
@@ -510,7 +517,7 @@ pub fn naive_weight_grad(
                     for b in 0..n {
                         for y in 0..oh {
                             for x in 0..ow {
-                                let (iy, ix) = (args.position(0, y, ky), args.position(1, x, kx));
+                                let (iy, ix) = (window_h.position(y, ky), window_w.position(x, kx));
                                 if iy < 0 || ix < 0 || iy >= h as isize || ix >= w as isize {
                                     continue;
                                 }

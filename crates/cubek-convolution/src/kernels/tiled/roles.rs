@@ -1,6 +1,6 @@
 use super::{B, CI, CO, ConvDecline, OH, OW, RH, RW};
 use crate::components::ConvolutionOperation;
-use crate::launch::ConvolutionArgs;
+use crate::launch::SpatialWindow;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::Axis;
 use cubecl::tile::launch::Refusal;
@@ -56,17 +56,11 @@ pub enum ConvGather {
 }
 
 impl ConvGather {
-    /// The map of spatial `dim` of `window` over the axes `out` and `tap`.
-    pub fn map(
-        self,
-        window: &ConvolutionArgs<2>,
-        dim: usize,
-        out: Axis,
-        tap: Axis,
-    ) -> PhysicalAxisMap {
+    /// The map of `window` over the axes `out` and `tap`.
+    pub fn map(self, window: &SpatialWindow, out: Axis, tap: Axis) -> PhysicalAxisMap {
         match self {
-            Self::Window => window.position_map(dim, out, tap),
-            Self::Gradient => window.gradient_position_map(dim, out, tap),
+            Self::Window => window.position_map(out, tap),
+            Self::Gradient => window.gradient_position_map(out, tap),
         }
     }
 

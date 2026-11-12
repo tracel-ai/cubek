@@ -1,6 +1,6 @@
 use super::{B, CI, CO, ConvBinding, ConvDecline, ConvProblem, ConvRoles, TileConvBlueprint};
 use crate::components::ConvolutionOperation;
-use crate::launch::ConvolutionArgs;
+use crate::launch::SpatialWindow;
 use cubecl::client::Client;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::kind::Boundary;
@@ -21,7 +21,7 @@ pub struct ConvTensors {
     input: TensorBinding,
     rhs: TensorBinding,
     out: TensorBinding,
-    window: ConvolutionArgs<2>,
+    window: Vec<SpatialWindow>,
     dtypes: MatmulElems,
 }
 
@@ -44,7 +44,7 @@ impl ConvTensors {
         weight: InputBinding,
         bias: Option<InputBinding>,
         out: TensorBinding,
-        window: ConvolutionArgs<2>,
+        window: &[SpatialWindow],
         dtypes: MatmulElems,
     ) -> Result<Self, Refusal> {
         if bias.is_some() {
@@ -65,7 +65,7 @@ impl ConvTensors {
         input: InputBinding,
         out_grad: InputBinding,
         weight_grad: TensorBinding,
-        window: ConvolutionArgs<2>,
+        window: &[SpatialWindow],
         dtypes: MatmulElems,
     ) -> Result<Self, Refusal> {
         let operation = ConvolutionOperation::BackwardWeight;
@@ -84,10 +84,10 @@ impl ConvTensors {
         out_grad: InputBinding,
         weights: InputBinding,
         in_grad: TensorBinding,
-        window: ConvolutionArgs<2>,
+        window: &[SpatialWindow],
         dtypes: MatmulElems,
     ) -> Result<Self, Refusal> {
-        if window.stride.iter().any(|&stride| stride > 1) {
+        if window.iter().any(|window| window.stride > 1) {
             return Err(ConvDecline::DataBackwardStrided.into());
         }
         let operation = ConvolutionOperation::BackwardData;
@@ -103,7 +103,7 @@ impl ConvTensors {
         client: &Client,
         [input, rhs]: [InputBinding; 2],
         out: TensorBinding,
-        window: ConvolutionArgs<2>,
+        window: &[SpatialWindow],
         dtypes: MatmulElems,
     ) -> Result<Self, Refusal> {
         let (InputBinding::Normal(input, _), InputBinding::Normal(rhs, _)) = (input, rhs) else {
@@ -135,7 +135,7 @@ impl ConvTensors {
             input,
             rhs,
             out,
-            window,
+            window: window.to_vec(),
             dtypes,
         };
         tensors.check_window()?;
@@ -153,13 +153,17 @@ impl ConvTensors {
             return Err(ConvDecline::KernelEmpty.into());
         }
         let window = &self.window;
-        if window.stride.contains(&0) || window.dilation.contains(&0) {
+        if window
+            .iter()
+            .any(|window| window.stride == 0 || window.dilation == 0)
+        {
             return Err(ConvDecline::WindowStepZero.into());
         }
         let roles = ConvRoles::of(self.operation)?;
         let (input, output) = roles.gather.window_ends(problem.gathered, problem.out);
         let mismatch = roles.extent_mismatch;
-        match window.output(input, problem.kernel) == output {
+        let yielded = (0..2).map(|dim| window[dim].output(input[dim], problem.kernel[dim]));
+        match yielded.eq(output) {
             true => Ok(()),
             false => Err(mismatch.into()),
         }
@@ -185,7 +189,7 @@ impl ConvTensors {
         };
         ConvProblem::from_views(
             self.operation,
-            self.window,
+            self.window.clone(),
             MatmulOperands {
                 lhs: shape(&self.input),
                 rhs: shape(&self.rhs),

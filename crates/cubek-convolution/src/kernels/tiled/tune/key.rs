@@ -1,6 +1,6 @@
 use crate::components::ConvolutionOperation;
 use crate::kernels::tiled::{B, ConvProblem};
-use crate::launch::ConvolutionArgs;
+use crate::launch::SpatialWindow;
 use cubecl::ir::ElemType;
 use cubecl::throughput::{MemoryAccess, compute_throughput_key};
 use cubecl::tile::layout::ElemAlignment;
@@ -29,7 +29,7 @@ pub struct CubeStagedConvTuneKey {
     pub kernel: [usize; 2],
     pub channels_in: usize,
     pub channels_out: usize,
-    pub window: ConvolutionArgs<2>,
+    pub window: Vec<SpatialWindow>,
     pub lhs_width: usize,
     pub rhs_width: usize,
 }
@@ -114,7 +114,7 @@ impl CubeStagedConvTuneKey {
             kernel: problem.kernel,
             channels_in: problem.channels_in,
             channels_out: problem.channels_out,
-            window: problem.window,
+            window: problem.window.clone(),
             lhs_width: width(MatmulOperand::Lhs),
             rhs_width: width(MatmulOperand::Rhs),
         }
@@ -138,7 +138,7 @@ impl From<&CubeStagedConvTuneKey> for ConvProblem {
             channels_out: key.channels_out,
             kernel: key.kernel,
             out: key.out_extent,
-            window: key.window,
+            window: key.window.clone(),
             elements: MatmulOperands {
                 lhs: key.lhs,
                 rhs: key.rhs,

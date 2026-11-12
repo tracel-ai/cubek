@@ -14,8 +14,8 @@ pub use kernels::{backward_data, backward_weight, forward};
 
 // Top-level launcher: the single public entry point.
 pub use launch::{
-    AcceleratedTileKind, ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy, UnitStrategy,
-    UnitTiling, launch_ref,
+    AcceleratedTileKind, ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, SpatialWindow,
+    Strategy, UnitStrategy, UnitTiling, launch_ref,
 };
 
 // The depthwise routine is its own entry point rather than a `ConvAlgorithm`: it shares no

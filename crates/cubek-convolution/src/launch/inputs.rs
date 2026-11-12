@@ -18,14 +18,12 @@ pub struct ConvolutionArgs<const N_SPATIAL: usize> {
 }
 
 impl<const N_SPATIAL: usize> ConvolutionArgs<N_SPATIAL> {
-    /// These arguments over two spatial dimensions, `None` where the convolution has another
-    /// number.
-    pub fn two_dimensional(&self) -> Option<ConvolutionArgs<2>> {
-        let dims = |args: &[usize]| <[usize; 2]>::try_from(args).ok();
-        Some(ConvolutionArgs {
-            stride: dims(&self.stride)?,
-            dilation: dims(&self.dilation)?,
-            padding: dims(&self.padding)?,
+    /// The window of each spatial dimension.
+    pub fn dims(&self) -> [SpatialWindow; N_SPATIAL] {
+        std::array::from_fn(|dim| SpatialWindow {
+            stride: self.stride[dim],
+            padding: self.padding[dim],
+            dilation: self.dilation[dim],
         })
     }
 }
@@ -64,46 +62,51 @@ impl<const N_SPATIAL: usize> TryFrom<ArgsRepr> for ConvolutionArgs<N_SPATIAL> {
     }
 }
 
-impl ConvolutionArgs<2> {
-    /// The spatial extent a window of `kernel` taps yields over an `input` of that extent, zero
-    /// where the dilated taps do not fit the padded input.
-    pub fn output(&self, input: [usize; 2], kernel: [usize; 2]) -> [usize; 2] {
-        [0, 1].map(|dim| {
-            let padded = input[dim] + 2 * self.padding[dim];
-            let span = self.dilation[dim] * kernel[dim].saturating_sub(1) + 1;
-            match padded.checked_sub(span) {
-                Some(room) => room / self.stride[dim] + 1,
-                None => 0,
-            }
-        })
+/// The stride, beginning padding and dilation of one spatial dimension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SpatialWindow {
+    pub stride: usize,
+    pub padding: usize,
+    pub dilation: usize,
+}
+
+impl SpatialWindow {
+    /// The extent a window of `kernel` taps yields over an `input` of that extent, zero where the
+    /// dilated taps do not fit the padded input.
+    pub fn output(&self, input: usize, kernel: usize) -> usize {
+        let padded = input + 2 * self.padding;
+        let span = self.dilation * kernel.saturating_sub(1) + 1;
+        match padded.checked_sub(span) {
+            Some(room) => room / self.stride + 1,
+            None => 0,
+        }
     }
 
-    /// The input position along spatial `dim` a forward window reads at output position `out` and
-    /// tap `tap`, `out * stride + tap * dilation - padding`: negative before the input's start.
-    pub fn position(&self, dim: usize, out: usize, tap: usize) -> isize {
-        (out * self.stride[dim] + tap * self.dilation[dim]) as isize - self.padding[dim] as isize
+    /// The input position a forward window reads at output position `out` and tap `tap`,
+    /// `out * stride + tap * dilation - padding`: negative before the input's start.
+    pub fn position(&self, out: usize, tap: usize) -> isize {
+        (out * self.stride + tap * self.dilation) as isize - self.padding as isize
     }
 
     /// [`Self::position`] as a map over the axes `out` and `tap`, for a tile projection.
-    pub fn position_map(&self, dim: usize, out: Axis, tap: Axis) -> PhysicalAxisMap {
-        PhysicalAxisMap::affine(&[(out, self.stride[dim]), (tap, self.dilation[dim])])
-            .shifted(-(self.padding[dim] as isize))
+    pub fn position_map(&self, out: Axis, tap: Axis) -> PhysicalAxisMap {
+        PhysicalAxisMap::affine(&[(out, self.stride), (tap, self.dilation)])
+            .shifted(-(self.padding as isize))
     }
 
-    /// The gradient position along spatial `dim` the data backward reads at input position `pos`
-    /// and tap `tap`, `pos + padding - tap * dilation`, at stride 1: negative before the
-    /// gradient's start.
-    pub fn gradient_position(&self, dim: usize, pos: usize, tap: usize) -> isize {
-        (pos + self.padding[dim]) as isize - (tap * self.dilation[dim]) as isize
+    /// The gradient position the data backward reads at input position `pos` and tap `tap`,
+    /// `pos + padding - tap * dilation`, at stride 1: negative before the gradient's start.
+    pub fn gradient_position(&self, pos: usize, tap: usize) -> isize {
+        (pos + self.padding) as isize - (tap * self.dilation) as isize
     }
 
     /// [`Self::gradient_position`] as a map over the axes `pos` and `tap`.
-    pub fn gradient_position_map(&self, dim: usize, pos: Axis, tap: Axis) -> PhysicalAxisMap {
+    pub fn gradient_position_map(&self, pos: Axis, tap: Axis) -> PhysicalAxisMap {
         PhysicalAxisMap::scaled(&[
             (pos, Scale::Static(1)),
-            (tap, Scale::Static(-(self.dilation[dim] as isize))),
+            (tap, Scale::Static(-(self.dilation as isize))),
         ])
-        .shifted(self.padding[dim] as isize)
+        .shifted(self.padding as isize)
     }
 }
 

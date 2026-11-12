@@ -41,7 +41,8 @@ impl Conv2dProblem {
     pub fn out_extent(&self) -> [usize; 2] {
         let [_, _, h, w] = self.input_shape;
         let [_, _, kh, kw] = self.weight_shape;
-        self.args.output([h, w], [kh, kw])
+        let [window_h, window_w] = self.args.dims();
+        [window_h.output(h, kh), window_w.output(w, kw)]
     }
 
     /// The shapes of the operands the operation reads and writes, `[lhs, rhs, out]`, each NHWC
@@ -72,7 +73,7 @@ impl From<&Conv2dProblem> for ConvProblem {
         let shapes = MatmulOperands { lhs, rhs, out };
         Self::from_views(
             problem.operation,
-            problem.args,
+            problem.args.dims().to_vec(),
             roles.views(shapes),
             MatmulOperands::all(problem.element.elem_type()),
             ElemType::Float(FloatKind::F32),

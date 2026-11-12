@@ -1,7 +1,7 @@
 use super::{ConvGather, ConvRoles};
 use crate::components::ConvolutionOperation;
 use crate::definition::Conv2dCost;
-use crate::launch::ConvolutionArgs;
+use crate::launch::SpatialWindow;
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::{ElemAlignment, PhysicalAxisMap};
 use cubecl::tile::{Axis, Projection, Space};
@@ -34,7 +34,8 @@ pub struct ConvProblem {
     pub kernel: [usize; 2],
     /// The output's spatial extent.
     pub out: [usize; 2],
-    pub window: ConvolutionArgs<2>,
+    /// The window of each spatial dim.
+    pub window: Vec<SpatialWindow>,
     /// The element each operand is stored in.
     pub elements: MatmulOperands<ElemType>,
     /// The element the contraction sums in.
@@ -50,7 +51,7 @@ impl ConvProblem {
     /// ([`ConvRoles::views`]), are `views`.
     pub fn from_views(
         operation: ConvolutionOperation,
-        window: ConvolutionArgs<2>,
+        window: Vec<SpatialWindow>,
         views: MatmulOperands<[usize; 4]>,
         elements: MatmulOperands<ElemType>,
         sum: ElemType,
@@ -140,7 +141,7 @@ impl ConvProblem {
     /// Whether a position can read before the input's start.
     pub fn underflows(&self) -> bool {
         self.roles().gather == ConvGather::Gradient
-            || self.window.padding.iter().any(|&padding| padding > 0)
+            || self.window.iter().any(|window| window.padding > 0)
     }
 
     /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: an NHWC buffer whose
@@ -154,8 +155,8 @@ impl ConvProblem {
             &roles.lhs,
             &[
                 PhysicalAxisMap::of(B),
-                roles.gather.map(window, 0, oh, rh),
-                roles.gather.map(window, 1, ow, rw),
+                roles.gather.map(&window[0], oh, rh),
+                roles.gather.map(&window[1], ow, rw),
                 PhysicalAxisMap::of(roles.inner.lhs),
             ],
         )
@@ -166,10 +167,10 @@ impl ConvProblem {
     pub fn reads_inside(&self) -> bool {
         self.roles().gather == ConvGather::Window
             && (0..2).all(|dim| {
-                let window = &self.window;
-                let last = (self.out[dim].saturating_sub(1)) * window.stride[dim]
-                    + self.kernel[dim].saturating_sub(1) * window.dilation[dim];
-                window.padding[dim] == 0 && last < self.gathered[dim]
+                let window = &self.window[dim];
+                let last = (self.out[dim].saturating_sub(1)) * window.stride
+                    + self.kernel[dim].saturating_sub(1) * window.dilation;
+                window.padding == 0 && last < self.gathered[dim]
             })
     }
 }

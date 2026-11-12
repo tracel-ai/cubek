@@ -64,9 +64,10 @@ fn launch_tile<const N_SPATIAL: usize>(
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError> {
-    let window = args
-        .two_dimensional()
-        .ok_or(Refusal::from(ConvDecline::NotTwoDimensional))?;
+    let window = &args.dims();
+    if N_SPATIAL != 2 {
+        return Err(Refusal::from(ConvDecline::NotTwoDimensional).into());
+    }
     let tensors = match inputs {
         ConvolutionInputs::Forward {
             input,
