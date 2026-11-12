@@ -287,9 +287,10 @@ mod tests {
     use crate::kernels::test_support::{offering, qwen};
     use crate::kernels::*;
 
-    use cubek_microkernel::attention::{AttentionMicrokernel, S};
+    use cubek_microkernel::attention::S;
     use cubek_std::Hardware;
     use cubek_std::devices;
+    use cubek_std::routine::Routine;
 
     /// Every power of two up to the widest class, the last inside the limit standing for it.
     #[test]
@@ -345,9 +346,7 @@ mod tests {
                 .sum(),
             fleet
                 .iter()
-                .map(|hw| {
-                    assert_steps_divide(HypercubeSecondLaunchShuffleAttentionRoutine::new(), hw)
-                })
+                .map(|hw| assert_steps_divide(HypercubeShufflePartialAttentionRoutine::new(), hw))
                 .sum(),
         ];
         assert!(
@@ -416,7 +415,7 @@ mod tests {
     /// every setting it lists; each of those three prepares a round-only one.
     #[test]
     fn only_the_hypercube_shuffles_and_the_staged_cube_read_a_packed_cache() {
-        fn reads<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+        fn reads<R: Routine<Problem = AttentionRoutineProblem>>(
             routine: R,
             hw: &Hardware,
             problem: &AttentionRoutineProblem,
@@ -426,7 +425,7 @@ mod tests {
                 .iter()
                 .any(|settings| routine.prepare(hw, problem, settings).is_ok())
         }
-        fn declines<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+        fn declines<R: Routine<Problem = AttentionRoutineProblem>>(
             routine: R,
             hw: &Hardware,
             problem: &AttentionRoutineProblem,
@@ -454,14 +453,14 @@ mod tests {
             &packed
         ));
         assert!(reads(
-            HypercubeSecondLaunchShuffleAttentionRoutine::new(),
+            HypercubeShufflePartialAttentionRoutine::new(),
             &hw,
             &packed
         ));
         assert!(reads(CubeStagedAttentionRoutine, &hw, &packed));
         declines(UnitAttentionRoutine, &hw, &packed);
         declines(CubeShuffleAttentionRoutine, &hw, &packed);
-        declines(HypercubeSecondLaunchFragmentAttentionRoutine, &hw, &packed);
+        declines(HypercubeFragmentPartialAttentionRoutine, &hw, &packed);
 
         // The staged cube stages its keys from one tile, which a QJL fix-up's second is not.
         use cubek_std::routine::Routine;
@@ -483,10 +482,14 @@ mod tests {
         }
     }
 
-    fn assert_steps_divide<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
-        routine: R,
-        hw: &Hardware,
-    ) -> usize {
+    fn assert_steps_divide<M, SM, R>(routine: R, hw: &Hardware) -> usize
+    where
+        R: Routine<
+                Problem = AttentionRoutineProblem,
+                Microkernel = M,
+                Blueprint = AttentionBlueprint<M, SM>,
+            >,
+    {
         let problems = [qwen(512, 512), qwen(1, 4096)];
         let mut prepared = 0;
         for settings in routine.settings(hw) {
