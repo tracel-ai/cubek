@@ -15,7 +15,7 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeGroupsRmsNormMicrokernel {
     /// Units sharing a row: the settings' target snapped to a power of two, grown to as many as
-    /// keep each unit within [`HeldRowShape::MAX_LINES_PER_UNIT`] lines of the row at `width`, and
+    /// keep each unit within [`RmsNormWorkItem::max_lines_per_unit`] lines of the row at `width`, and
     /// no larger than the lines the row holds then, so no unit holds nothing while the others hold
     /// several, nor than a cube holds.
     pub units: usize,
@@ -144,7 +144,7 @@ impl Microkernel for CubeGroupsRmsNormMicrokernel {
         let power_below = |count: usize| 1usize << count.max(1).ilog2();
         let lines = item.lines(hw);
         let needed = lines
-            .div_ceil(HeldRowShape::MAX_LINES_PER_UNIT)
+            .div_ceil(item.max_lines_per_unit())
             .next_power_of_two();
         let ceiling = power_below(lines).min(power_below(
             hw.properties.hardware.max_units_per_cube as usize,

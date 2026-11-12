@@ -55,8 +55,7 @@ impl PlaneRmsNormMicrokernel {
             width: item.width(hw),
             gate: item.gate,
         };
-        (microkernel.held_row().per_unit() <= HeldRowShape::MAX_LINES_PER_UNIT)
-            .then_some(microkernel)
+        (microkernel.held_row().per_unit() <= item.max_lines_per_unit()).then_some(microkernel)
     }
 
     /// How a lane's share of the run lies at the width the operands bind at.
@@ -81,7 +80,7 @@ impl Microkernel for PlaneRmsNormMicrokernel {
     type Operand = RmsNormOperand;
     type CubeSpace = ();
 
-    const DECLINE: &'static str = "the plane microkernel needs a plane width the device commits to, and a row its lanes hold within `HeldRowShape::MAX_LINES_PER_UNIT` lines each";
+    const DECLINE: &'static str = "the plane microkernel needs a plane width the device commits to, and a row its lanes hold within `RmsNormWorkItem::max_lines_per_unit` lines each";
 
     /// Its one setting: it has no knob.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {

@@ -1,4 +1,4 @@
-use crate::rms_norm::{GateOrder, RmsNormOperand};
+use crate::rms_norm::{GateOrder, HeldRowShape, RmsNormOperand};
 use crate::row_store::RowStore;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Vectorization;
@@ -37,6 +37,13 @@ impl RmsNormWorkItem {
             Some(GateOrder::GateThenNorm) => ElemType::Float(FloatKind::F32),
             Some(GateOrder::NormThenGate) | None => self.element,
         }
+    }
+
+    /// The most lines one unit holds of this row: [`HeldRowShape::MAX_LINES_PER_UNIT`] at the
+    /// input's element, fewer where the row is held wider, so a held row stays within the
+    /// registers the cap was set for.
+    pub fn max_lines_per_unit(&self) -> usize {
+        (HeldRowShape::MAX_LINES_PER_UNIT * self.element.size() / self.held_element().size()).max(1)
     }
 
     /// The width every operand binds at on `hw`: what the operands' one requirement, read along
@@ -92,6 +99,10 @@ mod tests {
         assert_eq!(
             registers(Some(GateOrder::GateThenNorm)) - 1,
             2 * (registers(None) - 1)
+        );
+        assert_eq!(
+            2 * item(Some(GateOrder::GateThenNorm)).max_lines_per_unit(),
+            item(None).max_lines_per_unit()
         );
     }
 }

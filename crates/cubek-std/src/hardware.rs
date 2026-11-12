@@ -9,7 +9,7 @@ use cubecl::tile::layout::Stagger;
 use cubecl::{
     CubeDim,
     client::Client,
-    features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig, Tma},
+    features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig, Tma, TypeUsage},
     ir::{DeviceProperties, ElemType, FloatKind, OpaqueType, TargetProperties, Type},
     quant::scheme::{QuantMode, QuantScheme, QuantValue},
     tile::BlockScaledOperands,
@@ -184,6 +184,15 @@ impl Hardware {
     /// wide it is. A preference: the grid may exceed it.
     pub fn cubes_to_fill(&self, units_per_cube: u32) -> Option<u32> {
         Some((self.units_to_fill()? / units_per_cube.max(1)).max(1))
+    }
+
+    /// Whether this device's runtime computes in `elem` and stores it in a buffer: what a kernel
+    /// at that element needs to compile there.
+    pub fn runs(&self, elem: ElemType) -> bool {
+        self.properties
+            .features
+            .type_usage(elem)
+            .is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer)
     }
 
     /// How many values of `elem` one load instruction holds: what a step counts its loads in.

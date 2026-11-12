@@ -1,6 +1,5 @@
 //! What the linear recurrence kernels decline with, by name.
 
-use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE;
@@ -12,13 +11,10 @@ use cubek_std::Hardware;
 ///
 /// [`ELEMENT_NOT_ON_DEVICE`] for the first it does not.
 pub(crate) fn admit_on_device(hw: &Hardware, elements: [ElemType; 2]) -> Result<(), Refusal> {
-    for element in elements {
-        let usage = hw.properties.features.type_usage(element);
-        if !usage.is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer) {
-            return Err(ELEMENT_NOT_ON_DEVICE);
-        }
+    match elements.into_iter().all(|element| hw.runs(element)) {
+        true => Ok(()),
+        false => Err(ELEMENT_NOT_ON_DEVICE),
     }
-    Ok(())
 }
 
 /// The buffers a walk needs a device to bind: one for each of its 8 operands, and one for the
