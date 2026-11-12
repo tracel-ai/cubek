@@ -1,6 +1,5 @@
 //! The tensors of one attention, and how a launch binds them.
 
-use crate::kernels::conversion::converted;
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
     AttentionRoutineProblem, AttentionScoring, KvSource, PAGED_PACKED_UNREAD, PackedAttentionCache,
@@ -705,29 +704,19 @@ impl AttentionTensors {
         let widths = blueprint.widths;
         let problem = self.problem();
         let read = blueprint.microkernel.served(&problem.work_item()).elements;
-        // Read at another element than the float it is stored in, a side of the cache is bound as
-        // its u32 words, which its kernel's stages decode at the read element as they fill: the
-        // cache is read once a launch, where it lies. The query is too where each of its values is
-        // a word of its own; a query of narrower values, read once a cube, is converted ahead into
-        // a buffer of its own (`converted`) and bound as it is read.
+        // Read at another element than the float it is stored in, an operand is bound as its u32
+        // words, which its stage decodes at the read element as it fills: each operand is read
+        // once a launch, where it lies. A decoding fill passes the words through the units'
+        // registers, so such an operand moves into its stage per unit, whatever the microkernel
+        // plans for the others; the stages meet on a barrier where two operands' moves differ.
         let words = |operand: AttentionOperand| match problem.elements.get(operand) {
-            stored @ ElemType::Float(kind)
-                if read.get(operand) != stored
-                    && (operand != AttentionOperand::Query
-                        || stored.size() == u32::BITS as usize / 8) =>
-            {
-                Some(kind)
-            }
+            stored @ ElemType::Float(kind) if read.get(operand) != stored => Some(kind),
             _ => None,
         };
-        let ahead = |tensor: &PlainTensor, operand: AttentionOperand| match read.get(operand)
-            != problem.elements.get(operand)
-            && words(operand).is_none()
-        {
-            true => converted(&self.client, tensor, read.get(operand)),
-            false => tensor.clone(),
+        let delivery = |operand: AttentionOperand, planned: Delivery| match words(operand) {
+            Some(_) => Delivery::SyncPerUnit,
+            None => planned,
         };
-        let query = ahead(&self.query, AttentionOperand::Query);
         let arg = |tensor: &PlainTensor, axes: &'static [Axis], width: usize, element: ElemType| {
             launcher
                 .arg(tensor.binding.clone(), element)
@@ -742,12 +731,12 @@ impl AttentionTensors {
                 Some(kind) => arg(tensor, axes, width, ElemType::UInt(UIntKind::U32)).packed(kind),
                 None => arg(tensor, axes, width, read.get(operand)),
             };
-        let query_delivery = match words(AttentionOperand::Query) {
-            Some(_) => Delivery::SyncPerUnit,
-            None => blueprint
+        let query_delivery = delivery(
+            AttentionOperand::Query,
+            blueprint
                 .microkernel
                 .query_delivery(&widths, &problem.work_item()),
-        };
+        );
         // Where the queries lie end to end, the query and the output each read the run of their
         // sequence: its entry of the cumulative counts, keyed by the batch, places it along `Q`.
         let runs = |bound: TileTensorLaunch| match &self.query_runs {
@@ -766,7 +755,7 @@ impl AttentionTensors {
         };
         let query = runs(
             read_operand(
-                &query,
+                &self.query,
                 &[B, KV, G, Q, D],
                 widths.query,
                 AttentionOperand::Query,
@@ -776,22 +765,11 @@ impl AttentionTensors {
             .expect(ADMITTED_PLAN_RUNS)
             .arg(),
         );
-        // Each side of the cache moves into its stage as the microkernel says, unless it is bound
-        // as words its stage decodes, which pass through the units' registers: the other side
-        // keeps its copy, and the stages meet on a barrier where the two differ.
         let planned = blueprint
             .microkernel
             .delivery(&widths, &problem.work_item());
-        let delivery = |operand: AttentionOperand| match words(operand) {
-            Some(_) => Delivery::SyncPerUnit,
-            None => planned,
-        };
         let cache = match &self.kv.cache {
             AttentionCache::Float { key, value } => {
-                let (key, value) = (
-                    &ahead(key, AttentionOperand::Key),
-                    &ahead(value, AttentionOperand::Value),
-                );
                 // A pool of pages is placed by its table, keyed by the batch and the keys'
                 // positions: it covers the launch, its rows the batch and its columns the keys.
                 let read_cache = |tensor: &PlainTensor,
@@ -799,7 +777,7 @@ impl AttentionTensors {
                                   width: usize,
                                   operand: AttentionOperand| {
                     let arg = read_operand(tensor, axes, width, operand)
-                        .delivery(delivery(operand))
+                        .delivery(delivery(operand, planned))
                         .build()
                         .expect(ADMITTED_PLAN_RUNS)
                         .arg();
