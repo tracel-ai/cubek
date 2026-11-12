@@ -1,7 +1,10 @@
-//! [`HypercubeKeyGradientSumRoutine`]: the hypercube walk, the heads of a group apart.
+//! [`HypercubeGradientSumRoutine`]: the hypercube walk, the heads of a group apart: every gradient
+//! as a sum.
 
 use super::kernel::hypercube_key_gradient_sum_kernel;
-use super::{HypercubeKeyGradientBlueprint, HypercubeKeyGradientRoutineSettings, key_walk};
+use super::{
+    HypercubeKeyGradientQuerySumBlueprint, HypercubeKeyGradientQuerySumRoutineSettings, key_walk,
+};
 use crate::kernels::routines::key_heads::cubes_with_heads_apart;
 use crate::kernels::{
     AttentionBackwardProblem, AttentionBackwardTensors, KeyGradientSums, QueryGradientSum,
@@ -10,14 +13,14 @@ use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
 use cubek_std::Hardware;
 
-/// [`HypercubeKeyGradientRoutine`](super::HypercubeKeyGradientRoutine) with the heads of a group
+/// [`HypercubeKeyGradientQuerySumRoutine`](super::HypercubeKeyGradientQuerySumRoutine) with the heads of a group
 /// split over cubes: every cube walks one head and adds its part of the keys' and values'
 /// gradients into the [`KeyGradientSums`] too, which every cube of the group adds into. It writes
 /// no gradient: cast routines do, once every cube is done.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct HypercubeKeyGradientSumRoutine;
+pub struct HypercubeGradientSumRoutine;
 
-impl HypercubeKeyGradientSumRoutine {
+impl HypercubeGradientSumRoutine {
     /// The cubes take the keys of every key head and each head of its group.
     ///
     /// # Errors
@@ -29,8 +32,8 @@ impl HypercubeKeyGradientSumRoutine {
         &self,
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
-        settings: &HypercubeKeyGradientRoutineSettings,
-    ) -> Result<HypercubeKeyGradientBlueprint, Refusal> {
+        settings: &HypercubeKeyGradientQuerySumRoutineSettings,
+    ) -> Result<HypercubeKeyGradientQuerySumBlueprint, Refusal> {
         key_walk(hw, problem, settings, |tiling| {
             cubes_with_heads_apart(tiling, problem.group)
         })
@@ -39,7 +42,7 @@ impl HypercubeKeyGradientSumRoutine {
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
-        walk: &HypercubeKeyGradientBlueprint,
+        walk: &HypercubeKeyGradientQuerySumBlueprint,
         key_sums: &KeyGradientSums,
         query_sum: &QueryGradientSum,
     ) {

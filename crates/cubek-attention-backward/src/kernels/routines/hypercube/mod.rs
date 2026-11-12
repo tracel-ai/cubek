@@ -8,12 +8,12 @@
 //! The atomic adds land in no set order, so the query's gradient may differ from one run to the
 //! next in its last bits.
 
+mod gradient_sum;
 mod kernel;
-mod key_gradient;
-mod key_gradient_sum;
+mod key_gradient_query_sum;
 
-pub use key_gradient::*;
-pub use key_gradient_sum::*;
+pub use gradient_sum::*;
+pub use key_gradient_query_sum::*;
 
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardWalk, WalkStages};
 use cubecl::features::AtomicUsage;
@@ -35,14 +35,14 @@ pub const ATTENTION_BACKWARD_NO_ATOMIC_ADD: Refusal = Refusal::Declined {
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HypercubeKeyGradientRoutineSettings {
+pub struct HypercubeKeyGradientQuerySumRoutineSettings {
     pub microkernel: HypercubeKeyGradientMicrokernelSettings,
     /// How a cube holds its stages.
     pub ring: StageRing,
 }
 
 /// What a hypercube walk launches.
-pub type HypercubeKeyGradientBlueprint =
+pub type HypercubeKeyGradientQuerySumBlueprint =
     AttentionBackwardWalk<HypercubeKeyGradientMicrokernel, StageRing>;
 
 /// A hypercube walk, its cubes as `cubes` places them over the microkernel's tiling, one batch
@@ -55,9 +55,9 @@ pub type HypercubeKeyGradientBlueprint =
 fn key_walk(
     hw: &Hardware,
     problem: &AttentionBackwardProblem,
-    settings: &HypercubeKeyGradientRoutineSettings,
+    settings: &HypercubeKeyGradientQuerySumRoutineSettings,
     cubes: impl FnOnce(Levels) -> Result<Levels, Refusal>,
-) -> Result<HypercubeKeyGradientBlueprint, Refusal> {
+) -> Result<HypercubeKeyGradientQuerySumBlueprint, Refusal> {
     let atomic_sum = Type::atomic(AttentionBackwardProblem::SUM);
     if !hw
         .properties

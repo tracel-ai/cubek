@@ -1,7 +1,10 @@
-//! [`HypercubeKeyGradientRoutine`]: the hypercube walk, every head of a group in one cube.
+//! [`HypercubeKeyGradientQuerySumRoutine`]: the hypercube walk, every head of a group in one cube:
+//! the keys' gradients, and the queries' gradient as a sum.
 
 use super::kernel::hypercube_key_gradient_kernel;
-use super::{HypercubeKeyGradientBlueprint, HypercubeKeyGradientRoutineSettings, key_walk};
+use super::{
+    HypercubeKeyGradientQuerySumBlueprint, HypercubeKeyGradientQuerySumRoutineSettings, key_walk,
+};
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, QueryGradientSum};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::S;
@@ -13,9 +16,9 @@ use cubek_std::Hardware;
 /// [`QueryGradientSum`], which a cast routine casts once every cube is done. It reads the queries'
 /// dot products of the output with its gradient, which the delta routine wrote.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct HypercubeKeyGradientRoutine;
+pub struct HypercubeKeyGradientQuerySumRoutine;
 
-impl HypercubeKeyGradientRoutine {
+impl HypercubeKeyGradientQuerySumRoutine {
     /// The cubes take the keys of every key head.
     ///
     /// # Errors
@@ -26,15 +29,15 @@ impl HypercubeKeyGradientRoutine {
         &self,
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
-        settings: &HypercubeKeyGradientRoutineSettings,
-    ) -> Result<HypercubeKeyGradientBlueprint, Refusal> {
+        settings: &HypercubeKeyGradientQuerySumRoutineSettings,
+    ) -> Result<HypercubeKeyGradientQuerySumBlueprint, Refusal> {
         key_walk(hw, problem, settings, |tiling| Ok(tiling.cubes(&[S])))
     }
 
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
-        walk: &HypercubeKeyGradientBlueprint,
+        walk: &HypercubeKeyGradientQuerySumBlueprint,
         query_sum: &QueryGradientSum,
     ) {
         let problem = tensors.problem();

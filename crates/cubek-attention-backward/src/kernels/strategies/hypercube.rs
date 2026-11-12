@@ -4,9 +4,10 @@
 use crate::kernels::{
     AttentionBackwardProblem, AttentionBackwardStrategy, AttentionBackwardTensors,
     CastKeyGradientBlueprint, CastKeyGradientRoutine, CastQueryGradientBlueprint,
-    CastQueryGradientRoutine, HypercubeKeyGradientBlueprint, HypercubeKeyGradientRoutine,
-    HypercubeKeyGradientRoutineSettings, HypercubeKeyGradientSumRoutine, KeyGradientSums, KeyHeads,
-    PlaneDeltaBlueprint, PlaneDeltaRoutine, PlaneDeltaRoutineSettings, QueryGradientSum,
+    CastQueryGradientRoutine, HypercubeGradientSumRoutine, HypercubeKeyGradientQuerySumBlueprint,
+    HypercubeKeyGradientQuerySumRoutine, HypercubeKeyGradientQuerySumRoutineSettings,
+    KeyGradientSums, KeyHeads, PlaneDeltaBlueprint, PlaneDeltaRoutine, PlaneDeltaRoutineSettings,
+    QueryGradientSum,
 };
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention_backward::delta::plane::PlaneDeltaMicrokernelSettings;
@@ -18,8 +19,8 @@ use cubek_std::microkernel::{Microkernel, StageRing};
 use cubek_std::routine::Grid;
 
 /// The backward pass that walks the tiles once, owned by the keys: [`PlaneDeltaRoutine`], then
-/// [`HypercubeKeyGradientRoutine`] with the heads of a group together, or
-/// [`HypercubeKeyGradientSumRoutine`] and [`CastKeyGradientRoutine`] with them apart, then
+/// [`HypercubeKeyGradientQuerySumRoutine`] with the heads of a group together, or
+/// [`HypercubeGradientSumRoutine`] and [`CastKeyGradientRoutine`] with them apart, then
 /// [`CastQueryGradientRoutine`] under the delta routine's planes. A device without `f32` atomic
 /// adds declines it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -60,12 +61,12 @@ impl core::fmt::Display for HypercubeAttentionBackwardSettings {
 pub enum HypercubeAttentionBackwardBlueprint {
     HeadsTogether {
         delta: PlaneDeltaBlueprint,
-        keys: HypercubeKeyGradientBlueprint,
+        keys: HypercubeKeyGradientQuerySumBlueprint,
         cast_queries: CastQueryGradientBlueprint,
     },
     HeadsApart {
         delta: PlaneDeltaBlueprint,
-        key_sums: HypercubeKeyGradientBlueprint,
+        key_sums: HypercubeKeyGradientQuerySumBlueprint,
         /// Boxed: the variant holds one launch more than the other.
         cast_keys: Box<CastKeyGradientBlueprint>,
         cast_queries: CastQueryGradientBlueprint,
@@ -134,14 +135,16 @@ impl AttentionBackwardStrategy for HypercubeAttentionBackward {
         problem: &AttentionBackwardProblem,
         settings: &Self::Settings,
     ) -> Result<Self::Blueprint, Refusal> {
-        let keys = HypercubeKeyGradientRoutineSettings {
+        let keys = HypercubeKeyGradientQuerySumRoutineSettings {
             microkernel: settings.key_gradient,
             ring: settings.ring,
         };
         // The key walk first: it is what declines a device without atomic adds.
         let key_walk = match settings.key_heads {
-            KeyHeads::Together => HypercubeKeyGradientRoutine.prepare(hw, problem, &keys)?,
-            KeyHeads::Apart => HypercubeKeyGradientSumRoutine.prepare(hw, problem, &keys)?,
+            KeyHeads::Together => {
+                HypercubeKeyGradientQuerySumRoutine.prepare(hw, problem, &keys)?
+            }
+            KeyHeads::Apart => HypercubeGradientSumRoutine.prepare(hw, problem, &keys)?,
         };
         let delta = PlaneDeltaRoutine.prepare(
             hw,
@@ -175,7 +178,7 @@ impl AttentionBackwardStrategy for HypercubeAttentionBackward {
                 cast_queries,
             } => {
                 PlaneDeltaRoutine.dispatch(tensors, &delta);
-                HypercubeKeyGradientRoutine.dispatch(tensors, &keys, &query_sum);
+                HypercubeKeyGradientQuerySumRoutine.dispatch(tensors, &keys, &query_sum);
                 CastQueryGradientRoutine.dispatch(tensors, &cast_queries, &query_sum);
             }
             HypercubeAttentionBackwardBlueprint::HeadsApart {
@@ -186,7 +189,7 @@ impl AttentionBackwardStrategy for HypercubeAttentionBackward {
             } => {
                 let sums = KeyGradientSums::zeros(tensors);
                 PlaneDeltaRoutine.dispatch(tensors, &delta);
-                HypercubeKeyGradientSumRoutine.dispatch(tensors, &key_sums, &sums, &query_sum);
+                HypercubeGradientSumRoutine.dispatch(tensors, &key_sums, &sums, &query_sum);
                 CastKeyGradientRoutine.dispatch(tensors, &cast_keys, &sums);
                 CastQueryGradientRoutine.dispatch(tensors, &cast_queries, &query_sum);
             }
