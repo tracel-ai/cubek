@@ -785,9 +785,8 @@ mod tests {
     use cubek_std::devices;
 
     /// An `f32` product read rounded runs its planes on the tf32 matrix instruction a device
-    /// offers, its inputs staged decoded from their words; read as stored, the software
-    /// instruction, its inputs staged as they lie. A rounded product that ran the software
-    /// instruction would be the many-times-slower kernel the multi-level routines never run.
+    /// offers, its inputs staged decoded from their words; read as stored, it runs no plane, as
+    /// the device offers no instruction for `f32`.
     #[test]
     fn a_rounded_f32_product_runs_the_tf32_instruction() {
         let (f32, tf32) = (

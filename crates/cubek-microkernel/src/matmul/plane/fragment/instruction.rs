@@ -197,9 +197,8 @@ impl PlaneFragmentInstruction {
     /// lands them, its rows along `rows`, and one of every batch axis in `batches`. The manual
     /// `mma`'s rows swizzled as the descriptor swizzles them, which keeps the rows a fragment load
     /// reads at once on distinct banks as its own [`stage_layout`](Self::stage_layout) does;
-    /// `cmma`'s in order, since a box lands no padding; the software instruction's as the operand
-    /// lies, as ever. The warpgroup MMA's swizzled as the manual `mma`'s are: a row one swizzle
-    /// span long lies as the instruction's descriptor reads it.
+    /// `cmma`'s in order, since a box lands no padding. The warpgroup MMA's swizzled as the manual
+    /// `mma`'s are: a row one swizzle span long lies as the instruction's descriptor reads it.
     pub fn landed_stage_storage(
         self,
         batches: &[Axis],
