@@ -89,6 +89,11 @@ impl RingCase {
         slot * self.slot_pitch() + column * self.column_pitch()
     }
 
+    /// The positions of the row the ring takes: `valid`, at most the prompt's.
+    pub fn real(&self, row: &PromptRow) -> usize {
+        row.valid.min(self.positions)
+    }
+
     /// The taps read back from the past.
     pub fn read_columns(&self) -> usize {
         self.taps - 1
@@ -181,7 +186,8 @@ impl RingCase {
         let after = read(client, raw, elem);
         let mut written = vec![false; after.len()];
         for (row, sequence) in self.rows.iter().zip(sequences) {
-            for t in row.valid.saturating_sub(self.read_columns())..row.valid {
+            let valid = self.real(row);
+            for t in valid.saturating_sub(self.read_columns())..valid {
                 let position = row.before + t;
                 let to = self.column_start(row.slot, position % self.columns);
                 for channel in 0..self.channels {

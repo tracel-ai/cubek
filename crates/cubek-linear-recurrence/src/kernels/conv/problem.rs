@@ -24,9 +24,9 @@ const F16: ElemType = ElemType::Float(FloatKind::F16);
 const BF16: ElemType = ElemType::Float(FloatKind::BF16);
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 
-/// The depthwise causal conv, with an optional bias and a silu, over `batch` rows of one position each, or
-/// prompts of positions: `channels` channels and a filter of `taps`, in activations of `element`,
-/// written at `output_element`.
+/// The depthwise causal conv, with an optional bias and a silu, over `batch` rows of one position
+/// each, or prompts of positions: `channels` channels and a filter of `taps`, in activations of
+/// `element`, written at `output_element`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CausalConvProblem {
     pub batch: usize,
@@ -35,7 +35,8 @@ pub struct CausalConvProblem {
     pub taps: usize,
     /// The element of the input, the filters, the bias and the ring.
     pub element: ElemType,
-    /// The element the convolved channels are written at: `f32`, or `element`.
+    /// The element the convolved channels are written at: `f32`, or `element`. An `f32` output
+    /// still holds values rounded through `element`.
     pub output_element: ElemType,
     /// Whether the conv adds a bias a channel.
     pub bias: bool,

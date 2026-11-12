@@ -1,4 +1,4 @@
-//! A conv launch's compile-time decisions.
+//! What a conv launch settles: the filter's shape and the grid its ring write back launches over.
 
 use crate::kernels::conv::RingWriteBackLaunch;
 use cubek_microkernel::linear_recurrence::CausalConvPartitioning;

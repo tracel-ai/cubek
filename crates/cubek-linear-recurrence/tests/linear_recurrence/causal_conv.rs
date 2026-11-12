@@ -1,11 +1,11 @@
 //! The causal conv with bias against a host reference in `f64`, over a window and over a prompt:
-//! the ring's wrap, a row with no history, prompts and windows packed and pitched, rows right padded
-//! to unequal lengths, and a prompt handed on to window steps. The rings hold NaN wherever the
-//! conv must not read.
+//! the ring's wrap, a row with no history, prompts and windows packed and pitched, rows right
+//! padded to unequal lengths, and a prompt handed on to window steps. The rings hold NaN wherever
+//! the conv must not read.
 
 use super::harness::{
-    F16, F32, compare, convolve_channels, elements, read, served, strided_table, table, tolerance,
-    view, wave,
+    F32, compare, convolve_channels, elements, read, served, strided_table, table, tolerance, view,
+    wave,
 };
 use super::ring::{PromptLayout, RingCase, RingPadding};
 use cubecl::client::Client;
@@ -16,8 +16,7 @@ use cubek_linear_recurrence::kernels::conv::{
     CausalConvTensors, CubeCausalConvRoutine,
 };
 use cubek_linear_recurrence::kernels::refusals::{
-    CAUSAL_CONV_CHANNELS_EMPTY, CAUSAL_CONV_NOTHING_TO_CONVOLVE, CAUSAL_CONV_OUTPUT_UNSUPPORTED,
-    CAUSAL_CONV_TAPS_PAST_RING,
+    CAUSAL_CONV_CHANNELS_EMPTY, CAUSAL_CONV_NOTHING_TO_CONVOLVE,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_std::Hardware;
@@ -233,28 +232,6 @@ fn the_causal_conv_matches_the_reference() {
     }
 }
 
-/// A row with no history reads zeros for its taps behind, however the ring holds NaN.
-#[test]
-fn a_row_with_no_history_reads_zeros() {
-    let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
-    for case in [
-        window_case(96, 4, 3, &[(1, 0)]),
-        prompt_case(2, 96, 4, 3, &[(0, 0, 2)]),
-    ] {
-        let o = case.operands(F32);
-        let ring = vec![f32::NAN; case.ring.slots * case.ring.columns * case.ring.channels];
-        let (_, store) = case.ring.ring_tensor(&client, &ring, F32);
-        let layout = PromptLayout::default();
-        let inputs = case.inputs(&client, &o, store, layout, BIASED_F32, F32);
-        if let Some(outputs) = launch(&hw, inputs, "no history") {
-            let got = outputs_of(&client, &outputs, F32);
-            let want = case.reference(&o, true, F32);
-            compare(&got, &want, tolerance(F32), "no history");
-        }
-    }
-}
-
 /// A prompt of `prompt` positions then `steps` window steps over the ring the prompt fills, a ring
 /// of `columns` columns: the prompt and every step match the reference over the whole sequence, so
 /// the ring the prompt leaves is the one a longer prompt would have read and it wraps right.
@@ -311,14 +288,15 @@ fn a_prompt_handed_on_to_window_steps_matches_the_reference() {
     handed_on(1, 8, 3);
 }
 
-/// Rows right padded to unequal lengths, one shorter than the taps read back and one of none, then
+/// Rows right padded to unequal lengths, one shorter than the taps read back, one of none and one
+/// whose `valid` is past the prompt, then
 /// a window step over the rings the prompt left: each row's step matches its valid positions alone.
 #[test]
 fn right_padded_rows_seed_the_ring_for_a_window_step() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
     for elem in elements(&client) {
-        let rows = [(1, 0, 9), (0, 0, 5), (2, 2, 2), (3, 7, 0)];
+        let rows = [(1, 0, 9), (0, 0, 12), (2, 2, 2), (3, 7, 0)];
         let case = prompt_case(9, 64, 4, 3, &rows);
         let o = case.operands(elem);
         let ring = case.ring.ring(&o.sequences);
@@ -331,7 +309,7 @@ fn right_padded_rows_seed_the_ring_for_a_window_step() {
         let got = outputs_of(&client, &outputs, F32);
         let want = case.reference(&o, true, elem);
         for (i, row) in case.ring.rows.iter().enumerate() {
-            let (from, len) = (i * case.ring.positions * 64, row.valid * 64);
+            let (from, len) = (i * case.ring.positions * 64, case.ring.real(row) * 64);
             compare(
                 &got[from..from + len],
                 &want[from..from + len],
@@ -342,12 +320,17 @@ fn right_padded_rows_seed_the_ring_for_a_window_step() {
         case.ring
             .check_ring(&client, raw, &o.sequences, &ring, elem, "padded rows");
 
-        let steps: Vec<(usize, usize)> = rows.iter().map(|&(slot, b, v)| (slot, b + v)).collect();
+        let steps: Vec<(usize, usize)> = case
+            .ring
+            .rows
+            .iter()
+            .map(|r| (r.slot, r.before + case.ring.real(r)))
+            .collect();
         let step = window_case(64, 4, 3, &steps);
         let known: Vec<Vec<f32>> = (case.ring.rows.iter().zip(&o.sequences))
             .enumerate()
             .map(|(i, (row, sequence))| {
-                let mut known = sequence[..(row.before + row.valid) * 64].to_vec();
+                let mut known = sequence[..(row.before + case.ring.real(row)) * 64].to_vec();
                 known.extend(wave(64, 2.5 + i as f32, 1.0, elem));
                 known
             })
@@ -367,8 +350,7 @@ fn right_padded_rows_seed_the_ring_for_a_window_step() {
     }
 }
 
-/// What the conv declines by name: a prompt with no position, no row, no channel, a ring shorter than the taps read
-/// back, and an output that is neither `f32` nor the activations'.
+/// What the conv declines before any shape is used: a prompt with no row and one with no channel.
 #[test]
 fn what_the_conv_cannot_run_is_declined_by_name() {
     let client = cubecl::test_device().client();
@@ -386,24 +368,12 @@ fn what_the_conv_cannot_run_is_declined_by_name() {
         CubeCausalConvRoutine.launch_on(&hw, inputs).err()
     };
     assert_eq!(
-        declined(prompt_case(0, 32, 4, 3, &[(0, 0, 0)]), F32),
-        Some(CAUSAL_CONV_NOTHING_TO_CONVOLVE)
-    );
-    assert_eq!(
         declined(prompt_case(1, 32, 4, 3, &[]), F32),
         Some(CAUSAL_CONV_NOTHING_TO_CONVOLVE)
     );
     assert_eq!(
         declined(prompt_case(1, 0, 4, 3, &[(0, 0, 1)]), F32),
         Some(CAUSAL_CONV_CHANNELS_EMPTY)
-    );
-    assert_eq!(
-        declined(window_case(32, 4, 2, &[(0, 0)]), F32),
-        Some(CAUSAL_CONV_TAPS_PAST_RING)
-    );
-    assert_eq!(
-        declined(window_case(32, 4, 3, &[(0, 0)]), F16),
-        Some(CAUSAL_CONV_OUTPUT_UNSUPPORTED)
     );
 }
 

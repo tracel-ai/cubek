@@ -152,9 +152,9 @@ pub enum CausalConvPastInputs {
     /// has the slot it lies in and the positions it has convolved: see [`SlotStore`].
     Window { ring: SlotStore },
     /// The same store and tables, and the positions of each row that are real (`valid`, `[rows]`,
-    /// `u32`; one past the prompt's counts as all of them): the rest is right padding, which the
-    /// ring takes nothing from and whose outputs are unspecified. The store's lengths are the fill
-    /// before the prompt.
+    /// `u32`; a `valid` past the prompt's positions counts as all of them): the rest is right
+    /// padding, which the ring takes nothing from and whose outputs are unspecified. The store's
+    /// lengths are the fill before the prompt.
     Prompt { ring: SlotStore, valid: PlainTensor },
 }
 

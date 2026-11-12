@@ -68,7 +68,7 @@ impl SlotStore {
     }
 
     /// The same store read as `meta` states.
-    pub fn viewed(self, meta: Metadata) -> Self {
+    pub(crate) fn viewed(self, meta: Metadata) -> Self {
         Self {
             store: self.store.viewed(meta),
             ..self
