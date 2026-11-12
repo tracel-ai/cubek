@@ -1,16 +1,18 @@
 //! How a walk reads its operands and binds them.
 
+use crate::kernels::bound::bound;
 use crate::kernels::walk::{
     RECURRENCE_WALK_ELEMENT, RecurrenceWalkBlueprint, RecurrenceWalkProblem,
     RecurrenceWalkStateLayout,
 };
+use crate::kernels::{BoundSlots, SlotStore};
 use core::num::NonZeroUsize;
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, UIntKind};
+use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
+use cubecl::tile::{Axis, Launcher, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
@@ -19,7 +21,7 @@ use cubek_microkernel::linear_recurrence::{
     BATCH, HEAD_IN_GROUP, KEPT_STATE, KEY_FEATURE, KEY_HEAD, POSITION, RATE, RecurrenceHeads,
     STORE_SLOT, VALUE_FEATURE,
 };
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
+use cubek_std::routine::Grid;
 
 /// The inputs of a walk, as a caller hands them: the queries and keys `[batch, positions,
 /// key_heads, key_features]`, the values `[batch, positions, value_heads, value_features]`, the
@@ -84,17 +86,11 @@ pub enum RecurrenceWalkStateInputs {
         state: PlainTensor,
         kept: NonZeroUsize,
     },
-    /// A store `[slots, value_heads, key_features, value_features]`, and for each sequence the slot
-    /// it lies in (`slots`, `[batch]`, `u32`) and the positions it has walked already (`lengths`,
-    /// `[batch]`, `u32`). A sequence that has walked none starts from zeros and reads nothing of
-    /// its slot. The walk writes the state after its last position back to the sequence's slot.
-    /// Two rows may share a slot only if it is never read. A slot past the store's last reads and
-    /// writes the last.
-    Slots {
-        store: PlainTensor,
-        slots: PlainTensor,
-        lengths: PlainTensor,
-    },
+    /// A store `[slots, value_heads, key_features, value_features]`, its tables placing each
+    /// sequence in a slot and counting the positions it has walked already. A sequence that has
+    /// walked none starts from zeros and reads nothing of its slot. The walk writes the state
+    /// after its last position back to the sequence's slot.
+    Slots(SlotStore),
 }
 
 impl RecurrenceWalkInputs {
@@ -104,9 +100,8 @@ impl RecurrenceWalkInputs {
             RecurrenceWalkStateInputs::Owned { kept, .. } => {
                 RecurrenceWalkStateLayout::Owned { kept: *kept }
             }
-            RecurrenceWalkStateInputs::Slots { store, .. } => RecurrenceWalkStateLayout::Slots {
-                slots: NonZeroUsize::new(store.shape().dims::<4>()[0])
-                    .expect("a store holds a slot"),
+            RecurrenceWalkStateInputs::Slots(store) => RecurrenceWalkStateLayout::Slots {
+                slots: store.slot_count(),
             },
         }
     }
@@ -162,11 +157,7 @@ enum StateTensors {
     },
     /// The store, each sequence's window placed at the slot its table names, and the positions
     /// each sequence has walked.
-    Slots {
-        store: PlainTensor,
-        slots: PlainTensor,
-        lengths: PlainTensor,
-    },
+    Slots(SlotStore),
 }
 
 /// The tensors of one walk, viewed as the kernel reads them, its outputs among them, and the
@@ -254,7 +245,7 @@ impl StateTensors {
     fn state(&self) -> &PlainTensor {
         match self {
             Self::Owned { state, .. } => state,
-            Self::Slots { store, .. } => store,
+            Self::Slots(store) => store.store(),
         }
     }
 
@@ -262,7 +253,7 @@ impl StateTensors {
     fn kept(&self) -> Option<&PlainTensor> {
         match self {
             Self::Owned { kept, .. } => Some(kept),
-            Self::Slots { .. } => None,
+            Self::Slots(_) => None,
         }
     }
 
@@ -276,9 +267,7 @@ impl StateTensors {
         Option<TileTensorLaunch>,
         Option<TileTensorLaunch>,
     ) {
-        let bind = |tensor, axes: &'static [Axis], width| {
-            RecurrenceWalkTensors::bound(launcher, tensor, axes, width)
-        };
+        let bind = |tensor, axes: &'static [Axis], width| bound(launcher, tensor, axes, width);
         match self {
             Self::Owned { state, kept } => (
                 bind(
@@ -300,34 +289,19 @@ impl StateTensors {
                 )),
                 None,
             ),
-            Self::Slots {
-                store,
-                slots,
-                lengths,
-            } => {
-                let entries = TileTensorLaunch::new(
-                    slots.binding.clone().into_tensor_arg(),
-                    slots.elem,
-                    1,
-                    TileSpec::direct(&[BATCH]),
+            Self::Slots(store) => {
+                let BoundSlots { store, lengths } = store.bind(
+                    launcher,
+                    &[
+                        STORE_SLOT,
+                        KEY_HEAD,
+                        HEAD_IN_GROUP,
+                        KEY_FEATURE,
+                        VALUE_FEATURE,
+                    ],
+                    width,
                 );
-                (
-                    bind(
-                        store,
-                        &[
-                            STORE_SLOT,
-                            KEY_HEAD,
-                            HEAD_IN_GROUP,
-                            KEY_FEATURE,
-                            VALUE_FEATURE,
-                        ],
-                        width,
-                    )
-                    .indexed(entries, Indexing::Coordinate(STORE_SLOT))
-                    .expect(ADMITTED_PLAN_RUNS),
-                    None,
-                    Some(bind(lengths, &[BATCH], 1)),
-                )
+                (store, None, Some(lengths))
             }
         }
     }
@@ -345,8 +319,8 @@ impl RecurrenceWalkTensors {
     /// # Panics
     ///
     /// On operands whose shapes disagree, whose innermost axis is strided, on value heads that
-    /// are not a multiple of the key heads, on tables that are not `u32`, on more kept states
-    /// than positions or none, on a store of no slot, and on a walk in slots of no position.
+    /// are not a multiple of the key heads, on more kept states than positions or none, on a
+    /// store's tables not placing every sequence, and on a walk in slots of no position.
     pub fn new(inputs: RecurrenceWalkInputs) -> Result<Self, Refusal> {
         let layout = inputs.state_layout();
         let RecurrenceWalkInputs {
@@ -362,7 +336,7 @@ impl RecurrenceWalkTensors {
         RecurrenceWalkProblem::admit_output(output_element)?;
         let states = match &state {
             RecurrenceWalkStateInputs::Owned { state, .. } => state,
-            RecurrenceWalkStateInputs::Slots { store, .. } => store,
+            RecurrenceWalkStateInputs::Slots(store) => store.store(),
         };
         for tensor in [&query, &key, &value, &rates, states]
             .into_iter()
@@ -408,14 +382,16 @@ impl RecurrenceWalkTensors {
 
         // The value heads a key head groups are two axes, `[key_head, head_in_group]`, over the caller's
         // stride along the value heads.
-        let grouped = |tensor: &PlainTensor, head_axis: usize| {
+        let grouping = |tensor: &PlainTensor, head_axis: usize| {
             let mut shape = tensor.shape().to_vec();
             let mut strides = tensor.binding.strides.to_vec();
             let stride = strides[head_axis];
             shape.splice(head_axis..=head_axis, [key_heads, heads_per_group]);
             strides.splice(head_axis..=head_axis, [stride * heads_per_group, stride]);
-            tensor.viewed(Metadata::new(shape, strides))
+            Metadata::new(shape, strides)
         };
+        let grouped =
+            |tensor: &PlainTensor, head_axis: usize| tensor.viewed(grouping(tensor, head_axis));
         let (out, out_view) = PlainTensor::empty_contiguous(
             &client,
             Shape::from(vec![batch, positions, value_heads, value_features]),
@@ -444,29 +420,16 @@ impl RecurrenceWalkTensors {
                 let (state, kept) = (grouped(state, 1), grouped(&plain, 2));
                 (StateTensors::Owned { state, kept }, Some(handle))
             }
-            RecurrenceWalkStateInputs::Slots {
-                store,
-                slots,
-                lengths,
-            } => {
+            RecurrenceWalkStateInputs::Slots(store) => {
                 assert!(positions > 0, "a walk in a store's slots walks a position");
                 assert_eq!(
-                    store.shape().dims::<4>()[1..],
+                    store.store().shape().dims::<4>()[1..],
                     [value_heads, key_features, value_features],
                     "a store is [slots, value_heads, key_features, value_features]"
                 );
-                for table in [slots, lengths] {
-                    assert_eq!(table.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
-                    assert_eq!(table.shape().dims::<1>(), [batch]);
-                }
-                (
-                    StateTensors::Slots {
-                        store: grouped(store, 1),
-                        slots: slots.clone(),
-                        lengths: lengths.clone(),
-                    },
-                    None,
-                )
+                assert_eq!(store.rows(), batch, "a table is [batch]");
+                let grouping = grouping(store.store(), 1);
+                (StateTensors::Slots(store.clone().viewed(grouping)), None)
             }
         };
         let update = match update {
@@ -563,7 +526,7 @@ impl RecurrenceWalkTensors {
         });
         let width = blueprint.width;
         let bind = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
-            Self::bound(&launcher, tensor, axes, width)
+            bound(&launcher, tensor, axes, width)
         };
         let (state, kept, lengths) = self.states.bind(&launcher, width);
         RecurrenceWalkBinding {
@@ -594,21 +557,5 @@ impl RecurrenceWalkTensors {
             lengths,
             launcher,
         }
-    }
-
-    /// `tensor` bound under `launcher` along `axes`, `width` values a line.
-    fn bound(
-        launcher: &Launcher,
-        tensor: &PlainTensor,
-        axes: &'static [Axis],
-        width: usize,
-    ) -> TileTensorLaunch {
-        launcher
-            .arg(tensor.binding.clone(), tensor.elem)
-            .axes(axes)
-            .vectorize(width)
-            .build()
-            .expect(ADMITTED_PLAN_RUNS)
-            .arg()
     }
 }
