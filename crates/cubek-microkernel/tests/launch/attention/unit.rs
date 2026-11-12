@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
-use cubecl::tile::space::UnitCube;
+use cubecl::tile::space::{ComputeScope, UnitCube};
 use cubecl::tile::{Launcher, Partitioning, Space, Tile, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::attention::unit::{
@@ -15,14 +15,17 @@ use cubek_microkernel::attention::{
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
-use super::{AttentionElements, AttentionLaunch};
+use super::{AttentionElements, AttentionLaunch, AttentionLines};
+use crate::launch::Lines;
 
-/// One unit attention microkernel ready to launch on one unit's rows, `steps` steps of keys.
+/// One unit attention microkernel ready to launch on one unit's rows, `steps` steps of keys, its
+/// operands bound as `lines` says.
 #[derive(Debug, Clone)]
 pub struct UnitAttentionLaunch {
     pub microkernel: UnitAttentionMicrokernel,
     pub item: AttentionWorkItem,
     pub seq: [usize; 2],
+    lines: AttentionLines,
 }
 
 impl UnitAttentionLaunch {
@@ -37,11 +40,13 @@ impl UnitAttentionLaunch {
         elements: AttentionElements,
         dims: [usize; 2],
         settings: &UnitAttentionMicrokernelSettings,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self, Refusal> {
         let item = elements.work_item(dims);
         let microkernel = UnitAttentionMicrokernel::best(hw, &item, settings)?;
         Ok(Self {
+            lines: AttentionLines::new(hw, lines, &item),
             seq: [
                 microkernel.settings.seq_q.get(),
                 microkernel.seq_kv() * steps,
@@ -71,6 +76,7 @@ impl AttentionLaunch for UnitAttentionLaunch {
         logsumexp: Option<TensorBinding>,
         lengths: TensorArg,
         scale: f32,
+        visibility: AttentionVisibility,
     ) -> Result<(), Refusal> {
         let [queries, keys] = self.seq;
         let item = &self.item;
@@ -100,21 +106,26 @@ impl AttentionLaunch for UnitAttentionLaunch {
             cube_count: partitioning.cube_count(),
             cube_dim: partitioning.cube_dim(1),
         };
+        // A cube holds one unit, so its box is the unit's.
+        let widths = self
+            .lines
+            .widths(&self.microkernel, &partitioning.box_of(ComputeScope::Unit));
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
-        let bound = |tensor: TensorBinding, element, axes: &'static [_]| {
+        let bound = |tensor: TensorBinding, element, width, axes: &'static [_]| {
             launcher
                 .arg(tensor, element)
                 .axes(axes)
-                .vectorize(1)
+                .vectorize(width)
                 .build()
         };
         let elements = item.elements;
-        let query = bound(query, elements.query, &[B, KV, G, Q, D])?;
-        let key = bound(key, elements.key, &[B, KV, S, D])?;
-        let value = bound(value, elements.value, &[B, KV, S, DV])?;
-        let out = bound(out, elements.out, &[B, KV, G, Q, DV])?;
+        let query = bound(query, elements.query, widths.query, &[B, KV, G, Q, D])?;
+        let key = bound(key, elements.key, widths.key, &[B, KV, S, D])?;
+        let value = bound(value, elements.value, widths.value, &[B, KV, S, DV])?;
+        let out = bound(out, elements.out, widths.out, &[B, KV, G, Q, DV])?;
+        // A value a query, written by whoever holds its row.
         let logsumexp = logsumexp
-            .map(|logsumexp| bound(logsumexp, item.sum, &[B, KV, G, Q]))
+            .map(|logsumexp| bound(logsumexp, item.sum, 1, &[B, KV, G, Q]))
             .transpose()?;
         // SAFETY: every operand is bound through the launcher at the problem's own extents, the
         // keys and values are read no further than the attended length, and the kernel indexes
@@ -135,6 +146,7 @@ impl AttentionLaunch for UnitAttentionLaunch {
                 scale,
                 launcher.partitioning_arg(),
                 self.microkernel,
+                visibility,
                 item.sum,
             );
         }
@@ -156,6 +168,7 @@ fn unit_attention_kernel<EA: Float>(
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitAttentionMicrokernel,
+    #[comptime] visibility: AttentionVisibility,
     #[define(EA)] _sum: ElemType,
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
@@ -171,7 +184,7 @@ fn unit_attention_kernel<EA: Float>(
             &unit,
             queries,
             &mask,
-            AttentionVisibility::Attended,
+            visibility,
         );
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);

@@ -2,7 +2,7 @@
 //! or contracting stages the cube's units fill.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{Refusal, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Axis, Instruction, Partitioning, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube};
@@ -19,13 +19,15 @@ use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::Microkernel;
 
 use super::{MatmulElements, MatmulLaunch, OneCube, WholeRows};
+use crate::launch::Lines;
 
 /// One cube shuffle microkernel ready to launch on one cube's box, every row held whole, `steps`
-/// of the cube's step of `K` deep.
+/// of the cube's step of `K` deep, its operands `widths` values a line.
 #[derive(Debug, Clone)]
 pub struct CubeShuffleLaunch {
     pub microkernel: CubeShuffleMicrokernel,
     pub elements: MatmulElements,
+    widths: MatmulOperands<usize>,
     rows: WholeRows,
     one_cube: OneCube,
 }
@@ -44,14 +46,18 @@ impl CubeShuffleLaunch {
         elements: MatmulElements,
         settings: &CubeShuffleMicrokernelSettings,
         rows: WholeRows,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self, Refusal> {
         let item = elements.work_item_of(MatmulRows::Whole(rows.0), Self::RHS);
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, settings)?;
+        let mut vectorization = Vectorization::new();
+        microkernel.vectorize(&(), &mut vectorization);
         let levels = microkernel.tiling().cubes(&[M, N]).build();
         Ok(Self {
             microkernel,
             elements,
+            widths: elements.widths(hw, lines, &vectorization),
             rows,
             one_cube: OneCube::new(levels, ComputeScope::Cube, steps),
         })
@@ -82,7 +88,9 @@ impl MatmulLaunch for CubeShuffleLaunch {
         let launcher = self
             .one_cube
             .launcher(client, microkernel.plane.plane_width() as u32)?;
-        let [lhs, rhs, out] = self.elements.bound([lhs, rhs, out], self.rhs_layout());
+        let [lhs, rhs, out] = self
+            .elements
+            .bound([lhs, rhs, out], self.rhs_layout(), self.widths);
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles; its shared memory is the cube's one
         // accumulator, which its planes meet in.
@@ -148,11 +156,13 @@ fn cube_shuffle_kernel<EA: Numeric, E: Numeric>(
 }
 
 /// One cube staged microkernel ready to launch on one cube's box, `steps` stages of `K` deep: its
-/// units fill the stages, its planes drain their fragments into the output.
+/// units fill the stages, its planes drain their fragments into the output; its operands `widths`
+/// values a line.
 #[derive(Debug, Clone)]
 pub struct CubeStagedLaunch {
     pub microkernel: CubeStagedMicrokernel,
     pub elements: MatmulElements,
+    widths: MatmulOperands<usize>,
     storage: StageStorage,
     plane_width: u32,
     one_cube: OneCube,
@@ -166,6 +176,7 @@ impl CubeStagedLaunch {
         hw: &Hardware,
         elements: MatmulElements,
         settings: &CubeStagedMicrokernelSettings,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self, Refusal> {
         let item = elements.work_item();
@@ -195,9 +206,12 @@ impl CubeStagedLaunch {
             ComputeScope::Cube,
             steps,
         );
+        let mut vectorization = Vectorization::new();
+        microkernel.vectorize(&one_cube.cube_space(), &mut vectorization);
         Ok(Self {
             microkernel,
             elements,
+            widths: elements.widths(hw, lines, &vectorization),
             storage: resolved.storage,
             plane_width: resolved.plane_width,
             one_cube,
@@ -222,7 +236,9 @@ impl MatmulLaunch for CubeStagedLaunch {
         out: TensorArg,
     ) -> Result<(), Refusal> {
         let launcher = self.one_cube.launcher(client, self.plane_width)?;
-        let [lhs, rhs, out] = self.elements.bound([lhs, rhs, out], self.rhs_layout());
+        let [lhs, rhs, out] = self
+            .elements
+            .bound([lhs, rhs, out], self.rhs_layout(), self.widths);
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles; its shared memory is its stages.
         unsafe {

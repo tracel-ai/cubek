@@ -1,5 +1,6 @@
 //! The plane shuffle microkernel alone: one plane's units take `K` in turns, each summing its share in registers.
 
+use crate::launch::Lines;
 use crate::launch::matmul::{MatmulElements, PlaneShuffleLaunch, WholeRows};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
@@ -19,9 +20,10 @@ impl MatmulSettings for PlaneShuffleMicrokernelSettings {
         &self,
         hw: &Hardware,
         elements: MatmulElements,
+        lines: Lines,
         steps: usize,
     ) -> Result<PlaneShuffleLaunch, Refusal> {
-        PlaneShuffleLaunch::new(hw, elements, self, ROWS, steps)
+        PlaneShuffleLaunch::new(hw, elements, self, ROWS, lines, steps)
     }
 }
 

@@ -2,7 +2,7 @@
 //! a step of its block at a time.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{Refusal, Vectorization};
 use cubecl::tile::space::{ComputeScope, UnitCube};
 use cubecl::tile::{Partitioning, Semiring, TileTensor};
 use cubecl::{self as cubecl, cube};
@@ -13,15 +13,18 @@ use cubek_std::Hardware;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::Microkernel;
 
-use cubek_microkernel::matmul::MatmulMicrokernel;
+use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperands};
 
 use super::{MatmulElements, MatmulLaunch, OneCube};
+use crate::launch::Lines;
 
-/// One unit registers microkernel ready to launch on one unit's block, `steps` steps of `K` deep.
+/// One unit registers microkernel ready to launch on one unit's block, `steps` steps of `K` deep,
+/// its operands `widths` values a line.
 #[derive(Debug, Clone)]
 pub struct UnitRegistersLaunch {
     pub microkernel: UnitRegistersMicrokernel,
     pub elements: MatmulElements,
+    widths: MatmulOperands<usize>,
     one_cube: OneCube,
 }
 
@@ -33,9 +36,12 @@ impl UnitRegistersLaunch {
         hw: &Hardware,
         elements: MatmulElements,
         settings: &UnitRegistersMicrokernelSettings,
+        lines: Lines,
         steps: usize,
     ) -> Result<Self, Refusal> {
         let microkernel = UnitRegistersMicrokernel::best(hw, &elements.work_item(), settings)?;
+        let mut vectorization = Vectorization::new();
+        microkernel.vectorize(&(), &mut vectorization);
         let levels = microkernel
             .tiling()
             .launch_units(
@@ -49,6 +55,7 @@ impl UnitRegistersLaunch {
         Ok(Self {
             microkernel,
             elements,
+            widths: elements.widths(hw, lines, &vectorization),
             one_cube: OneCube::new(levels, ComputeScope::Unit, steps),
         })
     }
@@ -71,7 +78,9 @@ impl MatmulLaunch for UnitRegistersLaunch {
         out: TensorArg,
     ) -> Result<(), Refusal> {
         let launcher = self.one_cube.launcher(client, 1)?;
-        let [lhs, rhs, out] = self.elements.bound([lhs, rhs, out], self.rhs_layout());
+        let [lhs, rhs, out] = self
+            .elements
+            .bound([lhs, rhs, out], self.rhs_layout(), self.widths);
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles; it holds no shared memory.
         unsafe {
