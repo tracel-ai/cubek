@@ -200,6 +200,7 @@ impl PlaneQueryGradientMicrokernel {
             axes: product.axes,
             blocks: None,
             k_stated: crate::matmul::plane::PlaneFragmentKStatement::Caller,
+            unit: crate::matmul::plane::PlaneUnit::Instruction,
         }
     }
 
@@ -289,36 +290,40 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
         let (score_item, gradient_item) = (item.score(Q), item.score_gradient(Q));
         let query_item = item.query_gradient(item.element);
         let (head, value) = (item.head_dim, item.val_dim);
-        let candidates: Vec<_> = PlaneFragmentMicrokernel::candidates(hw, &score_item, &grid)
-            .filter(|score| Self::serves(hw, settings, score.instruction, score.settings.along_n))
-            .filter_map(|score| {
-                let [_, (_, n), (_, k)] = score.instruction.shape();
-                let head_steps = Self::steps(head, k)?;
-                let value_steps = Self::steps(value, k)?;
-                let head_columns = Self::steps(head, n)?;
-                let key_steps = Self::steps(score.settings.along_n.get() * n, k)?;
-                Some(Self {
-                    settings,
-                    score: PlaneFragmentMicrokernel {
-                        settings: PlaneFragmentMicrokernelSettings {
-                            depth: head_steps,
-                            ..score.settings
-                        },
-                        ..score
-                    },
-                    score_gradient: Self::beside(
-                        score,
-                        &gradient_item,
-                        (score.settings.along_m, score.settings.along_n, value_steps),
-                    ),
-                    query_gradient: Self::beside(
-                        score,
-                        &query_item,
-                        (score.settings.along_m, head_columns, key_steps),
-                    ),
+        let candidates: Vec<_> =
+            PlaneFragmentMicrokernel::stated_candidates(hw, &score_item, &grid)
+                .into_iter()
+                .filter(|score| {
+                    Self::serves(hw, settings, score.instruction, score.settings.along_n)
                 })
-            })
-            .collect();
+                .filter_map(|score| {
+                    let [_, (_, n), (_, k)] = score.instruction.shape();
+                    let head_steps = Self::steps(head, k)?;
+                    let value_steps = Self::steps(value, k)?;
+                    let head_columns = Self::steps(head, n)?;
+                    let key_steps = Self::steps(score.settings.along_n.get() * n, k)?;
+                    Some(Self {
+                        settings,
+                        score: PlaneFragmentMicrokernel {
+                            settings: PlaneFragmentMicrokernelSettings {
+                                depth: head_steps,
+                                ..score.settings
+                            },
+                            ..score
+                        },
+                        score_gradient: Self::beside(
+                            score,
+                            &gradient_item,
+                            (score.settings.along_m, score.settings.along_n, value_steps),
+                        ),
+                        query_gradient: Self::beside(
+                            score,
+                            &query_item,
+                            (score.settings.along_m, head_columns, key_steps),
+                        ),
+                    })
+                })
+                .collect();
         candidates.into_iter()
     }
 

@@ -4,7 +4,7 @@ use crate::attention::{
 };
 use crate::matmul::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
-    PlaneFragmentMicrokernelSettings,
+    PlaneFragmentMicrokernelSettings, PlaneUnit,
 };
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use core::num::NonZeroUsize;
@@ -120,7 +120,8 @@ impl PlaneFragmentAttentionMicrokernel {
             ..PlaneFragmentMicrokernelSettings::DEFAULT
         };
         let value_item = Self::value_item(item);
-        PlaneFragmentMicrokernel::candidates(hw, &Self::score_item(item), &unsized_grid)
+        PlaneFragmentMicrokernel::stated_candidates(hw, &Self::score_item(item), &unsized_grid)
+            .into_iter()
             .filter_map(move |score| {
                 let [(_, rows), (_, keys), (_, depth)] = score.instruction.shape();
                 let plane_keys = score.settings.along_n.get() * keys;
@@ -168,6 +169,7 @@ impl PlaneFragmentAttentionMicrokernel {
                         axes: value_item.axes,
                         blocks: None,
                         k_stated: crate::matmul::plane::PlaneFragmentKStatement::Caller,
+                        unit: PlaneUnit::Instruction,
                     },
                 })
             })
@@ -234,7 +236,9 @@ impl PlaneFragmentAttentionMicrokernel {
                 read,
                 item.sum,
                 shape,
-            ) == Some(instruction.tile_instruction()))
+            )
+            .map(|pick| pick.instruction)
+                == Some(instruction.tile_instruction()))
             .then_some(ScoreHolder::Fragments),
             PlaneFragmentInstruction::Wgmma { .. } => None,
         }
