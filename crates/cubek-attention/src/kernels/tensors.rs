@@ -707,8 +707,9 @@ impl AttentionTensors {
         let read = blueprint.microkernel.served(&problem.work_item()).elements;
         // Read at another element than the float it is stored in, an operand each of whose values
         // is a word of its own is bound as its u32 words, which its kernel's stages decode at the
-        // read element. A query of narrower values is converted ahead, into a buffer of its own
-        // (`converted`); the microkernels read no narrower side of a cache converted.
+        // read element. An operand of narrower values is converted ahead, into a buffer of its
+        // own (`converted`), and bound as it is read: a stage of narrower values keeps their
+        // words, which every fragment load would pick apart.
         let words = |operand: AttentionOperand| match problem.elements.get(operand) {
             stored @ ElemType::Float(kind)
                 if read.get(operand) != stored && stored.size() == u32::BITS as usize / 8 =>
@@ -717,12 +718,14 @@ impl AttentionTensors {
             }
             _ => None,
         };
-        let converted_query =
-            read.query != problem.elements.query && words(AttentionOperand::Query).is_none();
-        let query = match converted_query {
-            true => converted(&self.client, &self.query, read.query),
-            false => self.query.clone(),
+        let ahead = |tensor: &PlainTensor, operand: AttentionOperand| match read.get(operand)
+            != problem.elements.get(operand)
+            && words(operand).is_none()
+        {
+            true => converted(&self.client, tensor, read.get(operand)),
+            false => tensor.clone(),
         };
+        let query = ahead(&self.query, AttentionOperand::Query);
         let arg = |tensor: &PlainTensor, axes: &'static [Axis], width: usize, element: ElemType| {
             launcher
                 .arg(tensor.binding.clone(), element)
@@ -781,6 +784,10 @@ impl AttentionTensors {
         };
         let cache = match &self.kv.cache {
             AttentionCache::Float { key, value } => {
+                let (key, value) = (
+                    &ahead(key, AttentionOperand::Key),
+                    &ahead(value, AttentionOperand::Value),
+                );
                 // A pool of pages is placed by its table, keyed by the batch and the keys'
                 // positions: it covers the launch, its rows the batch and its columns the keys.
                 let read_cache = |tensor: &PlainTensor,

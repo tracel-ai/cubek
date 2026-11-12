@@ -227,32 +227,32 @@ fn fragment_reads(hw: &Hardware, problem: &AttentionRoutineProblem) -> BTreeSet<
 }
 
 /// Every FP8 cache is read at a prompt and at a decode step. The plane fragments read `e4m3` keys
-/// on the device's FP8 instruction, the `f16` query converted ahead; they read no `e4m3` side
-/// widened, a stage of codes being words their loads would pick apart, so `e4m3` values and a
-/// device without the FP8 instruction are the plane shuffles', which widen every operand into the
-/// sum as they read it, at a prompt as at a decode step. The unit routine, which computes in its
-/// operands' one element, declines them all.
+/// on the device's FP8 instruction, the `f16` query converted ahead, and `e4m3` values widened
+/// ahead to it, as every side on a device without the instruction: a stage of codes keeps their
+/// words, which their loads would pick apart. The plane shuffles widen every operand into the sum
+/// as they read it. The unit routine, which computes in its operands' one element, declines them
+/// all.
 #[test]
 fn every_fp8_cache_is_read_at_a_prompt_and_at_a_decode_step() {
     let hw = offering_fp8();
     let without = offering(devices::rtx_pro_6000(), 16);
-    let e4m3 = format!("{E4M3:?}");
+    let (e4m3, f16) = (format!("{E4M3:?}"), format!("{F16:?}"));
     for (key, value) in FP8_CACHES {
         let (prompt, decode) = (cached(512, 4096, key, value), cached(1, 4096, key, value));
         let reads = fragment_reads(&hw, &prompt);
-        match value == F16 {
-            true => assert!(
-                !reads.is_empty() && reads.iter().all(|(score, _)| *score == e4m3),
-                "{key:?} keys, {value:?} values: the fragments read {reads:?}"
-            ),
-            false => assert!(
-                reads.is_empty(),
-                "{key:?} keys, {value:?} values: the fragments read {reads:?}"
-            ),
-        }
         assert!(
-            fragment_reads(&without, &prompt).is_empty(),
-            "{key:?} keys, {value:?} values: the fragments widen a cache"
+            reads.iter().any(|(score, _)| *score == e4m3) == (key == E4M3)
+                && reads.iter().all(|(_, read)| *read == f16),
+            "{key:?} keys, {value:?} values: the fragments read {reads:?}"
+        );
+        let widened = fragment_reads(&without, &prompt);
+        assert!(
+            !widened.is_empty()
+                && widened
+                    .iter()
+                    .all(|read| *read == (f16.clone(), f16.clone())),
+            "{key:?} keys, {value:?} values without an e4m3 instruction: the fragments read \
+             {widened:?}"
         );
 
         for problem in [&prompt, &decode] {

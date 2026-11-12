@@ -21,17 +21,16 @@ fn every_hypercube_fragment_setting_matches_the_host_at_a_head_dim_of_128() {
     forward.check(forward.at_every_setting(&[PROMPT_WIDE]));
 }
 
-/// Every microkernel setting the routine lists, on eight cubes a box, over `e4m3` keys at a
-/// model's head dim: multiplied on the device's FP8 instruction, the query converted as it is
-/// staged, or widened to the query's `f16`. The cubes a box splits over change the merge, not the
-/// score, so one count stands for them.
+/// Every microkernel setting the routine lists, on eight cubes a box, over every FP8 cache at a
+/// model's head dim: `e4m3` keys multiplied on the device's FP8 instruction, the query converted
+/// ahead, or widened ahead to the query's `f16`; `e4m3` values widened ahead to it. The cubes a box
+/// splits over change the merge, not the score, so one count stands for them.
 #[test]
-fn every_hypercube_fragment_microkernel_reads_fp8_keys() {
+fn every_hypercube_fragment_microkernel_reads_every_fp8_cache() {
     let forward = Forward::new(HypercubeSecondLaunchFragmentAttentionRoutine);
     let eight_cubes = forward
         .settings()
         .into_iter()
         .filter(|settings| settings.cubes_along_keys.get() == 8);
-    let [fp8_keys, ..] = PROMPTS_WIDE_FP8;
-    forward.check(forward.at(eight_cubes, &[fp8_keys]));
+    forward.check(forward.at(eight_cubes, &PROMPTS_WIDE_FP8));
 }

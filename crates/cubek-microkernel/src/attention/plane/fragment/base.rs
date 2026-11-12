@@ -136,22 +136,24 @@ impl PlaneFragmentAttentionMicrokernel {
         read: AttentionRead,
         settings: PlaneFragmentAttentionMicrokernelSettings,
     ) -> Vec<Self> {
-        // A stage of the cache converts a side it reads at another element only where each of its
-        // values is a word of its own, as an `f32` read at tf32 is: a stage of narrower values
-        // keeps their words, which every fragment load would pick apart cell by cell. Both sides
-        // converted are converted to one element alike. The query is converted ahead of the walk.
+        // A stage of the cache converts a side it reads at another element where each of its
+        // values is a word of its own, as an `f32` read at tf32 is; both sides converted so are
+        // converted to one element alike. A side of narrower values is converted ahead of the
+        // walk, as the query is, into a buffer of its own read as it lies: a stage of narrower
+        // values keeps their words, which every fragment load would pick apart cell by cell.
         let converted = |stored: ElemType, read: ElemType| stored != read;
+        let staged = |stored: ElemType, read: ElemType| {
+            converted(stored, read) && stored.size() == u32::BITS as usize / 8
+        };
         let (keys_converted, values_converted) = (
-            converted(item.elements.key, read.score),
-            converted(item.elements.value, read.value),
+            staged(item.elements.key, read.score),
+            staged(item.elements.value, read.value),
         );
-        let decoded_whole = |stored: ElemType| stored.size() == u32::BITS as usize / 8;
-        let stages_whole = (!keys_converted || decoded_whole(item.elements.key))
-            && (!values_converted || decoded_whole(item.elements.value));
-        if !stages_whole || (keys_converted && values_converted && read.score != read.value) {
+        if keys_converted && values_converted && read.score != read.value {
             return Vec::new();
         }
-        let score_converted = keys_converted || converted(item.elements.query, read.score);
+        let score_converted =
+            converted(item.elements.key, read.score) || converted(item.elements.query, read.score);
         let cache_stage = match values_converted {
             true => read.value,
             false => read.score,
