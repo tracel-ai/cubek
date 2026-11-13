@@ -269,9 +269,7 @@ impl PlaneFragmentAttentionMicrokernel {
                 read,
                 item.sum,
                 shape,
-            )
-            .map(|pick| pick.instruction)
-                == Some(instruction.tile_instruction()))
+            ) == Some(instruction.tile_instruction()))
             .then_some(ScoreHolder::Fragments),
             PlaneFragmentInstruction::Wgmma { .. } => None,
         }

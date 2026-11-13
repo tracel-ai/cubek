@@ -13,7 +13,8 @@ use cubecl::quant::scheme::QuantValue;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{
-    Axis, FragmentSource, Instruction, Levels, MmaOperands, Scratch, Space, StageStorage,
+    Axis, FragmentSource, Instruction, Levels, MmaOperands, PlanePick, Scratch, Space,
+    StageStorage,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Operand;
@@ -311,7 +312,12 @@ impl PlaneFragmentMicrokernel {
                 )
                 .stated(hw, item.elements)
             })
-            .filter(|plane| plane.tiles_pick(hw, item))
+            .filter(|plane| {
+                let values = item
+                    .elements
+                    .map(|_, element| FragmentSource::Values(element));
+                plane.tiles_pick(hw, item.sum, values)
+            })
             .collect()
     }
 
@@ -419,38 +425,34 @@ impl PlaneFragmentMicrokernel {
                     ..self
                 })
             }
-            PlaneUnit::Instruction => {
-                let [(_, m), (_, n), (_, k)] =
-                    self.instruction.shape_along(self.settings.rows_along);
-                let picked = Instruction::for_accumulator(
-                    &hw.properties,
-                    &hw.target,
-                    self.settings.holder,
-                    landed.lhs,
-                    landed.rhs,
-                    item.sum,
-                    [m, n, k],
-                );
-                (picked.map(|pick| pick.instruction) == Some(self.tile_instruction()))
-                    .then_some(self)
-            }
+            PlaneUnit::Instruction => self.tiles_pick(hw, item.sum, landed).then_some(self),
         }
     }
 
     /// Whether the tile picks this plane's instruction for one of its fragments, as deep as its
-    /// settings say.
-    fn tiles_pick(&self, hw: &Hardware, item: &MatmulWorkItem) -> bool {
+    /// settings say, its operands loaded from `sources` and summed in `sum`, and fills it in one
+    /// call: the fragments the plane states are the tile's own.
+    fn tiles_pick(
+        &self,
+        hw: &Hardware,
+        sum: ElemType,
+        sources: MatmulOperands<FragmentSource>,
+    ) -> bool {
         let [(_, m), (_, n), _] = self.instruction.shape_along(self.settings.rows_along);
         let picked = Instruction::for_accumulator(
             &hw.properties,
             &hw.target,
-            ComputeScope::Plane,
-            FragmentSource::Values(item.elements.lhs),
-            FragmentSource::Values(item.elements.rhs),
-            item.sum,
+            self.settings.holder,
+            sources.lhs,
+            sources.rhs,
+            sum,
             [m, n, self.leaf_extent(MatmulDim::K)],
         );
-        picked.map(|pick| pick.instruction) == Some(self.instruction.tile_instruction())
+        picked
+            == Some(PlanePick {
+                instruction: self.tile_instruction(),
+                cell: [m, n],
+            })
     }
 
     /// This plane stating its fragments, a grid of its instruction's calls, where its settings
