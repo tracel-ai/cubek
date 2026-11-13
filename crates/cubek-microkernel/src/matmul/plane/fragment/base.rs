@@ -13,7 +13,8 @@ use cubecl::quant::scheme::QuantValue;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{
-    Axis, FragmentSource, Instruction, Levels, MmaOperands, PlanePick, Scratch, Space, StageStorage,
+    Axis, FragmentSource, Instruction, Levels, MmaOperands, Scratch, ShapedInstruction, Space,
+    StageStorage,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Operand;
@@ -402,7 +403,7 @@ impl PlaneFragmentMicrokernel {
             PlaneFragmentRowsAlong::N => [tile[1], tile[0]],
         };
         let (rows, columns) = rows_first(settings.rows_along, lhs, rhs);
-        let pick = Instruction::for_accumulator(
+        let call = Instruction::for_accumulator(
             &hw.properties,
             &hw.target,
             settings.holder,
@@ -411,9 +412,14 @@ impl PlaneFragmentMicrokernel {
             elements.cd_type,
             [rows_cols[0], rows_cols[1], elements.k as usize],
         )?;
-        let [m, n] = pick.cell.map(|edge| edge as u32);
-        let shape = MmaConfig { m, n, ..elements };
-        match pick.instruction {
+        let [m, n, k] = call.shape.map(|edge| edge as u32);
+        let shape = MmaConfig {
+            m,
+            n,
+            k,
+            ..elements
+        };
+        match call.instruction {
             Instruction::Cmma => Some(PlaneFragmentInstruction::Cmma { shape }),
             Instruction::Mma {
                 operands: MmaOperands::Plain,
@@ -467,6 +473,7 @@ impl PlaneFragmentMicrokernel {
     ) -> bool {
         let [(_, m), (_, n), _] = self.instruction.shape_along(self.settings.rows_along);
         let (rows, columns) = rows_first(self.settings.rows_along, lhs, rhs);
+        let shape = [m, n, self.leaf_extent(MatmulDim::K)];
         let picked = Instruction::for_accumulator(
             &hw.properties,
             &hw.target,
@@ -474,12 +481,12 @@ impl PlaneFragmentMicrokernel {
             rows,
             columns,
             sum,
-            [m, n, self.leaf_extent(MatmulDim::K)],
+            shape,
         );
         picked
-            == Some(PlanePick {
+            == Some(ShapedInstruction {
                 instruction: self.tile_instruction(),
-                cell: [m, n],
+                shape,
             })
     }
 
@@ -1328,7 +1335,7 @@ mod tests {
                     [plane.tile_extent(M), plane.tile_extent(N), k],
                 );
                 assert_eq!(
-                    picked.map(|pick| (pick.instruction, pick.cell)),
+                    picked.map(|call| (call.instruction, call.cell())),
                     Some((plane.tile_instruction(), [m, n])),
                     "{name}, {kind:?}"
                 );
