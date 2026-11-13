@@ -72,17 +72,19 @@ impl<'a> CubeStagedPlacement<'a> {
         CubeStagedMicrokernel::admits(&item)?;
         let by_units = fill.delivery == CubeStagedDelivery::Copy;
         // An operand the TMA engine lands is read in the instruction the tile layer picks for
-        // landed operands: the planes take the first candidate whose sum it opens as planned.
+        // landed operands: the planes take the first candidate whose sum it opens, as it opens it.
         let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
             .filter(|candidate| {
                 by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
             })
-            .map(|candidate| CubeStagedMicrokernel {
-                fill,
-                store,
-                ..candidate
+            .find_map(|candidate| {
+                CubeStagedMicrokernel {
+                    fill,
+                    store,
+                    ..candidate
+                }
+                .summed(hw, &item)
             })
-            .find(|candidate| candidate.sums_as_planned(hw, &item))
             .ok_or(Refusal::Declined {
                 why: CubeStagedMicrokernel::decline(settings),
             })?;
