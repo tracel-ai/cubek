@@ -119,26 +119,23 @@ impl<EA: Float> StageQueryGradientShare<EA> {
         #[comptime] scratch: Scratch,
         #[comptime] rows: usize,
     ) {
-        let instruction = comptime!(self.product.tile_instruction());
         let scratch = comptime!(match self.product.instruction.drain() {
             PlaneFragmentDrain::Bounce => scratch,
-            PlaneFragmentDrain::CellByCell | PlaneFragmentDrain::InLines => Scratch::None,
+            PlaneFragmentDrain::CellByCell => Scratch::None,
         });
 
         let mut part = self
             .sum
             .at(plane)
-            .accumulator::<EA>(score_gradient, key, instruction, Semiring::SUM_PROD)
+            .accumulator::<EA>(score_gradient, key, Semiring::SUM_PROD)
             .with_scratch(scratch);
         part.zero();
 
         plane_fragment_microkernel(
             plane,
             &part.clone(),
-            &ComptimeOption::<Tile>::new_None(),
             &score_gradient.clone(),
             key,
-            instruction,
             comptime!(Some(DV)),
             MatmulOperands::AS_BOUND,
         );

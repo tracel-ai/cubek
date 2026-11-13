@@ -4,14 +4,13 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal, Vectorization};
 use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubecl::tile::{
-    Instruction, Launcher, Partitioning, Region, Scratch, Semiring, Space, StageStorage, Stages,
+    Launcher, Partitioning, Region, RegisterBlock, Scratch, Semiring, Space, StageStorage, Stages,
     Tile, TileTensor,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::matmul::plane::{
     PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
-    PlaneShuffleMicrokernelSettings, plane_fragment_microkernel, plane_fragment_partial,
-    plane_shuffle_microkernel,
+    PlaneShuffleMicrokernelSettings, plane_fragment_microkernel, plane_shuffle_microkernel,
 };
 use cubek_microkernel::matmul::{
     MatmulAxes, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
@@ -140,7 +139,6 @@ impl MatmulLaunch for PlaneFragmentLaunch {
                 rhs,
                 out,
                 launcher.partitioning_arg(),
-                self.microkernel,
                 self.stage.clone(),
                 self.ring,
                 [sum, input],
@@ -152,13 +150,16 @@ impl MatmulLaunch for PlaneFragmentLaunch {
 
 /// The one plane walking its tile through its own stages
 /// ([`plane_fragment_staged_microkernel`]) and draining its fragments into `out`.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
 #[cube(launch_unchecked)]
 fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
     out: &TileTensor<'_>,
     partitioning: Partitioning,
-    #[comptime] microkernel: PlaneFragmentMicrokernel,
     #[comptime] stage: StageStorage,
     #[comptime] ring: StageRing,
     #[define(EA, EL)] _elements: [ElemType; 2],
@@ -171,20 +172,11 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
 
         let mut sum = c
-            .accumulator::<EA>(&a, &b, microkernel.tile_instruction(), Semiring::SUM_PROD)
+            .accumulator::<EA>(&a, &b, Semiring::SUM_PROD)
             .with_scratch(Scratch::None);
         sum.zero();
 
-        plane_fragment_staged_microkernel::<EL>(
-            &plane,
-            &sum,
-            &c,
-            &a,
-            &b,
-            microkernel,
-            stage.clone(),
-            ring,
-        );
+        plane_fragment_staged_microkernel(&plane, &sum, &a, &b, stage.clone(), ring);
 
         sum.drained_into(&c);
     }
@@ -192,24 +184,18 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
 
 /// One plane's tile walked through stages of its own: the plane stages its operands a step of its
 /// walk at a time, holding as many stages as `ring` says, and contracts every stage into `sum`
-/// with the plane microkernel. `sum`, `c`, `a` and `b` are windowed to the plane; a narrow step's
-/// partial is opened over `c`. A walk below the planes' level is the plane's own, so its stages
-/// are too: each plane fills a copy of its own, met on its own barriers.
+/// with the plane microkernel. `sum`, `a` and `b` are windowed to the plane. A walk below the
+/// planes' level is the plane's own, so its stages are too: each plane fills a copy of its own,
+/// met on its own barriers.
 #[cube]
-fn plane_fragment_staged_microkernel<EL: Numeric>(
+fn plane_fragment_staged_microkernel(
     plane: &Region,
     sum: &Tile,
-    c: &Tile,
     a: &Tile,
     b: &Tile,
-    #[comptime] microkernel: PlaneFragmentMicrokernel,
     #[comptime] stage: StageStorage,
     #[comptime] ring: StageRing,
 ) {
-    let instruction = microkernel.tile_instruction();
-    let step_sum = microkernel.instruction.step_sum();
-    let partial = plane_fragment_partial::<EL>(c, a, b, step_sum, instruction);
-
     let walk = plane.walk();
     let in_flight = ring.stages_in_flight.get();
     let mut stages = Stages::smem(&walk, a, b, stage, in_flight, None);
@@ -220,10 +206,8 @@ fn plane_fragment_staged_microkernel<EL: Numeric>(
             plane_fragment_microkernel(
                 step,
                 &sum_step,
-                &partial,
                 a_step,
                 b_step,
-                instruction,
                 None,
                 MatmulOperands::AS_BOUND,
             );
@@ -309,7 +293,7 @@ impl MatmulLaunch for PlaneShuffleLaunch {
                 rhs,
                 out,
                 launcher.partitioning_arg(),
-                self.microkernel.tile_instruction(),
+                self.microkernel.block(),
                 [self.elements.sum, self.elements.out],
             );
         }
@@ -328,7 +312,7 @@ fn plane_shuffle_kernel<EA: Numeric, E: Numeric>(
     rhs: &TileTensor<'_>,
     out: &TileTensor<'_>,
     partitioning: Partitioning,
-    #[comptime] instruction: Instruction,
+    #[comptime] block: RegisterBlock,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let a = lhs.tile(&partitioning);
@@ -336,7 +320,7 @@ fn plane_shuffle_kernel<EA: Numeric, E: Numeric>(
     let c = out.tile(&partitioning);
     for plane in &partitioning {
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
-        let mut sum = c.accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
+        let mut sum = c.register_accumulator::<EA>(&a, &b, block, Semiring::SUM_PROD);
         sum.zero();
         for k_step in plane.walk_within(&b) {
             plane_shuffle_microkernel(&k_step, &sum, &a, &b, MatmulOperands::AS_BOUND);

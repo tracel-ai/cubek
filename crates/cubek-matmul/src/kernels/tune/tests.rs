@@ -176,9 +176,10 @@ mod candidate {
         let cpu = MatmulRoutineCandidate::list(CubeStagedMatmulRoutine, &devices::cpu_12())
             .swap_remove(0);
         assert_eq!(cpu.blueprint(&key), None);
+        // Planes of no single width hold no fragment: the plane routine claims nothing there.
         let rdna = offering(devices::rdna_range());
         let lead = MatmulRoutineCandidate::list(CubeStagedMatmulRoutine, &rdna).swap_remove(0);
-        assert!(lead.blueprint(&key).is_some());
+        assert!(lead.blueprint(&key).is_none());
     }
 
     /// A batched key prepares a batched launch: the batch is distributed to cubes, not dropped.

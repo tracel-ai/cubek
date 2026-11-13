@@ -334,6 +334,7 @@ mod tests {
     use super::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::tile::space::ComputeScope;
     use cubek_microkernel::matmul::MatmulLayout;
     use cubek_microkernel::matmul::cube::CubeStagedMicrokernelSettings;
     use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
@@ -361,7 +362,6 @@ mod tests {
     #[test]
     fn declines_the_warpgroup_mma() {
         use cubecl::features::{WgmmaConfig, WgmmaElems};
-        use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
         use cubek_std::microkernel::StageRing;
 
         let hw = devices::offering_wgmma(
@@ -388,7 +388,7 @@ mod tests {
                 along_m: NonZeroUsize::MIN,
                 along_n: NonZeroUsize::new(16).unwrap(),
                 depth: NonZeroUsize::new(4).unwrap(),
-                transport: PlaneFragmentTransport::Wgmma,
+                holder: ComputeScope::WARPGROUP,
                 ..cube.plane
             },
             ring: StageRing::DOUBLE,

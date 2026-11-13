@@ -43,7 +43,7 @@ pub fn cube_staged_matmul_kernel<
 
     for cube in &partitioning {
         let b = b.at(&cube);
-        cube_staged_microkernel::<EA, EL>(
+        cube_staged_microkernel::<EA>(
             cube.walk_within(&b),
             &a.at(&cube),
             &b,

@@ -36,8 +36,6 @@ pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
     }
 
     let walk = cube.walk().range(0, steps);
-    let sum =
-        PlaneQueryGradientMicrokernel::open_sum::<EA>(query_gradient, bias, key, microkernel.plane);
 
     // The query and the output's gradient span no key: staged once for every plane, before the
     // walk.
@@ -54,6 +52,18 @@ pub fn cube_staged_query_gradient_microkernel<EA: Float, ES: Float>(
         &walk,
         comptime!(vec![G, Q, S]),
         microkernel.plane.holder(),
+    );
+    let gradient = ScoreWindows::cast_box::<EA>(
+        &windows,
+        &walk,
+        comptime!(vec![G, Q, S]),
+        &staged_out_gradient,
+    );
+    let sum = PlaneQueryGradientMicrokernel::open_sum::<EA>(
+        query_gradient,
+        &gradient,
+        key,
+        microkernel.plane,
     );
 
     // The staged operands and the dot products land before any plane reads them.

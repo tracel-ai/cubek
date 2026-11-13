@@ -8,7 +8,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// box, and hands it on straight into `out` where this run holds the box whole, for the box's last
 /// arrival to add up otherwise ([`LastArrival`]).
 #[cube]
-pub fn hypercube_staged_last_arrival_microkernel<'a, EA: Numeric, EL: Numeric>(
+pub fn hypercube_staged_last_arrival_microkernel<'a, EA: Numeric>(
     run: Walk,
     a: &Tile,
     b: &Tile,
@@ -21,7 +21,7 @@ pub fn hypercube_staged_last_arrival_microkernel<'a, EA: Numeric, EL: Numeric>(
     let slot = merge.tile();
 
     let sum = CubeStagedWalk::open_sum::<EA>(&slot, a, b, walk);
-    cube_staged_sum_microkernel::<EL>(run, &sum, &slot, a, b, walk, storage);
+    cube_staged_sum_microkernel(run, &sum, a, b, walk, storage);
 
     let sum = CubeStagedWalk::drain_sum(sum, walk);
     merge.hand_on(&sum, &mut out);

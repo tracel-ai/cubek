@@ -213,6 +213,10 @@ impl HypercubeStagedLaunch {
 
 /// Every cube walking its run of the box's stages, handing its sum on through the box's last
 /// arrival.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 fn hypercube_staged_kernel<EA: Numeric, EL: Numeric, VO: Size>(
@@ -235,7 +239,7 @@ fn hypercube_staged_kernel<EA: Numeric, EL: Numeric, VO: Size>(
         let tile = portion.region(i);
         let (from, steps) = portion.steps(i);
         let merge: LastArrival<'_> = slots.last_arrival::<VO>(&partitioning, &portion, i, arrivals);
-        hypercube_staged_last_arrival_microkernel::<EA, EL>(
+        hypercube_staged_last_arrival_microkernel::<EA>(
             tile.over(&stages).range(from, steps),
             &a.at(&tile),
             &b.at(&tile),

@@ -1,5 +1,5 @@
 use cubecl::tile::launch::Destination;
-use cubecl::tile::{Instruction, Partitioning, Semiring, TileTensor};
+use cubecl::tile::{Partitioning, RegisterBlock, Semiring, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_microkernel::matmul::plane::plane_shuffle_microkernel;
@@ -16,7 +16,7 @@ pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destina
     rhs: &TileTensor<'_>,
     out: &O::Arg<E>,
     partitioning: Partitioning,
-    #[comptime] instruction: Instruction,
+    #[comptime] block: RegisterBlock,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let a = lhs.tile(&partitioning);
@@ -25,10 +25,9 @@ pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destina
 
     for plane in &partitioning {
         let (mut c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
-        let (a, a_factor) = a.factor(c.space(), instruction);
-        let (b, b_factor) = b.factor(c.space(), instruction);
-
-        let mut sum = c.accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
+        let mut sum = c.register_accumulator::<EA>(&a, &b, block, Semiring::SUM_PROD);
+        let (a, a_factor) = a.factor(&sum);
+        let (b, b_factor) = b.factor(&sum);
 
         sum.zero();
         for k_step in plane.walk_within(&b) {

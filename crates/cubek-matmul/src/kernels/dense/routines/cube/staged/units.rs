@@ -128,10 +128,10 @@ impl CubeStagedMatmulRoutine {
     /// `K` only on a device whose shared memory takes the atomic `f32` add they merge through:
     /// elsewhere they would only be tried and declined. Its cubes in the grid's order.
     ///
-    /// None through the `mma` transport: on an L4 its boxes lead `cmma`'s on Qwen3-4B's down
-    /// projection by a few percent, and lose a third once the projection's residual add is fused
-    /// into its store, which its fragments drain into cell by cell; the race sees only the
-    /// product.
+    /// The instruction is the tile layer's, `cmma` for a sum written out: on an L4 the `mma`
+    /// transport's boxes lead `cmma`'s on Qwen3-4B's down projection by a few percent, and lose a
+    /// third once the projection's residual add is fused into its store, which its fragments
+    /// drain into cell by cell.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
         let boxed = [StageRing::SINGLE, StageRing::DOUBLE]
             .into_iter()
@@ -157,16 +157,6 @@ impl CubeStagedMatmulRoutine {
             .map(CubeStagedMatmulRoutineSettings::on_grid)
             .collect()
     }
-
-    /// The cube order a box's cubes walk in: in strips along `m` for the tile DSL's multi-row box
-    /// ([`MULTI_ROW`](CubeStagedMicrokernelSettings::MULTI_ROW)), in the grid's order otherwise.
-    pub(crate) fn cube_order_of(microkernel: &CubeStagedMicrokernelSettings) -> CubeOrder {
-        let [along_m, _] = CUBE_STRIPS;
-        match microkernel.same_box(&CubeStagedMicrokernelSettings::MULTI_ROW) {
-            true => along_m,
-            false => CubeOrder::RowMajor,
-        }
-    }
 }
 
 impl core::fmt::Display for CubeStagedMatmulRoutineSettings {
@@ -187,8 +177,8 @@ impl Routine for CubeStagedMatmulRoutine {
     type Blueprint = CubeStagedMatmulRoutineBlueprint;
     type Partitioning = MatmulPartitioning;
 
-    /// Its microkernel's settings ([`CubeStagedMicrokernel::settings`]), its cubes in the order
-    /// their box walks (`cube_order_of`). Then its own knob around the
+    /// Its microkernel's settings ([`CubeStagedMicrokernel::settings`]), its cubes in the grid's
+    /// order. Then its own knob around the
     /// boxes it suits: the default, the default's grid on two by two planes with its stage's rows
     /// in order, and the planes splitting `K`, in strips.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
@@ -197,7 +187,7 @@ impl Routine for CubeStagedMatmulRoutine {
             .into_iter()
             .map(|microkernel| Self::Settings {
                 microkernel,
-                cube_order: Self::cube_order_of(&microkernel),
+                cube_order: CubeOrder::RowMajor,
             });
         let rows_in_order_on_2x2 = CubeStagedMicrokernelSettings {
             stage_layout: Some(StageLayout::Blocks),

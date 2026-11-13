@@ -4,7 +4,7 @@ use crate::kernels::{
     MatmulTensors, cube_order_name,
 };
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
-use cubecl::tile::space::CubeOrder;
+use cubecl::tile::space::{ComputeScope, CubeOrder};
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulRowsKind;
@@ -13,7 +13,7 @@ use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedStore,
 };
-use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
+use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_std::Hardware;
 use cubek_std::microkernel::KernelEstimate;
 use cubek_std::microkernel::StageRing;
@@ -74,7 +74,7 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
                 MatmulPlaneLayout::new(2, 1),
             )
             .ringed(StageRing::DOUBLE)
-            .through(PlaneFragmentTransport::Wgmma),
+            .held_by(ComputeScope::WARPGROUP),
             cube_order: CubeOrder::RowMajor,
         }]
     }

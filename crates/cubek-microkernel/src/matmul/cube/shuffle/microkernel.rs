@@ -1,7 +1,7 @@
 use super::base::CubeMeet;
 use crate::matmul::plane::plane_shuffle_microkernel;
 use crate::matmul::{MatmulOperands, MatmulRead};
-use cubecl::tile::{Axis, Instruction, Region, Semiring, Tile};
+use cubecl::tile::{Axis, Region, RegisterBlock, Semiring, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's run of the output: `c = a · b` over `cube`, its planes each summing their slice of
@@ -19,23 +19,20 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
     c: &Tile,
     a: &Tile,
     b: &Tile,
-    #[comptime] instruction: Instruction,
+    #[comptime] block: Option<RegisterBlock>,
     #[comptime] meet: CubeMeet,
     #[comptime] split: Axis,
     #[comptime] planes: usize,
     #[comptime] reads: MatmulOperands<MatmulRead>,
 ) {
     let mut c = c.clone();
-    let (a, a_factor) = a.factor(c.space(), instruction);
-    let (b, b_factor) = b.factor(c.space(), instruction);
 
     match meet {
         CubeMeet::Atomic => {
             let mut accumulator = c.smem_accumulation::<EA>();
-            let mut sum =
-                accumulator
-                    .sink
-                    .accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
+            let mut sum = open_sum::<EA>(&accumulator.sink, a, b, block);
+            let (a, a_factor) = a.factor(&sum);
+            let (b, b_factor) = b.factor(&sum);
             sum.zero();
 
             for step in cube {
@@ -52,7 +49,9 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
         }
         CubeMeet::InSlots => {
             let accumulator = c.smem_slots_accumulation::<EA>(planes);
-            let mut sum = c.accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
+            let mut sum = open_sum::<EA>(&c, a, b, block);
+            let (a, a_factor) = a.factor(&sum);
+            let (b, b_factor) = b.factor(&sum);
             sum.zero();
 
             let steps = cube.walk();
@@ -66,5 +65,20 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
             accumulator.drain(&sum.scaled(&a_factor).scaled(&b_factor), writer);
             c.copy_from(&accumulator.source);
         }
+    }
+}
+
+/// The sum `over` opens for `a · b`: the register block `block` names, or the plane's fragments
+/// where it names none.
+#[cube]
+fn open_sum<EA: Numeric>(
+    over: &Tile,
+    a: &Tile,
+    b: &Tile,
+    #[comptime] block: Option<RegisterBlock>,
+) -> Tile {
+    match block {
+        Some(block) => over.register_accumulator::<EA>(a, b, block, Semiring::SUM_PROD),
+        None => over.accumulator::<EA>(a, b, Semiring::SUM_PROD),
     }
 }

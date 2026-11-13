@@ -506,7 +506,6 @@ impl CubeAttentionMicrokernel {
                 &staged_query,
                 out,
                 value,
-                &bias.masked,
                 plane,
                 microkernel.planes(),
             ),

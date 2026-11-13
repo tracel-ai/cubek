@@ -119,12 +119,8 @@ fn unit_registers_kernel<EA: Numeric, E: Numeric>(
     let c = out.tile(&partitioning);
     for unit in &partitioning {
         let (c, a, b) = (c.at(&unit), a.at(&unit), b.at(&unit));
-        let mut sum = c.accumulator::<EA>(
-            &a,
-            &b,
-            microkernel.drained_instruction(),
-            Semiring::SUM_PROD,
-        );
+        let mut sum =
+            c.register_accumulator::<EA>(&a, &b, microkernel.drained_block(), Semiring::SUM_PROD);
         sum.zero();
         for step in unit.walk_within(&b) {
             unit_registers_microkernel(&step, &sum, &a, &b);

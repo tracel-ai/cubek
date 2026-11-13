@@ -33,21 +33,21 @@ pub struct PlaneFragmentAttention<EA: Float, EV: Float> {
 #[cube]
 impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
     /// Every plane's rows over `walk` before any key: its score placed by the walk, and its sum
-    /// opened at zero on `out`, the output it is shaped by, against `value` and `bias`. `query` is
-    /// staged, and `planes` the planes its walker lays it over along each axis.
+    /// opened at zero on `out`, the output it is shaped by, against `value` and the score's
+    /// probabilities. `query` is staged, and `planes` the planes its walker lays it over along
+    /// each axis.
     pub fn open(
         walk: &Walk,
         query: &Tile,
         out: &Tile,
         value: &Tile,
-        bias: &Tile,
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
         #[comptime] planes: Vec<(Axis, usize)>,
     ) -> Self {
         let score = StageScore::open::<EA, EV>(walk, query, microkernel);
         let softmax = score.softmax::<EA>(microkernel.seq_q());
         PlaneFragmentAttention::<EA, EV> {
-            sum: Self::open_sum(out, bias, value, microkernel),
+            sum: Self::open_sum(out, &score, value, microkernel),
             score,
             softmax,
             query: query.clone(),
@@ -77,16 +77,16 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
     }
 
     /// The output's accumulator every stage's product adds into, at `EA`, opened at zero on `out`
-    /// against the value: a cmma grid with the scratch its rows are scaled through, a manual one as
-    /// it is, which scales its rows in place.
+    /// against what each stage contracts with the value, `score`'s probabilities: a window's sum
+    /// through the fragment API with the scratch its rows are scaled through, the fragments' sum
+    /// in their own instruction, which scales its rows in place.
     fn open_sum(
         out: &Tile,
-        bias: &Tile,
+        score: &StageScore,
         value: &Tile,
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
     ) -> Tile {
-        let instruction = microkernel.tile_instruction();
-        let opened = out.accumulator::<EA>(bias, value, instruction, Semiring::SUM_PROD);
+        let opened = out.accumulator::<EA>(&score.probabilities(), value, Semiring::SUM_PROD);
         let mut sum = match microkernel.score_holder() {
             ScoreHolder::Window => opened.with_scratch(microkernel.settings.scratch),
             ScoreHolder::Fragments => opened,
@@ -200,8 +200,16 @@ impl StageScore {
                 walk,
                 comptime!(vec![G, Q, S]),
                 query,
-                microkernel.score.tile_instruction(),
             )),
+        }
+    }
+
+    /// What each stage contracts with the value: the probabilities' window, or the score's own
+    /// fragments, cast in their registers.
+    pub fn probabilities(&self) -> Tile {
+        match self {
+            StageScore::Window(_, probabilities) => probabilities.clone(),
+            StageScore::Fragments(logits) => logits.clone(),
         }
     }
 
@@ -270,16 +278,7 @@ impl StageScore {
                 score_levels,
             ),
             StageScore::Fragments(logits) => Self::fragments_step::<EA, E>(
-                stage,
-                sum,
-                logits,
-                softmax,
-                query,
-                key,
-                value,
-                bias,
-                scale,
-                microkernel,
+                stage, sum, logits, softmax, query, key, value, bias, scale,
             ),
         }
     }
@@ -304,13 +303,9 @@ impl StageScore {
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
         #[comptime] score_levels: Vec<Level>,
     ) {
-        let wide = ComptimeOption::<Tile>::new_None();
-
         // The score's accumulator, cut to its own grid below the planes' level.
         let score_window = scores.with_levels(1usize, score_levels);
-        let score_instruction = microkernel.score.tile_instruction();
-        let mut logits =
-            score_window.accumulator::<EA>(query, key, score_instruction, Semiring::SUM_PROD);
+        let mut logits = score_window.accumulator::<EA>(query, key, Semiring::SUM_PROD);
         logits.zero();
 
         // Each operand's fragments, walked over its own box and paired by position: the query's
@@ -366,10 +361,8 @@ impl StageScore {
         plane_fragment_microkernel(
             stage,
             &sum.clone(),
-            &wide,
             &probabilities.clone(),
             value,
-            microkernel.value.tile_instruction(),
             None,
             MatmulOperands::AS_BOUND,
         );
@@ -390,20 +383,15 @@ impl StageScore {
         value: &Tile,
         bias: &Tile,
         scale: EA,
-        #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
     ) {
-        let wide = ComptimeOption::<Tile>::new_None();
-
         let mut logits = logits.clone();
         logits.reset();
 
         plane_fragment_microkernel(
             stage,
             &logits,
-            &wide,
             query,
             key,
-            microkernel.score.tile_instruction(),
             comptime!(Some(DV)),
             MatmulOperands::AS_BOUND,
         );
@@ -419,10 +407,8 @@ impl StageScore {
                 plane_fragment_microkernel(
                     &keys,
                     &sum.clone(),
-                    &wide,
                     &probabilities,
                     value,
-                    microkernel.value.tile_instruction(),
                     comptime!(None),
                     MatmulOperands::AS_BOUND,
                 );
@@ -454,8 +440,6 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
 ) {
     let walk = rows.walk().range(0, steps);
     let decoded = microkernel.decoded_stage();
-    let mut sum = PlaneFragmentAttention::<EA, EV>::open_sum(out, bias, value, microkernel);
-
     // The query spans no key: staged once, before the walk, as the plane's own copy.
     let mut staged_query =
         query.stage_for(&walk, StageStorage::Strided, microkernel.decoded_query());
@@ -465,6 +449,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
 
     let score = StageScore::open::<EA, EV>(&walk, &staged_query, microkernel);
     let mut softmax = score.softmax::<EA>(microkernel.seq_q());
+    let mut sum = PlaneFragmentAttention::<EA, EV>::open_sum(out, &score, value, microkernel);
 
     let in_flight = ring.stages_in_flight.get();
     let mut stages = Stages::smem(&walk, key, value, StageStorage::Strided, in_flight, decoded);

@@ -1,20 +1,18 @@
 use crate::matmul::plane::PlaneFragmentRowsAlong;
-use crate::matmul::{MatmulAxes, MatmulDim, MatmulLayout, MatmulOperands, MatmulWorkItem};
+use crate::matmul::{MatmulAxes, MatmulDim, MatmulLayout, MatmulOperands};
 use cubecl::features::{MmaConfig, WgmmaConfig};
-use cubecl::ir::{ElemType, FloatKind};
+use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::ops::matmul::MmaIo;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{
-    Axis, BlockScaledOperands, Instruction, MmaOperands, RegisterBlock, StageStorage,
-};
+use cubecl::tile::{Axis, BlockScaledOperands, Instruction, MmaOperands, StageStorage};
 use cubecl::wgmma::WARPGROUP_UNITS;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{ArithmeticInstruction, SWIZZLED_STAGE_UNREAD, StageLayout};
 use cubek_std::{BlockScaledMma, Hardware};
 
 /// What a plane's fragments contract through: one of the device's matrix instructions, reached
-/// by either transport, or the software instruction every device runs.
+/// by either transport, the one the tile layer picks for it.
 ///
 /// Each is a tile of `m × n × k` the plane's units hold between them, which the plane
 /// microkernel's settings multiply into the tile one plane owns, so a setting means the same
@@ -33,11 +31,6 @@ pub enum PlaneFragmentInstruction {
         shape: MmaConfig,
         operands: MmaOperands,
     },
-    /// The software instruction: [`SOFTWARE_UNITS`](Self::SOFTWARE_UNITS) units, each holding
-    /// one cell of the tile in registers and contracting
-    /// [`SOFTWARE_DEPTH`](Self::SOFTWARE_DEPTH) of `K` into it with vector arithmetic, in the
-    /// element `step_sum` says. Asks nothing of the hardware.
-    Registers { step_sum: PlaneFragmentStepSum },
     /// The device's warpgroup MMA (Hopper's `wgmma.mma_async`): a group of four planes contracts
     /// one `64 × n` tile together, `config.k` of `K` a step, reading both operands straight out
     /// of a stage the TMA engine landed, and accumulating asynchronously. `n` is the plane
@@ -46,20 +39,6 @@ pub enum PlaneFragmentInstruction {
 }
 
 impl PlaneFragmentInstruction {
-    /// How the software instruction's units lie over its tile: along `m`, then along `n`.
-    ///
-    /// One accumulator cell a unit, the smallest a unit can hold: the plane's settings multiply
-    /// the instruction, and every cell they multiply it by is a register each unit keeps live
-    /// through the whole walk, so the instruction itself adds none a setting did not ask for.
-    /// The units share no instruction, so their count is this one's and never the device's
-    /// plane width: the instruction runs where the device reports none.
-    pub const SOFTWARE_UNITS: [(MatmulDim, usize); 2] = [(MatmulDim::M, 4), (MatmulDim::N, 8)];
-
-    /// How much of `K` one software instruction contracts. It costs no register: the
-    /// contraction walks it one line at a time. It is also as deep as a step may contract in
-    /// `f16` before its rounding shows ([`PlaneFragmentStepSum::Narrow`]).
-    pub const SOFTWARE_DEPTH: usize = 16;
-
     /// Planes one warpgroup is made of, which issue its MMA together.
     pub(crate) const WARPGROUP_PLANES: usize = 4;
 
@@ -84,14 +63,6 @@ impl PlaneFragmentInstruction {
                 (MatmulDim::N, shape.n as usize),
                 (MatmulDim::K, shape.k as usize),
             ],
-            Self::Registers { .. } => {
-                let [(_, m), (_, n)] = Self::SOFTWARE_UNITS;
-                [
-                    (MatmulDim::M, m),
-                    (MatmulDim::N, n),
-                    (MatmulDim::K, Self::SOFTWARE_DEPTH),
-                ]
-            }
             Self::Wgmma { config, n } => [
                 (MatmulDim::M, config.m as usize),
                 (MatmulDim::N, n),
@@ -107,38 +78,28 @@ impl PlaneFragmentInstruction {
     pub fn planes(self) -> usize {
         match self {
             Self::Wgmma { .. } => Self::WARPGROUP_PLANES,
-            Self::Cmma { .. } | Self::Mma { .. } | Self::Registers { .. } => 1,
+            Self::Cmma { .. } | Self::Mma { .. } => 1,
         }
     }
 
     /// Units one plane runs the instruction on: the width the device issues a matrix instruction
-    /// at, or the software instruction's own count.
+    /// at.
     ///
     /// # Errors
     ///
-    /// A matrix instruction on a device that does not commit to one width.
+    /// A device that does not commit to one width.
     pub fn units(self, hw: &Hardware) -> Result<u32, Refusal> {
-        match self {
-            Self::Cmma { .. } | Self::Mma { .. } | Self::Wgmma { .. } => hw.plane_dim(),
-            Self::Registers { .. } => Ok(Self::software_units() as u32),
-        }
+        hw.plane_dim()
     }
 
-    /// The instruction as the tile DSL runs it, a unit holding `cells` accumulator cells.
-    ///
-    /// The software instruction takes each lhs line's values at fixed positions
-    /// ([`RegisterBlock::component_fanout`]): a position read at runtime sends the whole line
-    /// through local memory on NVPTX at every step of `K`. The plane microkernel runs on GPUs
-    /// alone, where that is the right walk.
-    pub fn tile_instruction(self, cells: usize) -> Instruction {
+    /// The instruction as the tile DSL names it: what the tile layer picks for a plane's
+    /// fragment of this shape, where this is the tile layer's pick.
+    pub fn tile_instruction(self) -> Instruction {
         match self {
             Self::Cmma { .. } => Instruction::Cmma,
             Self::Mma { operands, .. } => Instruction::Mma {
                 io: MmaIo::default(),
                 operands,
-            },
-            Self::Registers { .. } => Instruction::Registers {
-                config: RegisterBlock::new(cells).component_fanout(),
             },
             Self::Wgmma { .. } => Instruction::Wgmma,
         }
@@ -149,48 +110,34 @@ impl PlaneFragmentInstruction {
         match self {
             Self::Cmma { .. } => PlaneFragmentDrain::Bounce,
             Self::Mma { .. } | Self::Wgmma { .. } => PlaneFragmentDrain::CellByCell,
-            Self::Registers { .. } => PlaneFragmentDrain::InLines,
         }
     }
 
     /// Which of the device's arithmetic rates the instruction runs at.
     pub fn arithmetic(self) -> ArithmeticInstruction {
-        match self {
-            Self::Cmma { .. } | Self::Mma { .. } | Self::Wgmma { .. } => {
-                ArithmeticInstruction::Matrix
-            }
-            Self::Registers { .. } => ArithmeticInstruction::Vector,
-        }
+        ArithmeticInstruction::Matrix
     }
 
     /// The order this instruction reads operands laid out as `layouts` in: a col operand in its
     /// buffer's order where the fragment loads it col-major, so the stage is filled along the
     /// operand's own lines. Both matrix transports load `A` and `B` either way; a warpgroup MMA
-    /// loads only `B` col-major. The others as the product names them. The software instruction
-    /// reads the role's own order, and under it a transposed tile would be a wrong answer rather
-    /// than a slow one.
+    /// loads only `B` col-major. The others as the product names them.
     ///
     /// Measured on an L4 for a weight gradient's `f32` col lhs at tf32: staged in the product's
     /// order, a unit reads one value at a time across the lhs's lines, and the cmma candidates
-    /// lose to the software instruction.
+    /// lose to the unit routines.
     pub fn orders(self, layouts: MatmulOperands<MatmulLayout>) -> MatmulOperands<BindingOrder> {
         let lhs = match (self, layouts.lhs) {
             (Self::Cmma { .. } | Self::Mma { .. }, MatmulLayout::Col) => {
                 BindingOrder::InBufferOrder
             }
-            (
-                Self::Cmma { .. } | Self::Mma { .. } | Self::Registers { .. } | Self::Wgmma { .. },
-                _,
-            ) => BindingOrder::Stated,
+            (Self::Cmma { .. } | Self::Mma { .. } | Self::Wgmma { .. }, _) => BindingOrder::Stated,
         };
         let rhs = match (self, layouts.rhs) {
             (Self::Cmma { .. } | Self::Mma { .. } | Self::Wgmma { .. }, MatmulLayout::Col) => {
                 BindingOrder::InBufferOrder
             }
-            (
-                Self::Cmma { .. } | Self::Mma { .. } | Self::Registers { .. } | Self::Wgmma { .. },
-                _,
-            ) => BindingOrder::Stated,
+            (Self::Cmma { .. } | Self::Mma { .. } | Self::Wgmma { .. }, _) => BindingOrder::Stated,
         };
         MatmulOperands {
             lhs,
@@ -200,8 +147,7 @@ impl PlaneFragmentInstruction {
     }
 
     /// The layout a stage the instruction reads lies in: `setting`'s, or the instruction's own
-    /// where it states none; strided for the software instruction, whose units read their cells
-    /// where they are, whatever it states.
+    /// where it states none.
     ///
     /// Both matrix instructions' own keep the rows a fragment load reads at once on distinct
     /// banks, each the way its transport can read. `cmma` reads a tile off a pointer and a stride,
@@ -222,7 +168,6 @@ impl PlaneFragmentInstruction {
     /// Swizzled tiles under `cmma`, which has no stride to read them by.
     pub fn stage_layout(self, setting: Option<StageLayout>) -> Result<StageLayout, Refusal> {
         match (self, setting) {
-            (Self::Registers { .. }, _) => Ok(StageLayout::Strided),
             (Self::Cmma { .. }, Some(StageLayout::SwizzledBlocks)) => Err(SWIZZLED_STAGE_UNREAD),
             (_, Some(layout)) => Ok(layout),
             (Self::Cmma { .. }, None) => Ok(StageLayout::PaddedBlocks),
@@ -252,9 +197,8 @@ impl PlaneFragmentInstruction {
     /// lands them, its rows along `rows`, and one of every batch axis in `batches`. The manual
     /// `mma`'s rows swizzled as the descriptor swizzles them, which keeps the rows a fragment load
     /// reads at once on distinct banks as its own [`stage_layout`](Self::stage_layout) does;
-    /// `cmma`'s in order, since a box lands no padding; the software instruction's as the operand
-    /// lies, as ever. The warpgroup MMA's swizzled as the manual `mma`'s are: a row one swizzle
-    /// span long lies as the instruction's descriptor reads it.
+    /// `cmma`'s in order, since a box lands no padding. The warpgroup MMA's swizzled as the manual
+    /// `mma`'s are: a row one swizzle span long lies as the instruction's descriptor reads it.
     pub fn landed_stage_storage(
         self,
         batches: &[Axis],
@@ -265,7 +209,6 @@ impl PlaneFragmentInstruction {
         let chunks = match self {
             Self::Cmma { .. } => RowChunks::InOrder,
             Self::Mma { .. } | Self::Wgmma { .. } => RowChunks::Swizzled,
-            Self::Registers { .. } => return StageStorage::Strided,
         };
         let [m, n, _] = self.shape_along(rows);
         StageStorage::Tiled {
@@ -304,7 +247,7 @@ impl PlaneFragmentInstruction {
     pub fn form(self) -> Option<BlockScaledOperands> {
         match self {
             Self::Mma { operands, .. } => operands.block_scaled(),
-            Self::Cmma { .. } | Self::Registers { .. } | Self::Wgmma { .. } => None,
+            Self::Cmma { .. } | Self::Wgmma { .. } => None,
         }
     }
 
@@ -331,73 +274,18 @@ impl PlaneFragmentInstruction {
             operands: MmaOperands::BlockScaled(instruction.form),
         }
     }
-
-    /// The element a step contracts in: a matrix instruction's own, which sums straight into
-    /// the accumulator.
-    pub fn step_sum(self) -> PlaneFragmentStepSum {
-        match self {
-            Self::Cmma { .. } | Self::Mma { .. } | Self::Wgmma { .. } => PlaneFragmentStepSum::Wide,
-            Self::Registers { step_sum } => step_sum,
-        }
-    }
-
-    fn software_units() -> usize {
-        Self::SOFTWARE_UNITS
-            .iter()
-            .map(|&(_, units)| units)
-            .product()
-    }
 }
 
-/// Which transport a plane reaches the device's matrix instruction through first, where the device
-/// offers one under both: the other follows it, and the software instruction follows both.
-///
-/// A setting rather than a candidate's order, an exception to candidates being searched and never
-/// tuned: the two emit the same instruction, so the hardware does not settle which is faster.
-/// Each transport loads the fragments its own way, and which way a layout of the rhs favours
-/// is a measurement.
+/// Which transport an attention's planes reach the device's matrix instruction through: its score
+/// holder in disguise, a fragment of registers through `mma` or a window of shared memory through
+/// `cmma`. A matmul's plane takes the instruction the tile layer picks for its product, and lists
+/// both transports, so an attention picks its own from them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlaneFragmentTransport {
-    /// The vendor's fragment API first ([`PlaneFragmentInstruction::Cmma`]).
+    /// The vendor's fragment API ([`PlaneFragmentInstruction::Cmma`]).
     Cmma,
-    /// The tile DSL's own transport first ([`PlaneFragmentInstruction::Mma`]).
+    /// The tile DSL's own transport ([`PlaneFragmentInstruction::Mma`]).
     Mma,
-    /// The warpgroup MMA alone ([`PlaneFragmentInstruction::Wgmma`]), where it runs, and nothing
-    /// where it does not: a setting that asks for it is laid out for it, a plane group's one
-    /// accumulator a row of `columns` granules, which no other instruction is measured at.
-    Wgmma,
-}
-
-/// The element one instruction step of the software instruction contracts in.
-///
-/// An explicit opt-in, never a tune candidate in a race: [`Narrow`](Self::Narrow) is faster where
-/// the device runs packed `f16` quickly and changes what the product computes, and a race weighs
-/// time alone. The caller that states it owns the trade: its inputs must keep a step's
-/// partial inside `f16`'s range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PlaneFragmentStepSum {
-    /// Straight into the accumulator, in the element it sums in.
-    Wide,
-    /// In the operands' element, into a partial emptied at every step and added into the
-    /// accumulator at its end: on `f16` operands, packed `f16` arithmetic. Its rounding is one
-    /// step's, [`SOFTWARE_DEPTH`](PlaneFragmentInstruction::SOFTWARE_DEPTH) products deep, and
-    /// never the walk's; its range is `f16`'s, so a step whose products sum past 65504 is an
-    /// infinity where the wide step is exact.
-    Narrow,
-}
-
-impl PlaneFragmentStepSum {
-    /// This setting where `item` admits it: a narrow step only for `f16` operands summed in a
-    /// wider element, since `bf16`'s mantissa is too short for any step and an `f32` step is
-    /// already wide. Elsewhere the wide step, whose kernel a narrow setting then repeats.
-    pub fn serving(self, item: &MatmulWorkItem) -> Self {
-        let f16 = ElemType::Float(FloatKind::F16);
-        let narrow_serves = item.elements.lhs == f16 && item.elements.rhs == f16 && item.sum != f16;
-        match (self, narrow_serves) {
-            (Self::Narrow, true) => Self::Narrow,
-            (Self::Narrow, false) | (Self::Wide, _) => Self::Wide,
-        }
-    }
 }
 
 /// How an instruction's accumulator reaches its destination.
@@ -412,9 +300,6 @@ pub enum PlaneFragmentDrain {
     /// so the destination is bound one element wide: a manual mma fragment knows which unit
     /// holds a cell, and its store reaches memory no other way.
     CellByCell,
-    /// Through the destination's write in the register block's lines, which are the rhs's, so
-    /// the rhs is bound no wider than the destination.
-    InLines,
 }
 
 impl core::fmt::Display for PlaneFragmentInstruction {
@@ -423,12 +308,6 @@ impl core::fmt::Display for PlaneFragmentInstruction {
         let name = match self {
             Self::Cmma { .. } => "cmma",
             Self::Mma { .. } => "mma",
-            Self::Registers {
-                step_sum: PlaneFragmentStepSum::Wide,
-            } => "registers",
-            Self::Registers {
-                step_sum: PlaneFragmentStepSum::Narrow,
-            } => "registers-narrow",
             Self::Wgmma { .. } => "wgmma",
         };
         write!(f, "{name}={m}x{n}x{k}")

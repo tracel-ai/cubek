@@ -31,18 +31,18 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
     scale: EA,
     #[comptime] microkernel: UnitKeyGradientMicrokernel,
 ) {
-    let mut key_sum = key_gradient.accumulator::<EA>(
+    let mut key_sum = key_gradient.register_accumulator::<EA>(
         bias,
         query,
-        microkernel.key_gradient.tile_instruction(),
+        microkernel.key_gradient.block(),
         Semiring::SUM_PROD,
     );
 
     key_sum.zero();
-    let mut value_sum = value_gradient.accumulator::<EA>(
+    let mut value_sum = value_gradient.register_accumulator::<EA>(
         bias,
         out_gradient,
-        microkernel.value_gradient.tile_instruction(),
+        microkernel.value_gradient.block(),
         Semiring::SUM_PROD,
     );
 
@@ -61,10 +61,10 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
             let (out_gradient, bias) = (out_gradient.at(&step), bias.at(&step));
             let (logsumexp, delta) = (logsumexp.at(&step), delta.at(&step));
 
-            let mut score = bias.accumulator::<EA>(
+            let mut score = bias.register_accumulator::<EA>(
                 &key,
                 &query,
-                microkernel.score.tile_instruction(),
+                microkernel.score.block(),
                 Semiring::SUM_PROD,
             );
 
@@ -80,10 +80,10 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
                 unit_registers_microkernel(&depth, &step_value_sum, &score, &out_gradient);
             }
 
-            let mut gradient = bias.accumulator::<EA>(
+            let mut gradient = bias.register_accumulator::<EA>(
                 &value,
                 &out_gradient,
-                microkernel.score_gradient.tile_instruction(),
+                microkernel.score_gradient.block(),
                 Semiring::SUM_PROD,
             );
 

@@ -3,12 +3,13 @@
 
 use std::sync::Arc;
 
+use cubecl::cmma::MatrixLayout;
 use cubecl::features::{
     AtomicUsage, Features, MmaConfig, Plane, ScaledMmaConfig, Tma, WgmmaConfig,
 };
 use cubecl::ir::{
     DeviceIdentity, DeviceProperties, ElemType, FloatKind, HardwareProperties,
-    MemoryDeviceProperties, OpaqueType, Type,
+    MemoryDeviceProperties, OpaqueType, TargetProperties, Type,
 };
 use cubecl::profile::TimingMethod;
 
@@ -106,10 +107,7 @@ pub fn h100() -> Hardware {
     device.features.types.opaque.insert(OpaqueType::Barrier);
     f32_atomic_add(&mut device);
     shared_f32_atomic_add(&mut device);
-    Hardware {
-        accumulator_as_a: true,
-        ..hardware(device)
-    }
+    on(device, cuda_target())
 }
 
 /// The RTX PRO 6000 (Blackwell, `sm_120`), as cubecl's CUDA runtime reports it: 188 SMs, 99 KiB
@@ -133,10 +131,7 @@ pub fn rtx_pro_6000() -> Hardware {
     device.features.types.opaque.insert(OpaqueType::Barrier);
     f32_atomic_add(&mut device);
     shared_f32_atomic_add(&mut device);
-    Hardware {
-        accumulator_as_a: true,
-        ..hardware(device)
-    }
+    on(device, cuda_target())
 }
 
 /// A 12-core CPU runtime, as cubecl's `CpuRuntime` reports it: single-unit planes with no
@@ -298,11 +293,32 @@ fn device(hardware: HardwareProperties) -> DeviceProperties {
     )
 }
 
-fn hardware(device: DeviceProperties) -> Hardware {
-    Hardware {
-        properties: Arc::new(device),
-        accumulator_as_a: false,
-    }
+/// `device` as a test states it, compiling for [`rdna_target`]: what a test asks of a device it
+/// states no target for.
+pub(crate) fn hardware(device: DeviceProperties) -> Hardware {
+    on(device, rdna_target())
+}
+
+/// `device` compiling for `target`.
+fn on(device: DeviceProperties, target: TargetProperties) -> Hardware {
+    Hardware::new(Arc::new(device), &target)
+}
+
+/// The target cubecl's CUDA compiler lays matrix fragments for: an `mma` accumulator holds its
+/// cells where the `A` of the next product holds them ([`Hardware::accumulator_as_a`]).
+fn cuda_target() -> TargetProperties {
+    let mut target = TargetProperties::default();
+    target.mma.register_layout_a = target.mma.register_layout_acc;
+    target.mma.register_duplication_a = target.mma.register_duplication_acc;
+    target
+}
+
+/// A target whose `mma` lays `A` along its rows against an accumulator down its columns, as
+/// RDNA's does: an accumulator is not the next product's `A`.
+fn rdna_target() -> TargetProperties {
+    let mut target = TargetProperties::default();
+    target.mma.register_layout_a = MatrixLayout::ColMajor;
+    target
 }
 
 fn f32_atomic_add(device: &mut DeviceProperties) {
