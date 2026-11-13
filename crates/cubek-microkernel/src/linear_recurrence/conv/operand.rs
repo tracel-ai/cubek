@@ -19,6 +19,16 @@ pub enum CausalConvOperand {
 }
 
 impl CausalConvOperand {
+    /// Every operand.
+    pub const ALL: [Self; 6] = [
+        Self::Input,
+        Self::Filters,
+        Self::Bias,
+        Self::Ring,
+        Self::Lengths,
+        Self::Output,
+    ];
+
     /// The operands a line of channels runs along.
     pub const CHANNELS: [Self; 4] = [Self::Input, Self::Bias, Self::Ring, Self::Output];
 

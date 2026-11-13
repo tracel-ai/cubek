@@ -2,9 +2,8 @@
 
 use crate::kernels::conv::{CausalConvPastLayout, CubeCausalConvRoutine};
 use crate::kernels::refusals::{
-    CAUSAL_CONV_BINDING_BUFFERS, CAUSAL_CONV_BINDINGS_PAST_DEVICE, CAUSAL_CONV_CHANNELS_EMPTY,
-    CAUSAL_CONV_ELEMENT_NOT_FLOAT, CAUSAL_CONV_ELEMENT_UNVERIFIED, CAUSAL_CONV_NOTHING_TO_CONVOLVE,
-    CAUSAL_CONV_OUTPUT_UNVERIFIED,
+    CAUSAL_CONV_BINDINGS_PAST_DEVICE, CAUSAL_CONV_CHANNELS_EMPTY, CAUSAL_CONV_ELEMENT_NOT_FLOAT,
+    CAUSAL_CONV_ELEMENT_UNVERIFIED, CAUSAL_CONV_NOTHING_TO_CONVOLVE, CAUSAL_CONV_OUTPUT_UNVERIFIED,
 };
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
@@ -12,8 +11,8 @@ use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Space};
 use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
-use cubek_microkernel::linear_recurrence::conv::CausalConvOperandMap;
 use cubek_microkernel::linear_recurrence::conv::cube::CausalConvWorkItem;
+use cubek_microkernel::linear_recurrence::conv::{CausalConvOperand, CausalConvOperandMap};
 use cubek_microkernel::linear_recurrence::{
     BATCH, CHANNEL, CHANNEL_RUN, LINE_IN_RUN, POSITION, TAP,
 };
@@ -85,6 +84,19 @@ impl CausalConvProblem {
             .map(|_| ())
     }
 
+    /// The operands the conv binds: the bias only where it has one.
+    pub fn operands(&self) -> impl Iterator<Item = CausalConvOperand> {
+        let bias = self.bias;
+        CausalConvOperand::ALL
+            .into_iter()
+            .filter(move |operand| bias || *operand != CausalConvOperand::Bias)
+    }
+
+    /// The buffers the conv binds, the metadata buffer included.
+    pub fn binding_buffers(&self) -> u32 {
+        self.operands().count() as u32 + self.past.binding_buffers()
+    }
+
     /// What every launch declines a problem with before it places anything.
     pub(crate) fn admit_launch(&self, hw: &Hardware) -> Result<(), Refusal> {
         if self.channels == 0 {
@@ -95,7 +107,7 @@ impl CausalConvProblem {
         }
         Self::admit_elements(self.element, self.output_element)?;
         self.past.admit(self.taps)?;
-        if CAUSAL_CONV_BINDING_BUFFERS > hw.properties.hardware.max_bindings {
+        if self.binding_buffers() > hw.properties.hardware.max_bindings {
             return Err(CAUSAL_CONV_BINDINGS_PAST_DEVICE);
         }
         Ok(())
@@ -236,9 +248,9 @@ mod tests {
     fn a_device_binding_fewer_buffers_than_the_launch_is_declined() {
         let problem = conv(decode_step(3));
         let mut hw = devices::h100();
-        devices::topology(&mut hw).max_bindings = CAUSAL_CONV_BINDING_BUFFERS - 1;
+        devices::topology(&mut hw).max_bindings = problem.binding_buffers() - 1;
         assert_eq!(problem.admit(&hw), Err(CAUSAL_CONV_BINDINGS_PAST_DEVICE));
-        devices::topology(&mut hw).max_bindings = CAUSAL_CONV_BINDING_BUFFERS;
+        devices::topology(&mut hw).max_bindings = problem.binding_buffers();
         assert_eq!(problem.admit(&hw), Ok(()));
     }
 
@@ -293,12 +305,13 @@ mod tests {
         assert_eq!(conv(prompt(8)).admit(&hw), Ok(()));
     }
 
-    /// The bias is counted in the filters' bytes only where the conv has one.
+    /// The bias is counted in the filters' bytes and the bound buffers only where the conv has one.
     #[test]
     fn the_bias_is_counted_only_where_the_conv_has_one() {
         let without = conv(decode_step(3));
         let with = without.clone().with_bias();
         let channel_bytes = without.channels * without.element.size();
         assert_eq!(with.demand().bytes - without.demand().bytes, channel_bytes);
+        assert_eq!(with.binding_buffers(), without.binding_buffers() + 1);
     }
 }

@@ -71,6 +71,12 @@ impl CausalConvPastLayout {
         }
     }
 
+    /// The buffers the past binds beside the operands: the slot table, and the metadata buffer some
+    /// runtimes bind beside them.
+    pub(crate) fn binding_buffers(&self) -> u32 {
+        2
+    }
+
     /// Whether the past holds a position to convolve.
     ///
     /// # Errors

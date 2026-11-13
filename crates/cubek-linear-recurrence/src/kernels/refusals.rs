@@ -50,10 +50,6 @@ pub const RECURRENCE_WALK_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
     why: "the walk reads f32 inputs and writes f32, f16 or bf16 outputs",
 };
 
-/// The buffers a causal conv needs a device to bind: one for each of its 6 operands, one for the
-/// slot table and one for the metadata buffer some runtimes bind beside them.
-pub const CAUSAL_CONV_BINDING_BUFFERS: u32 = 7 + 1;
-
 /// What admission declines a problem with when it describes no channel to convolve.
 pub const CAUSAL_CONV_CHANNELS_EMPTY: Refusal = Refusal::Declined {
     why: "the causal conv needs a channel",
