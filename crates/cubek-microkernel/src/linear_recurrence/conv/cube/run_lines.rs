@@ -16,10 +16,7 @@ const MOST_UNITS: usize = 64;
 impl ChannelRun {
     /// The most units one cube of a conv holds on `hw`.
     pub fn most_units(hw: &Hardware) -> usize {
-        let hardware = &hw.properties.hardware;
-        MOST_UNITS
-            .min(hardware.max_units_per_cube as usize)
-            .min(hardware.max_cube_dim.0 as usize)
+        MOST_UNITS.min(hw.most_units_1d())
     }
 }
 

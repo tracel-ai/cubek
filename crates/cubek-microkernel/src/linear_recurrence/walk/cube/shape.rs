@@ -46,9 +46,7 @@ impl HeldStateShape {
             .min(key_features);
         let units = key_features.div_ceil(target).next_power_of_two();
         let rows = key_features.div_ceil(units).next_multiple_of(columns);
-        let hardware = &hw.properties.hardware;
-        let fits = units <= hardware.max_units_per_cube as usize
-            && units <= hardware.max_cube_dim.0 as usize;
+        let fits = units <= hw.most_units_1d();
         let masked = units * rows == key_features || !key_features.is_multiple_of(rows);
         (fits && masked).then_some(Self {
             units,
