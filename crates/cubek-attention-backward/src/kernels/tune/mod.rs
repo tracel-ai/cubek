@@ -1,4 +1,4 @@
-//! Choosing a backward pass's routine by measurement.
+//! Choosing a backward pass's strategy by measurement.
 
 mod base;
 mod candidate;

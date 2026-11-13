@@ -11,8 +11,8 @@ use cubek_microkernel::attention::{AttentionVisibility, D, DV};
 use cubek_microkernel::attention_backward::AttentionBackwardOperands;
 use serde::{Deserialize, Serialize};
 
-/// What makes two backward passes want the same routine: the head shape exact, as the model
-/// fixes it, the queries, the keys and the batch anchored, where the crossovers between routines
+/// What makes two backward passes want the same strategy: the head shape exact, as the model
+/// fixes it, the queries, the keys and the batch anchored, where the crossovers between strategies
 /// live, and which keys a query sees.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct AttentionBackwardKey {
