@@ -1,4 +1,3 @@
-use crate::matmul::plane::PlaneFragmentDepth;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 
@@ -17,10 +16,6 @@ pub struct PlaneFragmentAttentionMicrokernelSettings {
     pub scratch: Scratch,
     /// Where the plane keeps the score between its two multiplications.
     pub score: ScoreHolder,
-    /// How deep along the head dim the score's fragments are: one instruction step, the head dim
-    /// walked a step at a time, or the whole head dim, contracted in one call. Only a score kept
-    /// in its fragments takes the whole head dim; any other declines it.
-    pub score_depth: PlaneFragmentDepth,
 }
 
 /// Where a plane keeps a stage's score between its two multiplications. The tile layer picks the
@@ -45,7 +40,6 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         seq_kv: NonZeroUsize::new(2).unwrap(),
         scratch: Scratch::OneTile,
         score: ScoreHolder::Fragments,
-        score_depth: PlaneFragmentDepth::Instruction,
     };
 
     /// The default with every fragment of the grid bounced at once.
@@ -84,12 +78,8 @@ impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
             Scratch::OneTile | Scratch::None => {}
         }
         match self.score {
-            ScoreHolder::Fragments => {}
-            ScoreHolder::Window => write!(f, " score=window")?,
-        }
-        match self.score_depth {
-            PlaneFragmentDepth::Instruction => Ok(()),
-            PlaneFragmentDepth::Stage => write!(f, " score_depth=head"),
+            ScoreHolder::Fragments => Ok(()),
+            ScoreHolder::Window => write!(f, " score=window"),
         }
     }
 }
