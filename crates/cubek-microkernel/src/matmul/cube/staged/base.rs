@@ -151,8 +151,7 @@ impl CubeStagedMicrokernel {
     /// layout and requests.
     ///
     /// Rounded first, as the multi-level routines promote an `f32` product to tf32 where they
-    /// may: on a device whose matrix instructions take no `f32`, no plane runs the exact product,
-    /// and the unit routines that do are outrun many times over by a matrix instruction.
+    /// may: on a device whose matrix instructions take no `f32`, no exact plane runs.
     fn as_stored_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -386,7 +385,7 @@ impl CubeStagedMicrokernel {
     /// # Errors
     ///
     /// A matrix instruction on a device that commits to no plane width; planes set aside to fill
-    /// where they cannot be ([`CubeStagedFillingRefusal`]); a warpgroup MMA its fill and drain do
+    /// where they cannot be ([`CubeStagedFillingRefusal`]); a plane group MMA its fill and drain do
     /// not serve (`CubeStagedWgmmaRefusal`).
     pub fn resolve(
         self,
@@ -657,12 +656,12 @@ impl Microkernel for CubeStagedMicrokernel {
         }
     }
 
-    /// Where the settings put the planes on warpgroups, that the warpgroup MMA's rules do not hold
-    /// for this device or product; [`DECLINE`](Self::DECLINE) otherwise.
+    /// Where the settings put the planes on plane groups, that the plane group MMA's rules do not
+    /// hold for this device or product; [`DECLINE`](Self::DECLINE) otherwise.
     fn decline(settings: &Self::Settings) -> &'static str {
         match settings.plane.holder {
-            ComputeScope::WARPGROUP => {
-                "this setting deals tiles to warpgroups, whose warpgroup MMA this device or \
+            ComputeScope::MMA_PLANE_GROUP => {
+                "this setting deals tiles to plane groups, whose plane group MMA this device or \
                  product does not take"
             }
             _ => Self::DECLINE,
@@ -784,7 +783,7 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
     /// A stage of scale blocks walks `KB`, its planes' steps inside each block
     /// (`PlaneFragmentMicrokernel::tiling_over`), and its planes split `KB`.
     ///
-    /// An instruction several planes issue together, a warpgroup MMA's, distributes the box over
+    /// An instruction several planes issue together, a plane group MMA's, distributes the box over
     /// groups of them instead: the layout counts groups.
     fn tiling(&self) -> Levels {
         let MatmulAxes { m, n, .. } = self.plane.axes;

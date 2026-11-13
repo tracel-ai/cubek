@@ -35,7 +35,7 @@
 //! Only meaningful on a GPU: `plane_size == 1` on CPU collapses every strategy to `seq_k`.
 
 use cubecl::tile::{
-    Axis, Launcher, Levels, Partitioning, RegisterBlock, Semiring, Space, TileTensor, launch::Grid,
+    Axis, Launcher, Levels, Partitioning, Semiring, SoftwareMatmul, Space, TileTensor, launch::Grid,
 };
 use cubecl::{
     CubeCount, CubeDim,
@@ -52,7 +52,7 @@ use cubek_test_utils::{
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no unit
 /// fan-out. Held fixed across mappings so the numbers compare the partitioning, not the
 /// instruction.
-const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
+const SOFTWARE_MATMUL: SoftwareMatmul = SoftwareMatmul::new(64);
 
 /// The kernel under test for the one-level mappings: this cube's region, contracted whole at
 /// the leaf. The mapping is the only variable.
@@ -69,7 +69,7 @@ fn split_k_matmul_one_level(
     for region in space {
         let mut c_cube = c
             .at(&region)
-            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+            .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
         c_cube.mma(&a.at(&region), &b.at(&region));
     }
 }
@@ -93,7 +93,7 @@ fn split_k_matmul_two_levels(
         for region in cube {
             let mut c_unit = c_cube
                 .at(&region)
-                .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
             c_unit.mma(&a_cube.at(&region), &b_cube.at(&region));
         }
     }

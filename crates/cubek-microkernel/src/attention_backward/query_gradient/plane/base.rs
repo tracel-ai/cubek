@@ -5,7 +5,7 @@ use crate::attention_backward::{
 };
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
-    PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
+    PlaneFragmentMicrokernelSettings,
 };
 use crate::matmul::{MatmulDim, MatmulWorkItem};
 use core::num::NonZeroUsize;
@@ -14,7 +14,7 @@ use cubecl::tile::{Axis, Level, Levels, Partitioning, Scratch};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
-/// A box of queries of one head a plane owns: their dot product of the output with its gradient,
+/// The queries of one head a plane owns: their dot product of the output with its gradient,
 /// then, a stage of keys at a time, their scores in the plane's window, the probabilities read
 /// back there from each query's logsumexp, the gradient against them in another window, the
 /// gradient against the scores cast for the fragments to load, and the query's gradient in
@@ -37,23 +37,23 @@ pub struct PlaneQueryGradientMicrokernel {
     pub query_gradient: PlaneFragmentMicrokernel,
 }
 
-/// The instructions a plane's box holds along the queries and along a stage of keys, how much of
-/// the query's gradient its scale bounces through shared memory at once, and the transport its
-/// three multiplications run on: cmma, the score read through windows of shared memory, or the
-/// manual `mma`, the score kept in its fragments ([`ScoreHolder`]).
+/// The shape of the tile a plane holds along the queries and along a stage of keys, in units of the
+/// device's matrix unit for the operands ([`PlaneFragmentMicrokernel::matrix_unit`]), how much of
+/// the query's gradient its scale bounces through shared memory at once, and where it keeps the
+/// score ([`ScoreHolder`]): in windows of shared memory, read through cmma, or in its own manual
+/// `mma` fragments. The instruction is not a setting: it follows from where the score is held.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneQueryGradientMicrokernelSettings {
     pub seq_q: NonZeroUsize,
     pub seq_kv: NonZeroUsize,
     pub scratch: Scratch,
-    pub transport: PlaneFragmentTransport,
+    pub score: ScoreHolder,
 }
 
 impl PlaneQueryGradientMicrokernelSettings {
     pub const DEFAULT: Self = Self::fragments(2, 2);
 
-    /// `queries` fragments of queries against `keys` fragments of keys, one fragment bounced at a
-    /// time.
+    /// `queries` units of queries against `keys` units of keys, one fragment bounced at a time.
     ///
     /// # Panics
     ///
@@ -63,14 +63,14 @@ impl PlaneQueryGradientMicrokernelSettings {
             seq_q: NonZeroUsize::new(queries).unwrap(),
             seq_kv: NonZeroUsize::new(keys).unwrap(),
             scratch: Scratch::OneTile,
-            transport: PlaneFragmentTransport::Cmma,
+            score: ScoreHolder::Window,
         }
     }
 
     /// These settings on the manual `mma`, the score kept in its fragments.
     pub const fn held(self) -> Self {
         Self {
-            transport: PlaneFragmentTransport::Mma,
+            score: ScoreHolder::Fragments,
             ..self
         }
     }
@@ -79,7 +79,7 @@ impl PlaneQueryGradientMicrokernelSettings {
 impl core::fmt::Display for PlaneQueryGradientMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "fragments={}x{}", self.seq_q, self.seq_kv)?;
-        if self.transport == PlaneFragmentTransport::Mma {
+        if self.score == ScoreHolder::Fragments {
             write!(f, " held")?;
         }
         match self.scratch {
@@ -126,16 +126,10 @@ impl PlaneQueryGradientMicrokernel {
         Self::grid_levels(self.score_gradient, planes)
     }
 
-    /// Where a plane keeps a step's score and the gradient against its probabilities: in their own
-    /// manual-mma fragments, the gradient read cast in place by the query's gradient, or in windows
-    /// of shared memory, which a cmma fragment is read through.
+    /// Where a plane keeps a step's score and the gradient against its probabilities: its
+    /// settings', which its instruction was picked for.
     pub fn holder(&self) -> ScoreHolder {
-        match self.score.instruction {
-            PlaneFragmentInstruction::Mma { .. } => ScoreHolder::Fragments,
-            PlaneFragmentInstruction::Cmma { .. } | PlaneFragmentInstruction::Wgmma { .. } => {
-                ScoreHolder::Window
-            }
-        }
+        self.settings.score
     }
 
     /// The scratch the query gradient's sum bounces through as its scale is taken: the
@@ -172,7 +166,7 @@ impl PlaneQueryGradientMicrokernel {
     }
 
     /// `product`'s own levels below the walker's planes, `planes` its counts: its fragments, its
-    /// rows by its columns by the steps of its contraction, so the plane's box spans the
+    /// rows by its columns by the steps of its contraction, so the plane's tile spans the
     /// contraction whole, as the operands' windows do.
     fn grid_levels(product: PlaneFragmentMicrokernel, planes: &[(Axis, usize)]) -> Vec<Level> {
         let [(_, m), (_, n), (_, k)] = product.instruction.shape();
@@ -209,23 +203,24 @@ impl PlaneQueryGradientMicrokernel {
         }
     }
 
-    /// Whether `instruction` runs a box under `settings`: a cmma one, read through windows, where
-    /// they ask for cmma; a manual `mma` of 16-bit operands as deep as two of its fragments are
-    /// wide, where they ask for it and the device reads an accumulator as an `A`, so the query's
-    /// gradient reads the score's gradient, a run of two fragments along the stage's keys, cast in
-    /// place.
+    /// Whether `instruction` runs a plane's tile under `settings`: a cmma one where they keep the
+    /// score in windows; a manual `mma` of 16-bit operands as deep as two of its fragments are wide
+    /// where they keep it in fragments and the device reads an accumulator as an `A`, so the
+    /// query's gradient reads the score's gradient, a run of two fragments along the stage's keys,
+    /// cast in place.
     fn serves(
         hw: &Hardware,
         settings: PlaneQueryGradientMicrokernelSettings,
         instruction: PlaneFragmentInstruction,
+        columns: NonZeroUsize,
     ) -> bool {
-        match (settings.transport, instruction) {
-            (PlaneFragmentTransport::Cmma, PlaneFragmentInstruction::Cmma { .. }) => true,
-            (PlaneFragmentTransport::Mma, PlaneFragmentInstruction::Mma { shape, .. }) => {
+        match (settings.score, instruction) {
+            (ScoreHolder::Window, PlaneFragmentInstruction::Cmma { .. }) => true,
+            (ScoreHolder::Fragments, PlaneFragmentInstruction::Mma { shape, .. }) => {
                 hw.accumulator_as_a
                     && shape.a_type.size() == 2
                     && shape.k == 2 * shape.n
-                    && (settings.seq_kv.get() * shape.n as usize).is_multiple_of(shape.k as usize)
+                    && (columns.get() * shape.n as usize).is_multiple_of(shape.k as usize)
             }
             _ => false,
         }
@@ -295,13 +290,13 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
         let query_item = item.query_gradient(item.element);
         let (head, value) = (item.head_dim, item.val_dim);
         let candidates: Vec<_> = PlaneFragmentMicrokernel::candidates(hw, &score_item, &grid)
-            .filter(|score| Self::serves(hw, settings, score.instruction))
+            .filter(|score| Self::serves(hw, settings, score.instruction, score.settings.along_n))
             .filter_map(|score| {
                 let [_, (_, n), (_, k)] = score.instruction.shape();
                 let head_steps = Self::steps(head, k)?;
                 let value_steps = Self::steps(value, k)?;
                 let head_columns = Self::steps(head, n)?;
-                let key_steps = Self::steps(settings.seq_kv.get() * n, k)?;
+                let key_steps = Self::steps(score.settings.along_n.get() * n, k)?;
                 Some(Self {
                     settings,
                     score: PlaneFragmentMicrokernel {
@@ -314,12 +309,12 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
                     score_gradient: Self::beside(
                         score,
                         &gradient_item,
-                        (settings.seq_q, settings.seq_kv, value_steps),
+                        (score.settings.along_m, score.settings.along_n, value_steps),
                     ),
                     query_gradient: Self::beside(
                         score,
                         &query_item,
-                        (settings.seq_q, head_columns, key_steps),
+                        (score.settings.along_m, head_columns, key_steps),
                     ),
                 })
             })

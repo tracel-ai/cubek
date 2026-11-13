@@ -21,8 +21,8 @@ use cubek_std::{Hardware, Instructions, block_scaled_for, manual_mma};
 
 /// A tile of the output one plane owns: a grid of instructions its units hold between them,
 /// contracted a stage of `K` at a time out of shared memory, as its settings size it. The
-/// instruction is the device's matrix instruction where it offers one, and the software
-/// instruction where it does not.
+/// instruction is the device's matrix instruction the tile layer picks; a device that offers none
+/// for the elements runs no plane.
 ///
 /// Against a packed rhs ([`blocks`](Self::blocks)) the plane reads the rhs straight from
 /// memory and holds every row: one fragment of rows, its settings' fragments along `n`, each a
@@ -191,11 +191,39 @@ impl PlaneFragmentMicrokernel {
             })
     }
 
-    /// The planes against a float rhs: every matrix instruction this device offers for the
-    /// item's elements that the tile layer picks for a plane's fragment of its shape
+    /// The matrix unit `hw` offers a product of `lhs` by `rhs` summed in `sum`: the instruction
+    /// that contracts the most per call, the squarest among those that contract as much
+    /// ([`largest_first`](Instructions::largest_first)), over both of the device's sets. A float
+    /// plane's settings count their tile's shape in it: `8 × 8 × 8` on an M2, `16 × 16 × 16` for
+    /// `f16` on NVIDIA and `16 × 16 × 8` for its tf32. `None` where the device offers none.
+    pub fn matrix_unit(
+        hw: &Hardware,
+        lhs: ElemType,
+        rhs: ElemType,
+        sum: ElemType,
+    ) -> Option<[usize; 3]> {
+        let unit = hw
+            .properties
+            .features
+            .matmul
+            .cmma
+            .iter()
+            .copied()
+            .chain(manual_mma(hw))
+            .for_triple(lhs, rhs, sum)
+            .largest_first()
+            .next()?;
+        Some([unit.m as usize, unit.n as usize, unit.k as usize])
+    }
+
+    /// The planes against a float rhs: every matrix instruction this device offers for the item's
+    /// elements that the tile layer picks for a plane's fragment of its shape
     /// ([`Instruction::for_accumulator`]), the fragment API's first, each the one that contracts
-    /// the most per call first ([`candidates`](Microkernel::candidates)). The warpgroup MMA alone
-    /// where the settings deal the tiles to warpgroups. None where the device offers no matrix
+    /// the most per call first ([`candidates`](Microkernel::candidates)), each cutting the same
+    /// tile: the settings' grid of the device's [`matrix_unit`](Self::matrix_unit), so the
+    /// instruction the tile picks never changes what a setting means. An instruction that does not
+    /// cut the tile in whole steps ([`MatmulStep`]) is not a candidate. The plane group MMA alone
+    /// where the settings deal the tiles to plane groups. None where the device offers no matrix
     /// instruction for the elements: a plane holds a fragment.
     fn float_candidates(
         hw: &Hardware,
@@ -220,12 +248,29 @@ impl PlaneFragmentMicrokernel {
             .largest_first()
             .map(PlaneFragmentInstruction::mma);
         let settings = *settings;
-        let depth = match settings.fragment_depth {
-            PlaneFragmentDepth::Stage => settings.depth.get(),
-            PlaneFragmentDepth::Instruction => 1,
-        };
+        let step = MatmulStep::new(hw, MatmulOperands::all(Operand::plain()), item.elements);
+        // The shape of the tile one plane holds, in elements along `M`, `N` and `K`: the settings'
+        // grid of the unit's steps, the fewest of its calls every load fills whole. Its rows lie
+        // along the axis the settings lay the instruction's rows along, so the unit's edges are
+        // exchanged where they lie along `n`.
+        let tile = Self::matrix_unit(hw, lhs, rhs, sum).map(|[m, n, k]| {
+            let (m, n) = match settings.rows_along {
+                PlaneFragmentRowsAlong::M => (m, n),
+                PlaneFragmentRowsAlong::N => (n, m),
+            };
+            let unit = step.clone().under(Space::new(&[(M, m), (N, n), (K, k)]));
+            [
+                settings.along_m.get() * m * unit.calls(M),
+                settings.along_n.get() * n * unit.calls(N),
+                settings.depth.get() * k * unit.calls(K),
+            ]
+        });
         let tiles_pick = move |instruction: &PlaneFragmentInstruction| {
             let [(_, m), (_, n), (_, k)] = instruction.shape_along(settings.rows_along);
+            let depth = match (settings.fragment_depth, tile) {
+                (PlaneFragmentDepth::Stage, Some([_, _, shape_k])) => shape_k,
+                _ => k,
+            };
             let picked = Instruction::for_accumulator(
                 &hw.properties,
                 &hw.target,
@@ -233,12 +278,12 @@ impl PlaneFragmentMicrokernel {
                 FragmentSource::Values(lhs),
                 FragmentSource::Values(rhs),
                 sum,
-                [m, n, k * depth],
+                [m, n, depth],
             );
             picked == Some(instruction.tile_instruction())
         };
         let instructions: Vec<_> = match settings.holder {
-            ComputeScope::WARPGROUP => Self::wgmma(hw, item, &settings).into_iter().collect(),
+            ComputeScope::MMA_PLANE_GROUP => Self::wgmma(hw, item, &settings).into_iter().collect(),
             _ => cmma
                 .chain(mma)
                 .filter(|_| committed)
@@ -246,26 +291,31 @@ impl PlaneFragmentMicrokernel {
                 .collect(),
         };
         let deep = settings.fragment_depth == PlaneFragmentDepth::Stage;
-        let step = MatmulStep::new(hw, MatmulOperands::all(Operand::plain()), item.elements);
         instructions
             .into_iter()
             .filter(move |instruction| !deep || instruction.contracts_deeper_fragments())
             .filter_map(move |instruction| {
                 let [(_, m), (_, n), (_, k)] = instruction.shape_along(settings.rows_along);
                 let step = step.clone().under(Space::new(&[(M, m), (N, n), (K, k)]));
+                // The plane group MMA's settings size its one instruction, not a grid of units.
+                let (along_m, along_n, depth) = match (instruction, tile) {
+                    (PlaneFragmentInstruction::Wgmma { .. }, _) => {
+                        (settings.along_m, settings.along_n, settings.depth)
+                    }
+                    (_, Some([shape_m, shape_n, shape_k])) => (
+                        Self::calls_cutting(shape_m, m, step.calls(M))?,
+                        Self::calls_cutting(shape_n, n, step.calls(N))?,
+                        Self::calls_cutting(shape_k, k, step.calls(K))?,
+                    ),
+                    (_, None) => return None,
+                };
                 Some(Self {
                     instruction,
                     orders: instruction.orders(item.layouts),
                     settings: PlaneFragmentMicrokernelSettings {
-                        along_m: settings
-                            .along_m
-                            .checked_mul(NonZeroUsize::new(step.calls(M))?)?,
-                        along_n: settings
-                            .along_n
-                            .checked_mul(NonZeroUsize::new(step.calls(N))?)?,
-                        depth: settings
-                            .depth
-                            .checked_mul(NonZeroUsize::new(step.calls(K))?)?,
+                        along_m,
+                        along_n,
+                        depth,
                         ..settings
                     },
                     axes: item.axes,
@@ -273,6 +323,17 @@ impl PlaneFragmentMicrokernel {
                     k_stated: PlaneFragmentKStatement::Caller,
                 })
             })
+    }
+
+    /// The instruction's calls of `extent` each that cut `edge` of a plane's tile, where they cut
+    /// it in whole steps of `calls` of them.
+    ///
+    /// A division, against "multiply, never divide": a plane states its grid of fragments, so it
+    /// needs the count of each instruction's calls that cut the tile its settings name in the
+    /// device's matrix unit.
+    fn calls_cutting(edge: usize, extent: usize, calls: usize) -> Option<NonZeroUsize> {
+        let step = extent * calls;
+        NonZeroUsize::new(edge / extent).filter(|_| edge.is_multiple_of(step))
     }
 
     /// The planes reading both packed inputs of `space` as they are stored: each block-scaled
@@ -622,13 +683,13 @@ impl PlaneFragmentMicrokernel {
         }
     }
 
-    /// The warpgroup MMA for `item` at `settings`, where every rule it runs under holds: the device
-    /// offers its form and a bulk tensor copy to land its stages; its planes are as wide as a
-    /// warpgroup's ([`PlaneFragmentInstruction::WARPGROUP_PLANE_UNITS`]); the rhs lies `{n, k}`, as
-    /// both operands must, K-major; the settings hold one step along `m`, a form `along_n` granules
-    /// wide the form spans, and a stage of `depth` steps of `K` whose rows, each operand's, are one
-    /// 32, 64 or 128-byte swizzle span, which the instruction's descriptors read. The cube walking
-    /// it adds what only its fill decides
+    /// The plane group MMA for `item` at `settings`, where every rule it runs under holds: the
+    /// device offers its form and a bulk tensor copy to land its stages; its planes are as wide as
+    /// a plane group's ([`PlaneFragmentInstruction::plane_group_plane_units`]); the rhs lies
+    /// `{n, k}`, as both operands must, K-major; the settings hold one step along `m`, a form
+    /// `along_n` granules wide the form spans, and a stage of `depth` steps of `K` whose rows, each
+    /// operand's, are one 32, 64 or 128-byte swizzle span, which the instruction's descriptors
+    /// read. The cube walking it adds what only its fill decides
     /// ([`CubeStagedMicrokernel::resolve`](crate::matmul::cube::CubeStagedMicrokernel::resolve)).
     fn wgmma(
         hw: &Hardware,
@@ -654,7 +715,7 @@ impl PlaneFragmentMicrokernel {
             )
         };
         let runs = hw.bulk_tensor_copy()
-            && hw.plane_dim() == Ok(PlaneFragmentInstruction::WARPGROUP_PLANE_UNITS as u32)
+            && hw.plane_dim() == Ok(PlaneFragmentInstruction::plane_group_plane_units() as u32)
             && item.layouts.rhs == MatmulLayout::Col
             && settings.along_m.get() == 1
             && config.supports_n(n as u32)
@@ -706,8 +767,8 @@ impl Microkernel for PlaneFragmentMicrokernel {
     /// contracts the most per call first; none where the device offers none, as a plane holds a
     /// fragment. A matrix instruction spreads its fragment across the plane, so it is offered only
     /// where the device commits to one plane width. Where the settings deal the tiles to
-    /// warpgroups, the warpgroup MMA alone, where it runs. Against a packed rhs, the planes that
-    /// decode it as they load, at the grids
+    /// plane groups, the plane group MMA alone, where it runs. Against a packed rhs, the planes
+    /// that decode it as they load, at the grids
     /// [`windowed`](PlaneFragmentMicrokernelSettings::windowed) names, narrowed until their columns
     /// close `n`.
     fn candidates(
@@ -905,7 +966,7 @@ mod tests {
         }
     }
 
-    /// Rows along `n` exchange the instruction's edges along `m` and `n`, so a plane's box and its
+    /// Rows along `n` exchange the instruction's edges along `m` and `n`, so a plane's tile and its
     /// stages' tiles follow: a `16 × 8` instruction is eight rows of the product by sixteen of its
     /// columns.
     #[test]
@@ -1003,5 +1064,73 @@ mod tests {
                 assert_eq!(picked, Some(plane.tile_instruction()), "{name}, {kind:?}");
             }
         }
+    }
+
+    /// A setting is one tile shape on a device whichever instruction cuts it: on an H100 offering
+    /// `f16` three cmma forms and the manual `16 × 8 × 16`, every candidate at the default's four
+    /// by four units of `16 × 16 × 16` holds `64 × 64` of the output and walks `16` of `K` a stage,
+    /// each in its own instruction's fragments. A unit that an instruction does not cut whole is
+    /// not that instruction's: `8 × 32` cuts no tile one unit high.
+    #[test]
+    fn every_instruction_cuts_the_tile_the_setting_names() {
+        use cubek_std::devices;
+
+        let (f16, f32) = (
+            ElemType::Float(FloatKind::F16),
+            ElemType::Float(FloatKind::F32),
+        );
+        let shape = |m, n, k| MmaConfig {
+            a_type: f16,
+            b_type: f16,
+            cd_type: f32,
+            m,
+            n,
+            k,
+        };
+        let hw = devices::offering_mma(
+            devices::offering_cmma(
+                devices::h100(),
+                [shape(16, 16, 16), shape(32, 8, 16), shape(8, 32, 16)],
+            ),
+            [shape(16, 8, 16)],
+        );
+        let item = MatmulWorkItem {
+            elements: MatmulOperands {
+                lhs: f16,
+                rhs: f16,
+                out: f16,
+            },
+            sum: f32,
+            layouts: MatmulOperands::all(MatmulLayout::Row),
+            blocks: None,
+            rows: MatmulRows::Tiled,
+            destination: MatmulDestination::Buffer,
+            axes: MatmulAxes::MNK,
+            reading: MatmulReading::AsStored,
+        };
+        assert_eq!(
+            PlaneFragmentMicrokernel::matrix_unit(&hw, f16, f16, f32),
+            Some([16, 16, 16])
+        );
+        let tiles = |settings: &PlaneFragmentMicrokernelSettings| -> Vec<_> {
+            PlaneFragmentMicrokernel::candidates(&hw, &item, settings)
+                .map(|plane| {
+                    let [(_, m), (_, n), (_, k)] = plane.instruction.shape();
+                    ((m, n, k), [M, N, K].map(|axis| plane.tile_extent(axis)))
+                })
+                .collect()
+        };
+        let default = tiles(&PlaneFragmentMicrokernelSettings::DEFAULT);
+        assert_eq!(default.len(), 4, "{default:?}");
+        for (instruction, tile) in default {
+            assert_eq!(tile, [64, 64, 16], "{instruction:?}");
+        }
+        let one_unit = tiles(&PlaneFragmentMicrokernelSettings::grid(1, 1, 1));
+        assert!(
+            one_unit
+                .iter()
+                .all(|(instruction, _)| *instruction != (8, 32, 16)),
+            "{one_unit:?}"
+        );
     }
 }

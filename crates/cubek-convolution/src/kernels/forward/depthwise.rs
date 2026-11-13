@@ -39,7 +39,7 @@ use crate::{components::ConvSetupError, launch::ConvolutionArgs};
 /// window this wide leaves most instances clear of the padded border, and they should not pay a
 /// guard for the few that straddle it. Unit fan-out does not: the lines run along the channel,
 /// not along `K`.
-const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64).split_edge();
+const SOFTWARE_MATMUL: SoftwareMatmul = SoftwareMatmul::new(64).split_edge();
 
 // Output positions, the channel axis every operand shares, and the window taps.
 const B: Axis = Axis(0);
@@ -197,7 +197,7 @@ fn depthwise_kernel(
             for unit in plane.leaves() {
                 let mut out = out
                     .at(&unit)
-                    .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                    .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
                 out.mm(&weight.at(&unit), &input.at(&unit));
             }
         }

@@ -1,4 +1,4 @@
-use super::base::{PlaneFragmentAttentionMicrokernel, ScoreHolder};
+use super::{PlaneFragmentAttentionMicrokernel, ScoreHolder};
 use crate::attention::{D, DV, G, Q, S};
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
@@ -355,7 +355,7 @@ impl StageScore {
         let mut logits = score_window.accumulator::<EA>(query, key, Semiring::SUM_PROD);
         logits.zero();
 
-        // Each operand's fragments, walked over its own box and paired by position: the query's
+        // Each operand's fragments, walked over its own tile and paired by position: the query's
         // rows by steps of the head dim, the keys' by the same steps, the scores' rows by keys.
         let [(_, m), (_, n), (_, k)] = microkernel.score.instruction.shape();
         let rows = microkernel.score.settings.along_m.get();
