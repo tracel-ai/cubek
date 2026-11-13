@@ -275,6 +275,7 @@ fn gpu(plane_size: u32, shared_memory: usize) -> HardwareProperties {
         max_cube_dim: (1024, 1024, 1024),
         num_streaming_multiprocessors: None,
         num_cpu_cores: None,
+        num_cpu_physical_cores: None,
         last_level_cache_size: None,
         num_tensor_cores: None,
         min_tensor_cores_dim: None,
