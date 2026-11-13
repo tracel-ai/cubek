@@ -3,7 +3,9 @@
 use cubek_attention::kernels::CubeStagedAttentionRoutine;
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::attention::{Forward, PROMPT, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8};
+use crate::attention::{
+    Forward, PROMPT, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8, PROMPTS_WIDE_PER_TENSOR,
+};
 
 /// The cube staged routine's lead on every prompt case.
 #[test]
@@ -34,10 +36,19 @@ fn every_cube_staged_setting_matches_the_host_at_a_head_dim_of_128() {
 }
 
 /// Every setting the routine lists over every FP8 cache at a model's head dim: the score on the
-/// device's FP8 instruction, the `f16` query converted ahead, and `e4m3` values widened ahead to
-/// the query's element.
+/// device's FP8 instruction, the `f16` query converted ahead, and `e4m3` values widened to the
+/// query's element by their stage.
 #[test]
 fn every_cube_staged_setting_reads_every_fp8_cache() {
     let forward = Forward::new(CubeStagedAttentionRoutine);
     forward.check(forward.at_every_setting(&PROMPTS_WIDE_FP8));
+}
+
+/// Every setting the routine lists over a cache quantized per tensor at a model's head dim: the
+/// stages hold the keys and values as stored, the softmax reads the score under the keys' scale,
+/// and the output drains under the values'.
+#[test]
+fn every_cube_staged_setting_reads_a_cache_quantized_per_tensor() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    forward.check(forward.at_every_setting(&PROMPTS_WIDE_PER_TENSOR));
 }
