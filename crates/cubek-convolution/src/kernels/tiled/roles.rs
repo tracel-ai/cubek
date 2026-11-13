@@ -78,11 +78,11 @@ pub enum ConvGather {
 }
 
 impl ConvGather {
-    /// The map of `window` over the axes `out` and `tap`.
-    pub fn map(self, window: &SpatialWindow, out: Axis, tap: Axis) -> PhysicalAxisMap {
+    /// The map of `window` over the axes `out_axis` and `tap_axis`.
+    pub fn map(self, window: &SpatialWindow, out_axis: Axis, tap_axis: Axis) -> PhysicalAxisMap {
         match self {
-            Self::Window => window.position_map(out, tap),
-            Self::Gradient => window.gradient_position_map(out, tap),
+            Self::Window => window.position_map(out_axis, tap_axis),
+            Self::Gradient => window.gradient_position_map(out_axis, tap_axis),
         }
     }
 
@@ -162,6 +162,19 @@ impl ViewOrder {
     fn view(self, spatial: usize, values: &[usize]) -> Vec<usize> {
         let dims = self.dims(spatial);
         dims.into_iter().map(|dim| values[dim]).collect()
+    }
+
+    /// `tensor` with its dims listed in this order.
+    fn permute(self, mut tensor: TensorBinding, spatial: usize) -> Result<TensorBinding, Refusal> {
+        if self == Self::Stored {
+            return Ok(tensor);
+        }
+        if tensor.tiling.is_tiled() {
+            return Err(ConvDecline::PermutedTiled.into());
+        }
+        tensor.shape = Shape::from(self.view(spatial, &tensor.shape));
+        tensor.strides = Strides::new(&self.view(spatial, &tensor.strides));
+        Ok(tensor)
     }
 }
 
@@ -408,7 +421,7 @@ impl ConvRoles {
     ///
     /// [`ConvDecline::PermutedTiled`], where the dims move and `rhs` is tiled.
     pub fn rhs_view(&self, rhs: TensorBinding) -> Result<TensorBinding, Refusal> {
-        permuted(rhs, self.rhs_order, self.dims)
+        self.rhs_order.permute(rhs, self.dims)
     }
 
     /// `out`, a tensor of the operation's output in its own layout, with its dims listed in the
@@ -418,24 +431,8 @@ impl ConvRoles {
     ///
     /// [`ConvDecline::PermutedTiled`], where the dims move and `out` is tiled.
     pub fn out_view(&self, out: TensorBinding) -> Result<TensorBinding, Refusal> {
-        permuted(out, self.out_order, self.dims)
+        self.out_order.permute(out, self.dims)
     }
-}
-
-fn permuted(
-    mut tensor: TensorBinding,
-    order: ViewOrder,
-    spatial: usize,
-) -> Result<TensorBinding, Refusal> {
-    if order == ViewOrder::Stored {
-        return Ok(tensor);
-    }
-    if tensor.tiling.is_tiled() {
-        return Err(ConvDecline::PermutedTiled.into());
-    }
-    tensor.shape = Shape::from(order.view(spatial, &tensor.shape));
-    tensor.strides = Strides::new(&order.view(spatial, &tensor.strides));
-    Ok(tensor)
 }
 
 #[cfg(test)]
