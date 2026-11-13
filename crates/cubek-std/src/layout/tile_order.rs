@@ -29,7 +29,7 @@
 
 use crate::NVFP4_BLOCK;
 use crate::layout::stored::Operand;
-use crate::layout::{Fragments, assemble, fragments_of};
+use crate::layout::{Fragments, assemble, fragments, fragments_of};
 use crate::matmul_axes::{K, KB, KI, blocked};
 use cubecl::ir::ElemType;
 use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
@@ -591,6 +591,40 @@ pub fn matrix_scales(kernel: &Metadata) -> Metadata {
     assemble(&[kb.as_slice(), rows.as_slice()])
 }
 
+/// `slabs` matrices laid end to end along their rows and stored as one matrix of all their rows,
+/// `whole` the kernel's statement of that matrix over [`values_axes`] or [`scales_axes`], as the
+/// kernel states one slab of them: a leading dim of the slabs, then a slab's rows, `k` and the
+/// rest as `whole` states them. The coarsest piece of the rows is a strip of tiles, which holds
+/// every value and scale of its rows, so a slab of whole strips is one run of them, each slab its
+/// strips' run past the one before.
+///
+/// `None` where `slabs` does not divide the strips, or the strips are not the coarsest piece of
+/// the matrix.
+pub fn stacked(whole: &Metadata, slabs: usize) -> Option<Metadata> {
+    let dims = fragments(whole);
+    let (rows, rest) = dims.split_first()?;
+    let (&(strips, pitch), inside) = rows.split_first()?;
+    let coarsest = dims
+        .iter()
+        .flatten()
+        .all(|&(extent, stride)| extent == 1 || stride <= pitch);
+    if slabs == 0 || !strips.is_multiple_of(slabs) || !coarsest {
+        return None;
+    }
+    let per_slab = strips / slabs;
+    // A slab's strips stay the coarsest piece of its rows, one strip included: what is finer is
+    // the tile, which a reader reads off every piece but the coarsest.
+    let slab_rows: Fragments = core::iter::once((per_slab, pitch))
+        .chain(inside.iter().copied())
+        .collect();
+    let slab = [(slabs, per_slab * pitch)];
+    let stated: Vec<&[(usize, usize)]> = [&slab[..], &slab_rows[..]]
+        .into_iter()
+        .chain(rest.iter().map(|dim| &dim[..]))
+        .collect();
+    Some(assemble(&stated))
+}
+
 /// A tiled matrix's `[k, rows]` fragments, coarsest first; `None` for one in rows.
 fn matrix_fragments(matrix: &Metadata) -> Option<[Fragments; 2]> {
     if !matrix.is_tiled() {
@@ -931,6 +965,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A stack's statement sends slab `e`'s row `r` where the whole matrix's statement sends its
+    /// row `e · rows + r`, values and scales alike, staggered or not, whether a slab is one strip
+    /// or several: a slab is a fixed run of strips, so a table's entry picks one by a stride.
+    #[test]
+    fn a_stack_of_whole_strips_reads_each_slab_where_the_matrix_holds_it() {
+        let (k, slabs) = (4096, 3);
+        for (order, words_per_load) in reads() {
+            let (_, tile_rows) = order.tile();
+            for rows in [tile_rows, 2 * tile_rows] {
+                let order = order.staggered(transaction()).for_matrix(k, slabs * rows);
+                let whole = order.kernel_values_read(k, (N, slabs * rows), words_per_load);
+                let stack = stacked(&whole, slabs).expect("whole strips a slab");
+                for (e, r, ki) in (0..slabs)
+                    .flat_map(|e| (0..rows).map(move |r| (e, r)))
+                    .flat_map(|(e, r)| (0..k).step_by(7).map(move |ki| (e, r, ki)))
+                {
+                    let (kb, ki) = (ki / BLOCK, ki % BLOCK);
+                    assert_eq!(
+                        offset(&stack, &[e, r, kb, ki]),
+                        offset(&whole, &[e * rows + r, kb, ki]),
+                        "{order:?}, {words_per_load} words a load, slab {e} row {r}"
+                    );
+                }
+                let Some(whole) = order.kernel_scales_read(k, (N, slabs * rows), 1) else {
+                    continue;
+                };
+                let stack = stacked(&whole, slabs).expect("whole strips a slab");
+                for (e, r, kb) in (0..slabs)
+                    .flat_map(|e| (0..rows).map(move |r| (e, r)))
+                    .flat_map(|(e, r)| (0..k / BLOCK).map(move |kb| (e, r, kb)))
+                {
+                    assert_eq!(
+                        offset(&stack, &[e, r, kb]),
+                        offset(&whole, &[e * rows + r, kb]),
+                        "{order:?} scales, slab {e} row {r}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Slabs that split a strip state no stack.
+    #[test]
+    fn a_stack_splitting_a_strip_states_none() {
+        let order = nvfp4(TileWords::RowByRow, (128, 8));
+        let whole = order.kernel_values_read(256, (N, 24), 4);
+        assert!(stacked(&whole, 3).is_some());
+        assert!(stacked(&whole, 2).is_none());
     }
 
     /// Block by block, every scale lies at an address of its own, inside the matrix's scales, at
