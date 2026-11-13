@@ -1,4 +1,4 @@
-use super::base::{PlaneFragmentAttentionMicrokernel, ScoreHolder};
+use super::{PlaneFragmentAttentionMicrokernel, ScoreHolder};
 use crate::attention::{D, DV, G, Q, S};
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;

@@ -276,18 +276,6 @@ impl PlaneFragmentInstruction {
     }
 }
 
-/// Which transport an attention's planes reach the device's matrix instruction through: its score
-/// holder in disguise, a fragment of registers through `mma` or a window of shared memory through
-/// `cmma`. A matmul's plane takes the instruction the tile layer picks for its product, and lists
-/// both transports, so an attention picks its own from them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PlaneFragmentTransport {
-    /// The vendor's fragment API ([`PlaneFragmentInstruction::Cmma`]).
-    Cmma,
-    /// The tile DSL's own transport ([`PlaneFragmentInstruction::Mma`]).
-    Mma,
-}
-
 /// How an instruction's accumulator reaches its destination.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlaneFragmentDrain {

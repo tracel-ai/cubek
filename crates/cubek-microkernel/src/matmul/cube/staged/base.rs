@@ -151,8 +151,7 @@ impl CubeStagedMicrokernel {
     /// layout and requests.
     ///
     /// Rounded first, as the multi-level routines promote an `f32` product to tf32 where they
-    /// may: on a device whose matrix instructions take no `f32`, no plane runs the exact product,
-    /// and the unit routines that do are outrun many times over by a matrix instruction.
+    /// may: on a device whose matrix instructions take no `f32`, no exact plane runs.
     fn as_stored_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
