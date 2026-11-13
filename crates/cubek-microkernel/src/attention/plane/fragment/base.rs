@@ -19,7 +19,7 @@ use cubek_std::microkernel::{
 };
 use cubek_std::{Hardware, manual_mma};
 
-/// A box of rows of one head a plane owns: their scores against a stage of keys in the fragments
+/// The rows of one head a plane owns: their scores against a stage of keys in the fragments
 /// of a matrix instruction, the softmax taken where the plane keeps the score, and their outputs
 /// over the whole value dim in fragments held across the walk.
 ///
@@ -74,7 +74,7 @@ impl PlaneFragmentAttentionMicrokernel {
     /// is placed in: the walker's level of planes, `planes` its counts, and below it the score's
     /// fragments, its rows by the stage's keys by the steps of the head dim. The counts are what
     /// index the accumulator's scratch, a window for every plane of the cube; the steps keep the
-    /// plane's box the whole head dim, as the query's and the keys' windows are.
+    /// plane's tile the whole head dim, as the query's and the keys' windows are.
     pub fn score_levels(&self, planes: &[(Axis, usize)]) -> Vec<Level> {
         let [(_, m), (_, n), (_, k)] = self.score.instruction.shape();
         let settings = self.score.settings;
@@ -132,8 +132,8 @@ impl PlaneFragmentAttentionMicrokernel {
         let item = &item.read_as(read);
         let (head, value) = (item.head_dim, item.val_dim);
 
-        // The box in units of the device's matrix unit; the score's candidates cut it in their
-        // own instruction's fragments, and the value's grid and walks follow from those.
+        // The tile's shape in units of the device's matrix unit; the score's candidates cut it in
+        // their own instruction's fragments, and the value's grid and walks follow from those.
         let unsized_grid = PlaneFragmentMicrokernelSettings {
             along_m: settings.seq_q,
             along_n: settings.seq_kv,
@@ -299,7 +299,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
          whose k divides the head dim and whose n divides the value dim and the stage's keys, on a \
          device that commits to one plane width";
 
-    /// A star off the default: each other box of fragments, the whole grid bounced at once, and
+    /// A star off the default: each other tile shape, the whole grid bounced at once, and
     /// the score read through the windows.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         vec![
@@ -559,8 +559,8 @@ impl PlaneFragmentAttentionMicrokernel {
     /// bytes at a time, splitting sectors and lines; a whole line a row is fetched in whole
     /// sectors, and a swizzle permutes its chunks within it. On an RTX PRO 6000, a 6016 by 8192
     /// causal `f16` prompt (32/8 heads, head dim 128) on eight planes a cube takes 2392 µs with
-    /// 32-byte rows and 2047 µs with 128 on two-by-four boxes, 2143 and 1884 µs on one-by-four
-    /// boxes.
+    /// 32-byte rows and 2047 µs with 128 on two-by-four tiles, 2143 and 1884 µs on one-by-four
+    /// tiles.
     fn block_edge(&self, step: usize, steps: usize, element: ElemType) -> usize {
         let row = step * element.size();
         (1..=steps)

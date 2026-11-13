@@ -19,11 +19,11 @@ use cubek_std::microkernel::KernelEstimate;
 use cubek_std::microkernel::StageRing;
 use cubek_std::routine::{Grid, Routine};
 
-/// `out = lhs · rhs` on a warpgroup MMA: groups of planes issue each instruction together out of
+/// `out = lhs · rhs` on a plane group MMA: groups of planes issue each instruction together out of
 /// stages the TMA engine lands swizzled, issued by planes set aside to fill, which release a stage
 /// only once the MMAs reading it are done; each group's sum drains straight into its output.
 ///
-/// Refused where the device or product takes no warpgroup MMA, where the TMA engine cannot land
+/// Refused where the device or product takes no plane group MMA, where the TMA engine cannot land
 /// the stages, and where the sum would be merged, along `K` or through a bounce.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedWgmmaMatmulRoutine;
@@ -35,7 +35,7 @@ pub struct CubeStagedWgmmaMatmulRoutineSettings {
 }
 
 impl CubeStagedWgmmaMatmulRoutine {
-    /// How it fills its stages: the TMA engine, issued by one plane set aside, which a warpgroup
+    /// How it fills its stages: the TMA engine, issued by one plane set aside, which a plane group
     /// MMA needs to release a stage only once its MMAs are done with it.
     const FILL: CubeStagedFill = CubeStagedFill {
         delivery: CubeStagedDelivery::Tma,
@@ -63,7 +63,7 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
 
     /// Two plane groups along `m`, each one `64 × 128` instruction four steps of `K` a stage (a
     /// 128-byte swizzle span of `f16`), two stages in flight. None without a bulk tensor copy and
-    /// a warpgroup MMA.
+    /// a plane group MMA.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.bulk_tensor_copy() || hw.properties.features.matmul.wgmma.iter().next().is_none() {
             return Vec::new();
@@ -74,7 +74,7 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
                 MatmulPlaneLayout::new(2, 1),
             )
             .ringed(StageRing::DOUBLE)
-            .held_by(ComputeScope::WARPGROUP),
+            .held_by(ComputeScope::MMA_PLANE_GROUP),
             cube_order: CubeOrder::RowMajor,
         }]
     }
@@ -99,7 +99,7 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
     }
 
     /// As [`CubeStagedTmaFillerMatmulRoutine`](crate::kernels::CubeStagedTmaFillerMatmulRoutine)'s
-    /// over one filling plane; the microkernel refuses a warpgroup MMA its fill and drain do not
+    /// over one filling plane; the microkernel refuses a plane group MMA its fill and drain do not
     /// serve.
     fn prepare(
         &self,

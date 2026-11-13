@@ -5,7 +5,7 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Levels, RegisterBlock};
+use cubecl::tile::{Levels, SoftwareMatmul};
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
@@ -73,19 +73,19 @@ impl UnitRegistersMicrokernel {
         bytes.div_ceil(4) as u32
     }
 
-    /// The register block a unit's sum opens as: its accumulator's cells, unrolled while they fit
-    /// a unit's registers. A block past them, such as an attention unit's sum over a 512-wide
-    /// value dim, walks its cells at runtime.
-    pub fn block(&self) -> RegisterBlock {
-        RegisterBlock::new(UNIT_REGISTERS as usize)
+    /// The software matmul a unit's sum opens as: its accumulator's cells, unrolled while they fit
+    /// a unit's registers. An accumulator past them, such as an attention unit's sum over a
+    /// 512-wide value dim, walks its cells at runtime.
+    pub fn software_matmul(&self) -> SoftwareMatmul {
+        SoftwareMatmul::new(UNIT_REGISTERS as usize)
     }
 
-    /// [`block`](Self::block) with partials: with a col rhs, each cell keeps one partial sum per
-    /// lane of a `K` line and reduces them once at the drain, instead of a horizontal sum every
-    /// step. Only for an accumulator read solely at its drain, like a matmul's output; an
-    /// attention score is read by its softmax first and uses `block`.
-    pub fn drained_block(&self) -> RegisterBlock {
-        RegisterBlock::new(UNIT_REGISTERS as usize).partials()
+    /// [`software_matmul`](Self::software_matmul) with partials: with a col rhs, each cell keeps
+    /// one partial sum per lane of a `K` line and reduces them once at the drain, instead of a
+    /// horizontal sum every step. Only for an accumulator read solely at its drain, like a matmul's
+    /// output; an attention score is read by its softmax first and uses `software_matmul`.
+    pub fn drained_software_matmul(&self) -> SoftwareMatmul {
+        SoftwareMatmul::new(UNIT_REGISTERS as usize).partials()
     }
 
     /// The extent along `dim` of one step of the block.

@@ -240,7 +240,7 @@ pub fn offering_block_scaled(hw: Hardware) -> Hardware {
     offering_scaled_mma(hw, eight_bit.chain(four_bit))
 }
 
-/// `hw` offering exactly `forms` as warpgroup MMAs.
+/// `hw` offering exactly `forms` as plane group MMAs.
 pub fn offering_wgmma(mut hw: Hardware, forms: impl IntoIterator<Item = WgmmaConfig>) -> Hardware {
     features(&mut hw).matmul.wgmma = forms.into_iter().collect();
     hw

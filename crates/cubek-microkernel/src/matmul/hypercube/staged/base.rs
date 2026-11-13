@@ -246,40 +246,60 @@ impl MatmulMicrokernel for HypercubeStagedMicrokernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::matmul::{MatmulAxes, MatmulDestination, MatmulLayout, MatmulReading, MatmulRows};
+    use crate::matmul::{
+        MatmulAxes, MatmulBlocks, MatmulDestination, MatmulLayout, MatmulReading, MatmulRows,
+    };
     use cubecl::features::MmaConfig;
     use cubecl::ir::FloatKind;
     use cubek_std::devices;
+    use cubek_std::layout::stored::{Operand, Packing};
+    use cubek_std::layout::tile_order;
+    use cubek_std::matmul_axes::K;
 
-    /// An `f32` product read rounded stages its inputs decoded from their words, as each of its
-    /// cubes reads them: bound as they lie, the cubes' tf32 instruction never expands and the
-    /// launch leaves the output unwritten.
+    /// A packed input stages decoded, as each of its cubes reads it: bound as it lies, the cubes'
+    /// instruction never expands and the launch leaves the output unwritten.
     #[test]
-    fn a_rounded_f32_product_binds_its_inputs_as_its_cubes_decode_them() {
-        let (f32, tf32) = (
+    fn a_decoded_input_is_bound_as_its_cubes_decode_it() {
+        let (f16, f32) = (
+            ElemType::Float(FloatKind::F16),
             ElemType::Float(FloatKind::F32),
-            ElemType::Float(FloatKind::TF32),
         );
-        let hw = devices::offering_mma(
+        let hw = devices::offering_cmma(
             devices::h100(),
             [MmaConfig {
-                a_type: tf32,
-                b_type: tf32,
+                a_type: f16,
+                b_type: f16,
                 cd_type: f32,
                 m: 16,
-                n: 8,
-                k: 8,
+                n: 16,
+                k: 16,
             }],
         );
+        let packings = MatmulOperands {
+            rhs: Some(Packing {
+                operand: Operand::packed(K, 8, K, cubek_std::NVFP4_BLOCK, 4),
+                scheme: tile_order::nvfp4_scheme(),
+            }),
+            ..MatmulOperands::all(None)
+        };
         let item = MatmulWorkItem {
-            elements: MatmulOperands::all(f32),
+            elements: MatmulOperands {
+                lhs: f16,
+                rhs: ElemType::Float(FloatKind::E2M1),
+                out: f16,
+            },
             sum: f32,
             layouts: MatmulOperands::all(MatmulLayout::Row),
-            blocks: None,
+            blocks: Some(MatmulBlocks {
+                packings,
+                m: 512,
+                n: 4096,
+                k: 4096,
+            }),
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes::MNK,
-            reading: MatmulReading::Rounded,
+            axes: MatmulAxes::INSIDE_BLOCKS,
+            reading: MatmulReading::AsStored,
         };
         let hypercube = HypercubeStagedMicrokernel::best(
             &hw,
@@ -287,7 +307,7 @@ mod tests {
             &HypercubeStagedMicrokernelSettings::DEFAULT,
         )
         .unwrap();
-        assert_eq!(hypercube.decoded_stage(), Some(tf32));
+        assert_eq!(hypercube.decoded_stage(), Some(f16));
         assert_eq!(hypercube.words_delivery(), hypercube.cube.words_delivery());
         assert_eq!(hypercube.block_scales(), hypercube.cube.block_scales());
     }

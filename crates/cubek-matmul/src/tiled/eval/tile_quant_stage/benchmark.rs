@@ -19,7 +19,7 @@ use super::strategy::StageDepth;
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no unit
 /// fan-out, so the numbers measure the staging, not the instruction.
-const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
+const SOFTWARE_MATMUL: SoftwareMatmul = SoftwareMatmul::new(64);
 
 /// `C = A · (B ⊗ S)`, `B` the packed weight staged in its stored form: both inputs stage into
 /// shared memory per cube region, and the plane's units read windows of the stage, each scaled
@@ -50,7 +50,7 @@ fn staged_matmul_quant_rhs(
                 for unit in step {
                     let mut c_unit = c_step
                         .at(&unit)
-                        .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                        .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
                     c_unit.mma(&a_s.at(&unit), &b_s.at(&unit).mul(&scales_step.at(&unit)));
                 }
             });

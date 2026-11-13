@@ -4,7 +4,7 @@ use crate::matmul::cube::{
 };
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
-    PlaneFragmentMicrokernelSettings,
+    PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong,
 };
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands,
@@ -15,7 +15,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::space::Coverage;
-use cubecl::tile::{Levels, Scratch, Space, StageStorage};
+use cubecl::tile::{FragmentSource, Instruction, Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
@@ -276,6 +276,64 @@ impl CubeStagedMicrokernel {
         }
     }
 
+    /// What its kernel's planes load `input` of `item` from, as the tile layer states it where
+    /// the kernel opens the sum on it ([`CubeStagedWalk::open_sum`]): values its fill decodes,
+    /// packed fields or the words of a float its stages hold as another
+    /// ([`FragmentSource::Decoded`]); a float input's values as bound, as the TMA engine lands
+    /// them where it fills the stages. `None` for packed codes staged as they are stored, whose
+    /// source the scales the routine binds beside them decide.
+    fn fragment_source(
+        &self,
+        item: &MatmulWorkItem,
+        input: MatmulOperand,
+    ) -> Option<FragmentSource> {
+        let element = item.elements.get(input);
+        let packed = item
+            .blocks
+            .is_some_and(|blocks| blocks.packings.get(input).is_some());
+        let decoded = match self.reads.get(input) {
+            MatmulRead::Dequantized(read) => packed || read != element,
+            MatmulRead::AsBound => false,
+        };
+        match (decoded, packed, self.fill.delivery) {
+            (true, _, _) => Some(FragmentSource::Decoded),
+            (false, true, _) => None,
+            (false, false, CubeStagedDelivery::Tma) => Some(FragmentSource::Landed(element)),
+            (false, false, _) => Some(FragmentSource::Values(element)),
+        }
+    }
+
+    /// Whether the tile layer, opening its kernel's sum on `item`'s inputs as the kernel does,
+    /// picks the instruction its planes are planned on ([`Instruction::for_accumulator`]). A
+    /// microkernel it does not is never admitted: its kernel would contract through another
+    /// instruction than the plan sized, or find none and fail to expand. Taken as picked where an
+    /// input's source is not stated here: packed codes staged as they are stored.
+    pub fn sums_as_planned(&self, hw: &Hardware, item: &MatmulWorkItem) -> bool {
+        let source = |input| self.fragment_source(item, input);
+        let (Some(lhs), Some(rhs)) = (source(MatmulOperand::Lhs), source(MatmulOperand::Rhs))
+        else {
+            return true;
+        };
+        // The sum opens on the factor the instruction's rows lie along, at the instruction's own
+        // rows and columns, as deep as the planes' fragments.
+        let (rows, columns) = match self.plane.settings.rows_along {
+            PlaneFragmentRowsAlong::M => (lhs, rhs),
+            PlaneFragmentRowsAlong::N => (rhs, lhs),
+        };
+        let [(_, m), (_, n), _] = self.plane.instruction.shape();
+        let k = self.plane.leaf_extent(MatmulDim::K);
+        let picked = Instruction::for_accumulator(
+            &hw.properties,
+            &hw.target,
+            self.plane.settings.holder,
+            rows,
+            columns,
+            item.sum,
+            [m, n, k],
+        );
+        picked == Some(self.plane.tile_instruction())
+    }
+
     /// Planes one cube holds that contract: its layout along `m` and `n` times the planes along
     /// `K`, each a group of the planes its instruction spans.
     fn contracting_planes(&self) -> usize {
@@ -327,7 +385,7 @@ impl CubeStagedMicrokernel {
     /// # Errors
     ///
     /// A matrix instruction on a device that commits to no plane width; planes set aside to fill
-    /// where they cannot be ([`CubeStagedFillingRefusal`]); a warpgroup MMA its fill and drain do
+    /// where they cannot be ([`CubeStagedFillingRefusal`]); a plane group MMA its fill and drain do
     /// not serve (`CubeStagedWgmmaRefusal`).
     pub fn resolve(
         self,
@@ -598,12 +656,12 @@ impl Microkernel for CubeStagedMicrokernel {
         }
     }
 
-    /// Where the settings put the planes on warpgroups, that the warpgroup MMA's rules do not hold
-    /// for this device or product; [`DECLINE`](Self::DECLINE) otherwise.
+    /// Where the settings put the planes on plane groups, that the plane group MMA's rules do not
+    /// hold for this device or product; [`DECLINE`](Self::DECLINE) otherwise.
     fn decline(settings: &Self::Settings) -> &'static str {
         match settings.plane.holder {
-            ComputeScope::WARPGROUP => {
-                "this setting deals tiles to warpgroups, whose warpgroup MMA this device or \
+            ComputeScope::MMA_PLANE_GROUP => {
+                "this setting deals tiles to plane groups, whose plane group MMA this device or \
                  product does not take"
             }
             _ => Self::DECLINE,
@@ -612,8 +670,10 @@ impl Microkernel for CubeStagedMicrokernel {
 
     /// Every plane microkernel this device offers, at the settings' layout and requests; against
     /// packed inputs, those over their block-split space
-    /// (`candidates_in_blocks`). None, where the planes split `K`,
-    /// on a device whose shared memory takes no atomic `f32` add, which is where they merge.
+    /// (`candidates_in_blocks`). Each one whose sum the tile layer opens in the instruction its
+    /// planes run ([`sums_as_planned`](CubeStagedMicrokernel::sums_as_planned)). None, where the
+    /// planes split `K`, on a device whose shared memory takes no atomic `f32` add, which is where
+    /// they merge.
     fn candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -621,10 +681,11 @@ impl Microkernel for CubeStagedMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let merges = settings.planes_along_k.get() > 1;
         let atomic = hw.shared_f32_atomic_add();
-        let candidates: Vec<Self> = match item.blocks {
+        let mut candidates: Vec<Self> = match item.blocks {
             None => Self::as_stored_candidates(hw, item, settings),
             Some(_) => Self::candidates_in_blocks(hw, item, settings),
         };
+        candidates.retain(|candidate| candidate.sums_as_planned(hw, item));
         candidates.into_iter().filter(move |_| !merges || atomic)
     }
     /// Its ring reads both operands out of their tiles a stage at a time, in stretches of the
@@ -722,7 +783,7 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
     /// A stage of scale blocks walks `KB`, its planes' steps inside each block
     /// (`PlaneFragmentMicrokernel::tiling_over`), and its planes split `KB`.
     ///
-    /// An instruction several planes issue together, a warpgroup MMA's, distributes the box over
+    /// An instruction several planes issue together, a plane group MMA's, distributes the box over
     /// groups of them instead: the layout counts groups.
     fn tiling(&self) -> Levels {
         let MatmulAxes { m, n, .. } = self.plane.axes;
@@ -779,28 +840,32 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::matmul::{MatmulLayout, MatmulReading, MatmulRows};
+    use crate::matmul::{MatmulBlocks, MatmulLayout, MatmulReading, MatmulRows};
     use cubecl::features::MmaConfig;
     use cubecl::ir::FloatKind;
     use cubek_std::devices;
+    use cubek_std::layout::stored::{Operand, Packing};
+    use cubek_std::layout::tile_order;
 
-    /// An `f32` product read rounded runs its planes on the tf32 matrix instruction a device
-    /// offers, its inputs staged decoded from their words; read as stored, it runs no plane, as
-    /// the device offers no instruction for `f32`.
+    /// An `f32` product read rounded stages both inputs decoded from their words, and the tile
+    /// layer names no element two decoded inputs contract at: the sum its kernel would open has no
+    /// instruction, so no plane on the device's tf32 instruction is admitted, rather than one
+    /// whose kernel fails to expand. Read as stored, it runs no plane either, as the device offers
+    /// no instruction for `f32`.
     #[test]
-    fn a_rounded_f32_product_runs_the_tf32_instruction() {
+    fn a_product_decoding_both_inputs_admits_no_plane_its_sum_has_no_instruction_for() {
         let (f32, tf32) = (
             ElemType::Float(FloatKind::F32),
             ElemType::Float(FloatKind::TF32),
         );
-        let hw = devices::offering_mma(
+        let hw = devices::offering_cmma(
             devices::h100(),
             [MmaConfig {
                 a_type: tf32,
                 b_type: tf32,
                 cd_type: f32,
                 m: 16,
-                n: 8,
+                n: 16,
                 k: 8,
             }],
         );
@@ -815,12 +880,87 @@ mod tests {
             reading,
         };
         let settings = CubeStagedMicrokernelSettings::DEFAULT;
-        let rounded =
-            CubeStagedMicrokernel::best(&hw, &item(MatmulReading::Rounded), &settings).unwrap();
-        assert_eq!(rounded.decoded_stage(), Some(tf32));
-        // The exact product has no instruction for `f32` here, so no plane runs it: the unit
-        // routines take it.
+        let rounded = item(MatmulReading::Rounded);
+        assert!(
+            PlaneFragmentMicrokernel::candidates(&hw, &rounded.read_as(tf32), &settings.plane)
+                .any(|plane| plane.tile_instruction() == Instruction::Cmma),
+            "the device's tf32 instruction is listed for the rounded inputs"
+        );
+        let opened = Instruction::for_accumulator(
+            &hw.properties,
+            &hw.target,
+            ComputeScope::Plane,
+            FragmentSource::Decoded,
+            FragmentSource::Decoded,
+            f32,
+            [16, 16, 8],
+        );
+        assert_eq!(opened, None);
+        let rounded = CubeStagedMicrokernel::best(&hw, &rounded, &settings);
+        assert!(rounded.is_err(), "{rounded:?}");
         let exact = CubeStagedMicrokernel::best(&hw, &item(MatmulReading::AsStored), &settings);
         assert!(exact.is_err(), "{exact:?}");
+    }
+
+    /// A packed input its fill decodes contracts at the float input's element, and its planes are
+    /// admitted; two decoded inputs, NVFP4 against NVFP4, name no element, so the sum the kernel
+    /// would open has no instruction and no plane is admitted, rather than one whose kernel fails
+    /// to expand.
+    #[test]
+    fn decoded_inputs_are_admitted_only_beside_a_float_one() {
+        let (f16, f32) = (
+            ElemType::Float(FloatKind::F16),
+            ElemType::Float(FloatKind::F32),
+        );
+        let hw = devices::offering_cmma(
+            devices::h100(),
+            [MmaConfig {
+                a_type: f16,
+                b_type: f16,
+                cd_type: f32,
+                m: 16,
+                n: 16,
+                k: 16,
+            }],
+        );
+        let nvfp4 = Some(Packing {
+            operand: Operand::packed(K, 8, K, cubek_std::NVFP4_BLOCK, 4),
+            scheme: tile_order::nvfp4_scheme(),
+        });
+        let item = |lhs: Option<Packing>| {
+            let packings = MatmulOperands {
+                lhs,
+                rhs: nvfp4,
+                out: None,
+            };
+            let element = |packing: Option<Packing>| match packing {
+                Some(_) => ElemType::Float(FloatKind::E2M1),
+                None => f16,
+            };
+            MatmulWorkItem {
+                elements: MatmulOperands {
+                    lhs: element(lhs),
+                    rhs: element(nvfp4),
+                    out: f16,
+                },
+                sum: f32,
+                layouts: MatmulOperands::all(MatmulLayout::Row),
+                blocks: Some(MatmulBlocks {
+                    packings,
+                    m: 512,
+                    n: 4096,
+                    k: 4096,
+                }),
+                rows: MatmulRows::Tiled,
+                destination: MatmulDestination::Buffer,
+                axes: MatmulAxes::INSIDE_BLOCKS,
+                reading: MatmulReading::AsStored,
+            }
+        };
+        let settings = CubeStagedMicrokernelSettings::DEFAULT;
+        let one = CubeStagedMicrokernel::best(&hw, &item(None), &settings).unwrap();
+        assert_eq!(one.decoded_stage(), Some(f16));
+        let both = CubeStagedMicrokernel::best(&hw, &item(nvfp4), &settings);
+        assert!(both.is_err(), "{both:?}");
     }
 }

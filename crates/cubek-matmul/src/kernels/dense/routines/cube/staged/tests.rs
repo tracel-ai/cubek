@@ -404,7 +404,7 @@ mod base {
         assert_eq!(width, 32);
     }
 
-    /// Hopper's warpgroup MMA of `f16` into `f32`: `64 × n × 16`, `n` a multiple of 8 to 256.
+    /// Hopper's plane group MMA of `f16` into `f32`: `64 × n × 16`, `n` a multiple of 8 to 256.
     const WGMMA_F16: WgmmaConfig = WgmmaConfig {
         elems: WgmmaElems {
             a: F16,
@@ -417,16 +417,16 @@ mod base {
         k: 16,
     };
 
-    /// An H100 offering its warpgroup MMA beside a fragment instruction.
+    /// An H100 offering its plane group MMA beside a fragment instruction.
     fn hopper() -> Hardware {
         devices::offering_wgmma(offering(devices::h100()), [WGMMA_F16])
     }
 
-    /// On a device with a warpgroup MMA, only the warpgroup routine's setting runs it, on a col
+    /// On a device with a plane group MMA, only the plane group routine's setting runs it, on a col
     /// rhs, and declines a row rhs it cannot read; every setting of the units' routine prepares as
     /// it does without one, on any other instruction.
     #[test]
-    fn only_the_setting_that_asks_for_it_runs_the_warpgroup_mma() {
+    fn only_the_setting_that_asks_for_it_runs_the_plane_group_mma() {
         let hw = hopper();
         let wgmma = CubeStagedWgmmaMatmulRoutine.settings(&hw);
         assert_eq!(wgmma.len(), 1);
@@ -1701,8 +1701,8 @@ mod base {
 
     /// A packed input is bound a whole read wide along `K`, which no mask checks, so a setting
     /// whose levels reach past the end of `K` declines rather than prepare a launch its binding
-    /// refuses: a q4 activation against a q4 weight, one row, where a deep stage holds more blocks
-    /// of `K` than the problem has, and at a `K` every stage closes.
+    /// refuses: a float activation against a q4 weight, one row, where a deep stage holds more
+    /// blocks of `K` than the problem has, and at a `K` every stage closes.
     #[test]
     fn a_packed_input_prepares_no_walk_past_k() {
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
@@ -1722,20 +1722,16 @@ mod base {
                 k: 16,
             }],
         );
-        let q4 = |block: [u8; 2], axes| {
-            let scheme = QuantScheme::default()
-                .with_value(QuantValue::Q4S)
-                .per_block(block, ScaleDtype::F16)
-                .with_store(QuantStore::PackedU32(1));
-            Packing {
-                operand: Operand::of_scheme(&scheme, K, axes).expect("q4 is one block along k"),
-                scheme,
-            }
-        };
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::Q4S)
+            .per_block([32, 1], ScaleDtype::F16)
+            .with_store(QuantStore::PackedU32(1));
         let packings = MatmulOperands {
-            lhs: Some(q4([1, 32], [M, K])),
-            rhs: Some(q4([32, 1], [K, N])),
-            out: None,
+            rhs: Some(Packing {
+                operand: Operand::of_scheme(&scheme, K, [K, N]).expect("q4 is one block along k"),
+                scheme,
+            }),
+            ..MatmulOperands::all(None)
         };
         let mut past_k = 0;
         for k in [256, 8192] {
