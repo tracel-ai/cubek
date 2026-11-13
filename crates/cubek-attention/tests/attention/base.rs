@@ -5,6 +5,7 @@
 
 use core::fmt::Debug;
 use cubecl::client::Client;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::{Shape, shape};
@@ -33,6 +34,10 @@ pub(crate) struct AttentionCase {
     /// A mask's pattern, where the case has one: query `i` of head `h` in sequence `b` does not
     /// see key `j` where `hidden([b, h, i, j])` holds.
     pub hidden: Option<fn([usize; 4]) -> bool>,
+    /// The element the cache stores its keys in: `f16` as the query, or `e4m3`, an FP8 cache's.
+    pub keys: FloatKind,
+    /// The element the cache stores its values in, as [`keys`](Self::keys) its keys.
+    pub values: FloatKind,
 }
 
 /// A prompt chunk of two groups of two query heads: no step of queries or keys divides it evenly.
@@ -48,6 +53,8 @@ pub(crate) const PROMPT: AttentionCase = AttentionCase {
         queries: QueryPlacement::Last,
     },
     hidden: None,
+    keys: FloatKind::F16,
+    values: FloatKind::F16,
 };
 
 /// A causal prompt chunk at a head dim of 128, the one a model's prefill runs: four query heads to
@@ -61,6 +68,38 @@ pub(crate) const PROMPT_WIDE: AttentionCase = AttentionCase {
     val_dim: 128,
     ..PROMPT
 };
+
+/// A decode step at a model's head dim: one position of the wide prompt's heads.
+pub(crate) const DECODE_WIDE: AttentionCase = AttentionCase {
+    seq_q: 1,
+    visibility: AttentionVisibility::Attended,
+    ..PROMPT_WIDE
+};
+
+/// `case` over each FP8 cache: `e4m3` keys, `e4m3` values, and both, beside the `f16` query.
+pub(crate) const fn fp8_caches(case: AttentionCase) -> [AttentionCase; 3] {
+    [
+        AttentionCase {
+            keys: FloatKind::E4M3,
+            ..case
+        },
+        AttentionCase {
+            values: FloatKind::E4M3,
+            ..case
+        },
+        AttentionCase {
+            keys: FloatKind::E4M3,
+            values: FloatKind::E4M3,
+            ..case
+        },
+    ]
+}
+
+/// The wide prompt over every FP8 cache.
+pub(crate) const PROMPTS_WIDE_FP8: [AttentionCase; 3] = fp8_caches(PROMPT_WIDE);
+
+/// The wide decode step over every FP8 cache.
+pub(crate) const DECODES_WIDE_FP8: [AttentionCase; 3] = fp8_caches(DECODE_WIDE);
 
 /// A single position of the same heads, which a routine walks the group of as its queries.
 pub(crate) const DECODE: AttentionCase = AttentionCase {
@@ -143,21 +182,36 @@ impl AttentionCase {
     }
 
     /// The query `[b, h, q, d]`, key `[b, kv, s, d]` and value `[b, kv, s, dv]`, in `[-1, 1)` and
-    /// not periodic in any extent a case uses, rounded to `f16`, the element every case runs in.
+    /// not periodic in any extent a case uses, each rounded to the element it is stored in.
     fn inputs(&self) -> [(Vec<f32>, [usize; 4]); 3] {
-        let input = |shape: [usize; 4], salt: usize| {
+        let input = |shape: [usize; 4], salt: usize, element: FloatKind| {
             let values = (0..shape.iter().product::<usize>())
                 .map(|i| {
                     let value = ((i * 2654435761 + salt * 40503) % 2048) as f32 / 1024. - 1.;
-                    f16::from_f32(value).to_f32()
+                    match element {
+                        FloatKind::E4M3 => cubecl::e4m3::from_f32(value).to_f32(),
+                        _ => f16::from_f32(value).to_f32(),
+                    }
                 })
                 .collect();
             (values, shape)
         };
         [
-            input([self.batch, self.heads, self.seq_q, self.head_dim], 1),
-            input([self.batch, self.kv_heads, self.seq_kv, self.head_dim], 2),
-            input([self.batch, self.kv_heads, self.seq_kv, self.val_dim], 3),
+            input(
+                [self.batch, self.heads, self.seq_q, self.head_dim],
+                1,
+                FloatKind::F16,
+            ),
+            input(
+                [self.batch, self.kv_heads, self.seq_kv, self.head_dim],
+                2,
+                self.keys,
+            ),
+            input(
+                [self.batch, self.kv_heads, self.seq_kv, self.val_dim],
+                3,
+                self.values,
+            ),
         ]
     }
 
@@ -233,7 +287,8 @@ impl AttentionCase {
     /// The case's tensors on `client`, asking for each query's logsumexp, under its mask where it
     /// has one, stored as `u32` cells.
     fn tensors(&self, client: &Client) -> AttentionTensors {
-        let element = f16::elem_type_native();
+        let query = f16::elem_type_native();
+        let (keys, values) = (ElemType::Float(self.keys), ElemType::Float(self.values));
         let upload = |values: Vec<f32>, shape: Shape, element| {
             PlainTensor::of_handle(
                 TestInput::builder(client.clone(), shape)
@@ -242,9 +297,10 @@ impl AttentionCase {
                     .generate_without_host_data(),
             )
         };
-        let [query, key, value] = self
-            .inputs()
-            .map(|(values, shape)| upload(values, Shape::new(shape), element));
+        let [(q, q_shape), (k, k_shape), (v, v_shape)] = self.inputs();
+        let query = upload(q, Shape::new(q_shape), query);
+        let key = upload(k, Shape::new(k_shape), keys);
+        let value = upload(v, Shape::new(v_shape), values);
         let lengths = upload(vec![self.seq_kv as f32], shape![1], u32::elem_type_native());
         let tensors = AttentionTensors::new(
             client,

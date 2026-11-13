@@ -6,7 +6,7 @@ use cubek_attention::kernels::{
 };
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::attention::{DECODES, Forward};
+use crate::attention::{DECODES, DECODES_WIDE_FP8, Forward};
 
 /// The partial routine's lead, merged by a second launch, on every decode case.
 #[test]
@@ -20,4 +20,14 @@ fn the_partial_routine_merged_matches_the_host() {
 fn the_last_arrival_routine_matches_the_host() {
     let forward = Forward::new(HypercubeLastArrivalShuffleAttentionRoutine::new());
     forward.check(forward.at_its_lead(&DECODES));
+}
+
+/// Every setting of the split-keys partial and of the last arrival over a decode step of every FP8
+/// cache: the planes widen the `e4m3` keys or values into the sum as they read them.
+#[test]
+fn every_hypercube_shuffle_setting_reads_every_fp8_cache() {
+    let partial = Forward::split_keys(HypercubeShufflePartialAttentionRoutine::new());
+    partial.check(partial.at_every_setting(&DECODES_WIDE_FP8));
+    let last_arrival = Forward::new(HypercubeLastArrivalShuffleAttentionRoutine::new());
+    last_arrival.check(last_arrival.at_every_setting(&DECODES_WIDE_FP8));
 }

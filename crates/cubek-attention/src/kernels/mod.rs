@@ -12,6 +12,7 @@ pub mod select;
 
 mod binding;
 mod blueprint;
+mod conversion;
 mod kv_source;
 mod launch;
 mod packed;
