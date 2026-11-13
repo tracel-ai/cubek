@@ -59,15 +59,21 @@ pub const CAUSAL_CONV_CHANNELS_EMPTY: Refusal = Refusal::Declined {
     why: "the causal conv needs a channel",
 };
 
-/// What admission declines an output element with that is neither `f32` nor the activations'.
-pub const CAUSAL_CONV_OUTPUT_UNVERIFIED: Refusal = Refusal::Declined {
-    why: "the causal conv writes f32 or the activations' element",
+/// What admission declines an element with that is not a plain float, a packed activation
+/// included: the conv reads floats, so a caller falls back to unpacking above it.
+pub const CAUSAL_CONV_ELEMENT_NOT_FLOAT: Refusal = Refusal::Declined {
+    why: "the causal conv reads plain float activations, not packed or integer ones",
 };
 
-/// What admission declines an element with that is not `f16`, `bf16` or `f32`: a packed or integer
-/// element is not a float the conv reads, and no other float is verified.
+/// What admission declines an activation float with that the conv is not verified at: one that is
+/// not `f16`, `bf16` or `f32`.
 pub const CAUSAL_CONV_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
     why: "the causal conv reads f16, bf16 or f32 activations",
+};
+
+/// What admission declines an output float with that is neither `f32` nor the activations'.
+pub const CAUSAL_CONV_OUTPUT_UNVERIFIED: Refusal = Refusal::Declined {
+    why: "the causal conv writes f32 or the activations' element",
 };
 
 /// What admission declines a problem with that holds no row, or no position to convolve.

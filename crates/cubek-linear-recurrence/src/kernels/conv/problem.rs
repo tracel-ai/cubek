@@ -3,7 +3,8 @@
 use crate::kernels::conv::{CausalConvPastLayout, CubeCausalConvRoutine};
 use crate::kernels::refusals::{
     CAUSAL_CONV_BINDING_BUFFERS, CAUSAL_CONV_BINDINGS_PAST_DEVICE, CAUSAL_CONV_CHANNELS_EMPTY,
-    CAUSAL_CONV_ELEMENT_UNVERIFIED, CAUSAL_CONV_NOTHING_TO_CONVOLVE, CAUSAL_CONV_OUTPUT_UNVERIFIED,
+    CAUSAL_CONV_ELEMENT_NOT_FLOAT, CAUSAL_CONV_ELEMENT_UNVERIFIED, CAUSAL_CONV_NOTHING_TO_CONVOLVE,
+    CAUSAL_CONV_OUTPUT_UNVERIFIED,
 };
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
@@ -22,6 +23,9 @@ use cubek_std::routine::{EstimatedProblem, Routine};
 const F16: ElemType = ElemType::Float(FloatKind::F16);
 const BF16: ElemType = ElemType::Float(FloatKind::BF16);
 const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+/// The activation elements the conv is verified at.
+const ELEMENTS: [ElemType; 3] = [F16, BF16, F32];
 
 /// The depthwise causal conv, with an optional bias and a silu, over `batch` rows of one position
 /// each, or prompts of positions: `channels` channels and a filter of `taps`, in activations of
@@ -52,16 +56,20 @@ impl CausalConvProblem {
     ///
     /// # Errors
     ///
-    /// [`CAUSAL_CONV_ELEMENT_UNVERIFIED`] for any but `f16`, `bf16` and `f32`, and
-    /// [`CAUSAL_CONV_OUTPUT_UNVERIFIED`] for any but `f32` and `element`.
+    /// [`CAUSAL_CONV_ELEMENT_NOT_FLOAT`] for an element that is not a float, a packed one
+    /// included, [`CAUSAL_CONV_ELEMENT_UNVERIFIED`] for a float other than `f16`, `bf16` and
+    /// `f32`, and [`CAUSAL_CONV_OUTPUT_UNVERIFIED`] for a float output other than `f32` and
+    /// `element`.
     pub fn admit_elements(element: ElemType, output: ElemType) -> Result<(), Refusal> {
-        if ![F16, BF16, F32].contains(&element) {
-            return Err(CAUSAL_CONV_ELEMENT_UNVERIFIED);
+        match element {
+            element if ELEMENTS.contains(&element) => {}
+            element if element.is_float() => return Err(CAUSAL_CONV_ELEMENT_UNVERIFIED),
+            _ => return Err(CAUSAL_CONV_ELEMENT_NOT_FLOAT),
         }
-        if output == element || output == F32 {
-            Ok(())
-        } else {
-            Err(CAUSAL_CONV_OUTPUT_UNVERIFIED)
+        match output {
+            output if output == element || output == F32 => Ok(()),
+            output if output.is_float() => Err(CAUSAL_CONV_OUTPUT_UNVERIFIED),
+            _ => Err(CAUSAL_CONV_ELEMENT_NOT_FLOAT),
         }
     }
 
@@ -234,8 +242,8 @@ mod tests {
         assert_eq!(problem.admit(&hw), Ok(()));
     }
 
-    /// An element the conv is not verified at, and an output that is neither `f32` nor the
-    /// activations', are declined by name.
+    /// An element that is no float or no verified one, and a float output that is neither `f32` nor
+    /// the activations', are declined by name.
     #[test]
     fn elements_the_conv_is_not_verified_at_are_declined() {
         let hw = devices::h100();
@@ -254,6 +262,10 @@ mod tests {
         assert_eq!(dense(F32, F16), Err(CAUSAL_CONV_OUTPUT_UNVERIFIED));
         assert_eq!(
             dense(ElemType::UInt(UIntKind::U32), F32),
+            Err(CAUSAL_CONV_ELEMENT_NOT_FLOAT)
+        );
+        assert_eq!(
+            dense(ElemType::Float(FloatKind::F64), F32),
             Err(CAUSAL_CONV_ELEMENT_UNVERIFIED)
         );
     }
