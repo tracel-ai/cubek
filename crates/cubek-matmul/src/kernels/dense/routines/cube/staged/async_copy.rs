@@ -26,8 +26,10 @@ use cubek_std::routine::{Grid, Routine};
 /// their own fragments.
 ///
 /// Refused where the device has no copy engine, where the ring holds its next stage in registers,
-/// which the engine never passes through, and where a line it would copy is not 4, 8 or 16 bytes
-/// ([`CubeStagedAsyncCopyRefusal`](cubek_microkernel::matmul::cube::CubeStagedAsyncCopyRefusal)).
+/// which the engine never passes through, and where a line it would copy is not 4, 8 or 16 bytes,
+/// as the delivery itself answers ([`Delivery::runs_on`](cubecl::tile::launch::Delivery::runs_on),
+/// [`holds`](cubecl::tile::launch::Delivery::holds),
+/// [`moves_lines`](cubecl::tile::launch::Delivery::moves_lines)).
 /// A packed input its fill decodes is loaded by the units; the engine copies the others.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedAsyncCopyMatmulRoutine;

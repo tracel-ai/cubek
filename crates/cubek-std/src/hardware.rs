@@ -4,13 +4,13 @@
 use core::cmp::Reverse;
 use std::sync::Arc;
 
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{Delivery, Refusal};
 use cubecl::tile::layout::Stagger;
 use cubecl::{
     CubeDim,
     client::Client,
-    features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig, Tma},
-    ir::{DeviceProperties, ElemType, FloatKind, OpaqueType, TargetProperties, Type},
+    features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig},
+    ir::{DeviceProperties, ElemType, FloatKind, TargetProperties, Type},
     quant::scheme::{QuantMode, QuantScheme, QuantValue},
     tile::BlockScaledOperands,
 };
@@ -270,25 +270,15 @@ impl Hardware {
     }
 
     /// Whether a stage may be filled by the TMA engine: the bulk tensor copy, and the barriers its
-    /// copies land on.
+    /// copies land on, as the tile DSL asks ([`Delivery::runs_on`]).
     pub fn bulk_tensor_copy(&self) -> bool {
-        self.properties.features.tma.contains(Tma::Base) && self.barrier_ops()
+        Delivery::Tma.runs_on(&self.properties).is_ok()
     }
 
     /// Whether a stage may be filled by the units' async copies: the copy engine, and the
-    /// barriers its copies land on.
+    /// barriers its copies land on, as the tile DSL asks ([`Delivery::runs_on`]).
     pub fn unit_async_copy(&self) -> bool {
-        self.properties.features.copy_async && self.barrier_ops()
-    }
-
-    /// Whether the runtime carries a barrier type, which is how a stage's producer and consumer
-    /// meet when they are different planes.
-    pub fn barrier_ops(&self) -> bool {
-        self.properties
-            .features
-            .types
-            .opaque
-            .contains(&OpaqueType::Barrier)
+        Delivery::AsyncPerUnit.runs_on(&self.properties).is_ok()
     }
 }
 
