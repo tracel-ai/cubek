@@ -1,12 +1,12 @@
-//! Choosing a backward pass's routine by measurement.
+//! Choosing a backward pass's strategy by measurement.
 
 use crate::kernels::tune::{AttentionBackwardCandidate, AttentionBackwardKey};
 use crate::kernels::{
-    AttentionBackwardGradients, AttentionBackwardRoutine, AttentionBackwardTensors,
+    AttentionBackwardGradients, AttentionBackwardLaunch, AttentionBackwardTensors,
 };
 use crate::kernels::{
-    CubeStagedAttentionBackwardRoutine, HypercubeAttentionBackwardRoutine,
-    PlaneFragmentAttentionBackwardRoutine, UnitAttentionBackwardRoutine,
+    CubeStagedAttentionBackward, HypercubeAttentionBackward, PlaneFragmentAttentionBackward,
+    UnitAttentionBackward,
 };
 use cubecl::tune::{LocalTuner, Tunable, local_tuner};
 use cubecl::{CubeTuneId, Device};
@@ -15,13 +15,13 @@ use cubek_std::autotune::{Autotune, GroupPriority};
 
 type AttentionBackwardAutotune = Autotune<AttentionBackwardKey, AttentionBackwardTensors, ()>;
 
-/// The gradients of the attention `tensors` state, through whichever routine and setting
+/// The gradients of the attention `tensors` state, through whichever strategy and setting
 /// measures fastest for this problem on `device`.
 ///
-/// Autotune races the plane, the cube staged and the hypercube routines where the device commits to
-/// a plane width, the unit routine where it does not: elsewhere measuring the unit routine's settings
-/// takes longer than the others'. Under them all sits the unit routine's lead, which asks
-/// nothing of the hardware and serves any problem on any device.
+/// Autotune races the plane, the cube staged and the hypercube strategies where the device commits
+/// to a plane width, the unit strategy where it does not: elsewhere measuring the unit strategy's
+/// settings takes longer than the others'. Under them all sits the unit strategy's lead, which
+/// asks nothing of the hardware and serves any problem on any device.
 pub fn attention_backward(
     device: &Device,
     tensors: AttentionBackwardTensors,
@@ -36,27 +36,27 @@ pub fn attention_backward(
         let mut autotune = AttentionBackwardAutotune::new(|tensors: &AttentionBackwardTensors| {
             AttentionBackwardKey::from(&tensors.problem())
         });
-        let routines = autotune.group("microkernel", GroupPriority::DEFAULT);
+        let strategies = autotune.group("microkernel", GroupPriority::DEFAULT);
         autotune = match hw.plane_dim() {
             Ok(_) => autotune
                 .prioritized(
-                    &routines,
-                    AttentionBackwardCandidate::list(PlaneFragmentAttentionBackwardRoutine, &hw),
+                    &strategies,
+                    AttentionBackwardCandidate::list(PlaneFragmentAttentionBackward, &hw),
                     AttentionBackwardCandidate::launch,
                 )
                 .prioritized(
-                    &routines,
-                    AttentionBackwardCandidate::list(CubeStagedAttentionBackwardRoutine, &hw),
+                    &strategies,
+                    AttentionBackwardCandidate::list(CubeStagedAttentionBackward, &hw),
                     AttentionBackwardCandidate::launch,
                 )
                 .prioritized(
-                    &routines,
-                    AttentionBackwardCandidate::list(HypercubeAttentionBackwardRoutine, &hw),
+                    &strategies,
+                    AttentionBackwardCandidate::list(HypercubeAttentionBackward, &hw),
                     AttentionBackwardCandidate::launch,
                 ),
             Err(_) => autotune.prioritized(
-                &routines,
-                AttentionBackwardCandidate::list(UnitAttentionBackwardRoutine, &hw),
+                &strategies,
+                AttentionBackwardCandidate::list(UnitAttentionBackward, &hw),
                 AttentionBackwardCandidate::launch,
             ),
         };
@@ -64,13 +64,13 @@ pub fn attention_backward(
         let unit_lead = Tunable::new(
             "unit-attention-backward-lead",
             move |tensors: AttentionBackwardTensors| {
-                let routine = UnitAttentionBackwardRoutine;
-                let lead = routine.lead(&hw);
-                routine
+                let strategy = UnitAttentionBackward;
+                let lead = strategy.lead(&hw);
+                strategy
                     .launch_on(&hw, tensors, &lead)
                     .map(|_| ())
                     .map_err(|why| {
-                        format!("the unit routine's lead does not serve this problem: {why:?}")
+                        format!("the unit strategy's lead does not serve this problem: {why:?}")
                     })
             },
         );
