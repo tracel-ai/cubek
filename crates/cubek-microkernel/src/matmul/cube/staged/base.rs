@@ -4,7 +4,7 @@ use crate::matmul::cube::{
 };
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
-    PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong,
+    PlaneFragmentMicrokernelSettings,
 };
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands,
@@ -15,7 +15,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::space::Coverage;
-use cubecl::tile::{FragmentSource, Instruction, Levels, Scratch, Space, StageStorage};
+use cubecl::tile::{FragmentSource, Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
@@ -303,35 +303,23 @@ impl CubeStagedMicrokernel {
         }
     }
 
-    /// Whether the tile layer, opening its kernel's sum on `item`'s inputs as the kernel does,
-    /// picks the instruction its planes are planned on ([`Instruction::for_accumulator`]). A
-    /// microkernel it does not is never admitted: its kernel would contract through another
-    /// instruction than the plan sized, or find none and fail to expand. Taken as picked where an
-    /// input's source is not stated here: packed codes staged as they are stored.
-    pub fn sums_as_planned(&self, hw: &Hardware, item: &MatmulWorkItem) -> bool {
+    /// This microkernel with its planes as the tile layer opens its kernel's sum on `item`'s
+    /// inputs, as the kernel does ([`PlaneFragmentMicrokernel::opened_on`]): the planes the tile
+    /// cuts take its pick for those sources, the others keep theirs where it is the tile's pick.
+    /// `None` where the tile picks nothing for them, or another instruction than the planes
+    /// state: the kernel would contract through another instruction than the plan sized, or find
+    /// none and fail to expand. Its planes as they are where an input's source is not stated
+    /// here: packed codes staged as they are stored.
+    pub fn summed(self, hw: &Hardware, item: &MatmulWorkItem) -> Option<Self> {
         let source = |input| self.fragment_source(item, input);
         let (Some(lhs), Some(rhs)) = (source(MatmulOperand::Lhs), source(MatmulOperand::Rhs))
         else {
-            return true;
+            return Some(self);
         };
-        // The sum opens on the factor the instruction's rows lie along, at the instruction's own
-        // rows and columns, as deep as the planes' fragments.
-        let (rows, columns) = match self.plane.settings.rows_along {
-            PlaneFragmentRowsAlong::M => (lhs, rhs),
-            PlaneFragmentRowsAlong::N => (rhs, lhs),
-        };
-        let [(_, m), (_, n), _] = self.plane.instruction.shape();
-        let k = self.plane.leaf_extent(MatmulDim::K);
-        let picked = Instruction::for_accumulator(
-            &hw.properties,
-            &hw.target,
-            self.plane.settings.holder,
-            rows,
-            columns,
-            item.sum,
-            [m, n, k],
-        );
-        picked == Some(self.plane.tile_instruction())
+        Some(Self {
+            plane: self.plane.opened_on(hw, item, lhs, rhs)?,
+            ..self
+        })
     }
 
     /// Planes one cube holds that contract: its layout along `m` and `n` times the planes along
@@ -671,7 +659,8 @@ impl Microkernel for CubeStagedMicrokernel {
     /// Every plane microkernel this device offers, at the settings' layout and requests; against
     /// packed inputs, those over their block-split space
     /// (`candidates_in_blocks`). Each one whose sum the tile layer opens in the instruction its
-    /// planes run ([`sums_as_planned`](CubeStagedMicrokernel::sums_as_planned)). None, where the
+    /// planes run, its planes as that sum opens ([`summed`](CubeStagedMicrokernel::summed)).
+    /// None, where the
     /// planes split `K`, on a device whose shared memory takes no atomic `f32` add, which is where
     /// they merge.
     fn candidates(
@@ -681,12 +670,14 @@ impl Microkernel for CubeStagedMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let merges = settings.planes_along_k.get() > 1;
         let atomic = hw.shared_f32_atomic_add();
-        let mut candidates: Vec<Self> = match item.blocks {
+        let candidates: Vec<Self> = match item.blocks {
             None => Self::as_stored_candidates(hw, item, settings),
             Some(_) => Self::candidates_in_blocks(hw, item, settings),
         };
-        candidates.retain(|candidate| candidate.sums_as_planned(hw, item));
-        candidates.into_iter().filter(move |_| !merges || atomic)
+        candidates
+            .into_iter()
+            .filter_map(|candidate| candidate.summed(hw, item))
+            .filter(move |_| !merges || atomic)
     }
     /// Its ring reads both operands out of their tiles a stage at a time, in stretches of the
     /// stage's extent along each one's contiguous axis, one element wide where the TMA engine
@@ -843,6 +834,7 @@ mod tests {
     use crate::matmul::{MatmulBlocks, MatmulLayout, MatmulReading, MatmulRows};
     use cubecl::features::MmaConfig;
     use cubecl::ir::FloatKind;
+    use cubecl::tile::Instruction;
     use cubek_std::devices;
     use cubek_std::layout::stored::{Operand, Packing};
     use cubek_std::layout::tile_order;
