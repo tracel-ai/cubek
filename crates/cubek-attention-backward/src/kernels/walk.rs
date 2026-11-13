@@ -92,7 +92,9 @@ impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
             shared_memory,
         }
     }
+}
 
+impl<M, SM> AttentionBackwardWalk<M, SM> {
     /// The partitioning the walk's kernel compiles against: every extent a launch varies — the
     /// batches, the key heads, the queries and the keys — left to the launch, and the group and
     /// the dims a row spans compiled in, which a row's registers are sized by.
@@ -104,5 +106,18 @@ impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
                 .with_dynamic(&[B, KV, Q, S]),
             self.partitioning.levels().to_vec(),
         )
+    }
+
+    /// Where this walk places its work, without its microkernel or its shared memory: what a
+    /// kernel running after it under the same planes binds on, such as a cast out of the sums the
+    /// walk added into.
+    pub(crate) fn placement(&self) -> AttentionBackwardWalk<()> {
+        AttentionBackwardWalk {
+            microkernel: (),
+            partitioning: self.partitioning.clone(),
+            widths: self.widths,
+            grid: self.grid.clone(),
+            shared_memory: (),
+        }
     }
 }

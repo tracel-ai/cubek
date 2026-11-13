@@ -1,6 +1,6 @@
 use cubek_test_utils::CatalogEntry;
 
-/// What runs a row: one routine at its lead setting, or the tuned pass.
+/// What runs a row: one strategy at its lead setting, or the tuned pass.
 #[derive(Debug, Clone, Copy)]
 pub enum AttentionBackwardStrategy {
     UnitLead,
@@ -14,22 +14,22 @@ pub fn strategies() -> Vec<CatalogEntry<AttentionBackwardStrategy>> {
     vec![
         CatalogEntry::new(
             "unit_lead",
-            "Unit routine (lead)",
+            "Unit strategy (lead)",
             AttentionBackwardStrategy::UnitLead,
         ),
         CatalogEntry::new(
             "plane_lead",
-            "Plane fragment routine (lead)",
+            "Plane fragment strategy (lead)",
             AttentionBackwardStrategy::PlaneLead,
         ),
         CatalogEntry::new(
             "cube_lead",
-            "Cube staged routine (lead)",
+            "Cube staged strategy (lead)",
             AttentionBackwardStrategy::CubeLead,
         ),
         CatalogEntry::new(
             "hypercube_lead",
-            "Hypercube routine (lead)",
+            "Hypercube strategy (lead)",
             AttentionBackwardStrategy::HypercubeLead,
         ),
         CatalogEntry::new("tuned", "Tuned", AttentionBackwardStrategy::Tuned),
