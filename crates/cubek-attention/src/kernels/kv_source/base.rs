@@ -43,10 +43,11 @@ pub const SCALED_PACKED_UNREAD: Refusal = Refusal::Declined {
 
 /// The keys and values an attention reads, and where each sequence's positions lie in them.
 ///
-/// Four independent choices, each of which combines with the others:
+/// Four choices, of which the entry declines the combinations no routine reads
+/// ([`AttentionTensors::attention`](crate::kernels::AttentionTensors::attention)):
 /// - what is stored, the [`cache`](Self::cache): float keys and values, or a packed cache;
-/// - what each stored side is multiplied by, the [`scales`](Self::scales): nothing, or one scale
-///   over all its keys or all its values;
+/// - what each side of a float cache is multiplied by, the [`scales`](Self::scales): nothing, or
+///   one scale over all its keys or all its values;
 /// - where a position lies, the [`pages`](Self::pages): along each sequence's own positions, or in
 ///   pools of pages a table names;
 /// - which positions a sequence reads, the [`blocks`](Self::blocks): every attended one, or the
