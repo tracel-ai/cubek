@@ -1,5 +1,5 @@
 use crate::linear_recurrence::{POSITION, PROMPT_POSITION, RING_COLUMN, walked};
-use cubecl::tile::{Axis, Region, Tile};
+use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
 /// Who writes the positions a launch convolves into the ring.
@@ -35,19 +35,39 @@ impl CausalConvPastTiles {
             columns: self.columns,
         }
     }
+
+    /// The same tiles, for a unit to hold.
+    pub fn held(&self) -> CausalConvPastTiles {
+        CausalConvPastTiles {
+            input: self.input.clone(),
+            ring: self.ring.clone(),
+            lengths: self.lengths.clone(),
+            columns: self.columns,
+        }
+    }
+
+    /// The `line`-th line of the input at `position`.
+    pub fn input_line<E: Float, N: Size>(&self, position: usize, line: usize) -> Vector<E, N> {
+        let placed = self.input.within(PROMPT_POSITION, position, position + 1);
+        placed.flat::<E, N>().read(line)
+    }
+
+    /// The `line`-th line of the ring at `column`.
+    pub fn ring_line<E: Float, N: Size>(&self, column: usize, line: usize) -> Vector<E, N> {
+        let placed = self.ring.within(RING_COLUMN, column, column + 1);
+        placed.flat::<E, N>().read(line)
+    }
 }
 
 /// Where a unit reads the values its taps run over: earlier positions of the row's input, then its
 /// ring.
 #[derive(CubeType)]
 pub struct PastReader {
-    input: Tile,
-    ring: Tile,
+    tiles: CausalConvPastTiles,
     /// The positions the row has convolved before the launch: its ring's fill.
     before: usize,
     /// The cube's place in the row's input.
     position: usize,
-    columns: usize,
     #[cube(comptime)]
     writer: RingWriter,
     #[cube(comptime)]
@@ -63,11 +83,9 @@ impl PastReader {
         #[comptime] read_columns: usize,
     ) -> Self {
         PastReader {
-            input: tiles.input.clone(),
-            ring: tiles.ring.clone(),
+            tiles: tiles.held(),
             before: walked(&tiles.lengths) as usize,
             position: cube.coord(POSITION),
-            columns: tiles.columns,
             writer,
             read_columns,
         }
@@ -75,7 +93,7 @@ impl PastReader {
 
     /// The `line`-th line at the newest tap: the position's own value.
     pub fn newest<E: Float, N: Size>(&self, line: usize) -> Vector<E, N> {
-        read_line::<E, N>(&self.input, PROMPT_POSITION, self.position, line)
+        self.tiles.input_line::<E, N>(self.position, line)
     }
 
     /// The `line`-th line at tap `column`: zero where neither the input nor the row's ring holds it
@@ -85,11 +103,12 @@ impl PastReader {
         let tap = self.position + column;
         let mut behind = Vector::<E, N>::cast_from(0.0f32);
         if tap >= read_columns {
-            behind = read_line::<E, N>(&self.input, PROMPT_POSITION, tap - read_columns, line);
+            behind = self.tiles.input_line::<E, N>(tap - read_columns, line);
         } else if self.before + tap >= read_columns {
             // The column wraps at a runtime length, which no window of the tile places.
-            let ring_column = (self.before + tap + self.columns - read_columns) % self.columns;
-            behind = read_line::<E, N>(&self.ring, RING_COLUMN, ring_column, line);
+            let ring_column =
+                (self.before + tap + self.tiles.columns - read_columns) % self.tiles.columns;
+            behind = self.tiles.ring_line::<E, N>(ring_column, line);
         }
         behind
     }
@@ -99,23 +118,11 @@ impl PastReader {
         let writer = comptime!(self.writer);
         match writer {
             RingWriter::ConvLaunch => {
-                let next = self.before % self.columns;
-                let mut column = self.ring.within(RING_COLUMN, next, next + 1);
+                let next = self.before % self.tiles.columns;
+                let mut column = self.tiles.ring.within(RING_COLUMN, next, next + 1);
                 column.flat_mut::<E, N>().write(line, newest);
             }
             RingWriter::WriteBackLaunch => {}
         }
     }
-}
-
-/// The `line`-th line of the tile at `column` along `axis`.
-#[cube]
-pub(super) fn read_line<E: Float, N: Size>(
-    tile: &Tile,
-    #[comptime] axis: Axis,
-    column: usize,
-    line: usize,
-) -> Vector<E, N> {
-    let placed = tile.within(axis, column, column + 1);
-    placed.flat::<E, N>().read(line)
 }

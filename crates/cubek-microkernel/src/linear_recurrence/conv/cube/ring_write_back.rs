@@ -1,6 +1,6 @@
-use super::past_reader::{CausalConvPastTiles, read_line};
+use super::past_reader::CausalConvPastTiles;
 use super::run_lines::{ChannelRun, RunLines};
-use crate::linear_recurrence::{PROMPT_POSITION, RING_COLUMN, RING_POSITION, walked};
+use crate::linear_recurrence::{RING_COLUMN, RING_POSITION, walked};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
@@ -8,14 +8,12 @@ use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 /// has read the ring's old columns, so the copy is its own launch.
 #[derive(CubeType)]
 pub struct RingWriteBack {
-    input: Tile,
-    ring: Tile,
+    tiles: CausalConvPastTiles,
     before: usize,
     /// The positions of the prompt that are real, the rest right padding, at most the prompt's.
     valid: usize,
     /// Which of the last `taps - 1` valid positions the cube copies, oldest first.
     written: usize,
-    columns: usize,
     #[cube(comptime)]
     read_columns: usize,
 }
@@ -30,12 +28,10 @@ impl RingWriteBack {
         #[comptime] read_columns: usize,
     ) -> Self {
         RingWriteBack {
-            input: tiles.input.clone(),
-            ring: tiles.ring.clone(),
+            tiles: tiles.held(),
             before: walked(&tiles.lengths) as usize,
             valid: usize::min(walked(valid) as usize, positions),
             written: cube.coord(RING_POSITION),
-            columns: tiles.columns,
             read_columns,
         }
     }
@@ -46,9 +42,9 @@ impl RingWriteBack {
         let read_columns = self.read_columns;
         if self.valid + self.written >= read_columns {
             let position = self.valid + self.written - read_columns;
-            let value = read_line::<E, N>(&self.input, PROMPT_POSITION, position, line);
-            let next = (self.before + position) % self.columns;
-            let mut column = self.ring.within(RING_COLUMN, next, next + 1);
+            let value = self.tiles.input_line::<E, N>(position, line);
+            let next = (self.before + position) % self.tiles.columns;
+            let mut column = self.tiles.ring.within(RING_COLUMN, next, next + 1);
             column.flat_mut::<E, N>().write(line, value);
         }
     }
