@@ -4,6 +4,7 @@ use cubecl::features::{MmaConfig, WgmmaConfig};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::ops::matmul::MmaIo;
+use cubecl::tile::space::ComputeScope;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{Axis, BlockScaledOperands, Instruction, MmaOperands, StageStorage};
 use cubecl::wgmma::PLANE_GROUP_UNITS;
@@ -39,11 +40,19 @@ pub enum PlaneFragmentInstruction {
 }
 
 impl PlaneFragmentInstruction {
-    /// Planes one plane group is made of, which issue its MMA together.
-    pub(crate) const PLANE_GROUP_PLANES: usize = 4;
+    /// Planes in the group that issues one plane group MMA together
+    /// ([`ComputeScope::MMA_PLANE_GROUP`]).
+    fn plane_group_planes() -> usize {
+        ComputeScope::MMA_PLANE_GROUP
+            .planes()
+            .expect("a plane group spans whole planes")
+    }
 
-    /// Units in each plane of a plane group: the only plane width its MMA runs at.
-    pub const PLANE_GROUP_PLANE_UNITS: usize = PLANE_GROUP_UNITS / Self::PLANE_GROUP_PLANES;
+    /// Units in each plane of the group that issues a plane group MMA: the only plane width its
+    /// MMA runs at.
+    pub fn plane_group_plane_units() -> usize {
+        PLANE_GROUP_UNITS / Self::plane_group_planes()
+    }
 
     /// The instruction's `m × n × k` laid with its rows along `rows`: its own where they lie
     /// along `m`, its rows' and columns' edges exchanged where they lie along `n`.
@@ -71,13 +80,13 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// Planes that issue one instruction together: a plane group's
-    /// `PLANE_GROUP_PLANES`, one elsewhere. The plane group MMA runs only
-    /// where planes are [`PLANE_GROUP_PLANE_UNITS`](Self::PLANE_GROUP_PLANE_UNITS) wide
+    /// Planes that issue one instruction together: the plane group MMA's group, one elsewhere. The
+    /// plane group MMA runs only where planes are
+    /// [`plane_group_plane_units`](Self::plane_group_plane_units) wide
     /// ([`PlaneFragmentMicrokernel`](super::PlaneFragmentMicrokernel)'s candidates).
     pub fn planes(self) -> usize {
         match self {
-            Self::Wgmma { .. } => Self::PLANE_GROUP_PLANES,
+            Self::Wgmma { .. } => Self::plane_group_planes(),
             Self::Cmma { .. } | Self::Mma { .. } => 1,
         }
     }
@@ -125,7 +134,7 @@ impl PlaneFragmentInstruction {
     ///
     /// Measured on an L4 for a weight gradient's `f32` col lhs at tf32: staged in the product's
     /// order, a unit reads one value at a time across the lhs's lines, and the cmma candidates
-    /// lost to the software instruction a plane once ran.
+    /// lose to the unit routines.
     pub fn orders(self, layouts: MatmulOperands<MatmulLayout>) -> MatmulOperands<BindingOrder> {
         let lhs = match (self, layouts.lhs) {
             (Self::Cmma { .. } | Self::Mma { .. }, MatmulLayout::Col) => {
@@ -197,9 +206,9 @@ impl PlaneFragmentInstruction {
     /// lands them, its rows along `rows`, and one of every batch axis in `batches`. The manual
     /// `mma`'s rows swizzled as the descriptor swizzles them, which keeps the rows a fragment load
     /// reads at once on distinct banks as its own [`stage_layout`](Self::stage_layout) does;
-    /// `cmma`'s in order, since a box lands no padding; the software instruction's as the operand
-    /// lies, as ever. The plane group MMA's swizzled as the manual `mma`'s are: a row one swizzle
-    /// span long lies as the instruction's descriptor reads it.
+    /// `cmma`'s in order, since a box lands no padding. The plane group MMA's swizzled as the
+    /// manual `mma`'s are: a row one swizzle span long lies as the instruction's descriptor reads
+    /// it.
     pub fn landed_stage_storage(
         self,
         batches: &[Axis],

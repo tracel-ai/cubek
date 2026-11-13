@@ -59,10 +59,32 @@ use serde::{Deserialize, Serialize};
 ///
 /// [`AttentionTuneInputs::attending_every_position`]:
 /// crate::kernels::tune::AttentionTuneInputs::attending_every_position
+/// The elements an [`AttentionKey`]'s operands are read in: the query's, which the output is
+/// written in, and the keys' and the values' each its own.
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct AttentionKeyElements {
+    pub query: ElemType,
+    pub key: ElemType,
+    pub value: ElemType,
+}
+
+impl AttentionKeyElements {
+    /// Every operand in `elem`.
+    pub fn one(elem: ElemType) -> Self {
+        Self {
+            query: elem,
+            key: elem,
+            value: elem,
+        }
+    }
+}
+
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct AttentionKey {
-    /// Query/key/value dtype.
-    elem: ElemType,
+    /// The element each operand is read in: a cache's keys and values may each be stored in
+    /// another than the query's, which a routine reads differently, so a winner measured over one
+    /// cache does not serve another.
+    elements: AttentionKeyElements,
     /// Query heads.
     heads: usize,
     /// Key/value heads (GQA when fewer than `heads`).
@@ -142,9 +164,9 @@ impl AttentionKey {
         self.keys
     }
 
-    /// The element the operands bind at.
-    pub fn elem(&self) -> ElemType {
-        self.elem
+    /// The element each operand binds at.
+    pub fn elements(&self) -> AttentionKeyElements {
+        self.elements
     }
 
     /// Key/value heads.
@@ -190,7 +212,7 @@ impl AttentionKey {
 }
 
 /// The problem a tuning **key** describes, at its bucket's extents
-/// ([`AttentionKey`]): operands of the key's element, the query `[b, h, q, d]`, the keys and
+/// ([`AttentionKey`]): operands of the key's elements, the output at the query's, the query `[b, h, q, d]`, the keys and
 /// values `[b, kv, s, d]`, read through a page table where the key has a page size, and the
 /// output `[b, q, h, d]`, the value dim the head dim.
 /// A key carries no value dim of its own: every attention reaching autotune has `DV = D`.
@@ -203,7 +225,7 @@ impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
     /// heads.
     fn try_from(key: &AttentionKey) -> Result<Self, Refusal> {
         let group = key.group().ok_or(ATTENTION_GROUP_UNEVEN)?;
-        let (element, head) = (key.elem(), key.head_dim());
+        let (elements, head) = (key.elements(), key.head_dim());
         let rows = |innermost: usize| ElemAlignment::new(&[1, innermost], &[innermost, 1]);
         let (group, queries, visibility) = QueryAxis::new(key.seq_q(), key.visibility()).read(
             group,
@@ -220,10 +242,10 @@ impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
             val_dim: head,
             visibility,
             elements: AttentionOperands {
-                query: element,
-                key: element,
-                value: element,
-                out: element,
+                query: elements.query,
+                key: elements.key,
+                value: elements.value,
+                out: elements.query,
             },
             elem_alignments: AttentionOperands {
                 query: rows(head),

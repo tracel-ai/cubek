@@ -74,7 +74,7 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
                 MatmulPlaneLayout::new(2, 1),
             )
             .ringed(StageRing::DOUBLE)
-            .held_by(ComputeScope::PLANE_GROUP),
+            .held_by(ComputeScope::MMA_PLANE_GROUP),
             cube_order: CubeOrder::RowMajor,
         }]
     }

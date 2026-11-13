@@ -8,9 +8,22 @@ use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 
 /// Every cube walking its run of its box over the keys its queries see, its planes reading the
-/// keys and values from tiles, leaving its partial in its slot for the split-keys merge.
+/// keys and values from tiles, leaving its partial in its slot for the split-keys merge. Each
+/// operand is read in its own element and widened into the sum, `EA`: the query in `EQ`, the keys
+/// in `EK`, the values in `EV`. The output, which the merge writes, is not read here.
 #[cube(launch_unchecked)]
-pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "every operand's element is defined, as the routine names them, the output's too"
+)]
+pub fn hypercube_attention_partial_kernel<
+    EA: Float,
+    EQ: Float,
+    EK: Float,
+    EV: Float,
+    EO: Float,
+    N: Size,
+>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
@@ -25,14 +38,14 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     #[comptime] microkernel: HypercubeAttentionMicrokernel,
     #[comptime] merge: HypercubeMergeShape,
     #[comptime] visibility: AttentionVisibility,
-    #[define(EA, E)] _elements: [ElemType; 2],
+    #[define(EA, EQ, EK, EV, EO)] _elements: [ElemType; 5],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
-    let key = TileStepReads::<E> {
+    let key = TileStepReads::<EK> {
         tile: key.tile(&partitioning),
         element: PhantomData,
     };
-    let value = TileStepReads::<E> {
+    let value = TileStepReads::<EV> {
         tile: value.tile(&partitioning),
         element: PhantomData,
     };
@@ -59,10 +72,10 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
 
     let _ = cube_unstaged_attention_partial_microkernel::<
         EA,
-        E,
+        EQ,
         N,
-        TileStepReads<E>,
-        TileStepReads<E>,
+        TileStepReads<EK>,
+        TileStepReads<EV>,
     >(
         run,
         // The query spans no key: its box is the first step's.

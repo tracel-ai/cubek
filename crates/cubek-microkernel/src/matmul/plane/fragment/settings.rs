@@ -21,8 +21,8 @@ pub struct PlaneFragmentMicrokernelSettings {
     pub along_m: NonZeroUsize,
     pub along_n: NonZeroUsize,
     pub depth: NonZeroUsize,
-    /// Who holds each of the plane's tiles: the plane itself, or a plane group the tiles are
-    /// dealt to whole. A plane group ([`ComputeScope::PLANE_GROUP`]) holds its tile in the plane
+    /// Who holds each of the plane's tiles: the plane itself, or a plane group the tiles are dealt
+    /// to whole. A plane group ([`ComputeScope::MMA_PLANE_GROUP`]) holds its tile in the plane
     /// group MMA, which the tile layer picks for it: a routine of its own, whose stages only the
     /// TMA engine lands.
     pub holder: ComputeScope,

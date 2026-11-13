@@ -273,7 +273,7 @@ impl PlaneFragmentMicrokernel {
         item: &MatmulWorkItem,
         settings: &PlaneFragmentMicrokernelSettings,
     ) -> Vec<Self> {
-        if settings.holder == ComputeScope::PLANE_GROUP {
+        if settings.holder == ComputeScope::MMA_PLANE_GROUP {
             return Self::wgmma(hw, item, settings)
                 .map(|instruction| Self::over(instruction, PlaneUnit::Instruction, item, *settings))
                 .into_iter()
@@ -497,6 +497,10 @@ impl PlaneFragmentMicrokernel {
 
     /// The instruction's calls of `extent` each that cut `edge` of a plane's tile, where they cut
     /// it in whole steps of `calls` of them.
+    ///
+    /// A division, against "multiply, never divide": a plane states its grid of fragments, so it
+    /// needs the count of each instruction's calls that cut the tile its settings name in the
+    /// device's matrix unit.
     fn calls_cutting(edge: usize, extent: usize, calls: usize) -> Option<NonZeroUsize> {
         let step = extent * calls;
         NonZeroUsize::new(edge / extent).filter(|_| edge.is_multiple_of(step))
@@ -906,7 +910,7 @@ impl PlaneFragmentMicrokernel {
 
     /// The plane group MMA for `item` at `settings`, where every rule it runs under holds: the
     /// device offers its form and a bulk tensor copy to land its stages; its planes are as wide as
-    /// a plane group's ([`PlaneFragmentInstruction::PLANE_GROUP_PLANE_UNITS`]); the rhs lies
+    /// a plane group's ([`PlaneFragmentInstruction::plane_group_plane_units`]); the rhs lies
     /// `{n, k}`, as both operands must, K-major; the settings hold one step along `m`, a form
     /// `along_n` granules wide the form spans, and a stage of `depth` steps of `K` whose rows, each
     /// operand's, are one 32, 64 or 128-byte swizzle span, which the instruction's descriptors
@@ -936,7 +940,7 @@ impl PlaneFragmentMicrokernel {
             )
         };
         let runs = hw.bulk_tensor_copy()
-            && hw.plane_dim() == Ok(PlaneFragmentInstruction::PLANE_GROUP_PLANE_UNITS as u32)
+            && hw.plane_dim() == Ok(PlaneFragmentInstruction::plane_group_plane_units() as u32)
             && item.layouts.rhs == MatmulLayout::Col
             && settings.along_m.get() == 1
             && config.supports_n(n as u32)
@@ -1014,10 +1018,9 @@ impl Microkernel for PlaneFragmentMicrokernel {
             .filter(Self::lays_its_rows)
     }
 
-    /// The leaf a unit reads is one instruction's tile of each operand, or the unit's block of the
-    /// software instruction: it reads the lhs in stretches of the leaf's `k` and the rhs in
-    /// stretches of the leaf's extent along the axis its tiles lie along. It writes only its
-    /// accumulator; the drain into the output is its walker's.
+    /// The leaf a unit reads is one instruction's tile of each operand: it reads the lhs in
+    /// stretches of the leaf's `k` and the rhs in stretches of the leaf's extent along the axis its
+    /// tiles lie along. It writes only its accumulator; the drain into the output is its walker's.
     ///
     /// Nothing against a packed rhs: every width follows from its packing.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {
@@ -1060,8 +1063,7 @@ impl core::fmt::Display for PlaneFragmentMicrokernel {
 impl MatmulMicrokernel for PlaneFragmentMicrokernel {
     /// The levels inside one plane's tile, which a routine states the rest of the partitioning
     /// around: the steps of `K` it walks through one stage, and below them the instructions the
-    /// plane holds — a grid of fragments, one matrix instruction each, or each unit's block of the
-    /// software instruction's cells, one cell of every instruction it holds.
+    /// plane holds, a grid of fragments, one matrix instruction each.
     fn tiling(&self) -> Levels {
         self.tiling_levels(&[], &[])
     }
@@ -1217,7 +1219,7 @@ mod tests {
     /// A plane at its default settings contracts through the instruction the tile layer picks for
     /// a drained sum over the plane's tile ([`Instruction::for_accumulator`]), its fragments the
     /// cells the tile cuts the tile into, on every mocked device and float element, and refuses
-    /// where the tile layer picks none: a plane holds a fragment.
+    /// where the tile layer picks none at any shape the device offers: a plane holds a fragment.
     #[test]
     fn a_plane_takes_the_tiles_pick_or_refuses() {
         use cubecl::tile::FragmentSource;
@@ -1259,20 +1261,19 @@ mod tests {
                 );
                 let Ok(plane) = plane else {
                     let values = FragmentSource::Values(input);
-                    let any = [(8, 8, 8), (16, 16, 16), (16, 8, 16), (16, 16, 8)]
-                        .into_iter()
-                        .any(|(m, n, k)| {
-                            Instruction::for_accumulator(
-                                &hw.properties,
-                                &hw.target,
-                                ComputeScope::Plane,
-                                values,
-                                values,
-                                f32,
-                                [m, n, k],
-                            )
-                            .is_some()
-                        });
+                    let matmul = &hw.properties.features.matmul;
+                    let any = matmul.cmma.iter().chain(&matmul.mma).any(|shape| {
+                        Instruction::for_accumulator(
+                            &hw.properties,
+                            &hw.target,
+                            ComputeScope::Plane,
+                            values,
+                            values,
+                            f32,
+                            [shape.m, shape.n, shape.k].map(|extent| extent as usize),
+                        )
+                        .is_some()
+                    });
                     assert!(!any, "{name}, {kind:?}: refused, though the tile picks one");
                     continue;
                 };
