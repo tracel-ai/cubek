@@ -36,8 +36,7 @@ impl SlotStore {
     pub fn new(store: PlainTensor, slots: PlainTensor, lengths: PlainTensor) -> Self {
         let rows = slots.shape().dims::<1>()[0];
         for table in [&slots, &lengths] {
-            assert_eq!(table.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
-            assert_eq!(table.shape().dims::<1>(), [rows], "a table is [rows]");
+            Self::assert_table(table, rows);
         }
         assert!(store.shape().to_vec()[0] > 0, "a store holds a slot");
         Self {
@@ -45,6 +44,16 @@ impl SlotStore {
             slots,
             lengths,
         }
+    }
+
+    /// A table of `rows` entries, one a row of a launch.
+    ///
+    /// # Panics
+    ///
+    /// On a table that is not `u32` or not `[rows]`.
+    pub(crate) fn assert_table(table: &PlainTensor, rows: usize) {
+        assert_eq!(table.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
+        assert_eq!(table.shape().dims::<1>(), [rows], "a table is [rows]");
     }
 
     /// The store.

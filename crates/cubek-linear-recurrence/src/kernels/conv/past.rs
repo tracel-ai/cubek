@@ -6,7 +6,6 @@ use crate::kernels::refusals::{
     CAUSAL_CONV_NOTHING_TO_CONVOLVE, CAUSAL_CONV_RING_SHORTER_THAN_TAPS, CAUSAL_CONV_TAPS_TOO_FEW,
 };
 use core::num::NonZeroUsize;
-use cubecl::ir::{ElemType, UIntKind};
 use cubecl::tile::Axis;
 use cubecl::tile::launch::Refusal;
 use cubek_matmul::kernels::tensor::PlainTensor;
@@ -220,8 +219,7 @@ impl CausalConvPastInputs {
         Ok(match self {
             Self::DecodeStep { .. } => CausalConvPastLayout::DecodeStep { ring },
             Self::Prompt { valid, .. } => {
-                assert_eq!(valid.elem, ElemType::UInt(UIntKind::U32), "a table is u32");
-                assert_eq!(valid.shape().dims::<1>(), [rows], "a table is [rows]");
+                SlotStore::assert_table(valid, rows);
                 CausalConvPastLayout::Prompt { ring, positions }
             }
         })
