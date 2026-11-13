@@ -193,7 +193,7 @@ impl EstimatedProblem for CausalConvProblem {
 mod tests {
     use super::*;
     use crate::kernels::conv::RingLayout;
-    use crate::kernels::refusals::CAUSAL_CONV_TAPS_PAST_RING;
+    use crate::kernels::refusals::{CAUSAL_CONV_RING_SHORTER_THAN_TAPS, CAUSAL_CONV_TAPS_TOO_FEW};
     use core::num::NonZeroUsize;
     use cubecl::ir::UIntKind;
     use cubek_std::devices;
@@ -272,7 +272,11 @@ mod tests {
         );
         assert_eq!(
             conv(decode_step(2)).admit(&hw),
-            Err(CAUSAL_CONV_TAPS_PAST_RING)
+            Err(CAUSAL_CONV_RING_SHORTER_THAN_TAPS)
+        );
+        assert_eq!(
+            CausalConvProblem::dense(1, 64, 1, decode_step(3), F16, F16).admit(&hw),
+            Err(CAUSAL_CONV_TAPS_TOO_FEW)
         );
         assert_eq!(conv(prompt(8)).admit(&hw), Ok(()));
     }

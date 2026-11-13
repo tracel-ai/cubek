@@ -75,10 +75,15 @@ pub const CAUSAL_CONV_NOTHING_TO_CONVOLVE: Refusal = Refusal::Declined {
     why: "the causal conv needs a row and a position to convolve",
 };
 
-/// What admission declines a filter or a ring with that cannot be read back: fewer than two
-/// taps, or a ring of fewer columns than the taps read back.
-pub const CAUSAL_CONV_TAPS_PAST_RING: Refusal = Refusal::Declined {
-    why: "the causal conv needs at least two taps and a ring of at least `taps - 1` columns",
+/// What admission declines a filter with fewer than two taps: the conv reads at least one tap
+/// behind the newest.
+pub const CAUSAL_CONV_TAPS_TOO_FEW: Refusal = Refusal::Declined {
+    why: "the causal conv needs at least two taps",
+};
+
+/// What admission declines a ring with that holds fewer columns than the taps read back.
+pub const CAUSAL_CONV_RING_SHORTER_THAN_TAPS: Refusal = Refusal::Declined {
+    why: "the causal conv needs a ring of at least `taps - 1` columns",
 };
 
 /// What admission declines a device with that binds fewer buffers to a kernel than the conv's

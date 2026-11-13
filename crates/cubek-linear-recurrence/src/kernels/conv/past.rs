@@ -2,7 +2,9 @@
 
 use crate::kernels::SlotStore;
 use crate::kernels::conv::CausalConvProblem;
-use crate::kernels::refusals::{CAUSAL_CONV_NOTHING_TO_CONVOLVE, CAUSAL_CONV_TAPS_PAST_RING};
+use crate::kernels::refusals::{
+    CAUSAL_CONV_NOTHING_TO_CONVOLVE, CAUSAL_CONV_RING_SHORTER_THAN_TAPS, CAUSAL_CONV_TAPS_TOO_FEW,
+};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::tile::Axis;
@@ -73,15 +75,18 @@ impl CausalConvPastLayout {
     ///
     /// # Errors
     ///
-    /// [`CAUSAL_CONV_NOTHING_TO_CONVOLVE`] for a prompt of no position, and
-    /// [`CAUSAL_CONV_TAPS_PAST_RING`] for fewer than two `taps` or a ring of fewer columns than the
-    /// taps read back.
+    /// [`CAUSAL_CONV_NOTHING_TO_CONVOLVE`] for a prompt of no position,
+    /// [`CAUSAL_CONV_TAPS_TOO_FEW`] for fewer than two `taps`, and
+    /// [`CAUSAL_CONV_RING_SHORTER_THAN_TAPS`] for a ring of fewer columns than the taps read back.
     pub(crate) fn admit(&self, taps: usize) -> Result<(), Refusal> {
         if self.positions() == 0 {
             return Err(CAUSAL_CONV_NOTHING_TO_CONVOLVE);
         }
-        if taps < 2 || self.ring().columns + 1 < taps {
-            return Err(CAUSAL_CONV_TAPS_PAST_RING);
+        if taps < 2 {
+            return Err(CAUSAL_CONV_TAPS_TOO_FEW);
+        }
+        if self.ring().columns + 1 < taps {
+            return Err(CAUSAL_CONV_RING_SHORTER_THAN_TAPS);
         }
         Ok(())
     }
