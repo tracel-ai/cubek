@@ -4,21 +4,31 @@
 //!
 //! `out = x / sqrt(mean(x²) + eps) · weight` over the last dim: the work item is one row, and its
 //! owner reads it once, squares it into a partial in `f32` as it lands, sums the partials of its
-//! units, and writes the row scaled out of the registers it read it into. What tells the scopes
-//! apart is only where the partials meet: across a plane's lanes, across a cube's planes after
-//! each plane has summed its own, or in shared memory between a group of the cube's units that
-//! need not be a plane ([`cube::CubeGroupsRmsNormMicrokernel`]).
+//! units, and writes the row scaled out of the registers it read it into. The scaled line is
+//! computed in `f32` and rounded once to the output element.
+//!
+//! A gate multiplies by `silu(gate)` either the row before the norm, held in `f32`, or the
+//! normalized row after it ([`GateOrder`]); a [`RowReader`] reads the lines the norm sums and
+//! applies the gate to the ones it writes.
+//!
+//! What tells the scopes apart is only where the partials meet: across a plane's lanes, across a
+//! cube's planes after each plane has summed its own, or in shared memory between a group of the
+//! cube's units that need not be a plane ([`cube::CubeGroupsRmsNormMicrokernel`]).
 
 pub mod cube;
+mod gate;
 mod held_row;
 mod operand;
 mod partitioning;
 pub mod plane;
+mod row_reader;
 mod scale;
 mod work_item;
 
+pub use gate::*;
 pub use held_row::*;
 pub use operand::*;
 pub use partitioning::*;
+pub use row_reader::*;
 pub use scale::*;
 pub use work_item::*;

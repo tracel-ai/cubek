@@ -42,7 +42,8 @@ impl<M> RmsNormBlueprint<M> {
         partitioning: RmsNormPartitioning,
         mut vectorization: Vectorization<RmsNormOperand>,
     ) -> Self {
-        for operand in RmsNormOperand::ALL {
+        let item = problem.work_item();
+        for &operand in RmsNormOperand::of(problem.gate) {
             vectorization.require(VectorRequirement::Aligned {
                 operand,
                 alignment: problem.elem_alignments.get(operand),
@@ -51,15 +52,15 @@ impl<M> RmsNormBlueprint<M> {
                 operand,
                 alignment: ElemAlignment::at_start(
                     problem.start_bytes.get(operand),
-                    problem.element.size(),
+                    item.element_of(operand).size(),
                 ),
             });
             if let Some(mask) = problem.store.mask(operand, partitioning.as_tile()) {
                 vectorization.require(mask);
             }
         }
-        let width = vectorization.width(RmsNormOperand::Input, |_| {
-            hw.vector_ceiling(problem.element)
+        let width = vectorization.width(RmsNormOperand::Input, |operand| {
+            hw.vector_ceiling(item.element_of(operand))
         });
         let stage = problem.store.cube_stage(&partitioning.cube_box());
         Self {

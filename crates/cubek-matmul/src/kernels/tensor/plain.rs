@@ -1,5 +1,4 @@
 use cubecl::client::Client;
-use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
@@ -10,6 +9,7 @@ use cubecl::tile::{Axis, Geometry, Projection};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::zspace::{Shape, Strides, Tiling};
+use cubek_std::Hardware;
 use cubek_std::layout::{is_dense, is_nonoverlapping, one_matrix};
 
 use cubek_microkernel::matmul::MatmulBlocks;
@@ -144,11 +144,7 @@ impl PlainTensor {
     /// Whether `client`'s runtime computes in this tensor's element and stores it in a buffer:
     /// what a kernel at that element needs to compile there.
     pub fn runs_on(&self, client: &Client) -> bool {
-        client
-            .properties()
-            .features
-            .type_usage(self.elem)
-            .is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer)
+        Hardware::from_client(client).runs(self.elem)
     }
 
     /// The buffer's shape, strides and tiling.

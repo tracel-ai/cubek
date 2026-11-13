@@ -140,12 +140,15 @@ impl RmsNormRoutine<CubeRmsNormMicrokernel> for CubeRmsNormRoutine {
                 blueprint.width,
                 binding.input.arg(),
                 binding.weight.arg(),
+                binding.gate.map(|gate| gate.arg()).into(),
                 O::arg(binding.out),
                 epsilon,
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel,
                 blueprint.stage,
                 problem.element,
+                problem.work_item().held_element(),
+                problem.output_element,
             );
         }
     }

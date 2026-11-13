@@ -1,4 +1,4 @@
-use crate::rms_norm::{HeldRowShape, RmsNormOperand, RmsNormWorkItem};
+use crate::rms_norm::{GateOrder, HeldRowShape, RmsNormOperand, RmsNormWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
@@ -15,7 +15,7 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeGroupsRmsNormMicrokernel {
     /// Units sharing a row: the settings' target snapped to a power of two, grown to as many as
-    /// keep each unit within [`HeldRowShape::MAX_LINES_PER_UNIT`] lines of the row at `width`, and
+    /// keep each unit within [`RmsNormWorkItem::max_lines_per_unit`] lines of the row at `width`, and
     /// no larger than the lines the row holds then, so no unit holds nothing while the others hold
     /// several, nor than a cube holds.
     pub units: usize,
@@ -27,6 +27,8 @@ pub struct CubeGroupsRmsNormMicrokernel {
     pub width: usize,
     /// How a group's units sum their partials.
     pub sum: GroupSum,
+    /// Whether the norm is gated, and where the gate enters.
+    pub gate: Option<GateOrder>,
 }
 
 /// How a group's units sum their partials into the row's sum.
@@ -142,7 +144,7 @@ impl Microkernel for CubeGroupsRmsNormMicrokernel {
         let power_below = |count: usize| 1usize << count.max(1).ilog2();
         let lines = item.lines(hw);
         let needed = lines
-            .div_ceil(HeldRowShape::MAX_LINES_PER_UNIT)
+            .div_ceil(item.max_lines_per_unit())
             .next_power_of_two();
         let ceiling = power_below(lines).min(power_below(
             hw.properties.hardware.max_units_per_cube as usize,
@@ -153,12 +155,13 @@ impl Microkernel for CubeGroupsRmsNormMicrokernel {
             dim: item.dim,
             width: item.width(hw),
             sum: GroupSum::of(hw, units),
+            gate: item.gate,
         })
     }
 
     /// Every operand along the whole row ([`RmsNormOperand::require_along_run`]).
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<RmsNormOperand>) {
-        RmsNormOperand::require_along_run(self.dim, vectorization);
+        RmsNormOperand::require_along_run(self.dim, self.gate, vectorization);
     }
 
     /// Its units hold their share of the row in registers ([`HeldRowShape::work`]). The reads are
@@ -170,7 +173,7 @@ impl Microkernel for CubeGroupsRmsNormMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        estimate.work = Some(self.held_row().work(self.width, item.element));
+        estimate.work = Some(self.held_row().work(self.width, item.held_element()));
     }
 }
 

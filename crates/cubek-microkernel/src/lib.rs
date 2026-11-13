@@ -13,6 +13,8 @@
 //! cubek-std's; what the producers of a product's lhs share, how they store their rows, is
 //! `row_store`.
 
+#[cfg(feature = "activation")]
+pub mod activation;
 #[cfg(feature = "attention")]
 pub mod attention;
 #[cfg(feature = "attention-backward")]

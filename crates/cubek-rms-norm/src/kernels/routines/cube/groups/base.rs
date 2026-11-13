@@ -17,6 +17,21 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
+/// Whether `hw` runs the norm `problem` states: what a caller asks before it falls back to composed
+/// ops. The floor serves every float row on every device, so this is the elements and the store.
+/// A tiled or sink output is known only at launch, which declines an `f32` output into one.
+///
+/// # Errors
+///
+/// What [`RmsNormRoutineProblem::admit`] declines, or what the floor declines the problem
+/// with.
+pub fn serves_rms_norm(hw: &Hardware, problem: &RmsNormRoutineProblem) -> Result<(), Refusal> {
+    problem.admit(hw)?;
+    CubeGroupsRmsNormRoutine
+        .prepare(hw, problem, &CubeGroupsRmsNormRoutineSettings::DEFAULT)
+        .map(|_| ())
+}
+
 /// The norm with every row owned by a group of units, a cube holding several groups side by
 /// side. Into a plain output it asks nothing of the hardware, so it runs everywhere: this kind's
 /// floor. Into a packed one it needs plane instructions, and a cube holds the rows its stage fits.
@@ -189,6 +204,7 @@ impl RmsNormRoutine<CubeGroupsRmsNormMicrokernel> for CubeGroupsRmsNormRoutine {
                 blueprint.width,
                 binding.input.arg(),
                 binding.weight.arg(),
+                binding.gate.map(|gate| gate.arg()).into(),
                 O::arg(binding.out),
                 epsilon,
                 binding.launcher.partitioning_arg(),
@@ -196,6 +212,8 @@ impl RmsNormRoutine<CubeGroupsRmsNormMicrokernel> for CubeGroupsRmsNormRoutine {
                 groups,
                 blueprint.stage,
                 problem.element,
+                problem.work_item().held_element(),
+                problem.output_element,
             );
         }
     }
@@ -204,7 +222,9 @@ impl RmsNormRoutine<CubeGroupsRmsNormMicrokernel> for CubeGroupsRmsNormRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::problem::tests::running;
     use cubecl::ir::{ElemType, FloatKind};
+    use cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE;
     use cubek_microkernel::rms_norm::HeldRowShape;
     use cubek_std::devices;
 
@@ -344,6 +364,20 @@ mod tests {
                 .prepare(&devices::wgpu_no_subgroups(), &problem, &settings)
                 .err(),
             Some(PACKED_STORE_NEEDS_PLANES)
+        );
+    }
+
+    /// A device running the floats serves a norm over groups of channels, which are rows of the
+    /// group's size; one that does not run them refuses it.
+    #[test]
+    fn it_serves_what_the_device_runs() {
+        let grouped = RmsNormRoutineProblem::dense(37 * 20, 128, F16);
+        for hw in [devices::h100(), devices::strix_halo(), devices::cpu_12()] {
+            assert_eq!(serves_rms_norm(&running(hw), &grouped), Ok(()));
+        }
+        assert_eq!(
+            serves_rms_norm(&devices::h100(), &grouped),
+            Err(ELEMENT_NOT_ON_DEVICE)
         );
     }
 }
