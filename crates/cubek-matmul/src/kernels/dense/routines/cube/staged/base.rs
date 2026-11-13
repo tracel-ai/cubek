@@ -17,7 +17,7 @@ use cubecl::tile::launch::{
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{FragmentSource, Instruction, StageStorage, TileTensorLaunch};
+use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedResolved, CubeStagedStore, CubeStagedTmaRefusal, CubeStagedTmaStoreRefusal,
