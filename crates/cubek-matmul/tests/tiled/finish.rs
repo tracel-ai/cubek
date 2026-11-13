@@ -4,8 +4,10 @@
 use cubecl::features::AtomicUsage;
 use cubecl::ir::{ElemType, FloatKind, Type, UIntKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Bound, Destination, DestinationLaunch, Output};
-use cubecl::tile::{Partitioning, Tile};
+use cubecl::tile::launch::{
+    Bound, Destination, DestinationLaunch, Output, ServedDestination, ServedDestinationExpand,
+};
+use cubecl::tile::{Partitioning, Region, Tile};
 use cubecl::zspace::shape;
 use cubek_matmul::kernels::{
     CubeShuffleMatmulRoutine, CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine,
@@ -30,13 +32,40 @@ struct CountedArg<'a, E: Numeric> {
 #[cube]
 impl Destination for Counted {
     type Arg<E: Numeric> = CountedArg<'static, E>;
+    type Served<E: Numeric> = CountedServed;
 
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
-        arg.out.tile(partitioning)
+    fn serve<E: Numeric, V: Size>(
+        arg: &Self::Arg<E>,
+        partitioning: &Partitioning,
+    ) -> CountedServed {
+        CountedServed {
+            tile: arg.out.tile(partitioning),
+            units: arg.units,
+        }
+    }
+}
+
+/// [`Counted`] as served to the kernel: the output's tile, and the count `finish` adds to.
+#[derive(CubeType)]
+struct CountedServed {
+    tile: Tile,
+    units: &'static [Atomic<u32>],
+}
+
+#[cube]
+impl ServedDestination for CountedServed {
+    type Opened = Tile;
+
+    fn tile(&self) -> Tile {
+        self.tile.clone()
     }
 
-    fn finish<E: Numeric>(arg: &Self::Arg<E>) {
-        arg.units[0].fetch_add(1);
+    fn open(&self, _owner: &Region, _sum: &Tile) -> Tile {
+        self.tile.clone()
+    }
+
+    fn finish(&self) {
+        self.units[0].fetch_add(1);
     }
 }
 
