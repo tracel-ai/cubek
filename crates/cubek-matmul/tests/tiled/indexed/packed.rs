@@ -1,7 +1,7 @@
 //! A packed stack read through an indexed launch answers the product with its dequantized values:
 //! each route, or each group, reads the slab its entry names, words and scales both.
 
-use super::super::packed::{PackedFormat, PackedSlabs, PackedSlabsSpec};
+use super::super::packed::{Laid, PackedFormat, PackedSlabs, PackedSlabsSpec};
 use super::*;
 use cubecl::ir::{ElemType, FloatKind};
 use cubek_matmul::kernels::MatmulRoutineProblem;
@@ -9,6 +9,7 @@ use cubek_matmul::kernels::indexed::m_grouped::{MGroupedMatmulTensors, MGroupedS
 use cubek_matmul::kernels::indexed::stack::SlabAxis;
 use cubek_matmul::kernels::tensor::PACKED_STACK_UNREAD;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
+use cubek_std::layout::tile_order::TileWords;
 use half::f16;
 
 /// Loose enough for an `f16` output.
@@ -161,6 +162,7 @@ fn a_tuned_routed_packed_stack_reads_each_route_s_slab(format: PackedFormat) {
 
 fn a_grouped_packed_stack_reads_each_group_s_slab<Mk, SM, R>(
     format: PackedFormat,
+    laid: Laid,
     routine: R,
     settings: impl Fn(&Hardware) -> Vec<MGroupedSettings<R::Settings>>,
 ) where
@@ -193,7 +195,7 @@ fn a_grouped_packed_stack_reads_each_group_s_slab<Mk, SM, R>(
         let tensors = MGroupedMatmulTensors::new(
             &client,
             lhs.upload(&client, &[rows, k]),
-            StoredTensor::Packed(stack.matrix()),
+            StoredTensor::Packed(stack.laid(&client, laid)),
             upload(&client, &[grouped.sizes.len()], &grouped.ends()),
             SlabAxis::Output,
         )
@@ -201,7 +203,13 @@ fn a_grouped_packed_stack_reads_each_group_s_slab<Mk, SM, R>(
         let launched = tensors.launch(&hw, &routine, &settings);
         if let Some(out) = walk.ran(launched) {
             let got = HostData::from_tensor_handle(&client, out.unpad(), HostDataType::F32);
-            assert_close(&got, &[rows, n], &expected, HALF_TOLERANCE, &settings);
+            assert_close(
+                &got,
+                &[rows, n],
+                &expected,
+                HALF_TOLERANCE,
+                &(laid, settings),
+            );
         }
     }
     walk.settle();
@@ -241,6 +249,7 @@ fn a_grouped_cube_staged_packed_stack_reads_each_group_s_slab(format: PackedForm
     }
     a_grouped_packed_stack_reads_each_group_s_slab(
         format,
+        Laid::InRows,
         CubeStagedMatmulRoutine,
         MGroupedSettings::cube_staged_packed,
     );
@@ -265,6 +274,7 @@ fn a_tuned_routed_product_reads_each_route_s_packed_nvfp4_slab() {
 fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_q8_slab() {
     a_grouped_packed_stack_reads_each_group_s_slab(
         PackedFormat::Q8,
+        Laid::InRows,
         PlaneShuffleMatmulRoutine,
         |_| MGroupedSettings::plane_shuffle_packed(),
     );
@@ -274,6 +284,7 @@ fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_q8_slab() {
 fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_q4_slab() {
     a_grouped_packed_stack_reads_each_group_s_slab(
         PackedFormat::Q4,
+        Laid::InRows,
         PlaneShuffleMatmulRoutine,
         |_| MGroupedSettings::plane_shuffle_packed(),
     );
@@ -283,6 +294,7 @@ fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_q4_slab() {
 fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_nvfp4_slab() {
     a_grouped_packed_stack_reads_each_group_s_slab(
         PackedFormat::Nvfp4,
+        Laid::InRows,
         PlaneShuffleMatmulRoutine,
         |_| MGroupedSettings::plane_shuffle_packed(),
     );
@@ -312,6 +324,7 @@ fn a_tuned_routed_product_reads_each_route_s_packed_mxfp4_slab() {
 fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_mxfp4_slab() {
     a_grouped_packed_stack_reads_each_group_s_slab(
         PackedFormat::Mxfp4,
+        Laid::InRows,
         PlaneShuffleMatmulRoutine,
         |_| MGroupedSettings::plane_shuffle_packed(),
     );
@@ -427,4 +440,192 @@ fn a_cube_staged_launch_over_a_packed_stack_holds_the_rows_its_groups_were_padde
         }
     }
     walk.settle();
+}
+
+/// The tile orders a stack of routed experts is laid in: row by row in the tile the TMA engine
+/// fills a Blackwell stage of, and block by block in one software reads a load at a time. At
+/// `k` 128 a strip is four transactions, so the stagger pads it to five: each slab starts past
+/// padding.
+const TILE_ORDERS: [Laid; 2] = [
+    Laid::InTiles(TileWords::RowByRow, (128, 8)),
+    Laid::InTiles(TileWords::BlockByBlock, (64, 8)),
+];
+
+/// A routed shape whose slab is one strip of eight rows.
+const ONE_STRIP: Routed = Routed {
+    tokens: 5,
+    picks: 3,
+    slabs: 4,
+    k: 128,
+    n: 8,
+};
+
+/// A routed product reads each route's slab of an NVFP4 stack laid in tile order on every setting
+/// of `routine` that prepares it, the route past the stack summing nothing.
+fn a_routed_stack_in_tile_order_reads_each_route_s_slab<Mk, SM, R>(
+    routine: R,
+    settings: impl Fn(&R, &Hardware) -> Vec<R::Settings>,
+) where
+    Mk: MatmulMicrokernel,
+    R: MatmulRoutine<Mk, SM>,
+{
+    let client = client();
+    let hw = Hardware::from_client(&client);
+    let mut walk = Walk::new();
+    for laid in TILE_ORDERS {
+        for routed in [ROUTED, NARROW, ONE_STRIP] {
+            let lhs = HalfValues::new(routed.tokens * routed.k, 1);
+            let stack = PackedSlabs::new(
+                &client,
+                PackedSlabsSpec {
+                    format: PackedFormat::Nvfp4,
+                    operand: MatmulOperand::Rhs,
+                    slabs: routed.slabs,
+                    rows: routed.n,
+                    k: routed.k,
+                    seed: 2,
+                },
+            );
+            let expected = routed.expected_from(&lhs.floats, |slab, k, j| stack.cell(slab, k, j));
+            let tensors = RoutedMatmulTensors::new(
+                &client,
+                lhs.upload(&client, &[routed.tokens, routed.k]),
+                StoredTensor::Packed(stack.laid(&client, laid)),
+                upload(&client, &[routed.tokens, routed.picks], &routed.routes()),
+                routed.slabs,
+                SlabAxis::Output,
+            )
+            .expect("a packed stack in tile order derives a routed launch");
+            for settings in settings(&routine, &hw) {
+                if let Some(out) = walk.ran(tensors.launch(&hw, &routine, &settings)) {
+                    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+                    let shape = [routed.tokens, routed.picks, routed.n];
+                    assert_close(&got, &shape, &expected, HALF_TOLERANCE, &(laid, settings));
+                }
+            }
+        }
+    }
+    walk.settle();
+}
+
+#[test]
+fn a_routed_product_on_the_plane_shuffle_reads_each_route_s_slab_of_a_stack_in_tile_order() {
+    a_routed_stack_in_tile_order_reads_each_route_s_slab(
+        PlaneShuffleMatmulRoutine,
+        |routine, _| routine.packed_settings(),
+    );
+}
+
+#[test]
+fn a_routed_product_on_the_cube_staged_reads_each_route_s_slab_of_a_stack_in_tile_order() {
+    if skipped_without_a_matrix_instruction(&Hardware::from_client(&client())) {
+        return;
+    }
+    a_routed_stack_in_tile_order_reads_each_route_s_slab(CubeStagedMatmulRoutine, |_, hw| {
+        MGroupedSettings::cube_staged_packed(hw)
+            .into_iter()
+            .map(|settings| settings.routine)
+            .collect()
+    });
+}
+
+/// Autotune serves a routed product over a stack in tile order: some floor reads it.
+#[test]
+fn a_tuned_routed_product_reads_each_route_s_slab_of_a_stack_in_tile_order() {
+    let client = client();
+    let hw = Hardware::from_client(&client);
+    for laid in TILE_ORDERS {
+        let lhs = HalfValues::new(ROUTED.tokens * ROUTED.k, 1);
+        let stack = PackedSlabs::new(
+            &client,
+            PackedSlabsSpec {
+                format: PackedFormat::Nvfp4,
+                operand: MatmulOperand::Rhs,
+                slabs: ROUTED.slabs,
+                rows: ROUTED.n,
+                k: ROUTED.k,
+                seed: 2,
+            },
+        );
+        let expected = ROUTED.expected_from(&lhs.floats, |slab, k, j| stack.cell(slab, k, j));
+        let tensors = RoutedMatmulTensors::new(
+            &client,
+            lhs.upload(&client, &[ROUTED.tokens, ROUTED.k]),
+            StoredTensor::Packed(stack.laid(&client, laid)),
+            upload(&client, &[ROUTED.tokens, ROUTED.picks], &ROUTED.routes()),
+            ROUTED.slabs,
+            SlabAxis::Output,
+        )
+        .expect("a packed stack in tile order derives a routed launch");
+        let no_matrix_instruction = hw.properties.features.matmul.cmma.iter().next().is_none();
+        let out = match launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT) {
+            Ok(out) => out,
+            Err(why) if matches!(why, Refusal::CubePastDevice { .. }) || no_matrix_instruction => {
+                TestOutcome::Validated(ValidationResult::Skipped(format!(
+                    "no floor serves a packed stack on this runtime: {why:?}"
+                )))
+                .enforce();
+                return;
+            }
+            Err(why) => panic!("a routed stack in tile order is refused: {laid:?} {why:?}"),
+        };
+        let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+        let shape = [ROUTED.tokens, ROUTED.picks, ROUTED.n];
+        assert_close(&got, &shape, &expected, HALF_TOLERANCE, &laid);
+    }
+}
+
+#[test]
+fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_slab_of_a_stack_in_tile_order() {
+    for laid in TILE_ORDERS {
+        a_grouped_packed_stack_reads_each_group_s_slab(
+            PackedFormat::Nvfp4,
+            laid,
+            PlaneShuffleMatmulRoutine,
+            |_| MGroupedSettings::plane_shuffle_packed(),
+        );
+    }
+}
+
+#[test]
+fn a_grouped_product_on_the_cube_staged_reads_each_group_s_slab_of_a_stack_in_tile_order() {
+    if skipped_without_a_matrix_instruction(&Hardware::from_client(&client())) {
+        return;
+    }
+    for laid in TILE_ORDERS {
+        a_grouped_packed_stack_reads_each_group_s_slab(
+            PackedFormat::Nvfp4,
+            laid,
+            CubeStagedMatmulRoutine,
+            MGroupedSettings::cube_staged_packed,
+        );
+    }
+}
+
+/// A stack in tile order is read slab by slab only where each slab is whole strips of its rows:
+/// slabs that split a strip, or lie along `k` across every strip, are refused rather than read
+/// across.
+#[test]
+fn a_stack_in_tile_order_whose_slabs_split_a_strip_is_refused() {
+    let client = client();
+    for laid in TILE_ORDERS {
+        let matrix = PackedSlabs::new(
+            &client,
+            PackedSlabsSpec {
+                format: PackedFormat::Nvfp4,
+                operand: MatmulOperand::Rhs,
+                slabs: 1,
+                rows: 24,
+                k: 256,
+                seed: 5,
+            },
+        )
+        .laid(&client, laid);
+        assert!(matrix.clone().stacked(3, N).is_ok(), "{laid:?}");
+        assert_eq!(
+            matrix.clone().stacked(2, N).err(),
+            Some(PACKED_STACK_UNREAD)
+        );
+        assert_eq!(matrix.stacked(2, K).err(), Some(PACKED_STACK_UNREAD));
+    }
 }

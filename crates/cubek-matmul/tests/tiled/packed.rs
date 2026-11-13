@@ -3,19 +3,25 @@
 
 use super::indexed::upload;
 use cubecl::client::Client;
-use cubecl::ir::ElemType;
+use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::Scalar;
+use cubecl::prelude::TensorBinding;
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Axis;
+use cubecl::tile::kind::Field;
+use cubecl::tile::layout::Stagger;
 use cubecl::zspace::Shape;
+use cubecl::zspace::metadata::Metadata;
 use cubecl_common::{e4m3, ue8m0};
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{CubeShuffleMatmulRoutine, MatmulRoutine, PlaneShuffleMatmulRoutine};
+use cubek_matmul::tiled::storage;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
+use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 use cubek_std::matmul_axes::{K, N};
 use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
 use half::bf16;
@@ -57,6 +63,14 @@ impl PackedFormat {
                 .with_store(QuantStore::PackedU32(0)),
         }
     }
+}
+
+/// How a test matrix's words lie: in rows, a row's words one run, or in tile order, in tiles of
+/// `(k, rows)` whose words lie as the [`TileWords`] says.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Laid {
+    InRows,
+    InTiles(TileWords, (usize, usize)),
 }
 
 /// `slabs` matrices of `rows` rows of `k` values, laid one after the other along the axis of
@@ -122,6 +136,14 @@ impl PackedSlabs {
         self.tensor.clone()
     }
 
+    /// The matrix whole, its words lying as `laid` says.
+    pub(super) fn laid(&self, client: &Client, laid: Laid) -> PackedTensor {
+        match laid {
+            Laid::InRows => self.matrix(),
+            Laid::InTiles(words, tile) => self.in_tile_order(client, words, tile),
+        }
+    }
+
     /// The matrix read as the stack of its slabs.
     pub(super) fn stack(&self) -> StoredTensor {
         let stack = self
@@ -129,6 +151,89 @@ impl PackedSlabs {
             .stacked(self.spec.slabs, across(self.spec.operand))
             .expect("whole slabs of whole blocks");
         StoredTensor::Packed(stack)
+    }
+
+    /// The matrix whole, an NVFP4 `[k, rows]` weight, its values and block scales laid in tile
+    /// order as a writer lays one for this device's readers, its tiles `tile` and their words as
+    /// `words` asks, its strips staggered where that pads them: the bytes a model's routed
+    /// experts are stored in. Its slabs are not yet read as such.
+    ///
+    /// # Panics
+    ///
+    /// On a format other than NVFP4, or an operand other than the rhs.
+    pub(super) fn in_tile_order(
+        &self,
+        client: &Client,
+        words: TileWords,
+        tile: (usize, usize),
+    ) -> PackedTensor {
+        assert!(
+            matches!(self.spec.format, PackedFormat::Nvfp4)
+                && self.spec.operand == MatmulOperand::Rhs,
+            "tile order is laid for an NVFP4 rhs here"
+        );
+        let scheme = tile_order::nvfp4_scheme();
+        let hw = Hardware::from_client(client);
+        let (k, n) = (self.spec.k, self.spec.slabs * self.spec.rows);
+        let transaction = Stagger::new(hw.transaction_bytes() * 8, 8).expect("bytes divide it");
+        let order = TileOrder::laid(&scheme, words, tile)
+            .expect("NVFP4 is tile order")
+            .staggered(transaction)
+            .for_matrix(k, n);
+        let word = ElemType::UInt(UIntKind::U32);
+        let words_per_load = hw.load_values(word);
+        let blocks = k / order.block();
+        let relayout = |source: TensorBinding, axes: &[Axis], field, storage| {
+            storage::tile(client, source, axes, word, Some(field), storage)
+                .unwrap_or_else(|err| panic!("the stack lays out in tile order: {err:?}"))
+        };
+        // The values as the kernel names them, `[n, k/block, block]`, counted in values.
+        let packed = self.tensor.words();
+        let values = packed.bound_as(Metadata::new(
+            [n, blocks, order.block()],
+            [
+                packed.binding.strides[0] * scheme.num_quants(),
+                order.block(),
+                1,
+            ],
+        ));
+        let values = relayout(
+            values,
+            &tile_order::values_axes(N),
+            Field::from(scheme.value),
+            order.values_storage(N, words_per_load),
+        );
+        // Row by row the scales stay the rows they are; block by block they are laid in tiles of
+        // their own beside the values.
+        let scales = self
+            .tensor
+            .scales()
+            .next()
+            .expect("a block-scaled matrix")
+            .clone();
+        let scales = match order.scales_storage(N, order.rows_a_load(N, words_per_load)) {
+            None => scales,
+            Some(storage) => PlainTensor::of_handle(relayout(
+                scales.bound_as(Metadata::new([n, blocks], [blocks, 1])),
+                &tile_order::scales_axes(N),
+                Field::of_scale(scheme.scale_dtype()),
+                storage,
+            )),
+        };
+        let words = PlainTensor::of_handle(values.clone())
+            .viewed(tile_order::matrix_values(&values.metadata));
+        let sized = [(K, k), (N, n)];
+        let operand = Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 blocks k");
+        let operand = PackedTensor::read_in_tiles(&hw, sized, operand, &words.meta())
+            .expect("a matrix laid in tile order reads in its tiles");
+        PackedTensor::new(
+            words,
+            scales,
+            self.tensor.scales().nth(1).cloned(),
+            scheme,
+            operand,
+            sized,
+        )
     }
 
     /// The dequantized value at `k` and row `row` of slab `slab`.

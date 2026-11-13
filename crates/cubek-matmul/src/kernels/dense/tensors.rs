@@ -57,11 +57,13 @@ pub const MATMUL_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
     why: "the microkernel matmul takes f32, f16, bf16 and i32 operands of one element",
 };
 
-/// What a routed or grouped product declines before preparing anything: an operand stored in
-/// tiles that its routines would read in rows, a slab at a time. That is either grouped operand,
-/// and the routed product's stack; a routed lhs is laid back in rows instead.
+/// What a routed or grouped product declines before preparing anything: a float operand stored
+/// in tiles that its routines would read in rows, a slab at a time. That is either k-grouped
+/// operand, an m-grouped product's rows and stack, and the routed product's stack; a routed lhs
+/// is laid back in rows instead. A packed stack in tile order is read slab by slab where its
+/// slabs are whole strips ([`PackedTensor::stacked`]).
 pub const MATMUL_SLABS_TAKE_NO_STORED_TILES: Refusal = Refusal::Declined {
-    why: "the routed and grouped products read their operands in rows, slab by slab; store \
+    why: "the routed and grouped products read float operands in rows, slab by slab; store \
               them untiled",
 };
 

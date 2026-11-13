@@ -18,7 +18,6 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::Roofline;
-use cubek_std::layout::contiguous;
 use cubek_std::matmul_axes::{K, N};
 
 /// The operands of one routed product: the rows, the stack of `experts` slabs laid `along`, and
@@ -64,7 +63,8 @@ impl RoutedMatmulTensors {
     /// # Errors
     ///
     /// As [`MatmulInputs::new`] for a float stack, and [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for a
-    /// stack stored in tiles.
+    /// float stack stored in tiles; a packed one is read as its slabs when launched
+    /// ([`PackedTensor::stacked`](crate::kernels::tensor::PackedTensor::stacked)).
     ///
     /// # Panics
     ///
@@ -78,7 +78,7 @@ impl RoutedMatmulTensors {
         experts: usize,
         along: SlabAxis,
     ) -> Result<Self, Refusal> {
-        if rhs.values().is_tiled() {
+        if matches!(&rhs, StoredTensor::Plain(rhs) if rhs.is_tiled()) {
             return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
         }
         assert_eq!(
@@ -156,7 +156,7 @@ impl RoutedMatmulTensors {
             MatmulTuneKey::anchored(self.rows(), Self::ROWS_KEYED),
             self.slots,
             self.stack_kind(),
-            OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
+            OperandLayout::of(&self.rhs.values().meta(), self.rhs.kind(), [K, N]),
             self.along,
         )
     }
