@@ -457,8 +457,9 @@ impl PlaneFragmentMicrokernel {
     /// count the device's matrix unit ([`stated_candidates`](Self::stated_candidates)). `None`
     /// where the instruction does not cut the plane's tile in whole steps ([`MatmulStep`]).
     ///
-    /// A division, against "multiply, never divide": the planes that state their fragments guess
-    /// the tile's cut here. It goes once the tile cuts their fragments too.
+    /// A division, against "multiply, never divide": a plane that states its fragments needs the
+    /// count of its instruction's calls, which the tile cuts by itself for a plane that states its
+    /// tile.
     fn stated(self, hw: &Hardware, elements: MatmulOperands<ElemType>) -> Option<Self> {
         let PlaneUnit::Matrix {
             unit: [unit_m, unit_n, unit_k],
