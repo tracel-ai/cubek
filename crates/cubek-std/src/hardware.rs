@@ -137,6 +137,13 @@ impl Hardware {
         )
     }
 
+    /// The most units one flat cube holds: the device's cap on units a cube and on the cube's
+    /// first dimension.
+    pub fn most_units_1d(&self) -> usize {
+        let hardware = &self.properties.hardware;
+        hardware.max_units_per_cube.min(hardware.max_cube_dim.0) as usize
+    }
+
     /// Shared memory a cube may claim: the reported maximum, less what the driver reserves for
     /// cube-scoped matrices. Every budget goes through here: reading the maximum directly
     /// over-subscribes on a runtime that reserves, as Vulkan does, and fails the launch.

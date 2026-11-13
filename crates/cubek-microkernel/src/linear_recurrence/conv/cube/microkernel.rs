@@ -1,31 +1,33 @@
-use super::base::CubeQkNormedConvMicrokernel;
-use super::convolved_head::ConvolvedHead;
-use super::qk_scale::QkScale;
-use super::tiles::QkNormedConvTiles;
-use crate::linear_recurrence::KEY_HEAD;
+use super::base::CubeCausalConvMicrokernel;
+use super::filters::CausalConvFilters;
+use super::past_reader::PastReader;
+use super::run_lines::RunLines;
+use super::tiles::CausalConvTiles;
 use cubecl::tile::Region;
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// One cube's key head of one row, or of one position of a sequence: the head's channels convolved
-/// and activated, the newest values written as the ring's next column over a window, then the
-/// queries scaled by `1 / (‖q‖ · √key_features)` and the keys by `1 / ‖k‖`, written with the values
-/// as `f32`.
+/// One cube's run of channel lines of one position of a row: each unit's line convolved over its
+/// past and the newest value, plus the bias and then the silu, written to the output at `O`. Where
+/// the launch writes the ring, the newest value is written as the ring's next column after the
+/// taps are read, by the unit that owns the channels.
 #[cube]
-pub fn cube_qk_normed_conv_microkernel<E: Float, N: Size>(
+pub fn cube_causal_conv_microkernel<E: Float, O: Float, N: Size>(
     cube: &Region,
-    tiles: &mut QkNormedConvTiles,
-    epsilon: f32,
-    #[comptime] microkernel: CubeQkNormedConvMicrokernel,
+    tiles: &mut CausalConvTiles,
+    #[comptime] microkernel: CubeCausalConvMicrokernel,
 ) {
-    let mut convolved = ConvolvedHead::<N>::new(microkernel);
-    convolved.convolve::<E>(cube, tiles, cube.coord(KEY_HEAD));
-    sync_cube();
-    let key_features = microkernel.heads.key_features;
-    QkScale::of::<N>(&convolved, epsilon, key_features).write::<N>(
-        cube,
-        &convolved,
-        &mut tiles.query,
-        &mut tiles.key,
-        key_features,
-    );
+    let read_columns = microkernel.taps - 1;
+    let past = PastReader::new(cube, &tiles.past, microkernel.writer, read_columns);
+    let filters = CausalConvFilters::new(&tiles.filters, &tiles.bias, microkernel.taps);
+    let lines = RunLines::new::<N>(cube, microkernel.channel_run());
+    let mut output = tiles.output.flat_mut::<O, N>();
+    for share in cube {
+        let line = lines.line(&share);
+        if lines.holds(line) {
+            let newest = past.newest::<E, N>(line);
+            let convolved = filters.convolved_line::<E, N>(&past, newest, line);
+            past.write_newest::<E, N>(line, newest);
+            output.write(line, Vector::<O, N>::cast_from(convolved));
+        }
+    }
 }

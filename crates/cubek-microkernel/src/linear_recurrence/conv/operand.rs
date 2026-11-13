@@ -1,48 +1,48 @@
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 
-/// One of the operands of the conv.
+/// One of the operands of the causal conv.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum QkNormedConvOperand {
-    /// `[batch, channel]`: the newest value of every channel of the `q|k|v` stream over a window,
-    /// or `[batch, stream_position, channel]` over a stream read by tap.
-    Qkv,
+pub enum CausalConvOperand {
+    /// `[batch, prompt_position, channel]`: the newest values of every channel, the positions a
+    /// row convolves.
+    Input,
     /// `[channel, tap]`: the filter of every channel, its newest tap last.
     Filters,
+    /// `[channel]`: the bias of every channel, where the conv has one.
+    Bias,
     /// `[store_slot, ring_column, channel]`: the past values of every channel, a ring a slot.
-    Window,
+    Ring,
     /// `[batch]`: the positions each row has convolved already.
     Lengths,
-    /// `[batch, key_head, key_feature]`: the queries, normalized and scaled.
-    Query,
-    /// `[batch, key_head, key_feature]`: the keys, normalized.
-    Key,
-    /// `[batch, key_head, head_in_group, value_feature]`: the values.
-    Value,
+    /// `[batch, position, channel]`: the convolved channels.
+    Output,
 }
 
-impl QkNormedConvOperand {
-    /// The operands a line of channels runs along over a window.
-    pub const WINDOW_CHANNELS: [Self; 5] =
-        [Self::Qkv, Self::Window, Self::Query, Self::Key, Self::Value];
+impl CausalConvOperand {
+    /// Every operand.
+    pub const ALL: [Self; 6] = [
+        Self::Input,
+        Self::Filters,
+        Self::Bias,
+        Self::Ring,
+        Self::Lengths,
+        Self::Output,
+    ];
 
-    /// The operands a line of channels runs along over a stream, which has no window.
-    pub const STREAM_CHANNELS: [Self; 4] = [Self::Qkv, Self::Query, Self::Key, Self::Value];
+    /// The operands a line of channels runs along.
+    pub const CHANNELS: [Self; 4] = [Self::Input, Self::Bias, Self::Ring, Self::Output];
 
-    /// What every microkernel of the conv requires: the `channels` of its case share one width
-    /// that divides both `key_features` and `value_features`, and the filters and lengths are read
-    /// an element at a time.
-    pub fn require(
-        channels: &[Self],
-        key_features: usize,
-        value_features: usize,
-        vectorization: &mut Vectorization<Self>,
-    ) {
-        for &operand in channels {
-            for elements in [key_features, value_features] {
-                vectorization.require(VectorRequirement::Access { operand, elements });
-            }
+    /// What every microkernel of the conv requires: the operands along the channels share one
+    /// width that divides `channels`, and the filters and the lengths are read an element at a
+    /// time.
+    pub fn require(channels: usize, vectorization: &mut Vectorization<Self>) {
+        for operand in Self::CHANNELS {
+            vectorization.require(VectorRequirement::Access {
+                operand,
+                elements: channels,
+            });
             vectorization.require(VectorRequirement::Together {
-                operand: Self::Qkv,
+                operand: Self::Input,
                 with: operand,
             });
         }
@@ -54,40 +54,37 @@ impl QkNormedConvOperand {
 
 /// One value per operand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct QkNormedConvOperandMap<T> {
-    pub qkv: T,
+pub struct CausalConvOperandMap<T> {
+    pub input: T,
     pub filters: T,
-    pub window: T,
+    pub bias: T,
+    pub ring: T,
     pub lengths: T,
-    pub query: T,
-    pub key: T,
-    pub value: T,
+    pub output: T,
 }
 
-impl<T: Copy> QkNormedConvOperandMap<T> {
+impl<T: Copy> CausalConvOperandMap<T> {
     /// The same value for every operand.
     pub fn splat(value: T) -> Self {
         Self {
-            qkv: value,
+            input: value,
             filters: value,
-            window: value,
+            bias: value,
+            ring: value,
             lengths: value,
-            query: value,
-            key: value,
-            value,
+            output: value,
         }
     }
 
     /// The value `operand` holds.
-    pub fn get(&self, operand: QkNormedConvOperand) -> T {
+    pub fn get(&self, operand: CausalConvOperand) -> T {
         match operand {
-            QkNormedConvOperand::Qkv => self.qkv,
-            QkNormedConvOperand::Filters => self.filters,
-            QkNormedConvOperand::Window => self.window,
-            QkNormedConvOperand::Lengths => self.lengths,
-            QkNormedConvOperand::Query => self.query,
-            QkNormedConvOperand::Key => self.key,
-            QkNormedConvOperand::Value => self.value,
+            CausalConvOperand::Input => self.input,
+            CausalConvOperand::Filters => self.filters,
+            CausalConvOperand::Bias => self.bias,
+            CausalConvOperand::Ring => self.ring,
+            CausalConvOperand::Lengths => self.lengths,
+            CausalConvOperand::Output => self.output,
         }
     }
 }

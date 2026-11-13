@@ -1,100 +1,35 @@
-//! A conv launch's compile-time decisions.
+//! What a conv launch settles: the filter's shape and the grid its ring write back launches over.
 
-use crate::kernels::conv::{QK_NORMED_CONV_OUTPUT_ELEMENT, QkNormedConvProblem};
-use cubecl::client::Client;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Launcher, Levels};
-use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperand;
-use cubek_microkernel::linear_recurrence::conv::cube::{
-    CubeQkNormedConvMicrokernel, QkNormedConvSettings,
-};
-use cubek_microkernel::linear_recurrence::{HEAD_CHANNEL, QkNormedConvPartitioning};
-use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
-use cubek_std::routine::{CubeResources, Grid};
+use crate::kernels::conv::RingWriteBackLaunch;
+use cubek_microkernel::linear_recurrence::RecurrencePartitioning;
+use std::sync::Arc;
 
-/// What a conv launch compiles: the microkernel, the partitioning, and the width the channels bind
-/// at.
+/// What a launch of a conv compiles: the microkernel, the partitioning that places its cubes, the
+/// width the channels bind at, and the launch that fills a prompt's rings after it.
+///
+/// One type for every routine of this kind: what differs between them is the microkernel.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QkNormedConvBlueprint {
-    pub microkernel: CubeQkNormedConvMicrokernel,
-    pub partitioning: QkNormedConvPartitioning,
+pub struct CausalConvBlueprint<M> {
+    pub microkernel: M,
+    pub partitioning: RecurrencePartitioning,
     pub width: usize,
+    pub write_back: Option<Arc<RingWriteBackLaunch>>,
 }
 
-impl QkNormedConvBlueprint {
-    /// The launch of `problem` on `hw`: no cube holds more units than a head has lines.
-    pub(crate) fn prepare(
-        hw: &Hardware,
-        problem: &QkNormedConvProblem,
-        settings: &QkNormedConvSettings,
-    ) -> Result<(Self, Grid), Refusal> {
-        problem.admit_launch(hw)?;
-        let item = problem.work_item();
-        let provisional = CubeQkNormedConvMicrokernel::best(hw, &item, settings)?;
-        let width = Self::settled_width(hw, problem, &provisional);
-        let lines = item.heads.channels_per_key_head() / width;
-        let microkernel = CubeQkNormedConvMicrokernel {
-            units: provisional.units.min(lines),
-            ..provisional
-        };
-        let partitioning = QkNormedConvPartitioning::new(
-            problem.space(),
-            Levels::leaf(&problem.leaf(width)).units_distributed(HEAD_CHANNEL, lines),
-        );
-        let cube = CubeResources {
-            plane_width: microkernel.units as u32,
-            shared_memory: microkernel.shared_memory(),
-        };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
-        let blueprint = Self {
+impl<M> CausalConvBlueprint<M> {
+    /// `microkernel` placed by `partitioning`, the channels bound at `width`, a prompt's rings
+    /// filled by `write_back`.
+    pub fn new(
+        microkernel: M,
+        partitioning: RecurrencePartitioning,
+        width: usize,
+        write_back: Option<Arc<RingWriteBackLaunch>>,
+    ) -> Self {
+        Self {
             microkernel,
             partitioning,
             width,
-        };
-        Ok((blueprint, grid))
-    }
-
-    pub(crate) fn launcher(&self, client: &Client, grid: &Grid) -> Launcher {
-        grid.launcher(client, || {
-            (
-                self.partitioning.kernel(),
-                self.partitioning.as_cubek().space().clone(),
-            )
-        })
-    }
-
-    /// The widest width the device, the microkernel's accesses and every operand's alignment and
-    /// view start admit.
-    fn settled_width(
-        hw: &Hardware,
-        problem: &QkNormedConvProblem,
-        microkernel: &CubeQkNormedConvMicrokernel,
-    ) -> usize {
-        let element = |operand| match operand {
-            QkNormedConvOperand::Query | QkNormedConvOperand::Key | QkNormedConvOperand::Value => {
-                QK_NORMED_CONV_OUTPUT_ELEMENT
-            }
-            _ => problem.element,
-        };
-        let mut vectorization = Vectorization::new();
-        microkernel.vectorize(&(), &mut vectorization);
-        for &operand in problem.past.channels() {
-            vectorization.require(VectorRequirement::Aligned {
-                operand,
-                alignment: problem.alignments.get(operand),
-            });
-            vectorization.require(VectorRequirement::Aligned {
-                operand,
-                alignment: ElemAlignment::at_start(
-                    problem.start_bytes.get(operand),
-                    element(operand).size(),
-                ),
-            });
+            write_back,
         }
-        vectorization.width(QkNormedConvOperand::Qkv, |operand| {
-            hw.vector_ceiling(element(operand))
-        })
     }
 }

@@ -1,4 +1,5 @@
 use super::{RecurrenceWalkSpec, RecurrenceWalkStrategy};
+use crate::kernels::SlotStore;
 use crate::kernels::walk::{
     CubeWalkRoutine, RecurrenceWalkInputs, RecurrenceWalkRoutine, RecurrenceWalkStateInputs,
     RecurrenceWalkStateLayout, UpdateRuleInputs, launch_tuned, serves,
@@ -72,9 +73,10 @@ impl SlotRotation {
 
     /// `inputs` with the next table of the rotation placing its rows.
     fn turned(&self, mut inputs: RecurrenceWalkInputs) -> RecurrenceWalkInputs {
-        if let RecurrenceWalkStateInputs::Slots { slots, .. } = &mut inputs.state {
+        if let RecurrenceWalkStateInputs::Slots(store) = inputs.state {
             let turn = self.next.fetch_add(1, Ordering::Relaxed);
-            *slots = self.tables[turn % self.tables.len()].clone();
+            let slots = self.tables[turn % self.tables.len()].clone();
+            inputs.state = RecurrenceWalkStateInputs::Slots(store.placed(slots));
         }
         inputs
     }
@@ -155,16 +157,18 @@ impl Benchmark for RecurrenceWalkBench {
                 ),
                 kept: NonZeroUsize::MIN,
             },
-            RecurrenceWalkStateLayout::Slots { slots } => RecurrenceWalkStateInputs::Slots {
-                store: self.uniform(
-                    vec![slots.get(), h, heads.key_features, heads.value_features],
-                    5,
-                    -0.2,
-                    0.2,
-                ),
-                slots: self.rotation.tables[0].clone(),
-                lengths: PlainTensor::of_u32s(&self.client, &[b], &vec![1; b]),
-            },
+            RecurrenceWalkStateLayout::Slots { slots } => {
+                RecurrenceWalkStateInputs::Slots(SlotStore::new(
+                    self.uniform(
+                        vec![slots.get(), h, heads.key_features, heads.value_features],
+                        5,
+                        -0.2,
+                        0.2,
+                    ),
+                    self.rotation.tables[0].clone(),
+                    PlainTensor::of_u32s(&self.client, &[b], &vec![1; b]),
+                ))
+            }
         };
         RecurrenceWalkInputs {
             client: self.client.clone(),

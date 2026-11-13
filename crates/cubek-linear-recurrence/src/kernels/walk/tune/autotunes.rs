@@ -6,6 +6,7 @@
 //! for each row it places: a round on the call's store would advance every live row's state once
 //! per candidate. A walk over states it owns is measured on the call's inputs.
 
+use crate::kernels::SlotStore;
 use crate::kernels::refusals::admit_on_device;
 use crate::kernels::walk::tune::RecurrenceWalkCandidate;
 use crate::kernels::walk::tune::key::RecurrenceWalkKey;
@@ -134,9 +135,10 @@ pub fn serves(
 /// zeros at the call's strides, with a slot for each row, each row at its own and past its first
 /// position.
 fn measured(_key: &RecurrenceWalkKey, inputs: &RecurrenceWalkInputs) -> RecurrenceWalkInputs {
-    let RecurrenceWalkStateInputs::Slots { store, .. } = &inputs.state else {
+    let RecurrenceWalkStateInputs::Slots(slotted) = &inputs.state else {
         return inputs.clone();
     };
+    let store = slotted.store();
     let client = &inputs.client;
     let [_, heads, key_features, value_features] = store.shape().dims::<4>();
     let rows = inputs.rates.shape().dims::<4>()[0];
@@ -145,16 +147,16 @@ fn measured(_key: &RecurrenceWalkKey, inputs: &RecurrenceWalkInputs) -> Recurren
         PlainTensor::of_u32s(client, &[rows], &entries)
     };
     RecurrenceWalkInputs {
-        state: RecurrenceWalkStateInputs::Slots {
-            store: PlainTensor::zeros(
+        state: RecurrenceWalkStateInputs::Slots(SlotStore::new(
+            PlainTensor::zeros(
                 client,
                 &[rows, heads, key_features, value_features],
                 store.binding.strides.clone(),
                 store.elem,
             ),
-            slots: table(&|row| row as u32),
-            lengths: table(&|_| 1),
-        },
+            table(&|row| row as u32),
+            table(&|_| 1),
+        )),
         ..inputs.clone()
     }
 }

@@ -4,7 +4,7 @@ use crate::kernels::walk::{RECURRENCE_WALK_ELEMENT, RecurrenceWalkProblem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
-use cubek_microkernel::linear_recurrence::RecurrenceWalkPartitioning;
+use cubek_microkernel::linear_recurrence::RecurrencePartitioning;
 use cubek_microkernel::linear_recurrence::walk::RecurrenceWalkOperand;
 use cubek_std::Hardware;
 
@@ -50,7 +50,7 @@ fn operand_element(operand: RecurrenceWalkOperand, problem: &RecurrenceWalkProbl
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecurrenceWalkBlueprint<M> {
     pub microkernel: M,
-    pub partitioning: RecurrenceWalkPartitioning,
+    pub partitioning: RecurrencePartitioning,
     pub width: usize,
     pub runs: usize,
 }
@@ -60,7 +60,7 @@ impl<M> RecurrenceWalkBlueprint<M> {
     /// ([`settled_width`]).
     pub fn new(
         microkernel: M,
-        partitioning: RecurrenceWalkPartitioning,
+        partitioning: RecurrencePartitioning,
         width: usize,
         runs: usize,
     ) -> Self {

@@ -16,6 +16,7 @@ use cubecl::ir::ElemType;
 use cubecl::server::Handle;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::metadata::Metadata;
+use cubek_linear_recurrence::kernels::SlotStore;
 use cubek_linear_recurrence::kernels::walk::{
     CubeWalkRoutineSettings, RecurrenceWalkInputs, RecurrenceWalkOutputs, RecurrenceWalkStateInputs,
 };
@@ -275,11 +276,11 @@ impl SlotCase {
         element: ElemType,
     ) -> RecurrenceWalkInputs {
         RecurrenceWalkInputs {
-            state: RecurrenceWalkStateInputs::Slots {
-                store: slotted.store.clone(),
-                slots: slotted.slots.clone(),
-                lengths: slotted.lengths.clone(),
-            },
+            state: RecurrenceWalkStateInputs::Slots(SlotStore::new(
+                slotted.store.clone(),
+                slotted.slots.clone(),
+                slotted.lengths.clone(),
+            )),
             ..self
                 .case
                 .inputs_laid_out(client, &slotted.operands, Layout::default(), element)

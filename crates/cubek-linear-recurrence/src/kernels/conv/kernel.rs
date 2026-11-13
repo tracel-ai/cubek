@@ -2,39 +2,75 @@ use cubecl::ir::ElemType;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::linear_recurrence::conv::cube::{
-    CubeQkNormedConvMicrokernel, QkNormedConvTiles, cube_qk_normed_conv_microkernel,
+    CausalConvPastTiles, CausalConvTiles, ChannelRun, CubeCausalConvMicrokernel,
+    cube_causal_conv_microkernel, cube_ring_write_back_microkernel,
 };
 
-/// Every cube convolves one key head of one row, or of one position of a sequence, and normalizes
-/// its queries and keys. `window` and `lengths` are bound over a window alone, and `columns` is the
-/// ring's length there.
+/// Every cube convolves a run of channel lines of one position of a row into `output`. `bias` is
+/// bound where the conv has one, and `columns` is the ring's length.
 #[cube(launch_unchecked)]
-pub fn cube_qk_normed_conv_kernel<E: Float, N: Size>(
-    qkv: &TileTensor<'_>,
+pub fn cube_causal_conv_kernel<E: Float, O: Float, N: Size>(
+    input: &TileTensor<'_>,
     filters: &TileTensor<'_>,
-    window: ComptimeOption<&TileTensor<'static>>,
-    lengths: ComptimeOption<&TileTensor<'static>>,
-    query: &TileTensor<'_>,
-    key: &TileTensor<'_>,
-    value: &TileTensor<'_>,
+    bias: ComptimeOption<&TileTensor<'static>>,
+    ring: &TileTensor<'_>,
+    lengths: &TileTensor<'_>,
+    output: &TileTensor<'_>,
     columns: usize,
-    epsilon: f32,
     partitioning: Partitioning,
-    #[comptime] microkernel: CubeQkNormedConvMicrokernel,
+    #[comptime] microkernel: CubeCausalConvMicrokernel,
     #[define(E)] _element: ElemType,
+    #[define(O)] _output_element: ElemType,
 ) {
-    let tiles = QkNormedConvTiles {
-        qkv: qkv.tile(&partitioning),
+    let tiles = CausalConvTiles {
+        past: CausalConvPastTiles {
+            input: input.tile(&partitioning),
+            ring: ring.tile(&partitioning),
+            lengths: lengths.tile(&partitioning),
+            columns,
+        },
         filters: filters.tile(&partitioning),
-        window: window.map(|window| window.tile(&partitioning)),
-        lengths: lengths.map(|lengths| lengths.tile(&partitioning)),
-        query: query.tile(&partitioning),
-        key: key.tile(&partitioning),
-        value: value.tile(&partitioning),
-        columns,
+        bias: bias.map(|bias| bias.tile(&partitioning)),
+        output: output.tile(&partitioning),
     };
     for cube in &partitioning {
         let mut tiles = tiles.at(&cube);
-        cube_qk_normed_conv_microkernel::<E, N>(&cube, &mut tiles, epsilon, microkernel);
+        cube_causal_conv_microkernel::<E, O, N>(&cube, &mut tiles, microkernel);
+    }
+}
+
+/// Every cube copies a run of channel lines of one of a row's last `taps - 1` valid positions of a
+/// prompt into its ring. It runs after the convolution has read every ring.
+#[cube(launch_unchecked)]
+pub fn ring_write_back_kernel<E: Float, N: Size>(
+    input: &TileTensor<'_>,
+    ring: &TileTensor<'_>,
+    lengths: &TileTensor<'_>,
+    valid: &TileTensor<'_>,
+    columns: usize,
+    positions: usize,
+    partitioning: Partitioning,
+    #[comptime] channel_run: ChannelRun,
+    #[comptime] read_columns: usize,
+    #[define(E)] _element: ElemType,
+) {
+    let tiles = CausalConvPastTiles {
+        input: input.tile(&partitioning),
+        ring: ring.tile(&partitioning),
+        lengths: lengths.tile(&partitioning),
+        columns,
+    };
+    let valid = valid.tile(&partitioning);
+    for cube in &partitioning {
+        let tiles = tiles.at(&cube);
+        let valid = valid.at(&cube);
+        cube_ring_write_back_microkernel::<E, N>(
+            &cube,
+            &tiles,
+            &valid,
+            positions,
+            channel_run,
+            read_columns,
+        );
     }
 }

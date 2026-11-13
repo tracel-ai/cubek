@@ -10,7 +10,7 @@ use cubek_microkernel::linear_recurrence::walk::cube::{
     CubeWalkMicrokernel, CubeWalkMicrokernelSettings, HeldStateShape, MAX_HELD_LINES_PER_UNIT,
 };
 use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, UpdateRule};
-use cubek_microkernel::linear_recurrence::{RecurrenceWalkPartitioning, VALUE_FEATURE};
+use cubek_microkernel::linear_recurrence::{RecurrencePartitioning, VALUE_FEATURE};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid};
@@ -111,7 +111,7 @@ pub(super) fn prepare(
     )?;
     let shape = microkernel.shape;
     let runs = settings.runs_of(hw, &shape, problem);
-    let partitioning = RecurrenceWalkPartitioning::new(
+    let partitioning = RecurrencePartitioning::walk(
         problem.space(),
         microkernel
             .tiling(problem.state.kept_axis())
@@ -173,8 +173,8 @@ pub(super) fn estimate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::fixtures::{binding_enough, fleet};
     use crate::kernels::refusals::RECURRENCE_WALK_RULE_NOT_SERVED;
-    use crate::kernels::walk::problem::fixtures::binding_enough;
     use crate::kernels::walk::{CubeWalkRoutine, RecurrenceWalkStateLayout};
     use cubek_microkernel::linear_recurrence::KEY_FEATURE;
     use cubek_microkernel::linear_recurrence::RecurrenceHeads;
@@ -243,17 +243,6 @@ mod tests {
                         in_slots(8, 1, (16, 3, 128, 128), 32),
                         in_slots(2, 3, (4, 3, 128, 128), 5),
                         in_slots(3, 2, (1, 2, 16, 37), 3),
-                    ]
-                }
-
-                fn fleet() -> [Hardware; 6] {
-                    [
-                        binding_enough(devices::h100()),
-                        binding_enough(devices::cdna_wave64()),
-                        binding_enough(devices::cpu_12()),
-                        binding_enough(devices::strix_halo()),
-                        binding_enough(devices::rdna_range()),
-                        binding_enough(devices::wgpu_no_subgroups()),
                     ]
                 }
 

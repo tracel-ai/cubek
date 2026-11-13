@@ -1,9 +1,7 @@
-//! The conv of a gated delta-rule layer: a depthwise causal filter over the `q|k|v` stream, then
-//! the L2 norms of the queries and keys. The taps' past is a ring of columns in a store, for one
-//! position of each row, or the stream itself read by tap, for the positions of a prompt.
-//!
-//! The work item is one key head of one row, or of one position of a stream. One unit owns a
-//! channel: over a ring, the write of its newest value overwrites the column the oldest tap reads.
+//! The depthwise causal conv of the linear recurrence family: a filter over channels, then a bias
+//! and a silu. One unit owns a channel: where the conv writes its own ring, the write of its
+//! newest value may overwrite the column the oldest tap reads (when the ring has exactly
+//! `taps - 1` columns), which the unit read first.
 
 pub mod cube;
 mod operand;

@@ -397,20 +397,6 @@ impl EstimatedProblem for RecurrenceWalkProblem {
 }
 
 #[cfg(test)]
-pub(crate) mod fixtures {
-    use cubek_std::Hardware;
-    use cubek_std::devices;
-
-    /// `hw` as a device that binds as many buffers as the walk's launch does: the fixtures that
-    /// bind eight decline the slots walk, and the routine tests would otherwise prepare it on
-    /// none of them.
-    pub(crate) fn binding_enough(mut hw: Hardware) -> Hardware {
-        devices::topology(&mut hw).max_bindings = 32;
-        hw
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use cubek_microkernel::linear_recurrence::walk::cube::CubeWalkMicrokernel;
@@ -631,7 +617,7 @@ mod tests {
     /// refusal, not prepared into a launch the device refuses.
     #[test]
     fn a_head_too_wide_for_the_floor_is_declined() {
-        let hw = super::fixtures::binding_enough(devices::wgpu_no_subgroups());
+        let hw = crate::kernels::fixtures::binding_enough(devices::wgpu_no_subgroups());
         let wide = RecurrenceHeads {
             key_heads: 1,
             heads_per_group: 1,
