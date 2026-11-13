@@ -27,6 +27,13 @@ Attention with its keys split across cubes is an example.
 A partial attention routine leaves each run of the keys in a slot, then the split-keys merge routine merges the slots into the output.
 `SplitKeysAttention` is the strategy that launches the two.
 
+Autotune races strategies. A candidate is a strategy at one of its settings, and that setting holds the settings of every routine the strategy launches.
+Which routines run can depend on the setting, so a strategy's blueprint holds one blueprint per routine it launches.
+Where they vary, an enum with a variant per sequence of routines says it best, and it holds only the routines that vary.
+The attention backward pass is an example: its cube staged strategy launches a walk owned by the queries, then a walk owned by the keys.
+With the heads of a group apart, the walk owned by the keys only adds into sums, and a cast routine follows it, three routines in all.
+The walk owned by the queries runs either way, so it sits beside the enum (`KeyHeadsBlueprint`), not in each variant.
+
 When a routine computes almost the result but not exactly, its name says what it computes.
 The partial attention routines write the partials of each run of the keys, and their names say so.
 Only the merge writes the attention.
