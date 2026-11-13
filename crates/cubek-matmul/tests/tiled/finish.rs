@@ -1,11 +1,13 @@
-//! The count of units reaching [`Destination::finish`] is the units each routine launches: a
+//! The count of units reaching [`ServedDestination::finish`] is the units each routine launches: a
 //! destination that counts them is launched through every routine whose launch reaches it.
 
 use cubecl::features::AtomicUsage;
 use cubecl::ir::{ElemType, FloatKind, Type, UIntKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Bound, Destination, DestinationLaunch, Output};
-use cubecl::tile::{Partitioning, Tile};
+use cubecl::tile::launch::{
+    Bound, Destination, DestinationLaunch, Output, ServedDestination, ServedDestinationExpand,
+};
+use cubecl::tile::{Partitioning, Region, Tile};
 use cubecl::zspace::shape;
 use cubek_matmul::kernels::{
     CubeShuffleMatmulRoutine, CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine,
@@ -18,7 +20,7 @@ use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::{Hardware, routine::Routine};
 use cubek_test_utils::{StridedLayout, TestInput, TestOutcome, ValidationResult};
 
-/// The buffered output, and the units that reached [`Destination::finish`].
+/// The buffered output, and the units that reached [`ServedDestination::finish`].
 struct Counted;
 
 #[derive(CubeType, CubeLaunch)]
@@ -30,13 +32,40 @@ struct CountedArg<'a, E: Numeric> {
 #[cube]
 impl Destination for Counted {
     type Arg<E: Numeric> = CountedArg<'static, E>;
+    type Served<E: Numeric> = CountedServed;
 
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
-        arg.out.tile(partitioning)
+    fn serve<E: Numeric, V: Size>(
+        arg: &Self::Arg<E>,
+        partitioning: &Partitioning,
+    ) -> CountedServed {
+        CountedServed {
+            tile: arg.out.tile(partitioning),
+            units: arg.units,
+        }
+    }
+}
+
+/// [`Counted`] as served to the kernel: the output tile, and the counter `finish` bumps.
+#[derive(CubeType)]
+struct CountedServed {
+    tile: Tile,
+    units: &'static [Atomic<u32>],
+}
+
+#[cube]
+impl ServedDestination for CountedServed {
+    type Opened = Tile;
+
+    fn tile(&self) -> Tile {
+        self.tile.clone()
     }
 
-    fn finish<E: Numeric>(arg: &Self::Arg<E>) {
-        arg.units[0].fetch_add(1);
+    fn open(&self, _owner: &Region, _sum: &Tile) -> Tile {
+        self.tile.clone()
+    }
+
+    fn finish(&self) {
+        self.units[0].fetch_add(1);
     }
 }
 

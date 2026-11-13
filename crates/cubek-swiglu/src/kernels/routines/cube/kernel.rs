@@ -1,5 +1,5 @@
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::Destination;
+use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpand};
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::row_store::CubeStage;
@@ -16,7 +16,8 @@ pub fn cube_swiglu_kernel<E: Float, N: Size, O: Destination>(
     #[define(E)] _element: ElemType,
 ) {
     let x = input.tile(&partitioning);
-    let o = O::tile::<E, N>(out, &partitioning);
+    let dest = O::serve::<E, N>(out, &partitioning);
+    let o = dest.tile();
     for cube in &partitioning {
         cube_swiglu_microkernel::<E, N>(
             &cube,
@@ -26,5 +27,5 @@ pub fn cube_swiglu_kernel<E: Float, N: Size, O: Destination>(
             stage.clone(),
         );
     }
-    O::finish::<E>(out);
+    dest.finish();
 }
