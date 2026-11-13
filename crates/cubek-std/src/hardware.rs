@@ -572,6 +572,7 @@ mod tests {
             max_cube_dim: (1024, 1024, 1024),
             num_streaming_multiprocessors: num_cpu_cores.is_none().then_some(19),
             num_cpu_cores,
+            num_cpu_physical_cores: None,
             last_level_cache_size: None,
             num_tensor_cores: None,
             min_tensor_cores_dim: None,
