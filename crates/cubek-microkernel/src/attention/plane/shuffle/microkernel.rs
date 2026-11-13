@@ -233,7 +233,8 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
     /// sum once, and adds the values they weigh into its lines of the output, rescaled to the new
     /// max. A key a row does not see weighs nothing. Each side's per-tensor scale, which its lines
     /// are read without, is applied once a sum: the keys' to every score, the values' to every
-    /// weight a value is added under, never to the rows' max and sum. `plane` is its region of one step of the walk.
+    /// weight a value is added under, never to the rows' max and sum. `plane` is its region of one
+    /// step of the walk.
     pub fn step<K: StepReads<N>, L: StepReads<N>>(
         &mut self,
         plane: &Region,
