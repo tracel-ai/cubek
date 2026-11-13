@@ -1,5 +1,5 @@
 use cubecl::tile::launch::Destination;
-use cubecl::tile::{Partitioning, RegisterBlock, Semiring, TileTensor};
+use cubecl::tile::{Partitioning, Semiring, SoftwareMatmul, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_microkernel::matmul::plane::plane_shuffle_microkernel;
@@ -16,7 +16,7 @@ pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destina
     rhs: &TileTensor<'_>,
     out: &O::Arg<E>,
     partitioning: Partitioning,
-    #[comptime] block: RegisterBlock,
+    #[comptime] block: SoftwareMatmul,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let a = lhs.tile(&partitioning);

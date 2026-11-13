@@ -34,7 +34,7 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
     let mut key_sum = key_gradient.register_accumulator::<EA>(
         bias,
         query,
-        microkernel.key_gradient.block(),
+        microkernel.key_gradient.software_matmul(),
         Semiring::SUM_PROD,
     );
 
@@ -42,7 +42,7 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
     let mut value_sum = value_gradient.register_accumulator::<EA>(
         bias,
         out_gradient,
-        microkernel.value_gradient.block(),
+        microkernel.value_gradient.software_matmul(),
         Semiring::SUM_PROD,
     );
 
@@ -64,7 +64,7 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
             let mut score = bias.register_accumulator::<EA>(
                 &key,
                 &query,
-                microkernel.score.block(),
+                microkernel.score.software_matmul(),
                 Semiring::SUM_PROD,
             );
 
@@ -83,7 +83,7 @@ pub fn unit_key_gradient_microkernel<EA: Float>(
             let mut gradient = bias.register_accumulator::<EA>(
                 &value,
                 &out_gradient,
-                microkernel.score_gradient.block(),
+                microkernel.score_gradient.software_matmul(),
                 Semiring::SUM_PROD,
             );
 

@@ -2,7 +2,7 @@ use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
 
-/// Why a cube does not run a warpgroup MMA its plane microkernel elected: what only the cube's
+/// Why a cube does not run a plane group MMA its plane microkernel elected: what only the cube's
 /// fill and drain decide, beside the device and product rules the plane microkernel checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CubeStagedWgmmaRefusal {
@@ -18,7 +18,7 @@ pub enum CubeStagedWgmmaRefusal {
 
 impl CubeStagedWgmmaRefusal {
     /// Why a cube filled as `fill`, its planes split `planes_along_k` ways along `K` and its sum
-    /// merged where `merges`, cannot run a warpgroup MMA; `None` where it can.
+    /// merged where `merges`, cannot run a plane group MMA; `None` where it can.
     pub fn new(fill: &CubeStagedFill, planes_along_k: NonZeroUsize, merges: bool) -> Option<Self> {
         if fill.delivery != CubeStagedDelivery::Tma {
             Some(Self::Unlanded)
@@ -36,14 +36,14 @@ impl From<CubeStagedWgmmaRefusal> for Refusal {
     fn from(refusal: CubeStagedWgmmaRefusal) -> Self {
         let details = match refusal {
             CubeStagedWgmmaRefusal::Unlanded => {
-                "a warpgroup MMA reads its stages as the TMA engine lands them"
+                "a plane group MMA reads its stages as the TMA engine lands them"
             }
             CubeStagedWgmmaRefusal::NoFillingPlanes => {
-                "a warpgroup MMA releases its stages once its MMAs are done, which needs planes \
+                "a plane group MMA releases its stages once its MMAs are done, which needs planes \
                  of their own to fill them"
             }
             CubeStagedWgmmaRefusal::Merged => {
-                "a warpgroup MMA's sum drains straight into its output, which no merge of the planes' sums reaches"
+                "a plane group MMA's sum drains straight into its output, which no merge of the planes' sums reaches"
             }
         };
         Refusal::Declined { why: details }

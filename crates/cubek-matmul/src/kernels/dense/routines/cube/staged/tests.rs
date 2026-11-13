@@ -424,7 +424,7 @@ mod base {
         assert_eq!(width, 32);
     }
 
-    /// Hopper's warpgroup MMA of `f16` into `f32`: `64 × n × 16`, `n` a multiple of 8 to 256.
+    /// Hopper's plane group MMA of `f16` into `f32`: `64 × n × 16`, `n` a multiple of 8 to 256.
     const WGMMA_F16: WgmmaConfig = WgmmaConfig {
         elems: WgmmaElems {
             a: F16,
@@ -437,16 +437,16 @@ mod base {
         k: 16,
     };
 
-    /// An H100 offering its warpgroup MMA beside a fragment instruction.
+    /// An H100 offering its plane group MMA beside a fragment instruction.
     fn hopper() -> Hardware {
         devices::offering_wgmma(offering(devices::h100()), [WGMMA_F16])
     }
 
-    /// On a device with a warpgroup MMA, only the warpgroup routine's setting runs it, on a col
+    /// On a device with a plane group MMA, only the plane group routine's setting runs it, on a col
     /// rhs, and declines a row rhs it cannot read; every setting of the units' routine prepares as
     /// it does without one, on any other instruction.
     #[test]
-    fn only_the_setting_that_asks_for_it_runs_the_warpgroup_mma() {
+    fn only_the_setting_that_asks_for_it_runs_the_plane_group_mma() {
         let hw = hopper();
         let wgmma = CubeStagedWgmmaMatmulRoutine.settings(&hw);
         assert_eq!(wgmma.len(), 1);

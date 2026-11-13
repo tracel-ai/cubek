@@ -75,7 +75,7 @@ fn every_tma_stored_setting_matches_the_host() {
     staged.check(staged.at_every_setting(&Product::many_rows()));
 }
 
-/// The stages contracted by warpgroup instructions, where the device has them.
+/// The stages contracted by plane group MMAs, where the device has them.
 #[test]
 fn every_wgmma_setting_matches_the_host() {
     let staged = ByRoutine::new(CubeStagedWgmmaMatmulRoutine, Declines::AsItStates);

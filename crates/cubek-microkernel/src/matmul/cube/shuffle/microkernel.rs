@@ -1,7 +1,7 @@
 use super::base::CubeMeet;
 use crate::matmul::plane::plane_shuffle_microkernel;
 use crate::matmul::{MatmulOperands, MatmulRead};
-use cubecl::tile::{Axis, Region, RegisterBlock, Semiring, Tile};
+use cubecl::tile::{Axis, Region, Semiring, SoftwareMatmul, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's run of the output: `c = a · b` over `cube`, its planes each summing their slice of
@@ -19,7 +19,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
     c: &Tile,
     a: &Tile,
     b: &Tile,
-    #[comptime] block: Option<RegisterBlock>,
+    #[comptime] block: Option<SoftwareMatmul>,
     #[comptime] meet: CubeMeet,
     #[comptime] split: Axis,
     #[comptime] planes: usize,
@@ -75,7 +75,7 @@ fn open_sum<EA: Numeric>(
     over: &Tile,
     a: &Tile,
     b: &Tile,
-    #[comptime] block: Option<RegisterBlock>,
+    #[comptime] block: Option<SoftwareMatmul>,
 ) -> Tile {
     match block {
         Some(block) => over.register_accumulator::<EA>(a, b, block, Semiring::SUM_PROD),
