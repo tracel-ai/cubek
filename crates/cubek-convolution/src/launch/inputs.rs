@@ -19,7 +19,7 @@ pub struct ConvolutionArgs<const N_SPATIAL: usize> {
 
 impl<const N_SPATIAL: usize> ConvolutionArgs<N_SPATIAL> {
     /// The window of each spatial dimension.
-    pub fn dims(&self) -> [SpatialWindow; N_SPATIAL] {
+    pub fn windows(&self) -> [SpatialWindow; N_SPATIAL] {
         std::array::from_fn(|dim| SpatialWindow {
             stride: self.stride[dim],
             padding: self.padding[dim],

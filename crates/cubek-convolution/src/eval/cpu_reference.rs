@@ -136,7 +136,7 @@ impl ConvSpec {
     }
 
     fn out(&self) -> [usize; 2] {
-        let [window_h, window_w] = self.args.dims();
+        let [window_h, window_w] = self.args.windows();
         let [kh, kw] = self.kernel_size;
         [
             window_h.output(self.in_h, kh),
@@ -492,7 +492,7 @@ pub fn naive_forward<const N: usize>(
     weight: HostTensor,
     args: &ConvolutionArgs<N>,
 ) -> Vec<f32> {
-    let windows = args.dims();
+    let windows = args.windows();
     let (batches, channels) = (input.dims[0], input.dims[N + 1]);
     let (gathered, kernel) = (&input.dims[1..=N], &weight.dims[1..=N]);
     let filters = weight.dims[0];
@@ -536,7 +536,7 @@ pub fn naive_weight_grad<const N: usize>(
     kernel: [usize; N],
     args: &ConvolutionArgs<N>,
 ) -> Vec<f32> {
-    let windows = args.dims();
+    let windows = args.windows();
     let (batches, channels) = (input.dims[0], input.dims[N + 1]);
     let (gathered, out) = (&input.dims[1..=N], &out_grad.dims[1..=N]);
     let filters = out_grad.dims[N + 1];

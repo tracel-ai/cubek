@@ -63,7 +63,7 @@ fn launch_tile<const N_SPATIAL: usize>(
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError> {
-    let window = &args.dims();
+    let window = &args.windows();
     let tensors = match inputs {
         ConvolutionInputs::Forward {
             input,
