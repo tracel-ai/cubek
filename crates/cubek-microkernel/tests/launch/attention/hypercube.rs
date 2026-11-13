@@ -2,7 +2,6 @@
 //! walks its run of the keys, its planes leaving their partials in its slot, and the last cube of
 //! the box to arrive merges the slots into the output and the logsumexp.
 
-use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
@@ -339,14 +338,8 @@ fn hypercube_attention_kernel<EA: Float, E: Float, N: Size>(
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
-    let key = TileStepReads::<E> {
-        tile: key.tile(&partitioning),
-        element: PhantomData,
-    };
-    let value = TileStepReads::<E> {
-        tile: value.tile(&partitioning),
-        element: PhantomData,
-    };
+    let key = TileStepReads::<E>::new(&key.tile(&partitioning));
+    let value = TileStepReads::<E>::new(&value.tile(&partitioning));
     // The cube level's walk: this cube's run of the steps of keys.
     let run = partitioning.walk();
     let first_step = run.region(0);

@@ -227,10 +227,9 @@ fn fragment_reads(hw: &Hardware, problem: &AttentionRoutineProblem) -> BTreeSet<
 
 /// Every FP8 cache is read at a prompt and at a decode step. The plane fragments read `e4m3` keys
 /// on the device's FP8 instruction, the `f16` query converted ahead, and `e4m3` values widened to
-/// it by their stage as it fills, as every side on a device without the instruction. The plane
-/// shuffles widen every operand into the sum
-/// as they read it. The unit routine, which computes in its operands' one element, declines them
-/// all.
+/// the query's `f16` by their stage as it fills, as every side on a device without the
+/// instruction. The plane shuffles widen every operand into the sum as they read it. The
+/// unit routine, which computes in its operands' one element, declines them all.
 #[test]
 fn every_fp8_cache_is_read_at_a_prompt_and_at_a_decode_step() {
     let hw = offering_fp8();

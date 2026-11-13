@@ -87,6 +87,11 @@ impl<N: Size> StepReads<N> for PackedStepReads {
         loaded
     }
 
+    /// A packed cache is read under the norms it stores, and no scale besides.
+    fn per_tensor_scale(&self) -> f32 {
+        1.0
+    }
+
     fn read_page_entry(&self, _region: &Region) -> PageEntry {
         PageEntry::unlisted()
     }

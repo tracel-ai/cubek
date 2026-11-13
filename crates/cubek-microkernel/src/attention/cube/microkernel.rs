@@ -469,9 +469,11 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, EV: Float, E: Float>(
 impl CubeAttentionMicrokernel {
     /// A cube's planes over the steps of keys it takes, those every row sees whole in `unmasked`,
     /// where the caller has them, and the rest in `walk`, which follows: its query staged once, its
-    /// keys and values a stage at a time through the ring for every plane, each plane taking its
-    /// part of every stage into its rows of one head with the plane fragment microkernel. Returns
-    /// the planes' rows as the walk leaves them, for the level above to end.
+    /// keys and values a stage at a time through the ring for every plane, as they are stored,
+    /// each plane taking its part of every stage into its rows of one head with the plane fragment
+    /// microkernel. Returns the planes' rows as the walk leaves them, each side's per-tensor scale
+    /// on the sum it enters ([`StagedCache`](crate::attention::plane::StagedCache)), for the level
+    /// above to end.
     ///
     /// `out` and `query`, which span no key, are windowed to the cube's box; `key`, `value` and
     /// `bias` are read at the walk's regions, each stage of them held as `storage`, the unmasked
@@ -505,6 +507,7 @@ impl CubeAttentionMicrokernel {
                 &walk,
                 &staged_query,
                 out,
+                key,
                 value,
                 plane,
                 microkernel.planes(),
@@ -518,7 +521,16 @@ impl CubeAttentionMicrokernel {
 
         let in_flight = microkernel.ring.stages_in_flight.get();
         let decoded = microkernel.plane.decoded_stage();
-        let mut stages = Stages::smem(&walk, key, value, storage, in_flight, decoded);
+        // The stages hold the keys and values as stored, without the scales the planes' sums take
+        // out of them.
+        let mut stages = Stages::smem(
+            &walk,
+            &planes.cache.key,
+            &planes.cache.value,
+            storage,
+            in_flight,
+            decoded,
+        );
 
         // The steps every row sees whole come first and take no bias, the visibility costing their
         // scores nothing; the rest take the visibility's. Two walks of the one ring, so neither

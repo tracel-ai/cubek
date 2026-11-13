@@ -3,7 +3,10 @@
 use cubek_attention::kernels::CubeShuffleAttentionRoutine;
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::attention::{DECODES, DECODES_WIDE_FP8, Forward, PROMPTS, PROMPTS_WIDE_FP8};
+use crate::attention::{
+    DECODES, DECODES_WIDE_FP8, DECODES_WIDE_PER_TENSOR, Forward, PROMPTS, PROMPTS_WIDE_FP8,
+    PROMPTS_WIDE_PER_TENSOR,
+};
 
 /// The cube shuffle routine's lead on every prompt and decode case.
 #[test]
@@ -21,4 +24,14 @@ fn every_cube_shuffle_setting_reads_every_fp8_cache() {
     let forward = Forward::new(CubeShuffleAttentionRoutine);
     forward.check(forward.at_every_setting(&DECODES_WIDE_FP8));
     forward.check(forward.at_its_lead(&PROMPTS_WIDE_FP8));
+}
+
+/// Every setting over a decode step of a cache quantized per tensor, and the lead over a prompt of
+/// it: the planes read the keys and values as stored, and take each side's scale on once, the
+/// keys' on every score and the values' on every weight.
+#[test]
+fn every_cube_shuffle_setting_reads_a_cache_quantized_per_tensor() {
+    let forward = Forward::new(CubeShuffleAttentionRoutine);
+    forward.check(forward.at_every_setting(&DECODES_WIDE_PER_TENSOR));
+    forward.check(forward.at_its_lead(&PROMPTS_WIDE_PER_TENSOR));
 }
