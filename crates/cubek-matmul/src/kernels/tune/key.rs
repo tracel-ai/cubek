@@ -112,6 +112,23 @@ impl OperandLayout {
         axis.map_or(Self::Strided, Self::Along)
     }
 
+    /// How an operand over `axes` lies, `meta` its metadata and `kind` what it is: the axis it is
+    /// contiguous along, the tile it is stored in and the order the tile's words lie in, so a
+    /// winner elected on one layout is never served to another, which its kernel may decline.
+    pub fn of(meta: &Metadata, kind: OperandKind, axes: [Axis; 2]) -> Self {
+        let words = match kind {
+            OperandKind::Quantized(scheme) => {
+                TileOrder::of_matrix(&scheme, meta).map_or(TileWords::RowByRow, TileOrder::words)
+            }
+            _ => TileWords::RowByRow,
+        };
+        match (contiguous(meta, axes), layout::tile(meta)) {
+            (None, _) => Self::Strided,
+            (Some(axis), (1, 1)) => Self::Along(axis),
+            (Some(axis), tile) => Self::Tiles(axis, tile, words),
+        }
+    }
+
     /// The axis the operand is read along: the one it is contiguous along, or the one its stored
     /// pieces run along; `None` for a strided one.
     pub fn axis(self) -> Option<Axis> {
@@ -390,24 +407,11 @@ pub fn create_key(
     let MatmulProblem {
         m, k, n, batches, ..
     } = MatmulProblem::new((&lhs_shape, lhs_kind), (&rhs_shape, rhs_kind));
-    // An operand keys by the axis it is contiguous along, the tile it is stored in and the order
-    // the tile's words lie in, so a winner elected on one layout is never served to another, which
-    // its kernel may decline.
     let operand = |meta: &Metadata, kind: OperandKind, operand: MatmulOperand| {
         let shape = logical(meta);
-        let words = match kind {
-            OperandKind::Quantized(scheme) => {
-                TileOrder::of_matrix(&scheme, meta).map_or(TileWords::RowByRow, TileOrder::words)
-            }
-            _ => TileWords::RowByRow,
-        };
         OperandKey {
             kind,
-            layout: match (contiguous(meta, operand.axes()), layout::tile(meta)) {
-                (None, _) => OperandLayout::Strided,
-                (Some(axis), (1, 1)) => OperandLayout::Along(axis),
-                (Some(axis), tile) => OperandLayout::Tiles(axis, tile, words),
-            },
+            layout: OperandLayout::of(meta, kind, operand.axes()),
             batching: MatmulBatching::new(&shape.as_slice()[..shape.rank() - 2]),
         }
     };
