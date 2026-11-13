@@ -13,8 +13,7 @@ use cubecl::quant::scheme::QuantValue;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{
-    Axis, FragmentSource, Instruction, Levels, MmaOperands, PlanePick, Scratch, Space,
-    StageStorage,
+    Axis, FragmentSource, Instruction, Levels, MmaOperands, PlanePick, Scratch, Space, StageStorage,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Operand;
@@ -251,7 +250,7 @@ impl PlaneFragmentMicrokernel {
                 let values = item
                     .elements
                     .map(|_, element| FragmentSource::Values(element));
-                Self::cut_by_the_tile(hw, item, settings, values)
+                Self::cut_by_the_tile(hw, item, settings, values.lhs, values.rhs)
                     .filter(|_| hw.plane_dim().is_ok())
                     .map(|(instruction, unit)| Self::over(instruction, unit, item, *settings))
                     .into_iter()
@@ -316,7 +315,7 @@ impl PlaneFragmentMicrokernel {
                 let values = item
                     .elements
                     .map(|_, element| FragmentSource::Values(element));
-                plane.tiles_pick(hw, item.sum, values)
+                plane.tiles_pick(hw, item.sum, values.lhs, values.rhs)
             })
             .collect()
     }
@@ -358,14 +357,15 @@ impl PlaneFragmentMicrokernel {
     }
 
     /// The instruction the tile picks for the plane's tile, one unit deep, its operands' fragments
-    /// loaded from `sources`, and the unit its settings count, where it picks the fragment API or
-    /// the crate's own transport over plain values: the instruction's shape is the cell the tile
-    /// cuts the plane's tile into.
+    /// loaded from `lhs` and `rhs`, and the unit its settings count, where it picks the fragment
+    /// API or the crate's own transport over plain values: the instruction's shape is the cell the
+    /// tile cuts the plane's tile into.
     fn cut_by_the_tile(
         hw: &Hardware,
         item: &MatmulWorkItem,
         settings: &PlaneFragmentMicrokernelSettings,
-        sources: MatmulOperands<FragmentSource>,
+        lhs: FragmentSource,
+        rhs: FragmentSource,
     ) -> Option<(PlaneFragmentInstruction, PlaneUnit)> {
         let (unit, calls) = Self::unit_of(hw, item, settings)?;
         let ([m, n, k], [calls_m, calls_n, _]) = (unit, calls);
@@ -373,78 +373,106 @@ impl PlaneFragmentMicrokernel {
             settings.along_m.get() * m * calls_m,
             settings.along_n.get() * n * calls_n,
         ];
+        let elements = MmaConfig {
+            a_type: item.elements.lhs,
+            b_type: item.elements.rhs,
+            cd_type: item.sum,
+            m: 0,
+            n: 0,
+            k: k as u32,
+        };
+        let instruction = Self::tiles_cut(hw, settings, tile, elements, lhs, rhs)?;
+        Some((instruction, PlaneUnit::Matrix { unit, calls }))
+    }
+
+    /// The instruction the tile picks for a plane's tile of `tile` along the caller's `m` and `n`,
+    /// `elements.k` deep, its operands' fragments loaded from `lhs` and `rhs`: `elements` cut into
+    /// the cell each call fills, where the tile picks the fragment API or the crate's own
+    /// transport over plain values.
+    fn tiles_cut(
+        hw: &Hardware,
+        settings: &PlaneFragmentMicrokernelSettings,
+        tile: [usize; 2],
+        elements: MmaConfig,
+        lhs: FragmentSource,
+        rhs: FragmentSource,
+    ) -> Option<PlaneFragmentInstruction> {
         let rows_cols = match settings.rows_along {
             PlaneFragmentRowsAlong::M => tile,
             PlaneFragmentRowsAlong::N => [tile[1], tile[0]],
         };
-        let (MatmulOperands { lhs, rhs, .. }, sum) = (item.elements, item.sum);
+        let (rows, columns) = rows_first(settings.rows_along, lhs, rhs);
         let pick = Instruction::for_accumulator(
             &hw.properties,
             &hw.target,
-            ComputeScope::Plane,
-            sources.lhs,
-            sources.rhs,
-            sum,
-            [rows_cols[0], rows_cols[1], k],
+            settings.holder,
+            rows,
+            columns,
+            elements.cd_type,
+            [rows_cols[0], rows_cols[1], elements.k as usize],
         )?;
-        let [cell_m, cell_n] = pick.cell.map(|edge| edge as u32);
-        let shape = MmaConfig {
-            a_type: lhs,
-            b_type: rhs,
-            cd_type: sum,
-            m: cell_m,
-            n: cell_n,
-            k: k as u32,
-        };
-        let instruction = match pick.instruction {
-            Instruction::Cmma => PlaneFragmentInstruction::Cmma { shape },
+        let [m, n] = pick.cell.map(|edge| edge as u32);
+        let shape = MmaConfig { m, n, ..elements };
+        match pick.instruction {
+            Instruction::Cmma => Some(PlaneFragmentInstruction::Cmma { shape }),
             Instruction::Mma {
                 operands: MmaOperands::Plain,
                 ..
-            } => PlaneFragmentInstruction::mma(shape),
-            _ => return None,
-        };
-        Some((instruction, PlaneUnit::Matrix { unit, calls }))
-    }
-
-    /// This plane as it reads operands the TMA engine lands, which the tile reads through the
-    /// instruction it picks for landed operands: the tile's pick for the same tile where it cuts
-    /// the plane's tile, this plane where the tile picks its stated instruction for them. `None`
-    /// where it picks neither.
-    pub fn landed(self, hw: &Hardware, item: &MatmulWorkItem) -> Option<Self> {
-        let landed = item
-            .elements
-            .map(|_, element| FragmentSource::Landed(element));
-        match self.unit {
-            PlaneUnit::Matrix { .. } => {
-                let (instruction, unit) = Self::cut_by_the_tile(hw, item, &self.settings, landed)?;
-                Some(Self {
-                    instruction,
-                    orders: instruction.orders(item.layouts),
-                    unit,
-                    ..self
-                })
-            }
-            PlaneUnit::Instruction => self.tiles_pick(hw, item.sum, landed).then_some(self),
+            } => Some(PlaneFragmentInstruction::mma(shape)),
+            _ => None,
         }
     }
 
+    /// This plane as the tile opens its sum on fragments loaded from `lhs` and `rhs`, as its
+    /// kernel states them: the tile's pick for the plane's tile where the tile cuts it, this plane
+    /// where the tile picks its stated instruction for them. `None` where it picks neither, so a
+    /// kernel opening its sum there would find no instruction, or another one than the plane was
+    /// sized for.
+    pub fn opened_on(
+        self,
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        lhs: FragmentSource,
+        rhs: FragmentSource,
+    ) -> Option<Self> {
+        let elements = match (self.unit, self.instruction) {
+            (
+                PlaneUnit::Matrix { .. },
+                PlaneFragmentInstruction::Cmma { shape }
+                | PlaneFragmentInstruction::Mma { shape, .. },
+            ) => shape,
+            // The tile cuts only into the fragment API's or its own transport's calls.
+            (PlaneUnit::Instruction, _) | (_, PlaneFragmentInstruction::Wgmma { .. }) => {
+                return self.tiles_pick(hw, item.sum, lhs, rhs).then_some(self);
+            }
+        };
+        let instruction =
+            Self::tiles_cut(hw, &self.settings, self.tile_edges(), elements, lhs, rhs)?;
+        Some(Self {
+            instruction,
+            orders: instruction.orders(item.layouts),
+            ..self
+        })
+    }
+
     /// Whether the tile picks this plane's instruction for one of its fragments, as deep as its
-    /// settings say, its operands loaded from `sources` and summed in `sum`, and fills it in one
+    /// settings say, its operands loaded from `lhs` and `rhs` and summed in `sum`, and fills it in one
     /// call: the fragments the plane states are the tile's own.
     fn tiles_pick(
         &self,
         hw: &Hardware,
         sum: ElemType,
-        sources: MatmulOperands<FragmentSource>,
+        lhs: FragmentSource,
+        rhs: FragmentSource,
     ) -> bool {
         let [(_, m), (_, n), _] = self.instruction.shape_along(self.settings.rows_along);
+        let (rows, columns) = rows_first(self.settings.rows_along, lhs, rhs);
         let picked = Instruction::for_accumulator(
             &hw.properties,
             &hw.target,
             self.settings.holder,
-            sources.lhs,
-            sources.rhs,
+            rows,
+            columns,
             sum,
             [m, n, self.leaf_extent(MatmulDim::K)],
         );
@@ -1073,6 +1101,15 @@ impl MatmulMicrokernel for PlaneFragmentMicrokernel {
 
     fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.orders
+    }
+}
+
+/// `lhs` and `rhs` in the order a plane's kernel opens its sum on them: the factor its
+/// instruction's rows lie along first.
+fn rows_first<T>(rows_along: PlaneFragmentRowsAlong, lhs: T, rhs: T) -> (T, T) {
+    match rows_along {
+        PlaneFragmentRowsAlong::M => (lhs, rhs),
+        PlaneFragmentRowsAlong::N => (rhs, lhs),
     }
 }
 
