@@ -12,7 +12,7 @@ use cubek_microkernel::linear_recurrence::conv::cube::{
     CausalConvSettings, CubeCausalConvMicrokernel,
 };
 use cubek_microkernel::linear_recurrence::{
-    CHANNEL_RUN, CausalConvPartitioning, LINE_IN_RUN, POSITION,
+    CHANNEL_RUN, LINE_IN_RUN, POSITION, RecurrencePartitioning,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
@@ -77,7 +77,7 @@ impl Routine for CubeCausalConvRoutine {
     type Microkernel = CubeCausalConvMicrokernel;
     type Settings = CausalConvSettings;
     type Blueprint = CubeCausalConvRoutineBlueprint;
-    type Partitioning = CausalConvPartitioning;
+    type Partitioning = RecurrencePartitioning;
 
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         CubeCausalConvMicrokernel::settings(hw)
@@ -86,7 +86,7 @@ impl Routine for CubeCausalConvRoutine {
     fn vectorize(
         &self,
         microkernel: &CubeCausalConvMicrokernel,
-        _: &CausalConvPartitioning,
+        _: &RecurrencePartitioning,
         vectorization: &mut Vectorization<CausalConvOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
@@ -143,7 +143,7 @@ impl Routine for CubeCausalConvRoutine {
             units: provisional.units.min(lines),
             ..provisional
         };
-        let partitioning = CausalConvPartitioning::new(
+        let partitioning = RecurrencePartitioning::conv(
             problem.space(microkernel.units, width),
             Levels::leaf(&problem.leaf(width)).units_distributed(LINE_IN_RUN, microkernel.units),
             &[POSITION, CHANNEL_RUN],

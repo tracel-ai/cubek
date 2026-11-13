@@ -10,7 +10,7 @@ use cubek_microkernel::linear_recurrence::walk::cube::{
     CubeWalkMicrokernel, CubeWalkMicrokernelSettings, HeldStateShape, MAX_HELD_LINES_PER_UNIT,
 };
 use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, UpdateRule};
-use cubek_microkernel::linear_recurrence::{RecurrenceWalkPartitioning, VALUE_FEATURE};
+use cubek_microkernel::linear_recurrence::{RecurrencePartitioning, VALUE_FEATURE};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid};
@@ -111,7 +111,7 @@ pub(super) fn prepare(
     )?;
     let shape = microkernel.shape;
     let runs = settings.runs_of(hw, &shape, problem);
-    let partitioning = RecurrenceWalkPartitioning::new(
+    let partitioning = RecurrencePartitioning::walk(
         problem.space(),
         microkernel
             .tiling(problem.state.kept_axis())

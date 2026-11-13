@@ -1,7 +1,7 @@
 //! What a conv launch settles: the filter's shape and the grid its ring write back launches over.
 
 use crate::kernels::conv::RingWriteBackLaunch;
-use cubek_microkernel::linear_recurrence::CausalConvPartitioning;
+use cubek_microkernel::linear_recurrence::RecurrencePartitioning;
 use std::sync::Arc;
 
 /// What a launch of a conv compiles: the microkernel, the partitioning that places its cubes, the
@@ -11,7 +11,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CausalConvBlueprint<M> {
     pub microkernel: M,
-    pub partitioning: CausalConvPartitioning,
+    pub partitioning: RecurrencePartitioning,
     pub width: usize,
     pub write_back: Option<Arc<RingWriteBackLaunch>>,
 }
@@ -21,7 +21,7 @@ impl<M> CausalConvBlueprint<M> {
     /// filled by `write_back`.
     pub fn new(
         microkernel: M,
-        partitioning: CausalConvPartitioning,
+        partitioning: RecurrencePartitioning,
         width: usize,
         write_back: Option<Arc<RingWriteBackLaunch>>,
     ) -> Self {

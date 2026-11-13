@@ -5,7 +5,7 @@ use crate::kernels::walk::{
     RecurrenceWalkTensors, UpdateRuleBinding,
 };
 use cubecl::tile::launch::{Refusal, Vectorization};
-use cubek_microkernel::linear_recurrence::RecurrenceWalkPartitioning;
+use cubek_microkernel::linear_recurrence::RecurrencePartitioning;
 use cubek_microkernel::linear_recurrence::walk::cube::CubeWalkMicrokernel;
 use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, UpdateRule};
 use cubek_std::Hardware;
@@ -49,7 +49,7 @@ impl Routine for CubeWalkRoutine {
     type Microkernel = CubeWalkMicrokernel;
     type Settings = CubeWalkRoutineSettings;
     type Blueprint = CubeWalkRoutineBlueprint;
-    type Partitioning = RecurrenceWalkPartitioning;
+    type Partitioning = RecurrencePartitioning;
 
     fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
         CubeWalkRoutineSettings::listed()
@@ -59,7 +59,7 @@ impl Routine for CubeWalkRoutine {
     fn vectorize(
         &self,
         microkernel: &CubeWalkMicrokernel,
-        _: &RecurrenceWalkPartitioning,
+        _: &RecurrencePartitioning,
         vectorization: &mut Vectorization<RecurrenceWalkOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);

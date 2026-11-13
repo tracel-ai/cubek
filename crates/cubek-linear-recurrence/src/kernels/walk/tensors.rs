@@ -517,13 +517,7 @@ impl RecurrenceWalkTensors {
         grid: &Grid,
     ) -> RecurrenceWalkBinding {
         let partitioning = &blueprint.partitioning;
-        // The grid's launcher, settled over the extents on its first launch and cloned after.
-        let launcher = grid.launcher(self.client(), || {
-            (
-                partitioning.kernel(),
-                partitioning.as_cubek().space().clone(),
-            )
-        });
+        let launcher = partitioning.launcher(self.client(), grid);
         let width = blueprint.width;
         let bind = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
             bind(&launcher, tensor, axes, width)

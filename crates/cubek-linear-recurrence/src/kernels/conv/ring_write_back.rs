@@ -7,7 +7,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Levels, Space};
 use cubek_microkernel::linear_recurrence::conv::cube::{ChannelRun, RingWriter};
 use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, CHANNEL_RUN, CausalConvPartitioning, LINE_IN_RUN, RING_POSITION,
+    BATCH, CHANNEL, CHANNEL_RUN, LINE_IN_RUN, RING_POSITION, RecurrencePartitioning,
 };
 use cubek_std::Hardware;
 use cubek_std::routine::{CubeResources, Grid};
@@ -18,7 +18,7 @@ use std::sync::Arc;
 /// preparation settled, so a prepared conv fills rings without placing anything again.
 #[derive(Debug, Clone)]
 pub struct RingWriteBackLaunch {
-    partitioning: CausalConvPartitioning,
+    partitioning: RecurrencePartitioning,
     width: usize,
     channel_run: ChannelRun,
     grid: Grid,
@@ -68,7 +68,7 @@ impl RingWriteBackLaunch {
             (CHANNEL, channels),
             (LINE_IN_RUN, width),
         ];
-        let partitioning = CausalConvPartitioning::new(
+        let partitioning = RecurrencePartitioning::conv(
             Space::new(&axes),
             Levels::leaf(&leaf).units_distributed(LINE_IN_RUN, units),
             &[RING_POSITION, CHANNEL_RUN],
