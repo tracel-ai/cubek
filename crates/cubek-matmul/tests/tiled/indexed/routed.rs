@@ -6,17 +6,22 @@ use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
+use cubek_matmul::kernels::indexed::m_grouped::MGroupedSettings;
 use cubek_matmul::kernels::indexed::routed::{RoutedMatmulTensors, launch_tuned};
 use cubek_matmul::kernels::indexed::stack::SlabAxis;
-use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
-use cubek_matmul::kernels::{PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine};
+use cubek_matmul::kernels::tensor::{PACKED_STACK_UNREAD, PlainTensor, StoredTensor};
+use cubek_matmul::kernels::{
+    CubeStagedMatmulRoutine, PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine,
+};
+use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
 use cubek_std::autotune::GroupPriority;
+use cubek_std::matmul_axes::{K, N};
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
 
-use crate::matmul::Declines;
+use crate::matmul::{Declines, skip_unless_matrix_instruction};
 use crate::tiled::indexed::{Routed, Stack, values};
-use crate::tiled::packed::{PackedFormat, PackedSlabs};
+use crate::tiled::packed::{PackedFormat, PackedSlabs, PackedSlabsSpec};
 use crate::tiled::{ByRoutine, upload};
 
 #[test]
@@ -43,6 +48,70 @@ fn every_packed_plane_shuffle_setting_reads_each_route_s_packed_slab() {
     shuffle.check_some(shuffle.at(PlaneShuffleMatmulRoutine.packed_settings(), &products));
 }
 
+/// The routed products of a stack laid in each tile order: a slab of several strips, its `n` a
+/// multiple of the column tile and not, and a slab of one strip.
+fn in_tile_order() -> Vec<Routed> {
+    Stack::TILE_ORDERS
+        .into_iter()
+        .flat_map(|stack| {
+            [Routed::MOE, Routed::NARROW, Routed::ONE_STRIP].map(|routed| routed.stored(stack))
+        })
+        .collect()
+}
+
+/// Every packed setting of the plane shuffle against a stack in tile order: each route's slab a
+/// fixed run of whole strips, the table moving the window by it.
+#[test]
+fn every_packed_plane_shuffle_setting_reads_each_route_s_slab_of_a_stack_in_tile_order() {
+    let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
+    shuffle.check_some(shuffle.at(
+        PlaneShuffleMatmulRoutine.packed_settings(),
+        &in_tile_order(),
+    ));
+}
+
+/// Every packed setting of the cube staged routine against a stack in tile order: skipped on a
+/// device with no matrix instruction, which it stages a packed input for.
+#[test]
+fn every_packed_cube_staged_setting_reads_each_route_s_slab_of_a_stack_in_tile_order() {
+    if skip_unless_matrix_instruction() {
+        return;
+    }
+    let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
+    let settings = MGroupedSettings::cube_staged_packed(staged.hw())
+        .into_iter()
+        .map(|settings| settings.routine);
+    staged.check_some(staged.at(settings, &in_tile_order()));
+}
+
+/// A stack in tile order is read slab by slab only where each slab is whole strips of its rows:
+/// slabs that split a strip, or lie along `k` across every strip, are refused rather than read
+/// across.
+#[test]
+fn a_stack_in_tile_order_whose_slabs_split_a_strip_is_refused() {
+    let client = cubecl::test_device().client();
+    for stack in Stack::TILE_ORDERS {
+        let matrix = PackedSlabs::new(
+            &client,
+            PackedSlabsSpec {
+                format: PackedFormat::Nvfp4,
+                operand: MatmulOperand::Rhs,
+                slabs: 1,
+                rows: 24,
+                k: 256,
+                seed: 5,
+            },
+        )
+        .laid(&client, stack.laid());
+        assert!(matrix.clone().stacked(3, N).is_ok(), "{stack:?}");
+        assert_eq!(
+            matrix.clone().stacked(2, N).err(),
+            Some(PACKED_STACK_UNREAD)
+        );
+        assert_eq!(matrix.stacked(2, K).err(), Some(PACKED_STACK_UNREAD));
+    }
+}
+
 /// The routed autotune, against a stack laid either way it takes: a col float stack, its buffer
 /// `[slabs · n, k]` behind the `[k, slabs · n]` view, and a stack packed in each format.
 #[test]
@@ -54,6 +123,8 @@ fn the_routed_autotune_reads_each_route_s_slab() {
             Stack::Packed(PackedFormat::Q4),
             Stack::Packed(PackedFormat::Nvfp4),
             Stack::Packed(PackedFormat::Mxfp4),
+            Stack::TILE_ORDERS[0],
+            Stack::TILE_ORDERS[1],
         ]
         .map(|stack| Routed {
             stack,
@@ -96,7 +167,7 @@ impl ScopeUnderTest for TunedRouted {
             stack,
         } = *routed;
         let stored = match routed.packed_slabs() {
-            Some(spec) => StoredTensor::Packed(PackedSlabs::new(client, spec).matrix()),
+            Some(_) => routed.stack_matrix(client),
             None => {
                 let values = values(slabs * k * n, 2);
                 let col: Vec<f32> = (0..slabs * n)
