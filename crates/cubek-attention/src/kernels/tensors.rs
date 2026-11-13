@@ -1,5 +1,6 @@
 //! The tensors of one attention, and how a launch binds them.
 
+use crate::kernels::conversion::converted;
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
     AttentionRoutineProblem, AttentionScoring, CacheScales, KvSource, PAGED_PACKED_UNREAD,
@@ -723,14 +724,33 @@ impl AttentionTensors {
         let widths = blueprint.widths;
         let problem = self.problem();
         let read = blueprint.microkernel.served(&problem.work_item()).elements;
-        // Read at another element than the float it is stored in, an operand is bound as its u32
-        // words, which its stage decodes at the read element as it fills: each operand is read
-        // once a launch, where it lies. A decoding fill passes the words through the units'
+        // Read at another element than the float it is stored in, a side of the cache is bound as
+        // its u32 words, which its stage decodes at the read element as it fills: the cache is
+        // read once a launch, where it lies. A decoding fill passes the words through the units'
         // registers, so such an operand moves into its stage per unit, whatever the microkernel
         // plans for the others; the stages meet on a barrier where two operands' moves differ.
+        // The query is bound so only where each of its values is a word of its own. A query of
+        // narrower values is a few megabytes against a cache of gigabytes: it is converted ahead
+        // into a buffer of its own (`converted`) and moves into its stage as the microkernel plans.
+        // Decoded by its stage instead, Devstral Small 2's 128k prompt over an `e4m3` cache took
+        // 24.1 s to its first token on an RTX PRO 6000, against 22.1 s converted ahead, under the
+        // same tuned routine.
         let words = |operand: AttentionOperand| match problem.elements.get(operand) {
-            stored @ ElemType::Float(kind) if read.get(operand) != stored => Some(kind),
+            stored @ ElemType::Float(kind)
+                if read.get(operand) != stored
+                    && (operand != AttentionOperand::Query
+                        || stored.size() == u32::BITS as usize / 8) =>
+            {
+                Some(kind)
+            }
             _ => None,
+        };
+        let query_read = read.get(AttentionOperand::Query);
+        let query = match query_read != problem.elements.get(AttentionOperand::Query)
+            && words(AttentionOperand::Query).is_none()
+        {
+            true => converted(&self.client, &self.query, query_read),
+            false => self.query.clone(),
         };
         let delivery = |operand: AttentionOperand, planned: Delivery| match words(operand) {
             Some(_) => Delivery::SyncPerUnit,
@@ -774,7 +794,7 @@ impl AttentionTensors {
         };
         let query = runs(
             read_operand(
-                &self.query,
+                &query,
                 &[B, KV, G, Q, D],
                 widths.query,
                 AttentionOperand::Query,

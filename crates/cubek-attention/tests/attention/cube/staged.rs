@@ -36,8 +36,8 @@ fn every_cube_staged_setting_matches_the_host_at_a_head_dim_of_128() {
 }
 
 /// Every setting the routine lists over every FP8 cache at a model's head dim: the score on the
-/// device's FP8 instruction, the `f16` query converted by its stage, and `e4m3` values widened to
-/// the query's element by theirs.
+/// device's FP8 instruction, the `f16` query converted ahead, and `e4m3` values widened to the
+/// query's element by their stage.
 #[test]
 fn every_cube_staged_setting_reads_every_fp8_cache() {
     let forward = Forward::new(CubeStagedAttentionRoutine);
