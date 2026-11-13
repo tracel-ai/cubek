@@ -381,7 +381,7 @@ where
     ///
     /// Why this device cannot run the norm at this setting.
     pub fn launch(&self, call: &RmsNormCall) -> Result<TensorHandle, Refusal> {
-        let tensors = RmsNormTensors::new(call)?;
+        let tensors = RmsNormTensors::new(&self.hw, call)?;
         self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
             tensors
                 .bind(blueprint, grid)
@@ -398,7 +398,7 @@ where
     ///
     /// Why this device cannot run the norm at this setting, or why `out` cannot hold it.
     pub fn launch_tiled(&self, call: &RmsNormCall, out: PlainTensor) -> Result<(), Refusal> {
-        let tensors = RmsNormTensors::tiled(call, out)?;
+        let tensors = RmsNormTensors::tiled(&self.hw, call, out)?;
         self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
             tensors
                 .bind(blueprint, grid)
@@ -415,7 +415,7 @@ where
     ///
     /// Why this device cannot encode the norm at this setting, or why `out` cannot hold it.
     pub fn launch_packed(&self, call: &RmsNormCall, out: PackedTensor) -> Result<(), Refusal> {
-        let tensors = RmsNormTensors::packed(call, out)?;
+        let tensors = RmsNormTensors::packed(&self.hw, call, out)?;
         self.launch_on::<Encoded, _>(call, &tensors, |blueprint, grid| {
             tensors.bind(blueprint, grid)
         })
@@ -444,7 +444,7 @@ where
     where
         R: Copy,
     {
-        let tensors = RmsNormTensors::sink(call)?;
+        let tensors = RmsNormTensors::sink(&self.hw, call)?;
         if tensors.problem().is_empty() {
             return Err(RMS_NORM_SINK_TAKES_NO_ROWS);
         }

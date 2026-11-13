@@ -110,7 +110,7 @@ impl RmsNormInputs {
     /// # Errors
     ///
     /// As [`RmsNormTensors::new`].
-    fn new(call: &RmsNormCall) -> Result<Self, Refusal> {
+    fn new(hw: &Hardware, call: &RmsNormCall) -> Result<Self, Refusal> {
         let (client, input) = (&call.client, call.input.clone());
         assert_eq!(
             input.elem, call.weight.elem,
@@ -127,8 +127,7 @@ impl RmsNormInputs {
             );
         }
         let output_element = call.output_element;
-        let hw = Hardware::from_client(client);
-        RmsNormRoutineProblem::admit_elements(&hw, input.elem, output_element)?;
+        RmsNormRoutineProblem::admit_elements(hw, input.elem, output_element)?;
         let read_bytes = hw.properties.io_width() as u64 / 8;
         let shape = input.binding.shape.to_vec();
         let dim = *shape.last().expect("a tensor has a last dimension");
@@ -280,8 +279,8 @@ impl RmsNormTensors {
     /// Operands on different devices or of different elements, a gate not shaped as the input, a
     /// weight that is not whole rows of the normalized dim, or a weight a row whose rows do not
     /// divide the input's: no norm at all.
-    pub fn new(call: &RmsNormCall) -> Result<Self, Refusal> {
-        let (client, operands) = (&call.client, RmsNormInputs::new(call)?);
+    pub fn new(hw: &Hardware, call: &RmsNormCall) -> Result<Self, Refusal> {
+        let (client, operands) = (&call.client, RmsNormInputs::new(hw, call)?);
         let (handle, tensor) = PlainTensor::empty_contiguous(
             client,
             operands.shape.clone().into(),
@@ -329,8 +328,8 @@ impl RmsNormTensors<Geometry> {
     /// # Panics
     ///
     /// As [`RmsNormTensors::new`].
-    pub fn sink(call: &RmsNormCall) -> Result<Self, Refusal> {
-        let operands = RmsNormInputs::new(call)?.writing_the_input_element()?;
+    pub fn sink(hw: &Hardware, call: &RmsNormCall) -> Result<Self, Refusal> {
+        let operands = RmsNormInputs::new(hw, call)?.writing_the_input_element()?;
         let out = Geometry::row_major(&[operands.batch, operands.rows, operands.dim]);
         let placement = Placement::dense_rows(operands.dim);
         Ok(operands.with_out(out, placement, RowStore::Plain))
@@ -372,8 +371,8 @@ impl RmsNormTensors<PackedRows> {
     /// # Panics
     ///
     /// As [`RmsNormTensors::new`], and on an `out` not shaped `[rows, dim]`.
-    pub fn packed(call: &RmsNormCall, out: PackedTensor) -> Result<Self, Refusal> {
-        let operands = RmsNormInputs::new(call)?
+    pub fn packed(hw: &Hardware, call: &RmsNormCall, out: PackedTensor) -> Result<Self, Refusal> {
+        let operands = RmsNormInputs::new(hw, call)?
             .writing_the_input_element()?
             .one_entry()?;
         let out = PackedRows::new(out, operands.rows, operands.dim)?;
@@ -407,8 +406,8 @@ impl RmsNormTensors<TiledRows> {
     /// # Panics
     ///
     /// As [`RmsNormTensors::new`].
-    pub fn tiled(call: &RmsNormCall, out: PlainTensor) -> Result<Self, Refusal> {
-        let operands = RmsNormInputs::new(call)?
+    pub fn tiled(hw: &Hardware, call: &RmsNormCall, out: PlainTensor) -> Result<Self, Refusal> {
+        let operands = RmsNormInputs::new(hw, call)?
             .writing_the_input_element()?
             .one_entry()?;
         let element = operands.input.elem;

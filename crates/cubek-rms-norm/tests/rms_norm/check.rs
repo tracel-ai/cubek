@@ -200,6 +200,7 @@ pub fn assert_gate_slice_is_read_in_place() {
         }),
     }
     .grouped(128);
-    let tensors = RmsNormTensors::new(&call).expect("the device runs the norm");
+    let tensors = RmsNormTensors::new(&Hardware::from_client(&client), &call)
+        .expect("the device runs the norm");
     assert_ne!(tensors.problem().start_bytes.gate, 0, "the gate was copied");
 }
