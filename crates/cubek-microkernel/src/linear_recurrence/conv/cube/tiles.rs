@@ -1,11 +1,11 @@
-use super::past_taps::PastTiles;
+use super::past_reader::CausalConvPastTiles;
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
 /// Every operand of the causal conv as a tile.
 #[derive(CubeType)]
 pub struct CausalConvTiles {
-    pub past: PastTiles,
+    pub past: CausalConvPastTiles,
     pub filters: Tile,
     pub bias: ComptimeOption<Tile>,
     pub output: Tile,

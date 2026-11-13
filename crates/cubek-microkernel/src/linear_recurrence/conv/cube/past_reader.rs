@@ -4,17 +4,17 @@ use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
 /// Who writes the positions a launch convolves into the ring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RingAdvance {
+pub enum RingWriter {
     /// The conv itself, which writes the newest value of each row as the ring's next column: a
     /// launch of one position a row.
-    InLaunch,
+    ConvLaunch,
     /// A launch after the conv, once every position has read the ring's old columns.
-    AfterLaunch,
+    WriteBackLaunch,
 }
 
 /// The operands the taps' past is read from, as tiles.
 #[derive(CubeType)]
-pub struct PastTiles {
+pub struct CausalConvPastTiles {
     /// The row's positions to convolve.
     pub input: Tile,
     /// The ring store, placed at the row's slot.
@@ -26,9 +26,9 @@ pub struct PastTiles {
 }
 
 #[cube]
-impl PastTiles {
-    pub fn at(&self, region: &Region) -> PastTiles {
-        PastTiles {
+impl CausalConvPastTiles {
+    pub fn at(&self, region: &Region) -> CausalConvPastTiles {
+        CausalConvPastTiles {
             input: self.input.at(region),
             ring: self.ring.at(region),
             lengths: self.lengths.at(region),
@@ -40,7 +40,7 @@ impl PastTiles {
 /// Where a unit reads the values its taps run over: earlier positions of the row's input, then its
 /// ring.
 #[derive(CubeType)]
-pub struct PastTaps {
+pub struct PastReader {
     input: Tile,
     ring: Tile,
     /// The positions the row has convolved before the launch: its ring's fill.
@@ -49,26 +49,26 @@ pub struct PastTaps {
     position: usize,
     columns: usize,
     #[cube(comptime)]
-    advance: RingAdvance,
+    writer: RingWriter,
     #[cube(comptime)]
     read_columns: usize,
 }
 
 #[cube]
-impl PastTaps {
+impl PastReader {
     pub fn new(
         cube: &Region,
-        tiles: &PastTiles,
-        #[comptime] advance: RingAdvance,
+        tiles: &CausalConvPastTiles,
+        #[comptime] writer: RingWriter,
         #[comptime] read_columns: usize,
     ) -> Self {
-        PastTaps {
+        PastReader {
             input: tiles.input.clone(),
             ring: tiles.ring.clone(),
             before: walked(&tiles.lengths) as usize,
             position: cube.coord(POSITION),
             columns: tiles.columns,
-            advance,
+            writer,
             read_columns,
         }
     }
@@ -94,16 +94,16 @@ impl PastTaps {
         behind
     }
 
-    /// `newest` as the ring's next column where the launch advances the ring.
-    pub fn advance<E: Float, N: Size>(&self, line: usize, newest: Vector<E, N>) {
-        let advance = comptime!(self.advance);
-        match advance {
-            RingAdvance::InLaunch => {
+    /// `newest` as the ring's next column where the launch writes the ring.
+    pub fn write_newest<E: Float, N: Size>(&self, line: usize, newest: Vector<E, N>) {
+        let writer = comptime!(self.writer);
+        match writer {
+            RingWriter::ConvLaunch => {
                 let next = self.before % self.columns;
                 let mut column = self.ring.within(RING_COLUMN, next, next + 1);
                 column.flat_mut::<E, N>().write(line, newest);
             }
-            RingAdvance::AfterLaunch => {}
+            RingWriter::WriteBackLaunch => {}
         }
     }
 }

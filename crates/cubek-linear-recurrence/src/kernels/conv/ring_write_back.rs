@@ -1,13 +1,13 @@
 //! The launch that fills a prompt's rings, which the conv ends with.
 
 use super::kernel::ring_write_back_kernel;
-use crate::kernels::bound::bound;
+use crate::kernels::bind::bind;
 use crate::kernels::conv::{CausalConvPastInputs, CausalConvProblem, CausalConvTensors};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Levels, Space};
-use cubek_microkernel::linear_recurrence::conv::cube::{ChannelBox, RingAdvance};
+use cubek_microkernel::linear_recurrence::conv::cube::{ChannelRun, RingWriter};
 use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, CHANNEL_BOX, CausalConvPartitioning, LINE_IN_BOX, RING_POSITION,
+    BATCH, CHANNEL, CHANNEL_RUN, CausalConvPartitioning, LINE_IN_RUN, RING_POSITION,
 };
 use cubek_std::Hardware;
 use cubek_std::routine::{CubeResources, Grid};
@@ -20,7 +20,7 @@ use std::sync::Arc;
 pub struct RingWriteBackLaunch {
     partitioning: CausalConvPartitioning,
     width: usize,
-    channel_box: ChannelBox,
+    channel_run: ChannelRun,
     grid: Grid,
 }
 
@@ -29,7 +29,7 @@ impl PartialEq for RingWriteBackLaunch {
     fn eq(&self, other: &Self) -> bool {
         self.partitioning == other.partitioning
             && self.width == other.width
-            && self.channel_box == other.channel_box
+            && self.channel_run == other.channel_run
     }
 }
 
@@ -37,7 +37,7 @@ impl Eq for RingWriteBackLaunch {}
 
 impl RingWriteBackLaunch {
     /// The write back of a prompt of `problem`, its channels `width` values a line over the
-    /// conv's `channel_box`, checked against `hw`, or none for a window, which writes its own ring.
+    /// conv's `channel_run`, checked against `hw`, or none for a decode step, which writes its own ring.
     ///
     /// # Errors
     ///
@@ -46,32 +46,32 @@ impl RingWriteBackLaunch {
         hw: &Hardware,
         problem: &CausalConvProblem,
         width: usize,
-        channel_box: ChannelBox,
+        channel_run: ChannelRun,
     ) -> Result<Option<Arc<Self>>, Refusal> {
-        if problem.past.advance() == RingAdvance::InLaunch {
+        if problem.past.writer() == RingWriter::ConvLaunch {
             return Ok(None);
         }
         let channels = problem.channels;
-        let units = channel_box.units;
-        let boxes = (channels / width).div_ceil(units);
+        let units = channel_run.units;
+        let runs = (channels / width).div_ceil(units);
         let mut axes = vec![
             (BATCH, problem.batch),
             (RING_POSITION, problem.taps - 1),
-            (CHANNEL_BOX, boxes),
-            (LINE_IN_BOX, units * width),
+            (CHANNEL_RUN, runs),
+            (LINE_IN_RUN, units * width),
             (CHANNEL, channels),
         ];
         axes.extend(problem.past.past_axes());
         let leaf = [
             (RING_POSITION, 1),
-            (CHANNEL_BOX, 1),
+            (CHANNEL_RUN, 1),
             (CHANNEL, channels),
-            (LINE_IN_BOX, width),
+            (LINE_IN_RUN, width),
         ];
         let partitioning = CausalConvPartitioning::new(
             Space::new(&axes),
-            Levels::leaf(&leaf).units_distributed(LINE_IN_BOX, units),
-            &[RING_POSITION, CHANNEL_BOX],
+            Levels::leaf(&leaf).units_distributed(LINE_IN_RUN, units),
+            &[RING_POSITION, CHANNEL_RUN],
         );
         let cube = CubeResources {
             plane_width: units as u32,
@@ -81,7 +81,7 @@ impl RingWriteBackLaunch {
         Ok(Some(Arc::new(Self {
             partitioning,
             width,
-            channel_box,
+            channel_run,
             grid,
         })))
     }
@@ -96,10 +96,10 @@ impl RingWriteBackLaunch {
         let launcher = self.partitioning.launcher(tensors.client(), grid);
         let input = tensors.bind_input(&launcher, self.width);
         let past = tensors.bind_ring(&launcher, self.width);
-        let valid = bound(&launcher, valid, &[BATCH], 1);
+        let valid = bind(&launcher, valid, &[BATCH], 1);
         // SAFETY: every operand is bound through the launcher. The input is read only at
         // positions below `valid`, which the kernel clamps to the prompt's positions. A cube writes
-        // the ring columns of its own position of its row and box, and the positions of a row take
+        // the ring columns of its own position of its row and run, and the positions of a row take
         // distinct columns, since the ring holds the taps read back.
         unsafe {
             ring_write_back_kernel::launch_unchecked(
@@ -114,7 +114,7 @@ impl RingWriteBackLaunch {
                 problem.past.ring().columns,
                 problem.past.positions(),
                 launcher.partitioning_arg(),
-                self.channel_box,
+                self.channel_run,
                 problem.taps - 1,
                 problem.element,
             );

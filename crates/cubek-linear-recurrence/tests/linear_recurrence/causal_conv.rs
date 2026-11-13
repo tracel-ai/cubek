@@ -1,6 +1,6 @@
-//! The causal conv with bias against a host reference in `f64`, over a window and over a prompt:
-//! the ring's wrap, a row with no history, prompts and windows packed and pitched, rows right
-//! padded to unequal lengths, and a prompt handed on to window steps. The rings hold NaN wherever
+//! The causal conv with bias against a host reference in `f64`, over a decode step and over a prompt:
+//! the ring's wrap, a row with no history, prompts and decode steps packed and pitched, rows right
+//! padded to unequal lengths, and a prompt handed on to decode steps. The rings hold NaN wherever
 //! the conv must not read.
 
 use super::harness::{
@@ -22,11 +22,11 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_std::Hardware;
 use cubek_std::routine::PreparedLaunches;
 
-/// A causal conv's rows, over a window when `window` holds, else a prompt.
+/// A causal conv's rows, over a decode step when `decode_step` holds, else a prompt.
 #[derive(Debug, Clone)]
 struct CausalCase {
     ring: RingCase,
-    window: bool,
+    decode_step: bool,
 }
 
 /// The host values of a case.
@@ -48,7 +48,7 @@ const BIASED_F32: Setting = Setting {
     output: F32,
 };
 
-fn window_case(
+fn decode_step_case(
     channels: usize,
     taps: usize,
     columns: usize,
@@ -60,7 +60,7 @@ fn window_case(
         .collect();
     CausalCase {
         ring: RingCase::new(1, channels, taps, columns, &rows),
-        window: true,
+        decode_step: true,
     }
 }
 
@@ -73,7 +73,7 @@ fn prompt_case(
 ) -> CausalCase {
     CausalCase {
         ring: RingCase::new(positions, channels, taps, columns, rows),
-        window: false,
+        decode_step: false,
     }
 }
 
@@ -82,21 +82,21 @@ fn pitched(mut case: CausalCase, padding: RingPadding) -> CausalCase {
     case
 }
 
-/// A window step with a ring that wraps, a fresh row and a ring as short as the taps read back, a
+/// A decode step with a ring that wraps, a fresh row and a ring as short as the taps read back, a
 /// long prompt, a prompt of one position, prime channels and the widths of a wide layer; prompts
 /// whose rows start from nothing, from exactly the taps read back, and from a ring they have gone
-/// round; a window and a prompt over a store whose columns and slots are padded.
+/// round; a decode step and a prompt over a store whose columns and slots are padded.
 fn cases() -> Vec<CausalCase> {
     vec![
-        window_case(1280, 4, 3, &[(7, 9), (3, 0), (4, 1), (1, 2)]),
-        window_case(37 * 3, 4, 5, &[(4, 9), (1, 0), (2, 3)]),
-        window_case(12, 2, 1, &[(1, 5), (0, 0), (2, 1)]),
+        decode_step_case(1280, 4, 3, &[(7, 9), (3, 0), (4, 1), (1, 2)]),
+        decode_step_case(37 * 3, 4, 5, &[(4, 9), (1, 0), (2, 3)]),
+        decode_step_case(12, 2, 1, &[(1, 5), (0, 0), (2, 1)]),
         prompt_case(257, 1280, 4, 3, &[(0, 0, 257), (1, 3, 257)]),
         prompt_case(1, 37 * 3, 4, 5, &[(2, 9, 1), (0, 0, 1)]),
         prompt_case(5, 12, 2, 1, &[(0, 1, 5), (1, 6, 5), (2, 0, 5)]),
         prompt_case(6, 40, 4, 3, &[(0, 3, 6), (1, 9, 6)]),
         pitched(
-            window_case(40, 4, 3, &[(2, 7), (0, 1), (1, 0)]),
+            decode_step_case(40, 4, 3, &[(2, 7), (0, 1), (1, 0)]),
             RingPadding { column: 5, slot: 3 },
         ),
         pitched(
@@ -128,8 +128,8 @@ impl CausalCase {
         let channels = self.ring.channels;
         let [slots, lengths, valid] = self.ring.tables(client);
         let ring = SlotStore::new(ring, slots, lengths);
-        let past = if self.window {
-            CausalConvPastInputs::Window { ring }
+        let past = if self.decode_step {
+            CausalConvPastInputs::DecodeStep { ring }
         } else {
             CausalConvPastInputs::Prompt { ring, valid }
         };
@@ -232,7 +232,7 @@ fn the_causal_conv_matches_the_reference() {
     }
 }
 
-/// A prompt of `prompt` positions then `steps` window steps over the ring the prompt fills, a ring
+/// A prompt of `prompt` positions then `steps` decode steps over the ring the prompt fills, a ring
 /// of `columns` columns: the prompt and every step match the reference over the whole sequence, so
 /// the ring the prompt leaves is the one a longer prompt would have read and it wraps right.
 fn handed_on(prompt: usize, steps: usize, columns: usize) {
@@ -259,7 +259,7 @@ fn handed_on(prompt: usize, steps: usize, columns: usize) {
         for step in 0..steps {
             let length = o.sequences[0].len() / channels;
             o.sequences[0].extend(wave(channels, 3.5 + step as f32, 1.0, elem));
-            let case = window_case(channels, taps, columns, &[(0, length)]);
+            let case = decode_step_case(channels, taps, columns, &[(0, length)]);
             let inputs = case.inputs(&client, &o, store.clone(), layout, BIASED_F32, elem);
             let what = format!("step {step} after {prompt} positions at {elem:?}");
             let Some(outputs) = launch(&hw, inputs, &what) else {
@@ -276,11 +276,11 @@ fn handed_on(prompt: usize, steps: usize, columns: usize) {
     }
 }
 
-/// A prompt handed on to window steps: with a ring as short as the taps read back, a prompt
+/// A prompt handed on to decode steps: with a ring as short as the taps read back, a prompt
 /// shorter than the ring, a long prompt, one step after a prompt, and a prompt of one position
 /// followed by more steps than the ring has columns.
 #[test]
-fn a_prompt_handed_on_to_window_steps_matches_the_reference() {
+fn a_prompt_handed_on_to_decode_steps_matches_the_reference() {
     handed_on(9, 4, 3);
     handed_on(2, 5, 4);
     handed_on(257, 2, 3);
@@ -290,9 +290,9 @@ fn a_prompt_handed_on_to_window_steps_matches_the_reference() {
 
 /// Rows right padded to unequal lengths, one shorter than the taps read back, one of none and one
 /// whose `valid` is past the prompt, then
-/// a window step over the rings the prompt left: each row's step matches its valid positions alone.
+/// a decode step over the rings the prompt left: each row's step matches its valid positions alone.
 #[test]
-fn right_padded_rows_seed_the_ring_for_a_window_step() {
+fn right_padded_rows_seed_the_ring_for_a_decode_step() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
     for elem in elements(&client) {
@@ -326,7 +326,7 @@ fn right_padded_rows_seed_the_ring_for_a_window_step() {
             .iter()
             .map(|r| (r.slot, r.before + case.ring.real(r)))
             .collect();
-        let step = window_case(64, 4, 3, &steps);
+        let step = decode_step_case(64, 4, 3, &steps);
         let known: Vec<Vec<f32>> = (case.ring.rows.iter().zip(&o.sequences))
             .enumerate()
             .map(|(i, (row, sequence))| {
@@ -377,9 +377,9 @@ fn what_the_conv_cannot_run_is_declined_by_name() {
     );
 }
 
-/// The window case the slot tests run over: rows at slots of a store of six.
+/// The decode step case the slot tests run over: rows at slots of a store of six.
 fn slotted(rows: &[(usize, usize)]) -> CausalCase {
-    let mut case = window_case(37 * 3, 4, 5, rows);
+    let mut case = decode_step_case(37 * 3, 4, 5, rows);
     case.ring.slots = 6;
     case
 }
@@ -405,7 +405,7 @@ fn slot_launch(
         F32,
     );
     let (slots, lengths) = tables(&client);
-    inputs.past = CausalConvPastInputs::Window {
+    inputs.past = CausalConvPastInputs::DecodeStep {
         ring: SlotStore::new(store, slots, lengths),
     };
     if let Some(outputs) = launch(&hw, inputs, what) {
@@ -448,12 +448,12 @@ fn a_slot_past_the_store_is_the_last_slot() {
 }
 
 /// Two launches of one prepared problem with different slot tables each leave the results of
-/// their own rows, over a window and over a prompt.
+/// their own rows, over a decode step and over a prompt.
 #[test]
 fn a_prepared_problem_is_right_for_each_slot_table() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    let windows: [&[(usize, usize)]; 2] = [&[(4, 9), (1, 0), (2, 1)], &[(0, 3), (3, 0), (5, 8)]];
+    let step_rows: [&[(usize, usize)]; 2] = [&[(4, 9), (1, 0), (2, 1)], &[(0, 3), (3, 0), (5, 8)]];
     let prompts: [&[(usize, usize, usize)]; 2] = [
         &[(4, 9, 5), (1, 0, 5), (2, 1, 5)],
         &[(0, 3, 5), (3, 0, 5), (5, 8, 5)],
@@ -463,7 +463,7 @@ fn a_prepared_problem_is_right_for_each_slot_table() {
         case.ring.slots = 6;
         case
     };
-    let cases: Vec<CausalCase> = (windows.iter().map(|rows| slotted(rows)))
+    let cases: Vec<CausalCase> = (step_rows.iter().map(|rows| slotted(rows)))
         .chain(prompts.iter().map(|rows| prompt(rows)))
         .collect();
     let prepared = [PreparedLaunches::default(), PreparedLaunches::default()];
@@ -473,7 +473,7 @@ fn a_prepared_problem_is_right_for_each_slot_table() {
         let (raw, store) = case.ring.ring_tensor(&client, &ring, F32);
         let inputs = case.inputs(&client, &o, store, PromptLayout::default(), BIASED_F32, F32);
         let launched = CubeCausalConvRoutine.launch_prepared_on(
-            &prepared[usize::from(!case.window)],
+            &prepared[usize::from(!case.decode_step)],
             &hw,
             inputs.clone(),
         );

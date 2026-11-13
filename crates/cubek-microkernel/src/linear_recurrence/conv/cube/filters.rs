@@ -1,4 +1,4 @@
-use super::past_taps::PastTaps;
+use super::past_reader::PastReader;
 use crate::linear_recurrence::CHANNEL;
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
@@ -18,14 +18,14 @@ fn silu(x: f32) -> f32 {
 
 /// The depthwise filters of every channel and, where there is one, each channel's bias.
 #[derive(CubeType)]
-pub struct CausalFilters {
+pub struct CausalConvFilters {
     filters: Tile,
     bias: ComptimeOption<Tile>,
     #[cube(comptime)]
     taps: usize,
 }
 
-impl CausalFilters {
+impl CausalConvFilters {
     /// What a unit does per line of channels over `taps` taps: the taps and their products held in
     /// registers.
     pub fn unit_work(taps: usize) -> UnitWork {
@@ -37,9 +37,9 @@ impl CausalFilters {
 }
 
 #[cube]
-impl CausalFilters {
+impl CausalConvFilters {
     pub fn new(filters: &Tile, bias: &ComptimeOption<Tile>, #[comptime] taps: usize) -> Self {
-        CausalFilters {
+        CausalConvFilters {
             filters: filters.clone(),
             bias: bias.clone(),
             taps,
@@ -50,7 +50,7 @@ impl CausalFilters {
     /// the filters, plus the bias, then the silu.
     pub fn convolved_line<E: Float, N: Size>(
         &self,
-        past: &PastTaps,
+        past: &PastReader,
         newest: Vector<E, N>,
         line: usize,
     ) -> Vector<f32, N> {

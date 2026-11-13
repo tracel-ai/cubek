@@ -1,5 +1,5 @@
-use super::box_lines::{BoxLines, ChannelBox};
-use super::past_taps::{PastTiles, read_line};
+use super::past_reader::{CausalConvPastTiles, read_line};
+use super::run_lines::{ChannelRun, RunLines};
 use crate::linear_recurrence::{PROMPT_POSITION, RING_COLUMN, RING_POSITION, walked};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
@@ -24,7 +24,7 @@ pub struct RingWriteBack {
 impl RingWriteBack {
     pub fn new(
         cube: &Region,
-        tiles: &PastTiles,
+        tiles: &CausalConvPastTiles,
         valid: &Tile,
         positions: usize,
         #[comptime] read_columns: usize,
@@ -54,22 +54,22 @@ impl RingWriteBack {
     }
 }
 
-/// One cube's box of channel lines of one of a prompt's last `taps - 1` positions, copied into the
+/// One cube's run of channel lines of one of a prompt's last `taps - 1` positions, copied into the
 /// row's ring.
 #[cube]
 pub fn cube_ring_write_back_microkernel<E: Float, N: Size>(
     cube: &Region,
-    tiles: &PastTiles,
+    tiles: &CausalConvPastTiles,
     valid: &Tile,
     positions: usize,
-    #[comptime] channel_box: ChannelBox,
+    #[comptime] channel_run: ChannelRun,
     #[comptime] read_columns: usize,
 ) {
     let write_back = RingWriteBack::new(cube, tiles, valid, positions, read_columns);
-    let box_lines = BoxLines::new::<N>(cube, channel_box);
+    let run_lines = RunLines::new::<N>(cube, channel_run);
     for share in cube {
-        let line = box_lines.line(&share);
-        if box_lines.holds(line) {
+        let line = run_lines.line(&share);
+        if run_lines.holds(line) {
             write_back.write::<E, N>(line);
         }
     }

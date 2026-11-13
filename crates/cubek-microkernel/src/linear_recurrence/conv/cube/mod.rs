@@ -2,17 +2,17 @@
 //! their taps read, the filters and the silu that make a line of channels are here.
 
 mod base;
-mod box_lines;
 mod filters;
 mod microkernel;
-mod past_taps;
+mod past_reader;
 mod ring_write_back;
+mod run_lines;
 mod tiles;
 
 pub use base::*;
-pub use box_lines::ChannelBox;
 pub use filters::*;
 pub use microkernel::*;
-pub use past_taps::*;
+pub use past_reader::*;
 pub use ring_write_back::*;
+pub use run_lines::ChannelRun;
 pub use tiles::*;

@@ -1,15 +1,15 @@
 use crate::linear_recurrence::conv::CausalConvOperand;
-use crate::linear_recurrence::conv::cube::{CausalFilters, ChannelBox, RingAdvance};
+use crate::linear_recurrence::conv::cube::{CausalConvFilters, ChannelRun, RingWriter};
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
-/// What a causal conv is: the channels it convolves, the filter's taps and who advances the ring.
+/// What a causal conv is: the channels it convolves, the filter's taps and who writes the ring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CausalConvWorkItem {
     pub channels: usize,
     pub taps: usize,
-    pub advance: RingAdvance,
+    pub writer: RingWriter,
 }
 
 impl CausalConvWorkItem {
@@ -29,20 +29,20 @@ impl core::fmt::Display for CausalConvSettings {
     }
 }
 
-/// A cube's box of channel lines, a line to each of `units` units. It reads no plane instruction
+/// A cube's run of channel lines, a line to each of `units` units. It reads no plane instruction
 /// and holds no shared memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeCausalConvMicrokernel {
     pub units: usize,
     pub taps: usize,
     pub channels: usize,
-    pub advance: RingAdvance,
+    pub writer: RingWriter,
 }
 
 impl CubeCausalConvMicrokernel {
-    /// The boxes the cube deals its units' lines between.
-    pub fn channel_box(&self) -> ChannelBox {
-        ChannelBox {
+    /// The runs the cube deals its units' lines between.
+    pub fn channel_run(&self) -> ChannelRun {
+        ChannelRun {
             units: self.units,
             channels: self.channels,
         }
@@ -66,13 +66,13 @@ impl Microkernel for CubeCausalConvMicrokernel {
         item: &CausalConvWorkItem,
         _: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        let units = ChannelBox::most_units(hw).min(item.channels);
+        let units = ChannelRun::most_units(hw).min(item.channels);
         (units > 0)
             .then_some(Self {
                 units,
                 taps: item.taps,
                 channels: item.channels,
-                advance: item.advance,
+                writer: item.writer,
             })
             .into_iter()
     }
@@ -88,6 +88,6 @@ impl Microkernel for CubeCausalConvMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        estimate.work = Some(CausalFilters::unit_work(self.taps));
+        estimate.work = Some(CausalConvFilters::unit_work(self.taps));
     }
 }

@@ -28,18 +28,18 @@ pub const TAP: Axis = Axis(9);
 /// A column of a store's ring, the conv's past values of every channel.
 pub const RING_COLUMN: Axis = Axis(10);
 /// A position of the input that later positions read by tap: no level cuts it.
-pub const PROMPT_POSITION: Axis = Axis(12);
+pub const PROMPT_POSITION: Axis = Axis(11);
 /// The two rates of a position and value head, the log of its decay at 0 and its strength at 1: no
 /// level cuts it.
-pub const RATE: Axis = Axis(13);
-/// A box of channel lines one cube works on: no operand binds it, only the cube level cuts it.
-pub const CHANNEL_BOX: Axis = Axis(14);
-/// A line of channels inside a cube's box, box local: no operand binds it, only the units level
+pub const RATE: Axis = Axis(12);
+/// A run of channel lines one cube works on: no operand binds it, only the cube level cuts it.
+pub const CHANNEL_RUN: Axis = Axis(13);
+/// A line of channels inside a cube's run, run local: no operand binds it, only the units level
 /// cuts it.
-pub const LINE_IN_BOX: Axis = Axis(15);
+pub const LINE_IN_RUN: Axis = Axis(14);
 /// One of the last `taps - 1` positions of a prompt, which the write back copies into the ring: no
 /// operand binds it, only the cube level cuts it.
-pub const RING_POSITION: Axis = Axis(16);
+pub const RING_POSITION: Axis = Axis(15);
 
 /// How the walk places its microkernel's runs over a problem: a cube for every box of value
 /// columns of one head of one sequence, and inside the cube's box the levels the routine and its
@@ -87,7 +87,7 @@ impl RecurrenceWalkPartitioning {
     }
 }
 
-/// How a conv places its microkernel's work: a cube for every box of channels of every row, and
+/// How a conv places its microkernel's work: a cube for every run of channels of every row, and
 /// of every position the routine puts on the grid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CausalConvPartitioning {
@@ -95,7 +95,7 @@ pub struct CausalConvPartitioning {
 }
 
 impl CausalConvPartitioning {
-    /// `space` partitioned with `inside` a cube's box: the `cubes` axes ride the grid, the first
+    /// `space` partitioned with `inside` a cube's run: the `cubes` axes ride the grid, the first
     /// on its `x`, and rows come one a cube.
     pub fn new(space: Space, inside: Levels, cubes: &[Axis]) -> Self {
         Self {

@@ -1,4 +1,4 @@
-mod bound;
+mod bind;
 pub mod conv;
 #[cfg(test)]
 mod fixtures;

@@ -1,11 +1,11 @@
-use crate::linear_recurrence::{CHANNEL_BOX, LINE_IN_BOX};
+use crate::linear_recurrence::{CHANNEL_RUN, LINE_IN_RUN};
 use cubecl::tile::Region;
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 use cubek_std::Hardware;
 
-/// How channels are cut into boxes: a cube's box holds `units` lines of the `channels`.
+/// How channels are cut into runs: a cube's run holds `units` lines of the `channels`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ChannelBox {
+pub struct ChannelRun {
     pub units: usize,
     pub channels: usize,
 }
@@ -13,7 +13,7 @@ pub struct ChannelBox {
 /// The units a cube deals channel lines between, at most.
 const MOST_UNITS: usize = 64;
 
-impl ChannelBox {
+impl ChannelRun {
     /// The most units one cube of a conv holds on `hw`.
     pub fn most_units(hw: &Hardware) -> usize {
         let hardware = &hw.properties.hardware;
@@ -23,28 +23,28 @@ impl ChannelBox {
     }
 }
 
-/// Which line of the channels a unit of the cube holds: the cube's box starts at the line its
-/// index times the units says, and the last box may reach past the channels.
+/// Which line of the channels a unit of the cube holds: the cube's run starts at the line its
+/// index times the units says, and the last run may reach past the channels.
 #[derive(CubeType)]
-pub(super) struct BoxLines {
+pub(super) struct RunLines {
     first: usize,
     #[cube(comptime)]
     lines: usize,
 }
 
 #[cube]
-impl BoxLines {
-    pub fn new<N: Size>(cube: &Region, #[comptime] shape: ChannelBox) -> Self {
+impl RunLines {
+    pub fn new<N: Size>(cube: &Region, #[comptime] shape: ChannelRun) -> Self {
         let width = N::value();
-        BoxLines {
-            first: cube.coord(CHANNEL_BOX) * shape.units,
+        RunLines {
+            first: cube.coord(CHANNEL_RUN) * shape.units,
             lines: comptime!(shape.channels / width),
         }
     }
 
     /// The line `share`'s unit holds, which may lie past the channels.
     pub fn line(&self, share: &Region) -> usize {
-        self.first + share.coord(LINE_IN_BOX)
+        self.first + share.coord(LINE_IN_RUN)
     }
 
     /// Whether `line` is one of the channels'.

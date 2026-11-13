@@ -5,7 +5,7 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// `tensor` bound under `launcher` along `axes`, `width` values a line.
-pub(crate) fn bound(
+pub(crate) fn bind(
     launcher: &Launcher,
     tensor: &PlainTensor,
     axes: &[Axis],

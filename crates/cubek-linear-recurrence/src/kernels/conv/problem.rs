@@ -1,10 +1,9 @@
 //! The problem a causal conv routine computes.
 
-use crate::kernels::conv::{CausalConvPast, CubeCausalConvRoutine};
+use crate::kernels::conv::{CausalConvPastLayout, CubeCausalConvRoutine};
 use crate::kernels::refusals::{
     CAUSAL_CONV_BINDING_BUFFERS, CAUSAL_CONV_BINDINGS_PAST_DEVICE, CAUSAL_CONV_CHANNELS_EMPTY,
-    CAUSAL_CONV_ELEMENT_UNSUPPORTED, CAUSAL_CONV_NOTHING_TO_CONVOLVE,
-    CAUSAL_CONV_OUTPUT_UNSUPPORTED,
+    CAUSAL_CONV_ELEMENT_UNVERIFIED, CAUSAL_CONV_NOTHING_TO_CONVOLVE, CAUSAL_CONV_OUTPUT_UNVERIFIED,
 };
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
@@ -15,7 +14,7 @@ use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_microkernel::linear_recurrence::conv::CausalConvOperandMap;
 use cubek_microkernel::linear_recurrence::conv::cube::CausalConvWorkItem;
 use cubek_microkernel::linear_recurrence::{
-    BATCH, CHANNEL, CHANNEL_BOX, LINE_IN_BOX, POSITION, TAP,
+    BATCH, CHANNEL, CHANNEL_RUN, LINE_IN_RUN, POSITION, TAP,
 };
 use cubek_std::Hardware;
 use cubek_std::routine::{EstimatedProblem, Routine};
@@ -41,7 +40,7 @@ pub struct CausalConvProblem {
     /// Whether the conv adds a bias a channel.
     pub bias: bool,
     /// Where the past the taps read lives.
-    pub past: CausalConvPast,
+    pub past: CausalConvPastLayout,
     /// The alignment of each operand's buffer in elements.
     pub alignments: CausalConvOperandMap<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's start. Both narrow the conv's lines.
@@ -53,16 +52,16 @@ impl CausalConvProblem {
     ///
     /// # Errors
     ///
-    /// [`CAUSAL_CONV_ELEMENT_UNSUPPORTED`] for any but `f16`, `bf16` and `f32`, and
-    /// [`CAUSAL_CONV_OUTPUT_UNSUPPORTED`] for any but `f32` and `element`.
+    /// [`CAUSAL_CONV_ELEMENT_UNVERIFIED`] for any but `f16`, `bf16` and `f32`, and
+    /// [`CAUSAL_CONV_OUTPUT_UNVERIFIED`] for any but `f32` and `element`.
     pub fn admit_elements(element: ElemType, output: ElemType) -> Result<(), Refusal> {
         if ![F16, BF16, F32].contains(&element) {
-            return Err(CAUSAL_CONV_ELEMENT_UNSUPPORTED);
+            return Err(CAUSAL_CONV_ELEMENT_UNVERIFIED);
         }
         if output == element || output == F32 {
             Ok(())
         } else {
-            Err(CAUSAL_CONV_OUTPUT_UNSUPPORTED)
+            Err(CAUSAL_CONV_OUTPUT_UNVERIFIED)
         }
     }
 
@@ -98,18 +97,18 @@ impl CausalConvProblem {
         CausalConvWorkItem {
             channels: self.channels,
             taps: self.taps,
-            advance: self.past.advance(),
+            writer: self.past.writer(),
         }
     }
 
-    /// Every axis of the problem at its extent, the channels cut into boxes of `units` lines of
+    /// Every axis of the problem at its extent, the channels cut into runs of `units` lines of
     /// `width` channels.
     pub(crate) fn space(&self, units: usize, width: usize) -> Space {
-        let boxes = (self.channels / width).div_ceil(units);
+        let runs = (self.channels / width).div_ceil(units);
         let mut axes = vec![
             (BATCH, self.batch),
-            (CHANNEL_BOX, boxes),
-            (LINE_IN_BOX, units * width),
+            (CHANNEL_RUN, runs),
+            (LINE_IN_RUN, units * width),
             (CHANNEL, self.channels),
             (TAP, self.taps),
         ];
@@ -117,14 +116,14 @@ impl CausalConvProblem {
         Space::new(&axes)
     }
 
-    /// The axes of a cube's leaf: one position and one box, every channel and tap, `width` of the
-    /// box's channels.
+    /// The axes of a cube's leaf: one position and one run, every channel and tap, `width` of the
+    /// run's channels.
     pub(crate) fn leaf(&self, width: usize) -> Vec<(Axis, usize)> {
         vec![
             (POSITION, 1),
-            (CHANNEL_BOX, 1),
+            (CHANNEL_RUN, 1),
             (CHANNEL, self.channels),
-            (LINE_IN_BOX, width),
+            (LINE_IN_RUN, width),
             (TAP, self.taps),
         ]
     }
@@ -134,7 +133,7 @@ impl CausalConvProblem {
         batch: usize,
         channels: usize,
         taps: usize,
-        past: CausalConvPast,
+        past: CausalConvPastLayout,
         element: ElemType,
         output_element: ElemType,
     ) -> Self {
@@ -193,33 +192,33 @@ impl EstimatedProblem for CausalConvProblem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::conv::RingStore;
+    use crate::kernels::conv::RingLayout;
     use crate::kernels::refusals::CAUSAL_CONV_TAPS_PAST_RING;
     use core::num::NonZeroUsize;
     use cubecl::ir::UIntKind;
     use cubek_std::devices;
 
-    fn ring(columns: usize) -> RingStore {
-        RingStore {
+    fn ring(columns: usize) -> RingLayout {
+        RingLayout {
             slots: NonZeroUsize::new(4).unwrap(),
             columns,
         }
     }
 
-    fn window(columns: usize) -> CausalConvPast {
-        CausalConvPast::Window {
+    fn decode_step(columns: usize) -> CausalConvPastLayout {
+        CausalConvPastLayout::DecodeStep {
             ring: ring(columns),
         }
     }
 
-    fn prompt(positions: usize) -> CausalConvPast {
-        CausalConvPast::Prompt {
+    fn prompt(positions: usize) -> CausalConvPastLayout {
+        CausalConvPastLayout::Prompt {
             ring: ring(3),
             positions,
         }
     }
 
-    fn conv(past: CausalConvPast) -> CausalConvProblem {
+    fn conv(past: CausalConvPastLayout) -> CausalConvProblem {
         CausalConvProblem::dense(2, 1280, 4, past, F16, F16)
     }
 
@@ -227,7 +226,7 @@ mod tests {
     /// admits.
     #[test]
     fn a_device_binding_fewer_buffers_than_the_launch_is_declined() {
-        let problem = conv(window(3));
+        let problem = conv(decode_step(3));
         let mut hw = devices::h100();
         devices::topology(&mut hw).max_bindings = CAUSAL_CONV_BINDING_BUFFERS - 1;
         assert_eq!(problem.admit(&hw), Err(CAUSAL_CONV_BINDINGS_PAST_DEVICE));
@@ -241,7 +240,7 @@ mod tests {
     fn elements_the_conv_is_not_verified_at_are_declined() {
         let hw = devices::h100();
         let dense = |element, output| {
-            CausalConvProblem::dense(1, 64, 4, window(3), element, output).admit(&hw)
+            CausalConvProblem::dense(1, 64, 4, decode_step(3), element, output).admit(&hw)
         };
         for (element, output) in [
             (F16, F16),
@@ -252,10 +251,10 @@ mod tests {
         ] {
             assert_eq!(dense(element, output), Ok(()));
         }
-        assert_eq!(dense(F32, F16), Err(CAUSAL_CONV_OUTPUT_UNSUPPORTED));
+        assert_eq!(dense(F32, F16), Err(CAUSAL_CONV_OUTPUT_UNVERIFIED));
         assert_eq!(
             dense(ElemType::UInt(UIntKind::U32), F32),
-            Err(CAUSAL_CONV_ELEMENT_UNSUPPORTED)
+            Err(CAUSAL_CONV_ELEMENT_UNVERIFIED)
         );
     }
 
@@ -264,21 +263,24 @@ mod tests {
     fn what_has_nothing_to_convolve_or_no_taps_to_read_is_declined() {
         let hw = devices::h100();
         assert_eq!(
-            CausalConvProblem::dense(1, 0, 4, window(3), F16, F16).admit(&hw),
+            CausalConvProblem::dense(1, 0, 4, decode_step(3), F16, F16).admit(&hw),
             Err(CAUSAL_CONV_CHANNELS_EMPTY)
         );
         assert_eq!(
             conv(prompt(0)).admit(&hw),
             Err(CAUSAL_CONV_NOTHING_TO_CONVOLVE)
         );
-        assert_eq!(conv(window(2)).admit(&hw), Err(CAUSAL_CONV_TAPS_PAST_RING));
+        assert_eq!(
+            conv(decode_step(2)).admit(&hw),
+            Err(CAUSAL_CONV_TAPS_PAST_RING)
+        );
         assert_eq!(conv(prompt(8)).admit(&hw), Ok(()));
     }
 
     /// The bias is counted in the filters' bytes only where the conv has one.
     #[test]
     fn the_bias_is_counted_only_where_the_conv_has_one() {
-        let without = conv(window(3));
+        let without = conv(decode_step(3));
         let with = without.clone().with_bias();
         let channel_bytes = without.channels * without.element.size();
         assert_eq!(with.demand().bytes - without.demand().bytes, channel_bytes);

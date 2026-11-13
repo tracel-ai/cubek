@@ -1,6 +1,6 @@
 //! How a walk reads its operands and binds them.
 
-use crate::kernels::bound::bound;
+use crate::kernels::bind::bind;
 use crate::kernels::walk::{
     RECURRENCE_WALK_ELEMENT, RecurrenceWalkBlueprint, RecurrenceWalkProblem,
     RecurrenceWalkStateLayout,
@@ -267,7 +267,7 @@ impl StateTensors {
         Option<TileTensorLaunch>,
         Option<TileTensorLaunch>,
     ) {
-        let bind = |tensor, axes: &'static [Axis], width| bound(launcher, tensor, axes, width);
+        let bind = |tensor, axes: &'static [Axis], width| bind(launcher, tensor, axes, width);
         match self {
             Self::Owned { state, kept } => (
                 bind(
@@ -526,7 +526,7 @@ impl RecurrenceWalkTensors {
         });
         let width = blueprint.width;
         let bind = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
-            bound(&launcher, tensor, axes, width)
+            bind(&launcher, tensor, axes, width)
         };
         let (state, kept, lengths) = self.states.bind(&launcher, width);
         RecurrenceWalkBinding {

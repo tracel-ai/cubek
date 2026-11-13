@@ -2,11 +2,11 @@ use cubecl::ir::ElemType;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::linear_recurrence::conv::cube::{
-    CausalConvTiles, ChannelBox, CubeCausalConvMicrokernel, PastTiles,
+    CausalConvPastTiles, CausalConvTiles, ChannelRun, CubeCausalConvMicrokernel,
     cube_causal_conv_microkernel, cube_ring_write_back_microkernel,
 };
 
-/// Every cube convolves a box of channel lines of one position of a row into `output`. `bias` is
+/// Every cube convolves a run of channel lines of one position of a row into `output`. `bias` is
 /// bound where the conv has one, and `columns` is the ring's length.
 #[cube(launch_unchecked)]
 pub fn cube_causal_conv_kernel<E: Float, O: Float, N: Size>(
@@ -23,7 +23,7 @@ pub fn cube_causal_conv_kernel<E: Float, O: Float, N: Size>(
     #[define(O)] _output_element: ElemType,
 ) {
     let tiles = CausalConvTiles {
-        past: PastTiles {
+        past: CausalConvPastTiles {
             input: input.tile(&partitioning),
             ring: ring.tile(&partitioning),
             lengths: lengths.tile(&partitioning),
@@ -39,7 +39,7 @@ pub fn cube_causal_conv_kernel<E: Float, O: Float, N: Size>(
     }
 }
 
-/// Every cube copies a box of channel lines of one of a row's last `taps - 1` valid positions of a
+/// Every cube copies a run of channel lines of one of a row's last `taps - 1` valid positions of a
 /// prompt into its ring. It runs after the convolution has read every ring.
 #[cube(launch_unchecked)]
 pub fn ring_write_back_kernel<E: Float, N: Size>(
@@ -50,11 +50,11 @@ pub fn ring_write_back_kernel<E: Float, N: Size>(
     columns: usize,
     positions: usize,
     partitioning: Partitioning,
-    #[comptime] channel_box: ChannelBox,
+    #[comptime] channel_run: ChannelRun,
     #[comptime] read_columns: usize,
     #[define(E)] _element: ElemType,
 ) {
-    let tiles = PastTiles {
+    let tiles = CausalConvPastTiles {
         input: input.tile(&partitioning),
         ring: ring.tile(&partitioning),
         lengths: lengths.tile(&partitioning),
@@ -69,7 +69,7 @@ pub fn ring_write_back_kernel<E: Float, N: Size>(
             &tiles,
             &valid,
             positions,
-            channel_box,
+            channel_run,
             read_columns,
         );
     }

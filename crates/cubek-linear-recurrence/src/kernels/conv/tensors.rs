@@ -1,6 +1,6 @@
 //! How a causal conv reads its operands and binds them.
 
-use crate::kernels::bound::bound;
+use crate::kernels::bind::bind;
 use crate::kernels::conv::{CausalConvBlueprint, CausalConvPastInputs, CausalConvProblem};
 use crate::kernels::refusals::CAUSAL_CONV_CHANNELS_EMPTY;
 use crate::kernels::{BoundSlots, SlotStore};
@@ -19,7 +19,7 @@ use cubek_microkernel::linear_recurrence::{
 };
 use cubek_std::routine::Grid;
 
-/// The inputs of a causal conv: the input `[rows, positions, channels]` (a window's positions are
+/// The inputs of a causal conv: the input `[rows, positions, channels]` (a decode step's positions are
 /// one), the filters `[channels, taps]` (a unit dim between allowed), the bias `[channels]` where
 /// there is one, and the past, all in one element. They are read where they lie, the innermost
 /// axis contiguous; a padded row or an off-line start narrows the conv's lines.
@@ -90,7 +90,7 @@ impl CausalConvTensors {
     /// # Panics
     ///
     /// On operands whose shapes disagree with the input's channels, whose innermost axis is
-    /// strided, on operands of different elements, on a window of more than one position, and on
+    /// strided, on operands of different elements, on a decode step of more than one position, and on
     /// tables that are not `[rows]`.
     pub fn new(inputs: CausalConvInputs) -> Result<Self, Refusal> {
         let CausalConvInputs {
@@ -217,7 +217,7 @@ impl CausalConvTensors {
 
     /// The input bound under `launcher`, `width` values a line.
     pub(crate) fn bind_input(&self, launcher: &Launcher, width: usize) -> TileTensorLaunch {
-        bound(
+        bind(
             launcher,
             &self.input,
             &[BATCH, PROMPT_POSITION, CHANNEL],
@@ -237,10 +237,10 @@ impl CausalConvTensors {
         let width = blueprint.width;
         CausalConvBinding {
             input: self.bind_input(&launcher, width),
-            filters: bound(&launcher, &self.filters, &[CHANNEL, TAP], 1),
-            bias: (self.bias.as_ref()).map(|bias| bound(&launcher, bias, &[CHANNEL], width)),
+            filters: bind(&launcher, &self.filters, &[CHANNEL, TAP], 1),
+            bias: (self.bias.as_ref()).map(|bias| bind(&launcher, bias, &[CHANNEL], width)),
             past: self.bind_ring(&launcher, width),
-            output: bound(&launcher, &self.output, &[BATCH, POSITION, CHANNEL], width),
+            output: bind(&launcher, &self.output, &[BATCH, POSITION, CHANNEL], width),
             launcher,
         }
     }

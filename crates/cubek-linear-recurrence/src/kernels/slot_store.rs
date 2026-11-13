@@ -8,7 +8,7 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::linear_recurrence::{BATCH, STORE_SLOT};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
-use crate::kernels::bound::bound;
+use crate::kernels::bind::bind;
 
 /// A store whose leading axis is its slots, and for each row of a launch the slot it lies in
 /// (`slots`, `[rows]`, `u32`) and the positions it has advanced already (`lengths`, `[rows]`,
@@ -90,10 +90,10 @@ impl SlotStore {
             TileSpec::direct(&[BATCH]),
         );
         BoundSlots {
-            store: bound(launcher, &self.store, store_axes, width)
+            store: bind(launcher, &self.store, store_axes, width)
                 .indexed(entries, Indexing::Coordinate(STORE_SLOT))
                 .expect(ADMITTED_PLAN_RUNS),
-            lengths: bound(launcher, &self.lengths, &[BATCH], 1),
+            lengths: bind(launcher, &self.lengths, &[BATCH], 1),
         }
     }
 }

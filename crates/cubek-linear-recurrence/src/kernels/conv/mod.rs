@@ -1,6 +1,6 @@
 //! The depthwise causal conv: a filter over channels, then an optional bias and a silu, over one
-//! position of each row or every position of a prompt (a window is a prompt of one position). A
-//! row reads the ring columns its length says it holds. A window writes its newest value as the
+//! position of each row or every position of a prompt (a decode step is a prompt of one position). A
+//! row reads the ring columns its length says it holds. A decode step writes its newest value as the
 //! ring's next column in the conv's own launch; a prompt's last valid positions fill the ring in
 //! a second launch once every position has read it.
 //!

@@ -1,7 +1,7 @@
 use super::kernel::cube_causal_conv_kernel;
 use crate::kernels::conv::{
     CausalConvBinding, CausalConvBlueprint, CausalConvProblem, CausalConvRoutine,
-    CausalConvTensors, ConvStreams, RingWriteBackLaunch,
+    CausalConvTensors, CausalConvTraffic, RingWriteBackLaunch,
 };
 use crate::kernels::refusals::admit_on_device;
 use cubecl::tile::Levels;
@@ -12,13 +12,13 @@ use cubek_microkernel::linear_recurrence::conv::cube::{
     CausalConvSettings, CubeCausalConvMicrokernel,
 };
 use cubek_microkernel::linear_recurrence::{
-    CHANNEL_BOX, CausalConvPartitioning, LINE_IN_BOX, POSITION,
+    CHANNEL_RUN, CausalConvPartitioning, LINE_IN_RUN, POSITION,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
-/// The causal conv with a box of channel lines of a position of a row in each cube, a line to each
+/// The causal conv with a run of channel lines of a position of a row in each cube, a line to each
 /// unit. It reads no plane feature, so it is the floor every device runs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeCausalConvRoutine;
@@ -105,7 +105,7 @@ impl Routine for CubeCausalConvRoutine {
             bytes: (elements * element_bytes) as u64,
             run_bytes: run * element_bytes,
         };
-        let (reads, writes) = problem.past.streams(&ConvStreams {
+        let (reads, writes) = problem.past.streams(&CausalConvTraffic {
             channels,
             taps: problem.taps,
             run: channels,
@@ -145,8 +145,8 @@ impl Routine for CubeCausalConvRoutine {
         };
         let partitioning = CausalConvPartitioning::new(
             problem.space(microkernel.units, width),
-            Levels::leaf(&problem.leaf(width)).units_distributed(LINE_IN_BOX, microkernel.units),
-            &[POSITION, CHANNEL_BOX],
+            Levels::leaf(&problem.leaf(width)).units_distributed(LINE_IN_RUN, microkernel.units),
+            &[POSITION, CHANNEL_RUN],
         );
         let cube = CubeResources {
             plane_width: microkernel.units as u32,
@@ -154,7 +154,7 @@ impl Routine for CubeCausalConvRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
         let write_back =
-            RingWriteBackLaunch::prepare(hw, problem, width, microkernel.channel_box())?;
+            RingWriteBackLaunch::prepare(hw, problem, width, microkernel.channel_run())?;
         let blueprint = CausalConvBlueprint::new(microkernel, partitioning, width, write_back);
         Ok((blueprint, grid))
     }
@@ -171,7 +171,7 @@ impl CausalConvRoutine<CubeCausalConvMicrokernel> for CubeCausalConvRoutine {
         let problem = tensors.problem();
         // SAFETY: every operand is bound through the launcher and indexed only through its tile,
         // whose reads past an edge are masked. A unit writes only the ring channels it reads, and
-        // a cube only its own position and box of the output.
+        // a cube only its own position and run of the output.
         unsafe {
             cube_causal_conv_kernel::launch_unchecked(
                 tensors.client(),
@@ -197,32 +197,32 @@ impl CausalConvRoutine<CubeCausalConvMicrokernel> for CubeCausalConvRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::conv::{CausalConvPast, RingStore};
+    use crate::kernels::conv::{CausalConvPastLayout, RingLayout};
     use crate::kernels::fixtures::{binding_enough, fleet};
     use core::num::NonZeroUsize;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::linear_recurrence::conv::cube::RingAdvance;
+    use cubek_microkernel::linear_recurrence::conv::cube::RingWriter;
     use cubek_std::devices;
     use cubek_std::routine::EstimatedProblem;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
-    fn ring(batch: usize, taps: usize) -> RingStore {
-        RingStore {
+    fn ring(batch: usize, taps: usize) -> RingLayout {
+        RingLayout {
             slots: NonZeroUsize::new(batch + 3).unwrap(),
             columns: taps + 1,
         }
     }
 
     fn conv(batch: usize, channels: usize, taps: usize) -> CausalConvProblem {
-        let past = CausalConvPast::Window {
+        let past = CausalConvPastLayout::DecodeStep {
             ring: ring(batch, taps),
         };
         CausalConvProblem::dense(batch, channels, taps, past, F16, F16)
     }
 
     fn prompt(batch: usize, positions: usize, channels: usize, taps: usize) -> CausalConvProblem {
-        let past = CausalConvPast::Prompt {
+        let past = CausalConvPastLayout::Prompt {
             ring: ring(batch, taps),
             positions,
         };
@@ -263,14 +263,14 @@ mod tests {
                 assert!(blueprint.microkernel.units <= lines);
                 assert_eq!(
                     blueprint.write_back.is_some(),
-                    problem.past.advance() == RingAdvance::AfterLaunch
+                    problem.past.writer() == RingWriter::WriteBackLaunch
                 );
-                let boxes = lines.div_ceil(blueprint.microkernel.units);
+                let runs = lines.div_ceil(blueprint.microkernel.units);
                 assert_eq!(
-                    blueprint.partitioning.as_cubek().distributed(LINE_IN_BOX),
+                    blueprint.partitioning.as_cubek().distributed(LINE_IN_RUN),
                     Some(blueprint.microkernel.units)
                 );
-                let cubes = problem.batch * problem.past.positions() * boxes;
+                let cubes = problem.batch * problem.past.positions() * runs;
                 assert_eq!(grid.cubes(), Some(cubes as u64));
                 let mut estimate = KernelEstimate::from(&grid);
                 CubeCausalConvRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
