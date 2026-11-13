@@ -5,7 +5,7 @@ use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::Shape;
-use cubek_attention_backward::kernels::AttentionBackwardRoutine;
+use cubek_attention_backward::kernels::AttentionBackwardLaunch;
 use cubek_attention_backward::{AttentionBackwardGradients, AttentionBackwardTensors};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
@@ -207,22 +207,22 @@ impl Reference {
         }
     }
 
-    /// `routine` at `settings`, or at its lead, on `case` in `element`, against the host within
+    /// `strategy` at `settings`, or at its lead, on `case` in `element`, against the host within
     /// `tolerance`; skipped, and said so, where the device declines it. A launch that fails on the
     /// device fails the check: its gradients would be whatever their buffers held, which a buffer
     /// handed back by the memory pool can make look right.
-    pub fn run<R: AttentionBackwardRoutine>(
-        routine: R,
+    pub fn run<S: AttentionBackwardLaunch>(
+        strategy: S,
         case: Case,
         element: ElemType,
         tolerance: f64,
-        settings: Option<R::Settings>,
+        settings: Option<S::Settings>,
     ) {
         let client: Client = cubecl::test_device().client();
         let reference = Reference::new(&client, case, element);
         let hw = Hardware::from_client(&client);
-        let settings = settings.unwrap_or_else(|| routine.lead(&hw));
-        match routine.launch_on(&hw, reference.tensors.clone(), &settings) {
+        let settings = settings.unwrap_or_else(|| strategy.lead(&hw));
+        match strategy.launch_on(&hw, reference.tensors.clone(), &settings) {
             Ok(gradients) => {
                 if let Err(error) = cubecl::future::block_on(client.sync()) {
                     panic!("{settings}: the launch failed on the device: {error:?}");
