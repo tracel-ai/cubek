@@ -5,7 +5,7 @@ use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
     AttentionWorkItem, G, Q, S,
 };
-use crate::matmul::cube::{CubeStagedAsyncCopyRefusal, CubeStagedDelivery};
+use crate::matmul::cube::CubeStagedDelivery;
 use crate::split_keys_merge::SlotShape;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Vectorization};
@@ -129,7 +129,9 @@ impl CubeAttentionMicrokernel {
         let staged = self.plane.reads() == CubePlaneReads::Stage;
         match self.settings.delivery {
             CubeStagedDelivery::AsyncCopy
-                if staged && CubeStagedAsyncCopyRefusal::new(hw, ring).is_none() =>
+                if staged
+                    && Delivery::AsyncPerUnit.runs_on(&hw.properties).is_ok()
+                    && Delivery::AsyncPerUnit.holds(ring.prefetch).is_ok() =>
             {
                 CubeStagedDelivery::AsyncCopy
             }
