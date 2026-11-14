@@ -203,8 +203,8 @@ impl PlaneFragmentAttentionMicrokernel {
 
     /// The value's instruction beside `score`, where the device offers it, its operands of
     /// `value`: the score's own instruction where it is a cmma one of any shape on operands of
-    /// `value`, read through the windows; else the deepest manual `mma` on 16-bit operands of
-    /// `value` of the score's tile and accumulator, a whole number of the score's fragments deep,
+    /// `value`, read through the windows; else the deepest manual `mma` on 16- or 8-bit operands
+    /// of `value` of the score's tile and accumulator, a whole number of the score's fragments deep,
     /// that the plane's `keys` a stage divide into, where the device's `A` lays its cells where the
     /// accumulator does ([`Hardware::accumulator_as_a`]; a `tf32` `A` never does). The score's
     /// accumulator is laid out by its tile alone, so a score on narrower operands, as an FP8
@@ -222,7 +222,7 @@ impl PlaneFragmentAttentionMicrokernel {
     ) -> Option<PlaneFragmentInstruction> {
         match score {
             PlaneFragmentInstruction::Cmma { shape } if shape.a_type == value => Some(score),
-            PlaneFragmentInstruction::Mma { shape, .. } if value.size() == 2 => {
+            PlaneFragmentInstruction::Mma { shape, .. } if value.size() <= 2 => {
                 // The score's tile and accumulator on the values' element, a whole number of its
                 // fragments deep, the plane's keys a whole number of its calls.
                 let run = |candidate: &MmaConfig| {
@@ -444,23 +444,42 @@ impl PlaneFragmentAttentionMicrokernel {
     /// above its planes.
     pub fn tiling(&self) -> Levels {
         match self.score_holder() {
-            ScoreHolder::Fragments => Levels::leaf(&[
-                (Q, self.score.leaf_extent(MatmulDim::M)),
-                (G, 1),
-                (S, self.score.leaf_extent(MatmulDim::N)),
-                (D, self.score.leaf_extent(MatmulDim::K)),
-                (DV, self.out_edge()),
-            ])
-            .walk(&[(S, self.score_run())])
-            .walk(&[
-                (Q, self.score.settings.along_m.get()),
-                (DV, self.value.settings.along_n.get()),
-            ])
-            .walk(&[(S, self.score.settings.along_n.get() / self.score_run())])
-            .walk(&[(D, self.head_steps())]),
+            ScoreHolder::Fragments => {
+                let run = Levels::leaf(&[
+                    (Q, self.score.leaf_extent(MatmulDim::M)),
+                    (G, 1),
+                    (S, self.score.leaf_extent(MatmulDim::N)),
+                    (D, self.score.leaf_extent(MatmulDim::K)),
+                    (DV, self.out_edge()),
+                ])
+                .walk(&[(S, self.score_run())]);
+                // An 8-bit value's fragments step two at a time along the value dim: each call's
+                // pair is one grid, its values loaded together by one transposing `ldmatrix`
+                // (`cubecl-tile`'s `load_ldmatrix_b8_pair`), which reads 16-byte rows.
+                let pair = self.value_pair();
+                let run = match pair {
+                    1 => run,
+                    _ => run.walk(&[(DV, pair)]),
+                };
+                run.walk(&[
+                    (Q, self.score.settings.along_m.get()),
+                    (DV, self.value.settings.along_n.get() / pair),
+                ])
+                .walk(&[(S, self.score.settings.along_n.get() / self.score_run())])
+                .walk(&[(D, self.head_steps())])
+            }
             ScoreHolder::Window => self
                 .value
                 .tiling_holding(&[(G, 1), (D, self.score.tile_extent(D))]),
+        }
+    }
+
+    /// The value's fragments one step of it contracts together: two where its values are 8-bit
+    /// and its fragments along the value dim pair, one otherwise.
+    fn value_pair(&self) -> usize {
+        match self.read.value.size() == 1 && self.value.settings.along_n.get().is_multiple_of(2) {
+            true => 2,
+            false => 1,
         }
     }
 
