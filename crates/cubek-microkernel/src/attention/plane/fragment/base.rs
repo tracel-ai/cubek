@@ -203,8 +203,8 @@ impl PlaneFragmentAttentionMicrokernel {
 
     /// The value's instruction beside `score`, where the device offers it, its operands of
     /// `value`: the score's own instruction where it is a cmma one of any shape on operands of
-    /// `value`, read through the windows; else the deepest manual `mma` on 16-bit operands of
-    /// `value` of the score's tile and accumulator, a whole number of the score's fragments deep,
+    /// `value`, read through the windows; else the deepest manual `mma` on 16- or 8-bit operands
+    /// of `value` of the score's tile and accumulator, a whole number of the score's fragments deep,
     /// that the plane's `keys` a stage divide into, where the device's `A` lays its cells where the
     /// accumulator does ([`Hardware::accumulator_as_a`]; a `tf32` `A` never does). The score's
     /// accumulator is laid out by its tile alone, so a score on narrower operands, as an FP8
@@ -222,7 +222,7 @@ impl PlaneFragmentAttentionMicrokernel {
     ) -> Option<PlaneFragmentInstruction> {
         match score {
             PlaneFragmentInstruction::Cmma { shape } if shape.a_type == value => Some(score),
-            PlaneFragmentInstruction::Mma { shape, .. } if value.size() == 2 => {
+            PlaneFragmentInstruction::Mma { shape, .. } if value.size() <= 2 => {
                 // The score's tile and accumulator on the values' element, a whole number of its
                 // fragments deep, the plane's keys a whole number of its calls.
                 let run = |candidate: &MmaConfig| {
@@ -444,23 +444,41 @@ impl PlaneFragmentAttentionMicrokernel {
     /// above its planes.
     pub fn tiling(&self) -> Levels {
         match self.score_holder() {
-            ScoreHolder::Fragments => Levels::leaf(&[
-                (Q, self.score.leaf_extent(MatmulDim::M)),
-                (G, 1),
-                (S, self.score.leaf_extent(MatmulDim::N)),
-                (D, self.score.leaf_extent(MatmulDim::K)),
-                (DV, self.out_edge()),
-            ])
-            .walk(&[(S, self.score_run())])
-            .walk(&[
-                (Q, self.score.settings.along_m.get()),
-                (DV, self.value.settings.along_n.get()),
-            ])
-            .walk(&[(S, self.score.settings.along_n.get() / self.score_run())])
-            .walk(&[(D, self.head_steps())]),
+            ScoreHolder::Fragments => {
+                let levels = Levels::leaf(&[
+                    (Q, self.score.leaf_extent(MatmulDim::M)),
+                    (G, 1),
+                    (S, self.score.leaf_extent(MatmulDim::N)),
+                    (D, self.score.leaf_extent(MatmulDim::K)),
+                    (DV, self.out_edge()),
+                ])
+                .walk(&[(S, self.score_run())]);
+                let step = self.value_fragments_a_step();
+                let levels = match step {
+                    1 => levels,
+                    _ => levels.walk(&[(DV, step)]),
+                };
+                levels
+                    .walk(&[
+                        (Q, self.score.settings.along_m.get()),
+                        (DV, self.value.settings.along_n.get() / step),
+                    ])
+                    .walk(&[(S, self.score.settings.along_n.get() / self.score_run())])
+                    .walk(&[(D, self.head_steps())])
+            }
             ScoreHolder::Window => self
                 .value
                 .tiling_holding(&[(G, 1), (D, self.score.tile_extent(D))]),
+        }
+    }
+
+    /// The value's fragments along the value dim one step contracts together: two where its values
+    /// are 8-bit and pair, which the tile layer then loads by one transposing `ldmatrix` reading
+    /// 16-byte rows, twice an 8-bit fragment's width; one otherwise.
+    fn value_fragments_a_step(&self) -> usize {
+        match self.read.value.size() == 1 && self.value.settings.along_n.get().is_multiple_of(2) {
+            true => 2,
+            false => 1,
         }
     }
 
