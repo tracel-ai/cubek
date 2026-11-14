@@ -208,11 +208,11 @@ impl PlaneKeyGradientMicrokernel {
                 logsumexp,
                 delta,
                 scale,
-                microkernel,
                 score_levels,
                 score_gradient_levels,
             ),
             ComptimeOption::None => Self::held_step::<EA, ES>(
+                stage,
                 sums,
                 left,
                 key,
@@ -245,14 +245,13 @@ impl PlaneKeyGradientMicrokernel {
         logsumexp: &Tile,
         delta: &Tile,
         scale: EA,
-        #[comptime] microkernel: Self,
         #[comptime] score_levels: Vec<Level>,
         #[comptime] score_gradient_levels: Vec<Level>,
     ) {
         let (scores, gradients) = (&windows.scores, &windows.gradients);
         let mut cast = windows.cast.clone();
 
-        ScoreWindows::contract_into::<EA>(scores, key, query, microkernel.score, score_levels);
+        ScoreWindows::contract_into::<EA>(scores, key, query, score_levels);
 
         // The scores' cells were stored in the fragments' layout; the softmax reads them along the
         // queries.
@@ -278,13 +277,7 @@ impl PlaneKeyGradientMicrokernel {
             MatmulOperands::AS_BOUND,
         );
 
-        ScoreWindows::contract_into::<EA>(
-            gradients,
-            value,
-            out_gradient,
-            microkernel.score_gradient,
-            score_gradient_levels,
-        );
+        ScoreWindows::contract_into::<EA>(gradients, value, out_gradient, score_gradient_levels);
 
         // The gradient against the probabilities lands, and the cast probabilities are read, before
         // either window is written again.
@@ -313,12 +306,13 @@ impl PlaneKeyGradientMicrokernel {
 
     /// [`step`](Self::step) with the score and the gradient against its probabilities held in
     /// their own manual-mma fragments: the probabilities and the gradient against the score taken
-    /// in place, each cast in its registers as the `A` of the gradient that contracts it, a run of
-    /// two along the stage's queries. Nothing passes through shared memory, so the plane meets on
-    /// nothing, unless a share of the query's gradient asks for the score's gradient `left` cast in
-    /// a window.
+    /// in place, each cast in its registers as the `A` of the gradient that contracts it, read in
+    /// runs of its cells along the stage's queries. Nothing passes through shared memory, so the
+    /// plane meets on nothing, unless a share of the query's gradient asks for the score's gradient
+    /// `left` cast in a window.
     #[allow(clippy::too_many_arguments)]
     fn held_step<EA: Float, ES: Float>(
+        stage: &Region,
         sums: &KeyGradientSums,
         left: &ComptimeOption<Tile>,
         key: &Tile,
@@ -338,40 +332,37 @@ impl PlaneKeyGradientMicrokernel {
             (Q, microkernel.seq_q())
         ]));
 
-        let scores = ScoreWindows::contract_held::<EA>(
-            key,
-            query,
-            space.clone(),
-            microkernel.score,
-            score_levels,
-        );
+        let scores = ScoreWindows::contract_held::<EA>(key, query, space.clone(), score_levels);
 
         scores.along(Q).probabilities::<EA>(scale, bias, logsumexp);
 
-        ScoreWindows::contract_fragments(
-            &sums.value,
+        plane_fragment_microkernel(
+            stage,
+            &sums.value.clone(),
             &scores.cast::<ES>(),
             out_gradient,
-            microkernel.value_gradient,
+            comptime!(Some(D)),
+            MatmulOperands::AS_BOUND,
         );
 
         let gradients = ScoreWindows::contract_held::<EA>(
             value,
             out_gradient,
             space,
-            microkernel.score_gradient,
-            score_gradient_levels,
+            score_gradient_levels.clone(),
         );
 
         gradients
             .along(Q)
             .softmax_gradient::<EA>(&scores.along(Q), delta);
 
-        ScoreWindows::contract_fragments(
-            &sums.key,
+        plane_fragment_microkernel(
+            stage,
+            &sums.key.clone(),
             &gradients.cast::<ES>(),
             query,
-            microkernel.key_gradient,
+            comptime!(Some(DV)),
+            MatmulOperands::AS_BOUND,
         );
 
         // A share of the query's gradient reads the score's gradient transposed, out of the window
@@ -379,7 +370,9 @@ impl PlaneKeyGradientMicrokernel {
         #[comptime]
         match left {
             ComptimeOption::Some(window) => {
-                ScoreWindows::store_cast(window, &gradients, microkernel.score_gradient);
+                // The window on the gradient's grid is the plane's part of `window`: drained at
+                // the depth the gradient sits.
+                gradients.drained_into(&window.with_levels(1usize, score_gradient_levels));
                 sync_plane();
             }
             ComptimeOption::None => {}
