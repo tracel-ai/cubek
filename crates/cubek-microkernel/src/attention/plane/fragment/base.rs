@@ -445,7 +445,7 @@ impl PlaneFragmentAttentionMicrokernel {
     pub fn tiling(&self) -> Levels {
         match self.score_holder() {
             ScoreHolder::Fragments => {
-                let run = Levels::leaf(&[
+                let levels = Levels::leaf(&[
                     (Q, self.score.leaf_extent(MatmulDim::M)),
                     (G, 1),
                     (S, self.score.leaf_extent(MatmulDim::N)),
@@ -453,20 +453,18 @@ impl PlaneFragmentAttentionMicrokernel {
                     (DV, self.out_edge()),
                 ])
                 .walk(&[(S, self.score_run())]);
-                // An 8-bit value's fragments step two at a time along the value dim: each call's
-                // pair is one grid, its values loaded together by one transposing `ldmatrix`
-                // (`cubecl-tile`'s `load_ldmatrix_b8_pair`), which reads 16-byte rows.
-                let pair = self.value_pair();
-                let run = match pair {
-                    1 => run,
-                    _ => run.walk(&[(DV, pair)]),
+                let step = self.value_fragments_a_step();
+                let levels = match step {
+                    1 => levels,
+                    _ => levels.walk(&[(DV, step)]),
                 };
-                run.walk(&[
-                    (Q, self.score.settings.along_m.get()),
-                    (DV, self.value.settings.along_n.get() / pair),
-                ])
-                .walk(&[(S, self.score.settings.along_n.get() / self.score_run())])
-                .walk(&[(D, self.head_steps())])
+                levels
+                    .walk(&[
+                        (Q, self.score.settings.along_m.get()),
+                        (DV, self.value.settings.along_n.get() / step),
+                    ])
+                    .walk(&[(S, self.score.settings.along_n.get() / self.score_run())])
+                    .walk(&[(D, self.head_steps())])
             }
             ScoreHolder::Window => self
                 .value
@@ -474,9 +472,10 @@ impl PlaneFragmentAttentionMicrokernel {
         }
     }
 
-    /// The value's fragments one step of it contracts together: two where its values are 8-bit
-    /// and its fragments along the value dim pair, one otherwise.
-    fn value_pair(&self) -> usize {
+    /// The value's fragments along the value dim one step contracts together: two where its values
+    /// are 8-bit and pair, which the tile layer then loads by one transposing `ldmatrix` reading
+    /// 16-byte rows, twice an 8-bit fragment's width; one otherwise.
+    fn value_fragments_a_step(&self) -> usize {
         match self.read.value.size() == 1 && self.value.settings.along_n.get().is_multiple_of(2) {
             true => 2,
             false => 1,
