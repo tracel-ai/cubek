@@ -3,21 +3,18 @@ use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
 };
 use crate::matmul::plane::{
-    PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
-    PlaneFragmentMicrokernelSettings, PlaneUnit,
+    PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
-use core::num::NonZeroUsize;
-use cubecl::features::MmaConfig;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, FragmentSource, Instruction, Level, Levels, Space};
+use cubecl::tile::{Axis, Level, Levels, Space};
+use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, SWIZZLED_STAGE_UNREAD,
     StageLayout, UnitWork,
 };
-use cubek_std::{Hardware, manual_mma};
 
 /// The rows of one head a plane owns: their scores against a stage of keys in the fragments
 /// of a matrix instruction, the softmax taken where the plane keeps the score, and their outputs
@@ -56,11 +53,9 @@ pub const ROW_STATE_HELD_BY_UNIT: Refusal = Refusal::Declined {
 pub const BLOCK_ROW_BYTES: usize = 128;
 
 impl PlaneFragmentAttentionMicrokernel {
-    /// Where the plane keeps the score: its settings', which its instruction was picked for.
-    ///
-    /// The score's fragments are the value's `A` only where they are one grid, the value's `k` a
-    /// run of the score's `n`: [`candidates`](Microkernel::candidates) pairs a manual mma only so.
-    /// Windows decouple the two, so a cmma instruction of any shape runs both products.
+    /// Where the plane keeps the score: its settings', which the tile picked its instructions for.
+    /// Kept in fragments, the score is the value's `A`, read in runs of its cells; windows
+    /// decouple the two products.
     pub fn score_holder(&self) -> ScoreHolder {
         self.settings.score
     }
@@ -71,21 +66,17 @@ impl PlaneFragmentAttentionMicrokernel {
     }
 
     /// The score's own levels where the plane reads it through its windows, which its accumulator
-    /// is placed in: the walker's level of planes, `planes` its counts, and below it the score's
-    /// fragments, its rows by the stage's keys by the steps of the head dim. The counts are what
-    /// index the accumulator's scratch, a window for every plane of the cube; the steps keep the
-    /// plane's tile the whole head dim, as the query's and the keys' windows are.
+    /// is placed in: the walker's level of planes, `planes` its counts, and below it the plane's
+    /// score, its rows by the stage's keys by the whole head dim, which the tile cuts and walks.
+    /// The counts are what index the accumulator's scratch, a window for every plane of the cube.
     pub fn score_levels(&self, planes: &[(Axis, usize)]) -> Vec<Level> {
-        let [(_, m), (_, n), (_, k)] = self.score.instruction.shape();
-        let settings = self.score.settings;
-        Levels::leaf(&[(Q, m), (S, n), (D, k)])
-            .walk(&[
-                (Q, settings.along_m.get()),
-                (S, settings.along_n.get()),
-                (D, settings.depth.get()),
-            ])
-            .planes(planes)
-            .build()
+        Levels::leaf(&[
+            (Q, self.score.tile_extent(Q)),
+            (S, self.score.tile_extent(S)),
+            (D, self.score.tile_extent(D)),
+        ])
+        .planes(planes)
+        .build()
     }
 
     /// 32-bit registers one unit keeps the softmax's running max and sum in, beside its share of
@@ -105,7 +96,17 @@ impl PlaneFragmentAttentionMicrokernel {
         item.value(item.elements.value)
     }
 
-    /// [`candidates`](Microkernel::candidates) with the operands read in `read`.
+    /// [`candidates`](Microkernel::candidates) with the operands read in `read`: for each place
+    /// the plane may keep its score, the tile's picks for both products over the plane's tile.
+    ///
+    /// The plane's tile is its rows by a stage's keys, counted in the device's matrix unit for
+    /// the score's operands, by the whole head dim, and its rows by the whole value dim. The tile
+    /// picks each product's instruction from the sources its kernel opens the sum on, cuts the
+    /// tile into its calls and walks the contracted dim in their steps: a score in windows is a
+    /// sum drained there, from the query and the keys; a score in fragments a sum contracted
+    /// again, which the value reads in runs of its cells as it lies
+    /// ([`ScoreHolder::sum_pick`], [`ScoreHolder::reader_pick`]). Where the tile picks no product
+    /// for a holder, the plane keeps its score nowhere else.
     fn reading(
         hw: &Hardware,
         item: &AttentionWorkItem,
@@ -123,161 +124,43 @@ impl PlaneFragmentAttentionMicrokernel {
         if keys_converted && values_converted && read.score != read.value {
             return Vec::new();
         }
-        let score_converted =
-            converted(item.elements.key, read.score) || converted(item.elements.query, read.score);
         let cache_stage = match values_converted {
             true => read.value,
             false => read.score,
         };
         let item = &item.read_as(read);
-        let (head, value) = (item.head_dim, item.val_dim);
-
-        // The tile's shape in units of the device's matrix unit; the score's candidates cut it in
-        // their own instruction's fragments, and the value's grid and walks follow from those.
-        let unsized_grid = PlaneFragmentMicrokernelSettings {
+        let (score_item, value_item) = (Self::score_item(item), Self::value_item(item));
+        let grid = PlaneFragmentMicrokernelSettings {
             along_m: settings.seq_q,
             along_n: settings.seq_kv,
             ..PlaneFragmentMicrokernelSettings::DEFAULT
         };
-        let value_item = Self::value_item(item);
-        PlaneFragmentMicrokernel::stated_candidates(hw, &Self::score_item(item), &unsized_grid)
-            .into_iter()
-            .filter_map(move |score| {
-                let [(_, rows), (_, keys), (_, depth)] = score.instruction.shape();
-                let plane_keys = score.settings.along_n.get() * keys;
-                let value_instruction =
-                    Self::value_instruction(hw, score.instruction, read.value, plane_keys)?;
-                let [_, (_, width), (_, value_depth)] = value_instruction.shape();
-                let head_steps = Self::steps(head, depth)?;
-                let value_steps = Self::steps(value, width)?;
-                let key_steps = Self::steps(plane_keys, value_depth)?;
-                let whole_head = settings.score_depth == PlaneFragmentDepth::Stage;
-                let fragment_depth = match whole_head {
-                    true => head,
-                    false => depth,
-                };
-                let holder =
-                    Self::holder(hw, item, score.instruction, [rows, keys, fragment_depth])?;
-                let wanted = match settings.score {
-                    ScoreHolder::Window => holder == ScoreHolder::Window,
-                    ScoreHolder::Fragments => true,
-                };
-                // Only the manual `mma` holds a fragment deeper than its instruction, which it
-                // loads in lane runs: over a 16-bit instruction's fragments alone, from a stage of
-                // the query and keys as they are stored.
-                let manual = matches!(score.instruction, PlaneFragmentInstruction::Mma { .. });
-                let lane_runs = manual && read.score.size() == 2 && !score_converted;
-                if !wanted || (whole_head && !lane_runs) {
-                    return None;
-                }
+        if hw.plane_dim().is_err() {
+            return Vec::new();
+        }
+        let Some([rows, keys]) = PlaneFragmentMicrokernel::unit_tile(hw, &score_item, &grid) else {
+            return Vec::new();
+        };
+        let score_tile = [rows, keys, item.head_dim];
+        let value_tile = [rows, item.val_dim, keys];
+        let holders: &[ScoreHolder] = match settings.score {
+            ScoreHolder::Fragments => &[ScoreHolder::Fragments, ScoreHolder::Window],
+            ScoreHolder::Window => &[ScoreHolder::Window],
+        };
+        holders
+            .iter()
+            .filter_map(|&holder| {
+                let score = holder.sum_pick(hw, &score_item, score_tile)?;
+                let value = holder.reader_pick(hw, score, &value_item, value_tile)?;
                 Some(Self {
                     settings: settings.held_in(holder),
                     read,
                     cache_stage,
-                    score: PlaneFragmentMicrokernel {
-                        settings: PlaneFragmentMicrokernelSettings {
-                            depth: head_steps,
-                            fragment_depth: settings.score_depth,
-                            ..score.settings
-                        },
-                        ..score
-                    },
-                    value: PlaneFragmentMicrokernel {
-                        instruction: value_instruction,
-                        orders: value_instruction.orders(value_item.layouts),
-                        settings: PlaneFragmentMicrokernelSettings {
-                            along_m: score.settings.along_m,
-                            along_n: value_steps,
-                            depth: key_steps,
-                            ..unsized_grid
-                        },
-                        axes: value_item.axes,
-                        blocks: None,
-                        k_stated: crate::matmul::plane::PlaneFragmentKStatement::Caller,
-                        unit: PlaneUnit::Instruction,
-                    },
+                    score: PlaneFragmentMicrokernel::holding(&score_item, grid, score_tile, score)?,
+                    value: PlaneFragmentMicrokernel::holding(&value_item, grid, value_tile, value)?,
                 })
             })
             .collect()
-    }
-
-    /// The value's instruction beside `score`, where the device offers it, its operands of
-    /// `value`: the score's own instruction where it is a cmma one of any shape on operands of
-    /// `value`, read through the windows; else the deepest manual `mma` on 16-bit operands of
-    /// `value` of the score's tile and accumulator, a whole number of the score's fragments deep,
-    /// that the plane's `keys` a stage divide into, where the device's `A` lays its cells where the
-    /// accumulator does ([`Hardware::accumulator_as_a`]; a `tf32` `A` never does). The score's
-    /// accumulator is laid out by its tile alone, so a score on narrower operands, as an FP8
-    /// cache's keys, still hands its fragments on as the value's `A` once cast. Each call reads
-    /// one run of the score's fragments along the keys, in their registers, as its `A`
-    /// (`cubecl-tile`'s `accumulators_as_a`), and the value walks the plane's keys a run at a time
-    /// ([`tiling`](Self::tiling)): the deepest contracts them in the fewest calls, and a shallower
-    /// call takes as long (on an RTX PRO 6000 an `m16n8k8` runs at half the rate of an
-    /// `m16n8k16`).
-    fn value_instruction(
-        hw: &Hardware,
-        score: PlaneFragmentInstruction,
-        value: ElemType,
-        keys: usize,
-    ) -> Option<PlaneFragmentInstruction> {
-        match score {
-            PlaneFragmentInstruction::Cmma { shape } if shape.a_type == value => Some(score),
-            PlaneFragmentInstruction::Mma { shape, .. } if value.size() == 2 => {
-                // The score's tile and accumulator on the values' element, a whole number of its
-                // fragments deep, the plane's keys a whole number of its calls.
-                let run = |candidate: &MmaConfig| {
-                    MmaConfig {
-                        a_type: value,
-                        b_type: value,
-                        k: candidate.k,
-                        ..shape
-                    } == *candidate
-                        && candidate.k.is_multiple_of(shape.n)
-                        && keys.is_multiple_of(candidate.k as usize)
-                };
-
-                hw.accumulator_as_a
-                    .then(|| manual_mma(hw).filter(run).max_by_key(|value| value.k))
-                    .flatten()
-                    .map(PlaneFragmentInstruction::mma)
-            }
-
-            PlaneFragmentInstruction::Cmma { .. }
-            | PlaneFragmentInstruction::Mma { .. }
-            | PlaneFragmentInstruction::Wgmma { .. } => None,
-        }
-    }
-
-    /// Where a plane keeps the score of `instruction`, a fragment of it `shape`: a window holds
-    /// a cmma fragment, which hides where its cells lie, and fragments hold the manual `mma`'s
-    /// where the tile layer picks it for a sum contracted again where it lies
-    /// ([`Instruction::for_stage_accumulator`]), on a device whose `A` lies where its
-    /// accumulator does. `None` for any other.
-    fn holder(
-        hw: &Hardware,
-        item: &AttentionWorkItem,
-        instruction: PlaneFragmentInstruction,
-        shape: [usize; 3],
-    ) -> Option<ScoreHolder> {
-        let read = FragmentSource::Values(item.elements.query);
-        match instruction {
-            PlaneFragmentInstruction::Cmma { .. } => Some(ScoreHolder::Window),
-            PlaneFragmentInstruction::Mma { .. } => (Instruction::for_stage_accumulator(
-                &hw.properties,
-                &hw.target,
-                read,
-                read,
-                item.sum,
-                shape,
-            ) == Some(instruction.tile_instruction()))
-            .then_some(ScoreHolder::Fragments),
-            PlaneFragmentInstruction::Wgmma { .. } => None,
-        }
-    }
-
-    /// `extent` in steps of `step`, where they divide it.
-    fn steps(extent: usize, step: usize) -> Option<NonZeroUsize> {
-        NonZeroUsize::new(extent / step).filter(|_| extent.is_multiple_of(step))
     }
 }
 
@@ -314,14 +197,11 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
         ]
     }
 
-    /// The shared plane fragment microkernel's candidates for the score, at each element the
-    /// operands may be read in, the exact one first ([`readings`](AttentionWorkItem::readings)),
-    /// that have a value instruction beside them (`value_instruction`), whose depth divides the
-    /// head dim, and whose value's width divides the value dim and depth the stage's keys. Within
-    /// one reading, a score kept in its fragments comes first where the settings ask for it, and
-    /// through the windows where the tile layer picks no manual `mma` to keep it in; a score the
-    /// settings read through the windows is read nowhere else. Their fragment grids and the steps
-    /// each walks follow from the settings and the shapes.
+    /// Its planes at each element the operands may be read in, the exact one first
+    /// ([`readings`](AttentionWorkItem::readings)). Within one reading, a score kept in its
+    /// fragments comes first where the settings ask for it, and through the windows where the
+    /// tile picks nothing to keep it in; a score the settings read through the windows is read
+    /// nowhere else.
     fn candidates(
         hw: &Hardware,
         item: &AttentionWorkItem,
@@ -428,64 +308,32 @@ impl PlaneFragmentAttentionMicrokernel {
         Some(self.cache_stage)
     }
 
-    /// Its fragments, as its [`ScoreHolder`] cuts them. Where the score is kept in fragments they
-    /// are one grid of both multiplications: its rows along the queries of one head, its keys, and
-    /// the head and value dims whole. Each multiplication steps along the axis it contracts alone,
-    /// the cells it sums into one level below: the head dim outermost, then the keys, then the
-    /// rows by the value dim. The score's step is a slice of the head dim over every row and key,
-    /// the value's a step of the keys over every row and value: each step loads its operands'
-    /// fragments once for all its cells, neighbours of a grid two at a time. The keys step by the
-    /// value's `k`, a run of the score's fragments below each step: the score contracts each
-    /// fragment of the run, the value the run at once. Where it is read
-    /// through windows, the value's fragments, its rows by the value dim and the steps of the
-    /// stage's keys it contracts, each spanning the head dim whole: the score
-    /// states its own grid below the plane ([`score_levels`](Self::score_levels)). The walk
-    /// through `S` is its walker's: the plane routine's under each plane, the cube microkernel's
-    /// above its planes.
+    /// The tile one plane holds: its rows along the queries of one head, a stage's keys, and the
+    /// head and value dims whole. The tile cuts each product's part of it into the calls of the
+    /// instruction it picks and walks the dim each contracts: the score the head dim, the value
+    /// the keys, a run of the score's cells a call where it keeps them. The shared microkernel
+    /// steps the level below a stage, so the tile states one step there, and each product is one
+    /// call a stage. The walk through `S` is its walker's: the plane routine's under each plane,
+    /// the cube microkernel's above its planes.
     pub fn tiling(&self) -> Levels {
+        Levels::leaf(&[
+            (Q, self.score.tile_extent(Q)),
+            (G, 1),
+            (S, self.score.tile_extent(S)),
+            (D, self.score.tile_extent(D)),
+            (DV, self.value.tile_extent(DV)),
+        ])
+        .walk(&[(D, 1)])
+    }
+
+    /// Whether the value contracts a stage's keys in more than one call, a run of the score's
+    /// cells each, where the plane keeps its score in fragments. Never where it reads the score
+    /// through its windows.
+    pub fn reads_keys_in_runs(&self) -> bool {
         match self.score_holder() {
-            ScoreHolder::Fragments => Levels::leaf(&[
-                (Q, self.score.leaf_extent(MatmulDim::M)),
-                (G, 1),
-                (S, self.score.leaf_extent(MatmulDim::N)),
-                (D, self.score.leaf_extent(MatmulDim::K)),
-                (DV, self.out_edge()),
-            ])
-            .walk(&[(S, self.score_run())])
-            .walk(&[
-                (Q, self.score.settings.along_m.get()),
-                (DV, self.value.settings.along_n.get()),
-            ])
-            .walk(&[(S, self.score.settings.along_n.get() / self.score_run())])
-            .walk(&[(D, self.head_steps())]),
-            ScoreHolder::Window => self
-                .value
-                .tiling_holding(&[(G, 1), (D, self.score.tile_extent(D))]),
+            ScoreHolder::Fragments => self.value.leaf_extent(MatmulDim::K) < self.seq_kv(),
+            ScoreHolder::Window => false,
         }
-    }
-
-    /// The steps a plane walks the head dim in: each step of the score's instruction, or one, where
-    /// its fragments already span the head dim whole.
-    fn head_steps(&self) -> usize {
-        match self.score.settings.fragment_depth {
-            PlaneFragmentDepth::Instruction => self.score.settings.depth.get(),
-            PlaneFragmentDepth::Stage => 1,
-        }
-    }
-
-    /// The calls the value contracts a stage's keys in, one run of the score's fragments each,
-    /// where the plane keeps its score in fragments; one where it reads the score through its
-    /// windows.
-    pub fn score_runs(&self) -> usize {
-        match self.score_holder() {
-            ScoreHolder::Fragments => self.score.settings.along_n.get() / self.score_run(),
-            ScoreHolder::Window => 1,
-        }
-    }
-
-    /// The score's fragments along the keys one call of the value contracts as its `A`.
-    fn score_run(&self) -> usize {
-        self.value.leaf_extent(MatmulDim::K) / self.score.leaf_extent(MatmulDim::N)
     }
 
     pub fn seq_q(&self) -> usize {
@@ -540,36 +388,33 @@ impl PlaneFragmentAttentionMicrokernel {
                 D,
                 self.block_edge(
                     self.score.leaf_extent(MatmulDim::K),
-                    self.score.settings.depth.get(),
+                    self.score.tile_extent(D),
                     self.read.score,
                 ),
             ),
             (
                 DV,
-                self.block_edge(
-                    self.out_edge(),
-                    self.value.settings.along_n.get(),
-                    self.read.value,
-                ),
+                self.block_edge(self.out_edge(), self.value.tile_extent(DV), self.read.value),
             ),
         ]
     }
 
-    /// A stage block's edge along a dim its fragments take `steps` steps of `step` elements of
-    /// `element` along: the fewest steps whose row spans [`BLOCK_ROW_BYTES`], else the whole dim.
+    /// A stage block's edge along a dim of `extent` its fragments take steps of `step` elements
+    /// of `element` along: the fewest whole steps that cut the dim and whose row spans
+    /// [`BLOCK_ROW_BYTES`], else the whole dim.
     /// A block one fragment wide holds a sliver of each source row, which the copy brings a few
     /// bytes at a time, splitting sectors and lines; a whole line a row is fetched in whole
     /// sectors, and a swizzle permutes its chunks within it. On an RTX PRO 6000, a 6016 by 8192
     /// causal `f16` prompt (32/8 heads, head dim 128) on eight planes a cube takes 2392 µs with
     /// 32-byte rows and 2047 µs with 128 on two-by-four tiles, 2143 and 1884 µs on one-by-four
     /// tiles.
-    fn block_edge(&self, step: usize, steps: usize, element: ElemType) -> usize {
-        let row = step * element.size();
-        (1..=steps)
-            .filter(|count| steps.is_multiple_of(*count))
-            .find(|count| count * row >= BLOCK_ROW_BYTES)
-            .unwrap_or(steps)
-            * step
+    fn block_edge(&self, step: usize, extent: usize, element: ElemType) -> usize {
+        (1..)
+            .map(|count| count * step)
+            .take_while(|edge| *edge <= extent)
+            .filter(|edge| extent.is_multiple_of(*edge))
+            .find(|edge| edge * element.size() >= BLOCK_ROW_BYTES)
+            .unwrap_or(extent)
     }
 
     /// Whether its rows' softmax state merges with another plane's of the same rows, as planes that
