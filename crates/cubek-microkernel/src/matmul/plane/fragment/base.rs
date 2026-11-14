@@ -431,18 +431,24 @@ impl PlaneFragmentMicrokernel {
             elements.cd_type,
             [rows_cols[0], rows_cols[1], elements.k as usize],
         )?;
-        Self::picked(call, elements)
+        Self::picked(call, [elements.a_type, elements.b_type, elements.cd_type])
     }
 
-    /// The tile's `call` as one of its fragments: `elements`' types at the call's shape. `None`
-    /// for any instruction but the fragment API and the crate's own transport over plain values.
-    fn picked(call: ShapedInstruction, elements: MmaConfig) -> Option<PlaneFragmentInstruction> {
+    /// The tile's `call` as one of its fragments, of the lhs, rhs and sum `types`, at the call's
+    /// shape. `None` for any instruction but the fragment API and the crate's own transport over
+    /// plain values.
+    fn picked(
+        call: ShapedInstruction,
+        [a_type, b_type, cd_type]: [ElemType; 3],
+    ) -> Option<PlaneFragmentInstruction> {
         let [m, n, k] = call.shape.map(|edge| edge as u32);
         let shape = MmaConfig {
+            a_type,
+            b_type,
+            cd_type,
             m,
             n,
             k,
-            ..elements
         };
         match call.instruction {
             Instruction::Cmma => Some(PlaneFragmentInstruction::Cmma { shape }),
@@ -464,15 +470,7 @@ impl PlaneFragmentMicrokernel {
         tile: [usize; 3],
         pick: ShapedInstruction,
     ) -> Option<Self> {
-        let elements = MmaConfig {
-            a_type: item.elements.lhs,
-            b_type: item.elements.rhs,
-            cd_type: item.sum,
-            m: 0,
-            n: 0,
-            k: 0,
-        };
-        let instruction = Self::picked(pick, elements)?;
+        let instruction = Self::picked(pick, [item.elements.lhs, item.elements.rhs, item.sum])?;
         Some(Self::over(
             instruction,
             PlaneUnit::Elements { tile },

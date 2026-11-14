@@ -8,8 +8,7 @@ use crate::matmul::plane::{
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Axis, FragmentSource, Instruction, Level, Levels, Space};
+use cubecl::tile::{Axis, Level, Levels, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
@@ -105,9 +104,9 @@ impl PlaneFragmentAttentionMicrokernel {
     /// picks each product's instruction from the sources its kernel opens the sum on, cuts the
     /// tile into its calls and walks the contracted dim in their steps: a score in windows is a
     /// sum drained there, from the query and the keys; a score in fragments a sum contracted
-    /// again ([`Instruction::for_stage_accumulator`]), which the value reads in runs of its cells
-    /// as it lies. Where the tile picks no product for a holder, the plane keeps its score
-    /// nowhere else.
+    /// again, which the value reads in runs of its cells as it lies
+    /// ([`ScoreHolder::sum_pick`], [`ScoreHolder::reader_pick`]). Where the tile picks no product
+    /// for a holder, the plane keeps its score nowhere else.
     fn reading(
         hw: &Hardware,
         item: &AttentionWorkItem,
@@ -136,49 +135,23 @@ impl PlaneFragmentAttentionMicrokernel {
             along_n: settings.seq_kv,
             ..PlaneFragmentMicrokernelSettings::DEFAULT
         };
+        if hw.plane_dim().is_err() {
+            return Vec::new();
+        }
         let Some([rows, keys]) = PlaneFragmentMicrokernel::unit_tile(hw, &score_item, &grid) else {
             return Vec::new();
         };
         let score_tile = [rows, keys, item.head_dim];
         let value_tile = [rows, item.val_dim, keys];
-        let (query, key, value) = (
-            FragmentSource::Values(score_item.elements.lhs),
-            FragmentSource::Values(score_item.elements.rhs),
-            FragmentSource::Values(value_item.elements.rhs),
-        );
-        let (device, target, sum) = (&hw.properties, &hw.target, item.sum);
-        let plane = ComputeScope::Plane;
-        let holders = match settings.score {
-            ScoreHolder::Fragments => vec![ScoreHolder::Fragments, ScoreHolder::Window],
-            ScoreHolder::Window => vec![ScoreHolder::Window],
+        let holders: &[ScoreHolder] = match settings.score {
+            ScoreHolder::Fragments => &[ScoreHolder::Fragments, ScoreHolder::Window],
+            ScoreHolder::Window => &[ScoreHolder::Window],
         };
         holders
-            .into_iter()
-            .filter(|_| hw.plane_dim().is_ok())
-            .filter_map(|holder| {
-                let (score, value) = match holder {
-                    ScoreHolder::Fragments => {
-                        let score = Instruction::for_stage_accumulator(
-                            device, target, query, query, sum, score_tile,
-                        )?;
-                        let held = FragmentSource::Fragments {
-                            instruction: score.instruction,
-                            cell: score.cell(),
-                        };
-                        let value = Instruction::for_accumulator(
-                            device, target, plane, held, value, sum, value_tile,
-                        )?;
-                        (score, value)
-                    }
-                    ScoreHolder::Window => (
-                        Instruction::for_accumulator(
-                            device, target, plane, query, key, sum, score_tile,
-                        )?,
-                        Instruction::for_accumulator(
-                            device, target, plane, value, value, sum, value_tile,
-                        )?,
-                    ),
-                };
+            .iter()
+            .filter_map(|&holder| {
+                let score = holder.sum_pick(hw, &score_item, score_tile)?;
+                let value = holder.reader_pick(hw, score, &value_item, value_tile)?;
                 Some(Self {
                     settings: settings.held_in(holder),
                     read,
@@ -224,14 +197,11 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
         ]
     }
 
-    /// The shared plane fragment microkernel's candidates for the score, at each element the
-    /// operands may be read in, the exact one first ([`readings`](AttentionWorkItem::readings)),
-    /// that have a value instruction beside them (`value_instruction`), whose depth divides the
-    /// head dim, and whose value's width divides the value dim and depth the stage's keys. Within
-    /// one reading, a score kept in its fragments comes first where the settings ask for it, and
-    /// through the windows where the tile layer picks no manual `mma` to keep it in; a score the
-    /// settings read through the windows is read nowhere else. Their fragment grids and the steps
-    /// each walks follow from the settings and the shapes.
+    /// Its planes at each element the operands may be read in, the exact one first
+    /// ([`readings`](AttentionWorkItem::readings)). Within one reading, a score kept in its
+    /// fragments comes first where the settings ask for it, and through the windows where the
+    /// tile picks nothing to keep it in; a score the settings read through the windows is read
+    /// nowhere else.
     fn candidates(
         hw: &Hardware,
         item: &AttentionWorkItem,
