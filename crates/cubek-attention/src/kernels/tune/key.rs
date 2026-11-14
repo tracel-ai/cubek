@@ -132,15 +132,23 @@ impl AttentionKey {
     /// length, is keyed here.
     pub const CACHE_PREFIX: usize = 4 * Self::CHUNK_QUERIES;
 
-    /// The attended prefix a chunk of many queries over a cache stands for: sixteen chunks into
-    /// its prompt. A chunk's work grows with the prefix it attends, so a long prompt spends its
-    /// attention on its deep chunks, and the routines rank differently there than near the
+    /// The attended prefix a chunk of many queries over a cache stands for: sixty-four chunks
+    /// into its prompt. A chunk's work grows with the prefix it attends, so a long prompt spends
+    /// its attention on its deep chunks, and the routines rank differently there than near the
     /// start: on an RTX PRO 6000, 512 queries of 32/8 heads over 2048 keys run fastest on a cube a
     /// box (84 µs, against 86 µs split four ways along the keys), over 8192 keys split four ways
     /// (254 µs against 285), and the split's lead grows deeper (922 against 1085 µs at 32768
     /// keys, 3600 against 4288 µs at 131072). Keyed at the shallow prefix, every chunk of a long
     /// prompt ran the shallow winner.
-    pub const CHUNK_PREFIX: usize = 16 * Self::CHUNK_QUERIES;
+    ///
+    /// The splits rank by depth too. Keyed sixteen chunks in, the split box elected four cubes
+    /// along the keys, the fastest at 8192 keys (240 µs against 248 for seven, at 128 head dim,
+    /// 32/8 heads, f16), but deeper seven and ten lead: 3153 and 3124 µs against 3261 at 131072
+    /// keys. Summed over every chunk of a prompt, seven cubes take 2.6% less attention than four
+    /// over 131072 positions in f16 and 3.8% less over an e4m3 cache, and the same or 1.5% less
+    /// over 32768; seven is also the winner at 32768 keys, where the key now stands. A prompt of
+    /// a few chunks pays up to 3% on attention that is milliseconds long.
+    pub const CHUNK_PREFIX: usize = 64 * Self::CHUNK_QUERIES;
 
     /// Whether the queries are the tail of a longer attended prefix rather
     /// than the whole of it: a chunk, or a decode step.
