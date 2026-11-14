@@ -1,5 +1,8 @@
+use crate::matmul::MatmulWorkItem;
 use core::num::NonZeroUsize;
-use cubecl::tile::Scratch;
+use cubecl::tile::space::ComputeScope;
+use cubecl::tile::{FragmentSource, Instruction, Scratch, ShapedInstruction};
+use cubek_std::Hardware;
 
 /// The shape of the tile a plane holds along the queries and along a stage of keys, in units of the
 /// device's matrix unit for the operands
@@ -32,6 +35,66 @@ pub enum ScoreHolder {
     /// of the rows it holds cells of, so the plane's state merges with no other holder's. Only a
     /// device whose instruction lays its `A` as it lays its accumulator keeps it so.
     Fragments,
+}
+
+impl ScoreHolder {
+    /// The tile's pick for the sum a plane keeps here, `item` over the plane's `tile`: drained
+    /// into a window, the sum of its operands' values; held in registers, a sum contracted again
+    /// ([`Instruction::for_stage_accumulator`]), which the kernel opens against its lhs.
+    pub(crate) fn sum_pick(
+        self,
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        tile: [usize; 3],
+    ) -> Option<ShapedInstruction> {
+        let (lhs, rhs) = (
+            FragmentSource::Values(item.elements.lhs),
+            FragmentSource::Values(item.elements.rhs),
+        );
+        let (device, target) = (&hw.properties, &hw.target);
+        match self {
+            ScoreHolder::Window => Instruction::for_accumulator(
+                device,
+                target,
+                ComputeScope::Plane,
+                lhs,
+                rhs,
+                item.sum,
+                tile,
+            ),
+            ScoreHolder::Fragments => {
+                Instruction::for_stage_accumulator(device, target, lhs, lhs, item.sum, tile)
+            }
+        }
+    }
+
+    /// The tile's pick for a product that reads the sum kept here as its `A`, `item` over the
+    /// plane's `tile`: out of the window, cast to the operands' element; held in registers, runs
+    /// of `kept`'s cells as they lie ([`FragmentSource::Fragments`]).
+    pub(crate) fn reader_pick(
+        self,
+        hw: &Hardware,
+        kept: ShapedInstruction,
+        item: &MatmulWorkItem,
+        tile: [usize; 3],
+    ) -> Option<ShapedInstruction> {
+        let lhs = match self {
+            ScoreHolder::Window => FragmentSource::Values(item.elements.lhs),
+            ScoreHolder::Fragments => FragmentSource::Fragments {
+                instruction: kept.instruction,
+                cell: kept.cell(),
+            },
+        };
+        Instruction::for_accumulator(
+            &hw.properties,
+            &hw.target,
+            ComputeScope::Plane,
+            lhs,
+            FragmentSource::Values(item.elements.rhs),
+            item.sum,
+            tile,
+        )
+    }
 }
 
 impl PlaneFragmentAttentionMicrokernelSettings {
