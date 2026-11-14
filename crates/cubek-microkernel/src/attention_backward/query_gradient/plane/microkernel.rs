@@ -268,7 +268,7 @@ impl PlaneQueryGradientMicrokernel {
 
         plane_fragment_microkernel(
             stage,
-            &sum.clone(),
+            sum,
             &gradients.cast::<ES>(),
             key,
             None,

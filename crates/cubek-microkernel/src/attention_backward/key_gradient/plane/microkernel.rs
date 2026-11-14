@@ -338,7 +338,7 @@ impl PlaneKeyGradientMicrokernel {
 
         plane_fragment_microkernel(
             stage,
-            &sums.value.clone(),
+            &sums.value,
             &scores.cast::<ES>(),
             out_gradient,
             comptime!(Some(D)),
@@ -358,7 +358,7 @@ impl PlaneKeyGradientMicrokernel {
 
         plane_fragment_microkernel(
             stage,
-            &sums.key.clone(),
+            &sums.key,
             &gradients.cast::<ES>(),
             query,
             comptime!(Some(DV)),

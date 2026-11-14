@@ -2,7 +2,6 @@ use crate::attention::plane::ScoreHolder;
 use crate::attention::{D, DV, G, Q, S};
 use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
-    reading_pick, score_pick,
 };
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
@@ -303,17 +302,17 @@ impl Microkernel for PlaneKeyGradientMicrokernel {
             let (score_tile, gradient_tile) = ([keys, queries, head], [keys, queries, value]);
             let (value_tile, key_tile) = ([keys, value, queries], [keys, head, queries]);
             let holder = settings.score;
-            let score = score_pick(hw, holder, &score_item, score_tile)?;
-            let gradient = score_pick(hw, holder, &gradient_item, gradient_tile)?;
-            let values = reading_pick(hw, holder, score, &value_item, value_tile)?;
-            let keys_pick = reading_pick(hw, holder, gradient, &key_item, key_tile)?;
+            let score_call = holder.sum_pick(hw, &score_item, score_tile)?;
+            let gradient_call = holder.sum_pick(hw, &gradient_item, gradient_tile)?;
+            let value_call = holder.reader_pick(hw, score_call, &value_item, value_tile)?;
+            let key_call = holder.reader_pick(hw, gradient_call, &key_item, key_tile)?;
             let holding = PlaneFragmentMicrokernel::holding;
             Some(Self {
                 settings,
-                score: holding(&score_item, grid, score_tile, score)?,
-                score_gradient: holding(&gradient_item, grid, gradient_tile, gradient)?,
-                value_gradient: holding(&value_item, grid, value_tile, values)?,
-                key_gradient: holding(&key_item, grid, key_tile, keys_pick)?,
+                score: holding(&score_item, grid, score_tile, score_call)?,
+                score_gradient: holding(&gradient_item, grid, gradient_tile, gradient_call)?,
+                value_gradient: holding(&value_item, grid, value_tile, value_call)?,
+                key_gradient: holding(&key_item, grid, key_tile, key_call)?,
             })
         };
         picked().into_iter()

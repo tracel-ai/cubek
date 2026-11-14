@@ -2,7 +2,6 @@ use crate::attention::plane::ScoreHolder;
 use crate::attention::{DV, G, Q, S};
 use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
-    reading_pick, score_pick,
 };
 use crate::matmul::MatmulDim;
 use crate::matmul::plane::{
@@ -254,24 +253,15 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
             let (score_tile, gradient_tile) = ([queries, keys, head], [queries, keys, value]);
             let query_tile = [queries, head, keys];
             let holder = settings.score;
-            let score = score_pick(hw, holder, &score_item, score_tile)?;
-            let gradient = score_pick(hw, holder, &gradient_item, gradient_tile)?;
-            let query = reading_pick(hw, holder, gradient, &query_item, query_tile)?;
+            let score_call = holder.sum_pick(hw, &score_item, score_tile)?;
+            let gradient_call = holder.sum_pick(hw, &gradient_item, gradient_tile)?;
+            let query_call = holder.reader_pick(hw, gradient_call, &query_item, query_tile)?;
+            let holding = PlaneFragmentMicrokernel::holding;
             Some(Self {
                 settings,
-                score: PlaneFragmentMicrokernel::holding(&score_item, grid, score_tile, score)?,
-                score_gradient: PlaneFragmentMicrokernel::holding(
-                    &gradient_item,
-                    grid,
-                    gradient_tile,
-                    gradient,
-                )?,
-                query_gradient: PlaneFragmentMicrokernel::holding(
-                    &query_item,
-                    grid,
-                    query_tile,
-                    query,
-                )?,
+                score: holding(&score_item, grid, score_tile, score_call)?,
+                score_gradient: holding(&gradient_item, grid, gradient_tile, gradient_call)?,
+                query_gradient: holding(&query_item, grid, query_tile, query_call)?,
             })
         };
         picked().into_iter()
