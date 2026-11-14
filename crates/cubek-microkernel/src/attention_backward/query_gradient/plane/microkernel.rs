@@ -151,11 +151,11 @@ impl PlaneQueryGradientMicrokernel {
                 logsumexp,
                 delta,
                 scale,
-                microkernel,
                 score_levels,
                 score_gradient_levels,
             ),
             ComptimeOption::None => Self::held_step::<EA, ES>(
+                stage,
                 sum,
                 query,
                 out_gradient,
@@ -187,26 +187,19 @@ impl PlaneQueryGradientMicrokernel {
         logsumexp: &Tile,
         delta: &Tile,
         scale: EA,
-        #[comptime] microkernel: Self,
         #[comptime] score_levels: Vec<Level>,
         #[comptime] score_gradient_levels: Vec<Level>,
     ) {
         let (scores, gradients) = (&windows.scores, &windows.gradients);
 
-        ScoreWindows::contract_into::<EA>(scores, query, key, microkernel.score, score_levels);
+        ScoreWindows::contract_into::<EA>(scores, query, key, score_levels);
 
         // The scores' cells were stored in the fragments' layout; the softmax reads them by rows.
         sync_plane();
 
         scores.along(S).probabilities::<EA>(scale, bias, logsumexp);
 
-        ScoreWindows::contract_into::<EA>(
-            gradients,
-            out_gradient,
-            value,
-            microkernel.score_gradient,
-            score_gradient_levels,
-        );
+        ScoreWindows::contract_into::<EA>(gradients, out_gradient, value, score_gradient_levels);
 
         // The probabilities and the gradient against them land before both are read.
         sync_plane();
@@ -238,10 +231,11 @@ impl PlaneQueryGradientMicrokernel {
     /// [`step`](Self::step) with the score and the gradient against its probabilities held in
     /// their own manual-mma fragments, queries first: the probabilities and the gradient against
     /// the score taken in place, each row reading its query's logsumexp and dot product, and the
-    /// gradient cast in its registers as the `A` of the query's gradient, a run of two along the
-    /// stage's keys. Nothing passes through shared memory, so the plane meets on nothing.
+    /// gradient cast in its registers as the `A` of the query's gradient, read in runs of its cells
+    /// along the stage's keys. Nothing passes through shared memory, so the plane meets on nothing.
     #[allow(clippy::too_many_arguments)]
     fn held_step<EA: Float, ES: Float>(
+        stage: &Region,
         sum: &Tile,
         query: &Tile,
         out_gradient: &Tile,
@@ -261,33 +255,24 @@ impl PlaneQueryGradientMicrokernel {
             (S, microkernel.seq_kv())
         ]));
 
-        let scores = ScoreWindows::contract_held::<EA>(
-            query,
-            key,
-            space.clone(),
-            microkernel.score,
-            score_levels,
-        );
+        let scores = ScoreWindows::contract_held::<EA>(query, key, space.clone(), score_levels);
 
         scores.along(S).probabilities::<EA>(scale, bias, logsumexp);
 
-        let gradients = ScoreWindows::contract_held::<EA>(
-            out_gradient,
-            value,
-            space,
-            microkernel.score_gradient,
-            score_gradient_levels,
-        );
+        let gradients =
+            ScoreWindows::contract_held::<EA>(out_gradient, value, space, score_gradient_levels);
 
         gradients
             .along(S)
             .softmax_gradient::<EA>(&scores.along(S), delta);
 
-        ScoreWindows::contract_fragments(
+        plane_fragment_microkernel(
+            stage,
             sum,
             &gradients.cast::<ES>(),
             key,
-            microkernel.query_gradient,
+            None,
+            MatmulOperands::AS_BOUND,
         );
     }
 }

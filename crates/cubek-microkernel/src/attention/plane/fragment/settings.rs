@@ -1,6 +1,8 @@
-use crate::matmul::plane::PlaneFragmentDepth;
+use crate::matmul::MatmulWorkItem;
 use core::num::NonZeroUsize;
-use cubecl::tile::Scratch;
+use cubecl::tile::space::ComputeScope;
+use cubecl::tile::{FragmentSource, Instruction, Scratch, ShapedInstruction};
+use cubek_std::Hardware;
 
 /// The shape of the tile a plane holds along the queries and along a stage of keys, in units of the
 /// device's matrix unit for the operands
@@ -17,10 +19,6 @@ pub struct PlaneFragmentAttentionMicrokernelSettings {
     pub scratch: Scratch,
     /// Where the plane keeps the score between its two multiplications.
     pub score: ScoreHolder,
-    /// How deep along the head dim the score's fragments are: one instruction step, the head dim
-    /// walked a step at a time, or the whole head dim, contracted in one call. Only a score kept
-    /// in its fragments takes the whole head dim; any other declines it.
-    pub score_depth: PlaneFragmentDepth,
 }
 
 /// Where a plane keeps a stage's score between its two multiplications. The tile layer picks the
@@ -39,13 +37,72 @@ pub enum ScoreHolder {
     Fragments,
 }
 
+impl ScoreHolder {
+    /// The tile's pick for the sum a plane keeps here, `item` over the plane's `tile`: drained
+    /// into a window, the sum of its operands' values; held in registers, a sum contracted again
+    /// ([`Instruction::for_stage_accumulator`]), which the kernel opens against its lhs.
+    pub(crate) fn sum_pick(
+        self,
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        tile: [usize; 3],
+    ) -> Option<ShapedInstruction> {
+        let (lhs, rhs) = (
+            FragmentSource::Values(item.elements.lhs),
+            FragmentSource::Values(item.elements.rhs),
+        );
+        let (device, target) = (&hw.properties, &hw.target);
+        match self {
+            ScoreHolder::Window => Instruction::for_accumulator(
+                device,
+                target,
+                ComputeScope::Plane,
+                lhs,
+                rhs,
+                item.sum,
+                tile,
+            ),
+            ScoreHolder::Fragments => {
+                Instruction::for_stage_accumulator(device, target, lhs, lhs, item.sum, tile)
+            }
+        }
+    }
+
+    /// The tile's pick for a product that reads the sum kept here as its `A`, `item` over the
+    /// plane's `tile`: out of the window, cast to the operands' element; held in registers, runs
+    /// of `kept`'s cells as they lie ([`FragmentSource::Fragments`]).
+    pub(crate) fn reader_pick(
+        self,
+        hw: &Hardware,
+        kept: ShapedInstruction,
+        item: &MatmulWorkItem,
+        tile: [usize; 3],
+    ) -> Option<ShapedInstruction> {
+        let lhs = match self {
+            ScoreHolder::Window => FragmentSource::Values(item.elements.lhs),
+            ScoreHolder::Fragments => FragmentSource::Fragments {
+                instruction: kept.instruction,
+                cell: kept.cell(),
+            },
+        };
+        Instruction::for_accumulator(
+            &hw.properties,
+            &hw.target,
+            ComputeScope::Plane,
+            lhs,
+            FragmentSource::Values(item.elements.rhs),
+            item.sum,
+            tile,
+        )
+    }
+}
+
 impl PlaneFragmentAttentionMicrokernelSettings {
     pub const DEFAULT: Self = Self {
         seq_q: NonZeroUsize::new(2).unwrap(),
         seq_kv: NonZeroUsize::new(2).unwrap(),
         scratch: Scratch::OneTile,
         score: ScoreHolder::Fragments,
-        score_depth: PlaneFragmentDepth::Instruction,
     };
 
     /// The default with every fragment of the grid bounced at once.
@@ -84,12 +141,8 @@ impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
             Scratch::OneTile | Scratch::None => {}
         }
         match self.score {
-            ScoreHolder::Fragments => {}
-            ScoreHolder::Window => write!(f, " score=window")?,
-        }
-        match self.score_depth {
-            PlaneFragmentDepth::Instruction => Ok(()),
-            PlaneFragmentDepth::Stage => write!(f, " score_depth=head"),
+            ScoreHolder::Fragments => Ok(()),
+            ScoreHolder::Window => write!(f, " score=window"),
         }
     }
 }

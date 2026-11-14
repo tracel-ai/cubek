@@ -27,7 +27,7 @@ impl<M: Microkernel<Operand = MatmulOperand, CubeSpace = ()>> BoundProduct<M> {
 }
 
 /// The work of multiplications a unit holds at once, each shared microkernel setting the work of
-/// its own product: their registers added, on the instruction they share.
+/// its own product: their registers added.
 pub(crate) fn estimate_beside<M>(
     products: impl IntoIterator<Item = (M, MatmulWorkItem)>,
     planes: CubePlanes,
