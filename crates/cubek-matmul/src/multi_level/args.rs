@@ -7,20 +7,22 @@ use cubecl::std::tensor::{
     layout::{Coords1d, VirtualLayout, VirtualLayoutLaunch},
 };
 use cubecl::unexpanded;
-use cubek_std::{InputBinding, MatrixLayout, launch::tma::tma_operand_typed};
+use cubek_std::{InputBinding, launch::tma::tma_operand_typed};
 
 pub use crate::routine::RuntimeConfig;
 use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulVectorSizes},
     multi_level::{
         BatchMatmulRoutine,
-        components::global::memory::{
-            BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch,
-            GlobalScaleLayout, NoopLayout, NoopLayoutLaunch, SimpleTmaGlobalLayout,
-            SimpleTmaGlobalLayoutLaunch,
+        components::global::{
+            memory::{
+                BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutConfig,
+                GlobalLayoutLaunch, GlobalScaleLayout, NoopLayout, NoopLayoutLaunch,
+                SimpleTmaGlobalLayout, SimpleTmaGlobalLayoutLaunch,
+            },
+            read::tma_box,
         },
         definition::Blueprint as _,
-        stage::SwizzleMode,
     },
 };
 
@@ -389,32 +391,30 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: BatchMatmulRo
         let rhs = rhs_handle.into_data();
 
         let tiling_scheme = blueprint.tiling_scheme();
-        let stage_m = tiling_scheme.elements_per_stage_along_m() as usize;
-        let stage_n = tiling_scheme.elements_per_stage_along_n() as usize;
-        let stage_k = tiling_scheme.elements_per_stage_along_k() as usize;
+        let stage_m = tiling_scheme.elements_per_stage_along_m();
+        let stage_n = tiling_scheme.elements_per_stage_along_n();
+        let stage_k = tiling_scheme.elements_per_stage_along_k();
         let (tile_m, tile_n, tile_k) = (
-            tiling_scheme.tile_size.m as usize,
-            tiling_scheme.tile_size.n as usize,
-            tiling_scheme.tile_size.k as usize,
+            tiling_scheme.tile_size.m,
+            tiling_scheme.tile_size.n,
+            tiling_scheme.tile_size.k,
         );
 
-        // Boxes in logical (rows, cols); `tma_operand` puts them in descriptor order. Without
-        // swizzle, bank conflicts cap the box at a single-tile-wide strip along the contiguous
-        // axis; swizzled loads the full stage per box.
-        let box_lhs = match blueprint.swizzle_modes().lhs {
-            SwizzleMode::None => match problem.lhs_layout {
-                MatrixLayout::RowMajor => (stage_m, tile_k),
-                MatrixLayout::ColMajor => (tile_m, stage_k),
-            },
-            _ => (stage_m, stage_k),
-        };
-        let box_rhs = match blueprint.swizzle_modes().rhs {
-            SwizzleMode::None => match problem.rhs_layout {
-                MatrixLayout::RowMajor => (stage_k, tile_n),
-                MatrixLayout::ColMajor => (tile_k, stage_n),
-            },
-            _ => (stage_k, stage_n),
-        };
+        // Boxes in logical (rows, cols); `tma_operand` puts them in descriptor order. The same
+        // boxes `validate_tma` held to the tensor map's limits when the blueprint was accepted.
+        let as_usize = |(rows, cols): (u32, u32)| (rows as usize, cols as usize);
+        let box_lhs = as_usize(tma_box(
+            (stage_m, stage_k),
+            (tile_m, tile_k),
+            problem.lhs_layout,
+            blueprint.swizzle_modes().lhs,
+        ));
+        let box_rhs = as_usize(tma_box(
+            (stage_k, stage_n),
+            (tile_k, tile_n),
+            problem.rhs_layout,
+            blueprint.swizzle_modes().rhs,
+        ));
 
         // Logical (batches, rows, cols), read before `tma_operand` consumes the bindings.
         let dims = |binding: &TensorBinding, batches: &[usize]| {
