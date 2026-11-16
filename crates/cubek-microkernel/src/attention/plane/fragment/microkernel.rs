@@ -1,5 +1,5 @@
 use super::{PlaneFragmentAttentionMicrokernel, ScoreHolder};
-use crate::attention::{AttentionWeighting, D, DV, G, Q, S, rescale, weigh};
+use crate::attention::{AttentionWeighting, DV, G, Q, S, rescale, weigh};
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
 use core::marker::PhantomData;
@@ -112,8 +112,8 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
             &values.at(plane),
             &visible.at(plane),
             scale,
-            self.microkernel,
             comptime!(self.microkernel.score_levels(&self.planes)),
+            self.microkernel.weighting,
         );
     }
 
@@ -318,8 +318,8 @@ impl StageScore {
         value: &Tile,
         bias: &Tile,
         scale: EA,
-        #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
         #[comptime] score_levels: Vec<Level>,
+        #[comptime] weighting: AttentionWeighting,
     ) {
         match self {
             StageScore::Window(scores, probabilities) => Self::window_step::<EA>(
@@ -334,30 +334,20 @@ impl StageScore {
                 value,
                 bias,
                 scale,
-                microkernel,
                 score_levels,
+                weighting,
             ),
             StageScore::Fragments(logits) => Self::fragments_step::<EA, E>(
-                stage,
-                sum,
-                logits,
-                softmax,
-                query,
-                key,
-                key_factor,
-                value,
-                bias,
-                scale,
-                microkernel.weighting,
+                stage, sum, logits, softmax, query, key, key_factor, value, bias, scale, weighting,
             ),
         }
     }
 
-    /// [`ScoreHolder::Window`]: the score contracted on its own grid, `score_levels`, and cast into
-    /// the plane's window, the softmax read there, and the probabilities cast into their window for
-    /// the value's fragments to load. The plane meets on `sync_plane` between the score landing and
-    /// the softmax reading it, and between the probabilities landing and the value's fragments
-    /// reading them.
+    /// [`ScoreHolder::Window`]: the score contracted on its own grid, `score_levels`, and drained
+    /// into the plane's window, the softmax read there, and the probabilities cast into their
+    /// window for the value's fragments to load. The plane meets on `sync_plane` between the score
+    /// landing and the softmax reading it, and between the probabilities landing and the value's
+    /// fragments reading them.
     #[allow(clippy::too_many_arguments)]
     fn window_step<EA: Float>(
         stage: &Region,
@@ -371,62 +361,28 @@ impl StageScore {
         value: &Tile,
         bias: &Tile,
         scale: EA,
-        #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
         #[comptime] score_levels: Vec<Level>,
+        #[comptime] weighting: AttentionWeighting,
     ) {
-        // The score's accumulator, cut to its own grid below the planes' level.
-        let score_window = scores.with_levels(1usize, score_levels);
-        let mut logits = score_window.accumulator::<EA>(query, key, Semiring::SUM_PROD);
+        // The score's accumulator, placed on its own grid below the planes' level: the tile cuts
+        // the plane's score into its calls and walks the head dim.
+        // The query and the keys are windowed to the plane as the scores are: placed on the same
+        // grid, their steps along the head dim are the tile's walk of the score's.
+        let score_window = scores.with_levels(1usize, score_levels.clone());
+        let query = query.with_levels(1usize, score_levels.clone());
+        let key = key.with_levels(1usize, score_levels);
+        let mut logits = score_window.accumulator::<EA>(&query, &key, Semiring::SUM_PROD);
         logits.zero();
-
-        // Each operand's fragments, walked over its own tile and paired by position: the query's
-        // rows by steps of the head dim, the keys' by the same steps, the scores' rows by keys.
-        let [(_, m), (_, n), (_, k)] = microkernel.score.instruction.shape();
-        let rows = microkernel.score.settings.along_m.get();
-        let columns = microkernel.score.settings.along_n.get();
-        let depth = microkernel.score.settings.depth.get();
-
-        let query_fragments = query.over(&comptime!(Level::every(&[(Q, m), (D, k)])));
-        let key_fragments = key.over(&comptime!(Level::every(&[(S, n), (D, k)])));
-        let score_fragments = score_window.over(&comptime!(Level::every(&[(Q, m), (S, n)])));
-
-        // Rolled, unlike the loops inside it: the step only offsets shared memory, never picks a
-        // register.
-        for step in 0..depth {
-            #[unroll]
-            for row in 0..rows {
-                #[unroll]
-                for column in 0..columns {
-                    let mut fragment = logits.at(&score_fragments.region(row * columns + column));
-                    fragment.mma(
-                        &query.at(&query_fragments.region(row * depth + step)),
-                        &key.at(&key_fragments.region(column * depth + step)),
-                    );
-                }
-            }
-        }
-
-        // The accumulator's fragments and the scores' window are one grid at two depths: the
-        // accumulator is placed on the score's own grid, the window sits under the plane's
-        // region, and a region only windows a tile at its depth.
-        let window_fragments = scores.over(&comptime!(Level::every(&[(Q, m), (S, n)])));
-        #[unroll]
-        for fragment in 0..rows * columns {
-            let mut window = scores.at(&window_fragments.region(fragment));
-            window.copy_cast_from(&logits.at(&score_fragments.region(fragment)));
-        }
+        logits.mma(&query, &key);
+        // The window on the score's grid is the plane's window of scores: drained at the depth
+        // the accumulator sits.
+        logits.drained_into(&score_window);
 
         // The score's cells were stored in the fragments' layout; the softmax reads them by rows.
         sync_plane();
 
         // The keys' scale multiplies the weighting's; the window holds the weights after it.
-        let correction = weigh::<EA>(
-            &scores.scaled(key_factor),
-            softmax,
-            bias,
-            scale,
-            microkernel.weighting,
-        );
+        let correction = weigh::<EA>(&scores.scaled(key_factor), softmax, bias, scale, weighting);
         probabilities.copy_cast_from(scores);
 
         // The weights land before the fragments load them.
@@ -448,8 +404,8 @@ impl StageScore {
 
     /// [`ScoreHolder::Fragments`]: the score contracted into its fragments, the softmax read where
     /// the plane's units hold their cells, and the fragments, cast in their registers, contracted
-    /// with the values. Nothing crosses the plane's units but the row reductions' shuffles, so the
-    /// plane never meets.
+    /// with the values, which read runs of them as each call's `A`. Nothing crosses the plane's
+    /// units but the row reductions' shuffles, so the plane never meets.
     #[allow(clippy::too_many_arguments)]
     fn fragments_step<EA: Float, E: Float>(
         stage: &Region,
@@ -480,21 +436,15 @@ impl StageScore {
         let correction = weigh::<EA>(&logits.scaled(key_factor), softmax, bias, scale, weighting);
         rescale::<EA>(sum, correction);
 
-        // The value spans no head dim: it takes the head dim's first step, and below it each step
-        // of the keys, a run of the score's fragments one call of its instruction reads as its `A`.
         let probabilities = logits.cast::<E>();
-        for head in stage.walk().routed(D, 0usize).unrolled() {
-            for keys in head.walk().unrolled() {
-                plane_fragment_microkernel(
-                    &keys,
-                    &sum.clone(),
-                    &probabilities,
-                    value,
-                    comptime!(None),
-                    MatmulOperands::AS_BOUND,
-                );
-            }
-        }
+        plane_fragment_microkernel(
+            stage,
+            &sum.clone(),
+            &probabilities,
+            value,
+            comptime!(None),
+            MatmulOperands::AS_BOUND,
+        );
     }
 }
 
@@ -557,8 +507,8 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
                 value,
                 &bias_stage,
                 scale,
-                microkernel,
                 microkernel.score_levels(&[(Q, planes)]),
+                microkernel.weighting,
             );
         });
     });

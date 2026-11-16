@@ -4,7 +4,6 @@ use crate::attention::plane::{
     ScoreHolder,
 };
 use crate::matmul::cube::CubeStagedDelivery;
-use crate::matmul::plane::PlaneFragmentDepth;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 use cubek_std::microkernel::{StageLayout, StageRing};
@@ -81,24 +80,6 @@ impl CubeAttentionMicrokernelSettings {
         delivery: CubeStagedDelivery::Copy,
         query_as_keys: false,
     };
-
-    /// These settings with their plane fragments holding the score the whole head dim deep
-    /// ([`PlaneFragmentDepth::Stage`]); settings over plane shuffles, which hold no score
-    /// fragments, as they are.
-    pub fn whole_head(self) -> Self {
-        match self.plane {
-            CubeAttentionPlaneSettings::Fragment(plane) => Self {
-                plane: CubeAttentionPlaneSettings::Fragment(
-                    PlaneFragmentAttentionMicrokernelSettings {
-                        score_depth: PlaneFragmentDepth::Stage,
-                        ..plane
-                    },
-                ),
-                ..self
-            },
-            CubeAttentionPlaneSettings::Shuffle(_) => self,
-        }
-    }
 
     /// The cube's settings worth trying over planes of the kind this lead runs, the lead first: a
     /// cube's own knobs are worth different values over each plane microkernel, so its list is one
@@ -275,11 +256,6 @@ impl CubeAttentionMicrokernelSettings {
             query_as_keys,
             ..fragments(rows, keys)
         });
-        // The score's fragments the whole head dim deep: one contraction a stage of keys instead of
-        // a walk of the head dim's steps. On an M2 Pro (Qwen3-0.6B's 16/8 heads and Qwen3-4B's
-        // 32/8), taken last first as the lead is, it is 1.5 to 4% under the lead at 512 and 2048
-        // queries.
-        let whole_head = lead.whole_head();
         // The copy engine lands a stage while the planes contract the one before, so it wants a
         // second slot. On Qwen3-8B's last 8k prompt chunk on an RTX PRO 6000 (32/8 heads, 512
         // queries over 8192 keys), the one-by-four box on two such slots takes 301 µs on two heads
@@ -327,7 +303,7 @@ impl CubeAttentionMicrokernelSettings {
             .chain([whole])
             .chain(along_keys)
             .chain(swizzled)
-            .chain([swizzled_split, four_planes_split, whole_head])
+            .chain([swizzled_split, four_planes_split])
             .chain(copied)
             .chain(eight_warps)
             .chain(pipelined)
