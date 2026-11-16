@@ -54,7 +54,7 @@ impl SlotRotation {
             RecurrenceWalkStateLayout::Slots { slots } => (0..slots.get() / spec.batch)
                 .map(|turn| {
                     let rows: Vec<u32> = (0..spec.batch)
-                        .map(|row| ((turn * spec.batch + row) % slots.get()) as u32)
+                        .map(|row| ((turn * spec.batch + row) % slots) as u32)
                         .collect();
                     PlainTensor::of_u32s(client, &[spec.batch], &rows)
                 })

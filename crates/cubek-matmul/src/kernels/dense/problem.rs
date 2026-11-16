@@ -12,7 +12,7 @@ use cubek_microkernel::matmul::{
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{BlockScales, Packing};
-use cubek_std::layout::tile_order::TileWords;
+use cubek_std::layout::tile_order::TileOrder;
 use cubek_std::matmul_axes::{EXPERT, K, batch_axis};
 use cubek_std::routine::EstimatedProblem;
 
@@ -137,20 +137,26 @@ impl MatmulRoutineProblem {
     }
 
     /// Checks every packed input's block scales lie where a launch binding them as
-    /// `block_scales` reads them: what a routine whose microkernel may take them as words
-    /// declines, those words being bound from rows.
+    /// `block_scales`, its stages filled by the TMA engine where `by_tma`, reads them: what a routine whose
+    /// microkernel may take them as words declines. Words copied by the units are bound from rows,
+    /// through a gather that cannot address scales kept in tiles of their own; the TMA engine lands
+    /// those tiles whole ([`TileOrder::scale_words_in_tiles`]).
     ///
     /// # Errors
     ///
     /// [`MATMUL_SCALE_WORDS_IN_TILES`], for scales taken as words over an input keeping them in
-    /// tiles of their own.
-    pub fn check_block_scales(&self, block_scales: BlockScales) -> Result<(), Refusal> {
+    /// tiles of their own, its stages filled by anything but the TMA engine.
+    pub fn check_block_scales(
+        &self,
+        block_scales: BlockScales,
+        by_tma: bool,
+    ) -> Result<(), Refusal> {
         let scales_in_tiles = [self.packings.lhs, self.packings.rhs]
             .into_iter()
             .flatten()
             .filter_map(|packing| packing.operand.tile_order())
-            .any(|order| order.words() == TileWords::BlockByBlock);
-        match block_scales == BlockScales::Words && scales_in_tiles {
+            .any(TileOrder::scales_in_tiles);
+        match block_scales == BlockScales::Words && scales_in_tiles && !by_tma {
             true => Err(MATMUL_SCALE_WORDS_IN_TILES),
             false => Ok(()),
         }
@@ -506,12 +512,12 @@ pub const MATMUL_INDEX_UNREAD_BY_TMA: Refusal = Refusal::Declined {
     why: "a tensor map reads no table; an indexed input is staged by the cube's units",
 };
 
-/// What a launch taking its block scales as words declines over a matrix whose scales are stored
-/// in tiles of their own ([`TileWords::BlockByBlock`](cubek_std::layout::tile_order::TileWords)):
-/// the words are bound from the rows a matrix in rows or laid row by row keeps them in.
+/// What a launch taking its block scales as words copied by the units declines: scales kept in
+/// tiles of their own ([`TileOrder::scales_in_tiles`]). The units bind the words from the rows a
+/// matrix in rows keeps them in; only the TMA engine lands the tiles whole.
 pub const MATMUL_SCALE_WORDS_IN_TILES: Refusal = Refusal::Declined {
-    why: "this launch binds its block scales as words of their rows, and this matrix keeps them in \
-          tiles of their own beside its values laid block by block",
+    why: "this launch's units copy its block scales as words of their rows, and this matrix keeps \
+          them in tiles of their own, which only the TMA engine lands",
 };
 
 /// What a fill or a store the TMA engine moves declines: an operand of rows one element wide

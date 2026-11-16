@@ -1,20 +1,14 @@
-#![allow(missing_docs)]
+//! A file per routine, each against the host's passes in [`base`].
 
-#[allow(unused)]
-pub mod basic;
+mod base;
 #[cfg(feature = "benchmarks")]
-pub mod bench_catalog;
-pub mod depthwise;
-pub mod depthwise_weight;
-pub mod direct;
-#[cfg(feature = "extended")]
-pub mod extended;
-#[cfg(feature = "full")]
-pub mod full;
-pub mod im2col;
+mod bench_catalog;
+mod depthwise;
+mod direct;
+mod im2col;
+mod multi_level;
 mod split;
-pub mod tile;
-pub mod unit;
+mod tile;
+mod unit;
 
-#[allow(unused)]
-pub mod launcher_strategy;
+pub(crate) use base::*;

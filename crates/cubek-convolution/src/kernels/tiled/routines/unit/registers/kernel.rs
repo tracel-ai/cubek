@@ -1,4 +1,4 @@
-use cubecl::tile::{Axis, Partitioning, RegisterBlock, Semiring, TileTensor};
+use cubecl::tile::{Axis, Partitioning, Semiring, SoftwareMatmul, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// Every plane of the launch, each of its units contracting its block of the output against the
@@ -20,7 +20,7 @@ pub fn unit_registers_conv_kernel<EA: Numeric, EL: Numeric>(
     rhs: &TileTensor<'_>,
     out: &TileTensor<'_>,
     partitioning: Partitioning,
-    #[comptime] block: RegisterBlock,
+    #[comptime] block: SoftwareMatmul,
     #[comptime] bounded: Vec<Axis>,
     extents: Sequence<usize>,
     #[define(EA, EL)] _elements: [ElemType; 2],

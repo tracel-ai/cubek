@@ -2,10 +2,11 @@ use super::{CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED};
 use crate::kernels::tiled::ConvProblem;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
+use cubecl::tile::space::ComputeScope;
 use cubecl::tile::stage::Prefetch;
 use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
 use cubek_microkernel::matmul::plane::{
-    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
+    PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{Microkernel, StageRing};
@@ -50,7 +51,7 @@ pub struct ConvSettings {
 impl ConvSettings {
     const STAGE_STEPS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
-    /// Cmma of an instruction of `rows` rows over the grid of `fragments` a plane and `planes`
+    /// An instruction of `rows` rows over the grid of `fragments` a plane and `planes`
     /// planes a cube, reading vectors.
     ///
     /// # Panics
@@ -81,12 +82,6 @@ impl ConvSettings {
         self
     }
 
-    /// These settings through the manual-mma instruction.
-    pub const fn mma(mut self) -> Self {
-        self.microkernel = self.microkernel.through(PlaneFragmentTransport::Mma);
-        self
-    }
-
     /// These settings holding two stages in flight.
     pub const fn double_ring(mut self) -> Self {
         self.microkernel = self.microkernel.ringed(StageRing::DOUBLE);
@@ -104,8 +99,8 @@ impl ConvSettings {
         self.microkernel.planes.count() * self.across.get()
     }
 
-    /// The first instruction of the kind these settings ask for that the device offers for
-    /// `problem`, with the grid of fragments a plane holds.
+    /// The instruction of `rows` rows the tile picks for `problem`, with the grid of fragments a
+    /// plane holds.
     ///
     /// # Errors
     ///
@@ -116,15 +111,14 @@ impl ConvSettings {
         problem: &ConvProblem,
     ) -> Result<PlaneFragmentMicrokernel, Refusal> {
         let grid = self.microkernel.plane;
-        if grid.transport == PlaneFragmentTransport::Wgmma {
+        if grid.holder != ComputeScope::Plane {
             return Err(CONV_WGMMA_UNSERVED);
         }
         PlaneFragmentMicrokernel::candidates(hw, &problem.work_item(), &grid)
-            .filter(|plane| {
+            .find(|plane| {
                 let [(_, rows), ..] = plane.instruction.shape();
                 rows == self.rows.get()
             })
-            .find(|plane| plane.instruction.reached_through(grid.transport))
             .ok_or(CONV_INSTRUCTION_UNOFFERED)
     }
 }
@@ -132,14 +126,9 @@ impl ConvSettings {
 impl core::fmt::Display for ConvSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let (fragments, planes) = (&self.microkernel.plane, &self.microkernel.planes);
-        match fragments.transport {
-            PlaneFragmentTransport::Cmma => write!(f, "cmma")?,
-            PlaneFragmentTransport::Mma => write!(f, "mma")?,
-            PlaneFragmentTransport::Wgmma => write!(f, "wgmma")?,
-        }
         write!(
             f,
-            "_F{}X{}_P{}X{}_T{}",
+            "F{}X{}_P{}X{}_T{}",
             fragments.along_m, fragments.along_n, planes.along_m, planes.along_n, self.rows
         )?;
         if self.across.get() > 1 {

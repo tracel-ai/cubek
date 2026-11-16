@@ -5,7 +5,7 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Instruction, Levels, RegisterBlock};
+use cubecl::tile::{Levels, SoftwareMatmul};
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
@@ -73,24 +73,19 @@ impl UnitRegistersMicrokernel {
         bytes.div_ceil(4) as u32
     }
 
-    /// The instruction a unit's sum opens on: a register block of its accumulator's cells,
-    /// unrolled while they fit a unit's registers. A block past them, such as an attention unit's
-    /// sum over a 512-wide value dim, walks its cells at runtime.
-    pub fn tile_instruction(&self) -> Instruction {
-        Instruction::Registers {
-            config: Self::register_block(),
-        }
+    /// The software matmul a unit's sum opens as: its accumulator's cells, unrolled while they fit
+    /// a unit's registers. An accumulator past them, such as an attention unit's sum over a
+    /// 512-wide value dim, walks its cells at runtime.
+    pub fn software_matmul(&self) -> SoftwareMatmul {
+        Self::register_budget()
     }
 
-    /// [`tile_instruction`](Self::tile_instruction) with partials: with a col rhs, each cell keeps
+    /// [`software_matmul`](Self::software_matmul) with partials: with a col rhs, each cell keeps
     /// one partial sum per lane of a `K` line and reduces them once at the drain, instead of a
-    /// horizontal sum every step. Only for an accumulator read solely at its drain, like a
-    /// matmul's output; an attention score is read by its softmax first and uses
-    /// `tile_instruction`.
-    pub fn drained_instruction(&self) -> Instruction {
-        Instruction::Registers {
-            config: Self::register_block().partials(),
-        }
+    /// horizontal sum every step. Only for an accumulator read solely at its drain, like a matmul's
+    /// output; an attention score is read by its softmax first and uses `software_matmul`.
+    pub fn drained_software_matmul(&self) -> SoftwareMatmul {
+        Self::register_budget().partials()
     }
 
     /// The block alone, `rows × columns` of the output with every contracted axis left whole, for
@@ -102,10 +97,10 @@ impl UnitRegistersMicrokernel {
         Levels::leaf(&[(m, rows), (n, columns)])
     }
 
-    /// The register block a memory window is accumulated under: unrolled while its cells fit a
+    /// The software matmul a memory window is accumulated under: unrolled while its cells fit a
     /// unit's registers.
-    pub fn register_block() -> RegisterBlock {
-        RegisterBlock::new(UNIT_REGISTERS as usize)
+    pub fn register_budget() -> SoftwareMatmul {
+        SoftwareMatmul::new(UNIT_REGISTERS as usize)
     }
 
     /// The extent along `dim` of one step of the block.

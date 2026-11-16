@@ -4,6 +4,10 @@ use cubek_microkernel::matmul::cube::{CubeStagedWalk, cube_staged_microkernel};
 
 /// Every cube running the cube microkernel on its box of the output, staging a gathered input and
 /// an rhs held as `storage`.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
 #[cube(launch_unchecked)]
 pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric>(
     input: &TileTensor<'_>,
@@ -24,7 +28,7 @@ pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric>(
         if walk.scratch != Scratch::None {
             sync_cube();
         }
-        cube_staged_microkernel::<EA, EL>(
+        cube_staged_microkernel::<EA>(
             cube.walk(),
             &input.at(&cube),
             &rhs.at(&cube),

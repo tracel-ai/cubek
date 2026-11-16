@@ -253,6 +253,38 @@ pub fn tma_operand_tiled_typed(
     }
 }
 
+/// A descriptor over block scales laid row by row in tiles, `binding` their `u32` words as
+/// [`TileOrder::scale_words_in_tiles`](crate::layout::tile_order::TileOrder::scale_words_in_tiles)
+/// states them, `[strips, k_tiles, tile_words]`: a box of `box_strips` strips one tile deep, each
+/// tile's words whole. A tile's words are one dense run, so the box's innermost run is a whole
+/// tile's scales (64 bytes for NVFP4's `128 × 8` tile), where a box over scales in rows would be
+/// one row's few bytes, under the 16 a descriptor's innermost run takes.
+///
+/// # Panics
+///
+/// On a binding that is not three dims stepping their tiles' words one at a time.
+pub fn tma_scale_words_in_tiles(binding: TensorBinding, box_strips: usize) -> TensorMapArg<Tiled> {
+    let (shape, strides) = (&binding.shape, &binding.strides);
+    assert!(
+        shape.len() == 3 && strides[2] == 1 && strides[1] == shape[2],
+        "tma_scale_words_in_tiles: scale words over [strips, k_tiles, tile_words], each tile one \
+         run, not shape {shape:?} strides {strides:?}"
+    );
+    let metadata = Metadata::new(shape.clone(), strides.clone());
+    let box_dims = shape![box_strips, 1, shape[2]];
+    let meta = tma_meta_tiled(
+        metadata,
+        box_dims,
+        u32::elem_type_native(),
+        TensorMapSwizzle::None,
+    );
+    TensorMapArg {
+        tensor: binding.into_tensor_arg(),
+        metadata: meta,
+        _kind: PhantomData,
+    }
+}
+
 /// `binding` with each two adjacent physical dims that are fragments of one logical dim and lie
 /// contiguous merged into one, its tiling a fragment fewer for each: a level a reader has to find
 /// whole, a vector read inside a storage tile say, that a copy of whole tiles does not need.

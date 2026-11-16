@@ -368,7 +368,7 @@ impl ConvRoutine<UnitRegistersMicrokernel> for UnitRegistersConvRoutine {
                 rhs,
                 out,
                 launcher.partitioning_arg(),
-                UnitRegistersMicrokernel::register_block().split_edge(),
+                UnitRegistersMicrokernel::register_budget().split_edge(),
                 bounded,
                 extents,
                 problem.kernel_elements(),

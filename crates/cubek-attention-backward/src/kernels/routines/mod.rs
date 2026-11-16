@@ -1,15 +1,16 @@
-//! The routines of attention's backward pass, one folder per scope: each walks the tiles of
-//! queries by keys once owned by the queries, then once owned by the keys, except the hypercube's,
-//! whose walk owned by the keys also sums the query's gradient.
+//! The routines of attention's backward pass, one kernel each, one folder per scope: walks owned
+//! by the queries and walks owned by the keys, the delta routine, and the casts out of the sums
+//! some walks add into. The strategies in [`strategies`](super::strategies) launch them in order.
 
+mod cast;
 mod cube;
+pub(crate) mod heads_apart;
 mod hypercube;
-mod key_heads;
 mod plane;
 mod unit;
 
+pub use cast::*;
 pub use cube::*;
 pub use hypercube::*;
-pub use key_heads::KeyHeads;
 pub use plane::*;
 pub use unit::*;

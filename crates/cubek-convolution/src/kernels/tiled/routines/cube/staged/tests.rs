@@ -5,10 +5,12 @@ use super::*;
 use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::Conv2dProblem;
 use crate::eval::benchmarks::settings;
-use crate::kernels::tiled::routines::test_support::{cmma_only, nvidia, problems};
+use crate::kernels::tiled::routines::test_support::{
+    cmma_8x32_only, cmma_only, mma_only, nvidia, problems,
+};
 use crate::kernels::tiled::{CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED, ConvProblem};
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentTransport};
+use cubek_microkernel::matmul::plane::PlaneFragmentInstruction;
 use cubek_std::devices::topology;
 use cubek_std::microkernel::KernelEstimate;
 use cubek_std::routine::EstimatedProblem;
@@ -28,17 +30,17 @@ fn problem(name: &str) -> ConvProblem {
     ConvProblem::from(&conv2d(name))
 }
 
-/// A few channels make a step of taps, which cmma declines by name and the Mma settings serve, so
-/// the first that serves is one of them.
+/// A few channels make a step of taps, which the fragment API declines by name; the tile picks
+/// the manual mma only where the device offers no fragment API, and that serves it.
 #[test]
 fn cmma_declines_a_step_of_taps_and_mma_serves_it() {
-    let (hw, problem) = (nvidia(), problem("few_channels_deep_filter"));
+    let problem = problem("few_channels_deep_filter");
     for settings in [settings::F2X2_P2X2_T16, settings::F1X2_P1X2_T16] {
-        let prepared = ROUTINE.prepare(&hw, &problem, &settings);
+        let prepared = ROUTINE.prepare(&nvidia(), &problem, &settings);
         assert_eq!(prepared.err(), Some(CMMA_STEP_ACROSS_TAPS));
     }
     let (blueprint, _) = ROUTINE
-        .prepare_first_served(&hw, &problem)
+        .prepare_first_served(&mma_only(), &problem)
         .expect("a setting serves");
     assert!(matches!(
         blueprint.microkernel.plane.instruction,
@@ -48,6 +50,7 @@ fn cmma_declines_a_step_of_taps_and_mma_serves_it() {
         ROUTINE.prepare_first_served(&cmma_only(), &problem).err(),
         Some(CMMA_STEP_ACROSS_TAPS)
     );
+    assert!(ROUTINE.prepare_first_served(&nvidia(), &problem).is_err());
 }
 
 /// A cmma fragment's store cannot be cut short, so its output is masked and bounces; a manual mma
@@ -55,25 +58,25 @@ fn cmma_declines_a_step_of_taps_and_mma_serves_it() {
 #[test]
 fn only_a_cmma_output_is_masked_to_bounce() {
     let problem = problem("channels_64");
-    let masks_out = |settings| {
+    let masks_out = |hw| {
         ROUTINE
-            .prepare(&nvidia(), &problem, &settings)
+            .prepare(&hw, &problem, &settings::F2X2_P2X2_T16)
             .expect("the setting prepares")
             .0
             .masks_out
     };
-    assert!(masks_out(settings::F2X2_P2X2_T16));
-    assert!(!masks_out(settings::F2X2_P2X2_T16.mma()));
+    assert!(masks_out(nvidia()));
+    assert!(!masks_out(mma_only()));
 }
 
 /// A split holding more planes than a cube of the device spawns is refused by name before any
-/// launch, at either plane width.
+/// launch, at either plane width, on a device whose tile picks the eight-row instruction.
 #[test]
 fn planes_across_past_the_cube_are_refused_by_name() {
     let narrow = problem("map_7_wide");
     let settings = settings::F1X1_P1X2_T8.across(7);
     for (plane_width, most_units) in [(32, 256), (64, 512)] {
-        let mut hw = nvidia();
+        let mut hw = cmma_8x32_only();
         let device = topology(&mut hw);
         device.plane_size_min = plane_width;
         device.plane_size_max = plane_width;
@@ -83,7 +86,11 @@ fn planes_across_past_the_cube_are_refused_by_name() {
             Some(Refusal::CubePastDevice { .. })
         ));
     }
-    assert!(ROUTINE.prepare(&nvidia(), &narrow, &settings).is_ok());
+    assert!(
+        ROUTINE
+            .prepare(&cmma_8x32_only(), &narrow, &settings)
+            .is_ok()
+    );
 }
 
 /// The catalog's 64 channel shape read as a data backward of `channels_out` output channels,
@@ -124,11 +131,7 @@ fn cmma_declines_a_data_backward_step_across_taps_and_mma_serves_it() {
         ROUTINE.prepare(&nvidia(), &problem, &settings).err(),
         Some(CMMA_STEP_ACROSS_TAPS)
     );
-    assert!(
-        ROUTINE
-            .prepare(&nvidia(), &problem, &settings.mma())
-            .is_ok()
-    );
+    assert!(ROUTINE.prepare(&mma_only(), &problem, &settings).is_ok());
 }
 
 /// The catalog problems as the launch states them.
@@ -147,25 +150,30 @@ fn named(refusal: &Refusal) -> bool {
         || matches!(refusal, Refusal::SharedMemoryPastDevice { .. })
 }
 
-/// Every listed setting prepares each problem or is declined by name, only cmma meets the step of
-/// taps, and some setting serves each problem.
+/// Every listed setting prepares each problem or is declined by name, and some setting serves
+/// each problem: on a device whose tile picks the manual mma every one, on one whose tile picks
+/// the fragment API all but those that take a step of taps, which every setting declines by name.
 #[test]
 fn every_setting_prepares_or_declines_by_name() {
-    let hw = nvidia();
-    for (name, problem) in staged_problems() {
-        for settings in ROUTINE.settings(&hw) {
-            let Err(refusal) = ROUTINE.prepare(&hw, &problem, &settings) else {
-                continue;
-            };
-            assert!(named(&refusal), "{settings} on {name}: {refusal:?}");
-            if refusal == CMMA_STEP_ACROSS_TAPS {
-                let transport = settings.microkernel.plane.transport;
-                assert_eq!(transport, PlaneFragmentTransport::Cmma, "{settings}");
+    for hw in [nvidia(), mma_only()] {
+        for (name, problem) in staged_problems() {
+            for settings in ROUTINE.settings(&hw) {
+                let Err(refusal) = ROUTINE.prepare(&hw, &problem, &settings) else {
+                    continue;
+                };
+                assert!(named(&refusal), "{settings} on {name}: {refusal:?}");
             }
+            let served = ROUTINE.prepare_first_served(&hw, &problem);
+            assert!(
+                served.is_ok() || served.as_ref().is_err_and(named),
+                "no setting serves {name}"
+            );
         }
+    }
+    for (name, problem) in staged_problems() {
         assert!(
-            ROUTINE.prepare_first_served(&hw, &problem).is_ok(),
-            "no setting serves {name}"
+            ROUTINE.prepare_first_served(&mma_only(), &problem).is_ok(),
+            "no setting serves {name} through the manual mma"
         );
     }
 }

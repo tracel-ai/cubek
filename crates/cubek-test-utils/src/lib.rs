@@ -4,6 +4,7 @@ pub mod hardware;
 mod progress;
 pub mod quant_layout;
 mod registry;
+mod scope;
 mod stubs;
 mod test_mode;
 mod test_tensor;
@@ -20,6 +21,7 @@ pub use registry::{
     ItemDescriptor, ResourceKind, RunSamples, client, profile_launch, supports_f16_arithmetic,
     timing_method,
 };
+pub use scope::*;
 pub use test_mode::*;
 pub use test_tensor::*;
 pub use tile_input::*;

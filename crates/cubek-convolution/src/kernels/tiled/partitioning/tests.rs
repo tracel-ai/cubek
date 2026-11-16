@@ -3,15 +3,15 @@ use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::Conv2dProblem;
 use crate::eval::benchmarks::settings;
 use crate::kernels::tiled::ConvProblem;
-use crate::kernels::tiled::routines::test_support::{dense, few_channels_deep_filter, nvidia};
+use crate::kernels::tiled::routines::test_support::{dense, few_channels_deep_filter, mma_only};
 
 const BUDGET: usize = 48 * 1024;
 
-/// The tiles of the Mma 2x2 grid on `problem`.
+/// The tiles of the 2x2 grid on the mma device on `problem`.
 fn tiles(problem: &ConvProblem) -> ConvTiles {
-    let settings = settings::F2X2_P2X2_T16.mma();
+    let settings = settings::F2X2_P2X2_T16;
     let plane = settings
-        .plane(&nvidia(), problem)
+        .plane(&mma_only(), problem)
         .expect("the device offers mma");
     ConvTiles::new(problem, &plane, &settings).expect("the tiles state")
 }
@@ -20,7 +20,7 @@ fn tiles(problem: &ConvProblem) -> ConvTiles {
 fn steps(problem: &ConvProblem, budget: usize) -> usize {
     let tiles = tiles(problem);
     let storage = tiles.storage(problem);
-    tiles.stage(&nvidia(), problem, &storage, budget).0.1
+    tiles.stage(&mma_only(), problem, &storage, budget).0.1
 }
 
 /// The forward of three channels under an 11 wide filter at stride four, six steps of eight.
@@ -54,6 +54,6 @@ fn a_stage_walks_down_to_the_budget() {
     let problem = alexnet_like();
     let tiles = tiles(&problem);
     let storage = tiles.storage(&problem);
-    let two = tiles.stage_bytes(&nvidia(), problem.elements, &storage, 2);
+    let two = tiles.stage_bytes(&mma_only(), problem.elements, &storage, 2);
     assert_eq!(steps(&problem, two), 2);
 }

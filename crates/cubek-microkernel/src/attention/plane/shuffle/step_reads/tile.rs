@@ -5,13 +5,34 @@ use cubecl::tile::layout::PageEntry;
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// A float operand's lines, read where they lie through its tile, at `E`, the element it holds.
+/// A float operand's lines, read where they lie through its tile, at `E`, the element it holds,
+/// without the per-tensor scale it is stored under.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct TileStepReads<E: Float> {
+    /// The operand, its per-tensor scale taken out.
     pub tile: Tile,
+    /// The per-tensor scale taken out of the operand, read once: `1` where it is stored under
+    /// none.
+    pub scale: f32,
     #[cube(comptime)]
     pub element: PhantomData<E>,
+}
+
+#[cube]
+impl<E: Float> TileStepReads<E> {
+    /// `operand`'s lines, the scale it is stored under over the whole tensor taken out of it and
+    /// read once, for the sums its lines enter, held in the units' own registers, to take on
+    /// ([`StepReads::per_tensor_scale`]). A scale that varies along an axis stays on the operand,
+    /// which a flat read refuses.
+    pub fn new(operand: &Tile) -> TileStepReads<E> {
+        let (tile, factor) = operand.factor_whole();
+        TileStepReads::<E> {
+            tile,
+            scale: factor.whole(),
+            element: PhantomData,
+        }
+    }
 }
 
 #[cube]
@@ -52,9 +73,14 @@ impl<E: Float, N: Size> StepReads<N> for TileStepReads<E> {
         loaded
     }
 
+    fn per_tensor_scale(&self) -> f32 {
+        self.scale
+    }
+
     fn at(&self, region: &Region) -> TileStepReads<E> {
         TileStepReads::<E> {
             tile: self.tile.at(region),
+            scale: self.scale,
             element: PhantomData,
         }
     }
@@ -66,6 +92,7 @@ impl<E: Float, N: Size> StepReads<N> for TileStepReads<E> {
     fn with_page_entry(&self, entry: &PageEntry) -> TileStepReads<E> {
         TileStepReads::<E> {
             tile: self.tile.with_page_entry(entry),
+            scale: self.scale,
             element: PhantomData,
         }
     }

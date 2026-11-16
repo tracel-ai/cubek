@@ -1,5 +1,5 @@
-use cubecl::tile::launch::Destination;
-use cubecl::tile::{Axis, Instruction, Partitioning, TileTensor};
+use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpand};
+use cubecl::tile::{Axis, Partitioning, SoftwareMatmul, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeMeet, cube_shuffle_microkernel};
 use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
@@ -13,7 +13,7 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
     rhs: &TileTensor<'_>,
     out: &O::Arg<E>,
     partitioning: Partitioning,
-    #[comptime] instruction: Instruction,
+    #[comptime] block: Option<SoftwareMatmul>,
     #[comptime] meet: CubeMeet,
     #[comptime] split: Axis,
     #[comptime] planes: usize,
@@ -23,7 +23,8 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = O::tile::<E, VO>(out, &partitioning);
+    let dest = O::serve::<E, VO>(out, &partitioning);
+    let c = dest.tile();
 
     // A persistent cube's run of the boxes, whole boxes each, the cube level sharing them as one
     // index; every other cube's one box.
@@ -38,12 +39,12 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
             &c.at(&cube),
             &a.at(&cube),
             &b.at(&cube),
-            instruction,
+            block,
             meet,
             split,
             planes,
             reads,
         );
     }
-    O::finish::<E>(out);
+    dest.finish();
 }

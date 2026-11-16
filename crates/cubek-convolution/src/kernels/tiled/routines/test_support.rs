@@ -36,6 +36,13 @@ pub fn cmma_only() -> Hardware {
     devices::offering_cmma(devices::h100(), [shape(F16, (16, 16, 16))])
 }
 
+/// A device offering the manual mma `16x8x8` alone, which the tile picks where no fragment API
+/// serves.
+pub fn mma_only() -> Hardware {
+    let hw = devices::offering_cmma(devices::h100(), []);
+    devices::offering_mma(hw, [shape(F16, (16, 8, 8))])
+}
+
 /// A device offering the cmma instruction of eight rows alone.
 pub fn cmma_8x32_only() -> Hardware {
     devices::offering_cmma(devices::h100(), [shape(F16, (8, 32, 16))])

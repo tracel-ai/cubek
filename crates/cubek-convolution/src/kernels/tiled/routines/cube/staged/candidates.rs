@@ -2,7 +2,7 @@ use crate::kernels::tiled::{ConvSettings, InstructionShape};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
-use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
+use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_std::{Hardware, Instructions, UNIT_REGISTERS, manual_mma};
 
 /// The share of a unit's registers the accumulators take, the rest left to the operand fragments,
@@ -37,20 +37,13 @@ impl<'a> ConvCandidates<'a> {
     }
 
     /// Every candidate, the base first: the settings around the base of each instruction the
-    /// device offers, then the base of each kind of instruction at one element a read.
+    /// device offers, then the base of the largest at one element a read.
     pub fn list(&self) -> Vec<ConvSettings> {
-        let instructions: Vec<_> = [PlaneFragmentTransport::Cmma, PlaneFragmentTransport::Mma]
-            .into_iter()
-            .flat_map(|transport| {
-                self.instruction_shapes(transport)
-                    .into_iter()
-                    .map(move |shape| (transport, shape))
-            })
-            .collect();
+        let instructions = self.instruction_shapes();
         let narrowest = instructions
             .iter()
             .enumerate()
-            .min_by_key(|(_, (_, shape))| shape.rows)
+            .min_by_key(|(_, shape)| shape.rows)
             .map(|(position, _)| position);
         let mut list = Vec::new();
         let mut keep = |settings: ConvSettings, shape: &InstructionShape| {
@@ -58,40 +51,35 @@ impl<'a> ConvCandidates<'a> {
                 list.push(settings);
             }
         };
-        for (position, (transport, shape)) in instructions.iter().enumerate() {
-            let base = Self::base(*transport, shape);
+        for (position, shape) in instructions.iter().enumerate() {
+            let base = Self::base(shape);
             let across = narrowest == Some(position);
             for settings in self.around(base, shape, across) {
                 keep(settings, shape);
             }
-            if instructions[..position]
-                .iter()
-                .all(|(other, _)| other != transport)
-            {
+            if position == 0 {
                 keep(base.width_one(), shape);
             }
         }
         list
     }
 
-    /// The instructions of `transport` the device offers, one for each count of rows of each
+    /// The instructions the device offers through either set, one for each count of rows of each
     /// triple of elements, the one contracting the most first: a row count's columns and depth
-    /// are the triple's own, not those of whichever element's shape came first.
-    fn instruction_shapes(&self, transport: PlaneFragmentTransport) -> Vec<InstructionShape> {
-        let configs: Vec<_> = match transport {
-            PlaneFragmentTransport::Cmma => self
-                .hw
-                .properties
-                .features
-                .matmul
-                .cmma
-                .iter()
-                .copied()
-                .largest_first()
-                .collect(),
-            PlaneFragmentTransport::Mma => manual_mma(self.hw).largest_first().collect(),
-            PlaneFragmentTransport::Wgmma => Vec::new(),
-        };
+    /// are the triple's own, not those of whichever element's shape came first. Which of them a
+    /// problem runs is the tile's pick, so a setting whose rows it passes over is declined.
+    fn instruction_shapes(&self) -> Vec<InstructionShape> {
+        let configs: Vec<_> = self
+            .hw
+            .properties
+            .features
+            .matmul
+            .cmma
+            .iter()
+            .copied()
+            .chain(manual_mma(self.hw))
+            .largest_first()
+            .collect();
         let mut seen: Vec<(ElemType, ElemType, ElemType, u32)> = Vec::new();
         let mut shapes = Vec::new();
         for config in configs {
@@ -108,13 +96,9 @@ impl<'a> ConvCandidates<'a> {
         shapes
     }
 
-    /// The base setting of an instruction of `shape` reached through `transport`.
-    fn base(transport: PlaneFragmentTransport, shape: &InstructionShape) -> ConvSettings {
-        let base = ConvSettings::new(shape.rows, BASE_FRAGMENTS, BASE_PLANES);
-        ConvSettings {
-            microkernel: base.microkernel.through(transport),
-            ..base
-        }
+    /// The base setting of an instruction of `shape`.
+    fn base(shape: &InstructionShape) -> ConvSettings {
+        ConvSettings::new(shape.rows, BASE_FRAGMENTS, BASE_PLANES)
     }
 
     /// The settings around `base`, an instruction of `shape`, the base first: fragments along the
@@ -262,7 +246,6 @@ mod tests {
     fn the_base_comes_first() {
         let base = list(&nvidia())[0];
         let microkernel = base.microkernel;
-        assert_eq!(microkernel.plane.transport, PlaneFragmentTransport::Cmma);
         assert_eq!(
             microkernel.plane,
             PlaneFragmentMicrokernelSettings::grid(2, 2, 1)
@@ -282,7 +265,7 @@ mod tests {
     }
 
     /// A device lists the instructions it offers and no others: without the 8x32 no setting takes
-    /// eight rows, and without a manual mma none takes it.
+    /// eight rows.
     #[test]
     fn a_device_lists_only_the_instructions_it_offers() {
         let eight = NonZeroUsize::new(8).unwrap();
@@ -291,10 +274,6 @@ mod tests {
         assert!(!list.is_empty());
         for settings in list {
             assert_ne!(settings.rows, eight, "{settings}");
-            assert_eq!(
-                settings.microkernel.plane.transport,
-                PlaneFragmentTransport::Cmma
-            );
         }
     }
 

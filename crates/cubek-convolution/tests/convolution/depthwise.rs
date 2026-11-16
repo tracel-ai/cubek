@@ -1,342 +1,271 @@
-//! The depthwise routine against a CPU reference, over every tiling the catalogue offers.
+//! The depthwise routine, forward, over every tiling the catalogue offers, and its weight gradient.
 //!
 //! The tile suite next door (cubecl-tile's `tests/tile/depthwise.rs`) checks that the *DSL* can
 //! express a depthwise convolution, and builds its own space to do it. This checks the space
-//! `launch_depthwise` actually builds — which is the one that ships, and the one whose tiling
-//! moves whenever the kernel is optimized. A tiling that is fast and wrong has to fail here.
+//! `launch_depthwise` actually builds, which is the one that ships, and the one whose tiling moves
+//! whenever the kernel is optimized. A tiling that is fast and wrong has to fail here.
 
-use cubecl::{prelude::*, std::tensor::TensorHandle, zspace::Shape};
+use cubecl::client::Client;
+use cubecl::ir::ElemType;
+use cubecl::prelude::*;
+use cubecl::std::tensor::TensorHandle;
+use cubecl::zspace::Shape;
+use cubek_convolution::components::ConvSetupError;
 use cubek_convolution::{
     ConvolutionArgs, DepthwiseStrategy, DepthwiseTensors, DepthwiseTiling,
-    components::ConvSetupError, launch_depthwise,
+    DepthwiseWeightBackwardTensors, launch_depthwise, launch_depthwise_weight_backward,
 };
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{ScopeUnderTest, TestInput};
 
-/// One depthwise convolution, in the layout the routine takes: NHWC in and out, `[C, kh, kw, 1]`
-/// weights.
-struct Case {
-    b: usize,
-    c: usize,
-    /// The side of the input map.
-    size: usize,
-    k: usize,
-    stride: usize,
-    dilation: usize,
-    /// Padding at the beginning and end of each spatial dimension.
-    padding: (usize, usize),
+use crate::convolution::{
+    Conv, ConvRoutine, ConvTensors, Convolves, Declines, F32, Pass, Storage, Values,
+};
+
+/// The depthwise forward routine at one tiling.
+#[derive(Debug)]
+struct Depthwise(DepthwiseStrategy);
+
+impl ConvRoutine<2> for Depthwise {
+    /// # Panics
+    ///
+    /// On a backward pass, which it does not compute.
+    fn launch(
+        &self,
+        client: &Client,
+        conv: &Conv<2>,
+        pass: Pass,
+        tensors: &ConvTensors,
+    ) -> Result<(), ConvSetupError> {
+        assert_eq!(
+            pass,
+            Pass::Forward,
+            "the depthwise routine computes the forward pass alone"
+        );
+        launch_depthwise(
+            client,
+            DepthwiseTensors {
+                input: tensors.input.clone().binding(),
+                weight: tensors.weight.clone().binding(),
+                out: tensors.written.clone().binding(),
+            },
+            conv.args(),
+            conv.group_count(),
+            conv.element(),
+            self.0,
+        )
+    }
 }
 
-impl Case {
-    fn out_size(&self) -> usize {
-        let reach = self.dilation * (self.k - 1) + 1;
-        (self.size + self.padding.0 + self.padding.1 - reach) / self.stride + 1
-    }
+/// The depthwise weight gradient, split over the positions.
+#[derive(Debug)]
+struct DepthwiseWeight;
 
-    /// Small integers on a short period, so every accumulation is exact in `f32` and the
-    /// comparison below can demand equality rather than an epsilon.
-    fn ramp(n: usize, period: usize) -> Vec<f32> {
-        (0..n).map(|i| ((i % period) as f32) - 1.0).collect()
-    }
-
-    /// The definition, written out: no sum over input channels, and a tap outside the input
-    /// contributes nothing.
-    fn reference(&self, input: &[f32], weight: &[f32]) -> Vec<f32> {
-        let (size, c, out) = (self.size, self.c, self.out_size());
-        let mut result = vec![0.0f32; self.b * out * out * c];
-
-        for b in 0..self.b {
-            for oh in 0..out {
-                for ow in 0..out {
-                    for ch in 0..c {
-                        let mut acc = 0.0f32;
-                        for rh in 0..self.k {
-                            for rw in 0..self.k {
-                                let h = (oh * self.stride + rh * self.dilation) as isize
-                                    - self.padding.0 as isize;
-                                let w = (ow * self.stride + rw * self.dilation) as isize
-                                    - self.padding.0 as isize;
-                                if h < 0 || w < 0 || h >= size as isize || w >= size as isize {
-                                    continue;
-                                }
-                                let x =
-                                    input[((b * size + h as usize) * size + w as usize) * c + ch];
-                                // `[C, kh, kw, 1]`: the channel is outermost, not innermost.
-                                let f = weight[(ch * self.k + rh) * self.k + rw];
-                                acc += x * f;
-                            }
-                        }
-                        result[((b * out + oh) * out + ow) * c + ch] = acc;
-                    }
-                }
-            }
-        }
-
-        result
-    }
-
-    fn check(&self, tiling: DepthwiseTiling) -> Result<(), String> {
-        self.check_with_weight_gap(tiling, 1)
-    }
-
-    /// Check a weight binding whose logical trailing singleton occupies one element out of every
-    /// `weight_gap` in its backing buffer. A gap above one makes every non-singleton weight axis
-    /// strided while preserving the logical `[C, kh, kw, 1]` shape.
-    fn check_with_weight_gap(
+impl ConvRoutine<2> for DepthwiseWeight {
+    /// # Panics
+    ///
+    /// On a pass other than the weight's gradient, the only one it computes.
+    fn launch(
         &self,
-        tiling: DepthwiseTiling,
-        weight_gap: usize,
-    ) -> Result<(), String> {
-        let client = cubecl::test_device().client();
-        let dtype = f32::elem_type_native();
-        let out_size = self.out_size();
-
-        let in_shape = [self.b, self.size, self.size, self.c];
-        let w_shape = [self.c, self.k, self.k, 1];
-        let out_shape = [self.b, out_size, out_size, self.c];
-
-        let in_data = Self::ramp(in_shape.iter().product(), 7);
-        let w_data = Self::ramp(w_shape.iter().product(), 5);
-        let physical_w_shape = [self.c, self.k, self.k, weight_gap];
-        let mut physical_w_data = vec![99.0; physical_w_shape.iter().product()];
-        for (physical, &logical) in physical_w_data
-            .chunks_exact_mut(weight_gap)
-            .zip(w_data.iter())
-        {
-            physical[0] = logical;
-        }
-
-        let (input, _) = TestInput::builder(client.clone(), Shape::new(in_shape))
-            .dtype(dtype)
-            .custom(in_data.clone())
-            .generate_with_f32_host_data();
-        let (weight, _) = TestInput::builder(client.clone(), Shape::new(physical_w_shape))
-            .dtype(dtype)
-            .custom(physical_w_data)
-            .generate_with_f32_host_data();
-        let mut weight = weight.binding();
-        // Keep the physical binding's strides while exposing only its logical singleton axis.
-        weight.shape = Shape::new(w_shape);
-        // Zeroed, not empty: the kernel writes every cell it owns, so a cell left untouched by a
-        // buggy walk shows up as the zero it started as rather than as whatever was there.
-        let out: TensorHandle = TestInput::builder(client.clone(), Shape::new(out_shape))
-            .dtype(dtype)
-            .zeros()
-            .generate_without_host_data();
-
-        launch_depthwise(
-            &client,
-            DepthwiseTensors {
-                input: input.binding(),
-                weight,
-                out: out.clone().binding(),
+        client: &Client,
+        conv: &Conv<2>,
+        pass: Pass,
+        tensors: &ConvTensors,
+    ) -> Result<(), ConvSetupError> {
+        assert_eq!(
+            pass,
+            Pass::BackwardWeight,
+            "it computes the weight's gradient alone"
+        );
+        launch_depthwise_weight_backward(
+            client,
+            DepthwiseWeightBackwardTensors {
+                input: tensors.input.clone().binding(),
+                out_grad: tensors.out_grad.clone().binding(),
+                weight_grad: tensors.written.clone().binding(),
             },
-            ConvolutionArgs::<2> {
-                stride: [self.stride; 2],
-                padding: [self.padding.0; 2],
-                dilation: [self.dilation; 2],
-            },
-            self.c,
-            dtype,
-            DepthwiseStrategy::Fixed(tiling),
+            conv.args(),
+            conv.group_count(),
+            conv.element(),
         )
-        .expect("the routine accepts a depthwise convolution");
+    }
+}
 
-        let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
-        let want = self.reference(&in_data, &w_data);
-
-        for b in 0..self.b {
-            for oh in 0..out_size {
-                for ow in 0..out_size {
-                    for ch in 0..self.c {
-                        let g = got.get_f32(&[b, oh, ow, ch]);
-                        let w = want[((b * out_size + oh) * out_size + ow) * self.c + ch];
-                        if g != w {
-                            return Err(format!("({b},{oh},{ow},{ch}) got {g} want {w}"));
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
+impl Conv<2> {
+    /// A depthwise convolution of `element`, summed exactly: give it as many groups as channels.
+    fn depthwise(element: ElemType) -> Self {
+        Conv::of(element).values(Values::Ramp)
     }
 
-    /// Under every tiling the benchmark catalogue offers, plus the default. A tiling only the
-    /// sweep reaches is still a tiling that can be selected, so it is still one that has to be
-    /// right.
-    fn check_every_tiling(&self) {
-        let mut bad = Vec::new();
+    /// This layer under every tiling the benchmark catalogue offers, plus the default. A tiling
+    /// only the sweep reaches is still a tiling that can be selected, so it is still one that has
+    /// to be right.
+    fn check_every_tiling(self) {
+        let mut tilings = vec![DepthwiseStrategy::Fixed(DepthwiseTiling::default())];
         for rows in [1, 2, 4] {
             for cols in [1, 3, 4] {
                 for (chans, lines) in [(1, 1), (2, 1), (3, 1), (1, 2), (1, 4), (2, 4)] {
-                    let t = DepthwiseTiling {
+                    tilings.push(DepthwiseStrategy::Fixed(DepthwiseTiling {
                         rows,
                         cols,
                         chans,
                         lines,
-                    };
-                    if let Err(e) = self.check(t) {
-                        bad.push(format!("{t:?}: {e}"));
-                    }
+                    }));
                 }
             }
         }
-        if let Err(e) = self.check(DepthwiseTiling::default()) {
-            bad.push(format!("default: {e}"));
+        for tiling in tilings {
+            let depthwise = Convolves::new(Depthwise(tiling), Declines::Never);
+            depthwise.check(depthwise.at(&[Pass::Forward], &[self]));
         }
-        assert!(bad.is_empty(), "failing tilings:\n{}", bad.join("\n"));
+    }
+
+    /// This layer under `tiling` alone.
+    fn check_at(self, tiling: DepthwiseTiling) {
+        let depthwise =
+            Convolves::new(Depthwise(DepthwiseStrategy::Fixed(tiling)), Declines::Never);
+        depthwise.check(depthwise.at(&[Pass::Forward], &[self]));
     }
 }
 
 /// The shape a depthwise layer actually has: a 3x3 window, unit stride, padded to keep the map.
 #[test]
 fn depthwise_3x3_padded() {
-    Case {
-        b: 2,
-        c: 40,
-        size: 7,
-        k: 3,
-        stride: 1,
-        dilation: 1,
-        padding: (1, 1),
-    }
-    .check_every_tiling();
+    Conv::depthwise(F32)
+        .batches(2)
+        .spatial([7, 7])
+        .channels(40)
+        .out_channels(40)
+        .groups(40)
+        .kernel([3, 3])
+        .padding([(1, 1); 2])
+        .check_every_tiling();
 }
 
 /// Unpadded, which takes the `checked` guard off every read.
 #[test]
 fn depthwise_3x3_unpadded() {
-    Case {
-        b: 1,
-        c: 33,
-        size: 6,
-        k: 3,
-        stride: 1,
-        dilation: 1,
-        padding: (0, 0),
-    }
-    .check_every_tiling();
+    Conv::depthwise(F32)
+        .batches(1)
+        .spatial([6, 6])
+        .channels(33)
+        .out_channels(33)
+        .groups(33)
+        .kernel([3, 3])
+        .check_every_tiling();
 }
 
 /// Strided, which is how the encoder's early stages downsample.
 #[test]
 fn depthwise_3x3_stride_2() {
-    Case {
-        b: 2,
-        c: 32,
-        size: 9,
-        k: 3,
-        stride: 2,
-        dilation: 1,
-        padding: (1, 1),
-    }
-    .check_every_tiling();
+    Conv::depthwise(F32)
+        .batches(2)
+        .spatial([9, 9])
+        .channels(32)
+        .out_channels(32)
+        .groups(32)
+        .kernel([3, 3])
+        .stride([2, 2])
+        .padding([(1, 1); 2])
+        .check_every_tiling();
 }
 
 /// A dilated 5x5: the shape seven of B4's blocks run, and the widest halo here.
 #[test]
 fn depthwise_5x5_dilated() {
-    Case {
-        b: 1,
-        c: 64,
-        size: 8,
-        k: 5,
-        stride: 1,
-        dilation: 2,
-        padding: (4, 4),
-    }
-    .check_every_tiling();
+    Conv::depthwise(F32)
+        .batches(1)
+        .spatial([8, 8])
+        .channels(64)
+        .out_channels(64)
+        .groups(64)
+        .kernel([5, 5])
+        .dilation([2, 2])
+        .padding([(4, 4); 2])
+        .check_every_tiling();
 }
 
 /// A channel count that is not a multiple of the unit count, so the last cube's channel tile is
 /// short and the walk has to stop where the tensor does.
 #[test]
 fn depthwise_channels_not_a_whole_number_of_cubes() {
-    Case {
-        b: 1,
-        c: 37,
-        size: 5,
-        k: 3,
-        stride: 1,
-        dilation: 1,
-        padding: (1, 1),
-    }
-    .check_every_tiling();
-}
-
-/// Re-laying the filter must follow the binding's actual address map, not assume contiguous
-/// `[C, kh, kw, 1]` storage.
-#[test]
-fn depthwise_strided_weight() {
-    Case {
-        b: 1,
-        c: 8,
-        size: 5,
-        k: 3,
-        stride: 1,
-        dilation: 1,
-        padding: (1, 1),
-    }
-    .check_with_weight_gap(DepthwiseTiling::default(), 2)
-    .unwrap();
+    Conv::depthwise(F32)
+        .batches(1)
+        .spatial([5, 5])
+        .channels(37)
+        .out_channels(37)
+        .groups(37)
+        .kernel([3, 3])
+        .padding([(1, 1); 2])
+        .check_every_tiling();
 }
 
 /// End-only padding extends the output without changing the projection offset. The output size
 /// divides every spatial tile used here, so correctness can't come from a ragged-tile guard.
 #[test]
 fn depthwise_3x3_end_padding() {
-    Case {
-        b: 1,
-        c: 32,
-        size: 8,
-        k: 3,
-        stride: 1,
-        dilation: 1,
-        padding: (0, 2),
-    }
-    .check_every_tiling();
+    Conv::depthwise(F32)
+        .batches(1)
+        .spatial([8, 8])
+        .channels(32)
+        .out_channels(32)
+        .groups(32)
+        .kernel([3, 3])
+        .padding([(0, 2); 2])
+        .check_every_tiling();
+}
+
+/// Re-laying the filter must follow the binding's actual address map, not assume contiguous
+/// `[C, kh, kw, 1]` storage.
+#[test]
+fn depthwise_strided_weight() {
+    Conv::depthwise(F32)
+        .batches(1)
+        .spatial([5, 5])
+        .channels(8)
+        .out_channels(8)
+        .groups(8)
+        .kernel([3, 3])
+        .padding([(1, 1); 2])
+        .stored(Storage::Gapped)
+        .check_at(DepthwiseTiling::default());
 }
 
 /// Batch-one weight gradients use the output gradient as the filter. This 20x20 filter used to
 /// expand all 400 taps into the kernel, making SPIR-V compilation stall in Mem2Reg.
 #[test]
 fn depthwise_large_filter_weight_gradient() {
-    Case {
-        b: 1,
-        c: 184,
-        size: 20,
-        k: 20,
-        stride: 1,
-        dilation: 1,
-        padding: (1, 1),
-    }
-    .check(DepthwiseTiling {
-        rows: 4,
-        cols: 2,
-        chans: 1,
-        lines: 1,
-    })
-    .unwrap();
+    Conv::depthwise(F32)
+        .batches(1)
+        .spatial([20, 20])
+        .channels(184)
+        .out_channels(184)
+        .groups(184)
+        .kernel([20, 20])
+        .padding([(1, 1); 2])
+        .check_at(DepthwiseTiling {
+            rows: 4,
+            cols: 2,
+            chans: 1,
+            lines: 1,
+        });
 }
 
-/// Cover an unpadded large filter with vectorized channels.
+/// An unpadded large filter with vectorized channels.
 #[test]
 fn depthwise_large_filter_unpadded() {
-    Case {
-        b: 1,
-        c: 256,
-        size: 23,
-        k: 20,
-        stride: 1,
-        dilation: 1,
-        padding: (0, 0),
-    }
-    .check(DepthwiseTiling {
-        rows: 4,
-        cols: 4,
-        chans: 1,
-        lines: 4,
-    })
-    .unwrap();
+    Conv::depthwise(F32)
+        .batches(1)
+        .spatial([23, 23])
+        .channels(256)
+        .out_channels(256)
+        .groups(256)
+        .kernel([20, 20])
+        .check_at(DepthwiseTiling {
+            rows: 4,
+            cols: 4,
+            chans: 1,
+            lines: 4,
+        });
 }
 
 /// The filter must carry exactly one channel's filter for every input/output channel. Reject the
@@ -391,5 +320,93 @@ fn depthwise_rejects_mismatched_weight_shape() {
             }) if weight_channels == want_weight_channels
                 && weight_group_channels == want_group_channels
         ));
+    }
+}
+
+/// The weight gradient split over the positions, against the defining sum: channel multipliers,
+/// strides, dilations, uneven paddings, more than one split with a partial last one, and partial
+/// channel and spatial tiles; its tensors channels last, channels first, and gapped beside a
+/// channels-first output gradient. Declined where a cube holds fewer than 128 units.
+#[test]
+fn depthwise_weight_split_matches_reference() {
+    // `(shape NHWC, kernel, stride, dilation, (beginning, end) padding, multiplier)`.
+    let layers = [
+        ([1, 1, 1, 1], [1, 1], [1, 1], [1, 1], [(0, 0), (0, 0)], 1),
+        ([2, 7, 9, 5], [3, 3], [1, 1], [1, 1], [(1, 1), (1, 1)], 1),
+        ([3, 9, 11, 3], [2, 3], [2, 1], [2, 1], [(0, 1), (2, 0)], 2),
+        ([2, 5, 7, 4], [3, 2], [2, 2], [2, 2], [(3, 0), (0, 2)], 1),
+        // Exactly one full split, followed below by a partial second split.
+        ([2, 32, 64, 3], [3, 3], [1, 1], [1, 1], [(1, 1), (1, 1)], 1),
+        // More than one 4096-sample split, with a partial final split.
+        ([4, 33, 35, 7], [3, 3], [1, 1], [1, 1], [(1, 1), (1, 1)], 1),
+        // Channel tiles: partial channel and spatial tiles, then a multiplier with stride and
+        // dilation.
+        ([2, 17, 19, 35], [3, 3], [1, 1], [1, 1], [(1, 1), (1, 1)], 1),
+        ([2, 19, 21, 33], [2, 3], [2, 1], [2, 2], [(1, 0), (0, 2)], 2),
+    ];
+    let convs: Vec<Conv<2>> = layers
+        .into_iter()
+        .flat_map(
+            |(
+                [batches, height, width, channels],
+                kernel,
+                stride,
+                dilation,
+                padding,
+                multiplier,
+            )| {
+                let layer = Conv::depthwise(F32)
+                    .batches(batches)
+                    .spatial([height, width])
+                    .channels(channels)
+                    .out_channels(channels * multiplier)
+                    .groups(channels)
+                    .kernel(kernel)
+                    .stride(stride)
+                    .dilation(dilation)
+                    .padding(padding);
+                [
+                    layer.stored(Storage::Dense),
+                    layer.stored(Storage::ChannelsFirst),
+                    layer
+                        .stored(Storage::Gapped)
+                        .out_grad_stored(Storage::ChannelsFirst),
+                ]
+            },
+        )
+        .collect();
+    let weight = Convolves::new(DepthwiseWeight, Declines::AsItStates);
+    weight.check(weight.at(&[Pass::BackwardWeight], &convs));
+}
+
+/// A dense convolution, and any element but `f32`, are declined.
+#[test]
+fn depthwise_weight_declines_dense_and_other_dtypes() {
+    let client = &cubecl::test_device().client();
+    for (groups, dtype) in [
+        (1, f32::elem_type_native()),
+        (4, half::f16::elem_type_native()),
+    ] {
+        let input = TensorHandle::empty(client, [1, 5, 5, 4], dtype);
+        let out_grad = TensorHandle::empty(client, [1, 3, 3, 4], dtype);
+        let weight_grad = TensorHandle::empty(client, [4, 3, 3, 1], dtype);
+        assert!(
+            launch_depthwise_weight_backward(
+                client,
+                DepthwiseWeightBackwardTensors {
+                    input: input.binding(),
+                    out_grad: out_grad.binding(),
+                    weight_grad: weight_grad.binding(),
+                },
+                ConvolutionArgs {
+                    stride: [1, 1],
+                    padding: [0, 0],
+                    dilation: [1, 1]
+                },
+                groups,
+                dtype,
+            )
+            .is_err()
+        );
     }
 }
