@@ -1,33 +1,12 @@
-use crate::matmul::plane::PlaneFragmentStepSum;
 use crate::matmul::{MatmulOperands, MatmulRead};
-use cubecl::tile::{Axis, Instruction, Region, Semiring, Space, Tile, Walk};
+use cubecl::tile::{Axis, Instruction, Region, Space, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// The partial a narrow step contracts into, opened over `out` beside the accumulator: one cell
-/// of the operands' element for every cell the accumulator holds. None for a wide step.
-#[cube]
-pub(crate) fn plane_fragment_partial<EL: Numeric>(
-    out: &Tile,
-    a: &Tile,
-    b: &Tile,
-    #[comptime] step_sum: PlaneFragmentStepSum,
-    #[comptime] instruction: Instruction,
-) -> ComptimeOption<Tile> {
-    match step_sum {
-        PlaneFragmentStepSum::Wide => ComptimeOption::<Tile>::new_None(),
-        PlaneFragmentStepSum::Narrow => {
-            ComptimeOption::new_Some(out.accumulator::<EL>(a, b, instruction, Semiring::SUM_PROD))
-        }
-    }
-}
-
 /// One stage of one plane's tile: `a · b` added into `sum`, the operands staged in shared memory,
-/// every instruction step of the stage and every fragment of the plane's grid.
+/// every instruction step of the stage and every fragment of the plane's grid, through the
+/// instruction the sum was opened in.
 ///
-/// `plane` is the plane's region of the stage; `sum`, `a` and `b` are already windowed to it, and
-/// `partial` is `plane_fragment_partial`'s, opened over the whole of the walker's output. The
-/// loops are the same whichever instruction runs: below a step lie the plane's fragments, or the
-/// one block of the software instruction this unit holds.
+/// `plane` is the plane's region of the stage; `sum`, `a` and `b` are already windowed to it.
 ///
 /// `held` is an axis the plane's steps walk that this product does not name, which each step
 /// takes at its first coordinate: where a stage holds two products over one region, as
@@ -37,20 +16,12 @@ pub(crate) fn plane_fragment_partial<EL: Numeric>(
 pub fn plane_fragment_microkernel(
     plane: &Region,
     sum: &Tile,
-    partial: &ComptimeOption<Tile>,
     a: &Tile,
     b: &Tile,
-    #[comptime] instruction: Instruction,
     #[comptime] held: Option<Axis>,
     #[comptime] reads: MatmulOperands<MatmulRead>,
 ) {
-    #[comptime]
-    match partial {
-        ComptimeOption::None => KWalk::wide_steps(plane, sum, a, b, instruction, held, reads),
-        ComptimeOption::Some(partial) => {
-            KWalk::narrow_steps(plane, sum, &partial.at(plane), a, b, reads)
-        }
-    }
+    KWalk::steps(plane, sum, a, b, held, reads);
 }
 
 /// How a plane walks its steps of `K`.
@@ -97,19 +68,18 @@ impl KWalk {
 
 #[cube]
 impl KWalk {
-    /// Every step contracted straight into `sum`: a grid of fragments in one call, which loads each
-    /// operand's fragments once; a register block, which is one unit's block and not a grid, cell
-    /// by cell. Each step takes `held` at its first coordinate.
-    fn wide_steps(
+    /// Every step contracted straight into `sum`, a grid of fragments in one call, which loads
+    /// each operand's fragments once. Each step takes `held` at its first coordinate.
+    fn steps(
         plane: &Region,
         sum: &Tile,
         a: &Tile,
         b: &Tile,
-        #[comptime] instruction: Instruction,
         #[comptime] held: Option<Axis>,
         #[comptime] reads: MatmulOperands<MatmulRead>,
     ) {
         let (a_shared, b_shared) = (a.is_shared(), b.is_shared());
+        let instruction = sum.sum_instruction();
         let walk = comptime!(KWalk::new(
             held,
             a_shared && b_shared && instruction != Instruction::Wgmma,
@@ -121,12 +91,12 @@ impl KWalk {
         match walk {
             KWalk::Unrolled => {
                 for step in KWalk::held_steps(plane, held).unrolled() {
-                    KWalk::wide_step(&step, sum, a, b, instruction, reads);
+                    KWalk::step(&step, sum, a, b, reads);
                 }
             }
             KWalk::Rolled => {
                 for step in KWalk::held_steps(plane, held) {
-                    KWalk::wide_step(&step, sum, a, b, instruction, reads);
+                    KWalk::step(&step, sum, a, b, reads);
                 }
             }
             KWalk::Routed(k) => {
@@ -134,42 +104,8 @@ impl KWalk {
                     / KWalk::held_steps(plane, held).routed(k, 0usize).total();
                 for k_step in 0..depth {
                     for step in KWalk::held_steps(plane, held).routed(k, k_step).unrolled() {
-                        KWalk::wide_step(&step, sum, a, b, instruction, reads);
+                        KWalk::step(&step, sum, a, b, reads);
                     }
-                }
-            }
-        }
-    }
-
-    /// Every step contracted into `partial`, emptied first, in the operands' element, and added
-    /// into `sum` at its end: the step's rounding never reaches the walk's. Only a register block
-    /// promotes, and a register block is one unit's block, so the step is walked cell by cell.
-    fn narrow_steps(
-        plane: &Region,
-        sum: &Tile,
-        partial: &Tile,
-        a: &Tile,
-        b: &Tile,
-        #[comptime] reads: MatmulOperands<MatmulRead>,
-    ) {
-        let (a_shared, b_shared) = (a.is_shared(), b.is_shared());
-        let walk = comptime!(KWalk::new(
-            None,
-            a_shared && b_shared,
-            &a.space(),
-            &b.space(),
-            &sum.space()
-        ));
-
-        match walk {
-            KWalk::Rolled => {
-                for step in plane.walk() {
-                    KWalk::narrow_step(&step, sum, partial, a, b, reads);
-                }
-            }
-            KWalk::Unrolled | KWalk::Routed(_) => {
-                for step in plane.walk().unrolled() {
-                    KWalk::narrow_step(&step, sum, partial, a, b, reads);
                 }
             }
         }
@@ -183,56 +119,17 @@ impl KWalk {
         }
     }
 
-    /// One step of [`wide_steps`](Self::wide_steps).
-    fn wide_step(
+    /// One step of [`steps`](Self::steps).
+    fn step(
         step: &Region,
         sum: &Tile,
-        a: &Tile,
-        b: &Tile,
-        #[comptime] instruction: Instruction,
-        #[comptime] reads: MatmulOperands<MatmulRead>,
-    ) {
-        let mut sum_step = sum.at(step);
-        let (a_step, b_step) = (a.at(step), b.at(step));
-
-        match instruction {
-            Instruction::Registers { .. } => {
-                for cell in step.walk().unrolled() {
-                    let mut sum_cell = sum_step.at(&cell);
-                    let b_cell = MatmulRead::leaf(&sum_cell, &b_step.at(&cell), reads.rhs);
-                    let a_cell = MatmulRead::leaf(&sum_cell, &a_step.at(&cell), reads.lhs);
-                    sum_cell.mma(&a_cell, &b_cell);
-                }
-            }
-
-            Instruction::Cmma | Instruction::Mma { .. } | Instruction::Wgmma => {
-                let b_step = MatmulRead::leaf(&sum_step, &b_step, reads.rhs);
-                let a_step = MatmulRead::leaf(&sum_step, &a_step, reads.lhs);
-                sum_step.mma(&a_step, &b_step)
-            }
-        }
-    }
-
-    /// One step of [`narrow_steps`](Self::narrow_steps).
-    fn narrow_step(
-        step: &Region,
-        sum: &Tile,
-        partial: &Tile,
         a: &Tile,
         b: &Tile,
         #[comptime] reads: MatmulOperands<MatmulRead>,
     ) {
-        let (sum_step, partial_step) = (sum.at(step), partial.at(step));
-        let (a_step, b_step) = (a.at(step), b.at(step));
-
-        for cell in step.walk().unrolled() {
-            let mut partial_cell = partial_step.at(&cell);
-            let b_cell = MatmulRead::leaf(&partial_cell, &b_step.at(&cell), reads.rhs);
-            let a_cell = MatmulRead::leaf(&partial_cell, &a_step.at(&cell), reads.lhs);
-            partial_cell.mm(&a_cell, &b_cell);
-
-            let mut sum_cell = sum_step.at(&cell);
-            sum_cell.add_cast_from(&partial_cell);
-        }
+        let mut sum_step = sum.at(step);
+        let b_step = MatmulRead::leaf(&sum_step, &b.at(step), reads.rhs);
+        let a_step = MatmulRead::leaf(&sum_step, &a.at(step), reads.lhs);
+        sum_step.mma(&a_step, &b_step)
     }
 }

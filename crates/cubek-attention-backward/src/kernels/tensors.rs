@@ -1,8 +1,8 @@
 //! The tensors of one backward pass, and how a walk binds them.
 
 use crate::kernels::{
-    AttentionBackwardBinding, AttentionBackwardGradients, AttentionBackwardMicrokernel,
-    AttentionBackwardProblem, AttentionBackwardWalk,
+    AttentionBackwardBinding, AttentionBackwardGradients, AttentionBackwardProblem,
+    AttentionBackwardWalk,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
@@ -212,10 +212,7 @@ impl AttentionBackwardTensors {
     pub(crate) fn bind<M, SM>(
         &self,
         walk: &AttentionBackwardWalk<M, SM>,
-    ) -> AttentionBackwardBinding
-    where
-        M: AttentionBackwardMicrokernel,
-    {
+    ) -> AttentionBackwardBinding {
         let launcher = Launcher::new(
             &self.client,
             walk.kernel_partitioning(),
@@ -246,10 +243,7 @@ impl AttentionBackwardTensors {
         walk: &AttentionBackwardWalk<M, SM>,
         tensor: &PlainTensor,
         operand: AttentionBackwardOperand,
-    ) -> Bound
-    where
-        M: AttentionBackwardMicrokernel,
-    {
+    ) -> Bound {
         let view = match operand.axes().contains(&G) {
             true => Self::grouped(tensor, self.problem().group),
             false => tensor.clone(),

@@ -61,7 +61,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
     let sums = KeyGradientSums::open::<EA>(
         key_gradient,
         value_gradient,
-        &ScoreWindows::scores_box::<EA>(&windows, &shape, key, plane_microkernel.score),
+        &ScoreWindows::cast_box::<EA>(&windows, &shape, comptime!(vec![S, Q]), key),
         &query.at(&first_head),
         &out_gradient.at(&first_head),
         plane_microkernel,

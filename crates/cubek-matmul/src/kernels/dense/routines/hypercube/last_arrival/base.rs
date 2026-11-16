@@ -8,7 +8,7 @@ use crate::kernels::{
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::{Space, StageStorage, TileTensorLaunch};
-use cubek_microkernel::matmul::cube::MatmulCubeWrite;
+use cubek_microkernel::matmul::cube::{CubeStagedDelivery, MatmulCubeWrite};
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
@@ -210,7 +210,10 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             return Err(MATMUL_HYPERCUBE_PACKED_LHS);
         }
         let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
-        problem.check_block_scales(microkernel.block_scales())?;
+        problem.check_block_scales(
+            microkernel.block_scales(),
+            microkernel.cube.fill.delivery == CubeStagedDelivery::Tma,
+        )?;
         if microkernel.cube.walk().decoded().is_some() {
             view.check_steps(hw)?;
         }
@@ -331,6 +334,7 @@ mod tests {
     use super::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::tile::space::ComputeScope;
     use cubek_microkernel::matmul::MatmulLayout;
     use cubek_microkernel::matmul::cube::CubeStagedMicrokernelSettings;
     use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
@@ -352,13 +356,12 @@ mod tests {
         )
     }
 
-    /// A setting asking for the warpgroup MMA declines, on a device and product it runs on: the
+    /// A setting asking for the plane group MMA declines, on a device and product it runs on: the
     /// hypercube's cubes fill their stages by their units, which never land the swizzled rows its
     /// descriptors read.
     #[test]
-    fn declines_the_warpgroup_mma() {
+    fn declines_the_plane_group_mma() {
         use cubecl::features::{WgmmaConfig, WgmmaElems};
-        use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
         use cubek_std::microkernel::StageRing;
 
         let hw = devices::offering_wgmma(
@@ -385,7 +388,7 @@ mod tests {
                 along_m: NonZeroUsize::MIN,
                 along_n: NonZeroUsize::new(16).unwrap(),
                 depth: NonZeroUsize::new(4).unwrap(),
-                transport: PlaneFragmentTransport::Wgmma,
+                holder: ComputeScope::MMA_PLANE_GROUP,
                 ..cube.plane
             },
             ring: StageRing::DOUBLE,

@@ -189,9 +189,10 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeStagedAtte
     ) {
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles();
-        // Its planes keep their sums in the first and read the stage in the last; the output is
+        // Its planes keep their sums in the first, read the query and the keys' stage in the
+        // second and cast their probabilities to the values' element in the last; the output is
         // stored as its tile states.
-        let [sum, _, staged] = blueprint
+        let [sum, _, staged, probabilities] = blueprint
             .microkernel
             .served(&problem.work_item())
             .served_kernel_elements();
@@ -218,7 +219,7 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeStagedAtte
                 blueprint.microkernel,
                 blueprint.shared_memory.clone(),
                 problem.visibility,
-                [sum, staged],
+                [sum, staged, probabilities],
             );
         }
     }

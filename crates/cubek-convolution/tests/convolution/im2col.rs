@@ -1,113 +1,72 @@
-//! Check explicit lowering independently of any convolution or matmul implementation.
+//! Explicit lowering, checked independently of any convolution or matmul: every window of the
+//! input written as a row of columns, a tap outside the input written as zero.
 
-use cubecl::{ir::FloatKind, prelude::*, std::tensor::TensorHandle};
+use cubecl::client::Client;
+use cubecl::ir::FloatKind;
+use cubecl::prelude::*;
+use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Refusal;
+use cubecl::zspace::Shape;
 use cubek_convolution::{ConvolutionArgs, Im2colTensors, launch_im2col};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
 
-fn upload(
-    client: &Client,
-    shape: &[usize],
-    values: &[f32],
-    channel_first: bool,
+use crate::convolution::{Conv, F32, Storage};
+
+/// The columns of one convolution's input, its rows `gap` elements apart within a padded row.
+#[derive(Debug, Clone, Copy)]
+struct Lowering<const N: usize> {
+    conv: Conv<N>,
     gap: usize,
-) -> TensorHandle {
-    let rank = shape.len();
-    let mut order = vec![0];
-    if channel_first {
-        order.push(rank - 1);
-        order.extend(1..rank - 1);
-    } else {
-        order.extend(1..rank);
-    }
-    let mut strides = vec![0; rank];
-    let mut size = gap;
-    for &axis in order.iter().rev() {
-        strides[axis] = size;
-        size *= shape[axis];
-        if axis == rank - 1 && !channel_first {
-            size = size.next_multiple_of(8);
-        }
-    }
-    let mut data = vec![99.0; size];
-    for (i, value) in values.iter().enumerate() {
-        let mut rem = i;
-        let mut offset = 0;
-        for axis in (0..rank).rev() {
-            offset += rem % shape[axis] * strides[axis];
-            rem /= shape[axis];
-        }
-        data[offset] = *value;
-    }
-    TensorHandle::new(
-        client.create_from_slice(f32::as_bytes(&data)),
-        shape.to_vec(),
-        strides,
-        f32::elem_type_native(),
-    )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn check<const N: usize>(
-    client: &Client,
-    batch: usize,
-    spatial: [usize; N],
-    channels: usize,
-    kernel: [usize; N],
-    stride: [usize; N],
-    dilation: [usize; N],
-    padding: [(usize, usize); N],
-) {
-    let out_shape: [usize; N] = core::array::from_fn(|i| {
-        (spatial[i] + padding[i].0 + padding[i].1 - dilation[i] * (kernel[i] - 1) - 1) / stride[i]
-            + 1
-    });
-    let mut shape = vec![batch];
-    shape.extend(spatial);
-    shape.push(channels);
-    let values = (0..shape.iter().product())
-        .map(|i| ((i * 7 % 31) as f32 - 15.0) / 8.0)
-        .collect::<Vec<_>>();
-    let rows = batch * out_shape.iter().product::<usize>();
-    let width = channels * kernel.iter().product::<usize>();
-    for (channel_first, input_gap, output_gap) in [(false, 1, 1), (true, 1, 1), (false, 2, 2)] {
-        let row_stride = (width * output_gap + 1).next_multiple_of(16);
-        let mut expected = vec![99.0; rows * row_stride];
-        for row in 0..rows {
-            let mut b = row;
-            let mut out_pos = [0; N];
-            for axis in (0..N).rev() {
-                out_pos[axis] = b % out_shape[axis];
-                b /= out_shape[axis];
-            }
-            for col in 0..width {
-                let channel = col % channels;
-                let mut tap = col / channels;
-                let mut coords = [0; N];
-                let mut valid = true;
-                for axis in (0..N).rev() {
-                    let k = tap % kernel[axis];
-                    tap /= kernel[axis];
-                    let p = (out_pos[axis] * stride[axis] + k * dilation[axis]) as isize
-                        - padding[axis].0 as isize;
-                    valid &= p >= 0 && p < spatial[axis] as isize;
-                    coords[axis] = p.max(0) as usize;
-                }
-                let value = if valid {
-                    let mut index = b;
-                    for axis in 0..N {
-                        index = index * spatial[axis] + coords[axis];
-                    }
-                    values[index * channels + channel]
-                } else {
-                    0.0
-                };
-                expected[row * row_stride + col * output_gap] = value;
-            }
-        }
-        let input = upload(client, &shape, &values, channel_first, input_gap);
+impl<const N: usize> Lowering<N> {
+    /// Each of `convs` read channels last and channels first into dense columns, and read gapped
+    /// into gapped columns.
+    fn every_storage_of(convs: &[Conv<N>]) -> Vec<Self> {
+        convs
+            .iter()
+            .flat_map(|&conv| {
+                [
+                    Self {
+                        conv: conv.stored(Storage::Padded),
+                        gap: 1,
+                    },
+                    Self {
+                        conv: conv.stored(Storage::ChannelsFirst),
+                        gap: 1,
+                    },
+                    Self {
+                        conv: conv.stored(Storage::Gapped),
+                        gap: 2,
+                    },
+                ]
+            })
+            .collect()
+    }
+
+    /// One row per output position, one column per tap and channel.
+    fn extents(&self) -> (usize, usize) {
+        let rows = self.conv.out_shape()[..N + 1].iter().product();
+        let width = self.conv.channels_count() * self.conv.kernel_size().iter().product::<usize>();
+        (rows, width)
+    }
+}
+
+/// The im2col kernel against the host's columns, on convolutions of `N` spatial axes.
+struct Im2col<const N: usize>;
+
+impl<const N: usize> ScopeUnderTest for Im2col<N> {
+    type Case = Lowering<N>;
+
+    fn launch(&self, client: &Client, lowering: &Lowering<N>) -> Result<Vec<Written>, Refusal> {
+        let conv = &lowering.conv;
+        let (rows, width) = lowering.extents();
+        let row_stride = (width * lowering.gap + 1).next_multiple_of(16);
+        let input = conv.store(client, &conv.input_shape(), &conv.input(), conv.storage());
         let columns = TensorHandle::new(
-            client.create_from_slice(f32::as_bytes(&vec![99.0; expected.len()])),
+            client.create_from_slice(f32::as_bytes(&vec![99.0; rows * row_stride])),
             [rows, width],
-            [row_stride, output_gap],
+            [row_stride, lowering.gap],
             f32::elem_type_native(),
         );
         launch_im2col(
@@ -116,80 +75,128 @@ fn check<const N: usize>(
                 input: input.binding(),
                 columns: columns.clone().binding(),
             },
-            out_shape,
-            kernel,
-            ConvolutionArgs {
-                stride,
-                padding: padding.map(|p| p.0),
-                dilation,
-            },
+            conv.out_spatial(),
+            conv.kernel_size(),
+            conv.args(),
             f32::elem_type_native(),
         )
-        .unwrap();
-        let bytes = client.read_one_unchecked(columns.handle);
-        assert_eq!(
-            f32::from_bytes(&bytes),
-            expected,
-            "N={N}, channels={channels}, channel_first={channel_first}, gap={input_gap}"
-        );
+        .unwrap_or_else(|why| panic!("{lowering:?} refused: {why:?}"));
+        Ok(vec![Written {
+            name: "columns",
+            tensor: columns,
+            host: HostDataType::F32,
+        }])
+    }
+
+    fn reference(&self, lowering: &Lowering<N>) -> Vec<HostData> {
+        let conv = &lowering.conv;
+        let (rows, width) = lowering.extents();
+        let input = conv.input();
+        let spatial = &conv.input_shape()[1..N + 1];
+        let out_spatial = conv.out_spatial();
+        let channels = conv.channels_count();
+        let kernel = conv.kernel_size();
+        let args = conv.args();
+        let mut columns = vec![0.0; rows * width];
+        for row in 0..rows {
+            let mut batch = row;
+            let mut position = [0; N];
+            for axis in (0..N).rev() {
+                position[axis] = batch % out_spatial[axis];
+                batch /= out_spatial[axis];
+            }
+            for column in 0..width {
+                let channel = column % channels;
+                let mut tap = column / channels;
+                let mut read = [0; N];
+                let mut inside = true;
+                for axis in (0..N).rev() {
+                    let k = tap % kernel[axis];
+                    tap /= kernel[axis];
+                    let p = (position[axis] * args.stride[axis] + k * args.dilation[axis]) as isize
+                        - args.padding[axis] as isize;
+                    inside &= p >= 0 && p < spatial[axis] as isize;
+                    read[axis] = p.max(0) as usize;
+                }
+                if inside {
+                    let mut pixel = batch;
+                    for (&extent, &at) in spatial.iter().zip(&read) {
+                        pixel = pixel * extent + at;
+                    }
+                    columns[row * width + column] = input[pixel * channels + channel];
+                }
+            }
+        }
+        vec![HostData::row_major(
+            HostDataVec::F32(columns),
+            Shape::from(vec![rows, width]),
+        )]
+    }
+
+    /// A copy: exact.
+    fn tolerance(&self, _lowering: &Lowering<N>) -> f32 {
+        0.
     }
 }
 
-pub fn check_im2col_reference(client: &Client) {
-    check(client, 2, [13], 3, [3], [2], [2], [(1, 2)]);
-    check(
-        client,
-        1,
-        [1, 1],
-        4,
-        [3, 3],
-        [1, 1],
-        [1, 1],
-        [(2, 1), (1, 2)],
-    );
-    check(
-        client,
-        2,
-        [13, 17],
-        4,
-        [3, 3],
-        [1, 1],
-        [1, 1],
-        [(1, 1), (1, 1)],
-    );
-    check(
-        client,
-        3,
-        [9, 11],
-        17,
-        [2, 3],
-        [2, 1],
-        [2, 2],
-        [(0, 1), (3, 0)],
-    );
-    check(
-        client,
-        2,
-        [5, 7],
-        32,
-        [3, 2],
-        [2, 2],
-        [1, 2],
-        [(1, 0), (0, 2)],
-    );
-    check(
-        client,
-        1,
-        [4, 5, 7],
-        4,
-        [2, 3, 2],
-        [1, 2, 1],
-        [2, 1, 2],
-        [(1, 0), (0, 1), (2, 0)],
-    );
+#[test]
+fn im2col_matches_reference() {
+    Im2col.check(Lowering::every_storage_of(&[Conv::of(F32)
+        .batches(2)
+        .spatial([13])
+        .channels(3)
+        .kernel([3])
+        .stride([2])
+        .dilation([2])
+        .padding([(1, 2)])]));
+    Im2col.check(Lowering::every_storage_of(&[
+        Conv::of(F32)
+            .batches(1)
+            .spatial([1, 1])
+            .channels(4)
+            .kernel([3, 3])
+            .stride([1, 1])
+            .dilation([1, 1])
+            .padding([(2, 1), (1, 2)]),
+        Conv::of(F32)
+            .batches(2)
+            .spatial([13, 17])
+            .channels(4)
+            .kernel([3, 3])
+            .stride([1, 1])
+            .dilation([1, 1])
+            .padding([(1, 1), (1, 1)]),
+        Conv::of(F32)
+            .batches(3)
+            .spatial([9, 11])
+            .channels(17)
+            .kernel([2, 3])
+            .stride([2, 1])
+            .dilation([2, 2])
+            .padding([(0, 1), (3, 0)]),
+        Conv::of(F32)
+            .batches(2)
+            .spatial([5, 7])
+            .channels(32)
+            .kernel([3, 2])
+            .stride([2, 2])
+            .dilation([1, 2])
+            .padding([(1, 0), (0, 2)]),
+    ]));
+    Im2col.check(Lowering::every_storage_of(&[Conv::of(F32)
+        .batches(1)
+        .spatial([4, 5, 7])
+        .channels(4)
+        .kernel([2, 3, 2])
+        .stride([1, 2, 1])
+        .dilation([2, 1, 2])
+        .padding([(1, 0), (0, 1), (2, 0)])]));
 }
 
-pub fn check_im2col_declines(client: &Client) {
+/// An element other than `f32`, a zero stride and columns of the wrong width are declined.
+#[test]
+fn im2col_declines_unsupported_inputs() {
+    let client = &cubecl::test_device().client();
     let dtype = ElemType::Float(FloatKind::F16);
     let input = TensorHandle::empty(client, [1, 5, 5, 4], dtype);
     let columns = TensorHandle::empty(client, [25, 36], dtype);
@@ -234,14 +241,4 @@ pub fn check_im2col_declines(client: &Client) {
             .is_err()
         );
     }
-}
-
-#[test]
-fn im2col_matches_reference() {
-    check_im2col_reference(&cubecl::test_device().client());
-}
-
-#[test]
-fn im2col_declines_unsupported_inputs() {
-    check_im2col_declines(&cubecl::test_device().client());
 }
