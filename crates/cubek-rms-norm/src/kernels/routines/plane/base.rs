@@ -60,8 +60,8 @@ impl Routine for PlaneRmsNormRoutine {
     type Blueprint = PlaneRmsNormRoutineBlueprint;
     type Partitioning = RmsNormPartitioning;
 
-    /// Planes a cube, the one axis this routine has: one, which spreads a few rows over the most
-    /// cubes, to eight, which spawns the fewest for a prompt's many.
+    /// Planes a cube, the one dimension this routine has: one, which spreads a few rows over the
+    /// most cubes, to eight, which spawns the fewest for a prompt's many.
     fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
         [4, 1, 2, 8]
             .into_iter()

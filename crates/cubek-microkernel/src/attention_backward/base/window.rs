@@ -2,7 +2,7 @@ use super::stage_storage;
 use crate::attention::plane::ScoreHolder;
 use crate::attention::{Q, S};
 use crate::matmul::plane::PlaneFragmentMicrokernel;
-use cubecl::tile::{Axis, Level, Levels, Region, Semiring, Space, StageStorage, Tile, Walk};
+use cubecl::tile::{Dimension, Level, Levels, Region, Semiring, Space, StageStorage, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// A plane's windows of shared memory between a step's contractions: its scores and the gradient
@@ -17,44 +17,48 @@ pub(crate) struct ScoreWindows {
 
 #[cube]
 impl ScoreWindows {
-    /// The windows of one step of `walk`, laid out along `axes`: every plane's the step holds.
-    pub fn open<EA: Float, ES: Float>(walk: &Walk, #[comptime] axes: Vec<Axis>) -> ScoreWindows {
+    /// The windows of one step of `walk`, laid out along `dimensions`: every plane's the step
+    /// holds.
+    pub fn open<EA: Float, ES: Float>(
+        walk: &Walk,
+        #[comptime] dimensions: Vec<Dimension>,
+    ) -> ScoreWindows {
         ScoreWindows {
-            scores: Tile::scratch::<EA>(walk, axes.clone(), StageStorage::Strided),
-            gradients: Tile::scratch::<EA>(walk, axes.clone(), StageStorage::Strided),
-            cast: Tile::scratch::<ES>(walk, axes, StageStorage::Strided),
+            scores: Tile::scratch::<EA>(walk, dimensions.clone(), StageStorage::Strided),
+            gradients: Tile::scratch::<EA>(walk, dimensions.clone(), StageStorage::Strided),
+            cast: Tile::scratch::<ES>(walk, dimensions, StageStorage::Strided),
         }
     }
 
-    /// The windows of one step of `walk` along `axes`, where `holder` reads the score through
+    /// The windows of one step of `walk` along `dimensions`, where `holder` reads the score through
     /// them; none where it holds the score in its fragments.
     pub fn held_or_open<EA: Float, ES: Float>(
         walk: &Walk,
-        #[comptime] axes: Vec<Axis>,
+        #[comptime] dimensions: Vec<Dimension>,
         #[comptime] holder: ScoreHolder,
     ) -> ComptimeOption<ScoreWindows> {
         match holder {
             ScoreHolder::Window => {
-                ComptimeOption::new_Some(ScoreWindows::open::<EA, ES>(walk, axes))
+                ComptimeOption::new_Some(ScoreWindows::open::<EA, ES>(walk, dimensions))
             }
             ScoreHolder::Fragments => ComptimeOption::new_None(),
         }
     }
 
     /// What each step contracts a gradient's sum with, over the box of one step's score laid out
-    /// along `axes`, which the sum is opened against: the windows' cast to the operands' element,
-    /// or, held in fragments, an accumulator over the same box opened against `against`, which
-    /// holds no memory.
+    /// along `dimensions`, which the sum is opened against: the windows' cast to the operands'
+    /// element, or, held in fragments, an accumulator over the same box opened against `against`,
+    /// which holds no memory.
     pub fn cast_box<EA: Float>(
         windows: &ComptimeOption<ScoreWindows>,
         walk: &Walk,
-        #[comptime] axes: Vec<Axis>,
+        #[comptime] dimensions: Vec<Dimension>,
         against: &Tile,
     ) -> Tile {
         #[comptime]
         match windows {
             ComptimeOption::Some(windows) => windows.cast.clone(),
-            ComptimeOption::None => Tile::stage_accumulator::<EA>(walk, axes, against),
+            ComptimeOption::None => Tile::stage_accumulator::<EA>(walk, dimensions, against),
         }
     }
 
@@ -151,8 +155,8 @@ impl ScoreWindows {
         // placed on the product's own grid, the window sits under the plane's region, and a region
         // only windows a tile at its depth.
         let fragment = comptime!(Level::every(&[
-            (product.axes.m, product.instruction.shape()[0].1),
-            (product.axes.n, product.instruction.shape()[1].1)
+            (product.dimensions.m, product.instruction.shape()[0].1),
+            (product.dimensions.n, product.instruction.shape()[1].1)
         ]));
         let (window_fragments, sum_fragments) = (window.over(&fragment), sum.over(&fragment));
         #[unroll]
@@ -204,13 +208,13 @@ impl ScoreWindows {
     /// step's grid at a time.
     fn product_levels(product: PlaneFragmentMicrokernel) -> Vec<Level> {
         let [(_, m), (_, n), (_, k)] = product.instruction.shape();
-        let (axes, settings) = (product.axes, product.settings);
-        Levels::leaf(&[(axes.m, m), (axes.n, n), (axes.k, k)])
+        let (dimensions, settings) = (product.dimensions, product.settings);
+        Levels::leaf(&[(dimensions.m, m), (dimensions.n, n), (dimensions.k, k)])
             .walk(&[
-                (axes.m, settings.along_m.get()),
-                (axes.n, settings.along_n.get()),
+                (dimensions.m, settings.along_m.get()),
+                (dimensions.n, settings.along_n.get()),
             ])
-            .walk(&[(axes.k, settings.depth.get())])
+            .walk(&[(dimensions.k, settings.depth.get())])
             .build()
     }
 }

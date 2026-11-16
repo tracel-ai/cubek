@@ -8,7 +8,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubek_matmul::kernels::indexed::m_grouped::{MGroupedMatmulTensors, MGroupedSettings};
-use cubek_matmul::kernels::indexed::stack::SlabAxis;
+use cubek_matmul::kernels::indexed::stack::SlabDimension;
 use cubek_matmul::kernels::tensor::StoredTensor;
 use cubek_matmul::kernels::{
     CubeStagedMatmulRoutine, MatmulRoutine, MatmulRoutineProblem, PlaneShuffleMatmulRoutine,
@@ -117,7 +117,7 @@ fn a_cube_staged_launch_holds_the_rows_its_groups_were_padded_to() {
                 &vec![0f32; k * groups * n],
             )),
             upload(&client, &[groups], &ends),
-            SlabAxis::Output,
+            SlabDimension::Output,
         )
         .expect("a float stack derives a grouped launch");
         let Some(padded) = walk.ran(tensors.launch(&hw, &CubeStagedMatmulRoutine, &settings))
@@ -166,7 +166,7 @@ fn a_cube_staged_launch_over_a_packed_stack_holds_the_rows_its_groups_were_padde
                 grouped.activation(&client),
                 StoredTensor::Packed(stack.matrix()),
                 upload(&client, &[sizes.len()], &ends),
-                SlabAxis::Output,
+                SlabDimension::Output,
             )
             .expect("a packed stack of whole slabs derives a grouped launch");
             let launched = tensors.launch(&hw, &CubeStagedMatmulRoutine, &settings);
@@ -176,7 +176,7 @@ fn a_cube_staged_launch_over_a_packed_stack_holds_the_rows_its_groups_were_padde
             let chunk = padded.layout().align();
             let packing = stack
                 .matrix()
-                .stacked(sizes.len(), SlabAxis::Output.axis())
+                .stacked(sizes.len(), SlabDimension::Output.dimension())
                 .expect("whole slabs stack")
                 .packing();
             let problem = MatmulRoutineProblem::packed(
@@ -248,7 +248,7 @@ where
             grouped.activation(client),
             StoredTensor::Packed(stack.matrix()),
             upload(client, &[grouped.sizes.len()], &grouped.ends()),
-            SlabAxis::Output,
+            SlabDimension::Output,
         )
         .expect("a packed stack of whole slabs derives a grouped launch");
         let padded = tensors.launch(&self.hw, &self.routine, &case.settings)?;

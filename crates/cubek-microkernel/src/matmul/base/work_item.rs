@@ -1,8 +1,8 @@
-use crate::matmul::{MatmulAxes, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead};
+use crate::matmul::{MatmulDimensions, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead};
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 use cubek_std::layout::stored::{Operand, Packing};
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::value_element;
 
 /// What a microkernel is handed to choose by: the elements it reads and writes and the one it
@@ -23,7 +23,7 @@ pub struct MatmulWorkItem {
     pub blocks: Option<MatmulBlocks>,
     pub rows: MatmulRows,
     pub destination: MatmulDestination,
-    pub axes: MatmulAxes,
+    pub dimensions: MatmulDimensions,
     /// Which elements its float inputs may be read in.
     pub reading: MatmulReading,
 }
@@ -56,16 +56,20 @@ pub struct MatmulBlocks {
 }
 
 impl MatmulBlocks {
-    /// The axes inside the blocks that some packed input's scales vary along: the tile engine
+    /// The dimensions inside the blocks that some packed input's scales vary along: the tile engine
     /// windows a factor through extents it knows at expansion, so a launch compiles these in
     /// (the kernels' `MatmulPartitioning::kernel_compiling`).
     /// A packed lhs's scales vary along its rows, a packed rhs's along its columns, and both along
     /// `K`.
-    pub fn scaled_axes(&self) -> Vec<Axis> {
+    pub fn scaled_dimensions(&self) -> Vec<Dimension> {
         MatmulOperand::INPUTS
             .into_iter()
             .filter(|&operand| self.packings.get(operand).is_some())
-            .flat_map(|operand| operand.dims().map(|dim| MatmulAxes::INSIDE_BLOCKS.of(dim)))
+            .flat_map(|operand| {
+                operand
+                    .dims()
+                    .map(|dim| MatmulDimensions::INSIDE_BLOCKS.of(dim))
+            })
             .collect()
     }
 
@@ -81,40 +85,43 @@ impl MatmulBlocks {
         MatmulOperands::all(()).map(|operand, ()| self.operand(operand))
     }
 
-    /// The two axes `axis` becomes: the blocks the scales of the operand grouping it make of it,
-    /// and the position inside one. An axis no scale groups is one block over the whole of it.
-    pub fn axes(&self, axis: Axis) -> [(Axis, usize); 2] {
-        let extent = self.extent(axis);
+    /// The two dimensions `dimension` becomes: the blocks the scales of the operand grouping it
+    /// make of it, and the position inside one. A dimension no scale groups is one block over the
+    /// whole of it.
+    pub fn dimensions(&self, dimension: Dimension) -> [(Dimension, usize); 2] {
+        let extent = self.extent(dimension);
         let grouping = MatmulOperand::INPUTS
             .map(|operand| self.operand(operand))
             .into_iter()
-            .find(|operand| operand.grouping(axis, extent).is_some());
-        grouping.unwrap_or(Operand::plain()).axes(axis, extent)
+            .find(|operand| operand.grouping(dimension, extent).is_some());
+        grouping
+            .unwrap_or(Operand::plain())
+            .dimensions(dimension, extent)
     }
 
-    /// What `axis`, one of the product's, measures.
-    pub fn extent(&self, axis: Axis) -> usize {
-        match axis {
+    /// What `dimension`, one of the product's, measures.
+    pub fn extent(&self, dimension: Dimension) -> usize {
+        match dimension {
             M => self.m,
             N => self.n,
             K => self.k,
-            _ => panic!("{axis:?} is not one of the product's axes"),
+            _ => panic!("{dimension:?} is not one of the product's dimensions"),
         }
     }
 
     /// The dims dense rows along `rows` by `columns`, `step` apart, are restated in over the
-    /// block-split space: the same bytes, one dim for each axis, `(axis, extent, stride)`,
-    /// coarsest first. A dim's blocks are left out where there is one, the tensor constant along
-    /// them; its inside always stays, so the tensor is a matrix.
+    /// block-split space: the same bytes, one dim for each dimension, `(dimension, extent,
+    /// stride)`, coarsest first. A dim's blocks are left out where there is one, the tensor
+    /// constant along them; its inside always stays, so the tensor is a matrix.
     pub fn restated_dims(
         &self,
-        rows: Axis,
-        columns: Axis,
+        rows: Dimension,
+        columns: Dimension,
         step: usize,
-    ) -> Vec<(Axis, usize, usize)> {
+    ) -> Vec<(Dimension, usize, usize)> {
         let mut dims = Vec::new();
         for (dim, dim_step) in [(rows, step), (columns, 1)] {
-            let [(blocks, block_count), (inside, inside_count)] = self.axes(dim);
+            let [(blocks, block_count), (inside, inside_count)] = self.dimensions(dim);
             if block_count > 1 {
                 dims.push((blocks, block_count, inside_count * dim_step));
             }
@@ -174,7 +181,7 @@ impl MatmulWorkItem {
     }
 
     /// The product a cube's planes contract once it has decoded this item's packed inputs into
-    /// its stages: both inputs at [`decoded_element`](Self::decoded_element), over the axes
+    /// its stages: both inputs at [`decoded_element`](Self::decoded_element), over the dimensions
     /// inside a block, the rows tiled. A packed input's stage lies as its words run, a float
     /// one's as its buffer does.
     pub fn decoded(&self) -> Self {
@@ -198,7 +205,7 @@ impl MatmulWorkItem {
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes::INSIDE_BLOCKS,
+            dimensions: MatmulDimensions::INSIDE_BLOCKS,
             reading: self.reading,
         }
     }
@@ -263,10 +270,10 @@ pub enum MatmulRowsKind {
 }
 
 impl MatmulRowsKind {
-    /// The product's axes a launch holding its rows this way reads at launch rather than compiling
-    /// in, so one kernel serves every product they tell apart. A batch or a case's own axis is the
-    /// launch's to add.
-    pub fn dynamic_axes(self) -> &'static [Axis] {
+    /// The product's dimensions a launch holding its rows this way reads at launch rather than
+    /// compiling in, so one kernel serves every product they tell apart. A batch or a case's own
+    /// dimension is the launch's to add.
+    pub fn dynamic_dimensions(self) -> &'static [Dimension] {
         match self {
             Self::Whole => &[N, K],
             Self::Tiled => &[M, N, K],
@@ -300,7 +307,7 @@ pub enum MatmulDestination {
 mod tests {
     use super::*;
     use cubek_std::layout::tile_order;
-    use cubek_std::matmul_axes::{KI, MI, NI};
+    use cubek_std::matmul_dimensions::{KI, MI, NI};
 
     /// The NVFP4 packing a tile-order operand carries, packed down `k`.
     fn nvfp4() -> Option<Packing> {
@@ -328,12 +335,12 @@ mod tests {
             rhs: nvfp4(),
             ..MatmulOperands::all(None)
         });
-        assert_eq!(rhs.scaled_axes(), [KI, NI]);
+        assert_eq!(rhs.scaled_dimensions(), [KI, NI]);
         let both = blocks(MatmulOperands {
             lhs: nvfp4(),
             rhs: nvfp4(),
             out: None,
         });
-        assert_eq!(both.scaled_axes(), [MI, KI, KI, NI]);
+        assert_eq!(both.scaled_dimensions(), [MI, KI, KI, NI]);
     }
 }

@@ -10,7 +10,7 @@ use crate::matmul::plane::{
 use crate::matmul::{MatmulDim, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Level, Levels, Partitioning, Scratch};
+use cubecl::tile::{Dimension, Level, Levels, Partitioning, Scratch};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -117,12 +117,12 @@ impl PlaneQueryGradientMicrokernel {
 
     /// The score's grid below the walker's level of planes, `planes` its counts
     /// (`grid_levels`).
-    pub fn score_levels(&self, planes: &[(Axis, usize)]) -> Vec<Level> {
+    pub fn score_levels(&self, planes: &[(Dimension, usize)]) -> Vec<Level> {
         Self::grid_levels(self.score, planes)
     }
 
     /// The grid of the gradient against the probabilities below the walker's level of planes.
-    pub fn score_gradient_levels(&self, planes: &[(Axis, usize)]) -> Vec<Level> {
+    pub fn score_gradient_levels(&self, planes: &[(Dimension, usize)]) -> Vec<Level> {
         Self::grid_levels(self.score_gradient, planes)
     }
 
@@ -168,14 +168,14 @@ impl PlaneQueryGradientMicrokernel {
     /// `product`'s own levels below the walker's planes, `planes` its counts: its fragments, its
     /// rows by its columns by the steps of its contraction, so the plane's tile spans the
     /// contraction whole, as the operands' windows do.
-    fn grid_levels(product: PlaneFragmentMicrokernel, planes: &[(Axis, usize)]) -> Vec<Level> {
+    fn grid_levels(product: PlaneFragmentMicrokernel, planes: &[(Dimension, usize)]) -> Vec<Level> {
         let [(_, m), (_, n), (_, k)] = product.instruction.shape();
-        let (axes, settings) = (product.axes, product.settings);
-        Levels::leaf(&[(axes.m, m), (axes.n, n), (axes.k, k)])
+        let (dimensions, settings) = (product.dimensions, product.settings);
+        Levels::leaf(&[(dimensions.m, m), (dimensions.n, n), (dimensions.k, k)])
             .walk(&[
-                (axes.m, settings.along_m.get()),
-                (axes.n, settings.along_n.get()),
-                (axes.k, settings.depth.get()),
+                (dimensions.m, settings.along_m.get()),
+                (dimensions.n, settings.along_n.get()),
+                (dimensions.k, settings.depth.get()),
             ])
             .planes(planes)
             .build()
@@ -197,7 +197,7 @@ impl PlaneQueryGradientMicrokernel {
                 depth,
                 ..score.settings
             },
-            axes: product.axes,
+            dimensions: product.dimensions,
             blocks: None,
             k_stated: crate::matmul::plane::PlaneFragmentKStatement::Caller,
             unit: crate::matmul::plane::PlaneUnit::Instruction,

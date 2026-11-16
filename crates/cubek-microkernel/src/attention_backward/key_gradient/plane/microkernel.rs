@@ -42,8 +42,8 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
     let first_head = heads.region(0usize);
     let shape = first_head.walk();
 
-    // The windows span the keys and one head's queries, the axes of every product out of them;
-    // a score held in fragments needs none.
+    // The windows span the keys and one head's queries, the dimensions of every product out of
+    // them; a score held in fragments needs none.
     let windows =
         ScoreWindows::held_or_open::<EA, ES>(&shape, comptime!(vec![S, Q]), microkernel.holder());
 

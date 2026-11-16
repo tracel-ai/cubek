@@ -105,7 +105,7 @@ impl SwigluTensors {
         let (launcher, input) = self.bind_input(blueprint, grid);
         let out = launcher
             .arg(self.out.rows.binding.clone(), self.problem.element)
-            .axes(&[R, D])
+            .dimensions(&[R, D])
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -119,8 +119,8 @@ impl SwigluTensors {
 
 impl SwigluTensors<PackedRows> {
     /// The gate of `both`, encoded into `out`, a packed `[rows, d]` matrix over a product's lhs
-    /// axes the caller allocated under one level of block scales along each row. The gated rows are
-    /// staged in each cube's shared memory, dense, and encoded from there.
+    /// dimensions the caller allocated under one level of block scales along each row. The gated
+    /// rows are staged in each cube's shared memory, dense, and encoded from there.
     ///
     /// # Errors
     ///
@@ -208,10 +208,10 @@ impl<Out> SwigluTensors<Out> {
                 partitioning.as_tile().space().clone(),
             )
         });
-        let (meta, axes) = self.problem.store.restated(&self.input.meta(), &[R, H]);
+        let (meta, dimensions) = self.problem.store.restated(&self.input.meta(), &[R, H]);
         let input = launcher
             .arg(self.input.bound_as(meta), self.problem.element)
-            .axes(&axes)
+            .dimensions(&dimensions)
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);

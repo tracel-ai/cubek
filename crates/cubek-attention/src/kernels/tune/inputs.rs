@@ -311,8 +311,9 @@ impl AttentionTuneInputs {
     }
 
     /// Zero keys and values of `batch` sequences, `positions` each, of this call's elements, each
-    /// side its own, and key heads, laid out as `key` says: one buffer per operand, or pools of pages of the key's
-    /// page size read through a table of their own, each sequence's pages in order.
+    /// side its own, and key heads, laid out as `key` says: one buffer per operand, or pools of
+    /// pages of the key's page size read through a table of their own, each sequence's pages in
+    /// order.
     fn zero_keys(
         &self,
         key: &AttentionKey,
@@ -348,7 +349,8 @@ impl AttentionTuneInputs {
     /// out as the call's are and attended to their end; or the call's own where the cache is
     /// paged, the queries lie end to end, or an operand cannot be laid out alike.
     fn whole_representative(&self, key: &AttentionKey) -> Self {
-        // A prompt's positions lie along each operand's third axis: `[batch, heads, positions, dim]`.
+        // A prompt's positions lie along each operand's third dimension: `[batch, heads, positions,
+        // dim]`.
         const POSITIONS: usize = 2;
         let grown = |tensor: &PlainTensor, extent: usize| {
             tensor.zeros_grown(&self.client, POSITIONS, extent)

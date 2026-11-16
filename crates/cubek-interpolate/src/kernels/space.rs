@@ -1,23 +1,23 @@
 use super::{coordinate::Rational, geometry::TileGeometry};
 use cubecl::tile::{
-    Axis, Level, Levels, Partitioning, Projection, Space,
+    Dimension, Level, Levels, Partitioning, Projection, Space,
     layout::{Compaction, PhysicalAxisMap},
 };
 use cubek_microkernel::interpolate::InterpolateWorkItem;
 
-pub const BATCH: Axis = Axis(0);
-pub const OUTPUT_H: Axis = Axis(1);
-pub const OUTPUT_W: Axis = Axis(2);
-pub const TAP_H: Axis = Axis(3);
-pub const TAP_W: Axis = Axis(4);
-pub const CHANNEL: Axis = Axis(5);
+pub const BATCH: Dimension = Dimension(0);
+pub const OUTPUT_H: Dimension = Dimension(1);
+pub const OUTPUT_W: Dimension = Dimension(2);
+pub const TAP_H: Dimension = Dimension(3);
+pub const TAP_W: Dimension = Dimension(4);
+pub const CHANNEL: Dimension = Dimension(5);
 
-/// What a partitioning over these axes prints as ([`Partitioning::labelled`]): an [`Axis`] is an
-/// index, and only the kernel that assigned it knows what it stands for.
+/// What a partitioning over these dimensions prints as ([`Partitioning::labelled`]): a
+/// [`Dimension`] is an index, and only the kernel that assigned it knows what it stands for.
 ///
 /// Only tests print one today. It widens when a caller does.
 #[cfg(test)]
-const LABELS: [(Axis, &str); 6] = [
+const LABELS: [(Dimension, &str); 6] = [
     (BATCH, "b"),
     (OUTPUT_H, "oh"),
     (OUTPUT_W, "ow"),
@@ -39,8 +39,8 @@ pub struct InterpolateSpace {
 }
 
 impl InterpolateSpace {
-    /// The space's axes and their extents, every one static.
-    pub fn extents(&self) -> Vec<(Axis, usize)> {
+    /// The space's dimensions and their extents, every one static.
+    pub fn extents(&self) -> Vec<(Dimension, usize)> {
         vec![
             (BATCH, self.batch),
             (OUTPUT_H, self.height),
@@ -52,14 +52,13 @@ impl InterpolateSpace {
     }
 
     /// Four levels, outermost first: the cube grid, the channel blocks a cube walks (one region
-    /// below `units * 4` channels), this plane's rows, then this unit's columns and channel
-    /// lines.
-    /// The levels, stated **from the leaf up, in counts**: one unit's columns by its channel
-    /// block by a plane's rows, the units of a plane across columns and channels, the planes of
-    /// a cube across rows, every channel block the cube's box holds, and a cube per box. The
-    /// geometry was already a product — `rows_per_cube` is planes by rows, `cols_per_cube` units
-    /// by columns — so this states the counts it holds rather than the sizes it multiplied them
-    /// into. A unit split of one along an axis is no split, and the axis is handed down whole.
+    /// below `units * 4` channels), this plane's rows, then this unit's columns and channel lines.
+    /// The levels, stated **from the leaf up, in counts**: one unit's columns by its channel block
+    /// by a plane's rows, the units of a plane across columns and channels, the planes of a cube
+    /// across rows, every channel block the cube's box holds, and a cube per box. The geometry was
+    /// already a product — `rows_per_cube` is planes by rows, `cols_per_cube` units by columns — so
+    /// this states the counts it holds rather than the sizes it multiplied them into. A unit split
+    /// of one along a dimension is no split, and the dimension is handed down whole.
     pub fn levels(&self) -> Vec<Level> {
         let (geometry, plane_size) = (self.geometry, self.plane_size);
         assert!(
@@ -67,7 +66,7 @@ impl InterpolateSpace {
             "InterpolateSpace: the unit split covers {} of the plane's {plane_size} units",
             geometry.unit_cols * geometry.unit_channels
         );
-        let plane_units: Vec<(Axis, usize)> = [
+        let plane_units: Vec<(Dimension, usize)> = [
             (OUTPUT_W, geometry.unit_cols),
             (CHANNEL, geometry.unit_channels),
         ]
@@ -112,8 +111,8 @@ pub fn input_projection(row: Rational, col: Rational, radius: usize) -> Projecti
         &[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W, CHANNEL],
         &[
             PhysicalAxisMap::of(BATCH),
-            row.tap_axis(OUTPUT_H, TAP_H, radius),
-            col.tap_axis(OUTPUT_W, TAP_W, radius),
+            row.tap_dimension(OUTPUT_H, TAP_H, radius),
+            col.tap_dimension(OUTPUT_W, TAP_W, radius),
             PhysicalAxisMap::of(CHANNEL),
         ],
     )
@@ -129,13 +128,15 @@ pub fn stage_window_bytes(
     vector_size: usize,
     elem_size: usize,
 ) -> usize {
-    let extent_of = |axis| match axis {
+    let extent_of = |dimension| match dimension {
         BATCH => 1,
         OUTPUT_H => geometry.rows_per_cube(),
         OUTPUT_W => geometry.cols_per_cube(),
         TAP_H | TAP_W => taps,
         CHANNEL => geometry.channels_per_cube(),
-        other => panic!("stage_window_bytes: {other:?} is not an axis of the interpolation space"),
+        other => {
+            panic!("stage_window_bytes: {other:?} is not a dimension of the interpolation space")
+        }
     };
     let window_vectors: usize =
         Compaction::new(&input_projection(row, col, radius), vector_size, extent_of)
@@ -151,7 +152,7 @@ mod tests {
     use crate::kernels::CubeInterpolateRoutineSettings;
 
     /// A bicubic resize to a `128x128` map on a 32-unit plane, four planes of two rows each and
-    /// four output columns a unit. The channel count is what the caller varies: it is the axis
+    /// four output columns a unit. The channel count is what the caller varies: it is the dimension
     /// the units cover first, so it decides the whole split and the cube grid with it.
     fn plan(channels: usize) -> InterpolateSpace {
         InterpolateSpace {
@@ -170,7 +171,7 @@ mod tests {
     }
 
     /// The four levels as a table, leaf up: each row's tile is the row below it times the count
-    /// beside it, so a tiling that stops dividing an axis where it meant to keep going shows up
+    /// beside it, so a tiling that stops dividing a dimension where it meant to keep going shows up
     /// as a row that no longer multiplies out. The taps never divide: they are the reduction,
     /// and every tap of one output position accumulates into the same register.
     #[test]
@@ -192,11 +193,11 @@ mod tests {
         );
     }
 
-    /// A channel axis wider than one pass of the plane is what the walk above the planes is
+    /// A channel dimension wider than one pass of the plane is what the walk above the planes is
     /// for: every unit rides the channels, and the blocks past the first are the cube's steps.
     /// The columns pay for it, so the same map takes eight times the cubes along `ow`.
     #[test]
-    fn a_channel_axis_wider_than_a_plane_walks_its_blocks() {
+    fn a_channel_dimension_wider_than_a_plane_walks_its_blocks() {
         assert_eq!(
             plan(256).partitioning().table(&LABELS).to_string(),
             [

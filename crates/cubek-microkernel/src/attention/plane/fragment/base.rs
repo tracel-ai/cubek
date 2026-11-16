@@ -8,7 +8,7 @@ use crate::matmul::plane::{
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Level, Levels, Space};
+use cubecl::tile::{Dimension, Level, Levels, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
@@ -21,11 +21,11 @@ use cubek_std::microkernel::{
 /// over the whole value dim in fragments held across the walk.
 ///
 /// Its two multiplications are the shared plane fragment microkernel's: the score, `query · keyᵀ`,
-/// fragments of its rows by the stage's keys walking the head dim, and the value,
-/// `probabilities · value`, fragments of its rows by the value dim walking the stage's keys. The
-/// keys are the columns of the one and the contracted axis of the other, cut by the score's `n` in
-/// the one and by the value's `k` in the other. Where the plane keeps the score between them is
-/// the score's [`ScoreHolder`], which also says whether the two cuts are one grid.
+/// fragments of its rows by the stage's keys walking the head dim, and the value, `probabilities ·
+/// value`, fragments of its rows by the value dim walking the stage's keys. The keys are the
+/// columns of the one and the contracted dimension of the other, cut by the score's `n` in the one
+/// and by the value's `k` in the other. Where the plane keeps the score between them is the score's
+/// [`ScoreHolder`], which also says whether the two cuts are one grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentAttentionMicrokernel {
     pub settings: PlaneFragmentAttentionMicrokernelSettings,
@@ -69,7 +69,7 @@ impl PlaneFragmentAttentionMicrokernel {
     /// is placed in: the walker's level of planes, `planes` its counts, and below it the plane's
     /// score, its rows by the stage's keys by the whole head dim, which the tile cuts and walks.
     /// The counts are what index the accumulator's scratch, a window for every plane of the cube.
-    pub fn score_levels(&self, planes: &[(Axis, usize)]) -> Vec<Level> {
+    pub fn score_levels(&self, planes: &[(Dimension, usize)]) -> Vec<Level> {
         Levels::leaf(&[
             (Q, self.score.tile_extent(Q)),
             (S, self.score.tile_extent(S)),
@@ -360,7 +360,7 @@ impl PlaneFragmentAttentionMicrokernel {
 
     /// The tile one fragment of the score reads of the staged query: one batch, one head of keys
     /// and one of its queries, the score's rows by its depth along the head dim.
-    pub fn query_tile(&self) -> Vec<(Axis, usize)> {
+    pub fn query_tile(&self) -> Vec<(Dimension, usize)> {
         vec![
             (B, 1),
             (KV, 1),
@@ -374,7 +374,7 @@ impl PlaneFragmentAttentionMicrokernel {
     /// keys' rows by the score's `n` and the value's `k`, whichever is longer, and along the head
     /// and value dims a run of the steps the score and the value take along them
     /// (`block_edge`).
-    pub fn stage_tile(&self) -> Vec<(Axis, usize)> {
+    pub fn stage_tile(&self) -> Vec<(Dimension, usize)> {
         vec![
             (B, 1),
             (KV, 1),

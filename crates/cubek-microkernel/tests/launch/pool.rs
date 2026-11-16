@@ -13,7 +13,7 @@ use cubek_microkernel::pool::cube::{
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
-pub use super::window::{Channels, WindowAxis, WindowedLaunch};
+pub use super::window::{Channels, WindowDimension, WindowedLaunch};
 
 /// A max pool microkernel ready to launch.
 #[derive(Debug, Clone, Copy)]
@@ -28,7 +28,7 @@ impl PoolLaunch {
     /// blocks of the plane.
     pub fn new(
         hw: &Hardware,
-        windows: [WindowAxis; 2],
+        windows: [WindowDimension; 2],
         input: [usize; 2],
         channels: Channels,
     ) -> Result<Self, Refusal> {

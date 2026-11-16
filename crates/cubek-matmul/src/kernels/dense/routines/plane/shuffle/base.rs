@@ -6,7 +6,7 @@ use crate::kernels::{
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubecl::tile::{Axis, TileTensorLaunch};
+use cubecl::tile::{Dimension, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulRowsKind;
@@ -14,7 +14,7 @@ use cubek_microkernel::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicr
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Packing;
-use cubek_std::matmul_axes::{K, M, N, blocked};
+use cubek_std::matmul_dimensions::{K, M, N, blocked};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 use cubek_std::selector::divisor_at_most;
@@ -88,13 +88,13 @@ impl PlaneShuffleMatmulRoutine {
     /// What a float rhs declines a capped launch with.
     pub const PERSISTENT_FLOAT: Refusal = Refusal::Declined {
         why: "a plane shuffle's launch is capped only against a packed rhs, whose planes walk one \
-              axis of columns",
+              dimension of columns",
     };
 
     /// What a batched product, whose planes are handed batches beside columns, declines a capped
     /// launch with.
     pub const PERSISTENT_BATCHED: Refusal = Refusal::Declined {
-        why: "a plane shuffle's capped launch walks one axis of columns, not batches beside them",
+        why: "a plane shuffle's capped launch walks one dimension of columns, not batches beside them",
     };
 
     /// What a device that does not say how many compute units it has declines a capped launch
@@ -191,7 +191,7 @@ impl PlaneShuffleMatmulRoutine {
         let (item, partitioning) = (view.work_item(), &blueprint.partitioning);
         let microkernel = &blueprint.microkernel;
         let (cube, leaf) = (partitioning.cube_space().space, partitioning.leaf());
-        let [rows, columns, k] = [M, N, K].map(|axis| cube.extent(axis) as u64);
+        let [rows, columns, k] = [M, N, K].map(|dimension| cube.extent(dimension) as u64);
         // Each run of columns a plane's units own reads every row of the lhs.
         let groups = columns / leaf.extent(N) as u64;
         let k_per_stage = leaf.extent(K) * microkernel.units_along_k;
@@ -234,12 +234,12 @@ impl PlaneShuffleMatmulRoutine {
             .expect(MatmulView::PREPARED);
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let [rows, k] = [view.rows(), problem.k].map(|extent| extent as u64);
-        // A step of the plane: one unit's block of `K`, over both axes it is split into, by the
-        // units sharing it.
+        // A step of the plane: one unit's block of `K`, over both dimensions it is split into, by
+        // the units sharing it.
         let leaf = blueprint.partitioning.leaf();
         let (blocks, inside) = blocked(K);
         let step_k = (leaf.extent(blocks) * leaf.extent(inside) * microkernel.units_along_k) as u64;
-        // The columns of a cube's box, over both axes `N` is split into: the planes its order
+        // The columns of a cube's box, over both dimensions `N` is split into: the planes its order
         // groups. A capped launch's cube walks several boxes, a launch apart.
         let box_columns = blueprint.partitioning.columns();
         let boxes = (problem.n as u64).div_ceil(box_columns.max(1));
@@ -313,7 +313,7 @@ impl PlaneShuffleMatmulRoutine {
             planes,
         } = PlaneShufflePackedPlacement::new(hw, problem, settings)?;
         let view = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?;
-        if settings.planes_per_worker.is_some() && !view.distributed_batch_axes().is_empty() {
+        if settings.planes_per_worker.is_some() && !view.distributed_batch_dimensions().is_empty() {
             return Err(Self::PERSISTENT_BATCHED);
         }
         let order = PlaneOrder::new(&[(columns, planes)], CubeOrder::RowMajor);
@@ -335,13 +335,13 @@ impl PlaneShuffleMatmulRoutine {
     }
 }
 
-/// Where the plane shuffle places a packed product: its microkernel, the axis its columns land on,
-/// and the planes one cube holds side by side along it, a target snapped to what the runs of
+/// Where the plane shuffle places a packed product: its microkernel, the dimension its columns land
+/// on, and the planes one cube holds side by side along it, a target snapped to what the runs of
 /// columns divide, so no cube overhangs. The plane shuffle deals the planes the launch's columns;
 /// the decode into a float rhs places the same planes in cubes, each cube copying its box.
 pub struct PlaneShufflePackedPlacement {
     pub microkernel: PlaneShuffleMicrokernel,
-    pub columns: Axis,
+    pub columns: Dimension,
     pub planes: usize,
 }
 
@@ -599,7 +599,7 @@ mod tests {
     /// column at a time; a row rhs is read along `N` and written a line at a time, the lhs a
     /// line of the block's depth at a time.
     #[test]
-    fn the_rhs_is_read_along_the_axis_its_buffer_runs() {
+    fn the_rhs_is_read_along_the_dimension_its_buffer_runs() {
         let hw = devices::strix_halo();
         let widths = |rhs_layout| {
             let (blueprint, _) = PlaneShuffleMatmulRoutine
@@ -710,7 +710,7 @@ mod tests {
                     .laid(MatmulOperand::Rhs, rhs_layout),
                 PlaneShuffleMatmulRoutine::ROWS_KIND,
             )
-            .expect("an rhs lined along an axis")
+            .expect("an rhs lined along a dimension")
             .work_item();
             let plane_width = 32;
             PlaneShuffleKSplit::OneTransaction.units(&hw, &item, depth, plane_width)
@@ -724,12 +724,12 @@ mod tests {
     }
 
     /// `m` rows against a `k × n` rhs of `value` whose words run `along`, under `f16` block
-    /// scales of 32 along the same axis.
+    /// scales of 32 along the same dimension.
     fn packed(
         m: usize,
         n: usize,
         k: usize,
-        along: Axis,
+        along: Dimension,
         value: QuantValue,
     ) -> MatmulRoutineProblem {
         let (block, store) = match along == K {
@@ -862,7 +862,7 @@ mod tests {
         );
     }
 
-    /// A capped launch walks a packed rhs's one axis of columns: a float rhs, whose planes are
+    /// A capped launch walks a packed rhs's one dimension of columns: a float rhs, whose planes are
     /// laid along `M` and `N` both, declines it.
     #[test]
     fn a_float_rhs_declines_a_capped_launch() {

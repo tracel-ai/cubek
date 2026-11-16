@@ -4,18 +4,18 @@
 use crate::kernels::MatmulRoutineProblem;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-use cubecl::tile::{Axis, Space};
+use cubecl::tile::{Dimension, Space};
 use cubek_microkernel::matmul::{MatmulOperands, MatmulStep};
 use cubek_std::layout::stored::{Operand, Packing};
 use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
-use cubek_std::matmul_axes::{K, M, N, blocked};
+use cubek_std::matmul_dimensions::{K, M, N, blocked};
 use cubek_std::{Hardware, devices};
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
 
-/// `value` packed along `axis` of a `[k, n]` rhs, `block` values a scale of `scale`.
-fn scheme(value: QuantValue, axis: Axis, block: u8, scale: ScaleDtype) -> QuantScheme {
-    let (block, store) = match axis {
+/// `value` packed along `dimension` of a `[k, n]` rhs, `block` values a scale of `scale`.
+fn scheme(value: QuantValue, dimension: Dimension, block: u8, scale: ScaleDtype) -> QuantScheme {
+    let (block, store) = match dimension {
         K => (vec![block, 1], QuantStore::PackedU32(1)),
         _ => (vec![1, block], QuantStore::PackedU32(0)),
     };
@@ -41,10 +41,11 @@ fn problem(m: usize, scheme: QuantScheme, operand: Operand) -> MatmulRoutineProb
 }
 
 /// Every scheme the packed routines serve at `m` rows, named: NVFP4 in rows and in tile order,
-/// MXFP4, MXFP8, and `q4` and `q8` along either axis.
+/// MXFP4, MXFP8, and `q4` and `q8` along either dimension.
 fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
-    let in_rows = |scheme: QuantScheme, axis: Axis| {
-        let operand = Operand::of_scheme(&scheme, axis, [K, N]).expect("one axis a block");
+    let in_rows = |scheme: QuantScheme, dimension: Dimension| {
+        let operand =
+            Operand::of_scheme(&scheme, dimension, [K, N]).expect("one dimension a block");
         problem(m, scheme, operand)
     };
     let nvfp4 = tile_order::nvfp4_scheme();
@@ -52,7 +53,7 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
     let in_tiles = |words_laid: TileWords| {
         let order = TileOrder::laid(&nvfp4, words_laid, (128, 8)).expect("NVFP4 is tile order");
         let operand = Operand::of_scheme(&nvfp4, K, [K, N])
-            .expect("one axis a block")
+            .expect("one dimension a block")
             .in_tile_order(order, N, words)
             .expect("tile order is read");
         problem(m, nvfp4, operand)
@@ -100,16 +101,16 @@ fn step(hw: &Hardware, problem: &MatmulRoutineProblem) -> MatmulStep {
 }
 
 /// Whether `space` covers a whole number of `step`s along `M`, `N` and `K`, each over the block
-/// axis and the inside axis it is split into.
+/// dimension and the inside dimension it is split into.
 fn whole_steps(step: &MatmulStep, space: &Space) -> bool {
-    [M, N, K].into_iter().all(|axis| {
-        let (blocks, inside) = blocked(axis);
+    [M, N, K].into_iter().all(|dimension| {
+        let (blocks, inside) = blocked(dimension);
         let extent = [blocks, inside]
             .into_iter()
             .filter(|&part| space.contains(part))
             .map(|part| space.extent(part))
             .product::<usize>();
-        extent.is_multiple_of(step.along(axis))
+        extent.is_multiple_of(step.along(dimension))
     })
 }
 
@@ -334,7 +335,7 @@ mod packed_lhs {
     fn packed_lhs(m: usize) -> MatmulRoutineProblem {
         let scheme = nvfp4_scheme();
         let packing = Packing {
-            operand: Operand::of_scheme(&scheme, K, [M, K]).expect("one axis a block"),
+            operand: Operand::of_scheme(&scheme, K, [M, K]).expect("one dimension a block"),
             scheme,
         };
         MatmulRoutineProblem::packed(
@@ -389,8 +390,8 @@ mod packed_lhs {
                 );
             }
         }
-        // The decode names a packed matrix's axes `K` and `N`: the `[m, k]` input's `m` is its `N`,
-        // in a product whose own `m` is one.
+        // The decode names a packed matrix's dimensions `K` and `N`: the `[m, k]` input's `m` is
+        // its `N`, in a product whose own `m` is one.
         let m = 512;
         let decode = MatmulRoutineProblem::packed(
             1,
@@ -446,12 +447,12 @@ mod hypercube_last_arrival {
             }],
         );
         let lhs = Packing {
-            operand: Operand::of_scheme(&nvfp4_scheme(), K, [M, K]).expect("one axis a block"),
+            operand: Operand::of_scheme(&nvfp4_scheme(), K, [M, K]).expect("one dimension a block"),
             scheme: nvfp4_scheme(),
         };
         let rhs = Packing {
             operand: Operand::of_scheme(&tile_order::nvfp4_scheme(), K, [K, N])
-                .expect("one axis a block"),
+                .expect("one dimension a block"),
             scheme: tile_order::nvfp4_scheme(),
         };
         let problem = MatmulRoutineProblem::packed(
