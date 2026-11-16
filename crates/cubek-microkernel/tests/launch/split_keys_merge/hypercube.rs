@@ -86,7 +86,6 @@ impl HypercubeMergeLaunch {
 /// the box where it arrives last: the box is `y`. A cube's share is every split whose index leaves
 /// `cube` over the box's cubes.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn hypercube_merge_kernel<EA: Float, E: Float, N: Size>(
     out: &mut Tensor<E>,
     logsumexp: ComptimeOption<&mut Tensor<EA>>,
