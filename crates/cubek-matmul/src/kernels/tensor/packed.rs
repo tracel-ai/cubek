@@ -245,9 +245,10 @@ impl PackedTensor {
         let operand = Self::read_in_tiles(&hw, sized, operand, &words.meta())?;
         let in_rows_of_words =
             |scale: PlainTensor| Self::bound_to_whole_words(scale.into_contiguous(client));
-        let block_scales = match operand.tile_order().map(TileOrder::words) {
-            Some(TileWords::BlockByBlock) => Self::bound_to_whole_words(block_scales),
-            Some(TileWords::RowByRow) | None => in_rows_of_words(block_scales.in_buffer_order()),
+        // Where the scales lie is the order's own answer, whichever way its words lie.
+        let block_scales = match operand.tile_order().is_some_and(TileOrder::scales_in_tiles) {
+            true => Self::bound_to_whole_words(block_scales),
+            false => in_rows_of_words(block_scales.in_buffer_order()),
         };
         Ok(Self::new(
             words,
