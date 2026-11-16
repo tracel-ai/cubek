@@ -54,4 +54,5 @@ mod roofline;
 mod tests;
 
 pub use base::*;
+pub use few_rows::FewRowsPackedList;
 pub(crate) use roofline::matmul_ceiling;
