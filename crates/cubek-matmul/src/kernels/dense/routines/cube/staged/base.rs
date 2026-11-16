@@ -343,7 +343,6 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
             blueprint.microkernel.plane.orders,
         ),
     };
-    let scale = tensors.bind_scale(&binding.launcher);
     // SAFETY: every operand is bound through the launcher, which masks the reads and writes
     // of a tile the problem's edge cuts short, or by a descriptor, whose copies fill what lies
     // past the operand with zeros and whose stores leave what lies past it unwritten; the
@@ -359,7 +358,6 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
                 out_width,
                 lhs,
                 rhs,
-                scale.into(),
                 O::arg(binding.out),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel.walk(),
@@ -375,7 +373,6 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
                 out_width,
                 lhs,
                 rhs,
-                scale.into(),
                 tensors.tma_output(&stage),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel.walk(),

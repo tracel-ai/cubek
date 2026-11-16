@@ -1,5 +1,5 @@
 use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpand};
-use cubecl::tile::{Partitioning, StageStorage, Tile, TileTensor};
+use cubecl::tile::{Partitioning, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeStagedWalk, cube_staged_microkernel};
 
@@ -16,9 +16,6 @@ use cubek_microkernel::matmul::cube::{CubeStagedWalk, cube_staged_microkernel};
 /// The walk is within the rhs: where it reads a table, a batch whose entry names no slab, or
 /// an empty run of `K`, holds nothing, so its cube takes no step and writes zeros; under a run, the
 /// cube steps that run's stages alone. A plain rhs is walked whole.
-///
-/// A float rhs may carry a `scale`, read over its batches and `K`, which the units multiply into
-/// each value as they fill its stage.
 #[allow(
     clippy::extra_unused_type_parameters,
     reason = "each element is defined from its operand at launch, which the kernel is compiled for"
@@ -34,7 +31,6 @@ pub fn cube_staged_matmul_kernel<
 >(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    scale: ComptimeOption<&TileTensor<'static>>,
     out: &O::Arg<E>,
     partitioning: Partitioning,
     #[comptime] walk: CubeStagedWalk,
@@ -43,14 +39,11 @@ pub fn cube_staged_matmul_kernel<
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let scale: ComptimeOption<Tile> = scale.map(|scale| scale.tile(&partitioning));
     let dest = O::serve::<E, VO>(out, &partitioning);
     let c = dest.tile();
 
     for cube in &partitioning {
         let b = b.at(&cube);
-        let scaled: ComptimeOption<Tile> = scale.clone().map(|scale| b.mul(&scale.at(&cube)));
-        let b = scaled.unwrap_or(b);
         cube_staged_microkernel::<EA>(
             cube.walk_within(&b),
             &a.at(&cube),

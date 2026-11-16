@@ -1126,18 +1126,20 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         self.read(|view| view.work_item())
     }
 
-    /// The rhs's scale bound under `launcher` over the batches and `K`, moved by the cube's units
-    /// as the stage it multiplies into is: none where the rhs is not scaled.
-    pub fn bind_scale(&self, launcher: &Launcher) -> Option<TileTensorLaunch> {
-        let scale = self.rhs_scale.as_ref()?;
-        let bound = launcher
+    /// `rhs` under the rhs's scale, where it has one: bound over the batches and `K`, moved by the
+    /// cube's units as the stage it multiplies into is.
+    fn scaled_rhs(&self, launcher: &Launcher, rhs: TileTensorLaunch) -> TileTensorLaunch {
+        let Some(scale) = &self.rhs_scale else {
+            return rhs;
+        };
+        let scale = launcher
             .arg(scale.binding.clone(), scale.elem)
             .axes(&[K])
             .batches(&self.batch_axes())
             .delivery(Delivery::SyncPerUnit)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
-        Some(bound.arg())
+        rhs.scales(scale.arg())
     }
 
     /// The axes the problem's batch dims are labelled with, read off the operands' rank without
@@ -1429,7 +1431,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             .build()
             .expect(ADMITTED_PLAN_RUNS);
         let lhs = self.read_through_table(MatmulOperand::Lhs, lhs.arg());
-        let rhs = self.read_through_table(MatmulOperand::Rhs, rhs.arg());
+        let rhs = self.scaled_rhs(&launcher, rhs.arg());
+        let rhs = self.read_through_table(MatmulOperand::Rhs, rhs);
         (launcher, [lhs, rhs])
     }
 
