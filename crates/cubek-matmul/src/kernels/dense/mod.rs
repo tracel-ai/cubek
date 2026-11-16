@@ -1,12 +1,12 @@
 //! The float product's seam: the one problem every matmul routine reads, how a launch reads it,
-//! the tensors, blueprint and routine trait, the routines by scope in `routines`, and the product
-//! that decodes a packed input ahead of one of them ([`DequantizedMatmulRoutine`]).
+//! the tensors, blueprint and routine trait, and the routines by scope in `routines`. A packed
+//! input no routine reads is decoded ahead of one by a plan step
+//! ([`Decoded`](crate::kernels::plan::Decoded)).
 
 mod binding;
 mod blueprint;
 mod counters;
 mod cube_order;
-mod dequantized;
 mod inputs;
 mod launch;
 mod output;
@@ -19,7 +19,6 @@ mod view;
 pub use binding::*;
 pub use blueprint::*;
 pub use cube_order::*;
-pub use dequantized::*;
 pub use inputs::*;
 pub use launch::*;
 pub use output::*;

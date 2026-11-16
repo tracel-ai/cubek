@@ -4,8 +4,8 @@
 //! kernel one resolves to is [`selector`](super::selector)'s.
 
 use crate::kernels::{
-    AttentionRoutine, AttentionTensors, CubeAttentionKernel, HypercubeAttentionKernel,
-    UnitAttentionRoutine,
+    AttentionLaunch, AttentionTensors, CubeAttentionKernel, DirectAttention,
+    HypercubeAttentionKernel, UnitAttentionRoutine,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
@@ -191,7 +191,7 @@ impl AttentionKernel {
         }
     }
 
-    /// The kernel's routine at its lead on `tensors` ([`AttentionRoutine::launch_lead_on`]): what a
+    /// The kernel's routine at its lead on `tensors` ([`AttentionLaunch::launch_lead_on`]): what a
     /// pin of it runs.
     ///
     /// # Errors
@@ -203,7 +203,7 @@ impl AttentionKernel {
         tensors: AttentionTensors,
     ) -> Result<TensorHandle, Refusal> {
         match self {
-            Self::Unit => UnitAttentionRoutine.launch_lead_on(hw, tensors),
+            Self::Unit => DirectAttention(UnitAttentionRoutine).launch_lead_on(hw, tensors),
             Self::Cube(cube) => cube.launch_lead_on(hw, tensors),
             Self::Hypercube(hypercube) => hypercube.launch_lead_on(hw, tensors),
         }

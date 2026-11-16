@@ -1,88 +1,85 @@
-use super::{
-    build_output_tensor, make_problem, output_host_f32, run_pool_backward_test, validate_test,
-};
+use super::make_problem;
+use crate::pool::{PoolBackward, Seeded, Unpooled};
+use crate::pool::{build_output_tensor, output_host_f32, validate_test};
 use cubecl::zspace::Shape;
 use cubek_pool::{
     definition::AvgPoolOptions, eval::cpu_reference::cpu_reference_pool_backward, pool2d_backward,
 };
+use cubek_test_utils::ScopeUnderTest;
 use cubek_test_utils::TestInput;
 
 const AVG_POOL2D_BACKWARD_TOLERANCE: f32 = 0.000001;
 
 #[test]
 fn test_avg_pool2d_backward() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         [4, 4],
         Shape::from([2, 4, 4, 2]),
         false,
         AvgPoolOptions::new([3, 3], [1, 1], [1, 1], false, false),
     );
-    run_pool_backward_test(
-        client,
-        5678,
-        -10.0,
-        10.0,
+    PoolBackward.check([Unpooled {
         problem,
-        AVG_POOL2D_BACKWARD_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 5678,
+            inputs: -10.0..10.0,
+        },
+        tolerance: AVG_POOL2D_BACKWARD_TOLERANCE,
+    }]);
 }
 
 #[test]
 fn test_avg_pool2d_backward_strided_no_pad() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         [6, 6],
         Shape::from([2, 3, 3, 4]),
         false,
         AvgPoolOptions::new([2, 2], [2, 2], [0, 0], false, false),
     );
-    run_pool_backward_test(
-        client,
-        1234,
-        -1.0,
-        1.0,
+    PoolBackward.check([Unpooled {
         problem,
-        AVG_POOL2D_BACKWARD_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 1234,
+            inputs: -1.0..1.0,
+        },
+        tolerance: AVG_POOL2D_BACKWARD_TOLERANCE,
+    }]);
 }
 
 #[test]
 fn test_avg_pool2d_backward_exclude_pad() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         [5, 5],
         Shape::from([1, 3, 3, 1]),
         false,
         AvgPoolOptions::new([3, 3], [2, 2], [1, 1], false, false),
     );
-    run_pool_backward_test(
-        client,
-        9999,
-        -1.0,
-        1.0,
+    PoolBackward.check([Unpooled {
         problem,
-        AVG_POOL2D_BACKWARD_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 9999,
+            inputs: -1.0..1.0,
+        },
+        tolerance: AVG_POOL2D_BACKWARD_TOLERANCE,
+    }]);
 }
 
 #[test]
 fn test_avg_pool2d_backward_non_square_asymmetric() {
-    let client = cubecl::test_device().client();
     let problem = make_problem(
         [5, 7],
         Shape::from([2, 6, 3, 3]),
         false,
         AvgPoolOptions::new([2, 3], [1, 2], [1, 0], false, true),
     );
-    run_pool_backward_test(
-        client,
-        3456,
-        -1.0,
-        1.0,
+    PoolBackward.check([Unpooled {
         problem,
-        AVG_POOL2D_BACKWARD_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 3456,
+            inputs: -1.0..1.0,
+        },
+        tolerance: AVG_POOL2D_BACKWARD_TOLERANCE,
+    }]);
 }
 
 #[test]
@@ -166,7 +163,6 @@ fn test_avg_pool2d_backward_dilation_exclude_pad_ceil_mode() {
 }
 
 fn run_dilated_ceil_case(count_include_pad: bool) {
-    let client = cubecl::test_device().client();
     // Height windows are disjoint; width windows overlap and only sample odd columns.
     // Ceil mode also leaves taps beyond the explicit end padding on both axes.
     let problem = make_problem(
@@ -175,12 +171,12 @@ fn run_dilated_ceil_case(count_include_pad: bool) {
         false,
         AvgPoolOptions::new([2, 3], [5, 2], [1, 1], true, count_include_pad).with_dilation([3, 2]),
     );
-    run_pool_backward_test(
-        client,
-        2468,
-        -10.0,
-        10.0,
+    PoolBackward.check([Unpooled {
         problem,
-        AVG_POOL2D_BACKWARD_TOLERANCE,
-    );
+        input: Seeded {
+            seed: 2468,
+            inputs: -10.0..10.0,
+        },
+        tolerance: AVG_POOL2D_BACKWARD_TOLERANCE,
+    }]);
 }

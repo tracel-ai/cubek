@@ -11,7 +11,7 @@ use crate::split_keys_merge::plane::{
 };
 use crate::split_keys_merge::{SlotBox, SlotShape};
 use cubecl::tile::layout::PageEntry;
-use cubecl::tile::{Region, StageStorage, Stages, Tile, Walk};
+use cubecl::tile::{Partitioning, Region, StageStorage, Stages, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// A cube's planes, fragments or shuffles, as the cube leaves their rows in slots once the walk
@@ -38,8 +38,7 @@ trait CubeSlotPlanes<EA: Float, N: Size>: CubeType {
 }
 
 #[cube]
-impl<EA: Float, ES: Float> CubeSlotPlanes<EA, Const<1>> for PlaneFragmentAttention<EA, ES> {
-    #[allow(clippy::too_many_arguments)]
+impl<EA: Float, EV: Float> CubeSlotPlanes<EA, Const<1>> for PlaneFragmentAttention<EA, EV> {
     fn store_partial(
         &mut self,
         walk: &Walk,
@@ -59,7 +58,6 @@ impl<EA: Float, ES: Float> CubeSlotPlanes<EA, Const<1>> for PlaneFragmentAttenti
 
 #[cube]
 impl<EA: Float, N: Size> CubeSlotPlanes<EA, N> for PlaneShuffleAttention<EA, N> {
-    #[allow(clippy::too_many_arguments)]
     fn store_partial(
         &mut self,
         walk: &Walk,
@@ -86,7 +84,7 @@ impl<EA: Float, N: Size> CubeSlotPlanes<EA, N> for PlaneShuffleAttention<EA, N> 
 /// `steps`, each held as `storage`; `out`, `logsumexp`, `query`, `key`, `value` and `bias` are
 /// windowed to it.
 #[cube]
-pub fn cube_staged_attention_microkernel<EA: Float, ES: Float>(
+pub fn cube_staged_attention_microkernel<EA: Float, EV: Float>(
     cube: &Region,
     out: &Tile,
     logsumexp: &ComptimeOption<Tile>,
@@ -99,11 +97,11 @@ pub fn cube_staged_attention_microkernel<EA: Float, ES: Float>(
     #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] storage: StageStorage,
 ) {
-    let unmasked = bias.unmasked_steps(0, steps, microkernel.seq_kv());
+    let unmasked = bias.unmasked_steps(0, steps, microkernel.seq_kv(), 1usize);
 
     // The keys and values are cut to the attended keys from the first: every stage but the walk's
     // last lies inside them, and fills unchecked.
-    let mut planes = CubeAttentionMicrokernel::staged_walk::<EA, ES>(
+    let mut planes = CubeAttentionMicrokernel::staged_walk::<EA, EV>(
         ComptimeOption::new_Some(cube.walk().over_run(S).range(0, unmasked)),
         cube.walk().over_run(S).range(unmasked, steps - unmasked),
         out,
@@ -134,11 +132,14 @@ pub fn cube_staged_attention_microkernel<EA: Float, ES: Float>(
 /// Each row's logsumexp is written where the caller asks for it, by the plane that writes the row.
 ///
 /// `cube` is the region the cube owns, its walk the steps of keys or the pages of them, of which
-/// it takes the first `steps`; `out`, `logsumexp` and `query` are windowed to it.
+/// it takes the first `steps`; `out`, `logsumexp` and `query` are windowed to it. The query is
+/// read in `E` and the output written in `EO`, the keys and values in what `key` and `value`
+/// read them in.
 #[cube]
 pub fn cube_unstaged_attention_microkernel<
     EA: Float,
     E: Float,
+    EO: Float,
     N: Size,
     K: StepReads<N>,
     L: StepReads<N>,
@@ -168,7 +169,7 @@ pub fn cube_unstaged_attention_microkernel<
     );
 
     if microkernel.settings.planes_along_keys.get() == 1 {
-        planes.store_normalized::<E>(cube, out);
+        planes.store_normalized::<EO>(cube, out);
 
         #[comptime]
         match logsumexp {
@@ -190,7 +191,7 @@ pub fn cube_unstaged_attention_microkernel<
 
         for plane in cube.planes() {
             let group = plane.coord(G) * layout.planes_along_queries + plane.coord(Q);
-            plane_merge_rows_microkernel::<EA, E, N>(
+            plane_merge_rows_microkernel::<EA, EO, N>(
                 &mut slot_out,
                 &mut slot_max,
                 &mut slot_sum,
@@ -268,14 +269,14 @@ pub fn cube_unstaged_attention_partial_microkernel<
 /// (`staged_walk`), then each plane's partial left in its slot (`store_plane_partials`): what a
 /// cube sharing its box with other cubes runs. Returns the box as the slots hold it.
 ///
-/// `staged` and `run` are both the cube level's walk, this cube's run of the steps of keys: the
-/// first, of which the ring takes the first `steps`, is spent on the staging, and the second is
-/// read for where the slots lie. `out` and `query`, which span no key, are windowed to the box;
-/// `key`, `value` and `bias` are read at the walk's regions, each stage of them held as `storage`.
+/// `partitioning`'s walk is the cube level's, this cube's run of the steps of keys, of which the
+/// ring takes the first `steps`: its unmasked steps first, then the rest, each a walk of its own,
+/// and once more read for where the slots lie. `out` and `query`, which span no key, are
+/// windowed to the box; `key`, `value` and `bias` are read at the walk's regions, each stage of
+/// them held as `storage`.
 #[cube]
-pub fn cube_staged_attention_partial_microkernel<EA: Float, ES: Float>(
-    staged: Walk,
-    run: &Walk,
+pub fn cube_staged_attention_partial_microkernel<EA: Float, EV: Float>(
+    partitioning: &Partitioning,
     out: &Tile,
     query: &Tile,
     key: &Tile,
@@ -290,11 +291,15 @@ pub fn cube_staged_attention_partial_microkernel<EA: Float, ES: Float>(
     #[comptime] splits: usize,
     #[comptime] storage: StageStorage,
 ) -> SlotBox {
-    // The cubes take the steps in turns: the run's steps every row sees whole are no prefix of
-    // it, so every step takes the visibility's bias.
-    let mut planes = CubeAttentionMicrokernel::staged_walk::<EA, ES>(
-        ComptimeOption::new_None(),
-        staged.range(0, steps),
+    // The cubes take the steps in turns, this one every `splits` from its first. Its steps rise,
+    // and only a box's last are masked, so the ones every row sees whole come first and take no
+    // bias. A step of the walk is a region of the keys, a page of steps where the keys are paged.
+    let run = partitioning.walk();
+    let first = run.region(0).origin(S) / microkernel.region_keys();
+    let unmasked = bias.unmasked_steps(first, steps, microkernel.region_keys(), splits);
+    let mut planes = CubeAttentionMicrokernel::staged_walk::<EA, EV>(
+        ComptimeOption::new_Some(partitioning.walk().range(0, unmasked)),
+        partitioning.walk().range(unmasked, steps - unmasked),
         out,
         query,
         key,
@@ -305,12 +310,12 @@ pub fn cube_staged_attention_partial_microkernel<EA: Float, ES: Float>(
         storage,
     );
 
-    // The cube's run starts at its step of the first `splits`: the cubes take them in turns.
-    let cube_slot = run.region(0).origin(S) / microkernel.region_keys();
-    CubeAttentionMicrokernel::store_plane_partials::<EA, Const<1>, PlaneFragmentAttention<EA, ES>>(
+    // The cube's run starts at its step of the first `splits`, the cubes taking them in turns:
+    // that step is its slot.
+    CubeAttentionMicrokernel::store_plane_partials::<EA, Const<1>, PlaneFragmentAttention<EA, EV>>(
         &mut planes,
-        run,
-        cube_slot,
+        &run,
+        first,
         slot_out,
         slot_max,
         slot_sum,
@@ -336,7 +341,7 @@ pub fn cube_staged_attention_partial_microkernel<EA: Float, ES: Float>(
 /// nothing. No cube waits on another: the merge does not depend on how the device schedules them.
 /// The walk is one, whichever end it takes, so the cube holds its stages once.
 #[cube]
-pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
+pub fn cube_staged_attention_shared_microkernel<EA: Float, EV: Float, E: Float>(
     cube: &Region,
     first: usize,
     steps: usize,
@@ -360,10 +365,10 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
     #[comptime] storage: StageStorage,
 ) {
     let value_dim = comptime!(out.space().extent(DV));
-    let unmasked = bias.unmasked_steps(first, steps, microkernel.seq_kv());
+    let unmasked = bias.unmasked_steps(first, steps, microkernel.seq_kv(), 1usize);
 
     // Every stage but the box's last lies inside the attended keys, and fills unchecked.
-    let mut planes = CubeAttentionMicrokernel::staged_walk::<EA, ES>(
+    let mut planes = CubeAttentionMicrokernel::staged_walk::<EA, EV>(
         ComptimeOption::new_Some(cube.walk().over_run(S).range(first, unmasked)),
         cube.walk()
             .over_run(S)
@@ -390,7 +395,7 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
         CubeAttentionMicrokernel::store_plane_partials::<
             EA,
             Const<1>,
-            PlaneFragmentAttention<EA, ES>,
+            PlaneFragmentAttention<EA, EV>,
         >(
             &mut planes,
             run,
@@ -462,16 +467,18 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
 impl CubeAttentionMicrokernel {
     /// A cube's planes over the steps of keys it takes, those every row sees whole in `unmasked`,
     /// where the caller has them, and the rest in `walk`, which follows: its query staged once, its
-    /// keys and values a stage at a time through the ring for every plane, each plane taking its
-    /// part of every stage into its rows of one head with the plane fragment microkernel. Returns
-    /// the planes' rows as the walk leaves them, for the level above to end.
+    /// keys and values a stage at a time through the ring for every plane, as they are stored,
+    /// each plane taking its part of every stage into its rows of one head with the plane fragment
+    /// microkernel. Returns the planes' rows as the walk leaves them, each side's per-tensor scale
+    /// on the sum it enters ([`StagedCache`](crate::attention::plane::StagedCache)), for the level
+    /// above to end.
     ///
     /// `out` and `query`, which span no key, are windowed to the cube's box; `key`, `value` and
     /// `bias` are read at the walk's regions, each stage of them held as `storage`, the unmasked
     /// steps summed with no bias ([`StepBias`]). The cube meets on the ring's `sync_cube`, its
     /// planes each on their own `sync_plane`.
     #[allow(clippy::too_many_arguments)]
-    fn staged_walk<EA: Float, ES: Float>(
+    fn staged_walk<EA: Float, EV: Float>(
         unmasked: ComptimeOption<Walk>,
         walk: Walk,
         out: &Tile,
@@ -482,24 +489,24 @@ impl CubeAttentionMicrokernel {
         scale: EA,
         #[comptime] microkernel: Self,
         #[comptime] storage: StageStorage,
-    ) -> PlaneFragmentAttention<EA, ES> {
+    ) -> PlaneFragmentAttention<EA, EV> {
         // The query spans no key: staged once for every plane, before the walk, laid out as the
         // stages of keys and values are.
         let mut staged_query = query.stage_for(
             &walk,
             comptime!(microkernel.query_storage(&query.space())),
-            microkernel.plane.decoded_stage(),
+            microkernel.plane.decoded_query(),
         );
 
         staged_query.copy_from(query);
 
         let mut planes = match microkernel.plane {
-            CubeAttentionPlane::Fragment(plane) => PlaneFragmentAttention::<EA, ES>::open(
+            CubeAttentionPlane::Fragment(plane) => PlaneFragmentAttention::<EA, EV>::open(
                 &walk,
                 &staged_query,
                 out,
+                key,
                 value,
-                &bias.masked,
                 plane,
                 microkernel.planes(),
             ),
@@ -512,7 +519,16 @@ impl CubeAttentionMicrokernel {
 
         let in_flight = microkernel.ring.stages_in_flight.get();
         let decoded = microkernel.plane.decoded_stage();
-        let mut stages = Stages::smem(&walk, key, value, storage, in_flight, decoded);
+        // The stages hold the keys and values as stored, without the scales the planes' sums take
+        // out of them.
+        let mut stages = Stages::smem(
+            &walk,
+            &planes.cache.key,
+            &planes.cache.value,
+            storage,
+            in_flight,
+            decoded,
+        );
 
         // The steps every row sees whole come first and take no bias, the visibility costing their
         // scores nothing; the rest take the visibility's. Two walks of the one ring, so neither
@@ -556,8 +572,8 @@ impl CubeAttentionMicrokernel {
     /// ([`OnlineSoftmax::normalizer`](cubecl::tile::ops::softmax::OnlineSoftmax::normalizer)), and
     /// the output sums their products
     /// ([`PlanesOutput`](cubecl::tile::kind::PlanesOutput)).
-    fn store_fragment_rows<EA: Float, ES: Float>(
-        planes: &mut PlaneFragmentAttention<EA, ES>,
+    fn store_fragment_rows<EA: Float, EV: Float>(
+        planes: &mut PlaneFragmentAttention<EA, EV>,
         cube: &Region,
         out: &Tile,
     ) {

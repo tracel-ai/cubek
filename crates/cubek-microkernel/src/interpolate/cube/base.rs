@@ -1,5 +1,5 @@
 use crate::interpolate::{InterpolateOperand, InterpolateWorkItem};
-use cubecl::tile::RegisterBlock;
+use cubecl::tile::SoftwareMatmul;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
@@ -7,12 +7,12 @@ use cubek_std::microkernel::{
 };
 
 /// One block of a cube's walk: every output cell of it contracts its tap window, weights by
-/// samples, in registers laid out as `register_block` states.
+/// samples, in registers laid out as `software_matmul` states.
 ///
 /// Every device runs it: the register block is the one the device's units hold best.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeInterpolateMicrokernel {
-    pub register_block: RegisterBlock,
+    pub software_matmul: SoftwareMatmul,
 }
 
 /// A block's microkernel has nothing a measurement settles.
@@ -44,11 +44,11 @@ impl Microkernel for CubeInterpolateMicrokernel {
         _item: &InterpolateWorkItem,
         _settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        let register_block = match hw.properties.hardware.num_cpu_cores {
-            Some(_) => RegisterBlock::new(256).split_edge(),
-            None => RegisterBlock::new(64).component_fanout(),
+        let software_matmul = match hw.properties.hardware.num_cpu_cores {
+            Some(_) => SoftwareMatmul::new(256).split_edge(),
+            None => SoftwareMatmul::new(64).component_fanout(),
         };
-        core::iter::once(Self { register_block })
+        core::iter::once(Self { software_matmul })
     }
 
     /// Its accesses are its work item's: nothing in the block's walk reads past a unit's run.

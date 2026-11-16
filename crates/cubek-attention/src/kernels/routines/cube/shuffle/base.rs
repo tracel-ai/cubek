@@ -187,7 +187,7 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeShuffleAtt
                 blueprint.microkernel,
                 problem.val_dim,
                 problem.visibility,
-                problem.work_item().kernel_elements(),
+                problem.work_item().operand_elements(),
             );
         }
     }
