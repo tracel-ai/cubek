@@ -67,7 +67,7 @@ impl PlaneFragmentAttentionMicrokernel {
 
     /// The score's own levels where the plane reads it through its windows, which its accumulator
     /// is placed in: the walker's level of planes, `planes` its counts, and below it the plane's
-    /// score, its rows by the stage's keys by the whole head dim, which the tile cuts and walks.
+    /// score, its queries by the stage's keys by the whole head dim, which the tile cuts and walks.
     /// The counts are what index the accumulator's scratch, a window for every plane of the cube.
     pub fn score_levels(&self, planes: &[(Axis, usize)]) -> Vec<Level> {
         Levels::leaf(&[
@@ -99,8 +99,8 @@ impl PlaneFragmentAttentionMicrokernel {
     /// [`candidates`](Microkernel::candidates) with the operands read in `read`: for each place
     /// the plane may keep its score, the tile's picks for both products over the plane's tile.
     ///
-    /// The plane's tile is its rows by a stage's keys, counted in the device's matrix unit for
-    /// the score's operands, by the whole head dim, and its rows by the whole value dim. The tile
+    /// The plane's tile is its queries by a stage's keys, counted in the device's matrix unit for
+    /// the score's operands, by the whole head dim, and its queries by the whole value dim. The tile
     /// picks each product's instruction from the sources its kernel opens the sum on, cuts the
     /// tile into its calls and walks the contracted dim in their steps: a score in windows is a
     /// sum drained there, from the query and the keys; a score in fragments a sum contracted
@@ -135,14 +135,12 @@ impl PlaneFragmentAttentionMicrokernel {
             along_n: settings.seq_kv,
             ..PlaneFragmentMicrokernelSettings::DEFAULT
         };
-        if hw.plane_dim().is_err() {
-            return Vec::new();
-        }
-        let Some([rows, keys]) = PlaneFragmentMicrokernel::unit_tile(hw, &score_item, &grid) else {
+        let Some([queries, keys]) = PlaneFragmentMicrokernel::unit_tile(hw, &score_item, &grid)
+        else {
             return Vec::new();
         };
-        let score_tile = [rows, keys, item.head_dim];
-        let value_tile = [rows, item.val_dim, keys];
+        let score_tile = [queries, keys, item.head_dim];
+        let value_tile = [queries, item.val_dim, keys];
         let holders: &[ScoreHolder] = match settings.score {
             ScoreHolder::Fragments => &[ScoreHolder::Fragments, ScoreHolder::Window],
             ScoreHolder::Window => &[ScoreHolder::Window],
@@ -308,7 +306,7 @@ impl PlaneFragmentAttentionMicrokernel {
         Some(self.cache_stage)
     }
 
-    /// The tile one plane holds: its rows along the queries of one head, a stage's keys, and the
+    /// The tile one plane holds: its queries of one head, a stage's keys, and the
     /// head and value dims whole. The tile cuts each product's part of it into the calls of the
     /// instruction it picks and walks the dim each contracts: the score the head dim, the value
     /// the keys, a run of the score's cells a call where it keeps them. The shared microkernel
