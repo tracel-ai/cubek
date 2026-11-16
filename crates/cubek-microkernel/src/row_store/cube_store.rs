@@ -85,12 +85,11 @@ pub struct Encoded;
 #[cube]
 impl Destination for Encoded {
     type Arg<E: Numeric> = TileTensor<'static>;
+    type Served<E: Numeric> = Tile;
 
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
+    fn serve<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
         arg.tile(partitioning)
     }
-
-    fn finish<E: Numeric>(_arg: &Self::Arg<E>) {}
 }
 
 impl DestinationLaunch for Encoded {
