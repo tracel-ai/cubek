@@ -39,7 +39,7 @@ pub use split_keys::*;
 pub use tensors::*;
 pub use tune::AttentionRoutineCandidate;
 
-pub use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
+pub use cubek_microkernel::attention::{AttentionVisibility, AttentionWeighting, QueryPlacement};
 
 pub use select::{AttentionKernel, AttentionKernelHeuristic, AttentionOpStrategy};
 

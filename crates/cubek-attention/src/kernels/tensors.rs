@@ -3,8 +3,8 @@
 use crate::kernels::conversion::converted;
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
-    AttentionRoutineProblem, AttentionScoring, CacheScales, KvSource, PAGED_PACKED_UNREAD,
-    PackedAttentionCache, QueryAxis, SCALED_PACKED_UNREAD,
+    AttentionRoutineProblem, AttentionScoring, AttentionWeighting, CacheScales, KvSource,
+    PAGED_PACKED_UNREAD, PackedAttentionCache, QueryAxis, SCALED_PACKED_UNREAD,
 };
 use cubecl::client::Client;
 use cubecl::features::TypeUsage;
@@ -104,7 +104,8 @@ impl core::fmt::Debug for AttentionTensors {
 
 impl AttentionTensors {
     /// Attention of `queries` over `kv`, each query scoring the keys as `scoring` says; the output
-    /// `[b, q, h, dv]` allocated, `dv` the values' head dim. Every way of stating an attention
+    /// `[b, q, h, dv]` allocated, `dv` the values' head dim, at the query's element under a
+    /// softmax and at the sum's, `f32`, under a relu. Every way of stating an attention
     /// comes through here: [`new`](Self::new), [`paged`](Self::paged) and
     /// [`packed`](Self::packed) are this call on one kind of source. A source listing blocks of
     /// keys is read as pages of one block each ([`KvSource::read_as_block_pages`]).
@@ -426,9 +427,13 @@ impl AttentionTensors {
         let q_shape = query.shape();
         let (batch, heads, queries) = (q_shape[0], q_shape[1], q_shape[2]);
         let value = kv.val_dim();
-        // The output is at the query's element, the one the model computes in, whatever each
-        // side of the cache is stored in.
-        let out_elem = query.elem;
+        // A softmax's output is at the query's element, the one the model computes in, whatever
+        // each side of the cache is stored in. A relu's is a sum of unnormalized weights a caller
+        // ranks, kept at the sum's element: rounded to the query's, near scores would tie.
+        let out_elem = match scoring.weighting {
+            AttentionWeighting::Softmax => query.elem,
+            AttentionWeighting::Relu => AttentionRoutineProblem::SUM,
+        };
         // Dense, as every arm of the attention seam allocates it: a token's heads are one row, so
         // the caller merges them by a reshape. The views below are a factorization of these
         // strides, which a pitched allocation would invalidate.
