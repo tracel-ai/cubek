@@ -39,7 +39,6 @@ trait CubeSlotPlanes<EA: Float, N: Size>: CubeType {
 
 #[cube]
 impl<EA: Float, EV: Float> CubeSlotPlanes<EA, Const<1>> for PlaneFragmentAttention<EA, EV> {
-    #[allow(clippy::too_many_arguments)]
     fn store_partial(
         &mut self,
         walk: &Walk,
@@ -59,7 +58,6 @@ impl<EA: Float, EV: Float> CubeSlotPlanes<EA, Const<1>> for PlaneFragmentAttenti
 
 #[cube]
 impl<EA: Float, N: Size> CubeSlotPlanes<EA, N> for PlaneShuffleAttention<EA, N> {
-    #[allow(clippy::too_many_arguments)]
     fn store_partial(
         &mut self,
         walk: &Walk,

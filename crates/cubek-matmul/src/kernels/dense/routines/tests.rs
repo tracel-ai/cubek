@@ -181,17 +181,17 @@ mod cube_shuffle {
         assert!(prepared > 0);
     }
 
-    /// The by-block split of `K` reads NVFP4 in rows only: in tile order its blocks are no
-    /// read's, and no other scale is bound a byte apiece.
+    /// The by-block split of `K` reads NVFP4 alone, in rows and in tile order in either word
+    /// order, a block of one row lying together in each: no other scale is bound a byte apiece.
     #[test]
-    fn the_split_k_reads_nvfp4_in_rows_alone() {
+    fn the_split_k_reads_nvfp4_alone() {
         let hw = devices::m2_pro();
-        let settings = crate::kernels::CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K;
+        let settings = crate::kernels::LoadingSchedule::SPLIT_K.settings();
         for (name, problem) in problems(1) {
             let prepared = CubeShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
             assert_eq!(
                 prepared.is_ok(),
-                name == "nvfp4 rows",
+                name.starts_with("nvfp4"),
                 "{name}: {prepared:?}"
             );
         }
