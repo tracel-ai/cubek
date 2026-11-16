@@ -178,7 +178,8 @@ fn cached(
 const FP8_CACHES: [(cubecl::ir::ElemType, cubecl::ir::ElemType); 3] =
     [(E4M3, F16), (F16, E4M3), (E4M3, E4M3)];
 
-/// An RTX PRO 6000 offering the manual `mma`'s 16-bit forms and its `e4m3` one.
+/// An RTX PRO 6000 offering the manual `mma`'s 16-bit forms and its `e4m3` one, which serves the
+/// score and the value alike.
 fn offering_fp8() -> Hardware {
     let (f16, f32, e4m3) = (
         cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F16),
@@ -241,7 +242,11 @@ fn every_fp8_cache_is_read_at_a_prompt_and_at_a_decode_step() {
         let reads = fragment_reads(&hw, &prompt);
         assert!(
             reads.iter().any(|(score, _)| *score == e4m3) == (key == E4M3)
-                && reads.iter().any(|(_, read)| *read == e4m3) == (value == E4M3),
+                && reads.iter().any(|(_, read)| *read == e4m3) == (value == E4M3)
+                && reads
+                    .iter()
+                    .all(|(score, read)| (*score == f16 || *score == e4m3)
+                        && (*read == f16 || *read == e4m3)),
             "{key:?} keys, {value:?} values: the fragments read {reads:?}"
         );
         let widened = fragment_reads(&without, &prompt);

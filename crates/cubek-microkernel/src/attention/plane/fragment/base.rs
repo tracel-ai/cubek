@@ -9,7 +9,7 @@ use crate::matmul::plane::{
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
-use cubecl::ir::ElemType;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, FragmentSource, Instruction, Level, Levels, Space};
 use cubek_std::layout::BindingOrder;
@@ -203,17 +203,18 @@ impl PlaneFragmentAttentionMicrokernel {
 
     /// The value's instruction beside `score`, where the device offers it, its operands of
     /// `value`: the score's own instruction where it is a cmma one of any shape on operands of
-    /// `value`, read through the windows; else the deepest manual `mma` on 16- or 8-bit operands
-    /// of `value` of the score's tile and accumulator, a whole number of the score's fragments deep,
-    /// that the plane's `keys` a stage divide into, where the device's `A` lays its cells where the
-    /// accumulator does ([`Hardware::accumulator_as_a`]; a `tf32` `A` never does). The score's
-    /// accumulator is laid out by its tile alone, so a score on narrower operands, as an FP8
-    /// cache's keys, still hands its fragments on as the value's `A` once cast. Each call reads
-    /// one run of the score's fragments along the keys, in their registers, as its `A`
-    /// (`cubecl-tile`'s `accumulators_as_a`), and the value walks the plane's keys a run at a time
-    /// ([`tiling`](Self::tiling)): the deepest contracts them in the fewest calls, and a shallower
-    /// call takes as long (on an RTX PRO 6000 an `m16n8k8` runs at half the rate of an
-    /// `m16n8k16`).
+    /// `value`, read through the windows; else the deepest manual `mma` on 16-bit or `e4m3`
+    /// operands of `value` of the score's tile and accumulator, a whole number of the score's
+    /// fragments deep, that the plane's `keys` a stage divide into, where the device's `A` lays its
+    /// cells where the accumulator does ([`Hardware::accumulator_as_a`]; a `tf32` `A` never
+    /// does). The score's accumulator is laid out by its tile alone, so a score on narrower
+    /// operands, as an FP8 cache's keys, still hands its fragments on as the value's `A` once
+    /// cast. Each call reads one run of the score's fragments along the keys, in their registers,
+    /// as its `A` (`cubecl-tile`'s `accumulators_as_a`), and the value walks the plane's keys a run
+    /// at a time ([`tiling`](Self::tiling)): the deepest contracts them in the fewest calls, and a
+    /// shallower call takes as long (on an RTX PRO 6000 an `m16n8k8` runs at half the rate of an
+    /// `m16n8k16`). Of the 8-bit elements only `e4m3` is taken: the probabilities are cast to the
+    /// values' element, and `e5m2`'s two bits of mantissa are too coarse for a weight.
     fn value_instruction(
         hw: &Hardware,
         score: PlaneFragmentInstruction,
@@ -222,7 +223,9 @@ impl PlaneFragmentAttentionMicrokernel {
     ) -> Option<PlaneFragmentInstruction> {
         match score {
             PlaneFragmentInstruction::Cmma { shape } if shape.a_type == value => Some(score),
-            PlaneFragmentInstruction::Mma { shape, .. } if value.size() <= 2 => {
+            PlaneFragmentInstruction::Mma { shape, .. }
+                if value.size() == 2 || value == ElemType::Float(FloatKind::E4M3) =>
+            {
                 // The score's tile and accumulator on the values' element, a whole number of its
                 // fragments deep, the plane's keys a whole number of its calls.
                 let run = |candidate: &MmaConfig| {
@@ -294,8 +297,8 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
     type Operand = AttentionOperand;
     type CubeSpace = Space;
 
-    const DECLINE: &'static str = "the plane microkernel runs on a cmma instruction, or a 16-bit \
-         manual mma whose accumulator the device lays out as its A operand, beside one a whole \
+    const DECLINE: &'static str = "the plane microkernel runs on a cmma instruction, or a 16-bit or \
+         e4m3 manual mma whose accumulator the device lays out as its A operand, beside one a whole \
          number of its fragments deep that the plane's keys divide into, of the operands' element \
          summing in f32, \
          whose k divides the head dim and whose n divides the value dim and the stage's keys, on a \
