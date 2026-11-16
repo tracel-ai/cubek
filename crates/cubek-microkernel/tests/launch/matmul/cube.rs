@@ -141,9 +141,9 @@ fn cube_shuffle_kernel<EA: Numeric, E: Numeric>(
     let b = rhs.tile(&partitioning);
     let c = out.tile(&partitioning);
     for cube in &partitioning {
-        cube_shuffle_microkernel::<EA>(
+        cube_shuffle_microkernel::<EA, Tile>(
             &cube,
-            &c.at(&cube),
+            &c,
             &a.at(&cube),
             &b.at(&cube),
             block,

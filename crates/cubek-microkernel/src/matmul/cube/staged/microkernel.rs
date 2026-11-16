@@ -293,9 +293,9 @@ impl CubeStagedWalk {
 /// output's, which the whole cube, filling planes too, then stores in one bulk copy
 /// ([`CubeStagedStore::Tma`]), the box taking the ring's bytes beside planes set aside to fill;
 /// or, splitting `K`, each adds its partial into one accumulator in shared memory, atomically,
-/// which the cube copies out once it has synchronized ([`CubeStagedDrain::Merged`]). Planes
-/// merging along `K` are never stored by the TMA engine. The box and the accumulator still store,
-/// so a destination that fuses must not be launched with them.
+/// whose total the cube hands to `dest` once it has synchronized ([`CubeStagedDrain::Merged`]).
+/// Planes merging along `K` are never stored by the TMA engine. The box still stores, so a
+/// destination that fuses must not be launched with it.
 #[cube]
 pub fn cube_staged_microkernel<EA: Numeric, D: ServedDestination>(
     run: Walk,
@@ -306,7 +306,7 @@ pub fn cube_staged_microkernel<EA: Numeric, D: ServedDestination>(
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,
 ) {
-    let mut c = dest.tile().at(cube);
+    let c = dest.tile().at(cube);
 
     match (walk.drain, walk.store) {
         (CubeStagedDrain::EachPlane, CubeStagedStore::Fragments) => {
@@ -323,7 +323,7 @@ pub fn cube_staged_microkernel<EA: Numeric, D: ServedDestination>(
 
             sync_cube();
 
-            c.copy_from(&accumulator.source);
+            accumulator.source.consumed_by::<D>(dest, cube);
         }
     }
 }
