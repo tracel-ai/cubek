@@ -5,7 +5,7 @@ use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
     AttentionWorkItem, G, Q, S,
 };
-use crate::matmul::cube::{CubeStagedAsyncCopyRefusal, CubeStagedDelivery};
+use crate::matmul::cube::CubeStagedDelivery;
 use crate::split_keys_merge::SlotShape;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Vectorization};
@@ -129,7 +129,9 @@ impl CubeAttentionMicrokernel {
         let staged = self.plane.reads() == CubePlaneReads::Stage;
         match self.settings.delivery {
             CubeStagedDelivery::AsyncCopy
-                if staged && CubeStagedAsyncCopyRefusal::new(hw, ring).is_none() =>
+                if staged
+                    && Delivery::AsyncPerUnit.runs_on(&hw.properties).is_ok()
+                    && Delivery::AsyncPerUnit.holds(ring.prefetch).is_ok() =>
             {
                 CubeStagedDelivery::AsyncCopy
             }
@@ -334,15 +336,16 @@ impl AttentionMicrokernel for CubeAttentionMicrokernel {
         self.plane.served(item)
     }
 
-    /// Its resolved delivery, the copy engine's only where the keys' and the values' lines at
-    /// `widths` are 4, 8 or 16 bytes, the only copies it makes.
+    /// Its resolved delivery, the copy engine's only where it copies the keys' and the values'
+    /// lines at `widths` whole ([`Delivery::moves_lines`]).
     fn delivery(&self, widths: &AttentionOperands<usize>, item: &AttentionWorkItem) -> Delivery {
         let served = self.served(item).elements;
         let copied = [AttentionOperand::Key, AttentionOperand::Value]
             .into_iter()
             .all(|operand| {
-                let bytes = widths.get(operand) * served.get(operand).size();
-                matches!(bytes, 4 | 8 | 16)
+                // Bits rather than bytes: an `e2m1` value is half of one.
+                let bits = widths.get(operand) * served.get(operand).size_bits();
+                Delivery::AsyncPerUnit.moves_lines(bits).is_ok()
             });
         match self.delivery {
             CubeStagedDelivery::AsyncCopy if copied => CubeStagedDelivery::AsyncCopy.bound(),
@@ -360,8 +363,9 @@ impl AttentionMicrokernel for CubeAttentionMicrokernel {
         widths: &AttentionOperands<usize>,
         item: &AttentionWorkItem,
     ) -> Delivery {
-        let bytes = widths.query * self.served(item).elements.query.size();
-        match self.settings.query_as_keys && matches!(bytes, 4 | 8 | 16) {
+        let bits = widths.query * self.served(item).elements.query.size_bits();
+        let copied = Delivery::AsyncPerUnit.moves_lines(bits).is_ok();
+        match self.settings.query_as_keys && copied {
             true => self.delivery(widths, item),
             false => Delivery::SyncPerUnit,
         }

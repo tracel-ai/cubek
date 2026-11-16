@@ -1,8 +1,6 @@
 //! A packed weight against a float activation.
 
-use cubek_matmul::kernels::{
-    CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
-};
+use cubek_matmul::kernels::{CubeShuffleMatmulRoutine, LoadingSchedule, PlaneShuffleMatmulRoutine};
 use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
 
 use crate::matmul::Declines;
@@ -33,8 +31,10 @@ fn a_transposed_packed_matrix_is_read_as_the_matrix_it_views() {
 /// the weight read a scale block at a time, its scales a byte each, every plane of a cube one turn
 /// of `K`, the cubes walking runs of the boxes of columns. One, three and eight rows against
 /// weights whose `K` takes three to twenty-four planes, their columns a whole number of
-/// eight-column boxes or not. Before a read could take two words, the words were bound a read a
-/// stored word, so a read of a block stepped its rows twice as far and read past the weight.
+/// eight-column boxes or not, the planes taking `K` in runs or in turns
+/// ([`LoadingSchedule::ONE_TRANSACTION`]), where a turn the planes do not fill is the last. Before
+/// a read could take two words, the words were bound a read a stored word, so a read of a block
+/// stepped its rows twice as far and read past the weight.
 ///
 /// A device it prepares on prepares every shape here: where the first is declined, a device that
 /// commits to no plane width, every one is a skip; elsewhere none may be declined.
@@ -48,7 +48,10 @@ fn the_split_k_answers_a_decode_step() {
         decode.clone().m(8).n(72).k(4096),
         decode.m(1).n(48).k(12288),
     ];
-    let settings = [CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K];
+    let settings = [
+        LoadingSchedule::SPLIT_K.settings(),
+        LoadingSchedule::ONE_TRANSACTION.settings(),
+    ];
     let probe = ByRoutine::new(CubeShuffleMatmulRoutine, Declines::AsItStates);
     let first = probe.at(settings, &products[..1]);
     let declines = match probe.outcome(&cubecl::test_device().client(), &first[0]) {

@@ -1,17 +1,15 @@
 use crate::matmul::cube::{CubeStagedMicrokernel, MatmulCubeSpace};
 use crate::matmul::plane::{PlaneFragmentKStatement, PlaneFragmentMicrokernel};
 use crate::matmul::{
-    MatmulBlocks, MatmulBuffers, MatmulLayout, MatmulOperand, MatmulOperands, MatmulStage,
-    MatmulWorkItem,
+    MatmulBlocks, MatmulBuffers, MatmulLayout, MatmulOperand, MatmulStage, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::stage::Prefetch;
 use cubecl::tile::{Axis, Scratch, Space, StageStorage};
+use cubek_std::TMA_ALIGNMENT_BYTES;
 use cubek_std::launch::tma::swizzle_span_bytes;
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::StageRing;
-use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 
 /// Who fills the cube microkernel's stages: the cube's units, the copy engine their lines are
 /// handed to, or the TMA engine, and how many of the cube's planes do nothing but fill them. The
@@ -54,12 +52,6 @@ impl CubeStagedDelivery {
 /// Why the TMA engine cannot fill a cube microkernel's stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CubeStagedTmaRefusal {
-    /// The device offers no bulk tensor copy, or no barrier for one to land on
-    /// ([`Hardware::bulk_tensor_copy`]).
-    NoBulkTensorCopy,
-    /// The ring holds its next stage in the units' registers, which a bulk copy never passes
-    /// through.
-    PrefetchInRegisters,
     /// A descriptor addresses one matrix, and the problem holds several.
     Batched,
     /// The rhs is contiguous along neither of its axes, and a descriptor's innermost stride is
@@ -94,52 +86,6 @@ pub enum CubeStagedTmaRefusal {
     ScalesDeeperThanATile(MatmulOperand),
 }
 
-/// Why the copy engine cannot fill a cube microkernel's stages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CubeStagedAsyncCopyRefusal {
-    /// The device offers no copy engine, or no barrier for its copies to land on
-    /// ([`Hardware::unit_async_copy`]).
-    NoCopyEngine,
-    /// The ring holds its next stage in the units' registers, which the engine never passes
-    /// through.
-    PrefetchInRegisters,
-    /// An operand's lines are not 4, 8 or 16 bytes, the only copies the engine makes. Known once
-    /// the widths are ([`of_widths`](Self::of_widths)).
-    LineSize(MatmulOperand),
-}
-
-impl CubeStagedAsyncCopyRefusal {
-    /// Why `hw` cannot hand `ring`'s stages to the copy engine, the widths aside; `None` where it
-    /// can.
-    pub fn new(hw: &Hardware, ring: &StageRing) -> Option<Self> {
-        if !hw.unit_async_copy() {
-            Some(Self::NoCopyEngine)
-        } else if ring.prefetch == Prefetch::InRegisters {
-            Some(Self::PrefetchInRegisters)
-        } else {
-            None
-        }
-    }
-
-    /// Why lines `widths` wide, of `item`'s elements, of the `copied` operands are not ones the
-    /// engine copies whole.
-    pub fn of_widths(
-        copied: &[MatmulOperand],
-        widths: &MatmulOperands<usize>,
-        item: &MatmulWorkItem,
-    ) -> Option<Self> {
-        copied
-            .iter()
-            .copied()
-            .find(|&operand| {
-                // Bits rather than bytes: an `e2m1` value is half of one.
-                let bytes = widths.get(operand) * item.elements.get(operand).size_bits() / 8;
-                !matches!(bytes, 4 | 8 | 16)
-            })
-            .map(Self::LineSize)
-    }
-}
-
 /// Why a cube microkernel cannot set planes aside to only fill its stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CubeStagedFillingRefusal {
@@ -157,13 +103,12 @@ pub enum CubeStagedFillingRefusal {
 }
 
 impl CubeStagedTmaRefusal {
-    /// Why `hw` cannot deliver the stages `microkernel` walks through the space `cube_space` of
-    /// `item`'s product, over buffers as `buffers` states them, by the TMA engine, its stages held
-    /// as its instruction reads a landed one
-    /// (`PlaneFragmentMicrokernel::landed_stage_storage`);
-    /// `None` where it can.
+    /// Why the TMA engine cannot deliver the stages `microkernel` walks through the space
+    /// `cube_space` of `item`'s product, over buffers as `buffers` states them, its stages held as
+    /// its instruction reads a landed one (`PlaneFragmentMicrokernel::landed_stage_storage`);
+    /// `None` where it can. Whether the device has the engine, and whether it fills the ring, are
+    /// the delivery's own questions ([`Delivery::runs_on`], [`Delivery::holds`]).
     pub fn new(
-        hw: &Hardware,
         item: &MatmulWorkItem,
         buffers: &MatmulBuffers,
         cube_space: &MatmulCubeSpace,
@@ -171,7 +116,6 @@ impl CubeStagedTmaRefusal {
     ) -> Option<Self> {
         let stage = &microkernel.stage(cube_space);
         let storage = &microkernel.plane.landed_stage_storage(stage);
-        let ring = &microkernel.ring;
         let microkernel = &microkernel.plane;
         // Bits rather than bytes: an `e2m1` value is half of one.
         let bits = |operand: MatmulOperand| item.elements.get(operand).size_bits().max(1);
@@ -211,11 +155,7 @@ impl CubeStagedTmaRefusal {
                 .tma_swizzle(&space, cell, element.size_bits())
                 .is_ok()
         };
-        if !hw.bulk_tensor_copy() {
-            Some(Self::NoBulkTensorCopy)
-        } else if ring.prefetch == Prefetch::InRegisters {
-            Some(Self::PrefetchInRegisters)
-        } else if cube_space.batched {
+        if cube_space.batched {
             Some(Self::Batched)
         } else if let Some(blocks) = &item.blocks {
             Self::of_blocks(item, blocks, buffers, stage, storage, microkernel)
@@ -419,12 +359,6 @@ impl CubeStagedFill {
 impl From<CubeStagedTmaRefusal> for Refusal {
     fn from(refusal: CubeStagedTmaRefusal) -> Self {
         let why = match refusal {
-            CubeStagedTmaRefusal::NoBulkTensorCopy => {
-                "this device offers no bulk tensor copy for the TMA engine to fill the stages with"
-            }
-            CubeStagedTmaRefusal::PrefetchInRegisters => {
-                "the ring holds its next stage in registers, which a bulk copy never passes through"
-            }
             CubeStagedTmaRefusal::Batched => {
                 "a descriptor addresses one matrix, and the problem holds several"
             }
@@ -454,23 +388,6 @@ impl From<CubeStagedTmaRefusal> for Refusal {
             }
             CubeStagedTmaRefusal::ScalesDeeperThanATile(_) => {
                 "a stage is deeper than one of an input's tiles, and its block scales lie in tiles a box lands one tile deep"
-            }
-        };
-        Refusal::Declined { why }
-    }
-}
-
-impl From<CubeStagedAsyncCopyRefusal> for Refusal {
-    fn from(refusal: CubeStagedAsyncCopyRefusal) -> Self {
-        let why = match refusal {
-            CubeStagedAsyncCopyRefusal::NoCopyEngine => {
-                "this device offers no copy engine to fill the stages with"
-            }
-            CubeStagedAsyncCopyRefusal::PrefetchInRegisters => {
-                "the ring holds its next stage in registers, which the copy engine never passes through"
-            }
-            CubeStagedAsyncCopyRefusal::LineSize(_) => {
-                "an operand's lines are not 4, 8 or 16 bytes, the only copies the copy engine makes"
             }
         };
         Refusal::Declined { why }
