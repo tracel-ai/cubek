@@ -3,8 +3,7 @@ use crate::matmul::cube::{
     CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaRefusal, MatmulCubeSpace, MatmulPlaneLayout,
 };
 use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
-    PlaneFragmentMicrokernelSettings,
+    PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands,
@@ -392,9 +391,9 @@ impl CubeStagedMicrokernel {
         // A box the TMA engine stores is drained whole into shared memory first, and the
         // descriptor clips it at the output's edge: no fragment's window is cut short there.
         let cut_short = cube_space.overhangs_output && self.store == CubeStagedStore::Fragments;
-        let window = match self.plane.instruction.drain() {
-            PlaneFragmentDrain::Bounce => self.scratch.at_least_bouncing(true),
-            PlaneFragmentDrain::CellByCell => Scratch::None,
+        let window = match self.plane.cost.bounced_cell {
+            Some(_) => self.scratch.at_least_bouncing(true),
+            None => Scratch::None,
         };
         let bounces = merges || cut_short || item.destination == MatmulDestination::Sink;
         let scratch = match bounces {
@@ -702,7 +701,7 @@ impl Microkernel for CubeStagedMicrokernel {
                         MatmulAxes::MNK.of(self.plane.orders.innermost(MatmulOperand::Out)),
                     ),
                 });
-                if self.plane.instruction.drain() == PlaneFragmentDrain::CellByCell {
+                if self.plane.cost.bounced_cell.is_none() {
                     vectorization.require(VectorRequirement::Elementwise {
                         operand: MatmulOperand::Out,
                     });

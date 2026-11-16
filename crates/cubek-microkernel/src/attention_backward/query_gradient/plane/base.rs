@@ -4,9 +4,7 @@ use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
 };
 use crate::matmul::MatmulDim;
-use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-};
+use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Level, Levels, Partitioning, Scratch};
@@ -139,9 +137,9 @@ impl PlaneQueryGradientMicrokernel {
     /// settings', for a sum that drains by bouncing through shared memory, a cmma one; none for
     /// one whose units hold their own cells and scale them in place.
     pub fn sum_scratch(&self) -> Scratch {
-        match self.query_gradient.instruction.drain() {
-            PlaneFragmentDrain::Bounce => self.settings.scratch,
-            PlaneFragmentDrain::CellByCell => Scratch::None,
+        match self.query_gradient.cost.bounced_cell {
+            Some(_) => self.settings.scratch,
+            None => Scratch::None,
         }
     }
 
@@ -188,24 +186,19 @@ impl PlaneQueryGradientMicrokernel {
         let (score_tile, gradient_tile) = ([queries, keys, head], [queries, keys, value]);
         let query_tile = [queries, head, keys];
         let holder = settings.score;
-        let score_call = holder.sum_pick(hw, &score_item, score_tile)?;
-        let gradient_call = holder.sum_pick(hw, &gradient_item, gradient_tile)?;
-        let query_call = holder.reader_pick(hw, gradient_call, &query_item, query_tile)?;
+        let score = holder.sum_plane(hw, &score_item, grid, score_tile)?;
+        let score_gradient = holder.sum_plane(hw, &gradient_item, grid, gradient_tile)?;
         Some(Self {
             settings,
-            score: PlaneFragmentMicrokernel::holding(&score_item, grid, score_tile, score_call)?,
-            score_gradient: PlaneFragmentMicrokernel::holding(
-                &gradient_item,
-                grid,
-                gradient_tile,
-                gradient_call,
-            )?,
-            query_gradient: PlaneFragmentMicrokernel::holding(
+            query_gradient: holder.reader_plane(
+                hw,
+                &score_gradient,
                 &query_item,
                 grid,
                 query_tile,
-                query_call,
             )?,
+            score,
+            score_gradient,
         })
     }
 }
@@ -301,8 +294,8 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
             operand: Operand::QueryGradient,
             elements: self.query_gradient.leaf_extent(MatmulDim::N),
         });
-        // A manual fragment drains one cell at a time, wherever its unit holds it.
-        if self.query_gradient.instruction.drain() == PlaneFragmentDrain::CellByCell {
+        // A sum nothing bounces drains one cell at a time, wherever its unit holds it.
+        if self.query_gradient.cost.bounced_cell.is_none() {
             vectorization.require(VectorRequirement::Elementwise {
                 operand: Operand::QueryGradient,
             });

@@ -2,9 +2,7 @@ use crate::attention::plane::{PlaneFragmentAttentionMicrokernelSettings, ScoreHo
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
 };
-use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-};
+use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
@@ -148,14 +146,14 @@ impl PlaneFragmentAttentionMicrokernel {
         holders
             .iter()
             .filter_map(|&holder| {
-                let score = holder.sum_pick(hw, &score_item, score_tile)?;
-                let value = holder.reader_pick(hw, score, &value_item, value_tile)?;
+                let score = holder.sum_plane(hw, &score_item, grid, score_tile)?;
+                let value = holder.reader_plane(hw, &score, &value_item, grid, value_tile)?;
                 Some(Self {
                     settings: settings.held_in(holder),
                     read,
                     cache_stage,
-                    score: PlaneFragmentMicrokernel::holding(&score_item, grid, score_tile, score)?,
-                    value: PlaneFragmentMicrokernel::holding(&value_item, grid, value_tile, value)?,
+                    score,
+                    value,
                 })
             })
             .collect()
@@ -242,8 +240,8 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             elements: self.out_edge(),
         });
 
-        // A manual fragment drains one cell at a time, wherever its unit holds it.
-        if self.value.instruction.drain() == PlaneFragmentDrain::CellByCell {
+        // A sum nothing bounces drains one cell at a time, wherever its unit holds it.
+        if self.value.cost.bounced_cell.is_none() {
             vectorization.require(VectorRequirement::Elementwise {
                 operand: AttentionOperand::Out,
             });
