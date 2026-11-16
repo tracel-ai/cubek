@@ -8,7 +8,6 @@ mod fragment {
     use cubek_microkernel::attention::AttentionRead;
     use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
     use cubek_microkernel::matmul::cube::CubeStagedDelivery;
-    use cubek_microkernel::matmul::plane::PlaneFragmentDepth;
 
     use cubek_microkernel::attention::plane::BLOCK_ROW_BYTES;
     use cubek_std::routine::Routine;
@@ -18,9 +17,10 @@ mod fragment {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::stage::RowChunks;
-    use cubek_microkernel::attention::cube::{CubeAttentionPlane, CubeAttentionPlaneSettings};
+    use cubek_microkernel::attention::cube::CubeAttentionPlane;
     use cubek_microkernel::attention::plane::{ROW_STATE_HELD_BY_UNIT, ScoreHolder};
-    use cubek_microkernel::attention::{AttentionMicrokernel, G, Q, S};
+    use cubek_microkernel::attention::{AttentionMicrokernel, D, G, Q, S};
+    use cubek_microkernel::matmul::MatmulDim;
     use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 
     const ROUTINE: CubeStagedAttentionRoutine = CubeStagedAttentionRoutine;
@@ -53,19 +53,9 @@ mod fragment {
         ]
     }
 
-    /// Whether `settings` hold the score the whole head dim deep, which only manual-mma fragments do.
-    fn holds_whole_head(settings: &Settings) -> bool {
-        matches!(
-            settings.microkernel.plane,
-            CubeAttentionPlaneSettings::Fragment(plane)
-                if plane.score_depth == PlaneFragmentDepth::Stage
-        )
-    }
-
     /// Every setting prepares where the device offers a square instruction and a cube holds a plane
     /// for every head; one other than the default may ask for more than a cube holds, or for a
-    /// layout its planes do not read, and says so, and one holding its score the whole head dim
-    /// deep declines on these devices, which offer the cmma instruction alone.
+    /// layout its planes do not read, and says so.
     #[test]
     fn every_setting_prepares_where_planes_run() {
         for hw in [
@@ -78,8 +68,7 @@ mod fragment {
                     let declined = matches!(
                         prepared,
                         Err(Refusal::SharedMemoryPastDevice { .. } | Refusal::CubePastDevice { .. })
-                    ) || prepared.as_ref().err() == Some(&SWIZZLED_STAGE_UNREAD)
-                        || (prepared.is_err() && holds_whole_head(settings));
+                    ) || prepared.as_ref().err() == Some(&SWIZZLED_STAGE_UNREAD);
                     assert!(
                         prepared.is_ok() || (position > 0 && declined),
                         "{settings} on {hw:?}: {prepared:?}"
@@ -127,8 +116,8 @@ mod fragment {
     }
 
     /// On an NVIDIA GPU, which offers `f32` no instruction of its own, `f32` is read as tf32 and
-    /// runs on its `16×16×8`: the score's fragments are `16` queries by `16` keys over head steps
-    /// of `8`, the value's `16` of the value dim over key steps of `8`, two to the score's one.
+    /// runs on its `16×16×8`: the plane's score is `16` keys by the whole head dim, which the tile
+    /// walks in steps of `8`, and the value contracts its `16` keys in steps of `8`.
     #[test]
     fn f32_runs_on_tf32_where_the_device_offers_nothing_exact() {
         let hw = offering_nvidia(devices::h100());
@@ -144,12 +133,19 @@ mod fragment {
             AttentionRead::all(ElemType::Float(FloatKind::TF32))
         );
         assert_eq!(
-            (plane.score.tile_extent(S), plane.score.settings.depth.get()),
-            (16, 128 / 8)
+            (
+                plane.score.tile_extent(S),
+                plane.score.tile_extent(D),
+                plane.score.leaf_extent(MatmulDim::K)
+            ),
+            (16, 128, 8)
         );
         assert_eq!(
-            (plane.value.tile_extent(S), plane.value.settings.depth.get()),
-            (16, 2)
+            (
+                plane.value.tile_extent(S),
+                plane.value.leaf_extent(MatmulDim::K)
+            ),
+            (16, 8)
         );
     }
 
@@ -423,12 +419,7 @@ mod fragment {
             queries: QueryOrder::LastFirst,
             ..Settings::DEFAULT
         };
-        let whole_head = Settings {
-            microkernel: reversed.microkernel.whole_head(),
-            ..reversed
-        };
         assert_eq!(settings[1], reversed);
-        assert!(settings.contains(&whole_head));
         assert!(!reverses_queries(&settings[0]));
         assert!(reverses_queries(&settings[1]));
     }
