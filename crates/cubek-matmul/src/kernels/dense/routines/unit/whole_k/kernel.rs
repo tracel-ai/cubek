@@ -1,4 +1,4 @@
-use cubecl::tile::launch::Destination;
+use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpand};
 use cubecl::tile::{Partitioning, Semiring, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, unit_registers_microkernel};
@@ -16,7 +16,8 @@ pub fn unit_whole_k_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = O::tile::<E, VO>(out, &partitioning);
+    let dest = O::serve::<E, VO>(out, &partitioning);
+    let c = dest.tile();
 
     for plane in &partitioning {
         for unit in plane {
@@ -29,8 +30,8 @@ pub fn unit_whole_k_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
                 unit_registers_microkernel(&step, &sum, &a, &b);
             }
 
-            sum.drained_into(&c);
+            sum.consumed_by::<O::Served<E>>(&dest, &unit);
         }
     }
-    O::finish::<E>(out);
+    dest.finish();
 }
