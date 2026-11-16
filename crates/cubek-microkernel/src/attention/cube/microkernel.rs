@@ -4,7 +4,7 @@ use crate::attention::plane::{
     PlaneFragmentAttention, PlaneFragmentAttentionExpand, PlaneShuffleAttention,
     PlaneShuffleAttentionExpand, StepReads, StepReadsExpand,
 };
-use crate::attention::{B, DV, G, KV, Q, S, StepBias, VisibleKeys};
+use crate::attention::{B, DV, G, KV, Q, S, StepBias, VisibleKeys, rescale};
 use crate::split_keys_merge::plane::{
     plane_merge_rows_microkernel, plane_merge_rows_partial_microkernel,
     plane_merge_slot_rows_microkernel,
@@ -565,12 +565,11 @@ impl CubeAttentionMicrokernel {
         planes
     }
 
-    /// Every plane's rows of `cube` normalized and written into `out`, `cube`'s window of the
-    /// output. The softmax and the output read how many planes share a plane's rows off the
-    /// plane's region of the walk's first step, whether or not the walk took one. Planes that split
-    /// the same rows' keys meet here: the softmax merges their rows' state
-    /// ([`OnlineSoftmax::normalizer`](cubecl::tile::ops::softmax::OnlineSoftmax::normalizer)), and
-    /// the output sums their products
+    /// Every plane's rows of `cube` normalized where they weigh by the softmax and written into
+    /// `out`, `cube`'s window of the output. The softmax and the output read how many planes share
+    /// a plane's rows off the plane's region of the walk's first step, whether or not the walk
+    /// took one. Planes that split the same rows' keys meet here: the softmax merges their rows'
+    /// state ([`PlaneFragmentAttention::normalizer`]), and the output sums their products
     /// ([`PlanesOutput`](cubecl::tile::kind::PlanesOutput)).
     fn store_fragment_rows<EA: Float, EV: Float>(
         planes: &mut PlaneFragmentAttention<EA, EV>,
@@ -580,8 +579,8 @@ impl CubeAttentionMicrokernel {
         let mut output = out.planes_output::<EA>(cube);
 
         for plane in cube.planes() {
-            let sum = planes.sum_at(&plane);
-            sum.along(DV).mul(&planes.softmax.normalizer(&plane));
+            let mut sum = planes.sum_at(&plane);
+            rescale::<EA>(&mut sum, planes.normalizer(&plane));
             output.drain(&sum, &plane);
         }
 

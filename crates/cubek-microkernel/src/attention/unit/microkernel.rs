@@ -1,5 +1,5 @@
 use super::base::UnitAttentionMicrokernel;
-use crate::attention::{AttentionWeighting, DV, S};
+use crate::attention::{AttentionWeighting, S, rescale, weigh};
 use crate::matmul::unit::unit_registers_microkernel;
 use cubecl::tile::ops::softmax::OnlineSoftmax;
 use cubecl::tile::{Region, Semiring, Tile};
@@ -53,11 +53,11 @@ pub fn unit_attention_microkernel<EA: Float>(
         );
     }
 
-    #[comptime]
-    match microkernel.weighting {
-        AttentionWeighting::Softmax => sum.along(DV).mul(&softmax.recip_l()),
-        AttentionWeighting::Relu => {}
-    }
+    let normalizer = match microkernel.weighting {
+        AttentionWeighting::Softmax => ComptimeOption::new_Some(softmax.recip_l()),
+        AttentionWeighting::Relu => ComptimeOption::new_None(),
+    };
+    rescale::<EA>(&mut sum, normalizer);
     sum.scaled(&value_factor).drained_into(out);
 
     #[comptime]
@@ -103,14 +103,14 @@ pub(crate) fn unit_attention_step<EA: Float>(
         unit_registers_microkernel(&depth, &score, query, &key);
     }
 
-    #[comptime]
-    match microkernel.weighting {
-        AttentionWeighting::Softmax => {
-            let correction = softmax.step(&score.scaled(&key_factor), bias, scale);
-            sum.along(DV).mul(&correction);
-        }
-        AttentionWeighting::Relu => score.scaled(&key_factor).relu_weights::<EA>(bias, scale, S),
-    }
+    let correction = weigh::<EA>(
+        &score.scaled(&key_factor),
+        softmax,
+        bias,
+        scale,
+        microkernel.weighting,
+    );
+    rescale::<EA>(sum, correction);
 
     // A tile's clone is a handle to the same cells: the shared microkernel adds into the sum
     // through it.

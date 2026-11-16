@@ -4,7 +4,7 @@ use cubek_attention::kernels::CubeStagedAttentionRoutine;
 use cubek_test_utils::ScopeUnderTest;
 
 use crate::attention::{
-    Forward, PROMPT, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8, PROMPTS_WIDE_PER_TENSOR,
+    Forward, PROMPT, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8, PROMPTS_WIDE_PER_TENSOR, RELUS, relu,
 };
 
 /// The cube staged routine's lead on every prompt case.
@@ -51,4 +51,27 @@ fn every_cube_staged_setting_reads_every_fp8_cache() {
 fn every_cube_staged_setting_reads_a_cache_quantized_per_tensor() {
     let forward = Forward::new(CubeStagedAttentionRoutine);
     forward.check(forward.at_every_setting(&PROMPTS_WIDE_PER_TENSOR));
+}
+
+/// The lead weighing by relu on every relu case, and every setting on a relu prompt at a model's
+/// head dim: the planes weigh their scores where they keep them, in their windows or their
+/// fragments, and normalize nothing. A key selector's value one wide is narrower than any
+/// fragment, and declines.
+#[test]
+fn the_cube_staged_routine_weighs_by_relu() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    forward.check_some(forward.at_its_lead(&RELUS));
+    forward.check_some(forward.at_every_setting(&[relu(PROMPT_WIDE)]));
+}
+
+/// Planes that split the same rows' keys under a relu weighting only add their sums.
+#[test]
+fn planes_splitting_the_keys_add_their_relu_sums() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    let split = forward
+        .settings()
+        .into_iter()
+        .filter(|settings| settings.microkernel.planes_along_keys.get() > 1)
+        .take(1);
+    forward.check_some(forward.at(split, &[relu(PROMPT)]));
 }

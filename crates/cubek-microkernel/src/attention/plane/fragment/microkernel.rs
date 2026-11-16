@@ -1,5 +1,5 @@
 use super::{PlaneFragmentAttentionMicrokernel, ScoreHolder};
-use crate::attention::{D, DV, G, Q, S};
+use crate::attention::{AttentionWeighting, D, DV, G, Q, S, rescale, weigh};
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
 use core::marker::PhantomData;
@@ -50,9 +50,9 @@ pub struct PlaneFragmentAttention<EA: Float, EV: Float> {
     score: StageScore,
     /// The keys and values its stages are filled from, and the scales its sums take on.
     pub(crate) cache: StagedCache,
-    /// The softmax state of every plane's rows: what the cube merges where its planes split the
-    /// same rows' keys ([`OnlineSoftmax::normalizer`]).
-    pub(crate) softmax: OnlineSoftmax<EA>,
+    /// The softmax state of every plane's rows, where it weighs by the softmax: what the cube
+    /// merges where its planes split the same rows' keys ([`normalizer`](Self::normalizer)).
+    softmax: OnlineSoftmax<EA>,
     query: Tile,
     /// The element the values are read in, which the probabilities are cast to.
     #[cube(comptime)]
@@ -143,10 +143,25 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
         self.sum.at(plane).scaled(&self.cache.value_factor)
     }
 
+    /// What `plane`'s sum is multiplied by once its last stage is taken in: its rows' softmax
+    /// normalizer, merged with the planes that split the same rows' keys, a meeting of the cube
+    /// ([`OnlineSoftmax::normalizer`]); none for a relu weighting, whose planes' sums only add.
+    pub fn normalizer(&mut self, plane: &Region) -> ComptimeOption<Array<EA>> {
+        match comptime!(self.microkernel.weighting) {
+            AttentionWeighting::Softmax => ComptimeOption::new_Some(self.softmax.normalizer(plane)),
+            AttentionWeighting::Relu => ComptimeOption::new_None(),
+        }
+    }
+
     /// Each plane's rows' logsumexp, `max + ln(sum)` of their scaled scores, written into
     /// `logsumexp`, `region`'s window of it, from their state kept where the score is
-    /// ([`OnlineSoftmax::store_logsumexp`]).
+    /// ([`OnlineSoftmax::store_logsumexp`]). Only a softmax has one.
     pub fn store_logsumexp(&self, region: &Region, logsumexp: &Tile) {
+        comptime!(assert!(
+            self.microkernel.weighting == AttentionWeighting::Softmax,
+            "PlaneFragmentAttention::store_logsumexp: a logsumexp is a softmax's; a relu \
+             weighting has none"
+        ));
         for plane in region.planes() {
             self.softmax
                 .store_logsumexp(&self.score.at(&plane).scores(), &mut logsumexp.at(&plane));
@@ -283,9 +298,8 @@ impl StageScore {
         }
     }
 
-    /// One stage of one plane's rows: the scores of its keys, taken into the rows' softmax, and
-    /// the probabilities contracted with its values into `sum`, the score kept where this one
-    /// holds it.
+    /// One stage of one plane's rows: the scores of its keys, weighed as the microkernel says, and
+    /// the weights contracted with its values into `sum`, the score kept where this one holds it.
     ///
     /// `stage` is the plane's region of the stage; this score, `sum`, `query`, `key`, `value` and
     /// `bias` are windowed to the plane, and the softmax reads the score under `key_factor`, the
@@ -324,7 +338,17 @@ impl StageScore {
                 score_levels,
             ),
             StageScore::Fragments(logits) => Self::fragments_step::<EA, E>(
-                stage, sum, logits, softmax, query, key, key_factor, value, bias, scale,
+                stage,
+                sum,
+                logits,
+                softmax,
+                query,
+                key,
+                key_factor,
+                value,
+                bias,
+                scale,
+                microkernel.weighting,
             ),
         }
     }
@@ -395,14 +419,20 @@ impl StageScore {
         // The score's cells were stored in the fragments' layout; the softmax reads them by rows.
         sync_plane();
 
-        // The keys' scale multiplies the softmax's; the window holds the probabilities after it.
-        let correction = softmax.step(&scores.scaled(key_factor), bias, scale);
+        // The keys' scale multiplies the weighting's; the window holds the weights after it.
+        let correction = weigh::<EA>(
+            &scores.scaled(key_factor),
+            softmax,
+            bias,
+            scale,
+            microkernel.weighting,
+        );
         probabilities.copy_cast_from(scores);
 
-        // The probabilities land before the fragments load them.
+        // The weights land before the fragments load them.
         sync_plane();
 
-        sum.along(DV).mul(&correction);
+        rescale::<EA>(sum, correction);
 
         // A tile's clone is a handle to the same cells: the shared microkernel reads the
         // probabilities and adds into the sum through it.
@@ -432,6 +462,7 @@ impl StageScore {
         value: &Tile,
         bias: &Tile,
         scale: EA,
+        #[comptime] weighting: AttentionWeighting,
     ) {
         let mut logits = logits.clone();
         logits.reset();
@@ -445,9 +476,9 @@ impl StageScore {
             MatmulOperands::AS_BOUND,
         );
 
-        // The keys' scale multiplies the softmax's; the fragments hold the probabilities after it.
-        let correction = softmax.step(&logits.scaled(key_factor), bias, scale);
-        sum.along(DV).mul(&correction);
+        // The keys' scale multiplies the weighting's; the fragments hold the weights after it.
+        let correction = weigh::<EA>(&logits.scaled(key_factor), softmax, bias, scale, weighting);
+        rescale::<EA>(sum, correction);
 
         // The value spans no head dim: it takes the head dim's first step, and below it each step
         // of the keys, a run of the score's fragments one call of its instruction reads as its `A`.
@@ -470,8 +501,8 @@ impl StageScore {
 /// One plane's rows: the plane stages its query once and its keys and values a stage at a time,
 /// without the scales the softmax and the sum take out of them ([`StagedCache`]), holding as many
 /// stages as `ring` says, runs the plane fragment microkernel on every stage of its first `steps`
-/// steps, drains its rows into `out` normalized under the values' scale, and writes each row's
-/// logsumexp where the caller asks for it. `out`, `logsumexp`, `query`, `key`, `value` and `bias`
+/// steps, drains its rows into `out` under the values' scale, normalized where it weighs by the
+/// softmax, and writes each row's logsumexp where the caller asks for it, which only a softmax has. `out`, `logsumexp`, `query`, `key`, `value` and `bias`
 /// are windowed to `rows`; `planes` is how many planes along the queries share the cube, which a
 /// score read through windows is placed under.
 #[cube]
@@ -532,12 +563,21 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
         });
     });
 
-    sum.along(DV).mul(&softmax.recip_l());
+    let normalizer = match microkernel.weighting {
+        AttentionWeighting::Softmax => ComptimeOption::new_Some(softmax.recip_l()),
+        AttentionWeighting::Relu => ComptimeOption::new_None(),
+    };
+    rescale::<EA>(&mut sum, normalizer);
     sum.scaled(&cache.value_factor).drained_into(out);
 
     #[comptime]
     match logsumexp {
         ComptimeOption::Some(logsumexp) => {
+            comptime!(assert!(
+                microkernel.weighting == AttentionWeighting::Softmax,
+                "plane_fragment_attention_microkernel: a logsumexp is a softmax's; a relu \
+                 weighting has none"
+            ));
             softmax.store_logsumexp(&score.scores(), &mut logsumexp.clone())
         }
         ComptimeOption::None => {}

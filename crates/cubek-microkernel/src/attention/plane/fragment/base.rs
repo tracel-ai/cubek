@@ -21,7 +21,7 @@ use cubek_std::microkernel::{
 use cubek_std::{Hardware, manual_mma};
 
 /// The rows of one head a plane owns: their scores against a stage of keys in the fragments
-/// of a matrix instruction, the softmax taken where the plane keeps the score, and their outputs
+/// of a matrix instruction, weighed where the plane keeps the score, and their outputs
 /// over the whole value dim in fragments held across the walk.
 ///
 /// Its two multiplications are the shared plane fragment microkernel's: the score, `query · keyᵀ`,
@@ -44,6 +44,8 @@ pub struct PlaneFragmentAttentionMicrokernel {
     pub score: PlaneFragmentMicrokernel,
     /// The value's fragments: its rows by the whole value dim, walking a stage's keys.
     pub value: PlaneFragmentMicrokernel,
+    /// How its scores become the weights its values are summed under.
+    pub weighting: AttentionWeighting,
 }
 
 /// What a routine whose planes' rows merge with another holder's declines where a plane keeps its
@@ -87,12 +89,6 @@ impl PlaneFragmentAttentionMicrokernel {
             ])
             .planes(planes)
             .build()
-    }
-
-    /// 32-bit registers one unit keeps the softmax's running max and sum in, beside its share of
-    /// both multiplications' fragments: at most every row's, which a window's state keeps.
-    fn softmax_registers(&self, item: &AttentionWorkItem) -> u32 {
-        (2 * self.seq_q() * item.sum.size()).div_ceil(4) as u32
     }
 
     /// The score as the shared microkernel is handed it: summed into the plane's window.
@@ -197,6 +193,7 @@ impl PlaneFragmentAttentionMicrokernel {
                         k_stated: crate::matmul::plane::PlaneFragmentKStatement::Caller,
                         unit: PlaneUnit::Instruction,
                     },
+                    weighting: item.weighting,
                 })
             })
             .collect()
@@ -303,7 +300,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
          number of its fragments deep that the plane's keys divide into, of the operands' element \
          summing in f32, \
          whose k divides the head dim and whose n divides the value dim and the stage's keys, on a \
-         device that commits to one plane width; it weighs its rows' scores by their softmax only";
+         device that commits to one plane width";
 
     /// A star off the default: each other tile shape, the whole grid bounced at once, and
     /// the score read through the windows.
@@ -333,7 +330,6 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let candidates: Vec<_> = item
             .readings()
-            .filter(|_| item.weighting == AttentionWeighting::Softmax)
             .flat_map(|read| {
                 let mut reading = Self::reading(hw, item, read, *settings);
                 reading.sort_by_key(|candidate| candidate.score_holder() != settings.score);
@@ -378,8 +374,8 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
     }
 
     /// Each multiplication's shared microkernel sets the work of its fragments; the plane's units
-    /// hold both at once, beside the softmax's state of every row, on the matrix instruction both
-    /// run. Its stages are its routine's to count.
+    /// hold both at once, beside its weighting's state of at most every row, which a window's
+    /// state keeps, on the matrix instruction both run. Its stages are its routine's to count.
     fn estimate(
         &self,
         item: &AttentionWorkItem,
@@ -392,14 +388,14 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
         let score = estimate.work.take();
         self.value
             .estimate(&Self::value_item(item), &(), planes, estimate);
-        let softmax = UnitWork {
+        let weighting = UnitWork {
             instruction: ArithmeticInstruction::Matrix,
-            registers: self.softmax_registers(item),
+            registers: self.weighting.state_registers(self.seq_q(), item.sum),
         };
 
         estimate.work = score
             .zip(estimate.work)
-            .map(|(score, value)| score.beside(value).beside(softmax));
+            .map(|(score, value)| score.beside(value).beside(weighting));
     }
 }
 

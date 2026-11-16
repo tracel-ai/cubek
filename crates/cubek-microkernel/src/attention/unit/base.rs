@@ -81,18 +81,6 @@ impl UnitAttentionMicrokernel {
         .walk_every(&[D])
     }
 
-    /// 32-bit registers one unit keeps its weighting's state in, beside both multiplications'
-    /// blocks: the softmax's running max and sum of every row; nothing for a relu, which weighs
-    /// each score on its own.
-    fn weighting_registers(&self, item: &AttentionWorkItem) -> u32 {
-        match self.weighting {
-            AttentionWeighting::Softmax => {
-                (2 * self.settings.seq_q.get() * item.sum.size()).div_ceil(4) as u32
-            }
-            AttentionWeighting::Relu => 0,
-        }
-    }
-
     /// Keys one step scores.
     pub fn seq_kv(&self) -> usize {
         self.settings.seq_kv.get()
@@ -218,7 +206,9 @@ impl Microkernel for UnitAttentionMicrokernel {
             .estimate(&Self::value_item(item), &(), planes, estimate);
         let weighting = UnitWork {
             instruction: ArithmeticInstruction::Vector,
-            registers: self.weighting_registers(item),
+            registers: self
+                .weighting
+                .state_registers(self.settings.seq_q.get(), item.sum),
         };
         estimate.work = score
             .zip(estimate.work)

@@ -563,13 +563,22 @@ impl<L: AttentionLaunch> ScopeUnderTest for Forward<L> {
     /// are cast to `e4m3` beside them, where the device multiplies them on its FP8 instruction:
     /// three bits of mantissa, a relative step of 2⁻⁴ on each weight, which the output carries
     /// times the values, so under the values' scale where they have one.
+    ///
+    /// A relu weighting is not normalized: the output sums every seen key's weight times its
+    /// value, each weight rounded to the values' `f16` where the device multiplies them on a
+    /// matrix instruction, half an ulp, 2⁻¹² of itself. With weights and values of about one,
+    /// that error grows with the keys summed.
     fn tolerance(&self, case: &Self::Case) -> f32 {
-        match case.case.values {
+        let softmax = match case.case.values {
             FloatKind::E4M3 => {
                 let scale = case.case.scales.map_or(1.0, |scales| scales.value.max(1.0));
                 2e-2 * scale
             }
             _ => 1e-2,
+        };
+        match case.case.weighting {
+            AttentionWeighting::Softmax => softmax,
+            AttentionWeighting::Relu => softmax.max(case.case.seq_kv as f32 / 4096.0),
         }
     }
 }

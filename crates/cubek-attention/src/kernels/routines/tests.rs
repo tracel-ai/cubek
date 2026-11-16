@@ -5,7 +5,9 @@ use crate::kernels::test_support::{offering, qwen};
 use crate::kernels::*;
 use cubecl::tile::stage::Prefetch;
 use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
-use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperands, Q, S};
+use cubek_microkernel::attention::{
+    AttentionMicrokernel, AttentionOperands, AttentionWeighting, Q, S,
+};
 use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 use cubek_std::routine::Routine;
 use cubek_std::{Hardware, devices};
@@ -290,4 +292,45 @@ fn every_fp8_cache_is_read_at_a_prompt_and_at_a_decode_step() {
             "the unit routine reads {key:?} keys beside {value:?} values"
         );
     }
+}
+
+/// A relu weighting runs on the unit routine and the staged cube, whose plane fragments weigh
+/// where they keep the score; every routine whose partials meet under a softmax's running max and
+/// sum declines it at every setting, the plane shuffles' and the hypercubes'.
+#[test]
+fn a_relu_weighting_runs_where_nothing_merges_softmax_state() {
+    let hw = offering(devices::m2_pro(), 8);
+    for problem in [qwen(512, 512), qwen(1, 4096)] {
+        let relu = AttentionRoutineProblem {
+            weighting: AttentionWeighting::Relu,
+            ..problem
+        };
+        assert!(prepares(UnitAttentionRoutine, &hw, &relu));
+        assert!(!prepares(CubeShuffleAttentionRoutine, &hw, &relu));
+        assert!(!prepares(
+            HypercubeLastArrivalShuffleAttentionRoutine::new(),
+            &hw,
+            &relu
+        ));
+        assert!(!prepares(
+            HypercubeShufflePartialAttentionRoutine::new(),
+            &hw,
+            &relu
+        ));
+        assert!(!prepares(
+            HypercubeFragmentPartialAttentionRoutine,
+            &hw,
+            &relu
+        ));
+        assert!(!prepares(
+            HypercubeStreamFragmentAttentionRoutine,
+            &hw,
+            &relu
+        ));
+    }
+    let prompt = AttentionRoutineProblem {
+        weighting: AttentionWeighting::Relu,
+        ..qwen(512, 512)
+    };
+    assert!(prepares(CubeStagedAttentionRoutine, &hw, &prompt));
 }
