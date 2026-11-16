@@ -1,5 +1,5 @@
 use super::base::PlaneRmsNormMicrokernel;
-use crate::rms_norm::{HeldRow, RmsNormScale, RowReader};
+use crate::rms_norm::{GatedRow, HeldRow, RmsNormScale};
 use crate::row_store::OwnerLines;
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Monoid, Tile};
@@ -18,8 +18,8 @@ pub fn plane_rms_norm_microkernel<E: Float, H: Float, W: Float, N: Size>(
     #[comptime] microkernel: PlaneRmsNormMicrokernel,
 ) {
     let lane = UNIT_POS_PLANE as usize;
-    let reader = RowReader::new(input, gate, microkernel.gate);
+    let gated = GatedRow::new(input, gate, microkernel.gate);
     let mut row = HeldRow::<H, N>::new(microkernel.held_row());
-    let sum = UnitShare::Plane.reduce::<f32>(row.load::<E>(&reader, lane), Monoid::Sum);
-    row.write::<E, W>(&reader, weight, out, lane, scale.of(sum));
+    let sum = UnitShare::Plane.reduce::<f32>(row.load::<E>(&gated, lane), Monoid::Sum);
+    row.write::<E, W>(&gated, weight, out, lane, scale.of(sum));
 }

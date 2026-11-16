@@ -1,5 +1,5 @@
 use super::base::CubeRmsNormMicrokernel;
-use crate::rms_norm::{HeldRow, RmsNormScale, RowReader};
+use crate::rms_norm::{GatedRow, HeldRow, RmsNormScale};
 use crate::row_store::{CubeStage, CubeStore};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Monoid, Region, Tile};
@@ -29,13 +29,13 @@ pub fn cube_rms_norm_microkernel<E: Float, H: Float, W: Float, N: Size>(
     for plane in cube {
         // The cube's planes lie along `y`, as its resources state them.
         let (slot, lane) = (UNIT_POS_Y as usize, UNIT_POS_PLANE as usize);
-        let reader = RowReader::new(
+        let gated = GatedRow::new(
             &input.at(&plane),
-            &RowReader::windowed(gate, &plane),
+            &GatedRow::windowed(gate, &plane),
             microkernel.plane.gate,
         );
         let mut row = HeldRow::<H, N>::new(microkernel.plane.held_row());
-        let run = UnitShare::Plane.reduce::<f32>(row.load::<E>(&reader, lane), Monoid::Sum);
+        let run = UnitShare::Plane.reduce::<f32>(row.load::<E>(&gated, lane), Monoid::Sum);
 
         let mut slots = Shared::<[f32]>::new_slice(planes);
         if lane == 0 {
@@ -55,7 +55,7 @@ pub fn cube_rms_norm_microkernel<E: Float, H: Float, W: Float, N: Size>(
         let run_lines = microkernel.plane.held_row().lines;
         let mut run_out = store.owner(&plane, slot * run_lines);
         row.write::<E, W>(
-            &reader,
+            &gated,
             &weight.at(&plane),
             &mut run_out,
             lane,

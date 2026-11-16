@@ -3,7 +3,7 @@ use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpa
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::rms_norm::plane::{PlaneRmsNormMicrokernel, plane_rms_norm_microkernel};
-use cubek_microkernel::rms_norm::{RmsNormScale, RowReader};
+use cubek_microkernel::rms_norm::{GatedRow, RmsNormScale};
 use cubek_microkernel::row_store::OwnerLines;
 
 /// Every plane of the launch, running its row.
@@ -30,7 +30,7 @@ pub fn plane_rms_norm_kernel<E: Float, H: Float, W: Float, N: Size, O: Destinati
         let mut row_out = OwnerLines::window(o.at(&plane));
         plane_rms_norm_microkernel::<E, H, W, N>(
             &x.at(&plane),
-            &RowReader::windowed(&z, &plane),
+            &GatedRow::windowed(&z, &plane),
             &w.at(&plane),
             &mut row_out,
             &scale,

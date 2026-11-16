@@ -3,12 +3,11 @@ use crate::rms_norm::GateOrder;
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
-/// What an owner's units read a row's lines from: the input's tile, and the gate's where the norm
-/// is gated. It emits the lines the norm sums and scales, which are the input's, or the input's
-/// times the silu of the gate's where the gate comes first, and applies the gate to the lines the
-/// norm writes where it comes last.
+/// A row of the norm's input and, where the norm is gated, of its gate. It yields the lines the
+/// norm sums and scales, gated where the gate comes first, and gates the lines the norm writes
+/// where it comes last.
 #[derive(CubeType)]
-pub struct RowReader {
+pub struct GatedRow {
     input: Tile,
     gate: ComptimeOption<Tile>,
     #[cube(comptime)]
@@ -16,15 +15,15 @@ pub struct RowReader {
 }
 
 #[cube]
-impl RowReader {
-    /// The reader of `input` and, where the norm is gated, `gate`, both windowed to the owner's
+impl GatedRow {
+    /// The row of `input` and, where the norm is gated, `gate`, both windowed to the owner's
     /// run.
     pub fn new(
         input: &Tile,
         gate: &ComptimeOption<Tile>,
         #[comptime] order: Option<GateOrder>,
     ) -> Self {
-        RowReader {
+        GatedRow {
             input: input.clone(),
             gate: gate.clone(),
             order,

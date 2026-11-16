@@ -1,5 +1,5 @@
 use super::base::{CubeGroupsRmsNormMicrokernel, GroupSum};
-use crate::rms_norm::{HeldRow, RmsNormScale, RowReader};
+use crate::rms_norm::{GatedRow, HeldRow, RmsNormScale};
 use crate::row_store::{CubeStage, CubeStore};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Monoid, Region, Tile};
@@ -33,13 +33,13 @@ pub fn cube_groups_rms_norm_microkernel<E: Float, H: Float, W: Float, N: Size>(
         // A group's units lie along `x` and the cube's groups along `y`, as its resources state
         // them.
         let (slot, unit) = (UNIT_POS_Y as usize, UNIT_POS_X as usize);
-        let reader = RowReader::new(
+        let gated = GatedRow::new(
             &input.at(&group),
-            &RowReader::windowed(gate, &group),
+            &GatedRow::windowed(gate, &group),
             microkernel.gate,
         );
         let mut row = HeldRow::<H, N>::new(microkernel.held_row());
-        let partial = row.load::<E>(&reader, unit);
+        let partial = row.load::<E>(&gated, unit);
 
         let sum = match microkernel.sum {
             GroupSum::Alone => partial,
@@ -95,7 +95,7 @@ pub fn cube_groups_rms_norm_microkernel<E: Float, H: Float, W: Float, N: Size>(
         let row_lines = microkernel.held_row().lines;
         let mut row_out = store.owner(&group, slot * row_lines);
         row.write::<E, W>(
-            &reader,
+            &gated,
             &weight.at(&group),
             &mut row_out,
             unit,

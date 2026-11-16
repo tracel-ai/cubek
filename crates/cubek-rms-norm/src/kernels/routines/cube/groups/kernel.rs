@@ -5,7 +5,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::rms_norm::cube::{
     CubeGroupsRmsNormMicrokernel, cube_groups_rms_norm_microkernel,
 };
-use cubek_microkernel::rms_norm::{RmsNormScale, RowReader};
+use cubek_microkernel::rms_norm::{GatedRow, RmsNormScale};
 use cubek_microkernel::row_store::CubeStage;
 
 /// Every cube, running its groups' rows, written out as `stage` says.
@@ -34,7 +34,7 @@ pub fn cube_groups_rms_norm_kernel<E: Float, H: Float, W: Float, N: Size, O: Des
         cube_groups_rms_norm_microkernel::<E, H, W, N>(
             &cube,
             &x.at(&cube),
-            &RowReader::windowed(&z, &cube),
+            &GatedRow::windowed(&z, &cube),
             &w.at(&cube),
             &o.at(&cube),
             &scale,

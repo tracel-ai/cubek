@@ -1,4 +1,4 @@
-use crate::rms_norm::RowReader;
+use crate::rms_norm::GatedRow;
 use crate::row_store::OwnerLines;
 use cubecl::ir::ElemType;
 use cubecl::tile::{Monoid, Tile};
@@ -42,7 +42,7 @@ impl HeldRowShape {
 /// squared into the unit's partial in `f32` as it lands, then scaled and written out of the
 /// registers, held as `H`. An `f16` square-sum would overflow at a magnitude of about 256.
 ///
-/// Unit `unit` holds lines `unit + i · units` of the row its reader reads ([`HeldRowShape`]).
+/// Unit `unit` holds lines `unit + i · units` of a [`GatedRow`] ([`HeldRowShape`]).
 #[derive(CubeType)]
 pub(crate) struct HeldRow<H: Float, N: Size> {
     lines: Array<Vector<H, N>>,
@@ -60,22 +60,22 @@ impl<H: Float, N: Size> HeldRow<H, N> {
         }
     }
 
-    /// Unit `unit`'s lines of the row `reader` reads, whose input is of element `E`, held in the
-    /// registers; returns the sum of their squares.
+    /// Unit `unit`'s lines of `gated`, whose input is of element `E`, held in the registers;
+    /// returns the sum of their squares.
     ///
     /// The view masks the tensor's bounds, not the run's, so a unit's last line, which lies past
     /// the run where the units do not divide it, is read clamped onto the run's last and left out
     /// of the sum. It is read rather than skipped so that every register holds a line: one left at
     /// the zero the compiler starts it at is a zero vector cubecl's constant evaluation cannot cast.
-    pub fn load<E: Float>(&mut self, reader: &RowReader, unit: usize) -> f32 {
+    pub fn load<E: Float>(&mut self, gated: &GatedRow, unit: usize) -> f32 {
         let shape = comptime!(self.shape);
-        let width = reader.vector_size();
+        let width = gated.vector_size();
 
         let mut partial = 0.0f32;
         #[unroll]
         for i in 0..shape.per_unit() {
             let line = unit + i * shape.units;
-            let held = reader.line::<E, H, N>(min(line, shape.lines - 1));
+            let held = gated.line::<E, H, N>(min(line, shape.lines - 1));
             self.lines[i] = held;
             if shape.lines.is_multiple_of(shape.units) || line < shape.lines {
                 let wide = Vector::<f32, N>::cast_from(held);
@@ -91,7 +91,7 @@ impl<H: Float, N: Size> HeldRow<H, N> {
     /// rounded once. `out` and `weight` are the owner's run, and a line past it is not written.
     pub fn write<E: Float, W: Float>(
         &self,
-        reader: &RowReader,
+        gated: &GatedRow,
         weight: &Tile,
         out: &mut OwnerLines,
         unit: usize,
@@ -107,7 +107,7 @@ impl<H: Float, N: Size> HeldRow<H, N> {
                 let scaled = Vector::<f32, N>::cast_from(self.lines[i])
                     * Vector::<f32, N>::cast_from(factor)
                     * Vector::<f32, N>::cast_from(weights.read(line));
-                let written = reader.written::<E, N>(line, scaled);
+                let written = gated.written::<E, N>(line, scaled);
                 out.write::<W, N>(line, Vector::<W, N>::cast_from(written));
             }
         }

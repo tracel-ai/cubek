@@ -8,7 +8,7 @@
 //! computed in `f32` and rounded once to the output element.
 //!
 //! A gate multiplies by `silu(gate)` either the row before the norm, held in `f32`, or the
-//! normalized row after it ([`GateOrder`]); a [`RowReader`] reads the lines the norm sums and
+//! normalized row after it ([`GateOrder`]); a [`GatedRow`] reads the lines the norm sums and
 //! applies the gate to the ones it writes.
 //!
 //! What tells the scopes apart is only where the partials meet: across a plane's lanes, across a
@@ -17,18 +17,18 @@
 
 pub mod cube;
 mod gate;
+mod gated_row;
 mod held_row;
 mod operand;
 mod partitioning;
 pub mod plane;
-mod row_reader;
 mod scale;
 mod work_item;
 
 pub use gate::*;
+pub use gated_row::*;
 pub use held_row::*;
 pub use operand::*;
 pub use partitioning::*;
-pub use row_reader::*;
 pub use scale::*;
 pub use work_item::*;
