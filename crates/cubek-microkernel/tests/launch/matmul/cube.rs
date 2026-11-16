@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Axis, Partitioning, SoftwareMatmul, StageStorage, TileTensor};
+use cubecl::tile::{Axis, Partitioning, SoftwareMatmul, StageStorage, Tile, TileTensor};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings, CubeStagedMicrokernel,
@@ -279,11 +279,12 @@ fn cube_staged_kernel<EA: Numeric, EL: Numeric>(
     let c = out.tile(&partitioning);
     for cube in &partitioning {
         let b = b.at(&cube);
-        cube_staged_microkernel::<EA>(
+        cube_staged_microkernel::<EA, Tile>(
             cube.walk_within(&b),
             &a.at(&cube),
             &b,
-            &c.at(&cube),
+            &c,
+            &cube,
             walk,
             storage.clone(),
         );
