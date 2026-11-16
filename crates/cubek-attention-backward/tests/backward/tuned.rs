@@ -1,4 +1,4 @@
-//! The entry point, which races the routines, against the host's backward pass.
+//! The entry point, which races the strategies, against the host's backward pass.
 
 use super::reference::{Case, Reference};
 use cubecl::prelude::*;
@@ -21,7 +21,7 @@ const CASE: Case = Case {
     hidden: None,
 };
 
-/// Whichever routine autotune elects, the gradients are the host's.
+/// Whichever strategy autotune elects, the gradients are the host's.
 #[test]
 fn the_tuned_backward_pass_matches_the_reference() {
     let device = cubecl::test_device();

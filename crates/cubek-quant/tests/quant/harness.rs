@@ -91,8 +91,8 @@ pub(crate) fn quantize(
     (values, scales, out_global)
 }
 
-/// Reconstruct `values` into a fresh `out_dtype` tensor, a buffer of its own so an element the
-/// kernel never wrote reads as a mismatch rather than as whatever was there before.
+/// Reconstruct `values` into a fresh `out_dtype` tensor poisoned with NaN, so an element the
+/// kernel never wrote reads as a mismatch rather than as a plausible zero.
 pub(crate) fn dequantize(
     client: &Client,
     scheme: &QuantScheme,
@@ -102,7 +102,10 @@ pub(crate) fn dequantize(
     shape: &Shape,
     out_dtype: ElemType,
 ) -> TensorHandle {
-    let out = TensorHandle::zeros(client, shape.clone(), out_dtype);
+    let out = TestInput::builder(client.clone(), shape.clone())
+        .dtype(out_dtype)
+        .custom(vec![f32::NAN; shape.iter().product()])
+        .generate_without_host_data();
 
     let mut bindings = vec![scales.clone().binding()];
     if let Some(global) = global {

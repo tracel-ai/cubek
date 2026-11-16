@@ -32,6 +32,7 @@ cubek-test-utils = { workspace = true, optional = true }
 serde = { workspace = true }
 
 [dev-dependencies]
+cubek-test-utils = { workspace = true }
 half = { workspace = true }
 
 cubecl = { workspace = true, features = ["test-runtime"] }

@@ -2,9 +2,9 @@ use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// `sum += a · b` over one step of `plane`: each unit adds its block. The caller opens `sum` (an
-/// `accumulator` of `Instruction::Registers` at
-/// [`tile_instruction`](crate::matmul::plane::PlaneShuffleMicrokernel::tile_instruction)), walks
+/// `sum += a · b` over one step of `plane`: each unit adds its block. The caller opens `sum` (a
+/// `register_accumulator` of the
+/// [`block`](crate::matmul::plane::PlaneShuffleMicrokernel::block)), walks
 /// `K` and drains it; the drain sums the units' partials across the plane. Each unit reads its
 /// window of each operand as `reads` says.
 #[cube]

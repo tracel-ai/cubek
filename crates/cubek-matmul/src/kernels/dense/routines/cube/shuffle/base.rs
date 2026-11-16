@@ -426,7 +426,7 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
                 binding.rhs,
                 O::arg(binding.out),
                 binding.launcher.partitioning_arg(),
-                microkernel.plane.tile_instruction(),
+                microkernel.plane.software_matmul(),
                 microkernel.meet,
                 microkernel.split(),
                 microkernel.planes_along_k.get(),

@@ -72,9 +72,13 @@ impl<M: AttentionMicrokernel, SM> AttentionBlueprint<M, SM> {
                 ));
             }
         }
-        let widths = problem
-            .elements
-            .map(|operand, element| vectorization.width(operand, |_| hw.vector_ceiling(element)));
+        // An operand lined with others takes the narrowest width any of them reads at, each at
+        // its own element: `e4m3` keys lined with `f16` values bind at the values' width.
+        let widths = problem.elements.map(|operand, _| {
+            vectorization.width(operand, |member| {
+                hw.vector_ceiling(problem.elements.get(member))
+            })
+        });
         Self {
             microkernel,
             partitioning,

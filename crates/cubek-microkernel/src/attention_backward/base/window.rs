@@ -41,24 +41,20 @@ impl ScoreWindows {
         }
     }
 
-    /// A tile over the box of one step's score, keys first, which the gradients' sums are opened
-    /// against: the windows' scores, or, held in fragments, an accumulator over the same box
-    /// opened against `key`, which holds no memory.
-    pub fn scores_box<EA: Float>(
+    /// What each step contracts a gradient's sum with, over the box of one step's score laid out
+    /// along `axes`, which the sum is opened against: the windows' cast to the operands' element,
+    /// or, held in fragments, an accumulator over the same box opened against `against`, which
+    /// holds no memory.
+    pub fn cast_box<EA: Float>(
         windows: &ComptimeOption<ScoreWindows>,
         walk: &Walk,
-        key: &Tile,
-        #[comptime] score: PlaneFragmentMicrokernel,
+        #[comptime] axes: Vec<Axis>,
+        against: &Tile,
     ) -> Tile {
         #[comptime]
         match windows {
-            ComptimeOption::Some(windows) => windows.scores.clone(),
-            ComptimeOption::None => Tile::stage_accumulator::<EA>(
-                walk,
-                comptime!(vec![S, Q]),
-                key,
-                score.tile_instruction(),
-            ),
+            ComptimeOption::Some(windows) => windows.cast.clone(),
+            ComptimeOption::None => Tile::stage_accumulator::<EA>(walk, axes, against),
         }
     }
 
@@ -140,8 +136,7 @@ impl ScoreWindows {
     ) {
         // The accumulator, cut to the product's own grid below the planes' level.
         let placed = window.with_levels(1usize, levels);
-        let instruction = product.tile_instruction();
-        let mut sum = placed.accumulator::<EA>(lhs, rhs, instruction, Semiring::SUM_PROD);
+        let mut sum = placed.accumulator::<EA>(lhs, rhs, Semiring::SUM_PROD);
         sum.zero();
 
         ScoreWindows::contract_fragments(&sum, lhs, rhs, product);
@@ -197,8 +192,7 @@ impl ScoreWindows {
         #[comptime] product: PlaneFragmentMicrokernel,
         #[comptime] levels: Vec<Level>,
     ) -> Tile {
-        let sum =
-            Tile::placed_accumulator::<EA>(space, 1usize, levels, lhs, product.tile_instruction());
+        let sum = Tile::placed_accumulator::<EA>(space, 1usize, levels, lhs);
         ScoreWindows::contract_fragments(&sum, lhs, rhs, product);
         sum
     }

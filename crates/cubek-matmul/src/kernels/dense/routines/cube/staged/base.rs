@@ -71,18 +71,23 @@ impl<'a> CubeStagedPlacement<'a> {
         let item = view.work_item();
         CubeStagedMicrokernel::admits(&item)?;
         let by_units = fill.delivery == CubeStagedDelivery::Copy;
+        // An operand the TMA engine lands is read in the instruction the tile layer picks for
+        // landed operands: the planes take the first candidate whose sum it opens, as it opens it.
         let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
-            .find(|candidate| {
+            .filter(|candidate| {
                 by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
+            })
+            .find_map(|candidate| {
+                CubeStagedMicrokernel {
+                    fill,
+                    store,
+                    ..candidate
+                }
+                .summed(hw, &item)
             })
             .ok_or(Refusal::Declined {
                 why: CubeStagedMicrokernel::decline(settings),
             })?;
-        let microkernel = CubeStagedMicrokernel {
-            fill,
-            store,
-            ..microkernel
-        };
         if microkernel.walk().decoded().is_some() {
             view.check_steps(hw)?;
         }
@@ -167,7 +172,10 @@ impl<'a> CubeStagedPlacement<'a> {
             ..
         } = self;
         let microkernel = resolved.microkernel;
-        problem.check_block_scales(microkernel.block_scales())?;
+        problem.check_block_scales(
+            microkernel.block_scales(),
+            microkernel.fill.delivery == CubeStagedDelivery::Tma,
+        )?;
         let partitioning = view.partitioning(
             microkernel.launch_tiling(),
             &[item.axes.m, item.axes.n],

@@ -2,6 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
+use cubek_microkernel::attention_backward::delta::plane::plane_delta_microkernel;
 use cubek_microkernel::attention_backward::key_gradient::plane::{
     PlaneKeyGradientMicrokernel, plane_fragment_key_gradient_microkernel,
 };
@@ -123,5 +124,22 @@ pub fn plane_fragment_key_gradient_kernel<EA: Float, ES: Float>(
             ring,
             planes,
         );
+    }
+}
+
+/// Every plane of the launch writing its queries' dot product of the output with its gradient.
+#[cube(launch_unchecked)]
+pub fn plane_delta_kernel<EA: Float>(
+    out: &TileTensor<'_>,
+    out_gradient: &TileTensor<'_>,
+    delta: &TileTensor<'_>,
+    partitioning: Partitioning,
+    #[define(EA)] _sum: ElemType,
+) {
+    let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
+    let delta = delta.tile(&partitioning);
+
+    for plane in &partitioning {
+        plane_delta_microkernel::<EA>(&plane, &delta.at(&plane), &d_o.at(&plane), &o.at(&plane));
     }
 }
