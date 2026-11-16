@@ -141,13 +141,10 @@ impl AttentionKey {
     /// keys, 3600 against 4288 µs at 131072). Keyed at the shallow prefix, every chunk of a long
     /// prompt ran the shallow winner.
     ///
-    /// The splits rank by depth too. Keyed sixteen chunks in, the split box elected four cubes
-    /// along the keys, the fastest at 8192 keys (240 µs against 248 for seven, at 128 head dim,
-    /// 32/8 heads, f16), but deeper seven and ten lead: 3153 and 3124 µs against 3261 at 131072
-    /// keys. Summed over every chunk of a prompt, seven cubes take 2.6% less attention than four
-    /// over 131072 positions in f16 and 3.8% less over an e4m3 cache, and the same or 1.5% less
-    /// over 32768; seven is also the winner at 32768 keys, where the key now stands. A prompt of
-    /// a few chunks pays up to 3% on attention that is milliseconds long.
+    /// How many cubes the split box takes along the keys ranks by depth too: four lead at 8192
+    /// keys, seven and ten from 32768 on. Keyed at 32768, a long prompt's deep chunks run their
+    /// own winner, and a prompt of a few chunks pays a few percent on attention that is
+    /// milliseconds long.
     pub const CHUNK_PREFIX: usize = 64 * Self::CHUNK_QUERIES;
 
     /// Whether the queries are the tail of a longer attended prefix rather
