@@ -17,7 +17,7 @@ use cubek_microkernel::linear_recurrence::walk::cube::{
 use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkItem, UpdateRule};
 use cubek_microkernel::linear_recurrence::{
     BATCH, HEAD_IN_GROUP, KEY_FEATURE, KEY_HEAD, POSITION, RATE, RecurrenceHeads,
-    RecurrenceWalkPartitioning, VALUE_FEATURE,
+    RecurrencePartitioning, VALUE_FEATURE,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
@@ -89,7 +89,7 @@ impl WalkLaunch {
             (KEY_FEATURE, heads.key_features),
             (VALUE_FEATURE, heads.value_features),
         ]);
-        let partitioning = RecurrenceWalkPartitioning::new(
+        let partitioning = RecurrencePartitioning::walk(
             space.clone(),
             microkernel.tiling(None).planes(&[(VALUE_FEATURE, 1)]),
         )
