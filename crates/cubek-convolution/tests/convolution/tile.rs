@@ -120,12 +120,14 @@ impl Accepts {
         match self {
             Self::Instruction => states(CONV_INSTRUCTION_UNOFFERED),
             Self::Taps => Self::Instruction.covers(message) || states(CMMA_STEP_ACROSS_TAPS),
-            Self::Listed => {
-                Self::Taps.covers(message)
-                    || states(CONV_WGMMA_UNSERVED)
-                    || message.contains("SharedMemoryPastDevice")
-            }
+            Self::Listed => Self::Taps.covers(message) || Self::listed_alone(message),
         }
+    }
+
+    /// The refusals only a listed setting meets: a holder other than a plane, and a stage past
+    /// the device's shared memory.
+    fn listed_alone(message: &str) -> bool {
+        message.contains(why(CONV_WGMMA_UNSERVED)) || message.contains("SharedMemoryPastDevice")
     }
 }
 
@@ -155,12 +157,12 @@ impl<const N: usize> ConvRoutine<N> for Tile {
             conv.args(),
             conv.matmul_elems(),
         );
-        match launched {
-            Err(error) if !self.accepts.covers(&format!("{error:?}")) => {
-                panic!("a setting that serves this problem refused it: {error:?}")
-            }
-            launched => launched,
-        }
+        launched.inspect_err(|error| {
+            assert!(
+                self.accepts.covers(&format!("{error:?}")),
+                "a setting that serves this problem refused it: {error:?}"
+            )
+        })
     }
 }
 
@@ -308,10 +310,8 @@ mod cube {
                 },
                 Declines::AsItStates,
             );
-            if let Ok(outcome) = scope.attempt(&client, &ConvCase { conv, pass }) {
-                outcome.enforce();
-                served += 1;
-            }
+            let attempt = scope.attempt(&client, &ConvCase { conv, pass });
+            served += usize::from(attempt.map(|outcome| outcome.enforce()).is_ok());
         }
         assert!(served > 0, "no listed setting serves {pass:?}");
     }

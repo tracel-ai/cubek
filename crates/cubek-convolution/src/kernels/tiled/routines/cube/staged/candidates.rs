@@ -45,20 +45,22 @@ impl<'a> ConvCandidates<'a> {
             .enumerate()
             .min_by_key(|(_, shape)| shape.rows)
             .map(|(position, _)| position);
+        let around = instructions
+            .iter()
+            .enumerate()
+            .flat_map(|(position, shape)| {
+                let across = narrowest == Some(position);
+                self.around(Self::base(shape), shape, across)
+                    .into_iter()
+                    .map(move |settings| (settings, shape))
+            });
+        let one_wide = instructions
+            .first()
+            .map(|largest| (Self::base(largest).width_one(), largest));
         let mut list = Vec::new();
-        let mut keep = |settings: ConvSettings, shape: &InstructionShape| {
+        for (settings, shape) in around.chain(one_wide) {
             if self.fits(shape, &settings) && !list.contains(&settings) {
                 list.push(settings);
-            }
-        };
-        for (position, shape) in instructions.iter().enumerate() {
-            let base = Self::base(shape);
-            let across = narrowest == Some(position);
-            for settings in self.around(base, shape, across) {
-                keep(settings, shape);
-            }
-            if position == 0 {
-                keep(base.width_one(), shape);
             }
         }
         list
