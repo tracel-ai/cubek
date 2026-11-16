@@ -16,6 +16,8 @@ workspace = true
 [features]
 default = ["std", "cubecl/default"]
 std = ["cubecl/std", "cubek-std/std"]
+# Autotune compares every candidate's output against the first's: a debugging instrument.
+autotune-checks = ["cubecl/autotune-checks", "cubek-matmul/autotune-checks"]
 
 [dependencies]
 cubek-matmul = { workspace = true, features = ["tiled"] }

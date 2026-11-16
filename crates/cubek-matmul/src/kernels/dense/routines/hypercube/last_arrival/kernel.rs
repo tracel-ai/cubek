@@ -1,4 +1,4 @@
-use cubecl::tile::launch::Destination;
+use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpand};
 use cubecl::tile::{Partitioning, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::hypercube::{
@@ -33,7 +33,8 @@ pub fn hypercube_last_arrival_matmul_kernel<
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = O::tile::<E, VO>(out, &partitioning);
+    let dest = O::serve::<E, VO>(out, &partitioning);
+    let c = dest.tile();
 
     // The walk under the cubes steps a tile's `K` a stage at a time: what a run is counted in.
     let stages = comptime!(partitioning.levels()[1].clone());
@@ -44,7 +45,7 @@ pub fn hypercube_last_arrival_matmul_kernel<
         let (from, steps) = portion.steps(i);
 
         let merge = slots.last_arrival::<VO>(&partitioning, &portion, i, arrivals);
-        hypercube_staged_last_arrival_microkernel::<EA, EL>(
+        hypercube_staged_last_arrival_microkernel::<EA>(
             tile.over(&stages).range(from, steps),
             &a.at(&tile),
             &b.at(&tile),
@@ -54,5 +55,5 @@ pub fn hypercube_last_arrival_matmul_kernel<
             storage.clone(),
         );
     }
-    O::finish::<E>(out);
+    dest.finish();
 }

@@ -5,13 +5,12 @@ mod fragment {
     use super::super::*;
     use crate::kernels::{AttentionRoutineProblem, QueryOrder};
     use cubecl::tile::launch::{Delivery, Refusal};
+    use cubek_microkernel::attention::AttentionRead;
     use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
     use cubek_microkernel::matmul::cube::CubeStagedDelivery;
     use cubek_microkernel::matmul::plane::PlaneFragmentDepth;
 
-    use cubek_microkernel::attention::plane::{
-        BLOCK_ROW_BYTES, PlaneFragmentAttentionMicrokernelSettings,
-    };
+    use cubek_microkernel::attention::plane::BLOCK_ROW_BYTES;
     use cubek_std::routine::Routine;
     use cubek_std::{Hardware, devices};
 
@@ -20,9 +19,7 @@ mod fragment {
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::stage::RowChunks;
     use cubek_microkernel::attention::cube::{CubeAttentionPlane, CubeAttentionPlaneSettings};
-    use cubek_microkernel::attention::plane::{
-        InstructionShape, ROW_STATE_HELD_BY_UNIT, ScoreHolder,
-    };
+    use cubek_microkernel::attention::plane::{ROW_STATE_HELD_BY_UNIT, ScoreHolder};
     use cubek_microkernel::attention::{AttentionMicrokernel, G, Q, S};
     use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 
@@ -129,50 +126,6 @@ mod fragment {
         assert_eq!((m, n, k), (16, 16, 16));
     }
 
-    /// On an NVIDIA GPU, `f16` asked for a rectangular instruction takes the first its shapes
-    /// rank, `8×32×16`: the score's fragments are `8` queries by `32` keys over head steps of
-    /// `16`, the value's `8` queries by `32` of the value dim over key steps of `16`, two to the
-    /// score's one.
-    #[test]
-    fn a_rectangular_instruction_cuts_each_product_its_own_way() {
-        let hw = offering_nvidia(devices::h100());
-        let [_, _, f16, _] = problems();
-        let lead = Settings::DEFAULT;
-        let CubeAttentionPlaneSettings::Fragment(lead_plane) = lead.microkernel.plane else {
-            panic!("the lead runs plane fragments")
-        };
-        let rectangular = Settings {
-            microkernel: CubeAttentionMicrokernelSettings {
-                plane: CubeAttentionPlaneSettings::Fragment(
-                    PlaneFragmentAttentionMicrokernelSettings {
-                        shape: InstructionShape::Rectangular,
-                        ..lead_plane
-                    },
-                ),
-                ..lead.microkernel
-            },
-            ..lead
-        };
-        let (blueprint, _) = ROUTINE
-            .prepare(&hw, &f16, &rectangular)
-            .expect("f16 prepares on an NVIDIA GPU's shapes");
-        let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
-            panic!("the routine runs plane fragments")
-        };
-        assert_eq!(
-            plane.score.instruction.shape(),
-            plane.value.instruction.shape()
-        );
-        assert_eq!(
-            (plane.score.tile_extent(S), plane.score.settings.depth.get()),
-            (32, 128 / 16)
-        );
-        assert_eq!(
-            (plane.value.tile_extent(S), plane.value.settings.depth.get()),
-            (32, 2)
-        );
-    }
-
     /// On an NVIDIA GPU, which offers `f32` no instruction of its own, `f32` is read as tf32 and
     /// runs on its `16×16×8`: the score's fragments are `16` queries by `16` keys over head steps
     /// of `8`, the value's `16` of the value dim over key steps of `8`, two to the score's one.
@@ -186,7 +139,10 @@ mod fragment {
         let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
             panic!("the routine runs plane fragments")
         };
-        assert_eq!(plane.read, ElemType::Float(FloatKind::TF32));
+        assert_eq!(
+            plane.read,
+            AttentionRead::all(ElemType::Float(FloatKind::TF32))
+        );
         assert_eq!(
             (plane.score.tile_extent(S), plane.score.settings.depth.get()),
             (16, 128 / 8)
@@ -385,7 +341,7 @@ mod fragment {
                         ..Settings::DEFAULT
                     },
                 )
-                .expect("prepares where both transports are offered");
+                .expect("prepares where both cmma and the manual mma are offered");
             let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
                 panic!("the routine runs plane fragments")
             };

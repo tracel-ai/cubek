@@ -1,5 +1,5 @@
-use cubecl::tile::launch::Destination;
-use cubecl::tile::{Instruction, Partitioning, Semiring, TileTensor};
+use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpand};
+use cubecl::tile::{Partitioning, Semiring, SoftwareMatmul, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_microkernel::matmul::plane::plane_shuffle_microkernel;
@@ -16,26 +16,28 @@ pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destina
     rhs: &TileTensor<'_>,
     out: &O::Arg<E>,
     partitioning: Partitioning,
-    #[comptime] instruction: Instruction,
+    #[comptime] block: SoftwareMatmul,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = O::tile::<E, VO>(out, &partitioning);
+    let dest = O::serve::<E, VO>(out, &partitioning);
+    let c = dest.tile();
 
     for plane in &partitioning {
-        let (mut c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
-        let (a, a_factor) = a.factor(c.space(), instruction);
-        let (b, b_factor) = b.factor(c.space(), instruction);
-
-        let mut sum = c.accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
+        let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
+        let mut sum = c.register_accumulator::<EA>(&a, &b, block, Semiring::SUM_PROD);
+        let (a, a_factor) = a.factor(&sum);
+        let (b, b_factor) = b.factor(&sum);
 
         sum.zero();
         for k_step in plane.walk_within(&b) {
             plane_shuffle_microkernel(&k_step, &sum, &a, &b, MatmulOperands::AS_BOUND);
         }
 
-        c.dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
+        sum.scaled(&a_factor)
+            .scaled(&b_factor)
+            .consumed_by::<O::Served<E>>(&dest, &plane);
     }
-    O::finish::<E>(out);
+    dest.finish();
 }

@@ -24,6 +24,9 @@ pub struct Hardware {
     /// What the runtime reports about the device. Every capability and limit a routine adapts to
     /// is read here, as cubecl states it.
     pub properties: Arc<DeviceProperties>,
+    /// What the compiler targets on it: how its matrix instructions lay their registers. A
+    /// decision the tile layer makes reads it beside the properties, as a kernel does compiling.
+    pub target: Arc<TargetProperties>,
     /// Whether an `mma` accumulator holds its cells where the `A` operand of a contraction as
     /// deep as it is wide holds them, and a run of accumulators along a deeper contraction where
     /// its `A` holds them one after another, so a product contracted again reads them as that
@@ -31,7 +34,8 @@ pub struct Hardware {
     ///
     /// True on CUDA, and on Metal, whose simdgroup matrix gives every lane two cells of one row
     /// in each operand. False on RDNA, whose `A` runs along its rows against an accumulator down
-    /// its columns, and whose RDNA3 `A` is held twice across the wave.
+    /// its columns, and whose RDNA3 `A` is held twice across the wave. Read off
+    /// [`target`](Self::target).
     pub accumulator_as_a: bool,
 }
 
@@ -52,6 +56,7 @@ impl Hardware {
             properties,
             accumulator_as_a: mma.register_layout_a == mma.register_layout_acc
                 && mma.register_duplication_a == mma.register_duplication_acc,
+            target: Arc::new(target.clone()),
         }
     }
 
@@ -583,16 +588,13 @@ mod tests {
             fingerprint: "fixture".into(),
             physical: None,
         };
-        Hardware {
-            properties: Arc::new(DeviceProperties::new(
-                features,
-                MemoryDeviceProperties::new(u64::MAX, 4),
-                hardware,
-                TimingMethod::System,
-                identity,
-            )),
-            accumulator_as_a: false,
-        }
+        devices::hardware(DeviceProperties::new(
+            features,
+            MemoryDeviceProperties::new(u64::MAX, 4),
+            hardware,
+            TimingMethod::System,
+            identity,
+        ))
     }
 
     fn shape(m: u32, n: u32, k: u32) -> MmaConfig {
