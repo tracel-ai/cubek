@@ -74,7 +74,7 @@ pub(crate) const QUAD: StageRing = StageRing {
 /// addressing, loop state and the scale registers. A margin rather than a derivation, since the
 /// compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
 /// `sm_120`.
-const ADDRESSING_REGISTERS: u32 = 64;
+pub(super) const ADDRESSING_REGISTERS: u32 = 64;
 
 /// The settings of `shapes` `routine` races against a block-scaled product read as stored on `hw`,
 /// each the microkernel's `in_steps` handed to `settings`: the lists of every block-scaled
