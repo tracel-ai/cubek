@@ -204,14 +204,11 @@ impl CubeStagedWalk {
     /// Under the TMA store, the ring freed and the cube met on a barrier, so the box declared next
     /// takes the stages' bytes with no plane still reading them.
     fn free_ring_for_box(stages: &Stages<OperandPair>, #[comptime] walk: CubeStagedWalk) {
+        // One branch holding two statements: split out, the pair would name nothing of its own.
         if comptime!(walk.store == CubeStagedStore::Tma) {
-            Self::free_ring(stages)
+            stages.free();
+            sync_cube();
         }
-    }
-
-    fn free_ring(stages: &Stages<OperandPair>) {
-        stages.free();
-        sync_cube();
     }
 
     /// `c = a · b` over `run`, stored by the TMA engine out of a box in shared memory laid as `c`:
@@ -226,13 +223,13 @@ impl CubeStagedWalk {
         #[comptime] storage: StageStorage,
     ) {
         if walk.filling_planes > 0 {
-            Self::box_after_walk::<EA>(run, a, b, c, walk, storage)
+            Self::stage_after_walk::<EA>(run, a, b, c, walk, storage)
         } else {
-            Self::box_before_walk::<EA>(run, a, b, c, walk, storage)
+            Self::stage_before_walk::<EA>(run, a, b, c, walk, storage)
         }
     }
 
-    fn box_after_walk<EA: Numeric>(
+    fn stage_after_walk<EA: Numeric>(
         run: Walk,
         a: &Tile,
         b: &Tile,
@@ -247,7 +244,7 @@ impl CubeStagedWalk {
         c.copy_from(&staged);
     }
 
-    fn box_before_walk<EA: Numeric>(
+    fn stage_before_walk<EA: Numeric>(
         run: Walk,
         a: &Tile,
         b: &Tile,
