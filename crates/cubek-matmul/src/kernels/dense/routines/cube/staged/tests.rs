@@ -4,8 +4,7 @@ mod base {
     use super::super::*;
     use crate::kernels::MatmulRoutine;
     use crate::kernels::{
-        CUBE_STRIPS, MATMUL_PACKED_WALK_PAST_K, MatmulPartitioning, MatmulRoutineProblem,
-        MatmulView,
+        CUBE_STRIPS, MATMUL_PACKED_WALK_PAST_K, MatmulRoutineProblem, MatmulView,
     };
     use core::num::NonZeroUsize;
     use cubecl::features::{MmaConfig, WgmmaConfig, WgmmaElems};
@@ -17,9 +16,9 @@ mod base {
     use cubecl::tile::{Scratch, StageStorage};
     use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::{
-        CubeStagedAsyncCopyRefusal, CubeStagedDelivery, CubeStagedFillingRefusal,
-        CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedStore,
-        CubeStagedTmaRefusal, CubeStagedTmaStoreRefusal,
+        CubeStagedDelivery, CubeStagedFillingRefusal, CubeStagedMicrokernel,
+        CubeStagedMicrokernelSettings, CubeStagedStore, CubeStagedTmaRefusal,
+        CubeStagedTmaStoreRefusal,
     };
     use cubek_microkernel::matmul::plane::{
         PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
@@ -35,25 +34,6 @@ mod base {
     use cubek_std::microkernel::{Microkernel, StageLayout, StageRing};
     use cubek_std::routine::{Grid, Routine};
     use cubek_std::{Hardware, devices};
-
-    /// Why `hw` cannot deliver `problem`'s stages by the TMA engine to `microkernel`, its cubes
-    /// placed as `partitioning` places them.
-    fn tma_refusal(
-        hw: &Hardware,
-        problem: &MatmulRoutineProblem,
-        partitioning: &MatmulPartitioning,
-        microkernel: &CubeStagedMicrokernel,
-    ) -> Option<CubeStagedTmaRefusal> {
-        CubeStagedTmaRefusal::new(
-            hw,
-            &MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)
-                .expect(MatmulView::PREPARED)
-                .work_item(),
-            &problem.buffers(microkernel.plane.orders),
-            &partitioning.cube_space(),
-            microkernel,
-        )
-    }
 
     /// A routine's preparation of a problem at one of its settings, named by the setting.
     type Prepared = (
@@ -873,13 +853,26 @@ mod base {
             .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.fill.delivery, CubeStagedDelivery::Tma);
         assert_eq!((blueprint.widths.lhs, blueprint.widths.rhs), (1, 1));
-        let through_registers = CubeStagedMicrokernel {
-            ring: StageRing::DOUBLE_THROUGH_REGISTERS,
-            ..blueprint.microkernel
+        // A ring that holds its next stage in registers, and a device with no bulk tensor copy,
+        // are the delivery's own refusals.
+        let through_registers =
+            default_with(|microkernel| microkernel.ring = StageRing::DOUBLE_THROUGH_REGISTERS);
+        let through_registers = CubeStagedTmaMatmulRoutineSettings {
+            microkernel: through_registers.microkernel,
+            cube_order: through_registers.cube_order,
         };
         assert_eq!(
-            tma_refusal(&hw, &aligned, &blueprint.partitioning, &through_registers),
-            Some(CubeStagedTmaRefusal::PrefetchInRegisters)
+            CubeStagedTmaMatmulRoutine
+                .prepare(&hw, &aligned, &through_registers)
+                .err(),
+            Some(Refusal::PrefetchPastDelivery(Delivery::Tma))
+        );
+        let no_engine = devices::offering_mma(devices::strix_halo(), [MmaConfig { n: 8, ..SHAPE }]);
+        assert_eq!(
+            CubeStagedTmaMatmulRoutine
+                .prepare(&no_engine, &aligned, &settings)
+                .err(),
+            Some(Refusal::DeliveryNotOnDevice(Delivery::Tma))
         );
         let batched = MatmulRoutineProblem {
             batches: vec![2],
@@ -909,11 +902,6 @@ mod base {
         };
         let row_rhs = MatmulRoutineProblem::dense(256, 512, 64, F16);
         for (hw, problem, why) in [
-            (
-                devices::offering_mma(devices::strix_halo(), [MmaConfig { n: 8, ..SHAPE }]),
-                &aligned,
-                CubeStagedTmaRefusal::NoBulkTensorCopy,
-            ),
             (hw.clone(), &batched, CubeStagedTmaRefusal::Batched),
             (
                 hw.clone(),
@@ -1174,25 +1162,25 @@ mod base {
                 StageRing::DOUBLE_THROUGH_REGISTERS,
                 devices::h100(),
                 &covered,
-                CubeStagedAsyncCopyRefusal::PrefetchInRegisters,
+                Refusal::PrefetchPastDelivery(Delivery::AsyncPerUnit),
             ),
             (
                 StageRing::DOUBLE,
                 devices::strix_halo(),
                 &covered,
-                CubeStagedAsyncCopyRefusal::NoCopyEngine,
+                Refusal::DeliveryNotOnDevice(Delivery::AsyncPerUnit),
             ),
             // `k = 19` binds the lhs one `f16` wide: two bytes, which the engine does not copy.
             (
                 StageRing::DOUBLE,
                 devices::h100(),
                 &problem(),
-                CubeStagedAsyncCopyRefusal::LineSize(MatmulOperand::Lhs),
+                Refusal::LineNotCopied { bits: 16 },
             ),
         ] {
             assert_eq!(
                 prepared(ring, hw, problem),
-                Err(why.into()),
+                Err(why),
                 "{ring:?} on {problem:?}"
             );
         }
