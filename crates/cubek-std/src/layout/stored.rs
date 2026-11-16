@@ -5,10 +5,11 @@
 //! reads one value and is constant inside nothing, and the same reads serve it without asking
 //! whether anything is quantized at all.
 
-use crate::layout::tile_order::{TileOrder, TileWords, scales_axes, values_axes};
+use crate::layout::tile_order::{TileOrder, scales_axes, values_axes};
 use crate::matmul_axes::{K, blocked};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
 use cubecl::tile::launch::Refusal;
+use cubecl::tile::layout::{Run, VectorTile};
 use cubecl::tile::{Axis, MicroTile, OperandReads, Space, kind::Field};
 
 /// How an operand is read and how it is scaled, as tiles of its own axes.
@@ -375,29 +376,65 @@ impl Operand {
             .unwrap_or(1)
     }
 
-    /// Reads of neighbouring rows, those `across` the axis its words run along, that lie side by
-    /// side in memory at the same place along that axis: a tile's rows a read's width apart, where
-    /// tile order lays a block's words of every row of its tile together
-    /// ([`TileWords::BlockByBlock`]); one otherwise, each row's reads its own run.
-    pub fn rows_side_by_side(&self, across: Axis) -> usize {
-        match self.tiles {
-            Some(order) if order.words() == TileWords::BlockByBlock => {
-                (order.tile().1 / self.reads.read.extent(across).max(1)).max(1)
-            }
-            Some(_) | None => 1,
-        }
+    /// Reads down `K` that one `run` of a `[k, rows]` matrix read as this operand holds, its
+    /// values `value_bits` wide and its rows `across` that axis: the stored pieces above one read,
+    /// in the order the matrix lays them, multiplied until the run is whole
+    /// ([`VectorTile::run_loads`]). In tile order a transaction takes the rows a tile lays side by
+    /// side before going down `K`, and a stored tile all of its reads; in rows, a transaction is
+    /// the reads down a column where its words run down `K`, and one where they run across it.
+    /// `None` for a stored tile of a matrix in rows, which stores none.
+    pub fn reads_down_k(
+        &self,
+        run: Run,
+        across: Axis,
+        (k, rows): (usize, usize),
+        value_bits: usize,
+        transaction_bytes: usize,
+    ) -> Option<usize> {
+        let (read, matrix) = match self.tiles {
+            Some(order) => self.read_in_tiles(order, across, (k, rows))?,
+            None => self.read_in_rows(across, (k, rows)),
+        };
+        let (blocks, in_block) = blocked(K);
+        let reads = read
+            .run_loads(run, &matrix, value_bits, transaction_bytes)?
+            .into_iter()
+            .filter(|&(axis, _)| [K, blocks, in_block].contains(&axis))
+            .map(|(_, reads)| reads)
+            .product();
+        Some(reads)
     }
 
-    /// Reads down `K` that one stored tile holds of a row. Tile order lays each tile as one run,
-    /// its words block by block or row by row: as many units along `K` as this, the rest of a
-    /// plane across the tile's rows, read the tile whole. One in rows, where no tile is stored.
-    pub fn reads_down_a_tile(&self, axis: Axis) -> usize {
-        match self.tiles {
-            Some(order) if axis == K => {
-                (order.tile().0 / self.reads.read.extent(axis).max(1)).max(1)
-            }
-            Some(_) | None => 1,
-        }
+    /// One read of a `[k, rows]` matrix stored in `order`, its rows `across` that axis, as the
+    /// tile of stored pieces it covers, and the matrix over the axes the order names
+    /// ([`values_axes`]). `None` where the read cuts a stored piece.
+    fn read_in_tiles(
+        &self,
+        order: TileOrder,
+        across: Axis,
+        (k, rows): (usize, usize),
+    ) -> Option<(VectorTile, Space)> {
+        let values = self.read_values();
+        let [rows_axis, blocks, in_block] = values_axes(across);
+        let storage = order.values_storage(across, values / order.values_per_word());
+        let read = VectorTile::new(storage.tiles(), in_block, values).ok()?;
+        let matrix = Space::new(&[
+            (rows_axis, rows),
+            (blocks, k / order.block()),
+            (in_block, order.block()),
+        ]);
+        Some((read, matrix))
+    }
+
+    /// One read of a `[k, rows]` matrix in rows, its rows `across` that axis, as a run along the
+    /// axis its words run along, and the matrix with that axis innermost.
+    fn read_in_rows(&self, across: Axis, (k, rows): (usize, usize)) -> (VectorTile, Space) {
+        let lined = self.lined();
+        let matrix = match lined == K {
+            true => Space::new(&[(across, rows), (K, k)]),
+            false => Space::new(&[(K, k), (lined, rows)]),
+        };
+        (VectorTile::run(lined, self.read_values()), matrix)
     }
 
     /// How `units` spread `axis` between them, stated from the leaf up.
@@ -589,6 +626,11 @@ impl Packing {
             .is_some_and(|block| block.dtype == ScaleDtype::UE4M3)
     }
 
+    /// Bits one value holds, packed.
+    pub fn value_bits(&self) -> usize {
+        self.scheme.size_bits_stored() / self.scheme.num_quants()
+    }
+
     /// Bytes the words of a matrix of `values` values hold, packed.
     pub fn values_bytes(&self, values: usize) -> usize {
         values * self.scheme.size_bits_stored() / self.scheme.num_quants() / 8
@@ -642,9 +684,10 @@ pub enum Walked {
 
 #[cfg(test)]
 mod tests {
-    use crate::layout::stored::Operand;
+    use crate::layout::stored::{Operand, Packing};
     use crate::layout::tile_order::{self, TileOrder, TileWords};
     use crate::matmul_axes::{K, KB, KI, N, NI};
+    use cubecl::tile::layout::Run;
 
     /// Words one 128-bit load holds.
     const WORDS: usize = 4;
@@ -771,5 +814,65 @@ mod tests {
                 "{tiles:?}"
             );
         }
+    }
+
+    /// The packing of [`nvfp4`] laid out in `tile` as `words` asks, or in rows where `None`.
+    fn packing(tile: Option<(TileWords, (usize, usize))>) -> Packing {
+        let operand = match tile {
+            Some((words, tile)) => nvfp4()
+                .in_tile_order(laid(words, tile), N, WORDS)
+                .expect("tile order is read"),
+            None => nvfp4(),
+        };
+        Packing {
+            operand,
+            scheme: tile_order::nvfp4_scheme(),
+        }
+    }
+
+    /// A transaction of 128 bytes over NVFP4 64 deep by 8 rows a tile, its words block by block:
+    /// a read is one block of two rows, 16 bytes; the transaction takes the tile's four pairs of
+    /// rows, then two of its blocks down `K`. A stored tile is its four blocks down `K`.
+    #[test]
+    fn block_by_block_runs_go_across_the_rows_then_down_k() {
+        let packing = packing(Some((TileWords::BlockByBlock, (64, 8))));
+        let reads = |run| {
+            packing
+                .operand
+                .reads_down_k(run, N, (1024, 64), packing.value_bits(), 128)
+        };
+        assert_eq!(reads(Run::Load), Some(1));
+        assert_eq!(reads(Run::Transaction), Some(2));
+        assert_eq!(reads(Run::StoredTile), Some(4));
+    }
+
+    /// Row by row, a read is one block of one row, 8 bytes, and a row's four blocks lie together:
+    /// a transaction is a row's four reads down `K` and four rows beside them, the 128 bytes that
+    /// lie together, rather than sixteen reads down one row, which would cross four tiles.
+    #[test]
+    fn row_by_row_runs_go_down_a_row_then_across_the_rows() {
+        let packing = packing(Some((TileWords::RowByRow, (64, 8))));
+        let reads = |run| {
+            packing
+                .operand
+                .reads_down_k(run, N, (1024, 64), packing.value_bits(), 128)
+        };
+        assert_eq!(reads(Run::Transaction), Some(4));
+        assert_eq!(reads(Run::StoredTile), Some(4));
+    }
+
+    /// In rows a column's words run down `K`: a transaction is as many reads down it as fill one,
+    /// and no tile is stored.
+    #[test]
+    fn rows_run_down_a_column() {
+        let packing = packing(None);
+        let read_bytes = packing.values_bytes(packing.operand.read_values());
+        let reads = |run| {
+            packing
+                .operand
+                .reads_down_k(run, N, (1024, 64), packing.value_bits(), 128)
+        };
+        assert_eq!(reads(Run::Transaction), Some(128 / read_bytes));
+        assert_eq!(reads(Run::StoredTile), None);
     }
 }
