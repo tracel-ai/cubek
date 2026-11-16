@@ -1,20 +1,20 @@
 # m2-pro
-few-rows: 75 candidates, checksum c81f0c34af12fbf2b53dcc4de065a246
+few-rows: 83 candidates, checksum 764447764fef6d62a75ada6b392c8130
 many-rows: 164 candidates, checksum f482711d642854608d0db6ee7c938fcf
 block-scaled: 3 candidates, checksum 319b30ed87ce2d7e5f61e160639de436
 
 # h100
-few-rows: 75 candidates, checksum c81f0c34af12fbf2b53dcc4de065a246
+few-rows: 83 candidates, checksum 764447764fef6d62a75ada6b392c8130
 many-rows: 202 candidates, checksum 1cdd2ec9222643a761ac3f1a989c4356
 block-scaled: 3 candidates, checksum 319b30ed87ce2d7e5f61e160639de436
 
 # h100 with nvfp4
-few-rows: 75 candidates, checksum c81f0c34af12fbf2b53dcc4de065a246
+few-rows: 83 candidates, checksum 764447764fef6d62a75ada6b392c8130
 many-rows: 202 candidates, checksum 1cdd2ec9222643a761ac3f1a989c4356
 block-scaled: 22 candidates, checksum a8f1600625184aa67e37ba3b9b4975da
 
 # wgpu without subgroups
-few-rows: 82 candidates, checksum a95d3af77ccd3705ed7d6f820a2402a8
+few-rows: 90 candidates, checksum 81afb040843b2a27ce0ef327ff1a0dff
 many-rows: 96 candidates, checksum c3ddb6234c89657916d22e1d654ec863
 block-scaled: 3 candidates, checksum 319b30ed87ce2d7e5f61e160639de436
 
