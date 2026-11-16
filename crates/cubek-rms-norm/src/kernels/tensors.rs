@@ -301,7 +301,7 @@ impl RmsNormTensors {
         self.out.handle
     }
 
-    /// The three operands bound as `blueprint` states them, on `grid`: under its partitioning, at
+    /// The operands bound as `blueprint` states them, on `grid`: under its partitioning, at
     /// its width.
     pub fn bind<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<Bound> {
         let binding = self.bind_operands(blueprint, grid);
@@ -335,7 +335,7 @@ impl RmsNormTensors<Geometry> {
         Ok(operands.with_out(out, placement, RowStore::Plain))
     }
 
-    /// The three operands bound as `blueprint` states them, on `grid`, the output derived over
+    /// The operands bound as `blueprint` states them, on `grid`, the output derived over
     /// the sink's layout rather than a buffer: its spec, and the geometry the derivation settled,
     /// which the caller's sink addresses through.
     pub fn bind<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<Unbound> {

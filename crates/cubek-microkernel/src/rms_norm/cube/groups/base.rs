@@ -15,9 +15,9 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeGroupsRmsNormMicrokernel {
     /// Units sharing a row: the settings' target snapped to a power of two, grown to as many as
-    /// keep each unit within [`RmsNormWorkItem::max_lines_per_unit`] lines of the row at `width`, and
-    /// no larger than the lines the row holds then, so no unit holds nothing while the others hold
-    /// several, nor than a cube holds.
+    /// keep each unit within [`RmsNormWorkItem::max_lines_per_unit`] lines of the row at `width`,
+    /// and no larger than the lines the row holds then, so no unit holds nothing while the others
+    /// hold several, nor than a cube holds.
     pub units: usize,
     /// The dim the row spans. An extent the kernel compiles, the exception
     /// [`RmsNormPartitioning::kernel`](crate::rms_norm::RmsNormPartitioning::kernel)

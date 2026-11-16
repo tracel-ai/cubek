@@ -6,7 +6,6 @@
 //! row, groups, and operands that are slices of a wider projection.
 
 use cubecl::client::Client;
-use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
@@ -63,16 +62,8 @@ impl Run {
 
     /// Whether the device reads, writes and computes both elements.
     pub(crate) fn runs_on(&self, client: &Client) -> bool {
-        let full = TypeUsage::Arithmetic | TypeUsage::Buffer;
-        [self.element, self.output_element]
-            .into_iter()
-            .all(|element| {
-                client
-                    .properties()
-                    .features
-                    .type_usage(element)
-                    .is_superset(full)
-            })
+        let hw = Hardware::from_client(client);
+        hw.runs(self.element) && hw.runs(self.output_element)
     }
 }
 
