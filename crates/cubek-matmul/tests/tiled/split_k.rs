@@ -8,7 +8,7 @@ use cubecl::prelude::*;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{
-    CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, MatmulRoutine,
+    CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, LoadingSchedule, MatmulRoutine,
 };
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
@@ -20,14 +20,25 @@ const BF16_TOLERANCE: f32 = 1e-2;
 
 /// One, three and eight rows against NVFP4 weights whose `K` takes three to twenty-four planes,
 /// their columns a whole number of eight-column boxes or not: every product answers the
-/// dequantized one. Before a read could take two words, the words were bound a read a stored
-/// word, so a read of a block stepped its rows twice as far and read past the weight. Skipped on
-/// a device where the setting does not prepare, one committing to no plane width.
+/// dequantized one, its planes taking `K` in runs or in turns
+/// ([`LoadingSchedule::ONE_TRANSACTION`]),
+/// where a turn the planes do not fill is the last. Before a read could take two words, the words
+/// were bound a read a stored word, so a read of a block stepped its rows twice as far and read
+/// past the weight. Skipped on a device where the settings do not prepare, one committing to no
+/// plane width.
 #[test]
 fn the_split_k_answers_a_decode_step() {
+    for settings in [
+        LoadingSchedule::SPLIT_K.settings(),
+        LoadingSchedule::ONE_TRANSACTION.settings(),
+    ] {
+        split_k_answers_a_decode_step(&settings);
+    }
+}
+
+fn split_k_answers_a_decode_step(settings: &CubeShuffleMatmulRoutineSettings) {
     let client = client();
     let hw = Hardware::from_client(&client);
-    let settings = CubeShuffleMatmulRoutineSettings::PACKED_SPLIT_K;
     let (mut ran, mut declined) = (0, Vec::new());
     for (m, n, k) in [
         (1, 64, 2048),
@@ -69,7 +80,7 @@ fn the_split_k_answers_a_decode_step() {
             StoredTensor::Plain(upload(&client, &[m, k], &x)),
             StoredTensor::Packed(weight.matrix()),
             bound,
-            &settings,
+            settings,
         );
         if let Err(why) = launched {
             declined.push(format!("m {m}, n {n}, k {k}: {why:?}"));
@@ -81,12 +92,15 @@ fn the_split_k_answers_a_decode_step() {
             let have = got.get_f32(&[at / n, at % n]);
             assert!(
                 (have - want).abs() <= BF16_TOLERANCE * (1. + want.abs()),
-                "m {m}, n {n}, k {k}: element {at} is {have}, want {want}"
+                "{settings}, m {m}, n {n}, k {k}: element {at} is {have}, want {want}"
             );
         }
     }
     // A device it prepares on prepares every shape here.
-    assert!(ran == 0 || declined.is_empty(), "declined: {declined:?}");
+    assert!(
+        ran == 0 || declined.is_empty(),
+        "{settings} declined: {declined:?}"
+    );
     if ran == 0 {
         TestOutcome::Validated(ValidationResult::Skipped(
             "the split of K does not prepare on this device".to_string(),

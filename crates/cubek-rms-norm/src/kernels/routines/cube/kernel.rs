@@ -1,5 +1,5 @@
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::Destination;
+use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpand};
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::rms_norm::cube::{CubeRmsNormMicrokernel, cube_rms_norm_microkernel};
@@ -24,7 +24,8 @@ pub fn cube_rms_norm_kernel<E: Float, H: Float, W: Float, N: Size, O: Destinatio
     let x = input.tile(&partitioning);
     let w = weight.tile(&partitioning);
     let z = gate.map(|gate| gate.tile(&partitioning));
-    let o = O::tile::<W, N>(out, &partitioning);
+    let dest = O::serve::<W, N>(out, &partitioning);
+    let o = dest.tile();
     let scale = RmsNormScale::new(epsilon, microkernel.plane.dim);
     for cube in &partitioning {
         cube_rms_norm_microkernel::<E, H, W, N>(
@@ -38,5 +39,5 @@ pub fn cube_rms_norm_kernel<E: Float, H: Float, W: Float, N: Size, O: Destinatio
             stage.clone(),
         );
     }
-    O::finish::<W>(out);
+    dest.finish();
 }

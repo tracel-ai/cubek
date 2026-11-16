@@ -1,5 +1,5 @@
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::Destination;
+use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpand};
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::rms_norm::plane::{PlaneRmsNormMicrokernel, plane_rms_norm_microkernel};
@@ -23,7 +23,8 @@ pub fn plane_rms_norm_kernel<E: Float, H: Float, W: Float, N: Size, O: Destinati
     let x = input.tile(&partitioning);
     let w = weight.tile(&partitioning);
     let z = gate.map(|gate| gate.tile(&partitioning));
-    let o = O::tile::<W, N>(out, &partitioning);
+    let dest = O::serve::<W, N>(out, &partitioning);
+    let o = dest.tile();
     let scale = RmsNormScale::new(epsilon, microkernel.dim);
     for plane in &partitioning {
         let mut row_out = OwnerLines::window(o.at(&plane));
@@ -36,5 +37,5 @@ pub fn plane_rms_norm_kernel<E: Float, H: Float, W: Float, N: Size, O: Destinati
             microkernel,
         );
     }
-    O::finish::<W>(out);
+    dest.finish();
 }

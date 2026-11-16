@@ -5,7 +5,7 @@
 //! reads one value and is constant inside nothing, and the same reads serve it without asking
 //! whether anything is quantized at all.
 
-use crate::layout::tile_order::{TileOrder, scales_axes, values_axes};
+use crate::layout::tile_order::{TileOrder, TileWords, scales_axes, values_axes};
 use crate::matmul_axes::{K, blocked};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
 use cubecl::tile::launch::Refusal;
@@ -241,16 +241,19 @@ impl Operand {
         })
     }
 
-    /// This operand read a scale block at a time: one read the whole block, its scale read alone.
-    /// `None` in tile order, without scales, across several axes, or where a block is no whole
-    /// number of reads. Whether its scales can be read one apiece is the scheme's
-    /// ([`Packing::by_block`]).
+    /// This operand read a scale block at a time: one read the whole block of one row, its scale
+    /// read alone. In rows, a block is a run of whole reads down its axis; in tile order, a
+    /// block's words of one row lie together in either word order ([`TileOrder::values_storage`]),
+    /// so the read is one block of one row however many rows a load of the order holds. `None`
+    /// without scales, across several axes in rows, or where a block is no whole number of reads.
+    /// Whether its scales can be read one apiece is the scheme's ([`Packing::by_block`]).
     fn by_block(self) -> Option<Self> {
         let axis = self.scaled_along()?;
         let block = self.scale?.extent(axis);
-        let lined = self.tiles.is_none()
-            && self.read.axis() == Some(axis)
-            && block.is_multiple_of(self.read.extent(axis));
+        let lined = match self.tiles {
+            None => self.read.axis() == Some(axis) && block.is_multiple_of(self.read.extent(axis)),
+            Some(order) => axis == K && order.block() == block,
+        };
         lined.then(|| Operand {
             read: MicroTile::along(axis, block),
             scale_read: MicroTile::along(axis, 1),
@@ -530,6 +533,29 @@ impl Operand {
             .unwrap_or(1)
     }
 
+    /// Reads of neighbouring rows, those `across` the axis its words run along, that lie side by
+    /// side in memory at the same place along that axis: a tile's rows a read's width apart, where
+    /// tile order lays a block's words of every row of its tile together
+    /// ([`TileWords::BlockByBlock`]); one otherwise, each row's reads its own run.
+    pub fn rows_side_by_side(&self, across: Axis) -> usize {
+        match self.tiles {
+            Some(order) if order.words() == TileWords::BlockByBlock => {
+                (order.tile().1 / self.read.extent(across).max(1)).max(1)
+            }
+            Some(_) | None => 1,
+        }
+    }
+
+    /// Reads down `K` that one stored tile holds of a row. Tile order lays each tile as one run,
+    /// its words block by block or row by row: as many units along `K` as this, the rest of a
+    /// plane across the tile's rows, read the tile whole. One in rows, where no tile is stored.
+    pub fn reads_down_a_tile(&self, axis: Axis) -> usize {
+        match self.tiles {
+            Some(order) if axis == K => (order.tile().0 / self.read.extent(axis).max(1)).max(1),
+            Some(_) | None => 1,
+        }
+    }
+
     /// How `units` spread `axis` between them, stated from the leaf up.
     ///
     /// A grouped axis is distributed by the scales: each unit takes the blocks one
@@ -635,9 +661,9 @@ pub struct Packing {
 
 impl Packing {
     /// This packing read a scale block at a time: a unit loads one block of values and its one
-    /// scale, so a plane's units side by side read one run of the row a load. Only `ue4m3` block
-    /// scales in rows are read so, each a byte a unit loads alone; any other scale's word is read
-    /// whole. `None` where the scheme or the operand reads no block whole.
+    /// scale. Only `ue4m3` block scales are read so, each a byte a unit loads alone, in rows or in
+    /// tile order; any other scale's word is read whole. `None` where the scheme or the operand
+    /// reads no block whole.
     pub fn by_block(&self) -> Option<Packing> {
         Some(Packing {
             operand: self.operand.by_block()?,
@@ -652,13 +678,11 @@ impl Packing {
         self.operand.reads_scales_alone() && self.scales_are_bytes()
     }
 
-    /// Whether its block scales are `ue4m3` bytes in rows.
+    /// Whether its block scales are `ue4m3` bytes.
     fn scales_are_bytes(&self) -> bool {
-        self.operand.tile_order().is_none()
-            && self
-                .scheme
-                .block_scale()
-                .is_some_and(|block| block.dtype == ScaleDtype::UE4M3)
+        self.scheme
+            .block_scale()
+            .is_some_and(|block| block.dtype == ScaleDtype::UE4M3)
     }
 
     /// Bytes the words of a matrix of `values` values hold, packed.
