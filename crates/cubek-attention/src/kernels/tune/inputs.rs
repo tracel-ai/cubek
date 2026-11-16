@@ -300,7 +300,7 @@ impl AttentionTuneInputs {
     /// stands for, [`CHUNK_QUERIES`](AttentionKey::CHUNK_QUERIES) over
     /// [`CHUNK_PREFIX`](AttentionKey::CHUNK_PREFIX), not the key's extents: the anchor rounds
     /// those up to its bucket's edge, which past the default level is no chunk a prompt is cut
-    /// into. At `extensive` 512 queries over 8192 keys anchor to 657 over 11223, a second box of
+    /// into. At `extensive` 512 queries over 32768 keys anchor to 657 over 37877, a second box of
     /// 145 queries the routines rank differently than any call runs them. Over the call's own
     /// keys, the key's extents, the bucket's longest.
     fn chunk_extents(&self, key: &AttentionKey) -> (usize, usize) {
@@ -622,13 +622,13 @@ mod tests {
 
         /// **A round over a cache measures what its key stands for, whatever bucket holds it.**
         /// An anchor finer than the default rounds the chunk and the decode prefix a key over a
-        /// cache stands for up to extents no call has (512 queries over 8192 keys to 657 over
-        /// 11223, 2048 keys to 2217); the rounds still measure that chunk and that prefix, the
+        /// cache stands for up to extents no call has (512 queries over 32768 keys to 657 over
+        /// 37877, 2048 keys to 2217); the rounds still measure that chunk and that prefix, the
         /// decode's the depth its work is priced at.
         #[test]
         fn a_round_over_a_cache_measures_what_its_key_stands_for() {
             let chunk = inputs(512, 4096, None);
-            let key = chunk.key_of(657, 11223);
+            let key = chunk.key_of(657, 37877);
             assert!(key.chunk());
             let round = AttentionTuneInputs::many_queries_representative(&key, &chunk);
             assert_eq!(round.query.shape()[2], AttentionKey::CHUNK_QUERIES);
