@@ -218,7 +218,6 @@ impl HypercubeStagedLaunch {
     reason = "each element is defined from its operand at launch, which the kernel is compiled for"
 )]
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn hypercube_staged_kernel<EA: Numeric, EL: Numeric, VO: Size>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
