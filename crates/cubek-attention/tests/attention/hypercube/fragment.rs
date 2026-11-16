@@ -23,8 +23,8 @@ fn every_hypercube_fragment_setting_matches_the_host_at_a_head_dim_of_128() {
 
 /// Every microkernel setting the routine lists, on eight cubes a box, over every FP8 cache at a
 /// model's head dim: `e4m3` keys multiplied on the device's FP8 instruction, the query converted
-/// ahead, or keys widened to the query's `f16` by their stage; `e4m3` values widened to it by
-/// theirs.
+/// ahead, or keys widened to the query's `f16` by their stage; `e4m3` values multiplied on it
+/// beside the probabilities cast to `e4m3`, or widened to the query's `f16` by theirs.
 /// The cubes a box splits over change the merge, not the score, so one count stands for them.
 #[test]
 fn every_hypercube_fragment_microkernel_reads_every_fp8_cache() {
