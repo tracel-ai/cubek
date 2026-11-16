@@ -177,8 +177,8 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
     type Operand = AttentionOperand;
     type CubeSpace = Space;
 
-    const DECLINE: &'static str = "the plane microkernel runs on a cmma instruction, or a 16-bit \
-         manual mma whose accumulator the device lays out as its A operand, beside one a whole \
+    const DECLINE: &'static str = "the plane microkernel runs on a cmma instruction, or a 16-bit or \
+         e4m3 manual mma whose accumulator the device lays out as its A operand, beside one a whole \
          number of its fragments deep that the plane's keys divide into, of the operands' element \
          summing in f32, \
          whose k divides the head dim and whose n divides the value dim and the stage's keys, on a \

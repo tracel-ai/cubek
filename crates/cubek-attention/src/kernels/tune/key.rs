@@ -132,15 +132,20 @@ impl AttentionKey {
     /// length, is keyed here.
     pub const CACHE_PREFIX: usize = 4 * Self::CHUNK_QUERIES;
 
-    /// The attended prefix a chunk of many queries over a cache stands for: sixteen chunks into
-    /// its prompt. A chunk's work grows with the prefix it attends, so a long prompt spends its
-    /// attention on its deep chunks, and the routines rank differently there than near the
+    /// The attended prefix a chunk of many queries over a cache stands for: sixty-four chunks
+    /// into its prompt. A chunk's work grows with the prefix it attends, so a long prompt spends
+    /// its attention on its deep chunks, and the routines rank differently there than near the
     /// start: on an RTX PRO 6000, 512 queries of 32/8 heads over 2048 keys run fastest on a cube a
     /// box (84 µs, against 86 µs split four ways along the keys), over 8192 keys split four ways
     /// (254 µs against 285), and the split's lead grows deeper (922 against 1085 µs at 32768
     /// keys, 3600 against 4288 µs at 131072). Keyed at the shallow prefix, every chunk of a long
     /// prompt ran the shallow winner.
-    pub const CHUNK_PREFIX: usize = 16 * Self::CHUNK_QUERIES;
+    ///
+    /// How many cubes the split box takes along the keys ranks by depth too: four lead at 8192
+    /// keys, seven and ten from 32768 on. Keyed at 32768, a long prompt's deep chunks run their
+    /// own winner, and a prompt of a few chunks pays a few percent on attention that is
+    /// milliseconds long.
+    pub const CHUNK_PREFIX: usize = 64 * Self::CHUNK_QUERIES;
 
     /// Whether the queries are the tail of a longer attended prefix rather
     /// than the whole of it: a chunk, or a decode step.
