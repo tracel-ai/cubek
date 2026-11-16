@@ -2,11 +2,9 @@ use crate::attention::{D, DV, Q, S};
 use crate::attention_backward::key_gradient::plane::PlaneKeyGradientMicrokernel;
 use crate::attention_backward::{ScoreWindows, scale_rows};
 use crate::matmul::MatmulOperands;
-use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentMicrokernel, plane_fragment_microkernel,
-};
+use crate::matmul::plane::{PlaneFragmentMicrokernel, plane_fragment_microkernel};
 use cubecl::tile::kind::PlanesOutput;
-use cubecl::tile::{Level, Region, Scratch, Semiring, Tile};
+use cubecl::tile::{Level, Region, Scratch, Semiring, SumDrain, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// What a walk owned by keys adds into the query's gradient beside its own gradients:
@@ -59,7 +57,7 @@ impl QueryGradientShare {
         // the stage's queries, its columns along the head dim, the plane's place in it its place
         // along the keys.
         let product = comptime!(self.product);
-        let [(_, m), (_, n), _] = product.instruction.shape();
+        let [m, n, _] = product.call.shape;
         let (share, columns) = comptime!((
             product.settings.along_m.get() * m,
             product.settings.along_n.get() * n
@@ -121,9 +119,9 @@ impl<EA: Float> StageQueryGradientShare<EA> {
         #[comptime] scratch: Scratch,
         #[comptime] rows: usize,
     ) {
-        let scratch = comptime!(match self.product.instruction.drain() {
-            PlaneFragmentDrain::Bounce => scratch,
-            PlaneFragmentDrain::CellByCell => Scratch::None,
+        let scratch = comptime!(match self.product.call.instruction.sum_drain() {
+            SumDrain::Bounce => scratch,
+            SumDrain::CellByCell => Scratch::None,
         });
 
         let mut part = self

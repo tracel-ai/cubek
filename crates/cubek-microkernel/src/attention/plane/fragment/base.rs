@@ -2,13 +2,11 @@ use crate::attention::plane::{PlaneFragmentAttentionMicrokernelSettings, ScoreHo
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
 };
-use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-};
+use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Level, Levels, Space};
+use cubecl::tile::{Axis, Level, Levels, Space, SumDrain};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
@@ -167,7 +165,7 @@ impl PlaneFragmentAttentionMicrokernel {
 /// Its instruction and fragments.
 impl core::fmt::Display for PlaneFragmentAttentionMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} {}", self.score.instruction, self.settings)
+        write!(f, "{} {}", self.score.call, self.settings)
     }
 }
 
@@ -245,7 +243,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
         });
 
         // A manual fragment drains one cell at a time, wherever its unit holds it.
-        if self.value.instruction.drain() == PlaneFragmentDrain::CellByCell {
+        if self.value.call.instruction.sum_drain() == SumDrain::CellByCell {
             vectorization.require(VectorRequirement::Elementwise {
                 operand: AttentionOperand::Out,
             });

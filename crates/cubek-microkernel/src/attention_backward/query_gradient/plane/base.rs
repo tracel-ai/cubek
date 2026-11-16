@@ -4,12 +4,10 @@ use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
 };
 use crate::matmul::MatmulDim;
-use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-};
+use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Level, Levels, Partitioning, Scratch};
+use cubecl::tile::{Axis, Level, Levels, Partitioning, Scratch, SumDrain};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -139,9 +137,9 @@ impl PlaneQueryGradientMicrokernel {
     /// settings', for a sum that drains by bouncing through shared memory, a cmma one; none for
     /// one whose units hold their own cells and scale them in place.
     pub fn sum_scratch(&self) -> Scratch {
-        match self.query_gradient.instruction.drain() {
-            PlaneFragmentDrain::Bounce => self.settings.scratch,
-            PlaneFragmentDrain::CellByCell => Scratch::None,
+        match self.query_gradient.call.instruction.sum_drain() {
+            SumDrain::Bounce => self.settings.scratch,
+            SumDrain::CellByCell => Scratch::None,
         }
     }
 
@@ -189,7 +187,7 @@ impl PlaneQueryGradientMicrokernel {
 /// Its instruction and fragments.
 impl core::fmt::Display for PlaneQueryGradientMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} {}", self.score.instruction, self.settings)
+        write!(f, "{} {}", self.score.call, self.settings)
     }
 }
 
@@ -304,7 +302,7 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
             elements: self.query_gradient.leaf_extent(MatmulDim::N),
         });
         // A manual fragment drains one cell at a time, wherever its unit holds it.
-        if self.query_gradient.instruction.drain() == PlaneFragmentDrain::CellByCell {
+        if self.query_gradient.call.instruction.sum_drain() == SumDrain::CellByCell {
             vectorization.require(VectorRequirement::Elementwise {
                 operand: Operand::QueryGradient,
             });

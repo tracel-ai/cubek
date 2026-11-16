@@ -56,7 +56,7 @@ pub enum PlaneFragmentDepth {
     /// registers as each fragment loads, which is what lets an NVFP4 input be staged as it is
     /// stored under a 16-bit instruction, or read straight from memory a window of `K` at a time.
     /// Only the manual-mma instruction over plain operands offers it
-    /// ([`contracts_deeper_fragments`](super::PlaneFragmentInstruction::contracts_deeper_fragments)).
+    /// ([`contracts_deeper_fragments`](super::PlaneCall::contracts_deeper_fragments)).
     Stage,
 }
 

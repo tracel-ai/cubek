@@ -2,10 +2,7 @@ use crate::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedFillingRefusal, CubeStagedMicrokernelSettings,
     CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaRefusal, MatmulCubeSpace, MatmulPlaneLayout,
 };
-use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
-    PlaneFragmentMicrokernelSettings,
-};
+use crate::matmul::plane::{PlaneCall, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands,
     MatmulRead, MatmulStage, MatmulStagingCount, MatmulStep, MatmulWorkItem,
@@ -15,7 +12,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::space::Coverage;
-use cubecl::tile::{FragmentSource, Levels, Scratch, Space, StageStorage};
+use cubecl::tile::{FragmentSource, Instruction, Levels, Scratch, Space, StageStorage, SumDrain};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
@@ -227,7 +224,7 @@ impl CubeStagedMicrokernel {
             &PlaneFragmentMicrokernelSettings::DEFAULT,
         )
         .filter_map(|plane| {
-            let [(_, m), (_, n), (_, k)] = plane.instruction.shape();
+            let [m, n, k] = plane.call.shape;
             let step = step.clone()?.under(Space::new(&[(M, m), (N, n), (K, k)]));
             let block = block?;
             if !step.along(K).is_multiple_of(block) || !block.is_multiple_of(k) {
@@ -325,7 +322,7 @@ impl CubeStagedMicrokernel {
     /// Planes one cube holds that contract: its layout along `m` and `n` times the planes along
     /// `K`, each a group of the planes its instruction spans.
     fn contracting_planes(&self) -> usize {
-        self.planes.count() * self.planes_along_k.get() * self.plane.instruction.planes()
+        self.planes.count() * self.planes_along_k.get() * self.plane.call.instruction.planes()
     }
 
     /// The box one step of its walk through `K` stages, in the space `cube_space` its cube covers:
@@ -382,19 +379,19 @@ impl CubeStagedMicrokernel {
         cube_space: &MatmulCubeSpace,
     ) -> Result<CubeStagedResolved, Refusal> {
         let stage = &self.stage(cube_space);
-        let plane_width = self.plane.instruction.units(hw)?;
+        let plane_width = hw.plane_dim()?;
         let units = self.contracting_planes() * plane_width as usize;
         let operands = stage.operands(item.elements, self.plane.orders, self.walk().reads);
         let ring = self.ring.resolve(hw, &operands, units);
-        let instruction = self.plane.instruction;
+        let call = self.plane.call;
         let landed = self.plane.landed_stage_storage(stage);
         let merges = self.drain() == CubeStagedDrain::Merged;
         // A box the TMA engine stores is drained whole into shared memory first, and the
         // descriptor clips it at the output's edge: no fragment's window is cut short there.
         let cut_short = cube_space.overhangs_output && self.store == CubeStagedStore::Fragments;
-        let window = match self.plane.instruction.drain() {
-            PlaneFragmentDrain::Bounce => self.scratch.at_least_bouncing(true),
-            PlaneFragmentDrain::CellByCell => Scratch::None,
+        let window = match self.plane.call.instruction.sum_drain() {
+            SumDrain::Bounce => self.scratch.at_least_bouncing(true),
+            SumDrain::CellByCell => Scratch::None,
         };
         let bounces = merges || cut_short || item.destination == MatmulDestination::Sink;
         let scratch = match bounces {
@@ -408,7 +405,7 @@ impl CubeStagedMicrokernel {
         {
             return Err(refusal.into());
         }
-        if let PlaneFragmentInstruction::Wgmma { .. } = instruction
+        if call.instruction == Instruction::Wgmma
             && let Some(refusal) = CubeStagedWgmmaRefusal::new(&fill, self.planes_along_k, merges)
         {
             return Err(refusal.into());
@@ -420,7 +417,7 @@ impl CubeStagedMicrokernel {
         let (storage, stage_layout) = match fill.delivery {
             CubeStagedDelivery::Tma => (landed, None),
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => {
-                let layout = instruction.stage_layout(self.stage_layout)?;
+                let layout = call.stage_layout(self.stage_layout)?;
                 (self.plane.stage_storage(layout, stage), Some(layout))
             }
         };
@@ -702,7 +699,7 @@ impl Microkernel for CubeStagedMicrokernel {
                         MatmulAxes::MNK.of(self.plane.orders.innermost(MatmulOperand::Out)),
                     ),
                 });
-                if self.plane.instruction.drain() == PlaneFragmentDrain::CellByCell {
+                if self.plane.call.instruction.sum_drain() == SumDrain::CellByCell {
                     vectorization.require(VectorRequirement::Elementwise {
                         operand: MatmulOperand::Out,
                     });
@@ -791,7 +788,7 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
         if self.planes_along_k.get() > 1 {
             planes.push((walked, self.planes_along_k.get()));
         }
-        let tiling = match self.plane.instruction.planes() {
+        let tiling = match self.plane.call.instruction.planes() {
             1 => tiling.planes(&planes),
             group => tiling.plane_groups(group, &planes),
         };
@@ -816,8 +813,8 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
     /// of 64. As fields otherwise, each read and narrowed as the planes load it, kept beside the
     /// values: MXFP8's word of four `ue8m0` scales covers four of its steps of 32.
     fn block_scales(&self) -> BlockScales {
-        match self.plane.instruction.form() {
-            Some(form) if self.plane.instruction.scale_word_is_a_step(form) => BlockScales::Words,
+        match self.plane.call.instruction.block_scaled_form() {
+            Some(form) if self.plane.call.scale_word_is_a_step(form) => BlockScales::Words,
             Some(_) | None => BlockScales::Fields,
         }
     }

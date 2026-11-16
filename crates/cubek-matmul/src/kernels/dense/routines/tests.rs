@@ -244,7 +244,7 @@ mod cube_staged {
                 if name.starts_with("nvfp4 tile order") {
                     tile_order_prepared += 1;
                 }
-                let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.instruction.shape();
+                let [m, n, k] = blueprint.microkernel.plane.call.shape;
                 let step = step(&hw, &problem).under(Space::new(&[(M, m), (N, n), (K, k)]));
                 let cube_space = blueprint.partitioning.cube_space();
                 assert!(

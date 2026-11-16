@@ -16,7 +16,7 @@ use cubecl::tile::stage::RowChunks;
 pub fn stage_storage(holder: ScoreHolder, score: PlaneFragmentMicrokernel) -> StageStorage {
     match holder {
         ScoreHolder::Fragments => {
-            let [_, _, (_, depth)] = score.instruction.shape();
+            let depth = score.call.depth();
             let block = [B, KV, G]
                 .map(|axis| (axis, 1))
                 .into_iter()

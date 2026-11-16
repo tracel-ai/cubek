@@ -20,7 +20,7 @@ pub struct CubeStagedMicrokernelSettings {
     pub ring: StageRing,
     /// How a stage lays out the rows its fragments load: as the setting names, or as the
     /// instruction reads its own stage where it names none
-    /// ([`PlaneFragmentInstruction::stage_layout`](crate::matmul::plane::PlaneFragmentInstruction::stage_layout)).
+    /// ([`PlaneCall::stage_layout`](crate::matmul::plane::PlaneCall::stage_layout)).
     /// Which reads faster depends on the device and on which way the operands run, so it is a
     /// setting a table races rather than a rule.
     pub stage_layout: Option<StageLayout>,

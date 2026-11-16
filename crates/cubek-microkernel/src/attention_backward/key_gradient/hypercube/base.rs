@@ -181,7 +181,7 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
                 // A cube reading its score through windows has each plane take every query of a
                 // stage over its own keys; one holding it has each take its own rows of them over
                 // all the cube's keys ([`QueryGradientShare`]), which the planes split evenly.
-                let [(_, m), (_, n), (_, k)] = plane.score.instruction.shape();
+                let [m, n, k] = plane.score.call.shape;
                 let head_columns = PlaneKeyGradientMicrokernel::steps(head, n)?;
                 // Held, the planes split the stage's part in a grid: as many ways along its rows
                 // as whole fragments of rows allow, the rest of them along the head dim.

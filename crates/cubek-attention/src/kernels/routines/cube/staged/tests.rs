@@ -111,7 +111,7 @@ mod fragment {
         let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
             panic!("the routine runs plane fragments")
         };
-        let [(_, m), (_, n), (_, k)] = plane.score.instruction.shape();
+        let [m, n, k] = plane.score.call.shape;
         assert_eq!((m, n, k), (16, 16, 16));
     }
 

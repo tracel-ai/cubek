@@ -3,13 +3,11 @@ use crate::attention::{D, DV, G, Q, S};
 use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
 };
-use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-};
+use crate::matmul::plane::{PlaneCall, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Level, Levels, Partitioning, Scratch};
+use cubecl::tile::{Axis, Level, Levels, Partitioning, Scratch, SumDrain};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -151,9 +149,9 @@ impl PlaneKeyGradientMicrokernel {
     /// a sum that drains by bouncing through shared memory, a cmma one; none for one whose units
     /// hold their own cells and scale them in place.
     pub fn sum_scratch(&self) -> Scratch {
-        match self.key_gradient.instruction.drain() {
-            PlaneFragmentDrain::Bounce => self.settings.scratch,
-            PlaneFragmentDrain::CellByCell => Scratch::None,
+        match self.key_gradient.call.instruction.sum_drain() {
+            SumDrain::Bounce => self.settings.scratch,
+            SumDrain::CellByCell => Scratch::None,
         }
     }
 
@@ -209,8 +207,8 @@ impl PlaneKeyGradientMicrokernel {
         (along_m, along_n, depth): (NonZeroUsize, NonZeroUsize, NonZeroUsize),
     ) -> PlaneFragmentMicrokernel {
         PlaneFragmentMicrokernel {
-            instruction: score.instruction,
-            orders: score.instruction.orders(product.layouts),
+            call: score.call,
+            orders: score.call.orders(product.layouts),
             settings: PlaneFragmentMicrokernelSettings {
                 along_m,
                 along_n,
@@ -234,7 +232,7 @@ impl PlaneKeyGradientMicrokernel {
 /// Its instruction and fragments.
 impl core::fmt::Display for PlaneKeyGradientMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} {}", self.score.instruction, self.settings)
+        write!(f, "{} {}", self.score.call, self.settings)
     }
 }
 
@@ -365,7 +363,7 @@ impl Microkernel for PlaneKeyGradientMicrokernel {
                 elements: product.leaf_extent(MatmulDim::N),
             });
             // A manual fragment drains one cell at a time, wherever its unit holds it.
-            if product.instruction.drain() == PlaneFragmentDrain::CellByCell {
+            if product.call.instruction.sum_drain() == SumDrain::CellByCell {
                 vectorization.require(VectorRequirement::Elementwise { operand });
             }
         }

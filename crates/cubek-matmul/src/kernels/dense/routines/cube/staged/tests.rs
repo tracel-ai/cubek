@@ -14,6 +14,7 @@ mod base {
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::tile::space::{ComputeScope, CubeOrder};
     use cubecl::tile::stage::RowChunks;
+    use cubecl::tile::{Instruction, ShapedInstruction};
     use cubecl::tile::{Scratch, StageStorage};
     use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::{
@@ -22,7 +23,7 @@ mod base {
         CubeStagedTmaRefusal, CubeStagedTmaStoreRefusal,
     };
     use cubek_microkernel::matmul::plane::{
-        PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
+        PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, cmma_call,
     };
     use cubek_microkernel::matmul::{
         MatmulDestination, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead,
@@ -306,12 +307,12 @@ mod base {
     };
 
     /// The instruction the default elects on `hw` for `problem`, and the width its planes launch.
-    fn elected(hw: Hardware, problem: &MatmulRoutineProblem) -> (PlaneFragmentInstruction, usize) {
+    fn elected(hw: Hardware, problem: &MatmulRoutineProblem) -> (ShapedInstruction, usize) {
         let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
         let (blueprint, grid) = CubeStagedMatmulRoutine
             .prepare(&hw, problem, &settings)
             .expect("the plane routine prepares everywhere");
-        (blueprint.microkernel.plane.instruction, grid.planes().width)
+        (blueprint.microkernel.plane.call, grid.planes().width)
     }
 
     /// The tile layer's pick alone: the vendor's transport for a sum written out, and not the tile
@@ -323,13 +324,10 @@ mod base {
             .expect(MatmulView::PREPARED)
             .work_item();
         let settings = PlaneFragmentMicrokernelSettings::DEFAULT;
-        let instructions: Vec<_> = PlaneFragmentMicrokernel::candidates(&hw, &item, &settings)
-            .map(|candidate| candidate.instruction)
+        let calls: Vec<_> = PlaneFragmentMicrokernel::candidates(&hw, &item, &settings)
+            .map(|candidate| candidate.call)
             .collect();
-        assert_eq!(
-            instructions,
-            [PlaneFragmentInstruction::Cmma { shape: SHAPE }]
-        );
+        assert_eq!(calls, [cmma_call(SHAPE)]);
     }
 
     /// No two settings the cube staged routines list build the same kernel: on a device offering
@@ -416,10 +414,10 @@ mod base {
     #[test]
     fn a_shape_offered_only_to_mma_runs_through_it() {
         let hw = devices::offering_mma(devices::strix_halo(), [SHAPE]);
-        let (instruction, width) = elected(hw, &problem());
+        let (call, width) = elected(hw, &problem());
         assert!(
-            matches!(instruction, PlaneFragmentInstruction::Mma { .. }),
-            "{instruction}"
+            matches!(call.instruction, Instruction::Mma { .. }),
+            "{call}"
         );
         assert_eq!(width, 32);
     }
@@ -459,20 +457,19 @@ mod base {
         for (problem, col) in [(problem(), false), (col_rhs(), true)] {
             let prepared = CubeStagedWgmmaMatmulRoutine.prepare(&hw, &problem, &wgmma[0]);
             match (col, prepared) {
-                (true, Ok((blueprint, _))) => assert!(matches!(
-                    blueprint.microkernel.plane.instruction,
-                    PlaneFragmentInstruction::Wgmma { n: 128, .. }
-                )),
+                (true, Ok((blueprint, _))) => {
+                    let call = blueprint.microkernel.plane.call;
+                    assert_eq!(call.instruction, Instruction::Wgmma);
+                    assert_eq!(call.shape[1], 128);
+                }
                 (false, Err(Refusal::Declined { .. })) => {}
                 (_, prepared) => panic!("on a col rhs {col}: {prepared:?}"),
             }
             for (position, settings) in CubeStagedMatmulRoutine.settings(&hw).iter().enumerate() {
                 match CubeStagedMatmulRoutine.prepare(&hw, &problem, settings) {
-                    Ok((blueprint, _)) => assert!(
-                        !matches!(
-                            blueprint.microkernel.plane.instruction,
-                            PlaneFragmentInstruction::Wgmma { .. }
-                        ),
+                    Ok((blueprint, _)) => assert_ne!(
+                        blueprint.microkernel.plane.call.instruction,
+                        Instruction::Wgmma,
                         "{settings}"
                     ),
                     Err(Refusal::SharedMemoryPastDevice { .. }) if position > 0 => {}
@@ -521,7 +518,7 @@ mod base {
                 blueprint.microkernel.plane.orders.rhs,
                 BindingOrder::InBufferOrder,
                 "{}",
-                blueprint.microkernel.plane.instruction
+                blueprint.microkernel.plane.call
             );
             assert!(blueprint.widths.rhs > 1, "{:?}", blueprint.widths);
         }
@@ -1283,8 +1280,8 @@ mod base {
             .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
             .expect("the default prepares here");
         assert!(matches!(
-            blueprint.microkernel.plane.instruction,
-            PlaneFragmentInstruction::Cmma { .. } | PlaneFragmentInstruction::Mma { .. }
+            blueprint.microkernel.plane.call.instruction,
+            Instruction::Cmma | Instruction::Mma { .. }
         ));
         assert_eq!(blueprint.microkernel.scratch, Scratch::OneTile);
     }
@@ -1528,9 +1525,9 @@ mod base {
             };
             assert!(!prepared.is_empty(), "{form:?}");
             for (blueprint, _) in prepared {
-                let instruction = blueprint.microkernel.plane.instruction;
-                assert_eq!(instruction.form(), Some(form), "{form:?}");
-                assert_eq!(instruction.shape()[2].1, k, "{form:?}");
+                let call = blueprint.microkernel.plane.call;
+                assert_eq!(call.instruction.block_scaled_form(), Some(form), "{form:?}");
+                assert_eq!(call.depth(), k, "{form:?}");
                 assert_eq!(blueprint.microkernel.block_scales(), scales, "{form:?}");
             }
         }
@@ -1803,12 +1800,12 @@ mod base {
                 continue;
             };
             let plane = &blueprint.microkernel.plane;
-            if !plane.instruction.block_scaled() {
+            if plane.call.instruction.block_scaled_form().is_none() {
                 continue;
             }
             assert_eq!(
                 plane.leaf_extent(MatmulDim::K),
-                plane.instruction.shape()[2].1,
+                plane.call.depth(),
                 "{settings}"
             );
             block_scaled += 1;
