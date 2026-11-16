@@ -1,10 +1,9 @@
 use super::counters::ZeroedCounters;
 use crate::kernels::tensor::{PACKED_STACK_UNREAD, PackedTensor, PlainTensor, StoredTensor};
 use crate::kernels::{
-    MATMUL_SCALED_LHS_UNREAD, MATMUL_SCALED_RHS_ALONE, MATMUL_SCALED_UNREAD,
-    MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint, MatmulIndex,
-    MatmulIndexTable, MatmulInputs, MatmulOutput, MatmulOutputBuffer, MatmulRoutineProblem,
-    MatmulView,
+    MATMUL_SCALED_UNREAD, MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint,
+    MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulOutput, MatmulOutputBuffer,
+    MatmulRoutineProblem, MatmulView,
 };
 use core::marker::PhantomData;
 use cubecl::client::Client;
@@ -85,26 +84,12 @@ pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined 
     why: "a matmul holding every row whole reads one rhs matrix contiguous along `k` or `n`",
 };
 
-/// What a launch beside a packed input never binds: a scaled input, which reading the tensors
-/// declined.
-const SCALED_BESIDE_PACKED: &str = "a scaled input is declined beside a packed one";
-
-/// The kind of product two inputs make: a packed input on either side binds every operand as
-/// words beside their scales, two float inputs bind as values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProductKind {
-    Packed,
-    Float,
-}
-
-impl ProductKind {
-    fn of(lhs: &StoredTensor, rhs: &StoredTensor) -> Self {
-        match (lhs, rhs) {
-            (StoredTensor::Packed(_), _) | (_, StoredTensor::Packed(_)) => Self::Packed,
-            _ => Self::Float,
-        }
-    }
-}
+/// What [`MatmulTensors::scaled`] declines of a scale: one that is not a float the routines are
+/// verified at, or not laid `[batches.., k]` over the rhs.
+pub const MATMUL_SCALE_NOT_OVER_RHS: Refusal = Refusal::Declined {
+    why: "an rhs scale is an f32, f16 or bf16 tensor laid [batches.., k]: the rhs's batch dims, \
+          then its extent along k",
+};
 
 /// The tensors of one product, the output among them, from which the problem they state is read
 /// ([`problem`](Self::problem)). `Out` is where
@@ -128,9 +113,7 @@ impl ProductKind {
 /// block-split space, the float ones restated over the same space. Against a packed input every
 /// row is held whole, the lhs's leading dims merged: the problem it states has no batches,
 /// so a tiled launch reads it alike. Either way every input binds as one tile, so a kernel reads
-/// it as the tile it is. A float input may be scaled ([`ScaledTensor`](crate::kernels::tensor::ScaledTensor)):
-/// bound as a float one, its scale beside it where the stage that multiplies it is filled
-/// ([`bind_scale`](Self::bind_scale)), which only the tiled rows of the cube staged routine do.
+/// it as the tile it is.
 #[derive(Clone)]
 pub struct MatmulTensors<Out = MatmulOutputBuffer> {
     client: Client,
@@ -139,6 +122,8 @@ pub struct MatmulTensors<Out = MatmulOutputBuffer> {
     out: Out,
     rows_kind: MatmulRowsKind,
     table: Option<MatmulIndexTable>,
+    /// The scale along `K` the rhs is multiplied by as its stage is filled, where it has one.
+    rhs_scale: Option<PlainTensor>,
     /// The problem the tensors state, read the first time it is asked: a launch reads it to look
     /// up its prepared plan and again where it walks its work item.
     stated: StatedProblem,
@@ -158,7 +143,7 @@ impl<Out: core::fmt::Debug> core::fmt::Debug for MatmulTensors<Out> {
             .field("out", &self.out)
             .field("rows_kind", &self.rows_kind)
             .field("table", &self.table)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -184,9 +169,14 @@ impl MatmulTensors {
         rhs: StoredTensor,
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Refusal> {
-        match ProductKind::of(&lhs, &rhs) {
-            ProductKind::Packed => Self::packed(client, Self::packed_output(&lhs, &rhs), lhs, rhs),
-            ProductKind::Float => Self::float(client, lhs, rhs, rows_kind),
+        match (lhs, rhs) {
+            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
+                Self::float(client, lhs, rhs, rows_kind)
+            }
+            (lhs, rhs) => {
+                let out = Self::packed_output(&lhs, &rhs);
+                Self::packed(client, lhs, rhs, out)
+            }
         }
     }
 
@@ -202,7 +192,39 @@ impl MatmulTensors {
         rhs: StoredTensor,
         out: ElemType,
     ) -> Result<Self, Refusal> {
-        Self::packed(client, out, lhs, rhs)
+        Self::packed(client, lhs, rhs, out)
+    }
+
+    /// The float `lhs` against the float `rhs` multiplied by `scale` as its stage is filled: one
+    /// factor per batch and position along `K`, laid `[batches.., k]` as the rhs's batch dims
+    /// then its extent along `K`, a dim it does not vary along of stride zero.
+    ///
+    /// # Errors
+    ///
+    /// As [`new`](Self::new), [`MATMUL_SCALED_UNREAD`] where every row is held whole, which
+    /// merges the batches a scale is laid over, and [`MATMUL_SCALE_NOT_OVER_RHS`].
+    pub fn scaled(
+        client: &Client,
+        lhs: PlainTensor,
+        rhs: PlainTensor,
+        scale: PlainTensor,
+        rows_kind: MatmulRowsKind,
+    ) -> Result<Self, Refusal> {
+        if rows_kind == MatmulRowsKind::Whole {
+            return Err(MATMUL_SCALED_UNREAD);
+        }
+        let shape = rhs.shape();
+        let over_rhs = shape.as_slice()[..shape.rank() - 2]
+            .iter()
+            .chain([&shape[shape.rank() - 2]])
+            .eq(scale.shape().as_slice());
+        if !over_rhs || !MatmulInputs::FLOATS.contains(&scale.elem) {
+            return Err(MATMUL_SCALE_NOT_OVER_RHS);
+        }
+        Ok(Self {
+            rhs_scale: Some(scale),
+            ..Self::float(client, lhs, rhs, rows_kind)?
+        })
     }
 
     /// The product of `lhs` and `rhs`, both on `client`'s device, written into `out`, which the
@@ -226,9 +248,10 @@ impl MatmulTensors {
         out: PlainTensor,
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Refusal> {
-        if matches!(lhs, StoredTensor::Packed(_)) || matches!(rhs, StoredTensor::Packed(_)) {
-            return Self::packed_into(client, lhs, rhs, out);
-        }
+        let (lhs, rhs) = match (lhs, rhs) {
+            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => (lhs, rhs),
+            (lhs, rhs) => return Self::packed_into(client, lhs, rhs, out),
+        };
         let operands = Operands::read(client, lhs, rhs, rows_kind)?;
         if out.shape().as_slice() != operands.out_shape.as_slice()
             || !MatmulInputs::VERIFIED.contains(&out.elem)
@@ -239,14 +262,15 @@ impl MatmulTensors {
         let bound = operands.bound_out(&out);
         Ok(Self {
             client: client.clone(),
-            lhs: operands.lhs,
-            rhs: operands.rhs,
+            lhs: StoredTensor::Plain(operands.lhs),
+            rhs: StoredTensor::Plain(operands.rhs),
             out: MatmulOutputBuffer {
                 tensor: None,
                 bound,
             },
             rows_kind: rows_kind,
             table: None,
+            rhs_scale: None,
             stated: StatedProblem::default(),
         })
     }
@@ -287,7 +311,6 @@ impl MatmulTensors {
                 Self::indexed_float(client, lhs, rhs, table, out, rows_kind)
             }
             StoredTensor::Packed(rhs) => Self::indexed_packed(client, lhs, rhs, table, out),
-            StoredTensor::Scaled(_) => Err(MATMUL_SCALED_RHS_ALONE),
         }
     }
 
@@ -313,6 +336,7 @@ impl MatmulTensors {
             out,
             rows_kind,
             table: Some(table),
+            rhs_scale: None,
             stated: StatedProblem::default(),
         })
     }
@@ -343,6 +367,7 @@ impl MatmulTensors {
             out,
             rows_kind: MatmulRowsKind::Whole,
             table: Some(table),
+            rhs_scale: None,
             stated: StatedProblem::default(),
         })
     }
@@ -449,15 +474,14 @@ impl MatmulTensors {
                 Self::beside_packed(client, tensor, axes, k).map(StoredTensor::Plain)
             }
             StoredTensor::Packed(_) => Ok(operand),
-            StoredTensor::Scaled(_) => Err(MATMUL_SCALED_RHS_ALONE),
         }
     }
 
     /// The rows of `lhs`, `k` deep, its leading dims merged into them.
     fn rows_of(lhs: &StoredTensor, k: usize) -> usize {
-        match lhs.float() {
-            Some(values) => values.shape().num_elements() / k.max(1),
-            None => lhs.extent([M, K], M),
+        match lhs {
+            StoredTensor::Plain(lhs) => lhs.shape().num_elements() / k.max(1),
+            StoredTensor::Packed(lhs) => lhs.extent(M),
         }
     }
 
@@ -466,8 +490,8 @@ impl MatmulTensors {
     /// ([`PACKED`](MatmulRoutineProblem::PACKED)).
     pub(super) fn packed_output(lhs: &StoredTensor, rhs: &StoredTensor) -> ElemType {
         match (lhs, rhs) {
+            (StoredTensor::Plain(input), _) | (_, StoredTensor::Plain(input)) => input.elem,
             (StoredTensor::Packed(_), StoredTensor::Packed(_)) => MatmulRoutineProblem::PACKED,
-            (input, StoredTensor::Packed(_)) | (_, input) => input.values().elem,
         }
     }
 
@@ -475,25 +499,23 @@ impl MatmulTensors {
     /// in the operands' element.
     fn float(
         client: &Client,
-        lhs: StoredTensor,
-        rhs: StoredTensor,
+        lhs: PlainTensor,
+        rhs: PlainTensor,
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Refusal> {
         let operands = Operands::read(client, lhs, rhs, rows_kind)?;
-        let (tensor, out) = PlainTensor::empty(
-            client,
-            operands.out_shape.clone().into(),
-            operands.lhs.values().elem,
-        );
+        let (tensor, out) =
+            PlainTensor::empty(client, operands.out_shape.clone().into(), operands.lhs.elem);
         let bound = operands.bound_out(&out);
         let tensor = Some(tensor);
         Ok(Self {
             client: client.clone(),
-            lhs: operands.lhs,
-            rhs: operands.rhs,
+            lhs: StoredTensor::Plain(operands.lhs),
+            rhs: StoredTensor::Plain(operands.rhs),
             out: MatmulOutputBuffer { tensor, bound },
             rows_kind,
             table: None,
+            rhs_scale: None,
             stated: StatedProblem::default(),
         })
     }
@@ -501,9 +523,9 @@ impl MatmulTensors {
     /// `lhs` against `rhs`, either packed, the output allocated as `[.., n]` in `out`.
     fn packed(
         client: &Client,
-        out: ElemType,
         lhs: StoredTensor,
         rhs: StoredTensor,
+        out: ElemType,
     ) -> Result<Self, Refusal> {
         let (lhs, rhs, shape) = Self::beside_packed_inputs(client, lhs, rhs)?;
         let (tensor, bound) = PlainTensor::empty(client, shape.into(), out);
@@ -515,6 +537,7 @@ impl MatmulTensors {
             out: MatmulOutputBuffer { tensor, bound },
             rows_kind: MatmulRowsKind::Whole,
             table: None,
+            rhs_scale: None,
             stated: StatedProblem::default(),
         })
     }
@@ -549,6 +572,7 @@ impl MatmulTensors {
             },
             rows_kind: MatmulRowsKind::Whole,
             table: None,
+            rhs_scale: None,
             stated: StatedProblem::default(),
         })
     }
@@ -564,9 +588,9 @@ impl MatmulTensors {
         let k = rhs.extent([K, N], K);
         let lhs = Self::stored_beside_packed(client, lhs, [M, K], k)?;
         let rhs = Self::stored_beside_packed(client, rhs, [K, N], k)?;
-        let mut shape = match lhs.float() {
-            Some(values) => values.shape().to_vec(),
-            None => vec![lhs.extent([M, K], M), k],
+        let mut shape = match &lhs {
+            StoredTensor::Plain(lhs) => lhs.shape().to_vec(),
+            StoredTensor::Packed(lhs) => vec![lhs.extent(M), k],
         };
         *shape.last_mut().expect("the lhs has a rank") = rhs.extent([K, N], N);
         Ok((lhs, rhs, shape))
@@ -579,19 +603,22 @@ impl MatmulTensors {
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
     ) -> MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch> {
-        match ProductKind::of(&self.lhs, &self.rhs) {
-            ProductKind::Packed => self.bind_packed(blueprint, grid),
-            ProductKind::Float => self.bind_float(blueprint, grid),
+        match (&self.lhs, &self.rhs) {
+            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
+                self.bind_float(lhs, rhs, blueprint, grid)
+            }
+            _ => self.bind_packed(blueprint, grid),
         }
     }
 
     /// The operands bound as float ones, each read in the order its microkernel reads it.
     fn bind_float<Mk: MatmulMicrokernel, SM>(
         &self,
+        lhs: &PlainTensor,
+        rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
     ) -> MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch> {
-        let (lhs, rhs) = (self.lhs.values(), self.rhs.values());
         let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid);
         let out = launcher
             .arg(self.out.bound.binding.clone(), self.out.bound.elem)
@@ -650,28 +677,31 @@ impl MatmulTensors<Geometry> {
         rhs: StoredTensor,
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Refusal> {
-        match ProductKind::of(&lhs, &rhs) {
-            ProductKind::Packed => Self::packed(client, lhs, rhs),
-            ProductKind::Float => Self::float(client, lhs, rhs, rows_kind),
+        match (lhs, rhs) {
+            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
+                Self::float(client, lhs, rhs, rows_kind)
+            }
+            (lhs, rhs) => Self::packed(client, lhs, rhs),
         }
     }
 
     /// `lhs` against the float `rhs`, holding the rows as `rows_kind` says.
     fn float(
         client: &Client,
-        lhs: StoredTensor,
-        rhs: StoredTensor,
+        lhs: PlainTensor,
+        rhs: PlainTensor,
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Refusal> {
         let operands = Operands::read(client, lhs, rhs, rows_kind)?;
         let out = Geometry::row_major(&operands.sink_shape());
         Ok(Self {
             client: client.clone(),
-            lhs: operands.lhs,
-            rhs: operands.rhs,
+            lhs: StoredTensor::Plain(operands.lhs),
+            rhs: StoredTensor::Plain(operands.rhs),
             out,
             rows_kind,
             table: None,
+            rhs_scale: None,
             stated: StatedProblem::default(),
         })
     }
@@ -689,6 +719,7 @@ impl MatmulTensors<Geometry> {
             out,
             rows_kind: MatmulRowsKind::Whole,
             table: None,
+            rhs_scale: None,
             stated: StatedProblem::default(),
         })
     }
@@ -701,19 +732,22 @@ impl MatmulTensors<Geometry> {
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
     ) -> MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch> {
-        match ProductKind::of(&self.lhs, &self.rhs) {
-            ProductKind::Packed => self.bind_packed(blueprint, grid),
-            ProductKind::Float => self.bind_float(blueprint, grid),
+        match (&self.lhs, &self.rhs) {
+            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
+                self.bind_float(lhs, rhs, blueprint, grid)
+            }
+            _ => self.bind_packed(blueprint, grid),
         }
     }
 
     /// The operands bound as float ones, each read in the order its microkernel reads it.
     fn bind_float<Mk: MatmulMicrokernel, SM>(
         &self,
+        lhs: &PlainTensor,
+        rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
     ) -> MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch> {
-        let (lhs, rhs) = (self.lhs.values(), self.rhs.values());
         let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid);
         let out = launcher
             .unbound(&self.out)
@@ -850,75 +884,61 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 
     /// The problem these tensors state, read off them.
     fn state_problem(&self) -> MatmulRoutineProblem {
-        match ProductKind::of(&self.lhs, &self.rhs) {
-            ProductKind::Packed => self.packed_problem(),
-            ProductKind::Float => self.float_problem(),
-        }
-    }
-
-    /// The problem a product with a packed input states: every row held whole.
-    fn packed_problem(&self) -> MatmulRoutineProblem {
-        let (lhs, rhs) = (&self.lhs, &self.rhs);
-        let k = rhs.extent([K, N], K);
-        let packing = |operand: &StoredTensor| match operand {
-            StoredTensor::Packed(operand) => Some(operand.packing()),
-            StoredTensor::Plain(_) | StoredTensor::Scaled(_) => None,
-        };
-        let packings = MatmulOperands {
-            lhs: packing(lhs),
-            rhs: packing(rhs),
-            out: None,
-        };
-        let stored_tile = |operand: &StoredTensor| match operand {
-            StoredTensor::Plain(_) | StoredTensor::Scaled(_) => None,
-            StoredTensor::Packed(operand) => operand.stored_tile(),
-        };
-        // A float input is read at its own element, whatever the output is written in: an
-        // f16 activation into an f32 output is still an f16 activation.
-        let element = |operand: &StoredTensor| {
-            operand
-                .float()
-                .map_or(MatmulRoutineProblem::PACKED, |values| values.elem)
-        };
-        let out = self.out.element(lhs, rhs);
-        let problem = MatmulRoutineProblem {
-            destination: Out::DESTINATION,
-            stored_tiles: MatmulOperands {
-                lhs: stored_tile(lhs),
-                rhs: stored_tile(rhs),
-                out: None,
+        let problem = match (&self.lhs, &self.rhs) {
+            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => match &self.table {
+                None => self.out.problem(lhs, rhs),
+                Some(table) => self.indexed_problem(lhs, rhs, table),
             },
-            elements: MatmulOperands {
-                lhs: element(lhs),
-                rhs: element(rhs),
-                out,
-            },
-            ..MatmulRoutineProblem::packed(
-                MatmulTensors::rows_of(lhs, k),
-                rhs.extent([K, N], N),
-                k,
-                out,
-                packings,
-            )
-        };
-        match &self.table {
-            None => problem,
-            Some(table) => Self::indexed_packed_problem(problem, lhs, table),
-        }
-    }
-
-    /// The problem two float inputs state, a scaled rhs's scale element beside it.
-    fn float_problem(&self) -> MatmulRoutineProblem {
-        let (lhs, rhs) = (self.lhs.values(), self.rhs.values());
-        let problem = match &self.table {
-            None => self.out.problem(lhs, rhs),
-            Some(table) => self.indexed_problem(lhs, rhs, table),
+            (lhs, rhs) => {
+                let k = rhs.extent([K, N], K);
+                let packing = |operand: &StoredTensor| match operand {
+                    StoredTensor::Plain(_) => None,
+                    StoredTensor::Packed(operand) => Some(operand.packing()),
+                };
+                let packings = MatmulOperands {
+                    lhs: packing(lhs),
+                    rhs: packing(rhs),
+                    out: None,
+                };
+                let stored_tile = |operand: &StoredTensor| match operand {
+                    StoredTensor::Plain(_) => None,
+                    StoredTensor::Packed(operand) => operand.stored_tile(),
+                };
+                // A float input is read at its own element, whatever the output is written in: an
+                // f16 activation into an f32 output is still an f16 activation.
+                let element = |operand: &StoredTensor| match operand {
+                    StoredTensor::Plain(input) => input.elem,
+                    StoredTensor::Packed(_) => MatmulRoutineProblem::PACKED,
+                };
+                let out = self.out.element(lhs, rhs);
+                let problem = MatmulRoutineProblem {
+                    destination: Out::DESTINATION,
+                    stored_tiles: MatmulOperands {
+                        lhs: stored_tile(lhs),
+                        rhs: stored_tile(rhs),
+                        out: None,
+                    },
+                    elements: MatmulOperands {
+                        lhs: element(lhs),
+                        rhs: element(rhs),
+                        out,
+                    },
+                    ..MatmulRoutineProblem::packed(
+                        MatmulTensors::rows_of(lhs, k),
+                        rhs.extent([K, N], N),
+                        k,
+                        out,
+                        packings,
+                    )
+                };
+                match &self.table {
+                    None => problem,
+                    Some(table) => Self::indexed_packed_problem(problem, lhs, table),
+                }
+            }
         };
         MatmulRoutineProblem {
-            rhs_scale: match &self.rhs {
-                StoredTensor::Scaled(scaled) => Some(scaled.scale().elem),
-                StoredTensor::Plain(_) | StoredTensor::Packed(_) => None,
-            },
+            rhs_scale: self.rhs_scale.as_ref().map(|scale| scale.elem),
             ..problem
         }
     }
@@ -1062,7 +1082,6 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 },
                 blueprint.microkernel.words_delivery(),
             ),
-            StoredTensor::Scaled(_) => panic!("{SCALED_BESIDE_PACKED}"),
         };
         let lhs = bind(&self.lhs, [M, K], blueprint.widths.lhs);
         // A microkernel reading the rhs a block at a time planned on the rhs read so.
@@ -1096,10 +1115,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// On a packed input: its tensors hold every row whole, which
     /// [`assert_tiled`](Self::assert_tiled) refuses first.
     fn plain(&self) -> [&PlainTensor; 2] {
-        [&self.lhs, &self.rhs].map(|operand| {
-            operand
-                .float()
-                .expect("a packed input is read with every row whole")
+        [&self.lhs, &self.rhs].map(|operand| match operand {
+            StoredTensor::Plain(tensor) => tensor,
+            StoredTensor::Packed(_) => panic!("a packed input is read with every row whole"),
         })
     }
 
@@ -1108,24 +1126,18 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         self.read(|view| view.work_item())
     }
 
-    /// The rhs's scale bound under `launcher`: laid over the batches and `K`, one value a read,
-    /// moved synchronously by the cube's units as the stage it multiplies into is. None where the
-    /// rhs is not scaled.
+    /// The rhs's scale bound under `launcher` over the batches and `K`, moved by the cube's units
+    /// as the stage it multiplies into is: none where the rhs is not scaled.
     pub fn bind_scale(&self, launcher: &Launcher) -> Option<TileTensorLaunch> {
-        let StoredTensor::Scaled(scaled) = &self.rhs else {
-            return None;
-        };
-        let tensor = scaled.scale();
-        Some(
-            launcher
-                .arg(tensor.binding.clone(), tensor.elem)
-                .axes(&[K])
-                .batches(&self.batch_axes())
-                .delivery(Delivery::SyncPerUnit)
-                .build()
-                .expect(ADMITTED_PLAN_RUNS)
-                .arg(),
-        )
+        let scale = self.rhs_scale.as_ref()?;
+        let bound = launcher
+            .arg(scale.binding.clone(), scale.elem)
+            .axes(&[K])
+            .batches(&self.batch_axes())
+            .delivery(Delivery::SyncPerUnit)
+            .build()
+            .expect(ADMITTED_PLAN_RUNS);
+        Some(bound.arg())
     }
 
     /// The axes the problem's batch dims are labelled with, read off the operands' rank without
@@ -1250,7 +1262,6 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         let lhs = match &self.lhs {
             StoredTensor::Plain(lhs) => self.tma_float_lhs(lhs, stage, storage, orders, widths.lhs),
             StoredTensor::Packed(lhs) => packed(lhs, MatmulOperand::Lhs, M, widths.lhs),
-            StoredTensor::Scaled(_) => panic!("{SCALED_BESIDE_PACKED}"),
         };
         let rhs = packed(rhs, MatmulOperand::Rhs, N, widths.rhs);
         (lhs, rhs)
@@ -1503,8 +1514,8 @@ pub struct MatmulLastArrivalBinding {
 
 /// The operands as a launch holding rows one way binds them, and the output it allocates.
 struct Operands {
-    lhs: StoredTensor,
-    rhs: StoredTensor,
+    lhs: PlainTensor,
+    rhs: PlainTensor,
     /// The shape of the output a launch allocates.
     out_shape: Vec<usize>,
     rows_kind: MatmulRowsKind,
@@ -1522,41 +1533,29 @@ impl Operands {
     /// As [`MatmulTensors::new`].
     fn read(
         client: &Client,
-        lhs: StoredTensor,
-        rhs: StoredTensor,
+        lhs: PlainTensor,
+        rhs: PlainTensor,
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Refusal> {
-        if matches!(lhs, StoredTensor::Scaled(_)) {
-            return Err(MATMUL_SCALED_LHS_UNREAD);
-        }
-        use MatmulRowsKind::{Tiled, Whole};
-        use StoredTensor::Plain;
-        match (rows_kind, lhs, rhs) {
-            (Tiled, lhs, rhs) => Self::tiled(client, lhs, rhs),
-            (Whole, Plain(lhs), Plain(rhs)) => Self::whole(client, lhs, rhs),
-            // Merging the lhs's leading dims into rows leaves a scale over them nothing to read.
-            (Whole, ..) => Err(MATMUL_SCALED_UNREAD),
+        match rows_kind {
+            MatmulRowsKind::Tiled => Self::tiled(client, lhs, rhs),
+            MatmulRowsKind::Whole => Self::whole(client, lhs, rhs),
         }
     }
 
     /// Both operands where they lie unless they alias themselves, the output their product's
     /// shape.
-    ///
-    /// # Errors
-    ///
-    /// As [`MatmulTensors::new`].
-    fn tiled(client: &Client, lhs: StoredTensor, rhs: StoredTensor) -> Result<Self, Refusal> {
-        let out_shape = Self::product_shape(lhs.values(), rhs.values())?;
-        if lhs.values().is_tiled_column_first() || rhs.values().is_tiled_column_first() {
+    fn tiled(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Refusal> {
+        let out_shape = Self::product_shape(&lhs, &rhs)?;
+        if lhs.is_tiled_column_first() || rhs.is_tiled_column_first() {
             return Err(MATMUL_COLUMN_FIRST_TILES);
         }
-        let (values_lhs, values_rhs) =
-            MatmulInputs::new(client, lhs.values().clone(), rhs.values().clone())?
-                .addressable(client)
-                .into_parts();
+        let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?
+            .addressable(client)
+            .into_parts();
         Ok(Self {
-            lhs: lhs.over(client, values_lhs),
-            rhs: rhs.over(client, values_rhs),
+            lhs,
+            rhs,
             out_shape,
             rows_kind: MatmulRowsKind::Tiled,
         })
@@ -1590,8 +1589,8 @@ impl Operands {
         let mut out_shape = lhs_shape.to_vec();
         *out_shape.last_mut().expect("the lhs has a rank") = n;
         Ok(Self {
-            lhs: StoredTensor::Plain(lhs.as_rows(m, k)),
-            rhs: StoredTensor::Plain(weight),
+            lhs: lhs.as_rows(m, k),
+            rhs: weight,
             out_shape,
             rows_kind: MatmulRowsKind::Whole,
         })
@@ -1600,9 +1599,8 @@ impl Operands {
     /// The rows and the line the output is bound as, where the launch reads every row whole: the
     /// lhs's rows, the rhs's columns.
     fn out_rows(&self) -> Option<[usize; 2]> {
-        let (lhs, rhs) = (self.lhs.values(), self.rhs.values());
         match self.rows_kind {
-            MatmulRowsKind::Whole => Some([lhs.shape()[0], rhs.shape()[1]]),
+            MatmulRowsKind::Whole => Some([self.lhs.shape()[0], self.rhs.shape()[1]]),
             MatmulRowsKind::Tiled => None,
         }
     }

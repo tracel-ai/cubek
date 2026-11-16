@@ -6,9 +6,9 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
-use cubek_matmul::kernels::tensor::{PlainTensor, ScaledTensor, StoredTensor};
+use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_matmul::kernels::{
-    CubeStagedMatmulRoutine, MATMUL_SCALED_LHS_UNREAD, MATMUL_SCALED_UNREAD, MatmulRoutine,
+    CubeStagedMatmulRoutine, MATMUL_SCALE_NOT_OVER_RHS, MATMUL_SCALED_UNREAD, MatmulRoutine,
     PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine,
 };
 use cubek_std::Hardware;
@@ -42,8 +42,13 @@ fn values(count: usize, seed: usize) -> Vec<f32> {
         .collect()
 }
 
-/// Skips the test where the cube staged routine prepares no scaled input on this device.
+/// Skips the test where the cube staged routine prepares no scaled input on this device, which a
+/// refusal of the scale itself is not.
 fn skip_unprepared(why: Refusal) {
+    assert_ne!(
+        why, MATMUL_SCALED_UNREAD,
+        "the cube staged routine reads a scaled rhs"
+    );
     TestOutcome::Validated(ValidationResult::Skipped(format!(
         "the cube staged routine does not prepare a scaled input here: {why:?}"
     )))
@@ -104,9 +109,9 @@ fn answers_the_reference(element: ElemType, scale_element: ElemType, scale: Scal
         Scale::SharedOverFirstBatch => upload(&client, &scale_host, &[b1, K], scale_element)
             .viewed(Metadata::new(Shape::from(vec![b0, b1, K]), vec![0, K, 1])),
     };
-    let lhs = StoredTensor::Plain(lhs);
-    let rhs = StoredTensor::Scaled(ScaledTensor::new(rhs, scale).expect("a scale over K"));
-    let out = match CubeStagedMatmulRoutine.launch_first_served_on(&hw, &client, lhs, rhs) {
+    let launched =
+        CubeStagedMatmulRoutine.launch_scaled_first_served_on(&hw, &client, lhs, rhs, scale);
+    let out = match launched {
         Ok(out) => out,
         Err(why) => return skip_unprepared(why),
     };
@@ -153,41 +158,31 @@ fn a_scale_broadcast_over_a_batch_axis_answers_the_reference() {
 }
 
 /// The routines whose fill applies no scale decline a scaled rhs by name, whether they tile their
-/// rows or hold every one whole, and every routine declines a scaled lhs.
+/// rows or hold every one whole, and a scale not laid over the rhs's batches and `K` is declined.
 #[test]
 fn the_routines_applying_no_scale_decline_it() {
     let client = client();
     let hw = Hardware::from_client(&client);
-    let scaled_rhs = || {
-        let lhs = upload(&client, &values(M * K, LHS_SEED), &[M, K], F16);
-        let rhs = upload(&client, &values(K * N, RHS_SEED), &[K, N], F16);
-        let scale = upload(&client, &values(K, SCALE_SEED), &[K], F16);
-        let rhs = ScaledTensor::new(rhs, scale).expect("a scale over K");
-        (StoredTensor::Plain(lhs), StoredTensor::Scaled(rhs))
-    };
-    let (lhs, rhs) = scaled_rhs();
-    assert_eq!(
-        UnitRegistersMatmulRoutine
-            .launch_first_served_on(&hw, &client, lhs, rhs)
-            .err(),
-        Some(MATMUL_SCALED_UNREAD)
+    let lhs = || upload(&client, &values(M * K, LHS_SEED), &[M, K], F16);
+    let rhs = || upload(&client, &values(K * N, RHS_SEED), &[K, N], F16);
+    let scale = |extent| upload(&client, &values(extent, SCALE_SEED), &[extent], F16);
+    let unit = UnitRegistersMatmulRoutine.launch_scaled_first_served_on(
+        &hw,
+        &client,
+        lhs(),
+        rhs(),
+        scale(K),
     );
-    let (lhs, rhs) = scaled_rhs();
-    assert_eq!(
-        PlaneShuffleMatmulRoutine
-            .launch_first_served_on(&hw, &client, lhs, rhs)
-            .err(),
-        Some(MATMUL_SCALED_UNREAD)
+    assert_eq!(unit.err(), Some(MATMUL_SCALED_UNREAD));
+    let plane = PlaneShuffleMatmulRoutine.launch_scaled_first_served_on(
+        &hw,
+        &client,
+        lhs(),
+        rhs(),
+        scale(K),
     );
-    // A scaled lhs is built as a `[m, k]` matrix under a scale over its first dim.
-    let lhs = upload(&client, &values(M * K, LHS_SEED), &[M, K], F16);
-    let scale = upload(&client, &values(M, SCALE_SEED), &[M], F16);
-    let lhs = StoredTensor::Scaled(ScaledTensor::new(lhs, scale).expect("a scale over M"));
-    let rhs = StoredTensor::Plain(upload(&client, &values(K * N, RHS_SEED), &[K, N], F16));
-    assert_eq!(
-        CubeStagedMatmulRoutine
-            .launch_first_served_on(&hw, &client, lhs, rhs)
-            .err(),
-        Some(MATMUL_SCALED_LHS_UNREAD)
-    );
+    assert_eq!(plane.err(), Some(MATMUL_SCALED_UNREAD));
+    let over_n =
+        CubeStagedMatmulRoutine.launch_scaled_first_served_on(&hw, &client, lhs(), rhs(), scale(N));
+    assert_eq!(over_n.err(), Some(MATMUL_SCALE_NOT_OVER_RHS));
 }

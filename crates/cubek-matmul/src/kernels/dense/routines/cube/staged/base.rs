@@ -7,9 +7,8 @@
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::{
     CubeStagedMatmulRoutine, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
-    MATMUL_PACKED_WALK_PAST_K, MATMUL_SCALED_UNREAD_BY_ENGINE, MatmulBinding, MatmulBlueprint,
-    MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem, MatmulTensors,
-    MatmulView,
+    MATMUL_PACKED_WALK_PAST_K, MATMUL_SCALED_UNREAD, MatmulBinding, MatmulBlueprint, MatmulOutput,
+    MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{
@@ -25,7 +24,8 @@ use cubek_microkernel::matmul::cube::{
     CubeStagedTmaStoreRefusal, MatmulCubeSpace, MatmulCubeWrite,
 };
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulWorkItem,
+    MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead,
+    MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -60,8 +60,7 @@ impl<'a> CubeStagedPlacement<'a> {
     /// is drained into ([`CubeStagedTmaStoreRefusal`]).
     /// A stage an engine fills lands as it lies, so there a float product's planes read their
     /// stages undecoded, never rounded by the units on the way in.
-    /// A scaled rhs is filled by the units alone, as stored, its stage multiplied by its scale
-    /// as it is loaded ([`MATMUL_SCALED_UNREAD_BY_ENGINE`] for an engine).
+    /// A scaled rhs is filled by the units into fragment stages alone ([`MATMUL_SCALED_UNREAD`]).
     pub(crate) fn new(
         hw: &Hardware,
         problem: &'a MatmulRoutineProblem,
@@ -76,8 +75,14 @@ impl<'a> CubeStagedPlacement<'a> {
         let by_units = fill.delivery == CubeStagedDelivery::Copy;
         let scaled = problem.rhs_scale.is_some();
         if scaled && !(by_units && store == CubeStagedStore::Fragments) {
-            return Err(MATMUL_SCALED_UNREAD_BY_ENGINE);
+            return Err(MATMUL_SCALED_UNREAD);
         }
+        // A scaled rhs is read dequantized at its own element: its stage is filled by units
+        // multiplying the scale in, never landed as it lies.
+        let rhs_read = |read| match (scaled, read) {
+            (true, MatmulRead::AsBound) => MatmulRead::Dequantized(problem.elements.rhs),
+            (_, read) => read,
+        };
         // An operand the TMA engine lands is read in the instruction the tile layer picks for
         // landed operands: the planes take the first candidate whose sum it opens, as it opens it.
         let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
@@ -89,7 +94,10 @@ impl<'a> CubeStagedPlacement<'a> {
                 CubeStagedMicrokernel {
                     fill,
                     store,
-                    reads: problem.reads(candidate.reads),
+                    reads: MatmulOperands {
+                        rhs: rhs_read(candidate.reads.rhs),
+                        ..candidate.reads
+                    },
                     ..candidate
                 }
                 .summed(hw, &item)

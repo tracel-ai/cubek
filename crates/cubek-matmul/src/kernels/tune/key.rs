@@ -354,10 +354,6 @@ impl From<&MatmulShape> for MatmulRoutineProblem {
                 rhs: held(shape.rhs.batching),
                 out: shape.batch,
             },
-            rhs_scale: match shape.rhs.kind {
-                OperandKind::Scaled(element) => Some(element),
-                _ => None,
-            },
             ..Self::dense(shape.m, shape.n, shape.k, shape.elem)
                 .laid(
                     MatmulOperand::Lhs,

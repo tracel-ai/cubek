@@ -260,7 +260,6 @@ impl PlaneShuffleMatmulRoutine {
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Refusal> {
         problem.check_plain()?;
-        problem.check_unscaled()?;
         if settings.planes_per_worker.is_some() {
             return Err(Self::PERSISTENT_FLOAT);
         }

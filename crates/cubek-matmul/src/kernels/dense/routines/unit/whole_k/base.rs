@@ -221,7 +221,6 @@ impl Routine for UnitWholeKMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_plain()?;
-        problem.check_unscaled()?;
         problem.check_unindexed()?;
         let view = MatmulView::new(problem, Self::ROWS_KIND)?;
         let item = view.work_item();

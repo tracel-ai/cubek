@@ -43,14 +43,14 @@ pub fn cube_staged_matmul_kernel<
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let w: ComptimeOption<Tile> = scale.map(|scale| scale.tile(&partitioning));
+    let scale: ComptimeOption<Tile> = scale.map(|scale| scale.tile(&partitioning));
     let dest = O::serve::<E, VO>(out, &partitioning);
     let c = dest.tile();
 
     for cube in &partitioning {
         let b = b.at(&cube);
-        let weighted: ComptimeOption<Tile> = w.clone().map(|w| b.mul(&w.at(&cube)));
-        let b = weighted.unwrap_or(b);
+        let scaled: ComptimeOption<Tile> = scale.clone().map(|scale| b.mul(&scale.at(&cube)));
+        let b = scaled.unwrap_or(b);
         cube_staged_microkernel::<EA>(
             cube.walk_within(&b),
             &a.at(&cube),

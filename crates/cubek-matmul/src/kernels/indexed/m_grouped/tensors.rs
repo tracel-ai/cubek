@@ -6,8 +6,8 @@ use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
 use crate::kernels::{
-    MATMUL_SCALED_RHS_ALONE, MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable,
-    MatmulInputs, MatmulRoutine, MatmulRoutineProblem,
+    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
+    MatmulRoutineProblem,
 };
 use cubecl::client::Client;
 use cubecl::tile::launch::Refusal;
@@ -73,7 +73,6 @@ impl MGroupedMatmulTensors {
         }
         let rhs = match rhs {
             StoredTensor::Packed(packed) => StoredTensor::Packed(packed),
-            StoredTensor::Scaled(_) => return Err(MATMUL_SCALED_RHS_ALONE),
             // The rows are padded into a buffer of the launch's own, so only the stack is read
             // where it lies. The slabs are strided views of the stack's buffer, which an
             // overlapping view has no single place for.
@@ -313,7 +312,6 @@ impl MGroupedMatmulTensors {
                 };
                 Ok(MatmulRoutineProblem::packed(rows, n, k, elem, packings))
             }
-            StoredTensor::Scaled(_) => Err(MATMUL_SCALED_RHS_ALONE),
             StoredTensor::Plain(rhs) => {
                 let slabs = SlabView::new(rhs, self.groups(), self.along);
                 let rhs_layout = MatmulLayout::new(

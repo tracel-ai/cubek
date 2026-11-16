@@ -178,6 +178,26 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         Ok(tensors.into_out().expect(ALLOCATED))
     }
 
+    /// [`launch_first_served_on`](Self::launch_first_served_on) with `rhs` multiplied by `scale`
+    /// along `K` as its stage is filled ([`MatmulTensors::scaled`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`MatmulTensors::scaled`], and the last setting's decline, where none serves.
+    fn launch_scaled_first_served_on(
+        &self,
+        hw: &Hardware,
+        client: &Client,
+        lhs: PlainTensor,
+        rhs: PlainTensor,
+        scale: PlainTensor,
+    ) -> Result<TensorHandle, Refusal> {
+        let tensors = MatmulTensors::scaled(client, lhs, rhs, scale, Self::ROWS_KIND)?;
+        let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
+        self.dispatch_into_buffer(&tensors, blueprint, grid);
+        Ok(tensors.into_out().expect(ALLOCATED))
+    }
+
     /// [`launch_first_served_on`](Self::launch_first_served_on) into an output of `out`: what a
     /// caller naming the routine and no setting runs on a packed lhs
     /// ([`MatmulTensors::written_in`]).

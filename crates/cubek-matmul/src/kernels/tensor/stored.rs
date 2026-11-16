@@ -1,13 +1,12 @@
-use super::{PackedTensor, PlainTensor, ScaledTensor};
+use super::{PackedTensor, PlainTensor};
 use crate::kernels::select::problem::OperandKind;
 use cubecl::server::BufferBinding;
 use cubecl::tile::Axis;
 use cubecl::zspace::SmallVec;
 use cubecl::zspace::metadata::Metadata;
 
-/// A tensor as it is stored, which is how a kernel reads it: its values where they lie, packed
-/// under its scales, or multiplied by a scale tensor as they are read. Each binds as one tile, so a
-/// kernel reads whichever it is handed.
+/// A tensor as it is stored, which is how a kernel reads it: its values where they lie, or packed
+/// under its scales. Each binds as one tile, so a kernel reads whichever it is handed.
 #[derive(Debug, Clone)]
 #[expect(
     clippy::large_enum_variant,
@@ -18,8 +17,6 @@ pub enum StoredTensor {
     Plain(PlainTensor),
     /// Packed words under their scales.
     Packed(PackedTensor),
-    /// Float values multiplied by a scale tensor as a stage is filled.
-    Scaled(ScaledTensor),
 }
 
 impl StoredTensor {
@@ -28,31 +25,6 @@ impl StoredTensor {
         match self {
             Self::Plain(tensor) => tensor,
             Self::Packed(tensor) => tensor.words(),
-            Self::Scaled(tensor) => tensor.values(),
-        }
-    }
-
-    /// The tensor holding its values where they are floats, which a scale may multiply: none for
-    /// a packed one, whose words are not values.
-    pub fn float(&self) -> Option<&PlainTensor> {
-        match self {
-            Self::Plain(tensor) => Some(tensor),
-            Self::Scaled(tensor) => Some(tensor.values()),
-            Self::Packed(_) => None,
-        }
-    }
-
-    /// This float tensor with its values replaced by `values`, which a launch read from them: a
-    /// scaled one keeps its scale.
-    ///
-    /// # Panics
-    ///
-    /// On a packed tensor, whose words are not values.
-    pub(crate) fn over(self, client: &cubecl::client::Client, values: PlainTensor) -> Self {
-        match self {
-            Self::Plain(_) => Self::Plain(values),
-            Self::Scaled(tensor) => Self::Scaled(tensor.over(client, values)),
-            Self::Packed(_) => panic!("a packed tensor's words are not replaced by values"),
         }
     }
 
@@ -61,7 +33,6 @@ impl StoredTensor {
         match self {
             Self::Plain(_) => OperandKind::Float,
             Self::Packed(tensor) => OperandKind::Quantized(tensor.scheme()),
-            Self::Scaled(tensor) => OperandKind::Scaled(tensor.scale().elem),
         }
     }
 
@@ -71,15 +42,17 @@ impl StoredTensor {
     ///
     /// On an axis not among them.
     pub fn extent(&self, axes: [Axis; 2], axis: Axis) -> usize {
-        if let Self::Packed(tensor) = self {
-            return tensor.extent(axis);
+        match self {
+            Self::Plain(tensor) => {
+                let shape = tensor.shape();
+                let position = axes
+                    .iter()
+                    .position(|&own| own == axis)
+                    .unwrap_or_else(|| panic!("{axis:?} is not one of {axes:?}"));
+                shape[shape.rank() - 2 + position]
+            }
+            Self::Packed(tensor) => tensor.extent(axis),
         }
-        let shape = self.values().shape();
-        let position = axes
-            .iter()
-            .position(|&own| own == axis)
-            .unwrap_or_else(|| panic!("{axis:?} is not one of {axes:?}"));
-        shape[shape.rank() - 2 + position]
     }
 
     /// Every buffer it binds, in the order its binding holds them: its values, then a packed one's
@@ -113,17 +86,11 @@ impl StoredTensor {
 
     /// The tensors behind [`buffers`](Self::buffers), in its order.
     fn tensors(&self) -> impl Iterator<Item = &PlainTensor> {
-        let packed_scales = match self {
-            Self::Packed(tensor) => Some(tensor.scales()),
-            Self::Plain(_) | Self::Scaled(_) => None,
+        let (values, scales) = match self {
+            Self::Plain(tensor) => (tensor, None),
+            Self::Packed(tensor) => (tensor.words(), Some(tensor.scales())),
         };
-        let scale = match self {
-            Self::Scaled(tensor) => Some(tensor.scale()),
-            Self::Plain(_) | Self::Packed(_) => None,
-        };
-        core::iter::once(self.values())
-            .chain(packed_scales.into_iter().flatten())
-            .chain(scale)
+        core::iter::once(values).chain(scales.into_iter().flatten())
     }
 }
 
