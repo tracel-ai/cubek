@@ -135,6 +135,25 @@ impl PlaneShuffleMatmulRoutine {
         ]
     }
 
+    /// Whether `settings` sizes a plane against `problem`'s packed rhs on a device committing to
+    /// a plane width: every packed setting does, but one tile
+    /// ([`OneTile`](cubek_microkernel::matmul::plane::PlaneShuffleKSplit::OneTile)) only where
+    /// the rhs is stored in tiles holding more than one read down `K`. In rows it declines,
+    /// rather than size the one-read kernel a second time.
+    #[cfg(test)]
+    pub(crate) fn sizes_packed(
+        settings: &PlaneShuffleMatmulRoutineSettings,
+        problem: &MatmulRoutineProblem,
+    ) -> bool {
+        use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
+        settings.microkernel.k_split != PlaneShuffleKSplit::OneTile
+            || problem
+                .packings
+                .rhs
+                .as_ref()
+                .is_some_and(|packing| packing.operand.reads_down_a_tile(K) > 1)
+    }
+
     /// `microkernel` placed by `partitioning`, its widths settled.
     ///
     /// # Errors
@@ -752,8 +771,8 @@ mod tests {
         assert_eq!(names.len(), settings.len());
     }
 
-    /// Every setting prepares wherever the device commits to a plane width, and declines with its
-    /// reason wherever it does not.
+    /// Every setting prepares wherever the device commits to a plane width, one tile only where
+    /// the rhs is stored in tiles, and declines with its reason wherever it does not.
     #[test]
     fn a_setting_runs_on_a_packed_rhs_where_the_device_commits_to_a_width() {
         let problem = packed_projection(1);
@@ -764,7 +783,8 @@ mod tests {
             for settings in PlaneShuffleMatmulRoutine.packed_settings() {
                 match (
                     PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings),
-                    hw.plane_size().is_ok(),
+                    hw.plane_size().is_ok()
+                        && PlaneShuffleMatmulRoutine::sizes_packed(&settings, &problem),
                 ) {
                     (Ok(_), true) => {}
                     (Err(Refusal::Declined { why: details }), false) => {
@@ -791,7 +811,11 @@ mod tests {
         ];
         for hw in committed() {
             for problem in &problems {
-                for settings in PlaneShuffleMatmulRoutine.packed_settings() {
+                for settings in PlaneShuffleMatmulRoutine
+                    .packed_settings()
+                    .into_iter()
+                    .filter(|settings| PlaneShuffleMatmulRoutine::sizes_packed(settings, problem))
+                {
                     let (blueprint, grid) = PlaneShuffleMatmulRoutine
                         .prepare(&hw, problem, &settings)
                         .expect("a committed width places the projection");
