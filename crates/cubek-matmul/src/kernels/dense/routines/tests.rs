@@ -126,9 +126,13 @@ mod plane_shuffle {
         for m in [1, 8] {
             for (name, problem) in problems(m) {
                 for settings in PlaneShuffleMatmulRoutine.packed_settings() {
-                    let (blueprint, _) = PlaneShuffleMatmulRoutine
-                        .prepare(&hw, &problem, &settings)
-                        .unwrap_or_else(|error| panic!("{name} at {settings}: {error:?}"));
+                    let prepared = PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
+                    if !PlaneShuffleMatmulRoutine::sizes_packed(&settings, &problem) {
+                        assert!(prepared.is_err(), "{name} at {settings} sized a plane");
+                        continue;
+                    }
+                    let (blueprint, _) =
+                        prepared.unwrap_or_else(|error| panic!("{name} at {settings}: {error:?}"));
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
