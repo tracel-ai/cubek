@@ -185,11 +185,10 @@ impl ScopeUnderTest for Walk {
             .flat_map(|(&decay, &strength)| [decay, strength])
             .collect();
         let rates = tensor(rates, shape![1, t, key_heads, heads_per_group, 2], F32);
+        let skip_shape = shape![key_heads, heads_per_group];
         let skip = match case.rule {
             UpdateRule::Delta => None,
-            UpdateRule::Additive => {
-                Some(tensor(host.skip, shape![key_heads, heads_per_group], F32))
-            }
+            UpdateRule::Additive => Some(tensor(host.skip, skip_shape, F32)),
         };
         let state = tensor(
             host.state,
