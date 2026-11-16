@@ -158,7 +158,7 @@ impl PackedTensor {
     /// ([`PlainTensor::in_buffer_order`]): a transposed view of a packed matrix, a tied embedding
     /// read as a head, is the matrix it views, its rows along the axis its words do not run
     /// along. The scales are laid in rows and bound on whole words, as [`new`](Self::new) takes
-    /// them. Values a load laid in tile order are read in it ([`of_tile_order`](Self::of_tile_order)).
+    /// them. Values laid in tile order are read in tile order ([`of_tile_order`](Self::of_tile_order)).
     ///
     /// # Errors
     ///
@@ -212,11 +212,12 @@ impl PackedTensor {
         ))
     }
 
-    /// A quantized matrix whose `words` a load laid in tile order, their binding stating the order
-    /// over the values, read in the order it states ([`read_in_tiles`](Self::read_in_tiles)): its
-    /// words as they are stored, and its block scales where that order keeps them, in tiles of
-    /// their own laid block by block ([`TileWords::BlockByBlock`]), in rows laid row by row. The
-    /// per-tensor scale is bound as [`of_quantized`](Self::of_quantized) binds it.
+    /// A quantized matrix whose `words` are laid in tile order. Values are read in the order
+    /// stated by the bindings ([`read_in_tiles`](Self::read_in_tiles)): its words as they are
+    /// stored, and its block scales where it keeps them. The per-tensor scale is bound as
+    /// [`of_quantized`](Self::of_quantized) binds it.
+    ///
+    ///
     ///
     /// # Errors
     ///
