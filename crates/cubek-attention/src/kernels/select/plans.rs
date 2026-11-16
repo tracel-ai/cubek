@@ -17,6 +17,7 @@ use super::AttentionOpStrategy;
 use super::problem::{KvKind, QueryPositions};
 use super::selector::select;
 use crate::kernels::tune::AttentionAutotuneGroups;
+use cubek_microkernel::attention::AttentionWeighting;
 use cubek_std::plan::Plan;
 
 /// Every strategy's plan for every kind of call is the one `plans.txt` records.
@@ -65,9 +66,15 @@ fn render_all() -> String {
     ] {
         out.push_str(&format!("# {name}\n"));
         for strategy in AttentionOpStrategy::all() {
-            let plan = select(strategy, queries, cache, AttentionAutotuneGroups::default())
-                .map(|plan| plan.tree().to_string())
-                .unwrap_or_else(|refusal| format!("refused: {refusal}"));
+            let plan = select(
+                strategy,
+                queries,
+                cache,
+                AttentionWeighting::Softmax,
+                AttentionAutotuneGroups::default(),
+            )
+            .map(|plan| plan.tree().to_string())
+            .unwrap_or_else(|refusal| format!("refused: {refusal}"));
             out.push_str(&format!("{}: {plan}\n", strategy.name()));
         }
         out.push('\n');

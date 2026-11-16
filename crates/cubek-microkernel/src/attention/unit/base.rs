@@ -1,4 +1,6 @@
-use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, D, DV, G, Q, S};
+use crate::attention::{
+    AttentionMicrokernel, AttentionOperand, AttentionWeighting, AttentionWorkItem, D, DV, G, Q, S,
+};
 use crate::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use crate::matmul::{MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use core::num::NonZeroUsize;
@@ -10,8 +12,9 @@ use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
 
-/// Rows of one head a unit owns whole: their scores against a step of keys, the softmax of every
-/// row, and their outputs over the whole value dim, all in its registers while it walks the keys.
+/// Rows of one head a unit owns whole: their scores against a step of keys, weighed as the work
+/// item says (the softmax of every row, or each score's relu), and their outputs over the whole
+/// value dim, all in its registers while it walks the keys.
 ///
 /// Its two multiplications are the shared unit microkernel's: the score, `query · keyᵀ`, a block
 /// of its rows by the step's keys contracting the whole head dim, and the value,
@@ -24,6 +27,8 @@ pub struct UnitAttentionMicrokernel {
     pub score: UnitRegistersMicrokernel,
     /// The value's block: rows by the whole value dim, a step's keys deep.
     pub value: UnitRegistersMicrokernel,
+    /// How its scores become the weights its values are summed under.
+    pub weighting: AttentionWeighting,
 }
 
 /// The query rows a unit owns, and the keys one step of its walk scores.
@@ -76,10 +81,16 @@ impl UnitAttentionMicrokernel {
         .walk_every(&[D])
     }
 
-    /// 32-bit registers one unit keeps the softmax's running max and sum of every row in, beside
-    /// both multiplications' blocks.
-    fn softmax_registers(&self, item: &AttentionWorkItem) -> u32 {
-        (2 * self.settings.seq_q.get() * item.sum.size()).div_ceil(4) as u32
+    /// 32-bit registers one unit keeps its weighting's state in, beside both multiplications'
+    /// blocks: the softmax's running max and sum of every row; nothing for a relu, which weighs
+    /// each score on its own.
+    fn weighting_registers(&self, item: &AttentionWorkItem) -> u32 {
+        match self.weighting {
+            AttentionWeighting::Softmax => {
+                (2 * self.settings.seq_q.get() * item.sum.size()).div_ceil(4) as u32
+            }
+            AttentionWeighting::Relu => 0,
+        }
     }
 
     /// Keys one step scores.
@@ -164,6 +175,7 @@ impl Microkernel for UnitAttentionMicrokernel {
                 settings,
                 score,
                 value,
+                weighting: item.weighting,
             })
             .into_iter()
     }
@@ -190,7 +202,7 @@ impl Microkernel for UnitAttentionMicrokernel {
     }
 
     /// Each multiplication's shared microkernel sets the work of its block; the unit holds both
-    /// blocks at once, beside the softmax's state of every row. Its steps' reads are its routine's
+    /// blocks at once, beside its weighting's state of every row. Its steps' reads are its routine's
     /// to count, which places its units.
     fn estimate(
         &self,
@@ -204,13 +216,13 @@ impl Microkernel for UnitAttentionMicrokernel {
         let score = estimate.work.take();
         self.value
             .estimate(&Self::value_item(item), &(), planes, estimate);
-        let softmax = UnitWork {
+        let weighting = UnitWork {
             instruction: ArithmeticInstruction::Vector,
-            registers: self.softmax_registers(item),
+            registers: self.weighting_registers(item),
         };
         estimate.work = score
             .zip(estimate.work)
-            .map(|(score, value)| score.beside(value).beside(softmax));
+            .map(|(score, value)| score.beside(value).beside(weighting));
     }
 }
 

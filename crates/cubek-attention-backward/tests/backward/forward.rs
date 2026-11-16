@@ -13,7 +13,7 @@ use cubek_attention::kernels::{
 use cubek_attention_backward::AttentionBackwardTensors;
 use cubek_attention_backward::kernels::{AttentionBackwardLaunch, UnitAttentionBackward};
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
+use cubek_microkernel::attention::{AttentionVisibility, AttentionWeighting, QueryPlacement};
 use cubek_std::Hardware;
 use cubek_test_utils::TestInput;
 
@@ -55,6 +55,7 @@ fn the_backward_pass_reads_the_forward_it_follows() {
         AttentionScoring {
             visibility: case.visibility,
             scale: ScoreScale::Custom(case.scale() as f32),
+            weighting: AttentionWeighting::Softmax,
         },
     )
     .expect("the case's tensors are verified")

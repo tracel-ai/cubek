@@ -1,26 +1,29 @@
-use cubek_microkernel::attention::AttentionVisibility;
+use cubek_microkernel::attention::{AttentionVisibility, AttentionWeighting};
 use serde::{Deserialize, Serialize};
 
-/// How a query scores the keys: which of them it sees, and the scale its dot products take
-/// before the softmax.
+/// How a query scores the keys: which of them it sees, the scale its dot products take, and how
+/// the scaled scores become the weights its values are summed under.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AttentionScoring {
     pub visibility: AttentionVisibility,
     pub scale: ScoreScale,
+    pub weighting: AttentionWeighting,
 }
 
 impl AttentionScoring {
-    /// `visibility` at the standard scale of a head of `head_dim` features, `1 / sqrt(head_dim)`.
+    /// `visibility` at the standard scale of a head of `head_dim` features, `1 / sqrt(head_dim)`,
+    /// weighed by the softmax.
     pub fn standard(visibility: AttentionVisibility, head_dim: usize) -> Self {
         Self {
             visibility,
             scale: ScoreScale::standard(head_dim),
+            weighting: AttentionWeighting::Softmax,
         }
     }
 }
 
-/// The scale an attention's scores take before the softmax: the standard `1 / sqrt(head_dim)`
-/// or a custom scale.
+/// The scale an attention's scores take before they are weighed: the standard
+/// `1 / sqrt(head_dim)` or a custom scale.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum ScoreScale {
     /// `1 / sqrt(head_dim)`.

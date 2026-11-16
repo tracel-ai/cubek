@@ -1,5 +1,6 @@
 //! What every attention routine computes: `out = softmax(scale · q · kᵀ) · v` over the keys each
-//! query sees, written `[b, q, h, dv]`, and each query's `ln Σ exp(score)` over them, `[b, h, q]`.
+//! query sees, written `[b, q, h, dv]`, and each query's `ln Σ exp(score)` over them, `[b, h, q]`;
+//! or, weighed by relu, `out = relu(scale · q · kᵀ) · v` and no logsumexp.
 //! The cases are chosen to be awkward: no step of queries or keys divides them, the queries sit
 //! among the keys last or first, and a mask differs from head to head.
 
@@ -14,7 +15,7 @@ use cubek_attention::kernels::{
     CacheScales, DirectAttention, KvSource, ScoreScale, SplitKeysAttention,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
+use cubek_microkernel::attention::{AttentionVisibility, AttentionWeighting, QueryPlacement};
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
@@ -41,6 +42,8 @@ pub(crate) struct AttentionCase {
     /// The one scale each side of the cache is stored under, where it has them: the attention
     /// reads the stored keys and values times their side's scale.
     pub scales: Option<KvScales>,
+    /// How a query's scores become the weights its values are summed under.
+    pub weighting: AttentionWeighting,
 }
 
 /// The scale over every key, and the one over every value, a cache quantized per tensor is
@@ -73,6 +76,7 @@ pub(crate) const PROMPT: AttentionCase = AttentionCase {
     keys: FloatKind::F16,
     values: FloatKind::F16,
     scales: None,
+    weighting: AttentionWeighting::Softmax,
 };
 
 /// A causal prompt chunk at a head dim of 128, the one a model's prefill runs: four query heads to
@@ -184,6 +188,39 @@ pub(crate) const PROMPTS: [AttentionCase; 4] = [
 /// Every decode case a routine of single positions is held to.
 pub(crate) const DECODES: [AttentionCase; 2] = [DECODE, DECODE_MASKED];
 
+/// `case` weighed by relu: each score on its own, nothing normalized.
+pub(crate) const fn relu(case: AttentionCase) -> AttentionCase {
+    AttentionCase {
+        weighting: AttentionWeighting::Relu,
+        ..case
+    }
+}
+
+/// A key selector's scoring as an attention: its cache entries' keys the queries, one token's
+/// heads the keys, and each head's weight a value one wide. Two tokens, three hundred entries, and
+/// a head dim no step divides.
+pub(crate) const SELECTOR: AttentionCase = AttentionCase {
+    batch: 2,
+    heads: 1,
+    kv_heads: 1,
+    seq_q: 300,
+    seq_kv: 32,
+    head_dim: 96,
+    val_dim: 1,
+    visibility: AttentionVisibility::Attended,
+    weighting: AttentionWeighting::Relu,
+    ..PROMPT
+};
+
+/// Every relu case: the prompt cases weighed by relu, and the key selector's.
+pub(crate) const RELUS: [AttentionCase; 5] = [
+    relu(PROMPT),
+    relu(PROMPT_PLACED_FIRST),
+    relu(PROMPT_MASKED),
+    relu(DECODE_MASKED),
+    SELECTOR,
+];
+
 impl AttentionCase {
     fn scale(&self) -> f64 {
         1. / (self.head_dim as f64).sqrt()
@@ -254,10 +291,10 @@ impl AttentionCase {
         ]
     }
 
-    /// The output `[b, q, h, dv]` and the logsumexp `[b, h, q]` on the host, in `f64`, from the
-    /// inputs as the device holds them, the keys and values times their side's scale. A query
-    /// that sees no key writes zeros.
-    fn reference(&self) -> [HostData; 2] {
+    /// The output `[b, q, h, dv]` and, under a softmax, the logsumexp `[b, h, q]` on the host, in
+    /// `f64`, from the inputs as the device holds them, the keys and values times their side's
+    /// scale. A query that sees no key writes zeros.
+    fn reference(&self) -> Vec<HostData> {
         let Self {
             batch,
             heads,
@@ -308,33 +345,42 @@ impl AttentionCase {
                         .unwrap_or(f64::NEG_INFINITY);
                     let total: f64 = scores.iter().flatten().map(|s| (s - max).exp()).sum();
                     logsumexp[(b * heads + h) * seq_q + i] = (max + total.ln()) as f32;
+                    // Each seen key's weight, and what the weighted sum is divided by.
+                    let (weight, divisor): (&dyn Fn(f64) -> f64, f64) = match self.weighting {
+                        AttentionWeighting::Softmax => (&|s: f64| (s - max).exp(), total),
+                        AttentionWeighting::Relu => (&|s: f64| s.max(0.0), 1.0),
+                    };
                     for c in 0..val_dim {
                         let value: f64 = scores
                             .iter()
                             .enumerate()
                             .filter_map(|(j, s)| s.map(|s| (j, s)))
                             .map(|(j, s)| {
-                                (s - max).exp()
+                                weight(s)
                                     * v[((b * kv_heads + kv) * seq_kv + j) * val_dim + c] as f64
                                     * value_scale
                             })
                             .sum();
                         out[((b * seq_q + i) * heads + h) * val_dim + c] = match total > 0.0 {
-                            true => (value / total) as f32,
+                            true => (value / divisor) as f32,
                             false => 0.0,
                         };
                     }
                 }
             }
         }
-        [
-            HostData::row_major(HostDataVec::F32(out), shape![batch, seq_q, heads, val_dim]),
-            HostData::row_major(HostDataVec::F32(logsumexp), shape![batch, heads, seq_q]),
-        ]
+        let out = HostData::row_major(HostDataVec::F32(out), shape![batch, seq_q, heads, val_dim]);
+        let logsumexp =
+            HostData::row_major(HostDataVec::F32(logsumexp), shape![batch, heads, seq_q]);
+        match self.weighting {
+            AttentionWeighting::Softmax => vec![out, logsumexp],
+            AttentionWeighting::Relu => vec![out],
+        }
     }
 
-    /// The case's tensors on `client`, asking for each query's logsumexp, its cache under its
-    /// scales and the scores under its mask where it has them, the mask stored as `u32` cells.
+    /// The case's tensors on `client`, asking for each query's logsumexp under a softmax, its
+    /// cache under its scales and the scores under its mask where it has them, the mask stored as
+    /// `u32` cells.
     fn tensors(&self, client: &Client) -> AttentionTensors {
         let query = f16::elem_type_native();
         let (keys, values) = (ElemType::Float(self.keys), ElemType::Float(self.values));
@@ -366,10 +412,14 @@ impl AttentionCase {
             AttentionScoring {
                 visibility: self.visibility,
                 scale: ScoreScale::Custom(self.scale() as f32),
+                weighting: self.weighting,
             },
         )
-        .expect("the case's tensors are verified")
-        .with_logsumexp();
+        .expect("the case's tensors are verified");
+        let tensors = match self.weighting {
+            AttentionWeighting::Softmax => tensors.with_logsumexp(),
+            AttentionWeighting::Relu => tensors,
+        };
         match self.hidden {
             Some(hidden) => {
                 let (batch, heads, queries, keys) =
@@ -490,24 +540,23 @@ impl<L: AttentionLaunch> ScopeUnderTest for Forward<L> {
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
         let tensors = case.case.tensors(client);
-        let logsumexp = tensors.logsumexp().expect("asked for");
+        let logsumexp = tensors.logsumexp();
         let out = self.launched.launch_on(&self.hw, tensors, &case.settings)?;
-        Ok(vec![
-            Written {
-                name: "out",
-                tensor: out,
-                host: HostDataType::F32,
-            },
-            Written {
-                name: "logsumexp",
-                tensor: logsumexp,
-                host: HostDataType::F32,
-            },
-        ])
+        let out = Written {
+            name: "out",
+            tensor: out,
+            host: HostDataType::F32,
+        };
+        let logsumexp = logsumexp.map(|tensor| Written {
+            name: "logsumexp",
+            tensor,
+            host: HostDataType::F32,
+        });
+        Ok([out].into_iter().chain(logsumexp).collect())
     }
 
     fn reference(&self, case: &Self::Case) -> Vec<HostData> {
-        case.case.reference().into()
+        case.case.reference()
     }
 
     /// `f16` inputs, and a softmax the device's `exp` takes. Over `e4m3` values the probabilities

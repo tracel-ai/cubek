@@ -1,7 +1,8 @@
 use crate::attention::cube::{CubeAttentionMicrokernel, CubePlaneReads};
 use crate::attention::hypercube::HypercubeAttentionMicrokernelSettings;
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionWorkItem, G, Q,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionWeighting,
+    AttentionWorkItem, G, Q,
 };
 use crate::split_keys_merge::SlotShape;
 use crate::split_keys_merge::hypercube::HypercubeMergeShape;
@@ -37,7 +38,7 @@ impl Microkernel for HypercubeAttentionMicrokernel {
 
     const DECLINE: &'static str = "the hypercube attention needs a cube microkernel the device \
          runs and a plane width the device commits to; cubes that stage hold one plane along the \
-         keys";
+         keys; its cubes' partials meet under a softmax's running max and sum";
 
     /// The hypercube's settings over plane fragments, then over plane shuffles
     /// ([`HypercubeAttentionMicrokernelSettings::listed`]).
@@ -61,7 +62,10 @@ impl Microkernel for HypercubeAttentionMicrokernel {
         // A staging cube's planes leave their slots through one window of the cube's queries, so
         // planes holding the same queries cannot split their keys.
         let one_along_keys = settings.cube.planes_along_keys.get() == 1;
+        // The cubes' partials meet under their rows' running max and sum: a softmax's.
+        let softmax = item.weighting == AttentionWeighting::Softmax;
         CubeAttentionMicrokernel::candidates(hw, item, &settings.cube)
+            .filter(move |_| softmax)
             .filter(move |cube| cube.plane.reads() == CubePlaneReads::Global || one_along_keys)
             .map(|cube| Self { cube })
     }

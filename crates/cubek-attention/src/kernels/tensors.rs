@@ -649,6 +649,7 @@ impl AttentionTensors {
             head_dim: head,
             val_dim: value,
             visibility,
+            weighting: self.scoring.weighting,
             elements: AttentionOperands {
                 query: query_elem,
                 key: key_elem,

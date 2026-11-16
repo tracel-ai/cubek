@@ -4,6 +4,7 @@ mod operand;
 mod staging_count;
 mod visibility;
 mod visible_keys;
+mod weighting;
 mod work_item;
 
 pub use axes::*;
@@ -12,4 +13,5 @@ pub use operand::*;
 pub use staging_count::*;
 pub use visibility::*;
 pub use visible_keys::*;
+pub use weighting::*;
 pub use work_item::*;

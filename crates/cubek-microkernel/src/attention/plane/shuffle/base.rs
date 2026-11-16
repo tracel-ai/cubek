@@ -1,6 +1,6 @@
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
-    AttentionWorkItem, G, Q, S,
+    AttentionWeighting, AttentionWorkItem, G, Q, S,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
@@ -98,7 +98,8 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
 
     const DECLINE: &'static str = "the plane shuffle sums a key's partial dots across its team, \
          which needs a plane width the device commits to and its settings' units per key divide, \
-         a power of two, and holds at most `PlaneShuffleAttentionMicrokernel::MAX_ROWS` rows";
+         a power of two, and holds at most `PlaneShuffleAttentionMicrokernel::MAX_ROWS` rows; it \
+         weighs its rows' scores by their softmax only";
 
     /// A star off the default: eight rows a plane, thirty-two units on a key, four keys in flight.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
@@ -127,12 +128,13 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
     /// per key that divide it: a team is the lanes a mask of the low bits groups.
     fn candidates(
         hw: &Hardware,
-        _item: &AttentionWorkItem,
+        item: &AttentionWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
         let settings = *settings;
         let width = hw.plane_dim().ok().map(|width| width as usize);
         width
+            .filter(|_| item.weighting == AttentionWeighting::Softmax)
             .filter(|width| {
                 width.is_power_of_two()
                     && width.is_multiple_of(settings.units_per_key.get())

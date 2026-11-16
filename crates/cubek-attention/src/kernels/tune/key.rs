@@ -21,7 +21,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::{self as cubecl, AutotuneKey};
-use cubek_microkernel::attention::AttentionOperands;
+use cubek_microkernel::attention::{AttentionOperands, AttentionWeighting};
 use serde::{Deserialize, Serialize};
 
 /// What makes two attentions want the same kernel.
@@ -220,7 +220,8 @@ impl AttentionKey {
 /// ([`AttentionKey`]): operands of the key's elements, the output at the query's, the query `[b, h, q, d]`, the keys and
 /// values `[b, kv, s, d]`, read through a page table where the key has a page size, and the
 /// output `[b, q, h, d]`, the value dim the head dim.
-/// A key carries no value dim of its own: every attention reaching autotune has `DV = D`.
+/// A key carries no value dim or weighting of its own: every attention reaching autotune has
+/// `DV = D` and is weighed by its softmax.
 impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
     type Error = Refusal;
 
@@ -246,6 +247,8 @@ impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
             head_dim: head,
             val_dim: head,
             visibility,
+            // Autotune measures softmax attentions only: a relu goes by rule.
+            weighting: AttentionWeighting::Softmax,
             elements: AttentionOperands {
                 query: elements.query,
                 key: elements.key,

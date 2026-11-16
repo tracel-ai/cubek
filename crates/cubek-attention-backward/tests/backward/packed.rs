@@ -13,7 +13,7 @@ use cubek_attention::kernels::{
     DirectAttention, KvBitWidths, PackedAttentionCache, PackedAttentionOperand, ScoreScale,
 };
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
+use cubek_microkernel::attention::{AttentionVisibility, AttentionWeighting, QueryPlacement};
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 use cubek_test_utils::{HostData, HostDataType, TestInput};
@@ -207,6 +207,7 @@ fn check_packed(case: Case) {
             AttentionScoring {
                 visibility: case.visibility,
                 scale: ScoreScale::Custom(case.scale() as f32),
+                weighting: AttentionWeighting::Softmax,
             },
         )
         .expect("the case's tensors are verified");

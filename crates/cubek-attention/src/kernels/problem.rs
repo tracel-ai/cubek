@@ -9,7 +9,8 @@ use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{
-    AttentionOperand, AttentionOperands, AttentionReading, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    AttentionOperand, AttentionOperands, AttentionReading, AttentionWeighting, AttentionWorkItem,
+    B, D, DV, G, KV, Q, S,
 };
 use cubek_std::routine::EstimatedProblem;
 
@@ -33,6 +34,8 @@ pub struct AttentionRoutineProblem {
     pub val_dim: usize,
     /// Which of the attended keys a query sees.
     pub visibility: AttentionVisibility,
+    /// How a query's scores become the weights its values are summed under.
+    pub weighting: AttentionWeighting,
     /// The element each operand is stored in.
     pub elements: AttentionOperands<ElemType>,
     /// The alignment of each operand's buffer in elements, over the axes this kind names.
@@ -109,6 +112,7 @@ impl AttentionRoutineProblem {
             group: self.group,
             head_dim: self.head_dim,
             val_dim: self.val_dim,
+            weighting: self.weighting,
         }
     }
 
@@ -150,6 +154,7 @@ impl AttentionRoutineProblem {
             head_dim: head,
             val_dim: value,
             visibility: AttentionVisibility::Attended,
+            weighting: AttentionWeighting::Softmax,
             elements: AttentionOperands {
                 query: element,
                 key: element,

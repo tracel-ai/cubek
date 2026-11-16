@@ -1,6 +1,7 @@
 use crate::attention::plane::{PlaneFragmentAttentionMicrokernelSettings, ScoreHolder};
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionRead, AttentionWeighting, AttentionWorkItem,
+    B, D, DV, G, KV, Q, S,
 };
 use crate::matmul::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
@@ -302,7 +303,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
          number of its fragments deep that the plane's keys divide into, of the operands' element \
          summing in f32, \
          whose k divides the head dim and whose n divides the value dim and the stage's keys, on a \
-         device that commits to one plane width";
+         device that commits to one plane width; it weighs its rows' scores by their softmax only";
 
     /// A star off the default: each other tile shape, the whole grid bounced at once, and
     /// the score read through the windows.
@@ -332,6 +333,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let candidates: Vec<_> = item
             .readings()
+            .filter(|_| item.weighting == AttentionWeighting::Softmax)
             .flat_map(|read| {
                 let mut reading = Self::reading(hw, item, read, *settings);
                 reading.sort_by_key(|candidate| candidate.score_holder() != settings.score);

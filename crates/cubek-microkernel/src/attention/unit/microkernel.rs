@@ -1,18 +1,19 @@
 use super::base::UnitAttentionMicrokernel;
-use crate::attention::{DV, S};
+use crate::attention::{AttentionWeighting, DV, S};
 use crate::matmul::unit::unit_registers_microkernel;
 use cubecl::tile::ops::softmax::OnlineSoftmax;
 use cubecl::tile::{Region, Semiring, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// One unit's rows of one head: `out = softmax(query · keyᵀ · scale + bias) · value`, summed in
-/// `EA` over the first `steps` steps of the rows' walk through `S`.
+/// One unit's rows of one head: `out = weights(query · keyᵀ · scale + bias) · value`, summed in
+/// `EA` over the first `steps` steps of the rows' walk through `S`, the weights the softmax of each
+/// row or each score's relu as the microkernel's weighting says.
 ///
 /// `rows` is the region the unit owns, its walk the steps of keys; `out`, `logsumexp`, `query`,
 /// `key`, `value` and `bias` are already windowed to it. The bias is where the masking lies, read
 /// at each score's own coordinates. Each step is taken into the rows by `unit_attention_step`,
-/// then the rows are normalized and drained into `out`, and each row's logsumexp written where the
-/// caller asks for it.
+/// then the rows are normalized where the weighting is a softmax and drained into `out`, and each
+/// row's logsumexp written where the caller asks for it, which only a softmax has.
 ///
 /// The per-tensor scale each side is stored under is taken out of it and applied once: the keys'
 /// to every score the softmax reads ([`Tile::factor_whole`]), the values' to the output as it
@@ -52,24 +53,35 @@ pub fn unit_attention_microkernel<EA: Float>(
         );
     }
 
-    sum.along(DV).mul(&softmax.recip_l());
+    #[comptime]
+    match microkernel.weighting {
+        AttentionWeighting::Softmax => sum.along(DV).mul(&softmax.recip_l()),
+        AttentionWeighting::Relu => {}
+    }
     sum.scaled(&value_factor).drained_into(out);
 
     #[comptime]
     match logsumexp {
-        ComptimeOption::Some(logsumexp) => softmax.store_logsumexp(bias, &mut logsumexp.clone()),
+        ComptimeOption::Some(logsumexp) => {
+            comptime!(assert!(
+                microkernel.weighting == AttentionWeighting::Softmax,
+                "unit_attention_microkernel: a logsumexp is a softmax's; a relu weighting has none"
+            ));
+            softmax.store_logsumexp(bias, &mut logsumexp.clone())
+        }
         ComptimeOption::None => {}
     }
 }
 
 /// One step of keys taken into a unit's rows: the step's score opened over it and contracted, the
-/// softmax taking it in, and the value adding the probabilities against the step's values into
-/// the rows' `sum`, both multiplications by the shared unit microkernel.
+/// weighting taking it in (the softmax moving on and correcting the rows' `sum`, or each score's
+/// relu), and the value adding the weights against the step's values into the rows' `sum`, both
+/// multiplications by the shared unit microkernel.
 ///
 /// `step` is the unit's region of the step, its walk the score's walk through `D`, one step of the
 /// whole head dim, which holds the step's keys whole for the value too; `sum`, `query`, `key`,
 /// `value` and `bias` are windowed to it, wherever the keys and values lie. The keys' per-tensor
-/// scale is taken out of them, and the softmax reads the score under it.
+/// scale is taken out of them, and the weighting reads the score under it.
 #[cube]
 pub(crate) fn unit_attention_step<EA: Float>(
     step: &Region,
@@ -91,8 +103,14 @@ pub(crate) fn unit_attention_step<EA: Float>(
         unit_registers_microkernel(&depth, &score, query, &key);
     }
 
-    let correction = softmax.step(&score.scaled(&key_factor), bias, scale);
-    sum.along(DV).mul(&correction);
+    #[comptime]
+    match microkernel.weighting {
+        AttentionWeighting::Softmax => {
+            let correction = softmax.step(&score.scaled(&key_factor), bias, scale);
+            sum.along(DV).mul(&correction);
+        }
+        AttentionWeighting::Relu => score.scaled(&key_factor).relu_weights::<EA>(bias, scale, S),
+    }
 
     // A tile's clone is a handle to the same cells: the shared microkernel adds into the sum
     // through it.

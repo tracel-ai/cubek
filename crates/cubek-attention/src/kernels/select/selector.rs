@@ -11,6 +11,7 @@ use crate::kernels::plan::{AttentionPlan, CacheRead, KernelLead, Rebuilt};
 use crate::kernels::tune::{AttentionAutotuneGroups, fastest};
 use crate::kernels::{CubeAttentionKernel, HypercubeAttentionKernel};
 use cubecl::tile::launch::Refusal;
+use cubek_microkernel::attention::AttentionWeighting;
 use cubek_std::plan::{InOrder, Then};
 
 /// The kernel a rule runs at one query position, over a float cache or a packed one.
@@ -26,11 +27,14 @@ const PACKED_PIN_UNREAD: Refusal = Refusal::Declined {
     why: "of the microkernel attention routines, only the hypercube shuffles and the staged cube read a packed cache",
 };
 
-/// How a call of `queries` positions over a `cache` runs under `strategy`: the plan its launch
-/// tries, the autotunes it names shipping their routines' group at `groups`.
+/// How a call of `queries` positions over a `cache`, its scores weighed as `weighting` says, runs
+/// under `strategy`: the plan its launch tries, the autotunes it names shipping their routines'
+/// group at `groups`.
 ///
-/// A measuring strategy measures: a call of one query position on the one-position autotune, any
-/// other on the many-positions autotune. A rule runs the hypercube shuffle merged on the last
+/// A measuring strategy measures a softmax: a call of one query position on the one-position
+/// autotune, any other on the many-positions autotune. A relu weighting goes by rule under every
+/// policy but a pin: the autotunes key and measure softmax attentions, whose value dim is the
+/// head dim, and the routines that cannot weigh by relu decline down the rule to one that can. A rule runs the hypercube shuffle merged on the last
 /// arrival at one position, and the cube fragment routine elsewhere, then what each kernel's scope
 /// names where it declines, down to the unit routine. A pin runs its kernel alone.
 ///
@@ -47,9 +51,10 @@ pub fn select(
     strategy: AttentionOpStrategy,
     queries: QueryPositions,
     cache: KvKind,
+    weighting: AttentionWeighting,
     groups: AttentionAutotuneGroups,
 ) -> Result<AttentionPlan, Refusal> {
-    let choice = Choice::of(strategy, queries);
+    let choice = Choice::of(strategy, queries, weighting);
     let float = || choice.plan(queries, CacheRead::Float, groups);
     match (cache, choice) {
         (KvKind::Float, _) => Ok(float()),
@@ -80,11 +85,17 @@ enum Choice {
 }
 
 impl Choice {
-    /// How `strategy` chooses for a call of `queries` positions.
-    fn of(strategy: AttentionOpStrategy, queries: QueryPositions) -> Self {
+    /// How `strategy` chooses for a call of `queries` positions, its scores weighed as `weighting`
+    /// says.
+    fn of(
+        strategy: AttentionOpStrategy,
+        queries: QueryPositions,
+        weighting: AttentionWeighting,
+    ) -> Self {
+        let softmax = weighting == AttentionWeighting::Softmax;
         match strategy {
             AttentionOpStrategy::Specific(kernel) => Self::Pin(kernel),
-            strategy if strategy.measures() => Self::Measured,
+            strategy if strategy.measures() && softmax => Self::Measured,
             _ => Self::Rule(match queries {
                 QueryPositions::One => ONE_POSITION_RULE,
                 QueryPositions::Many => AttentionKernel::Cube(CubeAttentionKernel::Fragment),
@@ -234,6 +245,35 @@ mod tests {
         }
     }
 
+    /// A relu weighting goes by rule under every measuring strategy, as the tile ceiling's softmax
+    /// does, and a pin still runs its kernel.
+    #[test]
+    fn a_relu_weighting_goes_by_rule() {
+        let relu = |strategy, queries| {
+            select(
+                strategy,
+                queries,
+                KvKind::Float,
+                AttentionWeighting::Relu,
+                AttentionAutotuneGroups::default(),
+            )
+            .map(|plan| plan.tree().to_string())
+        };
+        for queries in [One, Many] {
+            for strategy in [Autotune, Heuristic(H::Cubek), Heuristic(H::Tile)] {
+                assert_eq!(
+                    relu(strategy, queries),
+                    plan(Heuristic(H::Tile), queries, KvKind::Float),
+                    "{strategy:?} at {queries:?}"
+                );
+            }
+            assert_eq!(
+                relu(Specific(AttentionKernel::Unit), queries),
+                Ok(lead(AttentionKernel::Unit, FLOAT))
+            );
+        }
+    }
+
     /// How a kernel's lead reads a float cache, and a packed one as it lies.
     const FLOAT: &str = "";
     const PACKED: &str = "(packed cache)";
@@ -245,8 +285,14 @@ mod tests {
         queries: QueryPositions,
         cache: KvKind,
     ) -> Result<String, cubecl::tile::launch::Refusal> {
-        select(strategy, queries, cache, AttentionAutotuneGroups::default())
-            .map(|plan| plan.tree().to_string())
+        select(
+            strategy,
+            queries,
+            cache,
+            AttentionWeighting::Softmax,
+            AttentionAutotuneGroups::default(),
+        )
+        .map(|plan| plan.tree().to_string())
     }
 
     /// `kernel` at its lead, reading the cache as `cache` says.

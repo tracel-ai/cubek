@@ -1,4 +1,6 @@
-use crate::attention::{AttentionOperand, AttentionOperands, B, D, DV, G, KV, Q, S};
+use crate::attention::{
+    AttentionOperand, AttentionOperands, AttentionWeighting, B, D, DV, G, KV, Q, S,
+};
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
     MatmulWorkItem,
@@ -23,6 +25,8 @@ pub struct AttentionWorkItem {
     pub group: usize,
     pub head_dim: usize,
     pub val_dim: usize,
+    /// How a query's scores become the weights its values are summed under.
+    pub weighting: AttentionWeighting,
 }
 
 /// Which elements an attention's operands may be read in.

@@ -3,7 +3,9 @@
 use cubek_attention::kernels::UnitAttentionRoutine;
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::attention::{AttentionCase, DECODE, DECODES, Forward, PER_TENSOR, PROMPT, PROMPTS};
+use crate::attention::{
+    AttentionCase, DECODE, DECODES, Forward, PER_TENSOR, PROMPT, PROMPTS, RELUS,
+};
 
 /// The unit routine's lead on every prompt and decode case.
 #[test]
@@ -23,4 +25,12 @@ fn the_unit_routine_reads_a_cache_quantized_per_tensor() {
         ..case
     });
     forward.check(forward.at_its_lead(&scaled));
+}
+
+/// The unit routine's lead weighing by relu: the prompt cases, masked and placed first, a masked
+/// decode step, and a key selector's scoring, its value one wide.
+#[test]
+fn the_unit_routine_weighs_by_relu() {
+    let forward = Forward::new(UnitAttentionRoutine);
+    forward.check(forward.at_its_lead(&RELUS));
 }
