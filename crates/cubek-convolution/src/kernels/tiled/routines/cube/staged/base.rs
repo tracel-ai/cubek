@@ -68,7 +68,7 @@ impl Routine for CubeStagedConvRoutine {
         settings: &ConvSettings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         let plane = settings.plane(hw, problem)?;
-        let tiles = ConvTiles::new(problem, &plane, settings)?;
+        let tiles = ConvTiles::new(problem, &plane, settings);
         let partitioning = ConvPartitioning::cube_staged(hw, problem, &tiles);
         let roles = problem.roles();
         let mut microkernel = CubeStagedMicrokernel::new(

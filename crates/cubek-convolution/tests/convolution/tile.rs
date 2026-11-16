@@ -11,8 +11,8 @@ use cubecl::zspace::{Shape, Strides};
 use cubek_convolution::components::ConvSetupError;
 use cubek_convolution::eval::benchmarks::settings;
 use cubek_convolution::kernels::tiled::{
-    CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED, ConvCandidate,
-    ConvDeclined, ConvRoutineKind, ConvSettings,
+    CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED, ConvCandidate, ConvDeclined, ConvRoutineKind,
+    ConvSettings,
 };
 use cubek_convolution::{ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref};
 use cubek_std::{Hardware, InputBinding};
@@ -107,9 +107,6 @@ fn tuned() -> Strategy {
 enum Accepts {
     /// A device that offers the setting no instruction.
     Instruction,
-    /// That, and the fragment API's refusal of a step of taps, which only a device whose tile
-    /// picks the manual mma serves.
-    Taps,
     /// Every refusal the routine states for a setting its device lists.
     Listed,
 }
@@ -119,8 +116,7 @@ impl Accepts {
         let states = |refusal| message.contains(why(refusal));
         match self {
             Self::Instruction => states(CONV_INSTRUCTION_UNOFFERED),
-            Self::Taps => Self::Instruction.covers(message) || states(CMMA_STEP_ACROSS_TAPS),
-            Self::Listed => Self::Taps.covers(message) || Self::listed_alone(message),
+            Self::Listed => Self::Instruction.covers(message) || Self::listed_alone(message),
         }
     }
 
@@ -250,13 +246,13 @@ mod cube {
     // whose tile picks the manual mma serves.
     cases! {
         taps, Forward;
-        channels_1: pinned(settings::F2X2_P2X2_T16), Taps, conv(1, (1, 16), [12, 12], [3, 3], SAME);
-        large_kernel: pinned(settings::F2X2_P2X2_T16), Taps, conv(1, (3, 16), [23, 23], [11, 11], window([4, 4], [1, 1], [1, 1]));
+        channels_1: pinned(settings::F2X2_P2X2_T16), Instruction, conv(1, (1, 16), [12, 12], [3, 3], SAME);
+        large_kernel: pinned(settings::F2X2_P2X2_T16), Instruction, conv(1, (3, 16), [23, 23], [11, 11], window([4, 4], [1, 1], [1, 1]));
     }
 
     cases! {
         taps_data_grad, BackwardData;
-        filters_3: pinned(settings::F2X2_P2X2_T16), Taps, conv(2, (32, 3), [6, 12], [3, 3], SAME);
+        filters_3: pinned(settings::F2X2_P2X2_T16), Instruction, conv(2, (32, 3), [6, 12], [3, 3], SAME);
     }
 
     // Planes across the rows of a cube, over a map they overhang, in every direction.

@@ -18,7 +18,6 @@ mod tensors;
 mod tune;
 
 pub use declined::ConvDeclined;
-pub use partitioning::CMMA_STEP_ACROSS_TAPS;
 pub use routines::{
     CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED, ConvRoutineKind, ConvSettings,
 };

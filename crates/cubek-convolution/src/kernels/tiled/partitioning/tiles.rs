@@ -1,7 +1,6 @@
 use super::{ConvBlock, ConvStep};
 use crate::kernels::tiled::{ConvProblem, ConvRoles, ConvSettings};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::Refusal;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{Axis, Level, Levels, Partitioning, StageStorage};
 use cubek_microkernel::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentMicrokernel};
@@ -42,22 +41,13 @@ pub struct ConvTiles {
 
 impl ConvTiles {
     /// The tiles `settings` ask of `problem`, over the instruction `plane` contracts through.
-    ///
-    /// # Errors
-    ///
-    /// [`CMMA_STEP_ACROSS_TAPS`](crate::kernels::tiled::CMMA_STEP_ACROSS_TAPS), for a step of taps
-    /// and channels under cmma.
     pub fn new(
         problem: &ConvProblem,
         plane: &PlaneFragmentMicrokernel,
         settings: &ConvSettings,
-    ) -> Result<Self, Refusal> {
+    ) -> Self {
         let instruction = InstructionShape::from(&plane.instruction);
         let step = ConvStep::new(problem, instruction.depth);
-        let cmma = matches!(plane.instruction, PlaneFragmentInstruction::Cmma { .. });
-        if cmma && let Some(refusal) = step.cmma_declined(&problem.roles()) {
-            return Err(refusal);
-        }
         let mut tiles = Self {
             roles: problem.roles(),
             instruction,
@@ -72,7 +62,7 @@ impl ConvTiles {
             rhs: cells(MatmulOperand::Rhs),
             out: tiles.run(MatmulOperand::Out),
         };
-        Ok(tiles)
+        tiles
     }
 
     /// The cells of `operand` one instruction tile holds along its innermost axis.

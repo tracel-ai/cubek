@@ -13,7 +13,7 @@ fn tiles(problem: &ConvProblem) -> ConvTiles {
     let plane = settings
         .plane(&mma_only(), problem)
         .expect("the device offers mma");
-    ConvTiles::new(problem, &plane, &settings).expect("the tiles state")
+    ConvTiles::new(problem, &plane, &settings)
 }
 
 /// The steps a stage of the Mma 2x2 grid holds on `problem`, within `budget`.

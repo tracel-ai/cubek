@@ -8,9 +8,8 @@ use crate::eval::benchmarks::settings;
 use crate::kernels::tiled::routines::test_support::{
     cmma_8x32_only, cmma_only, mma_only, nvidia, problems,
 };
-use crate::kernels::tiled::{CMMA_STEP_ACROSS_TAPS, CONV_INSTRUCTION_UNOFFERED, ConvProblem};
+use crate::kernels::tiled::{CONV_INSTRUCTION_UNOFFERED, ConvProblem};
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::matmul::plane::PlaneFragmentInstruction;
 use cubek_std::devices::topology;
 use cubek_std::microkernel::KernelEstimate;
 use cubek_std::routine::EstimatedProblem;
@@ -30,27 +29,18 @@ fn problem(name: &str) -> ConvProblem {
     ConvProblem::from(&conv2d(name))
 }
 
-/// A few channels make a step of taps, which the fragment API declines by name; the tile picks
-/// the manual mma only where the device offers no fragment API, and that serves it.
+/// A few channels make a step of taps beside the channels, which both instructions serve.
 #[test]
-fn cmma_declines_a_step_of_taps_and_mma_serves_it() {
+fn a_step_of_taps_is_served_by_either_instruction() {
     let problem = problem("few_channels_deep_filter");
-    for settings in [settings::F2X2_P2X2_T16, settings::F1X2_P1X2_T16] {
-        let prepared = ROUTINE.prepare(&nvidia(), &problem, &settings);
-        assert_eq!(prepared.err(), Some(CMMA_STEP_ACROSS_TAPS));
+    for hw in [nvidia(), cmma_only(), mma_only()] {
+        for settings in [settings::F2X2_P2X2_T16, settings::F1X2_P1X2_T16] {
+            assert!(
+                ROUTINE.prepare(&hw, &problem, &settings).is_ok(),
+                "{settings}"
+            );
+        }
     }
-    let (blueprint, _) = ROUTINE
-        .prepare_first_served(&mma_only(), &problem)
-        .expect("a setting serves");
-    assert!(matches!(
-        blueprint.microkernel.plane.instruction,
-        PlaneFragmentInstruction::Mma { .. }
-    ));
-    assert_eq!(
-        ROUTINE.prepare_first_served(&cmma_only(), &problem).err(),
-        Some(CMMA_STEP_ACROSS_TAPS)
-    );
-    assert!(ROUTINE.prepare_first_served(&nvidia(), &problem).is_err());
 }
 
 /// A cmma fragment's store cannot be cut short, so its output is masked and bounces; a manual mma
@@ -121,17 +111,15 @@ fn a_data_backward_over_overhanging_channels_reads_one_element_wide() {
     assert_eq!(widths(24).lhs, 1);
 }
 
-/// A few output channels make a data backward step of taps and channels, which cmma declines by
-/// name and Mma serves.
+/// A few output channels make a data backward step of taps and channels, which both
+/// instructions serve.
 #[test]
-fn cmma_declines_a_data_backward_step_across_taps_and_mma_serves_it() {
+fn a_data_backward_step_across_taps_is_served_by_either_instruction() {
     let problem = data_backward(3);
     let settings = settings::F2X2_P2X2_T16;
-    assert_eq!(
-        ROUTINE.prepare(&nvidia(), &problem, &settings).err(),
-        Some(CMMA_STEP_ACROSS_TAPS)
-    );
-    assert!(ROUTINE.prepare(&mma_only(), &problem, &settings).is_ok());
+    for hw in [nvidia(), cmma_only(), mma_only()] {
+        assert!(ROUTINE.prepare(&hw, &problem, &settings).is_ok());
+    }
 }
 
 /// The catalog problems as the launch states them.
@@ -142,20 +130,18 @@ fn staged_problems() -> Vec<(&'static str, ConvProblem)> {
         .collect()
 }
 
-/// The refusals the routine states for a setting its device lists: a step of taps through cmma, an
-/// instruction the device lacks, and a stage past the device's shared memory.
+/// The refusals the routine states for a setting its device lists: an instruction the device
+/// lacks, and a stage past the device's shared memory.
 fn named(refusal: &Refusal) -> bool {
-    *refusal == CMMA_STEP_ACROSS_TAPS
-        || *refusal == CONV_INSTRUCTION_UNOFFERED
+    *refusal == CONV_INSTRUCTION_UNOFFERED
         || matches!(refusal, Refusal::SharedMemoryPastDevice { .. })
 }
 
 /// Every listed setting prepares each problem or is declined by name, and some setting serves
-/// each problem: on a device whose tile picks the manual mma every one, on one whose tile picks
-/// the fragment API all but those that take a step of taps, which every setting declines by name.
+/// each problem, through either instruction.
 #[test]
 fn every_setting_prepares_or_declines_by_name() {
-    for hw in [nvidia(), mma_only()] {
+    for hw in [nvidia(), cmma_only(), mma_only()] {
         for (name, problem) in staged_problems() {
             for settings in ROUTINE.settings(&hw) {
                 let Err(refusal) = ROUTINE.prepare(&hw, &problem, &settings) else {
@@ -163,18 +149,11 @@ fn every_setting_prepares_or_declines_by_name() {
                 };
                 assert!(named(&refusal), "{settings} on {name}: {refusal:?}");
             }
-            let served = ROUTINE.prepare_first_served(&hw, &problem);
             assert!(
-                served.is_ok() || served.as_ref().is_err_and(named),
+                ROUTINE.prepare_first_served(&hw, &problem).is_ok(),
                 "no setting serves {name}"
             );
         }
-    }
-    for (name, problem) in staged_problems() {
-        assert!(
-            ROUTINE.prepare_first_served(&mma_only(), &problem).is_ok(),
-            "no setting serves {name} through the manual mma"
-        );
     }
 }
 
