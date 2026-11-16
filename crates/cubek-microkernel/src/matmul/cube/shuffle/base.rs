@@ -8,7 +8,7 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Levels, SoftwareMatmul, Space};
+use cubecl::tile::{Axis, LaneMap, Levels, SoftwareMatmul, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, blocked};
@@ -365,12 +365,12 @@ impl CubeShufflePlane {
         }
     }
 
-    /// The plane width the plane is compiled for: the tensor-core plane's, the only width its
-    /// decoding instruction's lane runs are laid over.
+    /// The plane width the plane is compiled for: the tensor-core plane's, the width its decoding
+    /// instruction's lane runs are laid over ([`LaneMap::PLANE_UNITS`]).
     pub fn plane_width(&self) -> usize {
         match self {
             CubeShufflePlane::Shuffle(plane) => plane.plane_width(),
-            CubeShufflePlane::Fragment(_) => PlaneFragmentMicrokernel::DECODING_PLANE_UNITS,
+            CubeShufflePlane::Fragment(_) => LaneMap::PLANE_UNITS,
         }
     }
 
