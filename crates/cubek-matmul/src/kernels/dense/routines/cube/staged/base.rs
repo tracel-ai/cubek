@@ -7,8 +7,9 @@
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::{
     CubeStagedMatmulRoutine, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
-    MATMUL_PACKED_WALK_PAST_K, MATMUL_SCALED_UNREAD, MatmulBinding, MatmulBlueprint, MatmulOutput,
-    MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_PACKED_WALK_PAST_K, MATMUL_SCALED_RHS_ALONG_K, MATMUL_SCALED_UNFILLED_BY_UNITS,
+    MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
+    MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{
@@ -24,8 +25,8 @@ use cubek_microkernel::matmul::cube::{
     CubeStagedTmaStoreRefusal, MatmulCubeSpace, MatmulCubeWrite,
 };
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead,
-    MatmulWorkItem,
+    MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands,
+    MatmulRead, MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -60,7 +61,9 @@ impl<'a> CubeStagedPlacement<'a> {
     /// is drained into ([`CubeStagedTmaStoreRefusal`]).
     /// A stage an engine fills lands as it lies, so there a float product's planes read their
     /// stages undecoded, never rounded by the units on the way in.
-    /// A scaled rhs is filled by the units into fragment stages alone ([`MATMUL_SCALED_UNREAD`]).
+    /// A scaled rhs is filled by the units into fragment stages alone
+    /// ([`MATMUL_SCALED_UNFILLED_BY_UNITS`]), in rows along `N` ([`MATMUL_SCALED_RHS_ALONG_K`]),
+    /// read at its own element, never rounded.
     pub(crate) fn new(
         hw: &Hardware,
         problem: &'a MatmulRoutineProblem,
@@ -75,7 +78,10 @@ impl<'a> CubeStagedPlacement<'a> {
         let by_units = fill.delivery == CubeStagedDelivery::Copy;
         let scaled = problem.rhs_scale.is_some();
         if scaled && !(by_units && store == CubeStagedStore::Fragments) {
-            return Err(MATMUL_SCALED_UNREAD);
+            return Err(MATMUL_SCALED_UNFILLED_BY_UNITS);
+        }
+        if scaled && problem.layouts.rhs != MatmulLayout::Row {
+            return Err(MATMUL_SCALED_RHS_ALONG_K);
         }
         // A scaled rhs is read dequantized at its own element: its stage is filled by units
         // multiplying the scale in, never landed as it lies.

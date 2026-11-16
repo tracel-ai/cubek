@@ -525,6 +525,19 @@ pub const MATMUL_SCALED_UNREAD: Refusal = Refusal::Declined {
           stages and multiply the scale in on the way",
 };
 
+/// What a cube staged launch declines of a scaled rhs not laid in rows along `N`, the one layout
+/// its scaled fill is verified at.
+pub const MATMUL_SCALED_RHS_ALONG_K: Refusal = Refusal::Declined {
+    why: "a scaled rhs is read in rows contiguous along n; one laid along k is declined",
+};
+
+/// What a cube staged launch declines of a scaled rhs where its units do not fill it into
+/// fragment stages: a fill an engine delivers lands each stage as it lies.
+pub const MATMUL_SCALED_UNFILLED_BY_UNITS: Refusal = Refusal::Declined {
+    why: "a scaled rhs is filled by the cube's units into fragment stages, multiplying the scale \
+          in, which a copy engine, a tensor map or another stage store does not do",
+};
+
 /// What a routine whose kernel walks no indexed input declines: a product whose inputs read a
 /// table, which the routines walking within their inputs serve.
 pub const MATMUL_INDEX_UNREAD: Refusal = Refusal::Declined {

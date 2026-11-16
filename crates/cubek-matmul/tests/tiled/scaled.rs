@@ -2,16 +2,18 @@
 //! fills its stage, against an `f64` reference; and the routines that decline it.
 
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, FloatKind};
+use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_matmul::kernels::{
-    CubeStagedMatmulRoutine, MATMUL_SCALE_NOT_OVER_RHS, MATMUL_SCALED_UNREAD, MatmulRoutine,
-    PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine,
+    CubeStagedMatmulRoutine, MATMUL_SCALE_NOT_OVER_RHS, MATMUL_SCALED_RHS_ALONG_K,
+    MATMUL_SCALED_UNREAD, MatmulRoutine, MatmulTensors, PlaneShuffleMatmulRoutine,
+    UnitRegistersMatmulRoutine,
 };
 use cubek_std::Hardware;
+use cubek_std::routine::Routine;
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult, client};
 use half::f16;
 
@@ -42,19 +44,6 @@ fn values(count: usize, seed: usize) -> Vec<f32> {
         .collect()
 }
 
-/// Skips the test where the cube staged routine prepares no scaled input on this device, which a
-/// refusal of the scale itself is not.
-fn skip_unprepared(why: Refusal) {
-    assert_ne!(
-        why, MATMUL_SCALED_UNREAD,
-        "the cube staged routine reads a scaled rhs"
-    );
-    TestOutcome::Validated(ValidationResult::Skipped(format!(
-        "the cube staged routine does not prepare a scaled input here: {why:?}"
-    )))
-    .enforce();
-}
-
 fn upload(client: &Client, data: &[f32], dims: &[usize], element: ElemType) -> PlainTensor {
     PlainTensor::of_handle(
         TestInput::builder(client.clone(), Shape::from(dims.to_vec()))
@@ -72,65 +61,95 @@ fn staged(element: ElemType, value: f64) -> f64 {
     }
 }
 
-/// How the scale `[3, 2, 96]` varies along the batch axes.
+/// A scaled product `[3, 2, 64, k] · [.., k, n]` the cube staged routine answers.
 #[derive(Debug, Clone, Copy)]
-enum Scale {
-    /// Along both.
-    PerBatch,
-    /// Along the second only: stride zero over the first, a view of `[2, 96]`.
-    SharedOverFirstBatch,
+enum Case {
+    /// An f16 rhs under an f16 scale, a row of it a batch.
+    F16,
+    /// An f32 rhs under an f32 scale: skipped where the planes take no f32 fragments, as a scaled
+    /// rhs is read as stored, never rounded to a narrower instruction's element.
+    F32,
+    F32ScaleOverF16,
+    /// The scale stored once over the first batch axis, viewed across it by a stride of zero.
+    ScaleSharedOverFirstBatch,
+    /// The rhs and its scale one along the first batch axis, broadcast against the lhs's.
+    RhsSharedOverFirstBatch,
+    /// A `k` and an `n` that overhang a stage.
+    Overhanging,
 }
 
-/// `[3, 2, 64, 96] · [3, 2, 96, 48]` with the rhs, at `element`, multiplied by a scale at
-/// `scale_element`.
-fn answers_the_reference(element: ElemType, scale_element: ElemType, scale: Scale) {
-    let client = client();
-    let hw = Hardware::from_client(&client);
-    let [b0, b1] = BATCHES;
-    let batches = b0 * b1;
-    let lhs_host = values(batches * M * K, LHS_SEED);
-    let rhs_host = values(batches * K * N, RHS_SEED);
-    let scale_rows = match scale {
-        Scale::PerBatch => batches,
-        Scale::SharedOverFirstBatch => b1,
-    };
-    let scale_host: Vec<f32> = values(scale_rows * K, SCALE_SEED)
-        .into_iter()
-        .map(|v| v + 0.6)
-        .collect();
-    let scale_row = |b: usize| match scale {
-        Scale::PerBatch => b,
-        Scale::SharedOverFirstBatch => b % b1,
-    };
-    let lhs = upload(&client, &lhs_host, &[b0, b1, M, K], element);
-    let rhs = upload(&client, &rhs_host, &[b0, b1, K, N], element);
-    let scale = match scale {
-        Scale::PerBatch => upload(&client, &scale_host, &[b0, b1, K], scale_element),
-        Scale::SharedOverFirstBatch => upload(&client, &scale_host, &[b1, K], scale_element)
-            .viewed(Metadata::new(Shape::from(vec![b0, b1, K]), vec![0, K, 1])),
-    };
-    let launched =
-        CubeStagedMatmulRoutine.launch_scaled_first_served_on(&hw, &client, lhs, rhs, scale);
-    let out = match launched {
-        Ok(out) => out,
-        Err(why) => return skip_unprepared(why),
-    };
-    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
-    for b in 0..batches {
-        for i in 0..M {
-            for j in 0..N {
-                let want: f64 = (0..K)
-                    .map(|k| {
-                        let weight = scale_host[scale_row(b) * K + k] as f64;
-                        let l = lhs_host[(b * M + i) * K + k] as f64;
-                        let r = rhs_host[(b * K + k) * N + j] as f64;
-                        l * staged(element, weight * r)
+impl Case {
+    /// The rhs's element, then the scale's.
+    fn elements(self) -> [ElemType; 2] {
+        match self {
+            Self::F32 => [F32, F32],
+            Self::F32ScaleOverF16 => [F16, F32],
+            _ => [F16, F16],
+        }
+    }
+
+    /// `k`, then `n`.
+    fn extents(self) -> [usize; 2] {
+        match self {
+            Self::Overhanging => [100, 50],
+            _ => [K, N],
+        }
+    }
+
+    /// The first batch dim the rhs, then the scale, is stored at.
+    fn first_batches(self) -> [usize; 2] {
+        match self {
+            Self::ScaleSharedOverFirstBatch => [BATCHES[0], 1],
+            Self::RhsSharedOverFirstBatch => [1, 1],
+            _ => [BATCHES[0], BATCHES[0]],
+        }
+    }
+
+    /// Skips the case where the device runs no plane at its element, which a refusal of the scale
+    /// itself is not.
+    fn skip(self, why: Refusal) {
+        assert_ne!(why, MATMUL_SCALED_UNREAD, "{self:?}");
+        let skipped = format!("{self:?}: no plane at this element here: {why:?}");
+        TestOutcome::Validated(ValidationResult::Skipped(skipped)).enforce();
+    }
+
+    /// The product on the device against the reference.
+    fn answers_the_reference(self) {
+        let client = client();
+        let hw = Hardware::from_client(&client);
+        let ([element, scale_element], [k, n]) = (self.elements(), self.extents());
+        let ([b0, b1], [rhs_b0, scale_b0]) = (BATCHES, self.first_batches());
+        let lhs_host = values(b0 * b1 * M * k, LHS_SEED);
+        let rhs_host = values(rhs_b0 * b1 * k * n, RHS_SEED);
+        let scale_host: Vec<f32> = values(scale_b0 * b1 * k, SCALE_SEED)
+            .into_iter()
+            .map(|v| v + 0.6)
+            .collect();
+        let lhs = upload(&client, &lhs_host, &[b0, b1, M, k], element);
+        let rhs = upload(&client, &rhs_host, &[rhs_b0, b1, k, n], element);
+        let scale = upload(&client, &scale_host, &[scale_b0, b1, k], scale_element);
+        let strides = vec![(scale_b0 / rhs_b0) * b1 * k, k, 1];
+        let scale = scale.viewed(Metadata::new(Shape::from(vec![rhs_b0, b1, k]), strides));
+        let out = match CubeStagedMatmulRoutine.launch_scaled_on(&hw, &client, lhs, rhs, scale) {
+            Ok(out) => out,
+            Err(why) => return self.skip(why),
+        };
+        let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+        for (b, [first, second]) in (0..b0 * b1).map(|b| (b, [b / b1, b % b1])) {
+            let rhs_b = (first % rhs_b0) * b1 + second;
+            let scale_b = (first % scale_b0) * b1 + second;
+            for (i, j) in (0..M).flat_map(|i| (0..n).map(move |j| (i, j))) {
+                let want: f64 = (0..k)
+                    .map(|c| {
+                        let weight = scale_host[scale_b * k + c] as f64;
+                        let r = rhs_host[(rhs_b * k + c) * n + j] as f64;
+                        lhs_host[(b * M + i) * k + c] as f64 * staged(element, weight * r)
                     })
                     .sum();
-                let have = got.get_f32(&[b / b1, b % b1, i, j]);
+                let have = got.get_f32(&[first, second, i, j]) as f64;
                 assert!(
-                    (have as f64 - want).abs() <= TOLERANCE as f64 * (1.0 + want.abs()),
-                    "batch {b}, [{i}, {j}] is {have}, want {want}"
+                    (have - want).abs() <= TOLERANCE as f64 * (1.0 + want.abs()),
+                    "{self:?}: batch {b}, [{i}, {j}] is {have}, want {want}"
                 );
             }
         }
@@ -139,50 +158,67 @@ fn answers_the_reference(element: ElemType, scale_element: ElemType, scale: Scal
 
 #[test]
 fn a_scaled_rhs_answers_the_reference_at_f16() {
-    answers_the_reference(F16, F16, Scale::PerBatch);
+    Case::F16.answers_the_reference();
 }
 
 #[test]
 fn a_scaled_rhs_answers_the_reference_at_f32() {
-    answers_the_reference(F32, F32, Scale::PerBatch);
+    Case::F32.answers_the_reference();
 }
 
 #[test]
 fn an_f32_scale_over_an_f16_rhs_answers_the_reference() {
-    answers_the_reference(F16, F32, Scale::PerBatch);
+    Case::F32ScaleOverF16.answers_the_reference();
 }
 
 #[test]
 fn a_scale_broadcast_over_a_batch_axis_answers_the_reference() {
-    answers_the_reference(F16, F16, Scale::SharedOverFirstBatch);
+    Case::ScaleSharedOverFirstBatch.answers_the_reference();
+}
+
+#[test]
+fn a_scaled_rhs_broadcast_over_the_lhs_batches_answers_the_reference() {
+    Case::RhsSharedOverFirstBatch.answers_the_reference();
+}
+
+#[test]
+fn a_scaled_rhs_whose_k_and_n_overhang_a_stage_answers_the_reference() {
+    Case::Overhanging.answers_the_reference();
 }
 
 /// The routines whose fill applies no scale decline a scaled rhs by name, whether they tile their
-/// rows or hold every one whole, and a scale not laid over the rhs's batches and `K` is declined.
+/// rows or hold every one whole, as the cube staged routine declines one laid along `K`; a scale
+/// not laid over the rhs's batches and `K`, or over an integer rhs, is declined.
 #[test]
-fn the_routines_applying_no_scale_decline_it() {
+fn a_scaled_rhs_is_declined_where_it_is_not_read() {
     let client = client();
     let hw = Hardware::from_client(&client);
-    let lhs = || upload(&client, &values(M * K, LHS_SEED), &[M, K], F16);
-    let rhs = || upload(&client, &values(K * N, RHS_SEED), &[K, N], F16);
+    let lhs = |element| upload(&client, &values(M * K, LHS_SEED), &[M, K], element);
+    let rhs = |element| upload(&client, &values(K * N, RHS_SEED), &[K, N], element);
     let scale = |extent| upload(&client, &values(extent, SCALE_SEED), &[extent], F16);
-    let unit = UnitRegistersMatmulRoutine.launch_scaled_first_served_on(
-        &hw,
-        &client,
-        lhs(),
-        rhs(),
-        scale(K),
-    );
-    assert_eq!(unit.err(), Some(MATMUL_SCALED_UNREAD));
-    let plane = PlaneShuffleMatmulRoutine.launch_scaled_first_served_on(
-        &hw,
-        &client,
-        lhs(),
-        rhs(),
-        scale(K),
-    );
-    assert_eq!(plane.err(), Some(MATMUL_SCALED_UNREAD));
-    let over_n =
-        CubeStagedMatmulRoutine.launch_scaled_first_served_on(&hw, &client, lhs(), rhs(), scale(N));
-    assert_eq!(over_n.err(), Some(MATMUL_SCALE_NOT_OVER_RHS));
+    let scaled = |rows_kind, element, extent| {
+        MatmulTensors::scaled(
+            &client,
+            lhs(element),
+            rhs(element),
+            scale(extent),
+            rows_kind,
+        )
+    };
+    let unit = scaled(UnitRegistersMatmulRoutine::ROWS_KIND, F16, K).and_then(|tensors| {
+        UnitRegistersMatmulRoutine.prepare_first_served(&hw, &tensors.problem())
+    });
+    assert_eq!(unit.map(|_| ()), Err(MATMUL_SCALED_UNREAD));
+    let plane = scaled(PlaneShuffleMatmulRoutine::ROWS_KIND, F16, K);
+    assert_eq!(plane.map(|_| ()), Err(MATMUL_SCALED_UNREAD));
+    let tiled = CubeStagedMatmulRoutine::ROWS_KIND;
+    let over_n = scaled(tiled, F16, N);
+    assert_eq!(over_n.map(|_| ()), Err(MATMUL_SCALE_NOT_OVER_RHS));
+    let integer = scaled(tiled, ElemType::Int(IntKind::I32), K);
+    assert_eq!(integer.map(|_| ()), Err(MATMUL_SCALE_NOT_OVER_RHS));
+    let columns = upload(&client, &values(K * N, RHS_SEED), &[N, K], F16)
+        .viewed(Metadata::new(Shape::from(vec![K, N]), vec![1, K]));
+    let along_k =
+        CubeStagedMatmulRoutine.launch_scaled_on(&hw, &client, lhs(F16), columns, scale(K));
+    assert_eq!(along_k.map(|_| ()), Err(MATMUL_SCALED_RHS_ALONG_K));
 }

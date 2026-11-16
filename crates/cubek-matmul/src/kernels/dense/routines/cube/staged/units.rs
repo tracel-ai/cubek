@@ -1,8 +1,12 @@
 use super::base::{self, CubeStagedMatmulRoutineBlueprint, CubeStagedPlacement};
+use crate::kernels::dense::launch::ALLOCATED;
+use crate::kernels::tensor::PlainTensor;
 use crate::kernels::{
     CUBE_STRIPS, MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, cube_order_name,
 };
+use cubecl::client::Client;
+use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
@@ -61,6 +65,27 @@ impl CubeStagedMatmulRoutineSettings {
 }
 
 impl CubeStagedMatmulRoutine {
+    /// `lhs · rhs` with `rhs` multiplied by `scale` along `K` as its stage is filled
+    /// ([`MatmulTensors::scaled`]), at the first of the routine's settings that prepares a launch
+    /// on `hw`: the one routine whose fill applies a scale.
+    ///
+    /// # Errors
+    ///
+    /// As [`MatmulTensors::scaled`], and the last setting's decline, where none serves.
+    pub fn launch_scaled_on(
+        &self,
+        hw: &Hardware,
+        client: &Client,
+        lhs: PlainTensor,
+        rhs: PlainTensor,
+        scale: PlainTensor,
+    ) -> Result<TensorHandle, Refusal> {
+        let tensors = MatmulTensors::scaled(client, lhs, rhs, scale, Self::ROWS_KIND)?;
+        let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
+        self.dispatch_into_buffer(&tensors, blueprint, grid);
+        Ok(tensors.into_out().expect(ALLOCATED))
+    }
+
     /// Boxes against a packed input several steps of `M` a plane, `(steps, planes)` as
     /// [`in_steps`](CubeStagedMicrokernelSettings::in_steps) takes them. A cube decodes every
     /// block of the rhs it stages once, for all its rows, so the boxes more planes high give that

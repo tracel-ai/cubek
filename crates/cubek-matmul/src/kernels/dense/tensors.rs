@@ -84,11 +84,11 @@ pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined 
     why: "a matmul holding every row whole reads one rhs matrix contiguous along `k` or `n`",
 };
 
-/// What [`MatmulTensors::scaled`] declines of a scale: one that is not a float the routines are
-/// verified at, or not laid `[batches.., k]` over the rhs.
+/// What [`MatmulTensors::scaled`] declines: a scale or an rhs that is not a float the routines
+/// are verified at, or a scale not laid `[batches.., k]` over the rhs.
 pub const MATMUL_SCALE_NOT_OVER_RHS: Refusal = Refusal::Declined {
-    why: "an rhs scale is an f32, f16 or bf16 tensor laid [batches.., k]: the rhs's batch dims, \
-          then its extent along k",
+    why: "a scaled rhs and its scale are f32, f16 or bf16, the scale laid [batches.., k]: the \
+          rhs's batch dims, then its extent along k",
 };
 
 /// The tensors of one product, the output among them, from which the problem they state is read
@@ -214,11 +214,16 @@ impl MatmulTensors {
             return Err(MATMUL_SCALED_UNREAD);
         }
         let shape = rhs.shape();
-        let over_rhs = shape.as_slice()[..shape.rank() - 2]
-            .iter()
-            .chain([&shape[shape.rank() - 2]])
-            .eq(scale.shape().as_slice());
-        if !over_rhs || !MatmulInputs::FLOATS.contains(&scale.elem) {
+        let Some(batch_dims) = shape.rank().checked_sub(2) else {
+            return Err(MATMUL_SCALE_NOT_OVER_RHS);
+        };
+        let over_rhs = shape.as_slice()[..=batch_dims].eq(scale.shape().as_slice());
+        let floats = [rhs.elem, scale.elem];
+        if !over_rhs
+            || !floats
+                .iter()
+                .all(|elem| MatmulInputs::FLOATS.contains(elem))
+        {
             return Err(MATMUL_SCALE_NOT_OVER_RHS);
         }
         Ok(Self {

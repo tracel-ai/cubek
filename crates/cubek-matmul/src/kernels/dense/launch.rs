@@ -19,7 +19,7 @@ use cubecl::tile::{
 use cubek_std::routine::{Grid, Routine};
 
 /// What a launch that allocated its output hands back.
-const ALLOCATED: &str = "a launch allocating its output hands it back";
+pub(crate) const ALLOCATED: &str = "a launch allocating its output hands it back";
 
 /// A routine around microkernel `M`, laying out shared memory as `SM`: it prepares a
 /// [`MatmulBlueprint`] and launches it on tensors, each as it is stored ([`StoredTensor`]).
@@ -173,26 +173,6 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         rhs: StoredTensor,
     ) -> Result<TensorHandle, Refusal> {
         let tensors = MatmulTensors::new(client, lhs, rhs, Self::ROWS_KIND)?;
-        let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
-        self.dispatch_into_buffer(&tensors, blueprint, grid);
-        Ok(tensors.into_out().expect(ALLOCATED))
-    }
-
-    /// [`launch_first_served_on`](Self::launch_first_served_on) with `rhs` multiplied by `scale`
-    /// along `K` as its stage is filled ([`MatmulTensors::scaled`]).
-    ///
-    /// # Errors
-    ///
-    /// As [`MatmulTensors::scaled`], and the last setting's decline, where none serves.
-    fn launch_scaled_first_served_on(
-        &self,
-        hw: &Hardware,
-        client: &Client,
-        lhs: PlainTensor,
-        rhs: PlainTensor,
-        scale: PlainTensor,
-    ) -> Result<TensorHandle, Refusal> {
-        let tensors = MatmulTensors::scaled(client, lhs, rhs, scale, Self::ROWS_KIND)?;
         let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
         self.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(tensors.into_out().expect(ALLOCATED))
