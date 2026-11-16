@@ -1,4 +1,4 @@
-use cubecl::tile::launch::Destination;
+use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpand};
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -13,11 +13,12 @@ pub fn plane_dequantize_kernel<ER: Numeric, VO: Size, O: Destination>(
     #[define(ER)] _element: ElemType,
 ) {
     let packed = packed.tile(&partitioning);
-    let c = O::tile::<ER, VO>(out, &partitioning);
+    let dest = O::serve::<ER, VO>(out, &partitioning);
+    let c = dest.tile();
 
     for plane in &partitioning {
         let mut c = c.at(&plane);
         c.dequantize_from(&packed.at(&plane));
     }
-    O::finish::<ER>(out);
+    dest.finish();
 }
