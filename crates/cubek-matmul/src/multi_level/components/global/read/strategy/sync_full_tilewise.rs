@@ -186,7 +186,6 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 
 #[cube]
 impl SyncFullTilewiseJob {
-    #[allow(clippy::too_many_arguments)]
     fn load_and_store_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
         this: &Self,
         tile: Coords2d,

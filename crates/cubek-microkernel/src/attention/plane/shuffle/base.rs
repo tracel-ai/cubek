@@ -140,7 +140,7 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
             })
             .map(|width| Self {
                 settings,
-                teams: width / settings.units_per_key.get(),
+                teams: width / settings.units_per_key,
             })
             .into_iter()
     }

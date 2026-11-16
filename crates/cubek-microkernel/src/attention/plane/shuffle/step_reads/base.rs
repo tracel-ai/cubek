@@ -33,6 +33,11 @@ pub trait StepReads<N: Size>: CubeType + Sized {
         #[comptime] lines: usize,
     ) -> Array<Vector<Self::Element, N>>;
 
+    /// The one scale every line [`load`](Self::load) returns is multiplied by: the per-tensor
+    /// scale the operand is stored under, which its lines are read without and the sums they enter
+    /// take on once. `1` where the lines are the operand's values whole.
+    fn per_tensor_scale(&self) -> f32;
+
     /// These lines cut to `region`'s window, so the steps inside it are cut from there rather
     /// than from the operand's top.
     fn at(&self, region: &Region) -> Self;

@@ -41,6 +41,9 @@ pub struct AttentionRoutineProblem {
     pub start_bytes: AttentionOperands<u64>,
     /// How the keys and values lie.
     pub cache: AttentionCacheLayout,
+    /// Whether every sequence's queries lie end to end, each sequence's run placed by its
+    /// cumulative count: `seq_q` is then the longest run.
+    pub packed_queries: bool,
 }
 
 /// How an attention's keys and values lie.
@@ -167,6 +170,7 @@ impl AttentionRoutineProblem {
                 out: 0,
             },
             cache: AttentionCacheLayout::Sequences,
+            packed_queries: false,
         }
     }
 
@@ -283,9 +287,10 @@ mod tests {
     use crate::kernels::test_support::{offering, qwen};
     use crate::kernels::*;
 
-    use cubek_microkernel::attention::{AttentionMicrokernel, S};
+    use cubek_microkernel::attention::{AttentionRead, S};
     use cubek_std::Hardware;
     use cubek_std::devices;
+    use cubek_std::routine::Routine;
 
     /// Every power of two up to the widest class, the last inside the limit standing for it.
     #[test]
@@ -341,9 +346,7 @@ mod tests {
                 .sum(),
             fleet
                 .iter()
-                .map(|hw| {
-                    assert_steps_divide(HypercubeSecondLaunchShuffleAttentionRoutine::new(), hw)
-                })
+                .map(|hw| assert_steps_divide(HypercubeShufflePartialAttentionRoutine::new(), hw))
                 .sum(),
         ];
         assert!(
@@ -363,7 +366,10 @@ mod tests {
             ..f32
         };
         assert_eq!(f32.work_item().readings().count(), 2);
-        assert_eq!(paged.work_item().readings().collect::<Vec<_>>(), [F32]);
+        assert_eq!(
+            paged.work_item().readings().collect::<Vec<_>>(),
+            [AttentionRead::all(F32)]
+        );
     }
 
     /// A cube whose planes read keys where they lie walks a paged cache a page at a time only
@@ -412,7 +418,7 @@ mod tests {
     /// every setting it lists; each of those three prepares a round-only one.
     #[test]
     fn only_the_hypercube_shuffles_and_the_staged_cube_read_a_packed_cache() {
-        fn reads<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+        fn reads<R: Routine<Problem = AttentionRoutineProblem>>(
             routine: R,
             hw: &Hardware,
             problem: &AttentionRoutineProblem,
@@ -422,7 +428,7 @@ mod tests {
                 .iter()
                 .any(|settings| routine.prepare(hw, problem, settings).is_ok())
         }
-        fn declines<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+        fn declines<R: Routine<Problem = AttentionRoutineProblem>>(
             routine: R,
             hw: &Hardware,
             problem: &AttentionRoutineProblem,
@@ -450,14 +456,14 @@ mod tests {
             &packed
         ));
         assert!(reads(
-            HypercubeSecondLaunchShuffleAttentionRoutine::new(),
+            HypercubeShufflePartialAttentionRoutine::new(),
             &hw,
             &packed
         ));
         assert!(reads(CubeStagedAttentionRoutine, &hw, &packed));
         declines(UnitAttentionRoutine, &hw, &packed);
         declines(CubeShuffleAttentionRoutine, &hw, &packed);
-        declines(HypercubeSecondLaunchFragmentAttentionRoutine, &hw, &packed);
+        declines(HypercubeFragmentPartialAttentionRoutine, &hw, &packed);
 
         // The staged cube stages its keys from one tile, which a QJL fix-up's second is not.
         use cubek_std::routine::Routine;
@@ -479,10 +485,14 @@ mod tests {
         }
     }
 
-    fn assert_steps_divide<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
-        routine: R,
-        hw: &Hardware,
-    ) -> usize {
+    fn assert_steps_divide<M, SM, R>(routine: R, hw: &Hardware) -> usize
+    where
+        R: Routine<
+                Problem = AttentionRoutineProblem,
+                Microkernel = M,
+                Blueprint = AttentionBlueprint<M, SM>,
+            >,
+    {
         let problems = [qwen(512, 512), qwen(1, 4096)];
         let mut prepared = 0;
         for settings in routine.settings(hw) {

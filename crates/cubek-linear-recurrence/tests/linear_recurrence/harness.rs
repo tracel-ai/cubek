@@ -155,7 +155,7 @@ pub fn convolve_channels(
 pub fn tolerance(elem: ElemType) -> f64 {
     match elem {
         F32 => 1e-5,
-        F16 => 6e-3,
+        F16 => 1e-3,
         BF16 => 2e-2,
         _ => unreachable!("the conv is verified at f16, bf16 and f32"),
     }

@@ -1,4 +1,3 @@
-use core::marker::PhantomData;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
@@ -12,13 +11,22 @@ use cubek_microkernel::split_keys_merge::hypercube::{
 /// Every cube walking its run of its box over the keys its queries see, its planes reading the
 /// keys and values from tiles, leaving its partial in its slot, then counting itself in at the
 /// box, the last merging it ([`hypercube_split_keys_merge_microkernel()`]), with each query's
-/// logsumexp where the launch binds one.
+/// logsumexp where the launch binds one. Each operand is read in its own element and widened into
+/// the sum, `EA`: the query in `EQ`, the keys in `EK`, the values in `EV`; the output is written in
+/// `EO`.
 #[cube(launch_unchecked)]
-pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
+pub fn hypercube_attention_arrival_kernel<
+    EA: Float,
+    EQ: Float,
+    EK: Float,
+    EV: Float,
+    EO: Float,
+    N: Size,
+>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &mut Tensor<E>,
+    out: &mut Tensor<EO>,
     logsumexp: ComptimeOption<&mut Tensor<EA>>,
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,
@@ -32,24 +40,25 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
     #[comptime] microkernel: HypercubeAttentionMicrokernel,
     #[comptime] merge: HypercubeMergeShape,
     #[comptime] visibility: AttentionVisibility,
-    #[define(EA, E)] _elements: [ElemType; 2],
+    #[define(EA, EQ, EK, EV, EO)] _elements: [ElemType; 5],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
-    let key = TileStepReads::<E> {
-        tile: key.tile(&partitioning),
-        element: PhantomData,
-    };
-    let value = TileStepReads::<E> {
-        tile: value.tile(&partitioning),
-        element: PhantomData,
-    };
+    let key = TileStepReads::<EK>::new(&key.tile(&partitioning));
+    let value = TileStepReads::<EV>::new(&value.tile(&partitioning));
 
     // The cube level's walk: this cube's run of the steps, or pages, of keys.
     let run = partitioning.walk();
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
 
-    let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
+    let visible = VisibleKeys::new(
+        len,
+        &ComptimeOption::new_None(),
+        &first_step,
+        queries,
+        &mask,
+        visibility,
+    );
     let steps = visible.steps(
         &first_step,
         microkernel.cube.seq_q(),
@@ -59,10 +68,10 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
 
     let slot_box = cube_unstaged_attention_partial_microkernel::<
         EA,
-        E,
+        EQ,
         N,
-        TileStepReads<E>,
-        TileStepReads<E>,
+        TileStepReads<EK>,
+        TileStepReads<EV>,
     >(
         run,
         // The query spans no key: its box is the first step's.
@@ -80,7 +89,7 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
         merge.slots.val_dim,
     );
 
-    hypercube_split_keys_merge_microkernel::<EA, E, N>(
+    hypercube_split_keys_merge_microkernel::<EA, EO, N>(
         &slot_box, slot_out, slot_max, slot_sum, out, logsumexp, arrivals, merge,
     );
 }
@@ -123,7 +132,14 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
 
-    let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
+    let visible = VisibleKeys::new(
+        len,
+        &ComptimeOption::new_None(),
+        &first_step,
+        queries,
+        &mask,
+        visibility,
+    );
     let steps = visible.steps(
         &first_step,
         microkernel.cube.seq_q(),

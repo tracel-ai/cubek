@@ -229,9 +229,18 @@ impl CubeAttentionPlane {
         }
     }
 
-    /// The element a stage of its query, keys and values holds where the stage's fill decodes
-    /// them, as it does an operand bound as its words: `f32` where `None`, the element the tile DSL
-    /// decodes a packed operand at unless the kernel names another.
+    /// The element a stage of its query holds where the stage's fill decodes it, as it does an
+    /// operand bound as its words: `f32` where `None`, the element the tile DSL decodes a packed
+    /// operand at unless the kernel names another.
+    pub fn decoded_query(&self) -> Option<ElemType> {
+        match self {
+            Self::Fragment(plane) => plane.decoded_query(),
+            Self::Shuffle(_) => None,
+        }
+    }
+
+    /// The element a stage of its keys and values holds where the stage's fill decodes them, as
+    /// [`decoded_query`](Self::decoded_query) the query's.
     pub fn decoded_stage(&self) -> Option<ElemType> {
         match self {
             Self::Fragment(plane) => plane.decoded_stage(),

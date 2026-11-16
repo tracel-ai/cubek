@@ -2,7 +2,7 @@ use super::kernel::hypercube_stream_fragment_attention_kernel;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
     AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
-    HypercubeMerge,
+    HypercubeMerge, PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
@@ -189,6 +189,9 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
         if let AttentionCacheLayout::Packed(_) = problem.cache {
             return Err(ATTENTION_PACKED_UNREAD);
         }
+        if problem.packed_queries {
+            return Err(PACKED_QUERIES_UNREAD);
+        }
         HypercubeMerge::LastArrival.admits(hw)?;
         let item = problem.work_item();
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
@@ -251,9 +254,10 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         let splits = Self::splits(&problem, &blueprint.partitioning);
         let slots = tensors.split_slots(splits);
         let arrivals = tensors.box_arrivals(microkernel.cube.seq_q());
-        // Its planes keep their sums in the first, write the output in the second and read the
-        // stage in the last.
-        let elements = microkernel
+        // Its planes keep their sums in the first, write the output in the second, read the
+        // query and the keys' stage in the third and cast their probabilities to the values'
+        // element in the last.
+        let [sum, out, staged, probabilities] = microkernel
             .served(&problem.work_item())
             .served_kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -268,10 +272,10 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 tensors.client(),
                 grid.launch.cube_count,
                 grid.launch.cube_dim,
-                binding.query.arg(),
+                binding.query,
                 key,
                 value,
-                binding.out.arg(),
+                binding.out,
                 binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
                 slots.out.binding().into_tensor_arg(),
                 slots.max.binding().into_tensor_arg(),
@@ -286,7 +290,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 splits,
                 problem.visibility,
                 blueprint.shared_memory.clone(),
-                elements,
+                [sum, out, staged, probabilities],
             );
         }
     }

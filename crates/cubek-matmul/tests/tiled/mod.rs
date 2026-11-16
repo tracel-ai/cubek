@@ -1,18 +1,17 @@
-//! Tests for the routines written on the tile DSL.
+//! Tests for the routines written on the tile DSL, a folder a scope as `kernels` lays them out.
 
-mod cmma;
-mod elements;
+mod base;
+mod cube;
 mod finish;
+mod hypercube;
 mod indexed;
-mod integers;
 mod packed;
-mod packed_activation;
+mod plane;
 mod storage;
+mod strategy;
+mod unit;
 
 #[cfg(feature = "benchmarks")]
 mod bench_catalog;
-#[cfg(feature = "extended")]
-mod cpu_gemm;
-#[cfg(feature = "extended")]
-#[cfg(feature = "extended")]
-mod stride_zero;
+
+pub(crate) use base::*;

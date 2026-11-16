@@ -1,12 +1,19 @@
-use crate::matmul::plane::{PlaneFragmentStepSum, PlaneFragmentTransport};
 use core::num::NonZeroUsize;
+use cubecl::tile::space::ComputeScope;
 
-/// The steps a plane holds along `m` and `n`, and how many steps of `K` it walks per stage, each
-/// step the fewest calls of the instruction every load fills whole
-/// ([`MatmulStep`](crate::matmul::MatmulStep)). The instruction itself is a candidate, not a
-/// setting.
+/// The shape of the tile a plane holds along `m` and `n`, and how deep along `K` it walks per
+/// stage, in units: steps of the device's matrix unit for the product's elements, its largest
+/// square instruction
+/// ([`PlaneFragmentMicrokernel::matrix_unit`](super::PlaneFragmentMicrokernel::matrix_unit)), each
+/// the fewest calls of it every load fills whole ([`MatmulStep`](crate::matmul::MatmulStep)). So a
+/// setting is one tile shape in elements on a device, whichever instruction cuts it. The
+/// instruction is not a setting: the tile layer picks it for the product
+/// ([`Instruction::for_accumulator`](cubecl::tile::Instruction::for_accumulator)).
 ///
-/// A warpgroup MMA holds one instruction a plane group, `along_n` times its form's granularity
+/// A resolved [`PlaneFragmentMicrokernel`](super::PlaneFragmentMicrokernel) states the same
+/// fields in its own instruction's calls: the tile cut into fragments.
+///
+/// A plane group MMA holds one instruction a plane group, `along_n` times its form's granularity
 /// wide: there `along_m` is one, and the steps along `n` size the instruction rather than a grid of
 /// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,12 +21,11 @@ pub struct PlaneFragmentMicrokernelSettings {
     pub along_m: NonZeroUsize,
     pub along_n: NonZeroUsize,
     pub depth: NonZeroUsize,
-    /// The element a software instruction's step contracts in, where its operands admit the
-    /// narrow one; a matrix instruction's step is always its own. Wide unless a caller opts in
-    /// ([`PlaneFragmentStepSum`]).
-    pub step_sum: PlaneFragmentStepSum,
-    /// Which transport a matrix instruction is reached through first.
-    pub transport: PlaneFragmentTransport,
+    /// Who holds each of the plane's tiles: the plane itself, or a plane group the tiles are dealt
+    /// to whole. A plane group ([`ComputeScope::MMA_PLANE_GROUP`]) holds its tile in the plane
+    /// group MMA, which the tile layer picks for it: a routine of its own, whose stages only the
+    /// TMA engine lands.
+    pub holder: ComputeScope,
     /// How deep along `K` each of its fragments is ([`PlaneFragmentDepth`]).
     pub fragment_depth: PlaneFragmentDepth,
     /// The axis the instruction's rows, and its accumulator's, lie along
@@ -57,8 +63,7 @@ pub enum PlaneFragmentDepth {
 impl PlaneFragmentMicrokernelSettings {
     pub const DEFAULT: Self = Self::grid(4, 4, 1);
 
-    /// `along_m` by `along_n` steps a plane, `depth` steps of `K` a stage, wide steps reached
-    /// through cubecl's fragment operations.
+    /// `along_m` by `along_n` units a plane, `depth` units of `K` a stage.
     ///
     /// # Panics
     ///
@@ -68,31 +73,30 @@ impl PlaneFragmentMicrokernelSettings {
             along_m: NonZeroUsize::new(along_m).unwrap(),
             along_n: NonZeroUsize::new(along_n).unwrap(),
             depth: NonZeroUsize::new(depth).unwrap(),
-            step_sum: PlaneFragmentStepSum::Wide,
-            transport: PlaneFragmentTransport::Cmma,
+            holder: ComputeScope::Plane,
             fragment_depth: PlaneFragmentDepth::Instruction,
             rows_along: PlaneFragmentRowsAlong::M,
         }
     }
 
     /// `along_n` fragments a plane along `n` and one along `m`, each a window `depth` steps of `K`
-    /// deep, reached through the tile DSL's transport: the grid a plane holds against a packed
-    /// rhs it reads straight from memory, decoding it as each fragment loads.
+    /// deep: the grid a plane holds against a packed rhs it reads straight from memory, decoding
+    /// it as each fragment loads, which only the instruction contracting fragments a stage deep
+    /// does ([`PlaneFragmentDepth::Stage`]).
     ///
     /// # Panics
     ///
     /// On a count of zero.
     pub const fn windowed(along_n: usize, depth: usize) -> Self {
         Self {
-            transport: PlaneFragmentTransport::Mma,
             fragment_depth: PlaneFragmentDepth::Stage,
             ..Self::grid(1, along_n, depth)
         }
     }
 
-    /// This grid reaching its matrix instruction through `transport`.
-    pub const fn through(self, transport: PlaneFragmentTransport) -> Self {
-        Self { transport, ..self }
+    /// This grid with its tiles held by `holder`.
+    pub const fn held_by(self, holder: ComputeScope) -> Self {
+        Self { holder, ..self }
     }
 
     /// This grid with its instruction's rows along `rows_along`.
@@ -103,11 +107,11 @@ impl PlaneFragmentMicrokernelSettings {
 
 impl core::fmt::Display for PlaneFragmentMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "steps={}x{}x{}", self.along_m, self.along_n, self.depth)?;
-        match self.transport {
-            PlaneFragmentTransport::Cmma => {}
-            PlaneFragmentTransport::Mma => write!(f, " transport=mma")?,
-            PlaneFragmentTransport::Wgmma => write!(f, " transport=wgmma")?,
+        write!(f, "units={}x{}x{}", self.along_m, self.along_n, self.depth)?;
+        match self.holder {
+            ComputeScope::Plane => {}
+            ComputeScope::PlaneGroup { planes } => write!(f, " plane_groups={planes}")?,
+            other => write!(f, " holder={other:?}")?,
         }
         if self.fragment_depth == PlaneFragmentDepth::Stage {
             write!(f, " fragments_through_stage")?;
@@ -115,9 +119,6 @@ impl core::fmt::Display for PlaneFragmentMicrokernelSettings {
         if self.rows_along == PlaneFragmentRowsAlong::N {
             write!(f, " rows_along=n")?;
         }
-        match self.step_sum {
-            PlaneFragmentStepSum::Wide => Ok(()),
-            PlaneFragmentStepSum::Narrow => write!(f, " narrow"),
-        }
+        Ok(())
     }
 }

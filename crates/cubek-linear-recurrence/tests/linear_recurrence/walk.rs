@@ -14,6 +14,8 @@ use cubecl::bytes::Bytes;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Refusal;
+use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_linear_recurrence::kernels::walk::{
     CubeWalkRoutine, CubeWalkRoutineSettings, RecurrenceWalkInputs, RecurrenceWalkOutputs,
@@ -25,6 +27,7 @@ use cubek_microkernel::linear_recurrence::RecurrenceHeads;
 use cubek_microkernel::linear_recurrence::walk::UpdateRule;
 use cubek_std::Hardware;
 use cubek_std::autotune::GroupPriority;
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
 
 /// A walk's shape, and the positions whose decay and strength are zero.
 #[derive(Debug, Clone)]
@@ -421,7 +424,7 @@ pub fn output_tolerance(element: ElemType) -> f64 {
     match element {
         F16 => 1.5e-3,
         F32 => 1e-4,
-        _ => 1.5e-2,
+        _ => 8e-3,
     }
 }
 
@@ -489,96 +492,209 @@ pub fn assert_close_within(got: Vec<f32>, want: &[f64], what: &str, tolerance: f
     }
 }
 
+/// How a walk is reached: the cube routine at one of its settings, or the table, which runs
+/// whichever setting its round elected.
+#[derive(Debug, Clone)]
+pub enum Reach {
+    Setting(CubeWalkRoutineSettings),
+    Table,
+}
+
+impl Reach {
+    /// Every setting the cube routine lists.
+    fn every_setting() -> Vec<Self> {
+        CubeWalkRoutineSettings::listed()
+            .into_iter()
+            .map(Self::Setting)
+            .collect()
+    }
+}
+
+/// One walk: a case at an element, its operands laid out as `layout` lays them, reached as
+/// `reach` names.
+#[derive(Debug, Clone)]
+pub struct WalkCase {
+    pub case: Case,
+    pub element: ElemType,
+    pub layout: Layout,
+    pub reach: Reach,
+}
+
+impl WalkCase {
+    /// Each of `cases` at each of `elements`, laid out as each of `layouts` lays them, reached as
+    /// each of `reaches` names.
+    pub fn every(
+        cases: &[Case],
+        elements: &[ElemType],
+        layouts: &[Layout],
+        reaches: &[Reach],
+    ) -> Vec<Self> {
+        let mut every = Vec::new();
+        for &element in elements {
+            for &layout in layouts {
+                for reach in reaches {
+                    for case in cases {
+                        every.push(Self {
+                            case: case.clone(),
+                            element,
+                            layout,
+                            reach: reach.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        every
+    }
+}
+
+/// The walk against the host: its output rounded to the element as the kernel rounds it, and the
+/// states it keeps, in `f32`. A device may decline a walk only by the refusal admission names: a
+/// head wider than its cube holds, or too few bindings.
+pub struct Walks;
+
+impl ScopeUnderTest for Walks {
+    type Case = WalkCase;
+
+    /// # Panics
+    ///
+    /// On a refusal other than the one admission names.
+    fn launch(&self, client: &Client, walk: &WalkCase) -> Result<Vec<Written>, Refusal> {
+        let hw = Hardware::from_client(client);
+        let operands = walk.case.operands();
+        let inputs = walk
+            .case
+            .inputs_laid_out(client, &operands, walk.layout, walk.element);
+        let admitted = problem_of(&inputs).admit(&hw);
+        let routine = CubeWalkRoutine::new(walk.case.rule);
+        let walked = match &walk.reach {
+            Reach::Setting(settings) => routine.launch_on(&hw, inputs, settings),
+            Reach::Table => admitted
+                .clone()
+                .map(|()| launch_tuned(&cubecl::test_device(), inputs, GroupPriority::DEFAULT)),
+        };
+        let walked = walked.inspect_err(|why| {
+            assert_eq!(admitted, Err(why.clone()), "{walk:?}: refused but admitted");
+        })?;
+        Ok(vec![
+            Written {
+                name: "output",
+                tensor: walked.out,
+                host: HostDataType::F32,
+            },
+            Written {
+                name: "kept states",
+                tensor: walked.kept.expect("a walk over owned states keeps them"),
+                host: HostDataType::F32,
+            },
+        ])
+    }
+
+    fn reference(&self, walk: &WalkCase) -> Vec<HostData> {
+        let Case {
+            batch,
+            positions,
+            heads,
+            kept,
+            ..
+        } = walk.case.clone();
+        let (out, kept_states) = walk.case.reference(&walk.case.operands());
+        let out = out
+            .iter()
+            .map(|&x| round_to(x as f32, walk.element))
+            .collect();
+        let value_heads = walk.case.value_heads();
+        let out_shape = [batch, positions, value_heads, heads.value_features];
+        let kept_shape = [
+            kept,
+            batch,
+            value_heads,
+            heads.key_features,
+            heads.value_features,
+        ];
+        vec![
+            HostData::row_major(HostDataVec::F32(out), Shape::from(out_shape.to_vec())),
+            HostData::row_major(
+                HostDataVec::F32(kept_states.iter().map(|&x| x as f32).collect()),
+                Shape::from(kept_shape.to_vec()),
+            ),
+        ]
+    }
+
+    /// A sum an ulp of the element apart rounds to neighbouring values.
+    fn tolerance(&self, walk: &WalkCase) -> f32 {
+        output_tolerance(walk.element) as f32
+    }
+
+    /// The kept states are summed and stored in `f32`.
+    fn tolerance_of(&self, walk: &WalkCase, name: &'static str) -> f32 {
+        match name {
+            "kept states" => 1e-4,
+            _ => self.tolerance(walk),
+        }
+    }
+}
+
 /// Every setting the cube routine lists runs every case at every element the device runs, and
 /// matches the reference.
 #[test]
 fn the_cube_walk_matches_the_reference() {
     let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
-    for element in elements(&client) {
-        for settings in CubeWalkRoutineSettings::listed() {
-            for case in cases() {
-                let operands = case.operands();
-                let inputs = case.inputs(&client, &operands, element);
-                let what = format!("{settings} {case:?}");
-                if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
-                    case.check(&client, &operands, walked, element, &settings.to_string());
-                }
-            }
-        }
-    }
+    Walks.check(WalkCase::every(
+        &cases(),
+        &elements(&client),
+        &[Layout::default()],
+        &Reach::every_setting(),
+    ));
 }
 
 /// The floor, which serves every admitted problem, matches the reference.
 #[test]
 fn the_floor_matches_the_reference() {
     let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
-    let settings = CubeWalkRoutineSettings::FLOOR;
-    for element in elements(&client) {
-        for case in cases() {
-            let operands = case.operands();
-            let inputs = case.inputs(&client, &operands, element);
-            let what = format!("the floor {case:?}");
-            if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
-                case.check(&client, &operands, walked, element, "the floor");
-            }
-        }
-    }
+    Walks.check(WalkCase::every(
+        &cases(),
+        &elements(&client),
+        &[Layout::default()],
+        &[Reach::Setting(CubeWalkRoutineSettings::FLOOR)],
+    ));
 }
 
 /// Every case through the table, which runs whichever setting its round elected.
 #[test]
 fn the_table_matches_the_reference() {
     let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
-    let device = cubecl::test_device();
-    for element in elements(&client) {
-        for case in cases() {
-            let operands = case.operands();
-            let inputs = case.inputs(&client, &operands, element);
-            let what = format!("the table {case:?}");
-            if let Some(walked) = tuned_or_skip(&hw, &device, inputs, &what) {
-                case.check(&client, &operands, walked, element, "the table");
-            }
-        }
-    }
+    Walks.check(WalkCase::every(
+        &cases(),
+        &elements(&client),
+        &[Layout::default()],
+        &[Reach::Table],
+    ));
 }
 
 /// A walk whose every position is masked leaves the state it resumed from, at every kept position,
 /// under either update rule.
 #[test]
 fn a_masked_walk_passes_the_state_through() {
-    let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
-    for rule in [UpdateRule::Delta, UpdateRule::Additive] {
-        for settings in CubeWalkRoutineSettings::listed() {
-            let case = Case {
-                batch: 2,
-                positions: 4,
-                heads: RecurrenceHeads {
-                    key_heads: 2,
-                    heads_per_group: 2,
-                    key_features: 40,
-                    value_features: 36,
-                },
-                kept: 3,
-                rule,
-                masked: vec![0, 1, 2, 3],
-            };
-            let operands = case.operands();
-            let inputs = case.inputs(&client, &operands, F32);
-            let what = format!("{rule:?} {settings}");
-            let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) else {
-                continue;
-            };
-            let kept = read(&client, walked.kept.unwrap().handle.clone(), F32);
-            let state: Vec<f64> = operands.state.iter().map(|&x| x as f64).collect();
-            for slab in kept.chunks(state.len()) {
-                assert_close(slab.to_vec(), &state, &format!("{what}: the kept state"));
-            }
-        }
-    }
+    let masked = |rule| Case {
+        batch: 2,
+        positions: 4,
+        heads: RecurrenceHeads {
+            key_heads: 2,
+            heads_per_group: 2,
+            key_features: 40,
+            value_features: 36,
+        },
+        kept: 3,
+        rule,
+        masked: vec![0, 1, 2, 3],
+    };
+    Walks.check(WalkCase::every(
+        &[masked(UpdateRule::Delta), masked(UpdateRule::Additive)],
+        &[F32],
+        &[Layout::default()],
+        &Reach::every_setting(),
+    ));
 }
 
 /// Operands that lie padded, off a whole read of their buffers, with the strides a decode step's
@@ -587,7 +703,6 @@ fn a_masked_walk_passes_the_state_through() {
 #[test]
 fn the_walk_reads_operands_where_they_lie() {
     let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
     let layouts = [
         Layout {
             pad: 3,
@@ -624,64 +739,49 @@ fn the_walk_reads_operands_where_they_lie() {
             ..Layout::default()
         },
     ];
-    for element in elements(&client) {
-        for layout in layouts {
-            for settings in [
-                CubeWalkRoutineSettings::DEFAULT,
-                CubeWalkRoutineSettings::FLOOR,
-            ] {
-                for case in cases() {
-                    let operands = case.operands();
-                    let inputs = case.inputs_laid_out(&client, &operands, layout, element);
-                    let what = format!("{layout:?} {settings} {case:?}");
-                    if let Some(walked) = walk_or_skip(&hw, inputs, &settings, &what) {
-                        let what = format!("{layout:?} {settings}");
-                        case.check(&client, &operands, walked, element, &what);
-                    }
-                }
-            }
-        }
-    }
+    Walks.check(WalkCase::every(
+        &cases(),
+        &elements(&client),
+        &layouts,
+        &[
+            Reach::Setting(CubeWalkRoutineSettings::DEFAULT),
+            Reach::Setting(CubeWalkRoutineSettings::FLOOR),
+        ],
+    ));
 }
 
 /// A key tuned on an aligned call is met again by calls that bind narrower: the winner serves them,
 /// in the table of either update rule.
 #[test]
 fn the_table_serves_a_narrower_call_after_an_aligned_one() {
-    let client = cubecl::test_device().client();
-    let hw = Hardware::from_client(&client);
-    let device = cubecl::test_device();
-    for rule in [UpdateRule::Delta, UpdateRule::Additive] {
-        let case = Case {
-            batch: 1,
-            positions: 8,
-            heads: RecurrenceHeads {
-                key_heads: 4,
-                heads_per_group: 3,
-                key_features: 128,
-                value_features: 128,
-            },
-            kept: 2,
-            rule,
-            masked: vec![],
-        };
-        for layout in [
-            Layout::default(),
-            Layout {
-                offset: 1,
-                ..Layout::default()
-            },
-            Layout {
-                pad: 3,
-                ..Layout::default()
-            },
-        ] {
-            let operands = case.operands();
-            let inputs = case.inputs_laid_out(&client, &operands, layout, F32);
-            let what = format!("the table {rule:?} {layout:?}");
-            if let Some(walked) = tuned_or_skip(&hw, &device, inputs, &what) {
-                case.check(&client, &operands, walked, F32, &what);
-            }
-        }
-    }
+    let case = |rule| Case {
+        batch: 1,
+        positions: 8,
+        heads: RecurrenceHeads {
+            key_heads: 4,
+            heads_per_group: 3,
+            key_features: 128,
+            value_features: 128,
+        },
+        kept: 2,
+        rule,
+        masked: vec![],
+    };
+    let layouts = [
+        Layout::default(),
+        Layout {
+            offset: 1,
+            ..Layout::default()
+        },
+        Layout {
+            pad: 3,
+            ..Layout::default()
+        },
+    ];
+    Walks.check(WalkCase::every(
+        &[case(UpdateRule::Delta), case(UpdateRule::Additive)],
+        &[F32],
+        &layouts,
+        &[Reach::Table],
+    ));
 }

@@ -56,3 +56,7 @@ cubek-quant = { workspace = true, features = ["kernels"] }
 num-complex = { workspace = true }
 
 cubecl = { workspace = true, features = ["test-runtime"] }
+
+[[example]]
+name = "nvfp4_gemv"
+required-features = ["std", "tiled"]
