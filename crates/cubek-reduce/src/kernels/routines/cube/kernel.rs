@@ -5,6 +5,12 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, cube_reduce_microkernel};
 
 /// Every cube of the launch, reducing its rows into the carrier its operation accumulates into.
+///
+/// Its operands' leaves:
+/// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
+///   its place (`I`).
+/// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k), or
+///   what the caller binds in its place (`O`).
 #[cube(launch_unchecked)]
 pub fn cube_reduce_kernel<
     In: Numeric,
@@ -38,6 +44,13 @@ pub fn cube_reduce_kernel<
 
 /// Every cube of the launch, reducing its rows into the carrier its operation accumulates into, and
 /// writing the values to `out` and their indices to `indices`, laid out as `out`.
+///
+/// Its operands' leaves:
+/// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
+///   its place (`I`).
+/// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k), or
+///   what the caller binds in its place (`O`).
+/// - `indices`: one tensor laid out as `out`.
 #[cube(launch_unchecked)]
 pub fn cube_reduce_with_indices_kernel<
     In: Numeric,

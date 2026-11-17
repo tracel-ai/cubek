@@ -64,6 +64,17 @@ fn split_place<N: Size>(
 
 /// Every cube's part of its rows, accumulated into the carrier its operation accumulates into; the last of
 /// a box of rows' cubes merges their partials and writes the rows.
+///
+/// Its operands' leaves:
+/// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
+///   its place (`I`).
+/// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k), or
+///   what the caller binds in its place (`O`).
+/// - `partials`, `partial_indices`: one tensor each, the input's shape with the reduced dim holding
+///   every part's carrier.
+/// - `arrivals`: one buffer of `u32` counters, one a box of rows, at zero.
+/// - `extents`: three scalars, the parts a row splits into, the values a row holds and the boxes
+///   of rows along the inner row dim.
 #[cube(launch_unchecked)]
 pub fn hypercube_reduce_kernel<
     In: Numeric,
@@ -115,6 +126,18 @@ pub fn hypercube_reduce_kernel<
 
 /// Every cube's part of its rows, as [`hypercube_reduce_kernel()`] reduces it, the values written to
 /// `out` and their indices to `indices`, laid out as `out`.
+///
+/// Its operands' leaves:
+/// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
+///   its place (`I`).
+/// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k), or
+///   what the caller binds in its place (`O`).
+/// - `indices`: one tensor laid out as `out`.
+/// - `partials`, `partial_indices`: one tensor each, the input's shape with the reduced dim holding
+///   every part's carrier.
+/// - `arrivals`: one buffer of `u32` counters, one a box of rows, at zero.
+/// - `extents`: three scalars, the parts a row splits into, the values a row holds and the boxes
+///   of rows along the inner row dim.
 #[cube(launch_unchecked)]
 pub fn hypercube_reduce_with_indices_kernel<
     In: Numeric,

@@ -6,6 +6,11 @@ use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, cube_reduce_microke
 
 /// Every cube of the launch, reducing its part of its rows as the cube microkernel reduces a row,
 /// its total added into `out`, which holds zero before the launch.
+///
+/// Its operands' leaves:
+/// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
+///   its place (`I`).
+/// - `out`: one tensor of the input's shape, the reduced dim one cell wide, at zero.
 #[cube(launch_unchecked)]
 pub fn hypercube_atomic_reduce_kernel<
     In: Numeric,
