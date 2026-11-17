@@ -56,6 +56,22 @@ pub fn skip_unless_plane_holds(client: &Client, units: u32) -> bool {
     false
 }
 
+/// A kernel whose planes contract through a matrix instruction cannot run on a device that offers
+/// none, as the CPU runtime does not. Records a `Skipped` outcome and returns `true` when `client` has
+/// neither a cmma nor a manual MMA, so the caller can bail out of the test.
+#[track_caller]
+pub fn skip_unless_matrix_instruction(client: &Client) -> bool {
+    let matmul = &client.properties().features.matmul;
+    if matmul.cmma.is_empty() && matmul.mma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "needs a matrix instruction; this runtime offers none".to_string(),
+        ))
+        .enforce();
+        return true;
+    }
+    false
+}
+
 #[derive(Debug)]
 /// Whether a kernel was executed (without regard to correctness)
 /// or failed to compile.

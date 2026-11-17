@@ -18,6 +18,7 @@ use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 use cubek_test_utils::{
     HostData, HostDataType, ScopeUnderTest, TestOutcome, ValidationResult, Written,
+    skip_unless_matrix_instruction,
 };
 
 use crate::matmul::Declines;
@@ -34,6 +35,9 @@ const FORMATS: [PackedFormat; 4] = [
 
 #[test]
 fn every_cube_staged_setting_reads_each_chunk_s_slab() {
+    if skip_unless_matrix_instruction(&cubecl::test_device().client()) {
+        return;
+    }
     let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
     let chunked = Chunked {
         chunks: 5,
@@ -105,6 +109,9 @@ fn a_cube_staged_launch_holds_the_rows_its_groups_were_padded_to() {
     let ends = [128u32, 128, 384, 512];
     let rows = *ends.last().unwrap() as usize;
     let client = cubecl::test_device().client();
+    if skip_unless_matrix_instruction(&client) {
+        return;
+    }
     let hw = Hardware::from_client(&client);
     let mut walk = Walk::new();
     for settings in MGroupedSettings::cube_staged(&hw) {

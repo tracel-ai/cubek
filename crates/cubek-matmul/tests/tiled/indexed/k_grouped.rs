@@ -2,7 +2,7 @@
 //! mixture of experts sums each expert's tokens. An empty run answers zeros.
 
 use cubek_matmul::kernels::CubeStagedMatmulRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::{ScopeUnderTest, skip_unless_matrix_instruction};
 
 use crate::matmul::Declines;
 use crate::tiled::ByRoutine;
@@ -10,6 +10,9 @@ use crate::tiled::indexed::RunsOfK;
 
 #[test]
 fn every_cube_staged_setting_sums_each_group_s_run() {
+    if skip_unless_matrix_instruction(&cubecl::test_device().client()) {
+        return;
+    }
     let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
     let runs = RunsOfK {
         m: 64,
