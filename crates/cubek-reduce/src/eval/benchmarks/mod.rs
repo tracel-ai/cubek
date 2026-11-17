@@ -13,8 +13,7 @@ pub use strategy::strategies;
 use cubecl::benchmark::TimingMethod;
 use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
-use crate::ReduceStrategy;
-use crate::eval::cpu_reference::{accumulation_dtype, output_dtype_for};
+use crate::eval::cpu_reference::{ReduceEntry, accumulation_dtype, output_dtype_for};
 use crate::launch::ReduceDtypes;
 use crate::routines::ReduceCost;
 
@@ -22,7 +21,7 @@ pub struct Category;
 
 impl cubek_test_utils::Category for Category {
     type Problem = ReduceProblem;
-    type Strategy = ReduceStrategy;
+    type Strategy = ReduceEntry;
 
     fn id(&self) -> &'static str {
         "reduce"
@@ -36,13 +35,13 @@ impl cubek_test_utils::Category for Category {
         problems()
     }
 
-    fn strategies(&self) -> Vec<CatalogEntry<ReduceStrategy>> {
+    fn strategies(&self) -> Vec<CatalogEntry<ReduceEntry>> {
         strategies()
     }
 
     fn bench(
         &self,
-        strategy: &ReduceStrategy,
+        strategy: &ReduceEntry,
         problem: &ReduceProblem,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
@@ -55,9 +54,8 @@ impl cubek_test_utils::Category for Category {
 
     fn correctness(
         &self,
-    ) -> Option<
-        &dyn cubek_test_utils::Correctness<Problem = ReduceProblem, Strategy = ReduceStrategy>,
-    > {
+    ) -> Option<&dyn cubek_test_utils::Correctness<Problem = ReduceProblem, Strategy = ReduceEntry>>
+    {
         Some(&ReduceCorrectness)
     }
 

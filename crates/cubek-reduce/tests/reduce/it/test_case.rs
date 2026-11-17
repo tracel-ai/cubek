@@ -366,13 +366,12 @@ impl ScopeUnderTest for Reduces {
             })
             .collect();
         let launched = match op.with_indices() {
-            true => ReduceEntry::from_env().reduce_with_indices()(
+            true => ReduceEntry::from(case.strategy.clone()).reduce_with_indices(
                 client,
                 input.binding(),
                 outputs[0].1.clone().binding(),
                 outputs[1].1.clone().binding(),
                 axis,
-                case.strategy.clone(),
                 config,
                 ReduceWithIndicesDtypes {
                     input: case.input_dtype,
@@ -381,12 +380,11 @@ impl ScopeUnderTest for Reduces {
                     accumulation: case.accumulation_dtype,
                 },
             ),
-            false => ReduceEntry::from_env().reduce()(
+            false => ReduceEntry::from(case.strategy.clone()).reduce(
                 client,
                 input.binding(),
                 outputs[0].1.clone().binding(),
                 axis,
-                case.strategy.clone(),
                 config,
                 ReduceDtypes {
                     input: case.input_dtype,
