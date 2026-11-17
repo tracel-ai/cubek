@@ -20,31 +20,31 @@ pub struct UnitZeroRoutine;
 
 /// The zero microkernel's setting, and how many planes each cube runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UnitZeroRoutineSettings {
+pub struct UnitZeroSettings {
     pub microkernel: UnitZeroMicrokernelSettings,
     pub planes: usize,
 }
 
-impl core::fmt::Display for UnitZeroRoutineSettings {
+impl core::fmt::Display for UnitZeroSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} planes={}", self.microkernel, self.planes)
     }
 }
 
-pub type UnitZeroRoutineBlueprint = ReduceRoutineBlueprint<UnitZeroMicrokernel>;
+pub type UnitZeroBlueprint = ReduceRoutineBlueprint<UnitZeroMicrokernel>;
 
 impl Routine for UnitZeroRoutine {
     type Problem = ReduceRoutineProblem;
     type Microkernel = UnitZeroMicrokernel;
-    type Settings = UnitZeroRoutineSettings;
-    type Blueprint = UnitZeroRoutineBlueprint;
+    type Settings = UnitZeroSettings;
+    type Blueprint = UnitZeroBlueprint;
     type Partitioning = Partitioning;
 
     /// Cubes of four planes: a zeroing is one write a unit, which no setting speeds up.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         UnitZeroMicrokernel::settings(hw)
             .into_iter()
-            .map(|microkernel| UnitZeroRoutineSettings {
+            .map(|microkernel| UnitZeroSettings {
                 microkernel,
                 planes: 4,
             })
@@ -117,7 +117,7 @@ impl ReduceRoutine<UnitZeroMicrokernel> for UnitZeroRoutine {
             <I::Arg as LaunchArg>::RuntimeArg,
             <O::Arg as LaunchArg>::RuntimeArg,
         >,
-        _blueprint: UnitZeroRoutineBlueprint,
+        _blueprint: UnitZeroBlueprint,
         grid: Grid,
     ) {
         // SAFETY: the output is bound through the launcher, which masks the writes of a tile the

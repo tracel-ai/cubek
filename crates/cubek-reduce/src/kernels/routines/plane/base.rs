@@ -20,24 +20,24 @@ pub struct PlaneReduceRoutine;
 
 /// How many of the launch's planes a cube holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PlaneReduceRoutineSettings {
+pub struct PlaneReduceSettings {
     pub microkernel: PlaneReduceMicrokernelSettings,
     pub planes: usize,
 }
 
-impl core::fmt::Display for PlaneReduceRoutineSettings {
+impl core::fmt::Display for PlaneReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} planes={}", self.microkernel, self.planes)
     }
 }
 
-pub type PlaneReduceRoutineBlueprint = ReduceRoutineBlueprint<PlaneReduceMicrokernel>;
+pub type PlaneReduceBlueprint = ReduceRoutineBlueprint<PlaneReduceMicrokernel>;
 
 impl Routine for PlaneReduceRoutine {
     type Problem = ReduceRoutineProblem;
     type Microkernel = PlaneReduceMicrokernel;
-    type Settings = PlaneReduceRoutineSettings;
-    type Blueprint = PlaneReduceRoutineBlueprint;
+    type Settings = PlaneReduceSettings;
+    type Blueprint = PlaneReduceBlueprint;
     type Partitioning = Partitioning;
 
     /// Four planes a cube by default, then one and eight.
@@ -45,7 +45,7 @@ impl Routine for PlaneReduceRoutine {
         PlaneReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
-                [4, 1, 8].map(|planes| PlaneReduceRoutineSettings {
+                [4, 1, 8].map(|planes| PlaneReduceSettings {
                     microkernel,
                     planes,
                 })
@@ -120,7 +120,7 @@ impl ReduceRoutine<PlaneReduceMicrokernel> for PlaneReduceRoutine {
             <I::Arg as LaunchArg>::RuntimeArg,
             <O::Arg as LaunchArg>::RuntimeArg,
         >,
-        blueprint: PlaneReduceRoutineBlueprint,
+        blueprint: PlaneReduceBlueprint,
         grid: Grid,
     ) {
         let elements = problem.elements;

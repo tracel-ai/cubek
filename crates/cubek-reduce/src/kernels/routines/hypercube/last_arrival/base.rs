@@ -30,24 +30,24 @@ pub struct HypercubeReduceRoutine;
 
 /// The cube microkernel's planes, and how many lines each unit reads of a part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HypercubeReduceRoutineSettings {
+pub struct HypercubeReduceSettings {
     pub microkernel: CubeReduceMicrokernelSettings,
     pub unit_lines: usize,
 }
 
-impl HypercubeReduceRoutineSettings {
+impl HypercubeReduceSettings {
     /// Lines each unit reads of a part, the longest parts first: the fewest partials that still
     /// spread a row over the device.
     pub const UNIT_LINES: [usize; 3] = [32, 8, 2];
 }
 
-impl core::fmt::Display for HypercubeReduceRoutineSettings {
+impl core::fmt::Display for HypercubeReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} unit_lines={}", self.microkernel, self.unit_lines)
     }
 }
 
-pub type HypercubeReduceRoutineBlueprint = ReduceRoutineBlueprint<HypercubeReduceMicrokernel>;
+pub type HypercubeReduceBlueprint = ReduceRoutineBlueprint<HypercubeReduceMicrokernel>;
 
 impl ReduceSplit {
     /// Where the cubes of `problem`'s hypercube sit.
@@ -109,8 +109,8 @@ const MAX_ROW_DIMS: usize = 2;
 impl Routine for HypercubeReduceRoutine {
     type Problem = ReduceRoutineProblem;
     type Microkernel = HypercubeReduceMicrokernel;
-    type Settings = HypercubeReduceRoutineSettings;
-    type Blueprint = HypercubeReduceRoutineBlueprint;
+    type Settings = HypercubeReduceSettings;
+    type Blueprint = HypercubeReduceBlueprint;
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes, each with the longest parts first.
@@ -118,11 +118,9 @@ impl Routine for HypercubeReduceRoutine {
         HypercubeReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
-                HypercubeReduceRoutineSettings::UNIT_LINES.map(|unit_lines| {
-                    HypercubeReduceRoutineSettings {
-                        microkernel,
-                        unit_lines,
-                    }
+                HypercubeReduceSettings::UNIT_LINES.map(|unit_lines| HypercubeReduceSettings {
+                    microkernel,
+                    unit_lines,
                 })
             })
             .collect()
@@ -203,7 +201,7 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
             <I::Arg as LaunchArg>::RuntimeArg,
             <O::Arg as LaunchArg>::RuntimeArg,
         >,
-        blueprint: HypercubeReduceRoutineBlueprint,
+        blueprint: HypercubeReduceBlueprint,
         grid: Grid,
     ) {
         let elements = problem.elements;

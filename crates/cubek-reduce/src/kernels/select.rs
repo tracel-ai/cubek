@@ -1,7 +1,7 @@
 //! The reduce family's rule: which routine runs a problem when nothing is measured.
 
 use crate::kernels::{
-    CubeReduceRoutine, HypercubeReduceRoutine, HypercubeReduceRoutineSettings, ReduceKernel,
+    CubeReduceRoutine, HypercubeReduceRoutine, HypercubeReduceSettings, ReduceKernel,
     ReduceRoutine, ReduceSplitExtents, ReduceTensors, UnitReduceRoutine,
 };
 use cubecl::tile::launch::Refusal;
@@ -61,7 +61,7 @@ fn hypercube_filling_the_device(
         ReduceCarrier::TopK { .. } | ReduceCarrier::TopValues { .. }
     );
     let settings = routine.settings(hw).into_iter().filter(|settings| {
-        !longest_only || settings.unit_lines == HypercubeReduceRoutineSettings::UNIT_LINES[0]
+        !longest_only || settings.unit_lines == HypercubeReduceSettings::UNIT_LINES[0]
     });
     for settings in settings {
         let Ok((blueprint, grid)) = routine.prepare(hw, problem, &settings) else {

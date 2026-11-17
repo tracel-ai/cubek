@@ -20,30 +20,30 @@ pub struct CubeReduceRoutine;
 
 /// The cube microkernel's planes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeReduceRoutineSettings {
+pub struct CubeReduceSettings {
     pub microkernel: CubeReduceMicrokernelSettings,
 }
 
-impl core::fmt::Display for CubeReduceRoutineSettings {
+impl core::fmt::Display for CubeReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.microkernel)
     }
 }
 
-pub type CubeReduceRoutineBlueprint = ReduceRoutineBlueprint<CubeReduceMicrokernel>;
+pub type CubeReduceBlueprint = ReduceRoutineBlueprint<CubeReduceMicrokernel>;
 
 impl Routine for CubeReduceRoutine {
     type Problem = ReduceRoutineProblem;
     type Microkernel = CubeReduceMicrokernel;
-    type Settings = CubeReduceRoutineSettings;
-    type Blueprint = CubeReduceRoutineBlueprint;
+    type Settings = CubeReduceSettings;
+    type Blueprint = CubeReduceBlueprint;
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes: it has no knob of its own.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         CubeReduceMicrokernel::settings(hw)
             .into_iter()
-            .map(|microkernel| CubeReduceRoutineSettings { microkernel })
+            .map(|microkernel| CubeReduceSettings { microkernel })
             .collect()
     }
 
@@ -115,7 +115,7 @@ impl ReduceRoutine<CubeReduceMicrokernel> for CubeReduceRoutine {
             <I::Arg as LaunchArg>::RuntimeArg,
             <O::Arg as LaunchArg>::RuntimeArg,
         >,
-        blueprint: CubeReduceRoutineBlueprint,
+        blueprint: CubeReduceBlueprint,
         grid: Grid,
     ) {
         let elements = problem.elements;
