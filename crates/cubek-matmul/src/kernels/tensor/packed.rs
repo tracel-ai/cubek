@@ -774,17 +774,33 @@ impl PackedTensor {
         });
         match scales {
             BlockScales::Fields => {
-                let block_scales = launcher
-                    .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
-                    .gathered(
-                        self.stack_dim()
-                            .dim(scale_rows)
-                            .dim(self.dim(lined))
-                            .build()
-                            .scales_per(blocks_axis),
+                // In the tiles tile order stores them in, where it does, stated for the read the
+                // operand takes of them, as `bind` states them: read as rows, only a tile's first
+                // strip of rows would find its own scales.
+                let scales_axes = tile_order::scales_axes(across);
+                let in_tiles = operand.tile_order().and_then(|order| {
+                    order.kernel_scales_read(
+                        self.extent(K),
+                        (across, self.extent(across)),
+                        operand.scale_read(across),
                     )
-                    .vectorize(operand.scale_read_values())
-                    .delivery(Delivery::AsyncPerUnit);
+                });
+                let block_scales = match in_tiles {
+                    None => launcher
+                        .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
+                        .gathered(
+                            self.stack_dim()
+                                .dim(scale_rows)
+                                .dim(self.dim(lined))
+                                .build()
+                                .scales_per(blocks_axis),
+                        ),
+                    Some(stated) => launcher
+                        .arg(self.block_scales.bound_as(stated), WORD)
+                        .axes(&scales_axes),
+                }
+                .vectorize(operand.scale_read_values())
+                .delivery(Delivery::AsyncPerUnit);
                 let fields = self
                     .scheme
                     .block_scale()
