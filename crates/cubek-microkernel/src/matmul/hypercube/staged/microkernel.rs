@@ -17,12 +17,11 @@ pub fn hypercube_staged_last_arrival_microkernel<'a, EA: Numeric>(
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,
 ) {
-    let mut out = out.clone();
     let slot = merge.tile();
 
     let sum = CubeStagedWalk::open_sum::<EA>(&slot, a, b, walk);
     cube_staged_sum_microkernel(run, &sum, a, b, walk, storage);
 
     let sum = CubeStagedWalk::drain_sum(sum, walk);
-    merge.hand_on(&sum, &mut out);
+    merge.hand_on::<Tile>(&sum, out);
 }

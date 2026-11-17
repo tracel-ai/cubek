@@ -9,25 +9,17 @@ use cubek_microkernel::reduce::plane::{PlaneReduceMicrokernel, plane_reduce_micr
 /// Its operands' leaves:
 /// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
 ///   its place (`I`).
-/// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k), or
-///   what the caller binds in its place (`O`).
+/// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k).
 #[cube(launch_unchecked)]
-pub fn plane_reduce_kernel<
-    In: Numeric,
-    Acc: Numeric,
-    Out: Numeric,
-    N: Size,
-    I: TileOperand,
-    O: TileOperand,
->(
+pub fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size, I: TileOperand>(
     input: &I::Arg,
-    out: &O::Arg,
+    out: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = I::tile::<In>(input, &partitioning);
-    let o = O::tile::<Out>(out, &partitioning);
+    let o = out.tile(&partitioning);
     for plane in &partitioning {
         let mut rows_out = o.at(&plane);
         // One output: the indices are never written, so they get the output's own window.
@@ -48,8 +40,7 @@ pub fn plane_reduce_kernel<
 /// Its operands' leaves:
 /// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
 ///   its place (`I`).
-/// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k), or
-///   what the caller binds in its place (`O`).
+/// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k).
 /// - `indices`: one tensor laid out as `out`.
 #[cube(launch_unchecked)]
 pub fn plane_reduce_with_indices_kernel<
@@ -59,17 +50,16 @@ pub fn plane_reduce_with_indices_kernel<
     Idx: Numeric,
     N: Size,
     I: TileOperand,
-    O: TileOperand,
 >(
     input: &I::Arg,
-    out: &O::Arg,
+    out: &TileTensor<'_>,
     indices: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneReduceMicrokernel,
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
     let x = I::tile::<In>(input, &partitioning);
-    let o = O::tile::<Out>(out, &partitioning);
+    let o = out.tile(&partitioning);
     let i = indices.tile(&partitioning);
     for plane in &partitioning {
         let mut rows_out = o.at(&plane);

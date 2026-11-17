@@ -1,4 +1,6 @@
 use crate::kernels::tensor::PlainTensor;
+use std::borrow::Cow;
+
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Geometry;
 use cubecl::tile::launch::Refusal;
@@ -120,6 +122,45 @@ impl MatmulRoutineProblem {
         match self.packings == MatmulOperands::all(None) {
             true => Ok(()),
             false => Err(MATMUL_PACKED_UNREAD),
+        }
+    }
+
+    /// What a setting reading the rhs a scale block at a time declines where it reads none so
+    /// ([`Packing::by_block`]): no packed rhs, block scales that are not `ue4m3`, blocks that are
+    /// no whole number of reads in rows, or tiles whose block is not the scheme's.
+    pub const RHS_UNREAD_BY_BLOCK: Refusal = Refusal::Declined {
+        why: "reading the rhs a block at a time needs a packed rhs with ue4m3 block scales, in \
+              blocks that are whole reads in rows or the tiles' own block in tile order",
+    };
+
+    /// This problem with its packed rhs read a scale block at a time ([`Packing::by_block`]): the
+    /// problem a microkernel reading so plans on.
+    ///
+    /// # Errors
+    ///
+    /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where its rhs reads none so.
+    pub fn rhs_by_block(&self) -> Result<Self, Refusal> {
+        let mut by_block = self.clone();
+        let rhs = by_block
+            .packings
+            .rhs
+            .as_mut()
+            .ok_or(Self::RHS_UNREAD_BY_BLOCK)?;
+        *rhs = rhs.by_block().ok_or(Self::RHS_UNREAD_BY_BLOCK)?;
+        Ok(by_block)
+    }
+
+    /// The problem a microkernel reading the rhs `by_block` plans and binds on: this one re-read a
+    /// scale block at a time ([`rhs_by_block`](Self::rhs_by_block)), or this one as it is.
+    ///
+    /// # Errors
+    ///
+    /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where it reads by block and its rhs
+    /// reads none so.
+    pub fn rhs_read(&self, by_block: bool) -> Result<Cow<'_, Self>, Refusal> {
+        match by_block {
+            true => self.rhs_by_block().map(Cow::Owned),
+            false => Ok(Cow::Borrowed(self)),
         }
     }
 

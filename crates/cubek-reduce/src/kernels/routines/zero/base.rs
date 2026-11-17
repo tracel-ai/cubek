@@ -1,12 +1,13 @@
 use super::kernel::unit_zero_kernel;
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
+    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
+    reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
-use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
+use cubecl::tile::launch::{Refusal, TileOperand, Unbound, Vectorization};
 use cubecl::tile::space::UnitCube;
-use cubecl::tile::{Levels, Partitioning};
+use cubecl::tile::{Geometry, Launcher, Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::zero::ZeroOperand;
 use cubek_microkernel::zero::unit::{UnitZeroMicrokernel, UnitZeroMicrokernelSettings};
 use cubek_std::Hardware;
@@ -109,29 +110,69 @@ impl Routine for UnitZeroRoutine {
 }
 
 impl ReduceRoutine<UnitZeroMicrokernel> for UnitZeroRoutine {
-    fn dispatch<I: TileOperand, O: TileOperand>(
+    /// The output zeroed; the input is never read.
+    fn dispatch<I: TileOperand>(
         &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
-        binding: ReduceBinding<
-            <I::Arg as LaunchArg>::RuntimeArg,
-            <O::Arg as LaunchArg>::RuntimeArg,
-        >,
+        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         _blueprint: UnitZeroBlueprint,
         grid: Grid,
     ) {
-        // SAFETY: the output is bound through the launcher, which masks the writes of a tile the
-        // problem's edge cuts short, and the kernel indexes no buffer but through its tile; it
-        // holds no shared memory.
-        unsafe {
-            unit_zero_kernel::launch_unchecked::<O>(
-                client,
-                grid.launch.cube_count,
-                grid.launch.cube_dim,
-                binding.out,
-                binding.launcher.partitioning_arg(),
-                problem.elements.out,
-            )
-        }
+        launch_zero(client, problem, binding.out, &binding.launcher, grid);
+    }
+
+    /// The output zeroed. The caller's input is never read, so `input` is never called.
+    fn launch_unbound<I: TileOperand>(
+        &self,
+        tensors: &ReduceTensors<Geometry>,
+        blueprint: UnitZeroBlueprint,
+        grid: Grid,
+        _input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
+    ) -> Result<(), Refusal> {
+        self.zero_unbound(tensors, blueprint, grid);
+        Ok(())
+    }
+}
+
+impl UnitZeroRoutine {
+    /// The output of `tensors`, whose input the caller binds, zeroed on `grid`.
+    pub fn zero_unbound(
+        &self,
+        tensors: &ReduceTensors<Geometry>,
+        blueprint: UnitZeroBlueprint,
+        grid: Grid,
+    ) {
+        let binding = tensors.bind(&blueprint, &grid);
+        launch_zero(
+            tensors.client(),
+            tensors.problem(),
+            binding.out.arg(),
+            &binding.launcher,
+            grid,
+        );
+    }
+}
+
+/// `out` zeroed on `grid`, through `launcher`'s partitioning.
+fn launch_zero(
+    client: &Client,
+    problem: &ReduceRoutineProblem,
+    out: TileTensorLaunch,
+    launcher: &Launcher,
+    grid: Grid,
+) {
+    // SAFETY: the output is bound through the launcher, which masks the writes of a tile the
+    // problem's edge cuts short, and the kernel indexes no buffer but through its tile; it holds
+    // no shared memory.
+    unsafe {
+        unit_zero_kernel::launch_unchecked(
+            client,
+            grid.launch.cube_count,
+            grid.launch.cube_dim,
+            out,
+            launcher.partitioning_arg(),
+            problem.elements.out,
+        )
     }
 }

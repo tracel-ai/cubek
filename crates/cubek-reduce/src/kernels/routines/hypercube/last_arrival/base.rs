@@ -12,7 +12,7 @@ use cubecl::prelude::LaunchArg;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Levels, Partitioning};
+use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::cube::CubeReduceMicrokernelSettings;
 use cubek_microkernel::reduce::hypercube::HypercubeReduceMicrokernel;
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand};
@@ -193,14 +193,11 @@ impl Routine for HypercubeReduceRoutine {
 }
 
 impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
-    fn dispatch<I: TileOperand, O: TileOperand>(
+    fn dispatch<I: TileOperand>(
         &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
-        binding: ReduceBinding<
-            <I::Arg as LaunchArg>::RuntimeArg,
-            <O::Arg as LaunchArg>::RuntimeArg,
-        >,
+        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: HypercubeReduceBlueprint,
         grid: Grid,
     ) {
@@ -246,7 +243,7 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
         // shared memory is the slots its microkernel declares, which the grid counted.
         match (binding.indices, problem.indices) {
             (Some(indices), Some(index)) => unsafe {
-                hypercube_reduce_with_indices_kernel::launch_unchecked::<I, O>(
+                hypercube_reduce_with_indices_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
@@ -269,7 +266,7 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
                 )
             },
             _ => unsafe {
-                hypercube_reduce_kernel::launch_unchecked::<I, O>(
+                hypercube_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,

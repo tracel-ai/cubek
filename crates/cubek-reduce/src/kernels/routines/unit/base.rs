@@ -6,7 +6,7 @@ use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
 use cubecl::tile::space::UnitCube;
-use cubecl::tile::{Levels, Partitioning};
+use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, UnitReduceMicrokernelSettings};
 use cubek_std::Hardware;
@@ -116,14 +116,11 @@ impl Routine for UnitReduceRoutine {
 }
 
 impl ReduceRoutine<UnitReduceMicrokernel> for UnitReduceRoutine {
-    fn dispatch<I: TileOperand, O: TileOperand>(
+    fn dispatch<I: TileOperand>(
         &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
-        binding: ReduceBinding<
-            <I::Arg as LaunchArg>::RuntimeArg,
-            <O::Arg as LaunchArg>::RuntimeArg,
-        >,
+        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: UnitReduceBlueprint,
         grid: Grid,
     ) {
@@ -133,7 +130,7 @@ impl ReduceRoutine<UnitReduceMicrokernel> for UnitReduceRoutine {
         // its tiles; it holds no shared memory.
         match (binding.indices, problem.indices) {
             (Some(indices), Some(index)) => unsafe {
-                unit_reduce_with_indices_kernel::launch_unchecked::<I, O>(
+                unit_reduce_with_indices_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
@@ -147,7 +144,7 @@ impl ReduceRoutine<UnitReduceMicrokernel> for UnitReduceRoutine {
                 )
             },
             _ => unsafe {
-                unit_reduce_kernel::launch_unchecked::<I, O>(
+                unit_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
