@@ -119,7 +119,7 @@ impl ReduceRoutine<UnitZeroMicrokernel> for UnitZeroRoutine {
         _blueprint: UnitZeroRoutineBlueprint,
         grid: Grid,
     ) {
-        launch_zero(client, problem, binding.out, &binding.launcher, &grid);
+        launch_zero(client, problem, binding.out, &binding.launcher, grid);
     }
 
     /// The output zeroed. The caller's input is never read, so `input` is never called.
@@ -149,7 +149,7 @@ impl UnitZeroRoutine {
             tensors.problem(),
             binding.out.arg(),
             &binding.launcher,
-            &grid,
+            grid,
         );
     }
 }
@@ -160,7 +160,7 @@ fn launch_zero(
     problem: &ReduceRoutineProblem,
     out: TileTensorLaunch,
     launcher: &Launcher,
-    grid: &Grid,
+    grid: Grid,
 ) {
     // SAFETY: the output is bound through the launcher, which masks the writes of a tile the
     // problem's edge cuts short, and the kernel indexes no buffer but through its tile; it holds

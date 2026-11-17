@@ -4,6 +4,7 @@ use crate::kernels::{
     ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
     UNBOUND_LINES_NARROWER, reduce_widths,
 };
+use core::convert::identity;
 use cubecl::client::Client;
 use cubecl::ir::Type;
 use cubecl::ir::features::AtomicUsage;
@@ -175,7 +176,7 @@ impl ReduceRoutine<CubeReduceMicrokernel> for HypercubeAtomicReduceRoutine {
         blueprint: HypercubeAtomicReduceRoutineBlueprint,
         grid: Grid,
     ) {
-        let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, accumulate);
+        let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, identity);
         launch_atomic::<StoredTileOperand>(
             tensors.problem(),
             tensors.client(),
@@ -203,7 +204,7 @@ impl ReduceRoutine<CubeReduceMicrokernel> for HypercubeAtomicReduceRoutine {
         if !input_lines.admits(blueprint.width) {
             return Err(UNBOUND_LINES_NARROWER);
         }
-        let binding = tensors.bind(&blueprint, &grid).map(input, accumulate);
+        let binding = tensors.bind(&blueprint, &grid).map(input, identity);
         launch_atomic::<I>(
             tensors.problem(),
             tensors.client(),
@@ -215,22 +216,18 @@ impl ReduceRoutine<CubeReduceMicrokernel> for HypercubeAtomicReduceRoutine {
     }
 }
 
-/// `out` as the atomic argument the kernel adds into.
-fn accumulate(out: Bound) -> AccumulateArgLaunch {
-    let (spec, width) = (out.spec.clone(), out.vector_size);
-    AccumulateArgLaunch::new(out.tensor(), width, spec)
-}
-
 /// The kernel `blueprint` compiles for `problem`, launched on `grid`, its input served as `I`
-/// serves it.
+/// serves it and its output bound as the atomic argument the kernel adds into.
 fn launch_atomic<I: TileOperand>(
     problem: &ReduceRoutineProblem,
     client: &Client,
-    binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, AccumulateArgLaunch>,
+    binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, Bound>,
     blueprint: HypercubeAtomicReduceRoutineBlueprint,
     grid: Grid,
 ) {
     let elements = problem.elements;
+    let (spec, width) = (binding.out.spec.clone(), binding.out.vector_size);
+    let out = AccumulateArgLaunch::new(binding.out.tensor(), width, spec);
     // SAFETY: both operands are bound through the launcher, which masks the reads and writes of a
     // tile the problem's edge cuts short, and the kernel indexes no buffer but through its tiles;
     // the output only receives atomic adds. Its shared memory is the slots its microkernel
@@ -242,7 +239,7 @@ fn launch_atomic<I: TileOperand>(
             grid.launch.cube_dim,
             blueprint.width,
             binding.input,
-            binding.out,
+            out,
             binding.launcher.partitioning_arg(),
             blueprint.microkernel,
             [elements.input, elements.accumulator, elements.out],
