@@ -96,9 +96,17 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceEntry>> {
             let label = format!("Tiles {}", strategy.name());
             CatalogEntry::new(id, label, ReduceEntry::Tiles(strategy))
         });
+    let shared_sums = [4, 16, 64].map(|cubes| {
+        CatalogEntry::new(
+            format!("kernels_shared_sum_{cubes}"),
+            format!("shared_sum, {cubes} cubes (whole-tensor sums only)"),
+            ReduceEntry::SharedSum(cubes),
+        )
+    });
     kernels
         .into_iter()
         .map(|entry| CatalogEntry::new(entry.id, entry.label, ReduceEntry::Kernels(entry.value)))
         .chain(tiles)
+        .chain(shared_sums)
         .collect()
 }
