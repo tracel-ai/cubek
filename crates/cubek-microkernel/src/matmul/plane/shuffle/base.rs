@@ -485,13 +485,21 @@ impl Microkernel for PlaneShuffleMicrokernel {
             axes: item.axes,
             blocks,
         };
+        // Planned on an rhs its routine re-read by block: planned on one read as stored, it would
+        // bind otherwise than it plans.
+        let rhs_read_by_block = item
+            .blocks
+            .as_ref()
+            .is_some_and(|space| space.packings.rhs.is_some_and(|p| p.reads_scale_bytes()));
         match item.blocks {
             // One tile reads a packed rhs's stored tiles, which a float rhs has none of.
             None if settings.k_split == PlaneShuffleKSplit::OneTile => Vec::new(),
+            None if settings.by_block => Vec::new(),
             None => {
                 let units_along_k = settings.k_split.units(hw, item, settings.depth, shared);
                 vec![sized(units_along_k, None)]
             }
+            Some(_) if settings.by_block && !rhs_read_by_block => Vec::new(),
             Some(space) => Self::packed_steps(hw, item, settings, space, shared)
                 .map(|(units_along_k, blocks)| sized(units_along_k, Some(blocks)))
                 .collect(),
@@ -566,6 +574,10 @@ impl MatmulMicrokernel for PlaneShuffleMicrokernel {
 
     fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.orders
+    }
+
+    fn reads_rhs_by_block(&self) -> bool {
+        self.settings.by_block
     }
 }
 
