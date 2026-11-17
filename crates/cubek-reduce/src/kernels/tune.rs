@@ -290,20 +290,18 @@ pub fn launch_tuned(tensors: ReduceTensors, device: &Device) {
     TUNER.execute(&id, &client, tunables, tensors);
 }
 
-/// The candidate, a routine at its setting, that the autotune found fastest for the reduction
-/// `tensors` states on `client`'s `device`, or `None` where no round has settled its key, or the
-/// floor named apart won it: what a fused reduce runs, so it inherits the kernel the unfused round
-/// chose.
-pub fn fastest_reduce_candidate<In>(
+/// The candidate, a routine at its setting, that the autotune found fastest for the reductions
+/// `key` describes on `client`'s `device`, or `None` where no round in this process has settled
+/// the key, or the floor named apart won it: what a fused reduce runs, so it inherits the kernel
+/// the unfused round chose.
+pub fn fastest_reduce_candidate(
     client: &Client,
     device: &Device,
-    tensors: &ReduceTensors<In>,
+    key: &ReduceKey,
 ) -> Option<ReduceCandidate> {
     let id = CubeTuneId::new(client, device);
     let tunables = tunables(&id, client);
-    TUNER
-        .fastest_identity(&id, &tunables, &ReduceKey::from(tensors))?
-        .routine()
+    TUNER.fastest_identity(&id, &tunables, key)?.routine()
 }
 
 /// The autotune for the device `id` names, built on first touch. The one place it is built: a
