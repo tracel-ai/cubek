@@ -13,8 +13,8 @@ use cubecl::quant::scheme::QuantValue;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{
-    Axis, FragmentSource, Instruction, Level, Levels, MmaOperands, Scratch, ShapedInstruction,
-    Space, StageStorage,
+    Axis, FragmentSource, Instruction, Levels, MmaOperands, Scratch, ShapedInstruction, Space,
+    StageStorage,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Operand;
@@ -365,6 +365,7 @@ impl PlaneFragmentMicrokernel {
     /// the device's matrix unit for `item` ([`PlaneUnit::Matrix`]): its settings' counts times the
     /// unit and the calls of it every load fills whole. `None` where the device offers no unit, or
     /// commits to no single plane width, which a plane's units need.
+    #[cfg(feature = "attention")]
     pub(crate) fn unit_tile(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -808,7 +809,8 @@ impl PlaneFragmentMicrokernel {
     /// Its own levels below a walker's planes, `planes` their counts: the plane's tile, its `m` by
     /// its `n` by its whole `k`, which the tile cuts and walks, as the backward's planes state each
     /// product they hold.
-    pub(crate) fn tile_levels(&self, planes: &[(Axis, usize)]) -> Vec<Level> {
+    #[cfg(feature = "attention-backward")]
+    pub(crate) fn tile_levels(&self, planes: &[(Axis, usize)]) -> Vec<cubecl::tile::Level> {
         let axes = self.axes;
         Levels::leaf(&[
             (axes.m, self.tile_extent(axes.m)),
