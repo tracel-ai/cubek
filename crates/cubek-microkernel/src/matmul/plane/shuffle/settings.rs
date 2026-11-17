@@ -24,6 +24,11 @@ pub struct PlaneShuffleMicrokernelSettings {
     /// where `None`. Fewer rows a unit hold fewer sums in its registers, and leave fewer of the
     /// plane's units to share `K`.
     pub rows_per_unit: Option<NonZeroUsize>,
+    /// Whether a packed rhs is read a scale block at a time
+    /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)): the step along `K`
+    /// is one block rather than a word of scales, so a `K` that is no whole number of words
+    /// closes. Declined against an rhs that reads none so.
+    pub by_block: bool,
 }
 
 impl PlaneShuffleMicrokernelSettings {
@@ -34,6 +39,7 @@ impl PlaneShuffleMicrokernelSettings {
         depth: NonZeroUsize::new(4).unwrap(),
         k_split: PlaneShuffleKSplit::WholePlane,
         rows_per_unit: None,
+        by_block: false,
     };
 
     /// One read deep.
@@ -114,6 +120,16 @@ impl PlaneShuffleMicrokernelSettings {
                 Some(rows) => Some(NonZeroUsize::new(rows).unwrap()),
                 None => None,
             },
+            by_block: false,
+        }
+    }
+
+    /// These settings reading a packed rhs a scale block at a time
+    /// ([`by_block`](Self::by_block)).
+    pub const fn by_block(self) -> Self {
+        Self {
+            by_block: true,
+            ..self
         }
     }
 
@@ -155,9 +171,12 @@ impl core::fmt::Display for PlaneShuffleMicrokernelSettings {
             "block={}x{} k_split={}",
             self.columns, self.depth, self.k_split
         )?;
-        match self.rows_per_unit {
-            Some(rows) => write!(f, " rows_per_unit={rows}"),
-            None => Ok(()),
+        if let Some(rows) = self.rows_per_unit {
+            write!(f, " rows_per_unit={rows}")?;
+        }
+        match self.by_block {
+            true => write!(f, " by_block"),
+            false => Ok(()),
         }
     }
 }
