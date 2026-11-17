@@ -185,9 +185,11 @@ where
         let launched = case
             .product
             .launch(&self.routine, &self.hw, client, &case.settings);
+        let on_cpu = client.properties().hardware.num_cpu_cores.is_some();
         match (launched, self.declines) {
             (Ok(out), _) => Ok(Product::written(out)),
             (Err(why), Declines::AsItStates) => Err(why),
+            (Err(why @ Refusal::CubePastDevice { .. }), Declines::Never) if on_cpu => Err(why),
             (Err(why), Declines::Never) => panic!("{case:?} refused: {why:?}"),
         }
     }
