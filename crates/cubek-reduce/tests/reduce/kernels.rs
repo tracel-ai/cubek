@@ -144,7 +144,7 @@ enum Scope {
     Plane,
     Cube,
     Hypercube,
-    /// The kernel a policy picks: the rule's, or the autotune's.
+    /// The kernel a strategy picks: the rule's, the autotune's, or the one it names.
     Picked(ReduceOpStrategy),
 }
 
@@ -243,7 +243,10 @@ impl ScopeUnderTest for Routines {
             Scope::Picked(ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile)) => {
                 select(&hw, &tensors)?
             }
-            Scope::Picked(_) => launch_tuned(tensors, &cubecl::test_device()),
+            Scope::Picked(ReduceOpStrategy::Specific(kernel)) => kernel.launch(&hw, &tensors)?,
+            Scope::Picked(ReduceOpStrategy::Autotune) => {
+                launch_tuned(tensors, &cubecl::test_device())
+            }
         }
         let host = match out_elem {
             I32 => HostDataType::I32,
@@ -344,15 +347,16 @@ fn the_hypercube_reduces_split_rows_like_the_cpu() {
     Routines.check(reductions);
 }
 
-/// The rule and the autotune reduce like the CPU wherever they send a problem: many short rows,
-/// one long row, and rows across the contiguous dim, at extents that are not powers of two.
+/// Every strategy reduces like the CPU wherever it sends a problem: many short rows, one long row
+/// holding several NaNs, and rows across the contiguous dim, at extents that are not powers of
+/// two. A kernel the device does not run, or that declines the problem, is skipped.
 #[test]
-fn the_rule_and_the_autotune_reduce_like_the_cpu() {
+fn every_strategy_reduces_like_the_cpu() {
     let mut reductions = Vec::new();
-    for strategy in [
-        ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile),
-        ReduceOpStrategy::Autotune,
-    ] {
+    // The pins first, so a failure names the kernel before a policy that picked it.
+    let mut strategies = ReduceOpStrategy::all();
+    strategies.rotate_left(2);
+    for strategy in strategies {
         for (shape, axis) in [([96, 7, 300], 2), ([1, 1, 50000], 2), ([3, 2100, 5], 1)] {
             for operation in [
                 ReduceOperation::Sum,
