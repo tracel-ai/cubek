@@ -242,9 +242,10 @@ impl PackedTensor {
         let operand = Self::read_in_tiles(&hw, sized, operand, &words.meta())?;
         let in_rows_of_words =
             |scale: PlainTensor| Self::bound_to_whole_words(scale.into_contiguous(client));
-        let block_scales = match operand.tile_order().map(TileOrder::words) {
-            Some(TileWords::BlockByBlock) => Self::bound_to_whole_words(block_scales),
-            Some(TileWords::RowByRow) | None => in_rows_of_words(block_scales.in_buffer_order()),
+        // Where the scales lie is the order's own answer, whichever way its words lie.
+        let block_scales = match operand.tile_order().is_some_and(TileOrder::scales_in_tiles) {
+            true => Self::bound_to_whole_words(block_scales),
+            false => in_rows_of_words(block_scales.in_buffer_order()),
         };
         Ok(Self::new(
             words,
@@ -773,17 +774,33 @@ impl PackedTensor {
         });
         match scales {
             BlockScales::Fields => {
-                let block_scales = launcher
-                    .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
-                    .gathered(
-                        self.stack_dim()
-                            .dim(scale_rows)
-                            .dim(self.dim(lined))
-                            .build()
-                            .scales_per(blocks_axis),
+                // In the tiles tile order stores them in, where it does, stated for the read the
+                // operand takes of them, as `bind` states them: read as rows, only a tile's first
+                // strip of rows would find its own scales.
+                let scales_axes = tile_order::scales_axes(across);
+                let in_tiles = operand.tile_order().and_then(|order| {
+                    order.kernel_scales_read(
+                        self.extent(K),
+                        (across, self.extent(across)),
+                        operand.scale_read(across),
                     )
-                    .vectorize(operand.scale_read_values())
-                    .delivery(Delivery::AsyncPerUnit);
+                });
+                let block_scales = match in_tiles {
+                    None => launcher
+                        .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
+                        .gathered(
+                            self.stack_dim()
+                                .dim(scale_rows)
+                                .dim(self.dim(lined))
+                                .build()
+                                .scales_per(blocks_axis),
+                        ),
+                    Some(stated) => launcher
+                        .arg(self.block_scales.bound_as(stated), WORD)
+                        .axes(&scales_axes),
+                }
+                .vectorize(operand.scale_read_values())
+                .delivery(Delivery::AsyncPerUnit);
                 let fields = self
                     .scheme
                     .block_scale()
