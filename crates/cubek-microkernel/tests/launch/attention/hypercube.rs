@@ -318,7 +318,6 @@ impl HypercubeAttentionLaunch {
 
 /// Every cube walking its run of the keys into its slot, the box's last arrival merging the slots.
 #[cube(launch_unchecked)]
-#[allow(clippy::too_many_arguments)]
 fn hypercube_attention_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,

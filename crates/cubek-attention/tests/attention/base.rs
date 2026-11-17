@@ -510,8 +510,17 @@ impl<L: AttentionLaunch> ScopeUnderTest for Forward<L> {
         case.case.reference().into()
     }
 
-    /// `f16` inputs, and a softmax the device's `exp` takes.
-    fn tolerance(&self, _case: &Self::Case) -> f32 {
-        1e-2
+    /// `f16` inputs, and a softmax the device's `exp` takes. Over `e4m3` values the probabilities
+    /// are cast to `e4m3` beside them, where the device multiplies them on its FP8 instruction:
+    /// three bits of mantissa, a relative step of 2⁻⁴ on each weight, which the output carries
+    /// times the values, so under the values' scale where they have one.
+    fn tolerance(&self, case: &Self::Case) -> f32 {
+        match case.case.values {
+            FloatKind::E4M3 => {
+                let scale = case.case.scales.map_or(1.0, |scales| scales.value.max(1.0));
+                2e-2 * scale
+            }
+            _ => 1e-2,
+        }
     }
 }

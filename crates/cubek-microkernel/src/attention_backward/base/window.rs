@@ -2,7 +2,7 @@ use super::stage_storage;
 use crate::attention::plane::ScoreHolder;
 use crate::attention::{Q, S};
 use crate::matmul::plane::PlaneFragmentMicrokernel;
-use cubecl::tile::{Axis, Level, Levels, Region, Semiring, Space, StageStorage, Tile, Walk};
+use cubecl::tile::{Axis, Level, Region, Semiring, Space, StageStorage, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// A plane's windows of shared memory between a step's contractions: its scores and the gradient
@@ -121,96 +121,43 @@ impl ScoreWindows {
         }
     }
 
-    /// `window = lhs · rhs`, summed in `EA` on `product`'s own grid of fragments, placed as
-    /// `levels` state it below the walker's planes, then cast into the plane's `window` of shared
-    /// memory: where a plane keeps a score, or the gradient against its probabilities, between two
-    /// contractions. Each fragment of the grid pairs the operands' fragments by position: the lhs's
-    /// rows by steps of the contraction, the rhs's columns by the same steps. The caller meets the
-    /// plane before the window is read.
+    /// `window = lhs · rhs`, summed in `EA` on the plane's tile placed as `levels` state it below
+    /// the walker's planes, then drained into the plane's `window` of shared memory: where a plane
+    /// keeps a score, or the gradient against its probabilities, between two contractions. The
+    /// tile cuts the plane's tile into the calls of the instruction it picks and walks the
+    /// contraction. The caller meets the plane before the window is read.
     pub fn contract_into<EA: Float>(
         window: &Tile,
         lhs: &Tile,
         rhs: &Tile,
-        #[comptime] product: PlaneFragmentMicrokernel,
         #[comptime] levels: Vec<Level>,
     ) {
-        // The accumulator, cut to the product's own grid below the planes' level.
-        let placed = window.with_levels(1usize, levels);
-        let mut sum = placed.accumulator::<EA>(lhs, rhs, Semiring::SUM_PROD);
+        // The window, the accumulator and both operands on one grid below the planes' level: the
+        // tile's walk of the contraction steps all three at that depth.
+        let placed = window.with_levels(1usize, levels.clone());
+        let lhs = lhs.with_levels(1usize, levels.clone());
+        let rhs = rhs.with_levels(1usize, levels);
+        let mut sum = placed.accumulator::<EA>(&lhs, &rhs, Semiring::SUM_PROD);
         sum.zero();
-
-        ScoreWindows::contract_fragments(&sum, lhs, rhs, product);
-        ScoreWindows::store_cast(window, &sum, product);
+        sum.mma(&lhs, &rhs);
+        sum.drained_into(&placed);
     }
 
-    /// `sum`, an accumulator on `product`'s own grid of fragments, cast into the plane's `window`
-    /// of shared memory, fragment by fragment. The caller meets the plane before the window is
-    /// read.
-    pub fn store_cast(window: &Tile, sum: &Tile, #[comptime] product: PlaneFragmentMicrokernel) {
-        // The accumulator's fragments and the window are one grid at two depths: the accumulator is
-        // placed on the product's own grid, the window sits under the plane's region, and a region
-        // only windows a tile at its depth.
-        let fragment = comptime!(Level::every(&[
-            (product.axes.m, product.instruction.shape()[0].1),
-            (product.axes.n, product.instruction.shape()[1].1)
-        ]));
-        let (window_fragments, sum_fragments) = (window.over(&fragment), sum.over(&fragment));
-        #[unroll]
-        for at in 0..product.settings.along_m.get() * product.settings.along_n.get() {
-            let mut cells = window.at(&window_fragments.region(at));
-            cells.copy_cast_from(&sum.at(&sum_fragments.region(at)));
-        }
-    }
-
-    /// `sum += lhs · rhs` on `product`'s own grid of fragments: one product of the whole grid a
-    /// step of the contraction at a time. An lhs of manual-mma accumulators is read in their
-    /// registers, a run of them along the contraction as one `A`.
-    pub fn contract_fragments(
-        sum: &Tile,
-        lhs: &Tile,
-        rhs: &Tile,
-        #[comptime] product: PlaneFragmentMicrokernel,
-    ) {
-        // Each operand re-placed on the product's own steps, so a step loads each operand's
-        // fragments once, for the whole grid, and the tile library pairs neighbours where it can.
-        let levels = comptime!(Self::product_levels(product));
-        let mut sum = sum.with_levels(0usize, levels.clone());
-        sum.mma(
-            &lhs.with_levels(0usize, levels.clone()),
-            &rhs.with_levels(0usize, levels),
-        );
-    }
-
-    /// `lhs · rhs` summed in `EA` on `product`'s own grid of fragments, placed as `levels` state it
-    /// below the walker's planes, over `space`, and left in the fragments' registers: where a plane
-    /// keeps a score, or the gradient against its probabilities, when the next contraction reads it
-    /// cast in place ([`ScoreHolder::Fragments`](crate::attention::plane::ScoreHolder)).
+    /// `lhs · rhs` summed in `EA` on the plane's tile, placed as `levels` state it below the
+    /// walker's planes, over `space`, and left in the fragments' registers: where a plane keeps a
+    /// score, or the gradient against its probabilities, when the next contraction reads it cast
+    /// in place ([`ScoreHolder::Fragments`](crate::attention::plane::ScoreHolder)). The tile cuts
+    /// the sum into cells the next contraction reads in runs.
     pub fn contract_held<EA: Float>(
         lhs: &Tile,
         rhs: &Tile,
         #[comptime] space: Space,
-        #[comptime] product: PlaneFragmentMicrokernel,
         #[comptime] levels: Vec<Level>,
     ) -> Tile {
-        let sum = Tile::placed_accumulator::<EA>(space, 1usize, levels, lhs);
-        ScoreWindows::contract_fragments(&sum, lhs, rhs, product);
+        let lhs = lhs.with_levels(1usize, levels.clone());
+        let rhs = rhs.with_levels(1usize, levels.clone());
+        let mut sum = Tile::placed_accumulator::<EA>(space, 1usize, levels, &lhs);
+        sum.mma(&lhs, &rhs);
         sum
-    }
-}
-
-impl ScoreWindows {
-    /// `product`'s contraction in steps of the instruction's depth, each step over its whole grid
-    /// of fragments: the levels its sum and operands are placed on, at the top, to contract a
-    /// step's grid at a time.
-    fn product_levels(product: PlaneFragmentMicrokernel) -> Vec<Level> {
-        let [(_, m), (_, n), (_, k)] = product.instruction.shape();
-        let (axes, settings) = (product.axes, product.settings);
-        Levels::leaf(&[(axes.m, m), (axes.n, n), (axes.k, k)])
-            .walk(&[
-                (axes.m, settings.along_m.get()),
-                (axes.n, settings.along_n.get()),
-            ])
-            .walk(&[(axes.k, settings.depth.get())])
-            .build()
     }
 }

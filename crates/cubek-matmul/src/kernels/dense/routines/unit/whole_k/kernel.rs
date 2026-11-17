@@ -34,7 +34,7 @@ pub fn unit_whole_k_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
                 unit_registers_microkernel(&step, &sum, &a, &b);
             }
 
-            sum.drained_into(&c);
+            sum.consumed_by::<O::Served<E>>(&dest, &unit);
         }
     }
     dest.finish();

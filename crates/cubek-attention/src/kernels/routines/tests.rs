@@ -178,7 +178,8 @@ fn cached(
 const FP8_CACHES: [(cubecl::ir::ElemType, cubecl::ir::ElemType); 3] =
     [(E4M3, F16), (F16, E4M3), (E4M3, E4M3)];
 
-/// An RTX PRO 6000 offering the manual `mma`'s 16-bit forms and its `e4m3` one.
+/// An RTX PRO 6000 offering the manual `mma`'s 16-bit forms and its `e4m3` one, which serves the
+/// score and the value alike.
 fn offering_fp8() -> Hardware {
     let (f16, f32, e4m3) = (
         cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F16),
@@ -225,11 +226,12 @@ fn fragment_reads(hw: &Hardware, problem: &AttentionRoutineProblem) -> BTreeSet<
         .collect()
 }
 
-/// Every FP8 cache is read at a prompt and at a decode step. The plane fragments read `e4m3` keys
-/// on the device's FP8 instruction, the `f16` query converted ahead, and `e4m3` values widened to
-/// the query's `f16` by their stage as it fills, as every side on a device without the
-/// instruction. The plane shuffles widen every operand into the sum as they read it. The
-/// unit routine, which computes in its operands' one element, declines them all.
+/// Every FP8 cache is read at a prompt and at a decode step. The plane fragments multiply `e4m3`
+/// keys and `e4m3` values on the device's FP8 instruction, the `f16` query converted ahead and the
+/// probabilities cast to `e4m3` beside the values; on a device without the instruction each side
+/// is widened to the query's `f16` by its stage as it fills. The plane shuffles widen every
+/// operand into the sum as they read it. The unit routine, which computes in its operands' one
+/// element, declines them all.
 #[test]
 fn every_fp8_cache_is_read_at_a_prompt_and_at_a_decode_step() {
     let hw = offering_fp8();
@@ -240,7 +242,11 @@ fn every_fp8_cache_is_read_at_a_prompt_and_at_a_decode_step() {
         let reads = fragment_reads(&hw, &prompt);
         assert!(
             reads.iter().any(|(score, _)| *score == e4m3) == (key == E4M3)
-                && reads.iter().all(|(_, read)| *read == f16),
+                && reads.iter().any(|(_, read)| *read == e4m3) == (value == E4M3)
+                && reads
+                    .iter()
+                    .all(|(score, read)| (*score == f16 || *score == e4m3)
+                        && (*read == f16 || *read == e4m3)),
             "{key:?} keys, {value:?} values: the fragments read {reads:?}"
         );
         let widened = fragment_reads(&without, &prompt);

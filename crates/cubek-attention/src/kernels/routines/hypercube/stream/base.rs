@@ -200,7 +200,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
             .plane
             .reads_stage(microkernel.cube.settings.layout)?;
         if let CubeAttentionPlane::Fragment(plane) = &microkernel.cube.plane
-            && plane.score_runs() > 1
+            && plane.reads_keys_in_runs()
         {
             return Err(Self::SCORE_RUNS);
         }

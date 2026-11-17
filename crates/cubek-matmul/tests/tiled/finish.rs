@@ -1,4 +1,4 @@
-//! The count of units reaching [`Destination::finish`] is the units each routine launches: a
+//! The count of units reaching [`ServedDestination::finish`] is the units each routine launches: a
 //! destination that counts them is launched through every routine whose launch reaches it.
 
 use cubecl::features::AtomicUsage;
@@ -20,7 +20,7 @@ use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::{Hardware, routine::Routine};
 use cubek_test_utils::{StridedLayout, TestInput, TestOutcome, ValidationResult};
 
-/// The buffered output, and the units that reached [`Destination::finish`].
+/// The buffered output, and the units that reached [`ServedDestination::finish`].
 struct Counted;
 
 #[derive(CubeType, CubeLaunch)]
@@ -45,7 +45,7 @@ impl Destination for Counted {
     }
 }
 
-/// [`Counted`] as served to the kernel: the output's tile, and the count `finish` adds to.
+/// [`Counted`] as served to the kernel: the output tile, and the counter `finish` bumps.
 #[derive(CubeType)]
 struct CountedServed {
     tile: Tile,
