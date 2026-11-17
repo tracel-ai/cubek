@@ -138,13 +138,13 @@ impl Rows {
 
     fn input(&self) -> Vec<f32> {
         (0..self.rows * self.dim)
-            .map(|i| Self::wobble(i, 1) * self.magnitude)
+            .map(|i| Self::wobble(i, INPUT_SALT) * self.magnitude)
             .collect()
     }
 
     fn gate(&self) -> Vec<f32> {
         (0..self.rows * self.dim)
-            .map(|i| Self::wobble(i, 3))
+            .map(|i| Self::wobble(i, GATE_SALT))
             .collect()
     }
 
@@ -154,7 +154,7 @@ impl Rows {
             WeightRows::EachRow => self.rows,
         };
         (0..rows * self.dim)
-            .map(|i| Self::wobble(i, 2) / 2.0)
+            .map(|i| Self::wobble(i, WEIGHT_SALT) / 2.0)
             .collect()
     }
 
@@ -180,9 +180,7 @@ impl Rows {
                 let gates = &gate[at..at + group];
                 let mut values = input[at..at + group].to_vec();
                 if order == Some(GateOrder::GateThenNorm) {
-                    for (x, &z) in values.iter_mut().zip(gates) {
-                        *x *= Self::silu(z);
-                    }
+                    Self::gate_in_place(&mut values, gates)
                 }
                 let mean = values.iter().map(|x| x * x).sum::<f64>() / group as f64;
                 let scale = 1.0 / (mean + EPSILON as f64).sqrt();
@@ -251,13 +249,25 @@ impl Rows {
         ((i.wrapping_mul(2654435761) + salt * 40503) % 2048) as f32 / 512.0 - 2.0
     }
 
+    fn gate_in_place(values: &mut [f64], gates: &[f64]) {
+        for (x, &z) in values.iter_mut().zip(gates) {
+            *x *= Self::silu(z);
+        }
+    }
+
     /// `z · sigmoid(z)`.
     fn silu(z: f64) -> f64 {
         z / (1.0 + (-z).exp())
     }
 }
 
+/// Distinct salts so the input, weight and gate are not correlated.
+const INPUT_SALT: usize = 1;
+const WEIGHT_SALT: usize = 2;
+const GATE_SALT: usize = 3;
+
 /// Runs over rows, at every setting a routine lists or at its default one.
+#[derive(Debug)]
 struct Block {
     every_setting: bool,
     runs: Vec<Run>,

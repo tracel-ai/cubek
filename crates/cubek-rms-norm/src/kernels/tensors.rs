@@ -34,6 +34,19 @@ pub struct RmsNormGate {
     pub order: GateOrder,
 }
 
+impl RmsNormGate {
+    fn assert_matches(&self, input: &PlainTensor) {
+        assert_eq!(
+            self.tensor.elem, input.elem,
+            "the gate is the rows' element"
+        );
+        assert_eq!(
+            self.tensor.binding.shape, input.binding.shape,
+            "the gate has the rows' shape"
+        );
+    }
+}
+
 /// The tensors of one norm, its output among them, and the problem they state.
 ///
 /// Every operand is read as dense rows starting on a whole read of the device: the rows as
@@ -61,12 +74,14 @@ pub struct RmsNormTensors<Out = RmsNormOutputBuffer> {
     problem: RmsNormRoutineProblem,
 }
 
+const GATE_FIELD: &str = "gate";
+
 impl<Out: core::fmt::Debug> core::fmt::Debug for RmsNormTensors<Out> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("RmsNormTensors")
             .field("input", &self.input)
             .field("weight", &self.weight)
-            .field("gate", &self.gate)
+            .field(GATE_FIELD, &self.gate)
             .field("out", &self.out)
             .field("problem", &self.problem)
             .finish_non_exhaustive()
@@ -117,14 +132,7 @@ impl RmsNormInputs {
             "the weight is the rows' element"
         );
         if let Some(gate) = &call.gate {
-            assert_eq!(
-                gate.tensor.elem, input.elem,
-                "the gate is the rows' element"
-            );
-            assert_eq!(
-                gate.tensor.binding.shape, input.binding.shape,
-                "the gate has the rows' shape"
-            );
+            gate.assert_matches(&input)
         }
         let output_element = call.output_element;
         RmsNormRoutineProblem::admit_elements(hw, input.elem, output_element)?;
@@ -151,23 +159,12 @@ impl RmsNormInputs {
                 .find(|tensor| tensor.binding.shape[0] > 1)
                 .map(|tensor| tensor.binding.shape[1])
         });
-        let to_each = |tensor: PlainTensor| match each {
-            Some(each) if tensor.binding.shape[1] != each => {
-                let rows = match tensor.binding.shape[0] {
-                    1 => tensor,
-                    _ => dense_entries(client, tensor, dim, read_bytes),
-                };
-                let rows_in_all = rows.binding.shape[1];
-                assert!(
-                    rows_in_all.is_multiple_of(each),
-                    "a weight of {each} rows scales whole groups of rows, got {rows_in_all} rows"
-                );
-                rows.viewed(Metadata::new(
-                    [rows_in_all / each, each, dim],
-                    [each * dim, dim, 1],
-                ))
+        let to_each = |tensor: PlainTensor| {
+            let rows = tensor.binding.shape[1];
+            match each {
+                Some(each) if rows != each => regroup(client, tensor, each, dim, read_bytes),
+                _ => tensor,
             }
-            _ => tensor,
         };
         let input = to_each(input);
         let gate = gate.map(|gate| RmsNormGate {
@@ -566,6 +563,29 @@ fn reads_whole(rows: &PlainTensor, dim: usize, read_bytes: u64) -> bool {
 }
 
 /// `tensor` copied into dense rows starting on a read, as `[1, rows, dim]`.
+/// `tensor` viewed as entries of `each` rows, made dense first where it lies in several.
+fn regroup(
+    client: &Client,
+    tensor: PlainTensor,
+    each: usize,
+    dim: usize,
+    read_bytes: u64,
+) -> PlainTensor {
+    let rows = match tensor.binding.shape[0] {
+        1 => tensor,
+        _ => dense_entries(client, tensor, dim, read_bytes),
+    };
+    let rows_in_all = rows.binding.shape[1];
+    assert!(
+        rows_in_all.is_multiple_of(each),
+        "a weight of {each} rows scales whole groups of rows, got {rows_in_all} rows"
+    );
+    rows.viewed(Metadata::new(
+        [rows_in_all / each, each, dim],
+        [each * dim, dim, 1],
+    ))
+}
+
 fn dense_entries(client: &Client, tensor: PlainTensor, dim: usize, read_bytes: u64) -> PlainTensor {
     tensor
         .into_dense_at(client, read_bytes)

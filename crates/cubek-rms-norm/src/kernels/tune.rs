@@ -665,15 +665,21 @@ mod tests {
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
+    const HIDDEN_DIM: usize = 2560;
+    const WIDE_DIM: usize = 8192;
+    const HUGE_DIM: usize = 65536;
+    const HEAD_DIM: usize = 128;
+    const SQUARE_EXTENT: usize = 512;
+    const PROMPT_ROWS: usize = 512 * 24;
 
     /// On devices a dev machine cannot show: the cube groups, this kind's floor, prepare
     /// everywhere, and a plane or cube setting is tried last exactly where it claims no launch.
     #[test]
     fn every_device_keeps_the_floor_and_a_decline_claims_nothing() {
         for key in [
-            RmsNormKey::new(F16, F16, None, 2560, 1),
-            RmsNormKey::new(F16, F16, None, 128, 512 * 24),
-            RmsNormKey::new(F16, F16, None, 8192, 1),
+            RmsNormKey::new(F16, F16, None, HIDDEN_DIM, 1),
+            RmsNormKey::new(F16, F16, None, HEAD_DIM, PROMPT_ROWS),
+            RmsNormKey::new(F16, F16, None, WIDE_DIM, 1),
         ] {
             for hw in [
                 devices::rdna_range(),
@@ -718,7 +724,7 @@ mod tests {
         }
         let hw = devices::h100();
 
-        let key = RmsNormKey::new(F16, F16, None, 512, 512);
+        let key = RmsNormKey::new(F16, F16, None, SQUARE_EXTENT, SQUARE_EXTENT);
         let (cubes, listed) = distinct(
             RmsNormRoutineCandidate::list(CubeRmsNormRoutine, &hw)
                 .iter()
@@ -729,7 +735,7 @@ mod tests {
             "{cubes} blueprints of {listed} cube settings"
         );
 
-        let key = RmsNormKey::new(F16, F16, None, 65536, 1);
+        let key = RmsNormKey::new(F16, F16, None, HUGE_DIM, 1);
         let (groups, listed) = distinct(
             RmsNormRoutineCandidate::list(CubeGroupsRmsNormRoutine, &hw)
                 .iter()
@@ -746,10 +752,10 @@ mod tests {
     #[test]
     fn the_key_splits_on_the_output_and_the_gate() {
         let f32 = ElemType::Float(FloatKind::F32);
-        let plain = RmsNormKey::new(F16, F16, None, 2560, 1);
-        let widened = RmsNormKey::new(F16, f32, None, 2560, 1);
-        let before = RmsNormKey::new(F16, F16, Some(GateOrder::GateThenNorm), 2560, 1);
-        let after = RmsNormKey::new(F16, F16, Some(GateOrder::NormThenGate), 2560, 1);
+        let plain = RmsNormKey::new(F16, F16, None, HIDDEN_DIM, 1);
+        let widened = RmsNormKey::new(F16, f32, None, HIDDEN_DIM, 1);
+        let before = RmsNormKey::new(F16, F16, Some(GateOrder::GateThenNorm), HIDDEN_DIM, 1);
+        let after = RmsNormKey::new(F16, F16, Some(GateOrder::NormThenGate), HIDDEN_DIM, 1);
         let keys = [&plain, &widened, &before, &after];
         for (i, key) in keys.iter().enumerate() {
             assert!(keys[i + 1..].iter().all(|other| other != key));
@@ -768,9 +774,11 @@ mod tests {
         let hw = devices::strix_halo();
         let lead = RmsNormRoutineCandidate::list(PlaneRmsNormRoutine, &hw).swap_remove(0);
         assert_eq!(
-            lead.priority(&RmsNormKey::new(F16, F16, None, 128, 512 * 24)),
+            lead.priority(&RmsNormKey::new(F16, F16, None, HEAD_DIM, PROMPT_ROWS)),
             CandidatePriority::FIRST
         );
-        assert!(lead.priority(&RmsNormKey::new(F16, F16, None, 128, 1)) < CandidatePriority::FIRST);
+        assert!(
+            lead.priority(&RmsNormKey::new(F16, F16, None, HEAD_DIM, 1)) < CandidatePriority::FIRST
+        );
     }
 }

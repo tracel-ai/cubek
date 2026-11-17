@@ -228,6 +228,8 @@ mod tests {
     use cubek_microkernel::rms_norm::HeldRowShape;
     use cubek_std::devices;
 
+    const CHANNELS_PER_GROUP: usize = 128;
+
     const F16: ElemType = ElemType::Float(FloatKind::F16);
     const F32: ElemType = ElemType::Float(FloatKind::F32);
 
@@ -371,7 +373,7 @@ mod tests {
     /// group's size; one that does not run them refuses it.
     #[test]
     fn it_serves_what_the_device_runs() {
-        let grouped = RmsNormRoutineProblem::dense(37 * 20, 128, F16);
+        let grouped = RmsNormRoutineProblem::dense(37 * 20, CHANNELS_PER_GROUP, F16);
         for hw in [devices::h100(), devices::strix_halo(), devices::cpu_12()] {
             assert_eq!(serves_rms_norm(&running(hw), &grouped), Ok(()));
         }

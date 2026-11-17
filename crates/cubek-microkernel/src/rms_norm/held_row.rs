@@ -50,6 +50,12 @@ pub(crate) struct HeldRow<H: Float, N: Size> {
     shape: HeldRowShape,
 }
 
+impl<H: Float, N: Size> core::fmt::Debug for HeldRow<H, N> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("HeldRow").finish_non_exhaustive()
+    }
+}
+
 #[cube]
 impl<H: Float, N: Size> HeldRow<H, N> {
     /// Registers for one unit's share of a row laid out as `shape` says, holding nothing yet.

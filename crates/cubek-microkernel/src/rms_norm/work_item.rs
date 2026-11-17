@@ -71,6 +71,7 @@ mod tests {
     use crate::rms_norm::HeldRowShape;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
+    const VECTOR_WIDTH: usize = 8;
 
     fn item(gate: Option<GateOrder>) -> RmsNormWorkItem {
         RmsNormWorkItem {
@@ -92,7 +93,7 @@ mod tests {
         };
         let registers = |gate| {
             let item = item(gate);
-            shape.work(8, item.held_element()).registers
+            shape.work(VECTOR_WIDTH, item.held_element()).registers
         };
         assert_eq!(item(None).held_element(), F16);
         assert_eq!(item(Some(GateOrder::NormThenGate)).held_element(), F16);

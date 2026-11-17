@@ -14,6 +14,12 @@ pub struct GatedRow {
     order: Option<GateOrder>,
 }
 
+impl core::fmt::Debug for GatedRow {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GatedRow").finish_non_exhaustive()
+    }
+}
+
 #[cube]
 impl GatedRow {
     /// The row of `input` and, where the norm is gated, `gate`, both windowed to the owner's
@@ -44,11 +50,7 @@ impl GatedRow {
     pub fn line<E: Float, H: Float, N: Size>(&self, line: usize) -> Vector<H, N> {
         let row = self.input.flat::<E, N>().read(line);
         match comptime!(self.order) {
-            Some(GateOrder::GateThenNorm) => {
-                let gate = self.gate_line::<E, N>(line);
-                let gated = activation::gated::<N>(Vector::<f32, N>::cast_from(row), gate);
-                Vector::<H, N>::cast_from(gated)
-            }
+            Some(GateOrder::GateThenNorm) => self.gated_line::<E, H, N>(row, line),
             Some(GateOrder::NormThenGate) | None => Vector::<H, N>::cast_from(row),
         }
     }
@@ -61,20 +63,38 @@ impl GatedRow {
         scaled: Vector<f32, N>,
     ) -> Vector<f32, N> {
         match comptime!(self.order) {
-            Some(GateOrder::NormThenGate) => {
-                activation::gated::<N>(scaled, self.gate_line::<E, N>(line))
-            }
+            Some(GateOrder::NormThenGate) => self.gated_scaled::<E, N>(scaled, line),
             Some(GateOrder::GateThenNorm) | None => scaled,
         }
+    }
+
+    fn gated_line<E: Float, H: Float, N: Size>(
+        &self,
+        row: Vector<E, N>,
+        line: usize,
+    ) -> Vector<H, N> {
+        let gate = self.gate_line::<E, N>(line);
+        let gated = activation::gated::<N>(Vector::<f32, N>::cast_from(row), gate);
+        Vector::<H, N>::cast_from(gated)
+    }
+
+    fn gated_scaled<E: Float, N: Size>(
+        &self,
+        scaled: Vector<f32, N>,
+        line: usize,
+    ) -> Vector<f32, N> {
+        activation::gated::<N>(scaled, self.gate_line::<E, N>(line))
     }
 
     fn gate_line<E: Float, N: Size>(&self, line: usize) -> Vector<f32, N> {
         #[comptime]
         match &self.gate {
-            ComptimeOption::Some(gate) => {
-                Vector::<f32, N>::cast_from(gate.flat::<E, N>().read(line))
-            }
+            ComptimeOption::Some(gate) => Self::line_as_f32::<E, N>(gate, line),
             ComptimeOption::None => panic!("a gated norm binds its gate"),
         }
+    }
+
+    fn line_as_f32<E: Float, N: Size>(tile: &Tile, line: usize) -> Vector<f32, N> {
+        Vector::<f32, N>::cast_from(tile.flat::<E, N>().read(line))
     }
 }

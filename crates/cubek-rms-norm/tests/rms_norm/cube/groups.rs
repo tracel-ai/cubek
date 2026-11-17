@@ -7,6 +7,9 @@ use cubek_test_utils::ScopeUnderTest;
 
 use crate::rms_norm::{Declines, F16, F32, RmsNorm, Rows, Run};
 
+const ROW_DIM: usize = 128;
+const GROUPED_ROW_DIM: usize = 256;
+
 /// The floor serves every case at every setting: a decline would be a family with nothing to fall
 /// back on.
 #[test]
@@ -31,8 +34,8 @@ fn no_rows_launch_nothing() {
         order: Some(GateOrder::GateThenNorm),
     };
     let cases = [
-        (Rows::new(0, 128), plain),
-        (Rows::new(0, 256).grouped(128), gated),
+        (Rows::new(0, ROW_DIM), plain),
+        (Rows::new(0, GROUPED_ROW_DIM).grouped(ROW_DIM), gated),
     ];
     for (rows, run) in cases.into_iter().filter(|(_, run)| run.runs_on(&client)) {
         let out = candidate
