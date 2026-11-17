@@ -364,6 +364,7 @@ impl PlaneFragmentMicrokernel {
     /// The edges along the caller's `m` and `n` of the tile a plane holds where its settings count
     /// the device's matrix unit for `item` ([`PlaneUnit::Matrix`]): its settings' counts times the
     /// unit and the calls of it every load fills whole. `None` where the device offers no unit.
+    #[cfg(feature = "attention")]
     pub(crate) fn unit_tile(
         hw: &Hardware,
         item: &MatmulWorkItem,
