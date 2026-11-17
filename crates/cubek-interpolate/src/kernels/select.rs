@@ -140,6 +140,7 @@ mod tests {
             max_units_per_cube: cores,
             max_cube_dim: (cores, cores, cores),
             num_cpu_cores: Some(cores),
+            num_cpu_physical_cores: None,
             ..AVX2
         }
     }

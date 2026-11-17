@@ -269,6 +269,13 @@ impl Hardware {
             .contains(AtomicUsage::Add)
     }
 
+    /// Whether the device offers any matrix instruction, a cmma or a manual MMA: what a plane that
+    /// holds fragments contracts through. The CPU runtime offers none.
+    pub fn offers_matrix_instruction(&self) -> bool {
+        let matmul = &self.properties.features.matmul;
+        !matmul.cmma.is_empty() || !matmul.mma.is_empty()
+    }
+
     /// Whether a stage may be filled by the TMA engine: the bulk tensor copy, and the barriers its
     /// copies land on, as the tile DSL asks ([`Delivery::runs_on`]).
     pub fn bulk_tensor_copy(&self) -> bool {
@@ -567,6 +574,7 @@ mod tests {
             max_cube_dim: (1024, 1024, 1024),
             num_streaming_multiprocessors: num_cpu_cores.is_none().then_some(19),
             num_cpu_cores,
+            num_cpu_physical_cores: None,
             last_level_cache_size: None,
             num_tensor_cores: None,
             min_tensor_cores_dim: None,
