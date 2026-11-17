@@ -304,12 +304,12 @@ impl PlaneKeyGradientMicrokernel {
         );
     }
 
-    /// [`step`](Self::step) with the score and the gradient against its probabilities held in
-    /// their own manual-mma fragments: the probabilities and the gradient against the score taken
-    /// in place, each cast in its registers as the `A` of the gradient that contracts it, read in
-    /// runs of its cells along the stage's queries. Nothing passes through shared memory, so the
-    /// plane meets on nothing, unless a share of the query's gradient asks for the score's gradient
-    /// `left` cast in a window.
+    /// [`step`](Self::step) with the score and the gradient against its probabilities held in their
+    /// own fragments, the registers of the units that hold them: the probabilities and the gradient
+    /// against the score taken in place, each cast in its registers as the `A` of the gradient that
+    /// contracts it, read in runs of its cells along the stage's queries. Nothing passes through
+    /// shared memory, so the plane meets on nothing, unless a share of the query's gradient asks
+    /// for the score's gradient `left` cast in a window.
     #[allow(clippy::too_many_arguments)]
     fn held_step<EA: Float, ES: Float>(
         stage: &Region,

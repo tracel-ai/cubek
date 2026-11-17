@@ -119,14 +119,14 @@ impl PlaneQueryGradientMicrokernel {
     }
 
     /// The score's grid below the walker's level of planes, `planes` its counts
-    /// (`grid_levels`).
+    /// ([`tile_levels`](PlaneFragmentMicrokernel::tile_levels)).
     pub fn score_levels(&self, planes: &[(Dimension, usize)]) -> Vec<Level> {
-        Self::grid_levels(self.score, planes)
+        self.score.tile_levels(planes)
     }
 
     /// The grid of the gradient against the probabilities below the walker's level of planes.
     pub fn score_gradient_levels(&self, planes: &[(Dimension, usize)]) -> Vec<Level> {
-        Self::grid_levels(self.score_gradient, planes)
+        self.score_gradient.tile_levels(planes)
     }
 
     /// Where a plane keeps a step's score and the gradient against its probabilities: its
@@ -168,21 +168,45 @@ impl PlaneQueryGradientMicrokernel {
         windows + bounced
     }
 
-    /// `product`'s own levels below the walker's planes, `planes` its counts: the plane's tile of
-    /// it, its rows by its columns by its whole contraction, which the tile cuts and walks, so the
-    /// plane's tile spans the contraction whole, as the operands' windows do.
-    pub(crate) fn grid_levels(
-        product: PlaneFragmentMicrokernel,
-        planes: &[(Dimension, usize)],
-    ) -> Vec<Level> {
-        let dimensions = product.dimensions;
-        Levels::leaf(&[
-            (dimensions.m, product.tile_extent(dimensions.m)),
-            (dimensions.n, product.tile_extent(dimensions.n)),
-            (dimensions.k, product.tile_extent(dimensions.k)),
-        ])
-        .planes(planes)
-        .build()
+    /// The plane over the tile's picks for its three products, `settings` counting the device's
+    /// matrix unit ([`candidates`](Microkernel::candidates)). `None` where the tile picks no
+    /// instruction for one of them.
+    fn picked(
+        hw: &Hardware,
+        item: &AttentionBackwardWorkItem,
+        settings: PlaneQueryGradientMicrokernelSettings,
+    ) -> Option<Self> {
+        let grid = PlaneFragmentMicrokernelSettings {
+            along_m: settings.seq_q,
+            along_n: settings.seq_kv,
+            ..PlaneFragmentMicrokernelSettings::DEFAULT
+        };
+        let (score_item, gradient_item) = (item.score(Q), item.score_gradient(Q));
+        let query_item = item.query_gradient(item.element);
+        let (head, value) = (item.head_dim, item.val_dim);
+        let [queries, keys] = PlaneFragmentMicrokernel::unit_tile(hw, &score_item, &grid)?;
+        let (score_tile, gradient_tile) = ([queries, keys, head], [queries, keys, value]);
+        let query_tile = [queries, head, keys];
+        let holder = settings.score;
+        let score_call = holder.sum_pick(hw, &score_item, score_tile)?;
+        let gradient_call = holder.sum_pick(hw, &gradient_item, gradient_tile)?;
+        let query_call = holder.reader_pick(hw, gradient_call, &query_item, query_tile)?;
+        Some(Self {
+            settings,
+            score: PlaneFragmentMicrokernel::holding(&score_item, grid, score_tile, score_call)?,
+            score_gradient: PlaneFragmentMicrokernel::holding(
+                &gradient_item,
+                grid,
+                gradient_tile,
+                gradient_call,
+            )?,
+            query_gradient: PlaneFragmentMicrokernel::holding(
+                &query_item,
+                grid,
+                query_tile,
+                query_call,
+            )?,
+        })
     }
 }
 
@@ -238,33 +262,7 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
         item: &AttentionBackwardWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        let settings = *settings;
-        let grid = PlaneFragmentMicrokernelSettings {
-            along_m: settings.seq_q,
-            along_n: settings.seq_kv,
-            ..PlaneFragmentMicrokernelSettings::DEFAULT
-        };
-        let (score_item, gradient_item) = (item.score(Q), item.score_gradient(Q));
-        let query_item = item.query_gradient(item.element);
-        let (head, value) = (item.head_dim, item.val_dim);
-        let picked = || {
-            hw.plane_dim().ok()?;
-            let [queries, keys] = PlaneFragmentMicrokernel::unit_tile(hw, &score_item, &grid)?;
-            let (score_tile, gradient_tile) = ([queries, keys, head], [queries, keys, value]);
-            let query_tile = [queries, head, keys];
-            let holder = settings.score;
-            let score_call = holder.sum_pick(hw, &score_item, score_tile)?;
-            let gradient_call = holder.sum_pick(hw, &gradient_item, gradient_tile)?;
-            let query_call = holder.reader_pick(hw, gradient_call, &query_item, query_tile)?;
-            let holding = PlaneFragmentMicrokernel::holding;
-            Some(Self {
-                settings,
-                score: holding(&score_item, grid, score_tile, score_call)?,
-                score_gradient: holding(&gradient_item, grid, gradient_tile, gradient_call)?,
-                query_gradient: holding(&query_item, grid, query_tile, query_call)?,
-            })
-        };
-        picked().into_iter()
+        Self::picked(hw, item, *settings).into_iter()
     }
 
     /// Each multiplication's own, on the operands it binds: the score reads the query and the keys,
@@ -336,5 +334,69 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
             planes,
             estimate,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::features::MmaConfig;
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubek_std::devices;
+
+    const F16: ElemType = ElemType::Float(FloatKind::F16);
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// `f16` summed in `f32`, `m × n × k`.
+    fn shape((m, n, k): (u32, u32, u32)) -> MmaConfig {
+        MmaConfig {
+            a_type: F16,
+            b_type: F16,
+            cd_type: F32,
+            m,
+            n,
+            k,
+        }
+    }
+
+    /// An H100 offering the fragment API's three `f16` shapes and the manual `16 × 8 × 16`.
+    fn nvidia() -> Hardware {
+        let hw = devices::offering_cmma(
+            devices::h100(),
+            [(16, 16, 16), (32, 8, 16), (8, 32, 16)].map(shape),
+        );
+        devices::offering_mma(hw, [shape((16, 8, 16))])
+    }
+
+    /// An M2 offering `simdgroup_matrix`'s `8 × 8 × 8` through both transports.
+    fn m2() -> Hardware {
+        let eight = shape((8, 8, 8));
+        devices::offering_mma(devices::offering_cmma(devices::m2_pro(), [eight]), [eight])
+    }
+
+    fn item() -> AttentionBackwardWorkItem {
+        AttentionBackwardWorkItem {
+            element: F16,
+            sum: F32,
+            group: 1,
+            head_dim: 64,
+            val_dim: 64,
+        }
+    }
+
+    /// On NVIDIA every setting the plane lists finds the tile's picks, the held ones keeping
+    /// the gradient against the probabilities in its registers; on an M2, whose one `8 × 8 × 8` both transports offer, the
+    /// plane reads its sums through windows only.
+    #[test]
+    fn the_held_planes_run_where_a_sum_stays_in_its_registers() {
+        let (nvidia, m2) = (nvidia(), m2());
+        for settings in PlaneQueryGradientMicrokernel::settings(&nvidia) {
+            let planes: Vec<_> =
+                PlaneQueryGradientMicrokernel::candidates(&nvidia, &item(), &settings).collect();
+            assert!(!planes.is_empty(), "{settings} on NVIDIA finds no plane");
+            let held = settings.score == ScoreHolder::Fragments;
+            let on_m2 = PlaneQueryGradientMicrokernel::candidates(&m2, &item(), &settings).count();
+            assert_eq!(on_m2 == 0, held, "{settings} on an M2");
+        }
     }
 }

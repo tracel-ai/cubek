@@ -364,12 +364,15 @@ impl PlaneFragmentMicrokernel {
 
     /// The edges along the caller's `m` and `n` of the tile a plane holds where its settings count
     /// the device's matrix unit for `item` ([`PlaneUnit::Matrix`]): its settings' counts times the
-    /// unit and the calls of it every load fills whole. `None` where the device offers no unit.
+    /// unit and the calls of it every load fills whole. `None` where the device offers no unit, or
+    /// commits to no single plane width, which a plane's units need.
+    #[cfg(feature = "attention")]
     pub(crate) fn unit_tile(
         hw: &Hardware,
         item: &MatmulWorkItem,
         settings: &PlaneFragmentMicrokernelSettings,
     ) -> Option<[usize; 2]> {
+        hw.plane_dim().ok()?;
         let ([m, n, _], [calls_m, calls_n, _]) = Self::unit_of(hw, item, settings)?;
         Some([
             settings.along_m.get() * m * calls_m,
@@ -808,6 +811,21 @@ impl PlaneFragmentMicrokernel {
         Some(fragments.units(&[]))
     }
 
+    /// Its own levels below a walker's planes, `planes` their counts: the plane's tile, its `m` by
+    /// its `n` by its whole `k`, which the tile cuts and walks, as the backward's planes state each
+    /// product they hold.
+    #[cfg(feature = "attention-backward")]
+    pub(crate) fn tile_levels(&self, planes: &[(Dimension, usize)]) -> Vec<cubecl::tile::Level> {
+        let dimensions = self.dimensions;
+        Levels::leaf(&[
+            (dimensions.m, self.tile_extent(dimensions.m)),
+            (dimensions.n, self.tile_extent(dimensions.n)),
+            (dimensions.k, self.tile_extent(dimensions.k)),
+        ])
+        .planes(planes)
+        .build()
+    }
+
     /// [`tiling`](Self::tiling), its leaf also spanning `held`: dimensions of the caller's that
     /// this product does not name, each whole at every leaf, as attention's value holds the head
     /// dim its score contracts.
@@ -893,17 +911,15 @@ impl PlaneFragmentMicrokernel {
     /// along `m` and `n` ([`tile_edges`](Self::tile_edges)), and the steps of `K` it walks through
     /// one stage; a tile stated in elements, as it states it.
     pub fn tile_extent(&self, dimension: Dimension) -> usize {
-        if let PlaneUnit::Elements {
-            tile: [tile_m, tile_n, tile_k],
-        } = self.unit
-        {
-            return match self.dimensions.dim(dimension) {
-                Some(MatmulDim::M) => tile_m,
-                Some(MatmulDim::N) => tile_n,
-                Some(MatmulDim::K) => tile_k,
-                None => 1,
-            };
+        match self.unit {
+            PlaneUnit::Elements { tile } => along(tile, self.dimensions.dim(dimension)),
+            PlaneUnit::Matrix { .. } | PlaneUnit::Instruction => self.stated_extent(dimension),
         }
+    }
+
+    /// [`tile_extent`](Self::tile_extent) where the plane states its tile in units: its edges
+    /// along `m` and `n`, and the steps of `K` it walks through one stage.
+    fn stated_extent(&self, dimension: Dimension) -> usize {
         let [(_, _), (_, _), (_, k)] = self.shape();
         let steps = self.steps_of_k();
         let k_dimensions = self.k_dimensions(steps);
@@ -1209,6 +1225,16 @@ impl MatmulMicrokernel for PlaneFragmentMicrokernel {
 
     fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.orders
+    }
+}
+
+/// The extent of `[m, n, k]` along `dim`; one along an dimension the product does not name.
+fn along([m, n, k]: [usize; 3], dim: Option<MatmulDim>) -> usize {
+    match dim {
+        Some(MatmulDim::M) => m,
+        Some(MatmulDim::N) => n,
+        Some(MatmulDim::K) => k,
+        None => 1,
     }
 }
 
