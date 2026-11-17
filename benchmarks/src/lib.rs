@@ -15,6 +15,7 @@ pub use cubek_matmul::tiled::eval::split_cubes;
 pub use cubek_matmul::tiled::eval::split_k;
 pub use cubek_matmul::tiled::eval::tile_quant_stage;
 pub use cubek_pool::eval::benchmarks as pool;
+pub use cubek_prefix_scan::eval::benchmark as prefix_scan;
 pub use cubek_random::eval::benchmarks as random;
 pub use cubek_reduce::eval::benchmarks as reduce;
 pub use cubek_std::eval::benchmarks::contiguous;
@@ -42,6 +43,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::interpolate::CpuCategory,
         &crate::memcpy_async::Category,
         &crate::pool::Category,
+        &crate::prefix_scan::Category,
         &crate::quantized_matmul::Category,
         &crate::random::Category,
         &crate::reduce::Category,
