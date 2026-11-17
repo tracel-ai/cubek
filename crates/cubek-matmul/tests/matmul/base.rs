@@ -373,10 +373,28 @@ impl Debug for Product {
 /// Which refusals a scope may answer a product with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Declines {
-    /// None: a floor, which serves any product on any device.
+    /// None: a floor, which serves any product on any device. On the CPU runtime, which holds one
+    /// unit per core of the host, a setting whose cube is larger than that is still skipped.
     Never,
     /// Its own, where it serves no such product on the test device.
     AsItStates,
+}
+
+/// Records a skip and returns `true` where the test device offers no matrix instruction, as the
+/// CPU runtime: a routine whose planes hold fragments runs nowhere else.
+#[cfg(feature = "tiled")]
+#[track_caller]
+pub(crate) fn skip_unless_matrix_instruction() -> bool {
+    use cubek_test_utils::{TestOutcome, ValidationResult};
+    let hw = cubek_std::Hardware::from_client(&cubecl::test_device().client());
+    if hw.offers_matrix_instruction() {
+        return false;
+    }
+    TestOutcome::Validated(ValidationResult::Skipped(
+        "needs a matrix instruction; the device offers none".to_string(),
+    ))
+    .enforce();
+    true
 }
 
 /// A [`Strategy`] reached through [`launch_ref`], against the host's product.
