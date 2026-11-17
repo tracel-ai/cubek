@@ -42,7 +42,8 @@ use cubek_test_utils::{
 
 use crate::{
     ReduceDtypes, ReduceError, ReduceStrategy, ReduceWithIndicesDtypes,
-    components::instructions::ReduceOperationConfig, kernels, reduce, reduce_with_indices,
+    components::instructions::ReduceOperationConfig, kernels, launch::RoutineStrategy, reduce,
+    reduce_with_indices,
 };
 
 /// The bits a comparison runs on: the kernel launch and the CPU reference each
@@ -156,7 +157,7 @@ impl ReduceEntry {
     ) -> Result<(), ReduceError> {
         match self {
             ReduceEntry::Kernels => reduce,
-            ReduceEntry::Tiles => kernels::reduce_on_tiles,
+            ReduceEntry::Tiles => reduce_on_tiles,
         }
     }
 
@@ -176,9 +177,73 @@ impl ReduceEntry {
     ) -> Result<(), ReduceError> {
         match self {
             ReduceEntry::Kernels => reduce_with_indices,
-            ReduceEntry::Tiles => kernels::reduce_with_indices_on_tiles,
+            ReduceEntry::Tiles => reduce_with_indices_on_tiles,
         }
     }
+}
+
+/// The tile strategy standing for today's `strategy`: the unit kernel, the plane kernel, or for
+/// the cube the rule, which reaches the cube and the hypercube.
+fn tile_strategy(strategy: &ReduceStrategy) -> kernels::ReduceOpStrategy {
+    match strategy.routine {
+        RoutineStrategy::Unit(_) => {
+            kernels::ReduceOpStrategy::Specific(kernels::ReduceKernel::Unit)
+        }
+        RoutineStrategy::Plane(_) => {
+            kernels::ReduceOpStrategy::Specific(kernels::ReduceKernel::PlaneShuffle)
+        }
+        RoutineStrategy::Cube(_) => {
+            kernels::ReduceOpStrategy::Heuristic(kernels::ReduceKernelHeuristic::Tile)
+        }
+    }
+}
+
+/// [`kernels::reduce`] on the test device, at the tile strategy standing for `strategy`.
+fn reduce_on_tiles(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
+    axis: usize,
+    strategy: ReduceStrategy,
+    operation: ReduceOperationConfig,
+    dtypes: ReduceDtypes,
+) -> Result<(), ReduceError> {
+    kernels::reduce(
+        client,
+        &cubecl::test_device(),
+        input,
+        output,
+        axis,
+        tile_strategy(&strategy),
+        operation,
+        dtypes,
+    )
+}
+
+/// [`kernels::reduce_with_indices`] on the test device, at the tile strategy standing for
+/// `strategy`.
+#[allow(clippy::too_many_arguments)]
+fn reduce_with_indices_on_tiles(
+    client: &Client,
+    input: TensorBinding,
+    values: TensorBinding,
+    indices: TensorBinding,
+    axis: usize,
+    strategy: ReduceStrategy,
+    operation: ReduceOperationConfig,
+    dtypes: ReduceWithIndicesDtypes,
+) -> Result<(), ReduceError> {
+    kernels::reduce_with_indices(
+        client,
+        &cubecl::test_device(),
+        input,
+        values,
+        indices,
+        axis,
+        tile_strategy(&strategy),
+        operation,
+        dtypes,
+    )
 }
 
 /// Run `strategy` on `input` and return its output as a [`HostData`].

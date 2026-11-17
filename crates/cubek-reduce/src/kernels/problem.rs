@@ -9,7 +9,7 @@ use cubek_std::routine::EstimatedProblem;
 
 /// The elements of a reduction: what the input is stored in, what it accumulates in, and what the
 /// output is written in (an index's, where it writes indices).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ReduceElements {
     pub input: ElemType,
     pub accumulator: ElemType,

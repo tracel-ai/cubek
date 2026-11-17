@@ -18,7 +18,7 @@ pub const TOP_K_LANE_SLOTS: usize = 32;
 /// | `ArgMax`, `ArgMin` | – | `Max`, `Min` | [`Indexed`](cubecl::tile::Indexed) | its index |
 /// | `TopK` | – | `Max` | [`TopValues`](cubecl::tile::TopValues) | its values |
 /// | `ArgTopK` | – | `Max` | [`TopK`](cubecl::tile::TopK) | its indices |
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ReduceOperation {
     Sum,
     Prod,

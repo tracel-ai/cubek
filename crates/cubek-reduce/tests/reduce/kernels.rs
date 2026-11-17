@@ -1,6 +1,6 @@
 //! The reduce routines on the tile stack, against a CPU reference: a rank-3 tensor reduced along
-//! each of its dims, every operation, its values and its rows as they lie; and the hypercube's
-//! rows split into parts.
+//! each of its dims, every operation, its values and its rows as they lie; the hypercube's rows
+//! split into parts; and the kernel the rule and the autotune pick.
 
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, IntKind};
@@ -9,8 +9,9 @@ use cubecl::tile::layout::ElemAlignment;
 use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_reduce::kernels::{
-    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceRoutine,
-    ReduceRoutineProblem, ReduceTensors, UnitReduceRoutine, launch_reduce_routine,
+    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements,
+    ReduceKernelHeuristic, ReduceOpStrategy, ReduceRoutine, ReduceRoutineProblem, ReduceTensors,
+    UnitReduceRoutine, launch_reduce_routine, launch_tuned, select,
 };
 use cubek_std::Hardware;
 use cubek_std::devices;
@@ -143,6 +144,8 @@ enum Scope {
     Plane,
     Cube,
     Hypercube,
+    /// The kernel a policy picks: the rule's, or the autotune's.
+    Picked(ReduceOpStrategy),
 }
 
 impl Scope {
@@ -237,6 +240,10 @@ impl ScopeUnderTest for Routines {
             Scope::Plane => scope.launch_with(&PlaneReduceRoutine, &hw, &tensors),
             Scope::Cube => scope.launch_with(&CubeReduceRoutine, &hw, &tensors),
             Scope::Hypercube => scope.launch_with(&HypercubeReduceRoutine, &hw, &tensors),
+            Scope::Picked(ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile)) => {
+                select(&hw, &tensors)?
+            }
+            Scope::Picked(_) => launch_tuned(tensors, &cubecl::test_device()),
         }
         let host = match out_elem {
             I32 => HostDataType::I32,
@@ -332,6 +339,34 @@ fn the_hypercube_reduces_split_rows_like_the_cpu() {
                 axis,
                 operation,
             });
+        }
+    }
+    Routines.check(reductions);
+}
+
+/// The rule and the autotune reduce like the CPU wherever they send a problem: many short rows,
+/// one long row, and rows across the contiguous dim, at extents that are not powers of two.
+#[test]
+fn the_rule_and_the_autotune_reduce_like_the_cpu() {
+    let mut reductions = Vec::new();
+    for strategy in [
+        ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile),
+        ReduceOpStrategy::Autotune,
+    ] {
+        for (shape, axis) in [([96, 7, 300], 2), ([1, 1, 50000], 2), ([3, 2100, 5], 1)] {
+            for operation in [
+                ReduceOperation::Sum,
+                ReduceOperation::Mean,
+                ReduceOperation::ArgMax,
+                ReduceOperation::TopK { k: 3 },
+            ] {
+                reductions.push(Reduction {
+                    scope: Scope::Picked(strategy),
+                    shape: shape.to_vec(),
+                    axis,
+                    operation,
+                });
+            }
         }
     }
     Routines.check(reductions);
