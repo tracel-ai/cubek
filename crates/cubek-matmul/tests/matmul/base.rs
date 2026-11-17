@@ -373,7 +373,8 @@ impl Debug for Product {
 /// Which refusals a scope may answer a product with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Declines {
-    /// None: a floor, which serves any product on any device.
+    /// None: a floor, which serves any product on any device. A setting whose cube is larger than
+    /// the device holds is still skipped: the CPU runtime holds one unit per core of the host.
     Never,
     /// Its own, where it serves no such product on the test device.
     AsItStates,

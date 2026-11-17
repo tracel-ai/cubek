@@ -188,6 +188,7 @@ where
         match (launched, self.declines) {
             (Ok(out), _) => Ok(Product::written(out)),
             (Err(why), Declines::AsItStates) => Err(why),
+            (Err(why @ Refusal::CubePastDevice { .. }), Declines::Never) => Err(why),
             (Err(why), Declines::Never) => panic!("{case:?} refused: {why:?}"),
         }
     }
