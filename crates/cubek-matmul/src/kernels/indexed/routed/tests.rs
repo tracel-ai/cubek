@@ -120,7 +120,8 @@ fn a_packed_stack_is_asked_every_plane_shuffle_floor_and_the_packed_cube_staged_
         plane_shuffle,
         [
             PlaneShuffleMatmulRoutineSettings::DEFAULT,
-            PlaneShuffleMatmulRoutineSettings::PACKED
+            PlaneShuffleMatmulRoutineSettings::PACKED,
+            PlaneShuffleMatmulRoutineSettings::PACKED_BY_BLOCK
         ]
     );
     assert_eq!(cube_staged, [CubeStagedMatmulRoutineSettings::PACKED]);
