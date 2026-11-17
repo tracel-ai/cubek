@@ -53,12 +53,11 @@ impl Conv2dProblem {
         let [co, _, kh, kw] = self.weight_shape;
         let [oh, ow] = self.out_extent();
         let (input, weight, out_grad) = ([n, h, w, ci], [co, kh, kw, ci], [n, oh, ow, co]);
+        use ConvolutionOperation as Operation;
         match self.operation {
-            ConvolutionOperation::Forward => [input, weight, out_grad],
-            ConvolutionOperation::BackwardWeight => [input, out_grad, weight],
-            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
-                [out_grad, weight, input]
-            }
+            Operation::Forward => [input, weight, out_grad],
+            Operation::BackwardWeight => [input, out_grad, weight],
+            Operation::BackwardData | Operation::ForwardTransposed => [out_grad, weight, input],
         }
     }
 }

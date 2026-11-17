@@ -1,4 +1,4 @@
-use cubecl::tile::{Axis, Partitioning, Semiring, SoftwareMatmul, TileTensor};
+use cubecl::tile::{Axis, Partitioning, Region, Semiring, SoftwareMatmul, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// Every plane of the launch, each of its units contracting its block of the output against the
@@ -37,10 +37,21 @@ pub fn unit_registers_conv_kernel<EA: Numeric, EL: Numeric>(
             inside = inside && plane.origin(axis) < *extents.index(i);
         }
         if inside {
-            for unit in plane {
-                let mut accumulator = out.at(&unit).accumulating(block, Semiring::SUM_PROD);
-                accumulator.mm(&input.at(&unit), &rhs.at(&unit));
-            }
+            accumulate_units(plane, &input, &rhs, &out, block);
         }
+    }
+}
+
+#[cube]
+fn accumulate_units(
+    plane: Region,
+    input: &Tile,
+    rhs: &Tile,
+    out: &Tile,
+    #[comptime] block: SoftwareMatmul,
+) {
+    for unit in plane {
+        let mut accumulator = out.at(&unit).accumulating(block, Semiring::SUM_PROD);
+        accumulator.mm(&input.at(&unit), &rhs.at(&unit));
     }
 }

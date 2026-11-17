@@ -9,6 +9,9 @@ use cubecl::tile::layout::PhysicalAxisMap;
 use cubecl::zspace::{Shape, Strides};
 use cubek_microkernel::matmul::{MatmulAxes, MatmulLayout, MatmulOperand, MatmulOperands};
 
+/// The dim of an NHWC view or a `[co, kh, kw, ci]` weight that holds the channels.
+const CHANNELS_DIM: usize = 3;
+
 /// The output's axes by the part each plays. The batch and the one across take a tile each of a
 /// cube or a plane, after the rows and the columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,7 +157,7 @@ impl ConvRoles {
         },
         gather: ConvGather::Window,
         extents: ConvExtents {
-            channels_in: ViewDim::at(MatmulOperand::Lhs, 3),
+            channels_in: ViewDim::at(MatmulOperand::Lhs, CHANNELS_DIM),
             channels_out: ViewDim::at(MatmulOperand::Rhs, 0),
             kernel: [
                 ViewDim::at(MatmulOperand::Rhs, 1),
@@ -192,8 +195,8 @@ impl ConvRoles {
         },
         gather: ConvGather::Window,
         extents: ConvExtents {
-            channels_in: ViewDim::at(MatmulOperand::Lhs, 3),
-            channels_out: ViewDim::at(MatmulOperand::Out, 3),
+            channels_in: ViewDim::at(MatmulOperand::Lhs, CHANNELS_DIM),
+            channels_out: ViewDim::at(MatmulOperand::Out, CHANNELS_DIM),
             kernel: [
                 ViewDim::at(MatmulOperand::Out, 0),
                 ViewDim::at(MatmulOperand::Out, 1),
@@ -230,8 +233,8 @@ impl ConvRoles {
         },
         gather: ConvGather::Gradient,
         extents: ConvExtents {
-            channels_in: ViewDim::at(MatmulOperand::Out, 3),
-            channels_out: ViewDim::at(MatmulOperand::Lhs, 3),
+            channels_in: ViewDim::at(MatmulOperand::Out, CHANNELS_DIM),
+            channels_out: ViewDim::at(MatmulOperand::Lhs, CHANNELS_DIM),
             kernel: [
                 ViewDim::at(MatmulOperand::Rhs, 0),
                 ViewDim::at(MatmulOperand::Rhs, 1),

@@ -22,6 +22,8 @@ use crate::{
     launch_ref,
 };
 
+const HOST_HAS_NO_TRANSPOSED: &str = "the host states no transposed forward";
+
 /// Run `strategy` against `operation` over `spec`'s geometry with seeded operands and return its
 /// output as a [`HostData`]: the forward's activation, the weight gradient or the data gradient.
 pub fn strategy_result(
@@ -39,21 +41,20 @@ pub fn strategy_result(
         let lhs = InputBinding::new(inputs.lhs.clone().binding(), dtypes.lhs_global);
         let rhs = InputBinding::new(inputs.rhs.clone().binding(), dtypes.rhs_global);
         let out = out_handle.clone().binding();
+        use ConvolutionOperation as Operation;
         let conv_inputs = match operation {
-            ConvolutionOperation::Forward | ConvolutionOperation::ForwardTransposed => {
-                ConvolutionInputs::Forward {
-                    input: lhs,
-                    weight: rhs,
-                    bias: None,
-                    out,
-                }
-            }
-            ConvolutionOperation::BackwardWeight => ConvolutionInputs::BackwardWeight {
+            Operation::Forward | Operation::ForwardTransposed => ConvolutionInputs::Forward {
+                input: lhs,
+                weight: rhs,
+                bias: None,
+                out,
+            },
+            Operation::BackwardWeight => ConvolutionInputs::BackwardWeight {
                 input: lhs,
                 out_grad: rhs,
                 weight_grad: out,
             },
-            ConvolutionOperation::BackwardData => ConvolutionInputs::BackwardData {
+            Operation::BackwardData => ConvolutionInputs::BackwardData {
                 out_grad: lhs,
                 weights: rhs,
                 in_grad: out,
@@ -89,25 +90,13 @@ pub fn cpu_reference_result(
     let args = &spec.args;
     let lhs_host = host_tensor(&inputs.lhs_data)?;
     let rhs_host = host_tensor(&inputs.rhs_data)?;
+    let in_extent = [spec.in_h, spec.in_w];
+    use ConvolutionOperation as Operation;
     let values = match operation {
-        ConvolutionOperation::Forward => {
-            let problem = build_problem(&spec, &dtypes, &inputs);
-            return Ok(conv_cpu_reference(
-                &inputs.lhs_data,
-                &inputs.rhs_data,
-                &problem,
-                progress,
-            ));
-        }
-        ConvolutionOperation::BackwardWeight => {
-            naive_weight_grad(lhs_host, rhs_host, spec.kernel_size, args)
-        }
-        ConvolutionOperation::BackwardData => {
-            naive_data_grad(lhs_host, rhs_host, [spec.in_h, spec.in_w], args)
-        }
-        ConvolutionOperation::ForwardTransposed => {
-            return Err("the host states no transposed forward".to_string());
-        }
+        Operation::Forward => return Ok(forward_reference(&spec, &dtypes, &inputs, progress)),
+        Operation::BackwardWeight => naive_weight_grad(lhs_host, rhs_host, spec.kernel_size, args),
+        Operation::BackwardData => naive_data_grad(lhs_host, rhs_host, in_extent, args),
+        Operation::ForwardTransposed => return Err(HOST_HAS_NO_TRANSPOSED.to_string()),
     };
     let shape = spec.shapes(operation)[2].clone();
     let strides = StridedLayout::RowMajor.compute_strides(&shape);
@@ -163,12 +152,11 @@ impl ConvSpec {
             self.channels
         ];
         let out_grad = shape![self.batches, self.out_h(), self.out_w(), self.out_channels];
+        use ConvolutionOperation as Operation;
         match operation {
-            ConvolutionOperation::Forward => [input, weight, out_grad],
-            ConvolutionOperation::BackwardWeight => [input, out_grad, weight],
-            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
-                [out_grad, weight, input]
-            }
+            Operation::Forward => [input, weight, out_grad],
+            Operation::BackwardWeight => [input, out_grad, weight],
+            Operation::BackwardData | Operation::ForwardTransposed => [out_grad, weight, input],
         }
     }
 
@@ -238,6 +226,16 @@ fn seed_inputs(
         rhs_data,
         out,
     })
+}
+
+fn forward_reference(
+    spec: &ConvSpec,
+    dtypes: &MatmulElems,
+    inputs: &SeededInputs,
+    progress: Option<&Progress>,
+) -> HostData {
+    let problem = build_problem(spec, dtypes, inputs);
+    conv_cpu_reference(&inputs.lhs_data, &inputs.rhs_data, &problem, progress)
 }
 
 fn build_problem(
@@ -454,7 +452,7 @@ impl From<&ConvSpec> for ConvGeometry {
 
 /// A host tensor as the naive references read it: its values and its four dims, NHWC but for a
 /// weight and its gradient, which are `[co, kh, kw, ci]`.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct HostTensor<'a> {
     pub values: &'a [f32],
     pub dims: [usize; 4],

@@ -1,5 +1,6 @@
 use super::{ConvCandidate, ConvTuneKey};
 use crate::kernels::tiled::{ConvRoutine, ConvSettings, ConvTensors, UnitRegistersConvRoutine};
+use cubecl::client::Client;
 use cubecl::tile::launch::Refusal;
 use cubecl::tune::{LocalTuner, TunableSet, local_tuner};
 use cubecl_common::device::ServiceId;
@@ -10,6 +11,9 @@ use cubek_std::autotune::{
 use cubek_std::routine::{EstimatedProblem, ROUTINE_LISTS_NO_SETTING, first_served};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+
+const TILE_GROUP: &str = "tile";
+const FLOOR_NAME: &str = "conv-tile-floor";
 
 static TUNER: LocalTuner<ConvTuneKey, ServiceId> = local_tuner!("tile-conv");
 
@@ -57,12 +61,20 @@ pub fn launch_tuned(hw: &Hardware, tensors: ConvTensors) -> Result<(), Refusal> 
         },
     };
     match tuned {
-        true => {
-            TUNER.execute(&id, &client, tunables, tensors);
-            Ok(())
-        }
+        true => run_tuned(&id, &client, tunables, tensors),
         false => launch_floor(&list, hw, tensors),
     }
+}
+
+/// `tensors` launched at the setting the autotune picks among `tunables`.
+fn run_tuned(
+    id: &ServiceId,
+    client: &Client,
+    tunables: Arc<TunableSet<ConvTuneKey, ConvTensors, (), CandidateIdentity<ConvSettings>>>,
+    tensors: ConvTensors,
+) -> Result<(), Refusal> {
+    TUNER.execute(id, client, tunables, tensors);
+    Ok(())
 }
 
 /// `tensors` at the first of `list` that serves them, or on the unit registers routine where none
@@ -91,7 +103,7 @@ pub(super) fn candidates(
         Autotune::<ConvTuneKey, ConvTensors, (), CandidateIdentity<ConvSettings>>::new(
             move |tensors: &ConvTensors| ConvTuneKey::of(&tensors.problem(), &keyed),
         );
-    let tile = autotune.group("tile", GroupPriority::DEFAULT);
+    let tile = autotune.group(TILE_GROUP, GroupPriority::DEFAULT);
     let floor = (list.clone(), hw.clone());
     autotune
         .bounded(move |key: &ConvTuneKey, tensors: &ConvTensors| Roofline {
@@ -113,7 +125,7 @@ pub(super) fn candidates(
             },
         )
         .floor(<CandidateIdentity<ConvSettings> as Identity>::named(
-            "conv-tile-floor",
+            FLOOR_NAME,
             move |tensors: ConvTensors| {
                 let (list, hw) = &floor;
                 launch_floor(list, hw, tensors).map_err(|refusal| format!("{refusal:?}"))

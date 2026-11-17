@@ -39,9 +39,7 @@ impl ConvRoutineKind {
             return Ok(());
         }
         match self {
-            Self::CubeStaged(Some(settings)) => {
-                CubeStagedConvRoutine.launch_on(hw, tensors, settings)
-            }
+            Self::CubeStaged(Some(pinned)) => CubeStagedConvRoutine.launch_on(hw, tensors, pinned),
             Self::CubeStaged(None) => CubeStagedConvRoutine.launch_first_served(hw, tensors),
             Self::Tuned => launch_tuned(hw, tensors),
             Self::UnitRegisters => UnitRegistersConvRoutine.launch_first_served(hw, tensors),

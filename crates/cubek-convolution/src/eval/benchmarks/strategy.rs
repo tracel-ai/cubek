@@ -6,6 +6,9 @@ use crate::{
     kernels::tiled::{ConvRoutineKind, ConvSettings},
 };
 
+const UNIT_REGISTERS_LABEL: &str = "Unit registers, at the device's settings";
+const UNIT_BALANCED_LABEL: &str = "Unit / balanced tiling";
+
 /// The settings pinned, beside the tuned row: the base setting at both widths, two tiles of rows
 /// over two planes, one tile of rows, the narrow instruction, and a grid held whole over a map of
 /// its width. The `T8` rows refuse where the tile picks no instruction of eight rows.
@@ -41,18 +44,14 @@ fn cube_staged(settings: Option<ConvSettings>) -> CatalogEntry<Strategy> {
 /// The unit routine of the tile convolution at the settings it derives from the device.
 fn unit_registers() -> CatalogEntry<Strategy> {
     let strategy = Strategy::Tile(ConvRoutineKind::UnitRegisters);
-    CatalogEntry::new(
-        strategy.to_string(),
-        "Unit registers, at the device's settings",
-        strategy,
-    )
+    CatalogEntry::new(strategy.to_string(), UNIT_REGISTERS_LABEL, strategy)
 }
 
 /// The register-tiled `f32` convolution at its balanced tiling, which a device with no matrix
 /// instruction runs.
 fn unit_balanced() -> CatalogEntry<Strategy> {
     let strategy = Strategy::Unit(UnitStrategy::Fixed(UnitTiling::BALANCED));
-    CatalogEntry::new(strategy.to_string(), "Unit / balanced tiling", strategy)
+    CatalogEntry::new(strategy.to_string(), UNIT_BALANCED_LABEL, strategy)
 }
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {

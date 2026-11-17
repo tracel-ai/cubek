@@ -80,6 +80,8 @@ fn make_uniform_4d(client: &Client, shape: [usize; 4], dtype: ElemType, seed: u6
         .generate_without_host_data()
 }
 
+const NO_TRANSPOSED_FORWARD: &str = "the benchmark has no transposed forward";
+
 impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
     type Input = (TensorHandle, TensorHandle);
     type Output = ();
@@ -105,26 +107,25 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
             InputBinding::Normal(rhs.binding(), elems.rhs_global),
         );
 
+        use ConvolutionOperation as Operation;
         let inputs = match self.problem.operation {
-            ConvolutionOperation::Forward => ConvolutionInputs::Forward {
+            Operation::Forward => ConvolutionInputs::Forward {
                 input: lhs,
                 weight: rhs,
                 bias: None,
                 out: out.binding(),
             },
-            ConvolutionOperation::BackwardData => ConvolutionInputs::BackwardData {
+            Operation::BackwardData => ConvolutionInputs::BackwardData {
                 out_grad: lhs,
                 weights: rhs,
                 in_grad: out.binding(),
             },
-            ConvolutionOperation::BackwardWeight => ConvolutionInputs::BackwardWeight {
+            Operation::BackwardWeight => ConvolutionInputs::BackwardWeight {
                 input: lhs,
                 out_grad: rhs,
                 weight_grad: out.binding(),
             },
-            ConvolutionOperation::ForwardTransposed => {
-                return Err("the benchmark has no transposed forward".to_string());
-            }
+            Operation::ForwardTransposed => return Err(NO_TRANSPOSED_FORWARD.to_string()),
         };
 
         launch_ref::<2>(

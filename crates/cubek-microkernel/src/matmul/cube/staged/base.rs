@@ -398,6 +398,16 @@ impl CubeStagedMicrokernel {
         self.resolve_in(hw, item, &placed)
     }
 
+    /// The storage a stage lands in when the units copy it, with the layout they copy it in.
+    fn copied_stage_storage(
+        &self,
+        instruction: PlaneFragmentInstruction,
+        stage: &MatmulStage,
+    ) -> Result<(StageStorage, Option<StageLayout>), Refusal> {
+        let layout = instruction.stage_layout(self.stage_layout)?;
+        Ok((self.plane.stage_storage(layout, stage), Some(layout)))
+    }
+
     /// [`resolve`](Self::resolve) for a routine that places the box and lays the stages out
     /// itself ([`CubeStagedBox`]).
     ///
@@ -449,8 +459,7 @@ impl CubeStagedMicrokernel {
             (Some(storage), _) => (storage.clone(), None),
             (None, CubeStagedDelivery::Tma) => (self.plane.landed_stage_storage(stage), None),
             (None, CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy) => {
-                let layout = instruction.stage_layout(self.stage_layout)?;
-                (self.plane.stage_storage(layout, stage), Some(layout))
+                self.copied_stage_storage(instruction, stage)?
             }
         };
         let microkernel = Self {

@@ -31,7 +31,7 @@ impl<const N_SPATIAL: usize> ConvolutionArgs<N_SPATIAL> {
 }
 
 /// The serialized form of [`ConvolutionArgs`], whose arrays serde has no impl for at any length.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct ArgsRepr {
     stride: Vec<usize>,
     padding: Vec<usize>,

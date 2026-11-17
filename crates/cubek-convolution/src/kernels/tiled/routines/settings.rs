@@ -131,11 +131,13 @@ impl core::fmt::Display for ConvSettings {
             "F{}X{}_P{}X{}_T{}",
             fragments.along_m, fragments.along_n, planes.along_m, planes.along_n, self.rows
         )?;
-        if self.across.get() > 1 {
-            write!(f, "_A{}", self.across)?;
+        match self.across.get() {
+            1 => {}
+            across => write!(f, "_A{across}")?,
         }
-        if self.stage_steps != Self::STAGE_STEPS {
-            write!(f, "_S{}", self.stage_steps)?;
+        match self.stage_steps {
+            Self::STAGE_STEPS => {}
+            stage_steps => write!(f, "_S{stage_steps}")?,
         }
         let ring = self.microkernel.ring;
         match ring.stages_in_flight.get() {

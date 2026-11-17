@@ -23,6 +23,7 @@ const OTHER_ROW_FRAGMENTS: [usize; 2] = [1, 4];
 /// planes; a plane's fragments grown to the register budget down the rows; planes across the
 /// output rows over the instruction of fewest rows). Interactions between those moves are not
 /// listed. The device prunes the list; the problem only orders it.
+#[derive(Debug)]
 pub struct ConvCandidates<'a> {
     hw: &'a Hardware,
     plane_width: usize,
@@ -83,19 +84,20 @@ impl<'a> ConvCandidates<'a> {
             .largest_first()
             .collect();
         let mut seen: Vec<(ElemType, ElemType, ElemType, u32)> = Vec::new();
-        let mut shapes = Vec::new();
-        for config in configs {
-            let key = (config.a_type, config.b_type, config.cd_type, config.m);
-            if !seen.contains(&key) {
+        configs
+            .into_iter()
+            .filter(|config| {
+                let key = (config.a_type, config.b_type, config.cd_type, config.m);
+                let fresh = !seen.contains(&key);
                 seen.push(key);
-                shapes.push(InstructionShape {
-                    rows: config.m as usize,
-                    columns: config.n as usize,
-                    depth: config.k as usize,
-                });
-            }
-        }
-        shapes
+                fresh
+            })
+            .map(|config| InstructionShape {
+                rows: config.m as usize,
+                columns: config.n as usize,
+                depth: config.k as usize,
+            })
+            .collect()
     }
 
     /// The base setting of an instruction of `shape`.
@@ -149,18 +151,34 @@ impl<'a> ConvCandidates<'a> {
             ..fragments
         };
         around.push(with(grown, MatmulPlaneLayout::new(1, 2)));
-        if across {
-            let one = PlaneFragmentMicrokernelSettings {
-                along_m: NonZeroUsize::MIN,
-                along_n: NonZeroUsize::MIN,
-                ..fragments
-            };
-            let alone = with(one, MatmulPlaneLayout::new(1, 1));
-            for planes in Self::counts(self.planes_across()) {
-                around.push(alone.across(planes));
-            }
-        }
+        around.extend(Self::across_rows(
+            &with,
+            fragments,
+            self.planes_across(),
+            across,
+        ));
         around
+    }
+
+    /// One instruction a plane, the planes spent across the output rows; nothing unless `across`.
+    fn across_rows(
+        with: &impl Fn(PlaneFragmentMicrokernelSettings, MatmulPlaneLayout) -> ConvSettings,
+        fragments: PlaneFragmentMicrokernelSettings,
+        planes_across: usize,
+        across: bool,
+    ) -> Vec<ConvSettings> {
+        if !across {
+            return Vec::new();
+        }
+        let one = PlaneFragmentMicrokernelSettings {
+            along_m: NonZeroUsize::MIN,
+            along_n: NonZeroUsize::MIN,
+            ..fragments
+        };
+        let alone = with(one, MatmulPlaneLayout::new(1, 1));
+        Self::counts(planes_across)
+            .map(|planes| alone.across(planes))
+            .collect()
     }
 
     /// Registers of a unit the accumulators of its plane's fragments may take. No runtime reports

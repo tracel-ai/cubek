@@ -440,6 +440,7 @@ fn why(declined: impl Into<Refusal>) -> &'static str {
 
 /// A launch of dense half precision operands to refuse, shaped as stated: the tuned launch of
 /// `pass` over `args`, which a quantized lhs declines whatever else it states.
+#[derive(Debug)]
 struct Refused {
     pass: Pass,
     quantized: bool,

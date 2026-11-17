@@ -13,6 +13,11 @@ use cubek_std::routine::Routine;
 use cubek_std::{Hardware, UnitDispatch};
 
 const ROUTINE: UnitRegistersConvRoutine = UnitRegistersConvRoutine;
+const THREADS: u32 = 12;
+const CORES: u32 = 12;
+const SMT_THREADS: u32 = 32;
+const SMT_CORES: u32 = 16;
+const ODD_CHANNELS: usize = 10;
 
 /// One image of `f32` through `operation`, over the map and channels the tests share.
 fn on(operation: ConvolutionOperation) -> ConvProblem {
@@ -39,14 +44,18 @@ fn layer(operation: ConvolutionOperation, channels_in: usize) -> ConvProblem {
 /// A CPU runtime offers no plane instruction, so the default tile strategy is the unit routine's.
 #[test]
 fn only_a_device_with_no_plane_instruction_leaves_the_default_to_the_unit_routine() {
-    assert!(CubeStagedConvRoutine.settings(&cpu(12, 12)).is_empty());
+    assert!(
+        CubeStagedConvRoutine
+            .settings(&cpu(THREADS, CORES))
+            .is_empty()
+    );
     assert!(!CubeStagedConvRoutine.settings(&nvidia()).is_empty());
 }
 
 /// Every operation prepares at each block setting, at the block its form gives that setting.
 #[test]
 fn every_operation_prepares_at_each_block_setting_on_a_cpu_runtime() {
-    let hw = cpu(12, 12);
+    let hw = cpu(THREADS, CORES);
     assert!(!ROUTINE.settings(&hw).is_empty());
     for operation in [
         ConvolutionOperation::Forward,
@@ -79,7 +88,7 @@ fn the_block_depth_is_one_register_of_the_sums() {
         ..f32_sums.clone()
     };
     for (load_width, f32_depth) in [(128, 4), (256, 8), (512, 16)] {
-        let mut hw = cpu(12, 12);
+        let mut hw = cpu(THREADS, CORES);
         devices::topology(&mut hw).load_width = load_width;
         assert_eq!(BlockDepth::of(&hw), BlockDepth::OneRegister);
         let depth = |problem: &ConvProblem| BlockDepth::of(&hw).size(&hw, problem);
@@ -94,7 +103,7 @@ fn the_block_depth_is_one_register_of_the_sums() {
 fn the_largest_blocks_follow_the_registers_the_device_keeps_live() {
     let f32 = Conv2dElement::F32.elem_type();
     let f64 = ElemType::Float(FloatKind::F64);
-    let mut hw = cpu(12, 12);
+    let mut hw = cpu(THREADS, CORES);
     assert_eq!(BlockForm::Dot.largest_block(&hw, f32), (4, 2));
     assert_eq!(BlockForm::Outer.largest_block(&hw, f32), (4, 8));
     assert_eq!(BlockForm::Dot.largest_block(&hw, f64), (4, 2));
@@ -108,7 +117,7 @@ fn the_largest_blocks_follow_the_registers_the_device_keeps_live() {
 /// at a time.
 #[test]
 fn a_forward_reads_its_rhs_as_wide_as_its_input() {
-    let hw = cpu(12, 12);
+    let hw = cpu(THREADS, CORES);
     let blueprint = first_served(&hw, &on(ConvolutionOperation::Forward));
     assert!(blueprint.widths.lhs > 1);
     assert_eq!(blueprint.widths.rhs, blueprint.widths.lhs);
@@ -118,8 +127,8 @@ fn a_forward_reads_its_rhs_as_wide_as_its_input() {
 /// An input vector not dividing the rows is narrowed to one that does, never declined.
 #[test]
 fn an_input_vector_not_dividing_the_rows_is_narrowed_not_declined() {
-    let hw = cpu(12, 12);
-    let problem = layer(ConvolutionOperation::BackwardWeight, 10);
+    let hw = cpu(THREADS, CORES);
+    let problem = layer(ConvolutionOperation::BackwardWeight, ODD_CHANNELS);
     for settings in ROUTINE.settings(&hw) {
         let (blueprint, _) = ROUTINE
             .prepare(&hw, &problem, &settings)
@@ -173,7 +182,7 @@ fn units_sweeping_every_cube_take_a_core_each() {
 #[test]
 fn units_number_the_physical_cores_not_the_threads() {
     let (problem, _) = catalog_entry("cpu_3x3_c64_56");
-    let hw = cpu(32, 16);
+    let hw = cpu(SMT_THREADS, SMT_CORES);
     assert_eq!(hw.unit_dispatch(), UnitDispatch::Sweeping { cores: 16 });
     assert_eq!(units_of(&first_served(&hw, &problem), &problem), 16);
 }
@@ -183,7 +192,10 @@ fn units_number_the_physical_cores_not_the_threads() {
 fn fewer_tiles_than_cores_take_a_unit_each() {
     let (problem, _) = catalog_entry("cpu_narrow_c64_7");
     assert_eq!(
-        units_of(&first_served(&cpu(32, 16), &problem), &problem),
+        units_of(
+            &first_served(&cpu(SMT_THREADS, SMT_CORES), &problem),
+            &problem
+        ),
         14
     );
 }

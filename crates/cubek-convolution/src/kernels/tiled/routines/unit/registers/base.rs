@@ -94,18 +94,16 @@ impl PlaneDeal {
     /// The order the launch's planes take the tiles of `roles`' plane axes in, a box's taken in
     /// `cube_order` with `along_n` planes along the columns.
     pub fn order(self, roles: &ConvRoles, along_n: usize, cube_order: CubeOrder) -> PlaneOrder {
+        let axes = roles.axes();
         match self {
-            Self::Boxed(split) => {
-                let axes = roles.axes();
-                PlaneOrder::new(
-                    &[
-                        (axes.m, split.rows),
-                        (axes.n, along_n),
-                        (roles.free.across, split.across),
-                    ],
-                    cube_order,
-                )
-            }
+            Self::Boxed(split) => PlaneOrder::new(
+                &[
+                    (axes.m, split.rows),
+                    (axes.n, along_n),
+                    (roles.free.across, split.across),
+                ],
+                cube_order,
+            ),
             Self::InTurns { units } => PlaneOrder::new(&[], CubeOrder::RowMajor).cubes_of(units),
         }
     }
@@ -191,35 +189,42 @@ impl UnitRegistersConvRoutine {
         let roles = problem.roles();
         let axes = roles.axes();
         let runs_along = |axis| axes.dim(axis);
-        if runs_along(roles.inner.lhs) == Some(MatmulDim::K) {
-            vectorization.require(VectorRequirement::Access {
+        let lhs_access = (runs_along(roles.inner.lhs) == Some(MatmulDim::K)).then(|| {
+            VectorRequirement::Access {
                 operand: MatmulOperand::Lhs,
                 elements: problem.extent(axes.k),
-            });
-        }
+            }
+        });
         let out_beside_rhs = [roles.inner.rhs, roles.inner.out]
             .into_iter()
             .all(|axis| runs_along(axis) == Some(MatmulDim::N));
-        match out_beside_rhs {
-            true => {
-                vectorization.require(VectorRequirement::Access {
+        let out_requirements = match out_beside_rhs {
+            true => vec![
+                VectorRequirement::Access {
                     operand: MatmulOperand::Out,
                     elements: microkernel.settings.columns.get(),
-                });
-                vectorization.require(VectorRequirement::Together {
+                },
+                VectorRequirement::Together {
                     operand: MatmulOperand::Rhs,
                     with: MatmulOperand::Out,
-                });
-            }
-            false => vectorization.require(VectorRequirement::Elementwise {
+                },
+            ],
+            false => vec![VectorRequirement::Elementwise {
                 operand: MatmulOperand::Out,
-            }),
-        }
-        if runs_along(roles.inner.rhs) == Some(MatmulDim::K) {
-            vectorization.require(VectorRequirement::Together {
+            }],
+        };
+        let rhs_with_lhs = (runs_along(roles.inner.rhs) == Some(MatmulDim::K)).then_some(
+            VectorRequirement::Together {
                 operand: MatmulOperand::Rhs,
                 with: MatmulOperand::Lhs,
-            });
+            },
+        );
+        for requirement in lhs_access
+            .into_iter()
+            .chain(out_requirements)
+            .chain(rhs_with_lhs)
+        {
+            vectorization.require(requirement);
         }
         vectorization
     }

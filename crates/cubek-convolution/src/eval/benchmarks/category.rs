@@ -7,6 +7,7 @@ use crate::definition::Conv2dCost;
 
 use crate::Strategy;
 
+#[derive(Debug)]
 pub struct Category;
 
 impl cubek_test_utils::Category for Category {

@@ -40,15 +40,10 @@ impl ConvStep {
     /// The axis a stage walks and the steps along it: the contracted axis alone, or the second
     /// one where it shares the step.
     pub(super) fn walk(self, roles: &ConvRoles, problem: &ConvProblem) -> (Axis, usize) {
-        match self {
-            Self::Alone { k } => {
-                let axis = roles.axes().k;
-                (axis, problem.extent(axis).div_ceil(k))
-            }
-            Self::Beside { beside, .. } => {
-                let axis = roles.contracted.beside;
-                (axis, problem.extent(axis).div_ceil(beside))
-            }
-        }
+        let (axis, step) = match self {
+            Self::Alone { k } => (roles.axes().k, k),
+            Self::Beside { beside, .. } => (roles.contracted.beside, beside),
+        };
+        (axis, problem.extent(axis).div_ceil(step))
     }
 }

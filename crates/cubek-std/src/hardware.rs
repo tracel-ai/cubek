@@ -601,6 +601,12 @@ mod tests {
     };
     use cubecl_common::profile::TimingMethod;
 
+    const PLANE_32: u32 = 32;
+    const CORES_32: u32 = 32;
+    const WITH_PLANE_OPS: bool = true;
+    const NO_PLANE_OPS: bool = false;
+    const NO_CPU_CORES: Option<u32> = None;
+
     /// A device reporting `plane_size_min..=plane_size_max` planes, with plane operations or
     /// without, on `num_cpu_cores` cores where it is a CPU runtime.
     fn device(
@@ -675,7 +681,7 @@ mod tests {
     /// A vector register holds as many values as a load, within the widest vector.
     #[test]
     fn a_register_holds_a_load_within_the_widest_vector() {
-        let hw = device(32, 32, true, None);
+        let hw = device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES);
         assert_eq!(hw.register_values(ElemType::Float(FloatKind::F64)), 2);
         assert_eq!(hw.register_values(ElemType::Float(FloatKind::F32)), 4);
         assert_eq!(hw.register_values(ElemType::Float(FloatKind::F16)), 4);
@@ -688,7 +694,7 @@ mod tests {
     fn a_staggered_pitch_is_an_odd_count_of_transactions() {
         let f16 = ElemType::Float(FloatKind::F16);
         let f32 = ElemType::Float(FloatKind::F32);
-        let gpu = device(32, 32, true, None);
+        let gpu = device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES);
         assert_eq!(gpu.staggered_pitch(4096, f16), 4096 + 64);
         assert_eq!(gpu.staggered_pitch(12288, f16), 12288 + 64);
         assert_eq!(gpu.staggered_pitch(4096, f32), 4096 + 32);
@@ -708,7 +714,10 @@ mod tests {
     /// and an exact width is the width.
     #[test]
     fn only_a_committed_plane_width_is_a_width() {
-        assert_eq!(device(32, 32, true, None).plane_dim(), Ok(32));
+        assert_eq!(
+            device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES).plane_dim(),
+            Ok(32)
+        );
         assert_eq!(device(1, 1, false, Some(12)).plane_size(), Ok(1));
         assert_eq!(
             device(8, 128, false, None).plane_dim(),
@@ -734,14 +743,14 @@ mod tests {
     /// unit, and a wider cube fills the same device in fewer of itself.
     #[test]
     fn a_fill_counts_units_on_the_workers_reported() {
-        let mut unknown = device(32, 32, true, None);
+        let mut unknown = device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES);
         Arc::make_mut(&mut unknown.properties)
             .hardware
             .num_streaming_multiprocessors = None;
         assert_eq!(unknown.units_to_fill(), None);
         assert_eq!(unknown.cubes_to_fill(32), None);
         assert_eq!(device(1, 1, false, Some(12)).units_to_fill(), Some(12));
-        let gpu = device(32, 32, true, None);
+        let gpu = device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES);
         assert_eq!(
             gpu.cubes_to_fill(32).unwrap(),
             gpu.cubes_to_fill(256).unwrap() * 8
@@ -752,7 +761,7 @@ mod tests {
     /// every core where it states no physical ones; planes with operations are spread, as on a GPU.
     #[test]
     fn single_unit_planes_are_swept_by_the_physical_cores() {
-        let mut cpu = device(1, 1, false, Some(32));
+        let mut cpu = device(1, 1, NO_PLANE_OPS, Some(CORES_32));
         assert_eq!(cpu.unit_dispatch(), UnitDispatch::Sweeping { cores: 32 });
         Arc::make_mut(&mut cpu.properties)
             .hardware
@@ -763,7 +772,7 @@ mod tests {
             UnitDispatch::Spread
         );
         assert_eq!(
-            device(32, 32, true, None).unit_dispatch(),
+            device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES).unit_dispatch(),
             UnitDispatch::Spread
         );
     }

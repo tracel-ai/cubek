@@ -1,4 +1,5 @@
 use super::{ConvPartitioning, ConvProblem, ConvStaging};
+use cubecl::tile::Axis;
 use cubecl::tile::launch::{MaskedExtent, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
@@ -75,31 +76,38 @@ impl<M> TileConvBlueprint<M> {
             });
             let innermost = problem.roles().inner.get(operand);
             if partitioning.overhangs(innermost) {
-                // Where a read can fall before the gathered operand's start (padding, or the
-                // data backward's taps), its vectors cannot be tested a vector at a time at an edge
-                // a tile overhangs: it is read one element wide there.
-                vectorization.require(match (operand, problem.underflows()) {
-                    (MatmulOperand::Lhs, true) => VectorRequirement::Masked {
-                        operand,
-                        extent: MaskedExtent::Unknown,
-                    },
-                    (MatmulOperand::Lhs, false) | (MatmulOperand::Rhs | MatmulOperand::Out, _) => {
-                        VectorRequirement::masked(operand, partitioning.space(), innermost)
-                    }
-                });
+                vectorization.require(Self::masked(problem, partitioning, operand, innermost));
             }
         }
+        let ceiling = |operand| hw.vector_ceiling(problem.elements.get(operand));
         let width = |operand| match operands.contains(&operand) {
-            true => {
-                let ceiling = hw.vector_ceiling(problem.elements.get(operand));
-                vectorization.width(operand, |_| ceiling)
-            }
+            true => vectorization.width(operand, |_| ceiling(operand)),
             false => 1,
         };
         MatmulOperands {
             lhs: width(MatmulOperand::Lhs),
             rhs: width(MatmulOperand::Rhs),
             out: width(MatmulOperand::Out),
+        }
+    }
+
+    /// Where a read can fall before the gathered operand's start (padding, or the data backward's
+    /// taps), its vectors cannot be tested a vector at a time at an edge a tile overhangs: it is
+    /// read one element wide there.
+    fn masked(
+        problem: &ConvProblem,
+        partitioning: &ConvPartitioning,
+        operand: MatmulOperand,
+        innermost: Axis,
+    ) -> VectorRequirement<MatmulOperand> {
+        use MatmulOperand::{Lhs, Out, Rhs};
+        let space = partitioning.space();
+        match (operand, problem.underflows()) {
+            (Lhs, true) => VectorRequirement::Masked {
+                operand,
+                extent: MaskedExtent::Unknown,
+            },
+            (Lhs, false) | (Rhs | Out, _) => VectorRequirement::masked(operand, space, innermost),
         }
     }
 }

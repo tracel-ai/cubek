@@ -54,12 +54,10 @@ impl BlockForm {
             Self::Dot => (along(Self::MOST_ALONG), along(Self::MOST_ALONG)),
             Self::Outer => (powers(Self::MOST_ALONG), powers(budget)),
         };
+        let held = |count: usize| registers.registers_for(count);
         let cost = |rows: usize, columns: usize| match self {
             Self::Dot => rows * columns + rows + columns,
-            Self::Outer => {
-                let row_registers = registers.registers_for(rows);
-                columns * row_registers + row_registers + registers.registers_for(columns)
-            }
+            Self::Outer => columns * held(rows) + held(rows) + held(columns),
         };
         rows.iter()
             .flat_map(|&rows| columns.iter().map(move |&columns| (rows, columns)))

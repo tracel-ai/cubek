@@ -13,6 +13,9 @@ use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::devices::topology;
 use cubek_std::routine::Routine;
 
+const ROWS_8: usize = 8;
+const FRAGMENTS_16: usize = 16;
+
 fn key(problem: Conv2dProblem) -> ConvTuneKey {
     ConvTuneKey::of(&ConvProblem::from(&problem), &nvidia())
 }
@@ -44,7 +47,11 @@ const WIDE: usize = 4096;
 fn a_map_56_wide_races_the_56_row_candidate_and_the_base_together() {
     let (hw, key) = (cmma_8x32_only(), key(wide_map_56()));
     let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
-    let base = ConvSettings::new(8, Fragments::grid(2, 2, 1), MatmulPlaneLayout::new(2, 2));
+    let base = ConvSettings::new(
+        ROWS_8,
+        Fragments::grid(2, 2, 1),
+        MatmulPlaneLayout::new(2, 2),
+    );
     assert_eq!(priority(settings::F7X1_P1X2_T8), CandidatePriority::FIRST);
     assert_eq!(priority(base), CandidatePriority::FIRST);
 }
@@ -69,7 +76,11 @@ fn a_grid_short_of_half_the_device_is_in_a_lower_band() {
 fn boxes_covering_twice_the_map_are_in_a_lower_band() {
     let (hw, key) = (cmma_8x32_only(), key(wide_map_56()));
     let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
-    let overhanging = ConvSettings::new(8, Fragments::grid(16, 1, 1), MatmulPlaneLayout::new(1, 2));
+    let overhanging = ConvSettings::new(
+        ROWS_8,
+        Fragments::grid(FRAGMENTS_16, 1, 1),
+        MatmulPlaneLayout::new(1, 2),
+    );
     assert!(priority(overhanging) < priority(settings::F7X1_P1X2_T8));
 }
 

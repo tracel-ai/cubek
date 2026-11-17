@@ -25,6 +25,12 @@ pub struct ConvTensors {
     dtypes: MatmulElems,
 }
 
+impl core::fmt::Debug for ConvTensors {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ConvTensors").finish_non_exhaustive()
+    }
+}
+
 impl ConvTensors {
     /// The forward convolution of `input` and `weight` into `out` over `window`, each element as
     /// `dtypes` says.
@@ -242,13 +248,14 @@ impl ConvTensors {
             .axes(&roles.free.in_order())
             .vectorize(widths.out)
             .build()?;
-        if blueprint.masks_out && !out.spec.is_checked() {
-            let masked = roles
-                .free
-                .in_order()
-                .map(|axis| (axis == roles.axes().m).then_some(Boundary::Zero));
-            out.spec = out.spec.boundaries(&masked);
-        }
+        let masked = roles
+            .free
+            .in_order()
+            .map(|axis| (axis == roles.axes().m).then_some(Boundary::Zero));
+        out.spec = match blueprint.masks_out && !out.spec.is_checked() {
+            true => out.spec.boundaries(&masked),
+            false => out.spec,
+        };
         let (input, rhs) = (input.build()?, rhs.build()?);
         Ok(ConvBinding {
             launcher,
