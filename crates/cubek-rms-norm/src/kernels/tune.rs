@@ -91,13 +91,24 @@ pub struct RmsNormCall {
     pub epsilon: f32,
 }
 
-/// What an autotune's candidate hands back: the norm.
+/// What an autotune's candidate hands back: the norm, and the client it lives on, which the
+/// autotune checks read two candidates' outputs through.
 #[derive(Clone)]
 pub struct RmsNormOutput {
+    pub client: Client,
     pub handle: TensorHandle,
 }
 
-impl AutotuneOutput for RmsNormOutput {}
+impl AutotuneOutput for RmsNormOutput {
+    #[cfg(feature = "autotune-checks")]
+    fn check_equivalence(&self, other: Self) {
+        cubek_matmul::kernels::tune::assert_equivalent(
+            &self.client,
+            self.handle.clone(),
+            other.handle,
+        );
+    }
+}
 
 /// A routine of this kind at one of its settings, as a value: what a fused tail's election hashes,
 /// and what names a candidate ([`RmsNormCandidate::settings`]).
@@ -408,7 +419,10 @@ where
     /// The norm of `call` at this candidate's setting.
     fn run(&self, call: RmsNormCall) -> Result<RmsNormOutput, String> {
         self.launch(&call)
-            .map(|handle| RmsNormOutput { handle })
+            .map(|handle| RmsNormOutput {
+                client: call.client.clone(),
+                handle,
+            })
             .map_err(|error| error.to_string())
     }
 }

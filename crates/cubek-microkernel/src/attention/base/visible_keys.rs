@@ -300,13 +300,21 @@ impl StepBias {
         }
     }
 
-    /// Of `steps` steps of `keys` keys from step `first`, those every query sees whole, which
-    /// come first: the steps a walk takes with the unmasked bias.
-    pub fn unmasked_steps(&self, first: usize, steps: usize, #[comptime] keys: usize) -> usize {
+    /// Of `steps` steps of `keys` keys taken one every `in_turns` from step `first`, as a cube
+    /// sharing its box with `in_turns - 1` others takes them, those every query sees whole: the
+    /// steps a walk takes with the unmasked bias. A run's steps rise and only the last of a box
+    /// are masked, so they come first.
+    pub fn unmasked_steps(
+        &self,
+        first: usize,
+        steps: usize,
+        #[comptime] keys: usize,
+        #[comptime] in_turns: usize,
+    ) -> usize {
         let seen = self.seen_by_all / keys;
         let mut unmasked = 0usize;
         if seen > first {
-            unmasked = steps.min(seen - first);
+            unmasked = steps.min((seen - first).div_ceil(in_turns));
         }
 
         unmasked

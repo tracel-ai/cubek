@@ -126,9 +126,13 @@ mod plane_shuffle {
         for m in [1, 8] {
             for (name, problem) in problems(m) {
                 for settings in PlaneShuffleMatmulRoutine.packed_settings() {
-                    let (blueprint, _) = PlaneShuffleMatmulRoutine
-                        .prepare(&hw, &problem, &settings)
-                        .unwrap_or_else(|error| panic!("{name} at {settings}: {error:?}"));
+                    let prepared = PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
+                    if !PlaneShuffleMatmulRoutine::sizes_packed(&settings, &problem) {
+                        assert!(prepared.is_err(), "{name} at {settings} sized a plane");
+                        continue;
+                    }
+                    let (blueprint, _) =
+                        prepared.unwrap_or_else(|error| panic!("{name} at {settings}: {error:?}"));
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
@@ -200,13 +204,12 @@ mod cube_shuffle {
 
 mod cube_staged {
     use super::*;
-    use crate::kernels::{CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings};
+    use crate::kernels::CubeStagedMatmulRoutine;
     use cubecl::features::MmaConfig;
     use cubecl::tile::StageStorage;
     use cubecl::tile::launch::Refusal;
     use cubecl::tile::stage::RowChunks;
     use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
-    use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
     use cubek_microkernel::matmul::{MatmulDim, MatmulMicrokernel};
     use cubek_std::devices;
     use cubek_std::routine::Routine;
@@ -264,8 +267,9 @@ mod cube_staged {
 
     /// A swizzled stage is read a chunk a unit, so the rhs decoding into one binds a line no
     /// wider than a chunk; a padded one takes a whole instruction step of `K` a line, so one unit
-    /// decodes a whole scale block. Every packed box through each transport, on a device offering
-    /// `f16` to `cmma` and to `mma`.
+    /// decodes a whole scale block. Every packed box under each transport: on a device offering
+    /// `f16` to `cmma` and to `mma`, where the tile layer picks `cmma`, and on one offering it to
+    /// `mma` alone.
     #[test]
     fn a_packed_rhs_decoding_into_a_swizzled_stage_binds_a_chunk_a_line() {
         let f16_into_f32 = |m, n, k| MmaConfig {
@@ -276,46 +280,39 @@ mod cube_staged {
             n,
             k,
         };
-        let hw = devices::offering_mma(
-            devices::offering_cmma(devices::strix_halo(), [f16_into_f32(16, 16, 16)]),
-            [f16_into_f32(16, 8, 16)],
-        );
+        let mma_alone = devices::offering_mma(devices::strix_halo(), [f16_into_f32(16, 8, 16)]);
+        let both = devices::offering_cmma(mma_alone.clone(), [f16_into_f32(16, 16, 16)]);
         let (_, problem) = problems(512)
             .into_iter()
             .find(|(name, _)| *name == "nvfp4 tile order")
             .expect("the problems hold tile order");
         let mut laid = Vec::new();
-        let settings = CubeStagedMatmulRoutine.packed_settings(&hw);
-        let through_mma = settings
-            .iter()
-            .map(|&settings| CubeStagedMatmulRoutineSettings {
-                microkernel: settings.microkernel.through(PlaneFragmentTransport::Mma),
-                ..settings
-            });
-        for settings in settings.iter().copied().chain(through_mma) {
-            let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings)
-            else {
-                continue;
-            };
-            // A stage holding the rhs as it is stored decodes nothing into it.
-            if blueprint.microkernel.decoded_stage().is_none() {
-                continue;
-            }
-            let StageStorage::Tiled { chunks, .. } = blueprint.shared_memory else {
-                panic!("{settings}: a matrix instruction's stage is tiled");
-            };
-            let step = blueprint.microkernel.plane.leaf_extent(MatmulDim::K);
-            let rhs = blueprint.widths.rhs;
-            match chunks {
-                RowChunks::Swizzled => {
-                    assert!(
-                        rhs * F16.size() <= RowChunks::CHUNK_BYTES,
-                        "{settings}: {rhs}"
-                    )
+        for hw in [both, mma_alone] {
+            for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
+                let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings)
+                else {
+                    continue;
+                };
+                // A stage holding the rhs as it is stored decodes nothing into it.
+                if blueprint.microkernel.decoded_stage().is_none() {
+                    continue;
                 }
-                RowChunks::Padded | RowChunks::InOrder => assert_eq!(rhs, step, "{settings}"),
+                let StageStorage::Tiled { chunks, .. } = blueprint.shared_memory else {
+                    panic!("{settings}: a matrix instruction's stage is tiled");
+                };
+                let step = blueprint.microkernel.plane.leaf_extent(MatmulDim::K);
+                let rhs = blueprint.widths.rhs;
+                match chunks {
+                    RowChunks::Swizzled => {
+                        assert!(
+                            rhs * F16.size() <= RowChunks::CHUNK_BYTES,
+                            "{settings}: {rhs}"
+                        )
+                    }
+                    RowChunks::Padded | RowChunks::InOrder => assert_eq!(rhs, step, "{settings}"),
+                }
+                laid.push(chunks);
             }
-            laid.push(chunks);
         }
         assert!(laid.contains(&RowChunks::Swizzled), "no setting swizzled");
         assert!(laid.contains(&RowChunks::Padded), "no setting padded");
@@ -326,7 +323,7 @@ mod packed_lhs {
     use super::*;
     use crate::kernels::select::packed::nvfp4_scheme;
     use crate::kernels::{
-        CubeShuffleMatmulRoutine, CubeStagedMatmulRoutine, DequantizedMatmulRoutine,
+        CubeShuffleMatmulRoutine, CubeStagedMatmulRoutine, PlaneDequantizeMatmulRoutine,
         PlaneShuffleMatmulRoutine,
     };
     use cubecl::features::MmaConfig;
@@ -353,8 +350,9 @@ mod packed_lhs {
     }
 
     /// A packed `[m, k]` input against a float `[k, n]` one is declined by the routines that
-    /// stream the `[k, n]` input, and served by the routine that decodes every packed input
-    /// first: the default a product with nothing chosen falls back to.
+    /// stream the `[k, n]` input, and served by the decode of the packed input then a float
+    /// routine ([`Decoded`](crate::kernels::plan::Decoded)): the default a product with nothing
+    /// chosen falls back to.
     #[test]
     fn a_packed_lhs_is_decoded_where_the_streaming_routines_decline_it() {
         let hw = devices::offering_cmma(
@@ -391,16 +389,34 @@ mod packed_lhs {
                 );
             }
         }
-        let problem = packed_lhs(512);
-        let decoded = DequantizedMatmulRoutine {
-            dense: CubeStagedMatmulRoutine,
-        };
+        // The decode names a packed matrix's axes `K` and `N`: the `[m, k]` input's `m` is its `N`,
+        // in a product whose own `m` is one.
+        let m = 512;
+        let decode = MatmulRoutineProblem::packed(
+            1,
+            m,
+            4096,
+            F16,
+            MatmulOperands {
+                rhs: packed_lhs(m).packings.lhs,
+                ..MatmulOperands::all(None)
+            },
+        );
         assert!(
-            decoded
+            PlaneDequantizeMatmulRoutine
+                .prepare(&hw, &decode, &PlaneDequantizeMatmulRoutine::SETTINGS)
+                .is_ok(),
+            "the decode declines the packed lhs"
+        );
+        let dense = MatmulRoutineProblem::dense(m, 2048, 4096, F16);
+        assert!(
+            CubeStagedMatmulRoutine
                 .settings(&hw)
                 .iter()
-                .any(|settings| decoded.prepare(&hw, &problem, settings).is_ok()),
-            "no setting decodes the packed lhs and runs the float product"
+                .any(|settings| CubeStagedMatmulRoutine
+                    .prepare(&hw, &dense, settings)
+                    .is_ok()),
+            "no setting of the float product runs on the decoded lhs"
         );
     }
 }

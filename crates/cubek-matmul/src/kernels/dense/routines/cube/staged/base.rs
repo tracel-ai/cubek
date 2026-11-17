@@ -12,16 +12,16 @@ use crate::kernels::{
 };
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{
-    DestinationLaunch, Refusal, TmaStored, VectorRequirement, Vectorization,
+    Delivery, DestinationLaunch, Refusal, TmaStored, VectorRequirement, Vectorization,
 };
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::{
-    CubeStagedAsyncCopyRefusal, CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel,
-    CubeStagedMicrokernelSettings, CubeStagedResolved, CubeStagedStore, CubeStagedTmaRefusal,
-    CubeStagedTmaStoreRefusal, MatmulCubeSpace, MatmulCubeWrite,
+    CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
+    CubeStagedResolved, CubeStagedStore, CubeStagedTmaRefusal, CubeStagedTmaStoreRefusal,
+    MatmulCubeSpace, MatmulCubeWrite,
 };
 use cubek_microkernel::matmul::{
     MatmulBlocks, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulWorkItem,
@@ -71,18 +71,23 @@ impl<'a> CubeStagedPlacement<'a> {
         let item = view.work_item();
         CubeStagedMicrokernel::admits(&item)?;
         let by_units = fill.delivery == CubeStagedDelivery::Copy;
+        // An operand the TMA engine lands is read in the instruction the tile layer picks for
+        // landed operands: the planes take the first candidate whose sum it opens, as it opens it.
         let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
-            .find(|candidate| {
+            .filter(|candidate| {
                 by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
+            })
+            .find_map(|candidate| {
+                CubeStagedMicrokernel {
+                    fill,
+                    store,
+                    ..candidate
+                }
+                .summed(hw, &item)
             })
             .ok_or(Refusal::Declined {
                 why: CubeStagedMicrokernel::decline(settings),
             })?;
-        let microkernel = CubeStagedMicrokernel {
-            fill,
-            store,
-            ..microkernel
-        };
         if microkernel.walk().decoded().is_some() {
             view.check_steps(hw)?;
         }
@@ -114,14 +119,16 @@ impl<'a> CubeStagedPlacement<'a> {
         &self.resolved.microkernel
     }
 
-    /// Whether the TMA engine can fill its stages: a box lands each stage as its instruction
-    /// reads it ([`CubeStagedTmaRefusal`]), the operands are read through no index, and no
-    /// input's rows are one element wide.
+    /// Whether the TMA engine can fill its stages: the device has it and the ring holds what it
+    /// lands ([`Delivery::runs_on`], [`Delivery::holds`]), a box lands each stage as its
+    /// instruction reads it ([`CubeStagedTmaRefusal`]), the operands are read through no index,
+    /// and no input's rows are one element wide.
     pub(crate) fn check_tma_fill(&self, hw: &Hardware) -> Result<(), Refusal> {
         let microkernel = self.microkernel();
+        Delivery::Tma.runs_on(&hw.properties)?;
+        Delivery::Tma.holds(microkernel.ring.prefetch)?;
         let orders = microkernel.plane.orders;
         if let Some(refusal) = CubeStagedTmaRefusal::new(
-            hw,
             &self.contracted,
             &self.problem.buffers(orders),
             &self.cube_space,
@@ -142,14 +149,12 @@ impl<'a> CubeStagedPlacement<'a> {
         }
     }
 
-    /// Whether the copy engine can fill its stages through its ring
-    /// ([`CubeStagedAsyncCopyRefusal::new`]); the lines it copies are checked once the blueprint
-    /// binds their widths ([`check_copy_engine_lines`]).
+    /// Whether the copy engine can fill its stages through its ring: the device has it, and the
+    /// ring holds what it lands ([`Delivery::runs_on`], [`Delivery::holds`]); the lines it copies
+    /// are checked once the blueprint binds their widths ([`check_copy_engine_lines`]).
     pub(crate) fn check_copy_engine(&self, hw: &Hardware) -> Result<(), Refusal> {
-        match CubeStagedAsyncCopyRefusal::new(hw, &self.microkernel().ring) {
-            Some(refusal) => Err(refusal.into()),
-            None => Ok(()),
-        }
+        Delivery::AsyncPerUnit.runs_on(&hw.properties)?;
+        Delivery::AsyncPerUnit.holds(self.microkernel().ring.prefetch)
     }
 
     /// Its launch: launched beside the planes its fill sets aside, on a grid of the box's cubes,
@@ -167,7 +172,10 @@ impl<'a> CubeStagedPlacement<'a> {
             ..
         } = self;
         let microkernel = resolved.microkernel;
-        problem.check_block_scales(microkernel.block_scales())?;
+        problem.check_block_scales(
+            microkernel.block_scales(),
+            microkernel.fill.delivery == CubeStagedDelivery::Tma,
+        )?;
         let partitioning = view.partitioning(
             microkernel.launch_tiling(),
             &[item.axes.m, item.axes.n],
@@ -226,20 +234,19 @@ fn check_tma_store(
 }
 
 /// Whether the copy engine copies whole every line `blueprint` binds of the inputs it hands it,
-/// those its fill does not decode, of `contracted`: 4, 8 or 16 bytes
-/// ([`CubeStagedAsyncCopyRefusal::LineSize`]).
+/// those its fill does not decode, of `contracted` ([`Delivery::moves_lines`]).
 pub(crate) fn check_copy_engine_lines(
     blueprint: &CubeStagedMatmulRoutineBlueprint,
     contracted: &MatmulWorkItem,
 ) -> Result<(), Refusal> {
-    let copied: Vec<MatmulOperand> = MatmulOperand::INPUTS
+    MatmulOperand::INPUTS
         .into_iter()
         .filter(|&operand| blueprint.microkernel.reads.get(operand).staged().is_none())
-        .collect();
-    match CubeStagedAsyncCopyRefusal::of_widths(&copied, &blueprint.widths, contracted) {
-        Some(refusal) => Err(refusal.into()),
-        None => Ok(()),
-    }
+        .try_for_each(|operand| {
+            // Bits rather than bytes: an `e2m1` value is half of one.
+            let bits = blueprint.widths.get(operand) * contracted.elements.get(operand).size_bits();
+            Delivery::AsyncPerUnit.moves_lines(bits)
+        })
 }
 
 /// What every cube staged routine's cubes access: nothing of the routine's own, which only walks

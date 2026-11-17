@@ -4,13 +4,13 @@
 use core::cmp::Reverse;
 use std::sync::Arc;
 
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{Delivery, Refusal};
 use cubecl::tile::layout::Stagger;
 use cubecl::{
     CubeDim,
     client::Client,
-    features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig, Tma},
-    ir::{DeviceProperties, ElemType, FloatKind, OpaqueType, TargetProperties, Type},
+    features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig},
+    ir::{DeviceProperties, ElemType, FloatKind, TargetProperties, Type},
     quant::scheme::{QuantMode, QuantScheme, QuantValue},
     tile::BlockScaledOperands,
 };
@@ -24,6 +24,9 @@ pub struct Hardware {
     /// What the runtime reports about the device. Every capability and limit a routine adapts to
     /// is read here, as cubecl states it.
     pub properties: Arc<DeviceProperties>,
+    /// What the compiler targets on it: how its matrix instructions lay their registers. A
+    /// decision the tile layer makes reads it beside the properties, as a kernel does compiling.
+    pub target: Arc<TargetProperties>,
     /// Whether an `mma` accumulator holds its cells where the `A` operand of a contraction as
     /// deep as it is wide holds them, and a run of accumulators along a deeper contraction where
     /// its `A` holds them one after another, so a product contracted again reads them as that
@@ -31,7 +34,8 @@ pub struct Hardware {
     ///
     /// True on CUDA, and on Metal, whose simdgroup matrix gives every lane two cells of one row
     /// in each operand. False on RDNA, whose `A` runs along its rows against an accumulator down
-    /// its columns, and whose RDNA3 `A` is held twice across the wave.
+    /// its columns, and whose RDNA3 `A` is held twice across the wave. Read off
+    /// [`target`](Self::target).
     pub accumulator_as_a: bool,
 }
 
@@ -52,6 +56,7 @@ impl Hardware {
             properties,
             accumulator_as_a: mma.register_layout_a == mma.register_layout_acc
                 && mma.register_duplication_a == mma.register_duplication_acc,
+            target: Arc::new(target.clone()),
         }
     }
 
@@ -264,26 +269,23 @@ impl Hardware {
             .contains(AtomicUsage::Add)
     }
 
+    /// Whether the device offers any matrix instruction, a cmma or a manual MMA: what a plane that
+    /// holds fragments contracts through. The CPU runtime offers none.
+    pub fn offers_matrix_instruction(&self) -> bool {
+        let matmul = &self.properties.features.matmul;
+        !matmul.cmma.is_empty() || !matmul.mma.is_empty()
+    }
+
     /// Whether a stage may be filled by the TMA engine: the bulk tensor copy, and the barriers its
-    /// copies land on.
+    /// copies land on, as the tile DSL asks ([`Delivery::runs_on`]).
     pub fn bulk_tensor_copy(&self) -> bool {
-        self.properties.features.tma.contains(Tma::Base) && self.barrier_ops()
+        Delivery::Tma.runs_on(&self.properties).is_ok()
     }
 
     /// Whether a stage may be filled by the units' async copies: the copy engine, and the
-    /// barriers its copies land on.
+    /// barriers its copies land on, as the tile DSL asks ([`Delivery::runs_on`]).
     pub fn unit_async_copy(&self) -> bool {
-        self.properties.features.copy_async && self.barrier_ops()
-    }
-
-    /// Whether the runtime carries a barrier type, which is how a stage's producer and consumer
-    /// meet when they are different planes.
-    pub fn barrier_ops(&self) -> bool {
-        self.properties
-            .features
-            .types
-            .opaque
-            .contains(&OpaqueType::Barrier)
+        Delivery::AsyncPerUnit.runs_on(&self.properties).is_ok()
     }
 }
 
@@ -584,16 +586,13 @@ mod tests {
             fingerprint: "fixture".into(),
             physical: None,
         };
-        Hardware {
-            properties: Arc::new(DeviceProperties::new(
-                features,
-                MemoryDeviceProperties::new(u64::MAX, 4),
-                hardware,
-                TimingMethod::System,
-                identity,
-            )),
-            accumulator_as_a: false,
-        }
+        devices::hardware(DeviceProperties::new(
+            features,
+            MemoryDeviceProperties::new(u64::MAX, 4),
+            hardware,
+            TimingMethod::System,
+            identity,
+        ))
     }
 
     fn shape(m: u32, n: u32, k: u32) -> MmaConfig {

@@ -1,4 +1,5 @@
-use crate::pool::{build_output_tensor, output_host_f32, validate_test};
+use crate::pool::{PoolBackward, Seeded, Unpooled};
+use crate::pool::{build_output_tensor, output_host_f32};
 use cubecl::{
     ir::{ElemType, FloatKind},
     prelude::*,
@@ -9,41 +10,61 @@ use cubek_pool::{
         AdaptiveAvgPoolOptions, AvgPoolOptions, MaxPoolOptions, PoolBackwardProblem, PoolError,
         PoolMode,
     },
-    eval::cpu_reference::cpu_reference_pool_backward,
     pool3d_backward,
 };
+use cubek_test_utils::ScopeUnderTest;
 use cubek_test_utils::TestInput;
 
 const TOLERANCE: f32 = 1e-5;
 
 #[test]
 fn test_adaptive_avg_pool3d_backward_global() {
-    run_case([5, 7, 4], [2, 1, 1, 1, 3], [1, 1, 1], 2001);
+    PoolBackward.check([Unpooled::adaptive(
+        [5, 7, 4],
+        [2, 1, 1, 1, 3],
+        [1, 1, 1],
+        2001,
+    )]);
 }
 
 #[test]
 fn test_adaptive_avg_pool3d_backward_divisible_vectorized_channels() {
-    run_case([6, 8, 10], [2, 3, 4, 5, 8], [3, 4, 5], 2002);
+    PoolBackward.check([Unpooled::adaptive(
+        [6, 8, 10],
+        [2, 3, 4, 5, 8],
+        [3, 4, 5],
+        2002,
+    )]);
 }
 
 #[test]
 fn test_adaptive_avg_pool3d_backward_non_divisible_overlap_odd_channels() {
-    run_case([5, 7, 4], [2, 3, 4, 3, 7], [3, 4, 3], 2003);
+    PoolBackward.check([Unpooled::adaptive(
+        [5, 7, 4],
+        [2, 3, 4, 3, 7],
+        [3, 4, 3],
+        2003,
+    )]);
 }
 
 #[test]
 fn test_adaptive_avg_pool3d_backward_output_larger_than_input() {
-    run_case([2, 3, 2], [1, 4, 5, 3, 5], [4, 5, 3], 2004);
+    PoolBackward.check([Unpooled::adaptive(
+        [2, 3, 2],
+        [1, 4, 5, 3, 5],
+        [4, 5, 3],
+        2004,
+    )]);
 }
 
 #[test]
 fn test_adaptive_avg_pool3d_backward_large_dimension_index_math() {
-    run_case(
+    PoolBackward.check([Unpooled::adaptive(
         [100_000, 1, 1],
         [1, 100_000, 1, 1, 1],
         [100_000, 1, 1],
         2005,
-    );
+    )]);
 }
 
 #[test]
@@ -248,45 +269,27 @@ fn test_adaptive_avg_pool3d_backward_f16_large_global_accumulates_in_f32() {
     assert!((sum - 1.0).abs() <= 1e-2, "expected sum 1, got {sum}");
 }
 
-fn run_case(
-    input_size: [usize; 3],
-    out_grad_shape: [usize; 5],
-    output_size: [usize; 3],
-    seed: u64,
-) {
-    let client = cubecl::test_device().client();
-    let problem = PoolBackwardProblem {
-        input_size,
-        out_grad_shape: Shape::from(out_grad_shape),
-        with_indices: false,
-        mode: AdaptiveAvgPoolOptions::new(output_size).into(),
-    };
-    let input_shape = vec![
-        problem.out_grad_shape[0],
-        problem.input_size[0],
-        problem.input_size[1],
-        problem.input_size[2],
-        problem.out_grad_shape[4],
-    ];
-    let (input, input_data) = TestInput::builder(client.clone(), input_shape.clone())
-        .uniform(seed, -1.0, 1.0)
-        .generate_with_f32_host_data();
-    let (out_grad, out_grad_data) =
-        TestInput::builder(client.clone(), problem.out_grad_shape.to_vec())
-            .uniform(seed + 1, -1.0, 1.0)
-            .generate_with_f32_host_data();
-    let in_grad = build_output_tensor(&client, input_shape, input.dtype);
-
-    let result = pool3d_backward(
-        &client,
-        input.clone().binding(),
-        out_grad.binding(),
-        in_grad.clone().binding(),
-        problem.mode.clone(),
-        input.dtype,
-    );
-    let actual = output_host_f32(&client, in_grad);
-    let expected = cpu_reference_pool_backward(&out_grad_data, &input_data, problem);
-
-    validate_test(result, actual, expected, TOLERANCE);
+impl Unpooled<3> {
+    /// The input's gradient of an adaptive average pool of `input_size` to `output_size`, its input
+    /// and output gradient seeded by `seed` in `[-1, 1)`.
+    fn adaptive(
+        input_size: [usize; 3],
+        out_grad_shape: [usize; 5],
+        output_size: [usize; 3],
+        seed: u64,
+    ) -> Self {
+        Self {
+            problem: PoolBackwardProblem {
+                input_size,
+                out_grad_shape: Shape::from(out_grad_shape),
+                with_indices: false,
+                mode: AdaptiveAvgPoolOptions::new(output_size).into(),
+            },
+            input: Seeded {
+                seed,
+                inputs: -1.0..1.0,
+            },
+            tolerance: TOLERANCE,
+        }
+    }
 }

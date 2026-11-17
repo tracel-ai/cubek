@@ -20,7 +20,7 @@ pub fn cube_interpolate_microkernel(
         for cell in plane {
             let mut sum = output
                 .at(&cell)
-                .accumulating(microkernel.register_block, Semiring::SUM_PROD);
+                .accumulating(microkernel.software_matmul, Semiring::SUM_PROD);
             sum.mm(&weights.at(&cell), &input.at(&cell));
         }
     }

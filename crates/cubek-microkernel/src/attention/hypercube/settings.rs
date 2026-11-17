@@ -1,9 +1,9 @@
 use crate::attention::cube::{CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings};
 use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernelSettings, PlaneShuffleAttentionMicrokernelSettings,
+    ScoreHolder,
 };
 use crate::matmul::cube::CubeStagedDelivery;
-use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubek_std::microkernel::{StageLayout, StageRing};
 
@@ -39,7 +39,7 @@ impl HypercubeAttentionMicrokernelSettings {
         cube: CubeAttentionMicrokernelSettings {
             plane: CubeAttentionPlaneSettings::Fragment(
                 PlaneFragmentAttentionMicrokernelSettings {
-                    transport: PlaneFragmentTransport::Cmma,
+                    score: ScoreHolder::Window,
                     ..PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1)
                 },
             ),

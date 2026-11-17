@@ -37,5 +37,3 @@ pub mod row_store;
 pub mod split_keys_merge;
 #[cfg(feature = "swiglu")]
 pub mod swiglu;
-#[cfg(feature = "testing")]
-pub mod testing;

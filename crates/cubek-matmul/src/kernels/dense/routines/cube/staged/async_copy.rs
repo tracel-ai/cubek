@@ -14,7 +14,7 @@ use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedStore, MatmulPlaneLayout,
 };
-use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
+use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_std::Hardware;
 use cubek_std::microkernel::KernelEstimate;
 use cubek_std::microkernel::StageRing;
@@ -26,8 +26,10 @@ use cubek_std::routine::{Grid, Routine};
 /// their own fragments.
 ///
 /// Refused where the device has no copy engine, where the ring holds its next stage in registers,
-/// which the engine never passes through, and where a line it would copy is not 4, 8 or 16 bytes
-/// ([`CubeStagedAsyncCopyRefusal`](cubek_microkernel::matmul::cube::CubeStagedAsyncCopyRefusal)).
+/// which the engine never passes through, and where a line it would copy is not 4, 8 or 16 bytes,
+/// as the delivery itself answers ([`Delivery::runs_on`](cubecl::tile::launch::Delivery::runs_on),
+/// [`holds`](cubecl::tile::launch::Delivery::holds),
+/// [`moves_lines`](cubecl::tile::launch::Delivery::moves_lines)).
 /// A packed input its fill decodes is loaded by the units; the engine copies the others.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedAsyncCopyMatmulRoutine;
@@ -129,13 +131,11 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
     /// The units routine's lead and named boxes, and the rings that fill in their slots, their
     /// stages handed to the engine: whether it beats the units' loads moves with the box, by a few
     /// percent either way on an L4. A ring that prefetches through registers is not listed, which
-    /// the engine refuses. None without a copy engine. The multi-row box's cubes walk in strips
-    /// along `m` (`CubeStagedMatmulRoutine::cube_order_of`).
+    /// the engine refuses. None without a copy engine.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.unit_async_copy() {
             return Vec::new();
         }
-        use PlaneFragmentTransport::Mma;
         let boxed = |(along_m, along_n, depth), (planes_m, planes_n)| {
             CubeStagedMicrokernelSettings::boxed(
                 PlaneFragmentMicrokernelSettings::grid(along_m, along_n, depth),
@@ -145,7 +145,6 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
         let lead = CubeStagedMicrokernelSettings::DEFAULT;
         let deep = boxed((4, 4, 2), (2, 4));
         let small_on_2x2 = boxed((2, 4, 2), (2, 2));
-        let multi_row = CubeStagedMicrokernelSettings::MULTI_ROW;
         [
             lead,
             deep,
@@ -153,15 +152,11 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
             boxed((4, 4, 2), (4, 2)),
             boxed((2, 4, 2), (2, 1)),
             small_on_2x2,
-            multi_row,
-            deep.through(Mma),
-            small_on_2x2.through(Mma),
             lead.ringed(StageRing::DOUBLE),
-            multi_row.ringed(StageRing::DOUBLE),
         ]
         .map(|microkernel| Self::Settings {
             microkernel,
-            cube_order: CubeStagedMatmulRoutine::cube_order_of(&microkernel),
+            cube_order: CubeOrder::RowMajor,
         })
         .into()
     }

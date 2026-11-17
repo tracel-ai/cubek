@@ -86,13 +86,24 @@ pub struct SwigluCall {
     pub both: PlainTensor,
 }
 
-/// What an autotune's candidate hands back: the gate.
+/// What an autotune's candidate hands back: the gate, and the client it lives on, which the
+/// autotune checks read two candidates' outputs through.
 #[derive(Clone)]
 pub struct SwigluOutput {
+    pub client: Client,
     pub handle: TensorHandle,
 }
 
-impl AutotuneOutput for SwigluOutput {}
+impl AutotuneOutput for SwigluOutput {
+    #[cfg(feature = "autotune-checks")]
+    fn check_equivalence(&self, other: Self) {
+        cubek_matmul::kernels::tune::assert_equivalent(
+            &self.client,
+            self.handle.clone(),
+            other.handle,
+        );
+    }
+}
 
 /// What a candidate of the autotune is identified by: the candidate itself, so a launch outside a
 /// round reads the launches the winner prepared in it, or the floor by name.
@@ -255,7 +266,10 @@ where
     /// The gate of `call` at this candidate's setting.
     fn run(&self, call: SwigluCall) -> Result<SwigluOutput, String> {
         self.launch(&call)
-            .map(|handle| SwigluOutput { handle })
+            .map(|handle| SwigluOutput {
+                client: call.client.clone(),
+                handle,
+            })
             .map_err(|error| error.to_string())
     }
 }
