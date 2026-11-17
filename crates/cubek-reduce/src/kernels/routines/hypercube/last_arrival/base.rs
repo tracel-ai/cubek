@@ -5,6 +5,7 @@ use super::kernel::{
 use crate::kernels::{
     ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
 };
+use cubecl::bytes::Bytes;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::LaunchArg;
@@ -14,7 +15,7 @@ use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Levels, Partitioning};
 use cubek_microkernel::reduce::cube::CubeReduceMicrokernelSettings;
 use cubek_microkernel::reduce::hypercube::HypercubeReduceMicrokernel;
-use cubek_microkernel::reduce::{ReduceCarrier, ReduceLayout, ReduceOperand};
+use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, CubeResources, Grid, Routine};
@@ -148,17 +149,6 @@ impl Routine for HypercubeReduceRoutine {
                 why: "the hypercube reduce runs its cubes along at most two row dims",
             });
         }
-        // The last cube merges a row's top-k lists one after another, `k` inserts a part, so the
-        // shorter parts cost more in the merge than their extra cubes save.
-        if matches!(
-            problem.operation.carrier(),
-            ReduceCarrier::TopK { .. } | ReduceCarrier::TopValues { .. }
-        ) && settings.unit_lines < HypercubeReduceRoutineSettings::UNIT_LINES[0]
-        {
-            return Err(Refusal::Declined {
-                why: "the hypercube splits a top-k's rows into its longest parts only",
-            });
-        }
         let microkernel =
             HypercubeReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
@@ -219,7 +209,9 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
         let elements = problem.elements;
         let extents = ReduceSplitExtents::new(problem, &blueprint.partitioning, blueprint.width);
         // A box of rows' partials lie where its output does, the reduced dim's cells holding
-        // every part's carrier; the counters, one a box of rows, hold zero.
+        // every part's carrier, each stored by its part's cube before any is read, so they start
+        // unset; the counters, one a box of rows, start at zero, copied from the host rather than
+        // set by a launch of their own.
         let partial_extent = blueprint.partitioning.space().extent(problem.partials());
         let partial_shape: Vec<usize> = (0..problem.shape.len())
             .map(|d| match d == problem.axis {
@@ -228,10 +220,14 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
             })
             .collect();
         let counter = ElemType::UInt(UIntKind::U32);
-        let partials = TensorHandle::zeros(client, partial_shape.clone(), elements.accumulator);
-        let partial_indices = TensorHandle::zeros(client, partial_shape, counter);
+        let partials = TensorHandle::empty(client, partial_shape.clone(), elements.accumulator);
+        let partial_indices = TensorHandle::empty(client, partial_shape, counter);
         let row_boxes = ReduceSplitExtents::row_boxes(problem, blueprint.width);
-        let arrivals = TensorHandle::zeros(client, [row_boxes], counter);
+        let arrivals = TensorHandle::new_contiguous(
+            [row_boxes],
+            client.create(Bytes::from_elems(vec![0u32; row_boxes])),
+            counter,
+        );
         let bind_partials = |handle: TensorHandle, element| {
             binding
                 .launcher

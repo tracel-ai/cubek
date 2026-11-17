@@ -1,10 +1,11 @@
 //! The reduce family's rule: which routine runs a problem when nothing is measured.
 
 use crate::kernels::{
-    CubeReduceRoutine, HypercubeReduceRoutine, ReduceKernel, ReduceRoutine, ReduceSplitExtents,
-    ReduceTensors, UnitReduceRoutine,
+    CubeReduceRoutine, HypercubeReduceRoutine, HypercubeReduceRoutineSettings, ReduceKernel,
+    ReduceRoutine, ReduceSplitExtents, ReduceTensors, UnitReduceRoutine,
 };
 use cubecl::tile::launch::Refusal;
+use cubek_microkernel::reduce::ReduceCarrier;
 use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
 use cubek_std::routine::Routine;
@@ -41,8 +42,10 @@ pub fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
 
 /// The hypercube's launch where a box of rows a cube leaves the device idle and splitting the rows
 /// along the reduced dim gives more cubes: at the first of its settings, the longest parts first,
-/// whose cubes fill the device, or at the one with the most cubes where none does. `None` where
-/// the device does not say how wide it is, the boxes already fill it, or every row is one part.
+/// whose cubes fill the device, or at the one with the most cubes where none does. A top-k takes
+/// the longest parts only: the last cube merges a row's top-k lists one after another, `k` inserts
+/// a part, so shorter parts cost more in the merge than their extra cubes save. `None` where the
+/// device does not say how wide it is, the boxes already fill it, or every row is one part.
 fn hypercube_filling_the_device(
     hw: &Hardware,
     tensors: &ReduceTensors,
@@ -53,7 +56,14 @@ fn hypercube_filling_the_device(
     let problem = tensors.problem();
     let routine = HypercubeReduceRoutine;
     let mut most_cubes = None;
-    for settings in routine.settings(hw) {
+    let longest_only = matches!(
+        problem.operation.carrier(),
+        ReduceCarrier::TopK { .. } | ReduceCarrier::TopValues { .. }
+    );
+    let settings = routine.settings(hw).into_iter().filter(|settings| {
+        !longest_only || settings.unit_lines == HypercubeReduceRoutineSettings::UNIT_LINES[0]
+    });
+    for settings in settings {
         let Ok((blueprint, grid)) = routine.prepare(hw, problem, &settings) else {
             continue;
         };
