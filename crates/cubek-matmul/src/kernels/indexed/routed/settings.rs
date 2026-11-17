@@ -12,10 +12,12 @@ use crate::kernels::{
 
 /// The settings every round must be able to fall back on, each for the kind of stack it serves.
 /// Each declines where another runs: the plane shuffle where the device commits to no plane
-/// width, its default against a packed stack, which its lead against a packed rhs reads (or its
-/// by-block lead, where `K` is no whole number of words of scales), the cube
+/// width, its default against a packed stack, which its lead against a packed rhs reads, the cube
 /// staged routine on a CPU runtime, which holds fewer units a cube than its planes, and the unit
 /// registers, which ask nothing of the device, against a float stack.
+///
+/// The plane shuffle's by-block lead serves a packed stack whose `K` is no whole number of
+/// words of scales, which every other floor declines.
 ///
 /// The unit registers refuse a packed stack, so a device neither other routine prepares on has no
 /// floor for one, and it is refused before racing.

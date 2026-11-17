@@ -65,6 +65,14 @@ impl PlaneShuffleMatmulRoutineSettings {
         ..Self::PACKED
     };
 
+    /// Two columns a unit on four planes, reading the rhs a scale block at a time: on an RTX 2060
+    /// the fastest routed NVFP4 decode at a `k` of 160, ten experts of one token.
+    pub const BY_BLOCK_TWO_COLUMNS: Self = Self {
+        microkernel: PlaneShuffleMicrokernelSettings::stepping(2, None).by_block(),
+        planes: NonZeroUsize::new(4).unwrap(),
+        planes_per_worker: None,
+    };
+
     /// [`PACKED`](Self::PACKED) on a launch of 32 planes a compute unit, its planes walking the
     /// runs of columns: on a Radeon 8060S, an NVFP4 decode against Qwen3-8B's projections read
     /// 3% (gate/up) to 20% (o) faster than a plane a run, flat from 24 to 32 planes a unit and
@@ -149,11 +157,7 @@ impl PlaneShuffleMatmulRoutine {
     pub fn packed_by_block_settings(&self) -> Vec<PlaneShuffleMatmulRoutineSettings> {
         vec![
             PlaneShuffleMatmulRoutineSettings::PACKED_BY_BLOCK,
-            PlaneShuffleMatmulRoutineSettings {
-                microkernel: PlaneShuffleMicrokernelSettings::stepping(2, None).by_block(),
-                planes: NonZeroUsize::new(4).unwrap(),
-                planes_per_worker: None,
-            },
+            PlaneShuffleMatmulRoutineSettings::BY_BLOCK_TWO_COLUMNS,
         ]
     }
 
@@ -303,9 +307,6 @@ impl PlaneShuffleMatmulRoutine {
         if settings.planes_per_worker.is_some() {
             return Err(Self::PERSISTENT_FLOAT);
         }
-        if settings.microkernel.by_block {
-            return Err(MatmulRoutineProblem::RHS_UNREAD_BY_BLOCK);
-        }
         let view = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?;
         let microkernel =
             PlaneShuffleMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
@@ -332,14 +333,9 @@ impl PlaneShuffleMatmulRoutine {
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Refusal> {
         // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
-        let reread = match settings.microkernel.by_block {
-            true => Some(problem.rhs_by_block()?),
-            false => None,
-        };
-        let (problem, packing) = match &reread {
-            Some(read) => (read, read.packings.rhs.as_ref().expect("re-read as packed")),
-            None => (problem, packing),
-        };
+        let read = problem.rhs_read(settings.microkernel.by_block)?;
+        let problem: &MatmulRoutineProblem = &read;
+        let packing = problem.packings.rhs.as_ref().unwrap_or(packing);
         let PlaneShufflePackedPlacement {
             microkernel,
             columns,

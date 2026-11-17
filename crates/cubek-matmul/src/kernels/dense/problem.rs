@@ -1,4 +1,6 @@
 use crate::kernels::tensor::PlainTensor;
+use std::borrow::Cow;
+
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Geometry;
 use cubecl::tile::launch::Refusal;
@@ -146,6 +148,20 @@ impl MatmulRoutineProblem {
             .ok_or(Self::RHS_UNREAD_BY_BLOCK)?;
         *rhs = rhs.by_block().ok_or(Self::RHS_UNREAD_BY_BLOCK)?;
         Ok(by_block)
+    }
+
+    /// The problem a microkernel reading the rhs `by_block` plans and binds on: this one re-read a
+    /// scale block at a time ([`rhs_by_block`](Self::rhs_by_block)), or this one as it is.
+    ///
+    /// # Errors
+    ///
+    /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where it reads by block and its rhs
+    /// reads none so.
+    pub fn rhs_read(&self, by_block: bool) -> Result<Cow<'_, Self>, Refusal> {
+        match by_block {
+            true => self.rhs_by_block().map(Cow::Owned),
+            false => Ok(Cow::Borrowed(self)),
+        }
     }
 
     /// Checks no input reads a table: what a routine whose kernel walks no indexed input
