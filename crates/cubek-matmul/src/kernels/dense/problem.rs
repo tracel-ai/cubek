@@ -123,6 +123,31 @@ impl MatmulRoutineProblem {
         }
     }
 
+    /// What a setting reading the rhs a scale block at a time declines where it reads none so
+    /// ([`Packing::by_block`]): no packed rhs, block scales that are not `ue4m3`, blocks that are
+    /// no whole number of reads in rows, or tiles whose block is not the scheme's.
+    pub const RHS_UNREAD_BY_BLOCK: Refusal = Refusal::Declined {
+        why: "reading the rhs a block at a time needs a packed rhs with ue4m3 block scales, in \
+              blocks that are whole reads in rows or the tiles' own block in tile order",
+    };
+
+    /// This problem with its packed rhs read a scale block at a time ([`Packing::by_block`]): the
+    /// problem a microkernel reading so plans on.
+    ///
+    /// # Errors
+    ///
+    /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where its rhs reads none so.
+    pub fn rhs_by_block(&self) -> Result<Self, Refusal> {
+        let mut by_block = self.clone();
+        let rhs = by_block
+            .packings
+            .rhs
+            .as_mut()
+            .ok_or(Self::RHS_UNREAD_BY_BLOCK)?;
+        *rhs = rhs.by_block().ok_or(Self::RHS_UNREAD_BY_BLOCK)?;
+        Ok(by_block)
+    }
+
     /// Checks no input reads a table: what a routine whose kernel walks no indexed input
     /// declines first.
     ///

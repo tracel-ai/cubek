@@ -12,7 +12,8 @@ use crate::kernels::{
 
 /// The settings every round must be able to fall back on, each for the kind of stack it serves.
 /// Each declines where another runs: the plane shuffle where the device commits to no plane
-/// width, its default against a packed stack, which its lead against a packed rhs reads, the cube
+/// width, its default against a packed stack, which its lead against a packed rhs reads (or its
+/// by-block lead, where `K` is no whole number of words of scales), the cube
 /// staged routine on a CPU runtime, which holds fewer units a cube than its planes, and the unit
 /// registers, which ask nothing of the device, against a float stack.
 ///
@@ -20,7 +21,7 @@ use crate::kernels::{
 /// floor for one, and it is refused before racing.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RoutedFloors {
-    pub plane_shuffle: [Listing<PlaneShuffleMatmulRoutineSettings>; 2],
+    pub plane_shuffle: [Listing<PlaneShuffleMatmulRoutineSettings>; 3],
     pub cube_staged: [Listing<CubeStagedMatmulRoutineSettings>; 2],
     pub unit_registers: [Listing<UnitRegistersMatmulRoutineSettings>; 1],
 }
@@ -55,6 +56,10 @@ impl RoutedFloors {
             Listing {
                 settings: PlaneShuffleMatmulRoutineSettings::PACKED,
                 kind: ListedFor::Either,
+            },
+            Listing {
+                settings: PlaneShuffleMatmulRoutineSettings::PACKED_BY_BLOCK,
+                kind: ListedFor::Packed,
             },
         ],
         cube_staged: [
@@ -93,7 +98,11 @@ impl RoutedCandidates {
     pub(crate) fn new(hw: &Hardware) -> Self {
         let plane_shuffle = Listing::float_then_packed(
             PlaneShuffleMatmulRoutine.settings(hw),
-            PlaneShuffleMatmulRoutine.packed_settings(),
+            [
+                PlaneShuffleMatmulRoutine.packed_settings(),
+                PlaneShuffleMatmulRoutine.packed_by_block_settings(),
+            ]
+            .concat(),
         );
         let mut packed = CubeStagedMatmulRoutine.packed_one_step_settings();
         let rest: Vec<_> = CubeStagedMatmulRoutine

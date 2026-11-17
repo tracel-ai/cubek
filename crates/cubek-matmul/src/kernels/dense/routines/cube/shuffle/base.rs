@@ -91,27 +91,6 @@ impl CubeShuffleMatmulRoutine {
             .collect()
     }
 
-    /// A setting reading the rhs a block at a time against one that reads none so
-    /// ([`Packing::by_block`]): block scales that are not `ue4m3`, blocks that are no whole
-    /// number of reads in rows, or tiles whose block is not the scheme's.
-    pub const BY_BLOCK_UNREAD: Refusal = Refusal::Declined {
-        why: "a cube shuffle reading the rhs a block at a time needs ue4m3 block scales, and \
-              blocks that are whole reads in rows or the tiles' own block in tile order",
-    };
-
-    /// `problem` with its packed rhs read a block at a time ([`Packing::by_block`];
-    /// [`BY_BLOCK_UNREAD`](Self::BY_BLOCK_UNREAD) where it reads none so).
-    pub fn rhs_by_block(problem: &MatmulRoutineProblem) -> Result<MatmulRoutineProblem, Refusal> {
-        let mut by_block = problem.clone();
-        let rhs = by_block
-            .packings
-            .rhs
-            .as_mut()
-            .ok_or(Self::BY_BLOCK_UNREAD)?;
-        *rhs = rhs.by_block().ok_or(Self::BY_BLOCK_UNREAD)?;
-        Ok(by_block)
-    }
-
     /// What a float rhs declines a setting reading by block or capping its launch with: both
     /// read a packed rhs's columns only.
     pub const PACKED_ONLY: Refusal = Refusal::Declined {
@@ -269,7 +248,7 @@ impl CubeShuffleMatmulRoutine {
         let (problem, packing) = match settings.microkernel.by_block {
             false => (problem, packing),
             true => {
-                reread = Self::rhs_by_block(problem)?;
+                reread = problem.rhs_by_block()?;
                 let packing = reread.packings.rhs.as_ref().expect("re-read just above");
                 (&reread, packing)
             }
