@@ -594,6 +594,7 @@ impl Relayout {
 mod tests {
     use super::tile_words;
     use cubecl::features::MmaConfig;
+    use cubecl::ir::EnumSet;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
     use cubek_std::layout::tile_order::TileWords;
@@ -618,11 +619,11 @@ mod tests {
     fn a_line_reader_keeps_its_tiles_line_by_line() {
         assert_eq!(tile_words(&devices::h100()), TileWords::RowByRow);
         assert_eq!(tile_words(&devices::rtx_pro_6000()), TileWords::RowByRow);
+        let mut without_tma =
+            devices::offering_mma(devices::rtx_pro_6000(), [plane_fragment_mma()]);
+        devices::features(&mut without_tma).tma = EnumSet::empty();
         assert_eq!(
-            tile_words(&devices::offering_mma(
-                devices::m2_pro(),
-                [plane_fragment_mma()]
-            )),
+            tile_words(&without_tma),
             TileWords::RowByRow,
             "a tensor-core plane without TMA"
         );

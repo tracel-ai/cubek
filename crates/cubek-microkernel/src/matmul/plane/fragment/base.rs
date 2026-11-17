@@ -13,7 +13,7 @@ use cubecl::quant::scheme::QuantValue;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{
-    Axis, FragmentSource, Instruction, Levels, MmaOperands, ProductStep, Scratch,
+    Axis, FragmentSource, Instruction, LaneMap, Levels, MmaOperands, ProductStep, Scratch,
     ShapedInstruction, Space, StageStorage, StepCost,
 };
 use cubek_std::layout::BindingOrder;
@@ -93,10 +93,6 @@ impl PlaneFragmentMicrokernel {
     /// 16-bit `16 × 8 × 16`, whose `B` fragment's lanes the tile DSL's lane runs are laid over.
     const DECODING_SHAPE: (u32, u32, u32) = (16, 8, 16);
 
-    /// Units of a plane the decoding instruction's lane runs are laid over: the only width a
-    /// plane against a packed rhs runs at.
-    pub(crate) const DECODING_PLANE_UNITS: usize = 32;
-
     /// The values of `K` a fragment's lane run looks one scale up for: NVFP4's block. A packed
     /// rhs's fragments decode under scale blocks a whole number of them long, NVFP4's sixteen
     /// values or MXFP4's thirty-two.
@@ -128,11 +124,17 @@ impl PlaneFragmentMicrokernel {
     }
 
     /// Whether `hw` runs a plane against a packed rhs for an lhs of element `lhs`, summed in
-    /// `sum`: it offers the decoding instruction over `lhs` on a plane of thirty-two, which no
-    /// element but a 16-bit float has.
+    /// `sum`: it offers the decoding instruction over `lhs`, which no element but a 16-bit float
+    /// has, its target lays that instruction's lanes out as lane runs read them ([`LaneMap`]),
+    /// and its planes are the width that lane map is laid over.
     fn decodes(hw: &Hardware, lhs: ElemType, sum: ElemType) -> bool {
+        let (m, n, k) = Self::DECODING_SHAPE;
+        let laid_out = LaneMap::try_from(&*hw.target).is_ok_and(|map| {
+            map.edges() == (m as usize, n as usize) && map.depths().contains(&(k as usize))
+        });
         manual_mma(hw).any(|shape| shape == Self::decoding_instruction(lhs, sum))
-            && hw.plane_size().ok() == Some(Self::DECODING_PLANE_UNITS as u32)
+            && laid_out
+            && hw.plane_size() == Ok(LaneMap::PLANE_UNITS as u32)
     }
 
     /// Whether `hw` runs a plane against a packed rhs for any lhs: for one of the
