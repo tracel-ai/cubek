@@ -55,31 +55,12 @@ fn cube_reduce<
     #[comptime] microkernel: CubeReduceMicrokernel,
 ) {
     let operation = microkernel.item.operation;
-    let monoid = operation.monoid();
     let layout = microkernel.item.layout;
-    let units = microkernel.lanes * microkernel.planes;
+    let count = input.flat::<In, N>().shape();
 
-    let unit = PLANE_POS as usize * microkernel.lanes + UNIT_POS_PLANE as usize;
+    let total = cube_reduce_part::<In, Acc, N, C>(input, 0, count, microkernel);
 
-    let lines = input.flat::<In, N>();
-    let count = lines.shape();
-
-    let mut acc = C::identity(monoid);
-    for step in 0..count.div_ceil(units) {
-        let line = unit + step * units;
-        if line < count {
-            let read = read_mapped::<Acc, N>(
-                Vector::<Acc, N>::cast_from(lines.read(line)),
-                operation.read_map(),
-            );
-            C::accumulate(&mut acc, read, line, layout, monoid);
-        }
-    }
-
-    let plane = C::across(acc, UnitShare::Plane, monoid);
-    let total = C::across_planes(plane, microkernel.planes, monoid);
-
-    if unit == 0 {
+    if PLANE_POS == 0 && UNIT_POS_PLANE == 0 {
         let values = match layout {
             ReduceLayout::Along => count * N::value(),
             ReduceLayout::Across => count,
@@ -94,4 +75,41 @@ fn cube_reduce<
             microkernel.item.writes(),
         );
     }
+}
+
+/// The first `count` lines of `input`, the line at `l` read as line `first_line + l` of its row,
+/// accumulated by the cube into `C`: each unit takes every `units`-th line, consecutive units
+/// reading consecutive lines, each plane's lanes meet in the plane's instructions and the planes in
+/// shared memory ([`ReduceAccumulator::across_planes`]). Every unit of the cube is left with the
+/// total.
+#[cube]
+pub(crate) fn cube_reduce_part<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+    input: &Tile,
+    first_line: usize,
+    count: usize,
+    #[comptime] microkernel: CubeReduceMicrokernel,
+) -> C {
+    let operation = microkernel.item.operation;
+    let monoid = operation.monoid();
+    let layout = microkernel.item.layout;
+    let units = microkernel.lanes * microkernel.planes;
+
+    let unit = PLANE_POS as usize * microkernel.lanes + UNIT_POS_PLANE as usize;
+
+    let lines = input.flat::<In, N>();
+
+    let mut acc = C::identity(monoid);
+    for step in 0..count.div_ceil(units) {
+        let line = unit + step * units;
+        if line < count {
+            let read = read_mapped::<Acc, N>(
+                Vector::<Acc, N>::cast_from(lines.read(line)),
+                operation.read_map(),
+            );
+            C::accumulate(&mut acc, read, first_line + line, layout, monoid);
+        }
+    }
+
+    let plane = C::across(acc, UnitShare::Plane, monoid);
+    C::across_planes(plane, microkernel.planes, monoid)
 }

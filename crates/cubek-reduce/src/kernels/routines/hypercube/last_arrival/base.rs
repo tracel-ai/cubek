@@ -2,7 +2,6 @@ use super::kernel::{
     ReduceSplit, ReduceSplitExtents, ReduceSplitExtentsLaunch, hypercube_reduce_kernel,
     hypercube_reduce_with_indices_kernel,
 };
-use crate::kernels::routines::cube::slot_bytes;
 use crate::kernels::{
     ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
 };
@@ -13,9 +12,8 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Levels, Partitioning};
-use cubek_microkernel::reduce::hypercube::{
-    HypercubeReduceMicrokernel, HypercubeReduceMicrokernelSettings,
-};
+use cubek_microkernel::reduce::cube::CubeReduceMicrokernelSettings;
+use cubek_microkernel::reduce::hypercube::HypercubeReduceMicrokernel;
 use cubek_microkernel::reduce::{ReduceCarrier, ReduceLayout, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -32,7 +30,7 @@ pub struct HypercubeReduceRoutine;
 /// The cube microkernel's planes, and how many lines each unit reads of a part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeReduceRoutineSettings {
-    pub microkernel: HypercubeReduceMicrokernelSettings,
+    pub microkernel: CubeReduceMicrokernelSettings,
     pub unit_lines: usize,
 }
 
@@ -166,7 +164,7 @@ impl Routine for HypercubeReduceRoutine {
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widths = reduce_widths(hw, problem, vectorization);
-        let units = microkernel.lanes * microkernel.planes;
+        let units = microkernel.part.lanes * microkernel.part.planes;
         // Along, a line holds `width` values of the row; across, one.
         let part = units
             * settings.unit_lines
@@ -184,7 +182,7 @@ impl Routine for HypercubeReduceRoutine {
         );
         let cube = CubeResources {
             plane_width: units as u32,
-            shared_memory: microkernel.planes * slot_bytes(problem, widths[0]),
+            shared_memory: microkernel.shared_memory_bytes_at_width(widths[0]),
         };
         let grid = Grid::new(hw, &partitioning, cube)?;
         Ok((

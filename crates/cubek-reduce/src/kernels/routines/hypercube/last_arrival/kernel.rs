@@ -89,7 +89,7 @@ pub fn hypercube_reduce_kernel<
     let p = partials.tile(&partitioning);
     let pi = partial_indices.tile(&partitioning);
     for cube in &partitioning {
-        let place = split_place::<N>(&cube, &extents, split.clone(), microkernel.item.layout);
+        let place = split_place::<N>(&cube, &extents, split.clone(), microkernel.part.item.layout);
         let mut rows_out = o.at(&cube);
         // One output: the indices are never written, so they get the output's own window.
         let mut unwritten = o.at(&cube);
@@ -143,7 +143,7 @@ pub fn hypercube_reduce_with_indices_kernel<
     let p = partials.tile(&partitioning);
     let pi = partial_indices.tile(&partitioning);
     for cube in &partitioning {
-        let place = split_place::<N>(&cube, &extents, split.clone(), microkernel.item.layout);
+        let place = split_place::<N>(&cube, &extents, split.clone(), microkernel.part.item.layout);
         let mut rows_out = o.at(&cube);
         let mut rows_indices = i.at(&cube);
         let rows = x.at(&cube);

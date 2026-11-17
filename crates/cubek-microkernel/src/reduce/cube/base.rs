@@ -30,6 +30,19 @@ impl CubeReduceMicrokernelSettings {
     pub const ALL: [Self; 2] = [Self { planes: 4 }, Self { planes: 8 }];
 }
 
+impl CubeReduceMicrokernel {
+    /// Bytes of shared memory it allocates with its lines `width` lanes wide: one slot of the
+    /// carrier a plane, which its planes meet through.
+    pub fn shared_memory_bytes_at_width(&self, width: usize) -> usize {
+        let slot = self
+            .item
+            .operation
+            .carrier()
+            .bytes(width, self.item.accumulator.size());
+        self.planes * slot
+    }
+}
+
 impl core::fmt::Display for CubeReduceMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "planes={}", self.planes)

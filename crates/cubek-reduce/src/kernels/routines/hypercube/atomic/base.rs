@@ -1,5 +1,4 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
-use crate::kernels::routines::cube::slot_bytes;
 use crate::kernels::{
     ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
     reduce_widths,
@@ -137,7 +136,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
         );
         let cube = CubeResources {
             plane_width: units as u32,
-            shared_memory: microkernel.planes * slot_bytes(problem, widths[0]),
+            shared_memory: microkernel.shared_memory_bytes_at_width(widths[0]),
         };
         let grid = Grid::new(hw, &partitioning, cube)?;
         Ok((

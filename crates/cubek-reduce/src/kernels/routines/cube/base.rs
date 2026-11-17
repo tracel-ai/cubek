@@ -81,7 +81,7 @@ impl Routine for CubeReduceRoutine {
         );
         let cube = CubeResources {
             plane_width: (microkernel.lanes * microkernel.planes) as u32,
-            shared_memory: microkernel.planes * slot_bytes(problem, widths[0]),
+            shared_memory: microkernel.shared_memory_bytes_at_width(widths[0]),
         };
         let grid = Grid::new(hw, &partitioning, cube)?;
         Ok((
@@ -105,15 +105,6 @@ impl Routine for CubeReduceRoutine {
 
 /// Most row dims the cubes run along: a launch grid has three.
 const MAX_ROW_DIMS: usize = 3;
-
-/// Bytes of the slot a plane meets the others through: one carrier of `width` lanes, in the
-/// accumulator's element.
-pub(crate) fn slot_bytes(problem: &ReduceRoutineProblem, width: usize) -> usize {
-    problem
-        .operation
-        .carrier()
-        .bytes(width, problem.elements.accumulator.size())
-}
 
 impl ReduceRoutine<CubeReduceMicrokernel> for CubeReduceRoutine {
     fn dispatch<I: TileOperand, O: TileOperand>(

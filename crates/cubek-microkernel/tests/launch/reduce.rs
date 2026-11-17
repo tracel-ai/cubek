@@ -17,7 +17,7 @@ use cubek_microkernel::reduce::cube::{
     CubeReduceMicrokernel, CubeReduceMicrokernelSettings, cube_reduce_microkernel,
 };
 use cubek_microkernel::reduce::hypercube::{
-    HypercubeReduceMicrokernel, HypercubeReduceMicrokernelSettings, hypercube_reduce_microkernel,
+    HypercubeReduceMicrokernel, hypercube_reduce_microkernel,
 };
 use cubek_microkernel::reduce::plane::{
     PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings, plane_reduce_microkernel,
@@ -87,8 +87,10 @@ impl ReduceLaunch {
                     .lanes as u32
             }
             ReduceScope::Hypercube { planes, .. } => {
-                let settings = HypercubeReduceMicrokernelSettings { planes };
-                HypercubeReduceMicrokernel::best(hw, &item, &settings)?.lanes as u32
+                let settings = CubeReduceMicrokernelSettings { planes };
+                HypercubeReduceMicrokernel::best(hw, &item, &settings)?
+                    .part
+                    .lanes as u32
             }
         };
         Ok(Self {
@@ -283,9 +285,11 @@ impl ReduceLaunch {
             )
         };
         let microkernel = HypercubeReduceMicrokernel {
-            item: self.item,
-            lanes: self.plane_width as usize,
-            planes,
+            part: CubeReduceMicrokernel {
+                item: self.item,
+                lanes: self.plane_width as usize,
+                planes,
+            },
         };
         // SAFETY: every operand but the counters is bound through the launcher at the problem's
         // own extents, and the kernel indexes no buffer but through its tiles and the counters,
