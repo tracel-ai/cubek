@@ -4,13 +4,12 @@ use super::kernel::{
 };
 use crate::kernels::routines::cube::slot_bytes;
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem,
-    reduce_widths,
+    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
 };
-use cubecl::ir::{ElemType, UIntKind};
-use cubecl::std::tensor::TensorHandle;
 use cubecl::client::Client;
+use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::LaunchArg;
+use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Levels, Partitioning};

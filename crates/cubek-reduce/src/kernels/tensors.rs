@@ -179,7 +179,11 @@ impl ReduceTensors<Geometry> {
 
     /// Both operands' specs and geometries as `blueprint` states them, on `grid`, for the caller
     /// to bind.
-    pub fn bind<M>(&self, blueprint: &ReduceRoutineBlueprint<M>, grid: &Grid) -> ReduceBinding<Unbound> {
+    pub fn bind<M>(
+        &self,
+        blueprint: &ReduceRoutineBlueprint<M>,
+        grid: &Grid,
+    ) -> ReduceBinding<Unbound> {
         let launcher = grid.launcher(&self.client, || {
             (
                 self.problem.kernel(&blueprint.partitioning),

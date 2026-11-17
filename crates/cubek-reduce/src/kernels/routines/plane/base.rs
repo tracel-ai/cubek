@@ -1,7 +1,6 @@
 use super::kernel::{plane_reduce_kernel, plane_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem,
-    reduce_widths,
+    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;

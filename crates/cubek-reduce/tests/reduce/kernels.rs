@@ -345,7 +345,14 @@ fn launch_unbound<R: ReduceRoutine<M> + Copy, M>(
         out: reduction.out_elem(),
     };
     let (axis, operation) = (reduction.axis, reduction.operation);
-    let buffers = ReduceTensors::new(client, input.clone(), out.clone(), axis, operation, elements);
+    let buffers = ReduceTensors::new(
+        client,
+        input.clone(),
+        out.clone(),
+        axis,
+        operation,
+        elements,
+    );
     let hw = Hardware::from_client(client);
     let (blueprint, _) = routine.prepare_first_served(&hw, buffers.problem())?;
     let tensors = ReduceTensors::unbound(

@@ -36,9 +36,7 @@ pub trait ReduceRoutine<M>:
 
     /// `tensors` bound as `blueprint` states them and reduced on `grid`.
     fn launch(&self, tensors: &ReduceTensors, blueprint: ReduceRoutineBlueprint<M>, grid: Grid) {
-        let binding = tensors
-            .bind(&blueprint, &grid)
-            .map(Bound::arg, Bound::arg);
+        let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, Bound::arg);
         self.dispatch::<StoredTileOperand, StoredTileOperand>(
             tensors.problem(),
             tensors.client(),
