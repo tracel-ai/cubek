@@ -5,6 +5,7 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::layout::Run;
 use cubecl::tile::{Axis, Levels, SoftwareMatmul};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -204,15 +205,13 @@ impl PlaneShuffleMicrokernel {
     /// A unit reads one step of `K` a turn, the units as many as the scales' words divide: where
     /// the units take a word of scales a turn, a turn is a step along `K`, and a step a load makes
     /// deeper than a word of scales is declined. The whole share splits `K`
-    /// ([`WholePlane`](PlaneShuffleKSplit::WholePlane)), or as few units as fill one memory
-    /// transaction beside the rows the rhs lays side by side, the rest along `N`
-    /// ([`OneTransaction`](PlaneShuffleKSplit::OneTransaction)), so each load coalesces: in rows,
-    /// a transaction's worth of reads down a column; block by block in tile order, where a block
-    /// of every row of a tile lies together, as few as that leaves. Or as many as read a stored
-    /// tile whole ([`OneTile`](PlaneShuffleKSplit::OneTile)), where tile order lays one as a
-    /// single run, so a load is the tile's transactions at once and a unit walks a tile's share of
-    /// `K`'s steps rather than every block. Settings stating another depth, or a tile where none
-    /// lies so, size none.
+    /// ([`WholePlane`](PlaneShuffleKSplit::WholePlane)), or as many units as read one run of the
+    /// rhs whole, the rest along `N` ([`PlaneShuffleKSplit::Run`]): the reads down `K` the run
+    /// holds, in the order the rhs is stored
+    /// ([`Operand::reads_down_k`](cubek_std::layout::stored::Operand::reads_down_k)), so a plane's
+    /// load is that run of memory at once. Settings stating another depth, or a stored tile where
+    /// none is stored or that holds one read down `K`, which would size the one-read plane again,
+    /// size none.
     fn packed_steps(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -223,25 +222,19 @@ impl PlaneShuffleMicrokernel {
         let operand = space.operand(MatmulOperand::Rhs);
         let step = MatmulStep::new(hw, space.operands(), item.elements);
         let (depth, columns_a_step) = (step.along(K), step.along(N));
-        let one_transaction = || {
-            let read_bytes = space
-                .packings
-                .rhs
-                .map_or(WORD_BYTES, |packing| {
-                    packing.values_bytes(operand.read_values())
-                })
-                .max(1);
-            hw.transaction_bytes() / (read_bytes * operand.rows_side_by_side(N))
-        };
+        let value_bits = space
+            .packings
+            .rhs
+            .map_or(item.elements.rhs.size_bits(), |packing| {
+                packing.value_bits()
+            });
+        let matrix = (space.k, space.n);
         let wanted = match settings.k_split {
             PlaneShuffleKSplit::WholePlane => Some(shared),
-            PlaneShuffleKSplit::OneTransaction => Some(one_transaction().clamp(1, shared)),
-            // A tile's reads down `K`, whichever order its words lie in: one transaction's
-            // would cut a row-by-row tile's 32-byte rows into pieces of several tiles.
-            PlaneShuffleKSplit::OneTile => match operand.reads_down_a_tile(K) {
-                1 => None,
-                tile => Some(tile.clamp(1, shared)),
-            },
+            PlaneShuffleKSplit::Run(run) => operand
+                .reads_down_k(run, N, matrix, value_bits, hw.transaction_bytes())
+                .filter(|&reads| run != Run::StoredTile || reads > 1)
+                .map(|reads| reads.clamp(1, shared)),
         };
         let units_along_k = operand.units_distributing(K, space.k, wanted.unwrap_or(1));
         let groups_along_n = shared / units_along_k;
@@ -487,7 +480,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
         };
         match item.blocks {
             // One tile reads a packed rhs's stored tiles, which a float rhs has none of.
-            None if settings.k_split == PlaneShuffleKSplit::OneTile => Vec::new(),
+            None if settings.k_split == PlaneShuffleKSplit::Run(Run::StoredTile) => Vec::new(),
             None => {
                 let units_along_k = settings.k_split.units(hw, item, settings.depth, shared);
                 vec![sized(units_along_k, None)]
