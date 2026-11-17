@@ -72,11 +72,15 @@ fn auto_reads_through_a_stride_of_zero() {
 }
 
 /// A weight stored in tiles is a fact of the data: `Auto` sends it to the tiled cmma routine, which
-/// stages to its tiles, whichever architecture it would have picked for the shape.
+/// stages to its tiles, whichever architecture it would have picked for the shape. Skipped where
+/// the device has no matrix instruction for that routine to run.
 #[cfg(feature = "tiled")]
 #[test]
 fn auto_sends_a_weight_stored_in_tiles_to_the_tiled_cmma() {
     use crate::matmul::RhsTiles;
+    if crate::matmul::skip_unless_matrix_instruction() {
+        return;
+    }
     let auto = ByStrategy::new(Strategy::Auto, Declines::Never);
     auto.check([Product::of(F32)
         .m(64)
