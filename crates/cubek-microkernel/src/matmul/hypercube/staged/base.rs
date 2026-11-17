@@ -95,7 +95,7 @@ impl HypercubeStagedMicrokernelSettings {
     pub const fn rows_in_order(self) -> Self {
         Self {
             cube: CubeStagedMicrokernelSettings {
-                stage_layout: Some(StageLayout::Blocks),
+                stage_layout: StageLayout::Blocks,
                 ..self.cube
             },
         }

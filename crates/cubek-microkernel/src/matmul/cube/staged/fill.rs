@@ -6,10 +6,10 @@ use crate::matmul::{
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Scratch, Space, StageStorage};
-use cubek_std::TMA_ALIGNMENT_BYTES;
 use cubek_std::launch::tma::swizzle_span_bytes;
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::StageRing;
+use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 
 /// Who fills the cube microkernel's stages: the cube's units, the copy engine their lines are
 /// handed to, or the TMA engine, and how many of the cube's planes do nothing but fill them. The
@@ -45,6 +45,16 @@ impl CubeStagedDelivery {
         match self {
             Self::Copy | Self::Tma => Delivery::SyncPerUnit,
             Self::AsyncCopy => Delivery::AsyncPerUnit,
+        }
+    }
+
+    /// The delivery that fills the stages, which a stage is arranged for as its instruction
+    /// reads it: the units' own loads, the copy engine, or the TMA engine.
+    pub fn fills(self) -> Delivery {
+        match self {
+            Self::Copy => Delivery::SyncPerUnit,
+            Self::AsyncCopy => Delivery::AsyncPerUnit,
+            Self::Tma => Delivery::Tma,
         }
     }
 }
@@ -103,19 +113,20 @@ pub enum CubeStagedFillingRefusal {
 }
 
 impl CubeStagedTmaRefusal {
-    /// Why the TMA engine cannot deliver the stages `microkernel` walks through the space
+    /// Why the TMA engine cannot deliver the stages `microkernel` walks on `hw` through the space
     /// `cube_space` of `item`'s product, over buffers as `buffers` states them, its stages held as
     /// its instruction reads a landed one (`PlaneFragmentMicrokernel::landed_stage_storage`);
     /// `None` where it can. Whether the device has the engine, and whether it fills the ring, are
     /// the delivery's own questions ([`Delivery::runs_on`], [`Delivery::holds`]).
     pub fn new(
+        hw: &Hardware,
         item: &MatmulWorkItem,
         buffers: &MatmulBuffers,
         cube_space: &MatmulCubeSpace,
         microkernel: &CubeStagedMicrokernel,
     ) -> Option<Self> {
         let stage = &microkernel.stage(cube_space);
-        let storage = &microkernel.plane.landed_stage_storage(stage);
+        let storage = &microkernel.plane.landed_stage_storage(hw, stage);
         let microkernel = &microkernel.plane;
         // Bits rather than bytes: an `e2m1` value is half of one.
         let bits = |operand: MatmulOperand| item.elements.get(operand).size_bits().max(1);

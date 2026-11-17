@@ -10,8 +10,9 @@ use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::QuantValue;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
+use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{
     Axis, FragmentSource, Instruction, Levels, MmaOperands, ProductStep, Scratch,
     ShapedInstruction, Space, StageStorage, StepCost,
@@ -809,40 +810,59 @@ impl PlaneFragmentMicrokernel {
         }
     }
 
-    /// How a stage it reads holds its cells, filled by its units, laid out as `layout`: where it
-    /// blocks the stage, in its instruction's tiles ([`PlaneFragmentInstruction::stage_tile`]),
-    /// each one step deep along every axis `K` is stated over.
-    pub(crate) fn stage_storage(&self, layout: StageLayout, stage: &MatmulStage) -> StageStorage {
+    /// How a stage it reads holds its cells, laid out as `layout` and filled by `delivery`'s
+    /// units: where it blocks the stage, in its instruction's tiles
+    /// ([`PlaneFragmentInstruction::stage_tile`]), each one step deep along every axis `K` is
+    /// stated over, their rows arranged as its instruction reads them (`read_by`).
+    pub fn stage_storage(
+        &self,
+        hw: &Hardware,
+        layout: StageLayout,
+        delivery: Delivery,
+        stage: &MatmulStage,
+    ) -> StageStorage {
         let beside: Vec<Axis> = stage.beside().collect();
         let tile = Self::over_k(
             self.instruction
                 .stage_tile(&beside, stage.axes(), self.settings.rows_along),
             &self.k_axes(1),
         );
-        layout.storage(stage.space(), tile)
+        self.read_by(hw, layout.storage(stage.space(), tile), delivery)
     }
 
     /// How a stage it reads holds its cells where one TMA box lands it whole
-    /// ([`PlaneFragmentInstruction::landed_stage_storage`]): each tile the whole stage deep along
-    /// every axis `K` is stated over.
-    pub(crate) fn landed_stage_storage(&self, stage: &MatmulStage) -> StageStorage {
+    /// ([`PlaneFragmentInstruction::landed_stage_tile`]): each tile the whole stage deep along
+    /// every axis `K` is stated over, its rows swizzled where its instruction reads them so and in
+    /// order where it cannot, since a box lands no padding (`read_by`).
+    pub(crate) fn landed_stage_storage(&self, hw: &Hardware, stage: &MatmulStage) -> StageStorage {
         let (beside, axes): (Vec<Axis>, _) = (stage.beside().collect(), stage.axes());
         let whole_k: Vec<_> = self
             .k_axes(1)
             .into_iter()
             .map(|(axis, _)| (axis, stage.extent(axis)))
             .collect();
-        match self.instruction.landed_stage_storage(
+        let tile = self.instruction.landed_stage_tile(
             &beside,
             axes,
             stage.extent(axes.k),
             self.settings.rows_along,
-        ) {
-            StageStorage::Tiled { block, chunks } => StageStorage::Tiled {
-                block: Self::over_k(block, &whole_k),
-                chunks,
-            },
-            storage => storage,
+        );
+        let swizzled = StageStorage::Tiled {
+            block: Self::over_k(tile, &whole_k),
+            chunks: RowChunks::Swizzled,
+        };
+        self.read_by(hw, swizzled, Delivery::Tma)
+    }
+
+    /// `stated` as a stage this plane reads and `delivery` fills lays it: arranged by the tile
+    /// for the instruction computing its Step ([`ProductStep::stage_storage`]), or for the
+    /// instruction it states ([`StageStorage::read_by`]).
+    fn read_by(&self, hw: &Hardware, stated: StageStorage, delivery: Delivery) -> StageStorage {
+        match self.step {
+            Some(step) => step
+                .stage_storage(stated, delivery, &hw.properties, &hw.target)
+                .expect("a plane's Step is one the tile computes, which its cost asked"),
+            None => stated.read_by(self.instruction.tile_instruction(), delivery),
         }
     }
 
