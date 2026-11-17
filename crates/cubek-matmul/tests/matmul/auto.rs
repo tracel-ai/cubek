@@ -78,7 +78,7 @@ fn auto_reads_through_a_stride_of_zero() {
 #[test]
 fn auto_sends_a_weight_stored_in_tiles_to_the_tiled_cmma() {
     use crate::matmul::RhsTiles;
-    if cubek_test_utils::skip_unless_matrix_instruction(&cubecl::test_device().client()) {
+    if crate::matmul::skip_unless_matrix_instruction() {
         return;
     }
     let auto = ByStrategy::new(Strategy::Auto, Declines::Never);
