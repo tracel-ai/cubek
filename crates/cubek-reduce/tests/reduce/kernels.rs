@@ -4,8 +4,10 @@
 
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, IntKind};
-use cubecl::tile::launch::Refusal;
+use cubecl::prelude::TensorBinding;
+use cubecl::tile::launch::{Refusal, StoredTileOperand};
 use cubecl::tile::layout::ElemAlignment;
+use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_reduce::kernels::{
@@ -318,6 +320,131 @@ fn every_routine_reduces_every_dim_like_the_cpu() {
         }
     }
     Routines.check(reductions);
+}
+
+/// A reduce routine of the tile stack launched unbound, its input and output bound by the caller
+/// as plain buffers once the launch is prepared, at the widths the routine picks for them: what a
+/// fused read and write stand in for, against the host.
+struct UnboundRoutines;
+
+/// `reduction`'s routine launched unbound over `input` and `out`, bound back as the buffers they
+/// are.
+fn launch_unbound<R: ReduceRoutine<M> + Copy, M>(
+    routine: R,
+    client: &Client,
+    input: TensorBinding,
+    out: TensorBinding,
+    reduction: &Reduction,
+) -> Result<(), Refusal> {
+    let elements = ReduceElements {
+        input: F32,
+        accumulator: F32,
+        out: reduction.out_elem(),
+    };
+    let (axis, operation) = (reduction.axis, reduction.operation);
+    let buffers = ReduceTensors::new(client, input.clone(), out.clone(), axis, operation, elements);
+    let hw = Hardware::from_client(client);
+    let (blueprint, _) = routine.prepare_first_served(&hw, buffers.problem())?;
+    let tensors = ReduceTensors::unbound(
+        client,
+        Geometry::from(&input),
+        Geometry::from(&out),
+        [blueprint.width, blueprint.out_width],
+        axis,
+        operation,
+        elements,
+    );
+    let (blueprint, grid) = routine.prepare_first_served(&hw, tensors.problem())?;
+    routine.launch_unbound::<StoredTileOperand, StoredTileOperand>(
+        &tensors,
+        blueprint,
+        grid,
+        |bound| TileTensorLaunch::new(input.into_tensor_arg(), F32, bound.vector_size, bound.spec),
+        |bound| {
+            TileTensorLaunch::new(
+                out.into_tensor_arg(),
+                elements.out,
+                bound.vector_size,
+                bound.spec,
+            )
+        },
+    )
+}
+
+impl ScopeUnderTest for UnboundRoutines {
+    type Case = Reduction;
+
+    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Refusal> {
+        let (out_elem, out_shape) = (reduction.out_elem(), reduction.out_shape());
+        let input = TestInput::builder(client.clone(), Shape::from(reduction.shape.clone()))
+            .dtype(F32)
+            .custom(reduction.input())
+            .generate_without_host_data();
+        let out = TestInput::builder(client.clone(), Shape::from(out_shape.clone()))
+            .dtype(out_elem)
+            .custom(vec![-7.0; out_shape.iter().product()])
+            .generate_without_host_data();
+        let (input, written) = (input.binding(), out.clone().binding());
+        match reduction.scope {
+            Scope::Unit => launch_unbound(UnitReduceRoutine, client, input, written, reduction),
+            Scope::Plane => launch_unbound(PlaneReduceRoutine, client, input, written, reduction),
+            Scope::Cube => launch_unbound(CubeReduceRoutine, client, input, written, reduction),
+            Scope::Hypercube => {
+                launch_unbound(HypercubeReduceRoutine, client, input, written, reduction)
+            }
+            Scope::Picked(strategy) => {
+                unreachable!("an unbound launch names its routine, not a strategy ({strategy:?})")
+            }
+        }?;
+        let host = match out_elem {
+            I32 => HostDataType::I32,
+            _ => HostDataType::F32,
+        };
+        Ok(vec![Written {
+            name: "output",
+            tensor: out,
+            host,
+        }])
+    }
+
+    fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
+        Routines.reference(reduction)
+    }
+
+    fn tolerance(&self, reduction: &Reduction) -> f32 {
+        Routines.tolerance(reduction)
+    }
+}
+
+/// The unit, plane and cube routines launched unbound reduce a `[2, 5, 300]` tensor along its
+/// contiguous dim and across it as they do bound: a sum, a max, a mean and an argmax. The plane
+/// and the cube where the device commits to a plane width.
+#[test]
+fn unbound_routines_reduce_like_the_cpu() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let mut scopes = vec![Scope::Unit];
+    if hw.plane_dim().is_ok() {
+        scopes.extend([Scope::Plane, Scope::Cube]);
+    }
+    let mut reductions = Vec::new();
+    for scope in scopes {
+        for axis in [2, 1] {
+            for operation in [
+                ReduceOperation::Sum,
+                ReduceOperation::Max,
+                ReduceOperation::Mean,
+                ReduceOperation::ArgMax,
+            ] {
+                reductions.push(Reduction {
+                    scope,
+                    shape: vec![2, 5, 300],
+                    axis,
+                    operation,
+                });
+            }
+        }
+    }
+    UnboundRoutines.check(reductions);
 }
 
 /// The hypercube splits rows into parts, the last one short, and merges them: a `[2, 3, 5000]`
