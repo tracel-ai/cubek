@@ -72,6 +72,20 @@ fn every_packed_plane_shuffle_setting_reads_each_group_s_packed_slab() {
     ));
 }
 
+/// Rows grouped against an NVFP4 stack whose `k` is 2.5 words of scales, which only a stack read a
+/// scale block at a time closes: some packed setting of the plane shuffle still serves it.
+#[test]
+fn a_packed_plane_shuffle_setting_reads_an_nvfp4_stack_whose_k_is_no_whole_number_of_words() {
+    let grouped = ByGroupedRoutine::new(PlaneShuffleMatmulRoutine);
+    grouped.check_some(grouped.at(
+        MGroupedSettings::plane_shuffle_packed(),
+        &[GroupedRows {
+            k: 160,
+            ..GroupedRows::of(PackedFormat::Nvfp4)
+        }],
+    ));
+}
+
 /// Rows grouped against a stack packed in each format, through the cube staged routine's packed
 /// settings, which stage a packed input for a matrix instruction: skipped on a device with none.
 #[test]
