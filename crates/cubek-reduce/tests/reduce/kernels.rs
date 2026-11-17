@@ -11,9 +11,10 @@ use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_reduce::kernels::{
-    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceKernel,
-    ReduceKernelHeuristic, ReduceOpStrategy, ReduceRoutine, ReduceRoutineProblem, ReduceTensors,
-    UnitReduceRoutine, launch_reduce_routine, launch_tuned, select,
+    CubeReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine,
+    ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceOpStrategy, ReduceRoutine,
+    ReduceRoutineProblem, ReduceTensors, UnitReduceRoutine, launch_reduce_routine, launch_tuned,
+    select,
 };
 use cubek_std::Hardware;
 use cubek_std::devices;
@@ -592,4 +593,51 @@ fn routines_decline_more_row_dims_than_the_grid_holds() {
     assert!(UnitReduceRoutine.prepare(&hw, &problem, &unit).is_ok());
     let plane = PlaneReduceRoutine.settings(&hw)[0];
     assert!(PlaneReduceRoutine.prepare(&hw, &problem, &plane).is_ok());
+}
+
+/// On a device lacking every Feature the routines read (planes, one cube's stores reaching
+/// another within a launch, atomic adds), every routine but the unit one declines, and the unit
+/// one still prepares: a sum, which every routine computes.
+#[test]
+fn routines_decline_on_a_device_without_their_features() {
+    let mut hw = devices::m2_pro();
+    let features = devices::features(&mut hw);
+    features.plane.clear();
+    features.device_memory_scope = false;
+    features.types.atomic.clear();
+    let problem = ReduceRoutineProblem {
+        operation: ReduceOperation::Sum,
+        elements: ReduceElements {
+            input: F32,
+            accumulator: F32,
+            out: F32,
+        },
+        ..problem(&[4, 4096], 1)
+    };
+    let declines =
+        |prepared: Result<(), Refusal>| matches!(prepared, Err(Refusal::Declined { .. }));
+    let plane = PlaneReduceRoutine.settings(&hw)[0];
+    assert!(declines(
+        PlaneReduceRoutine
+            .prepare(&hw, &problem, &plane)
+            .map(|_| ())
+    ));
+    let cube = CubeReduceRoutine.settings(&hw)[0];
+    assert!(declines(
+        CubeReduceRoutine.prepare(&hw, &problem, &cube).map(|_| ())
+    ));
+    let hypercube = HypercubeReduceRoutine.settings(&hw)[0];
+    assert!(declines(
+        HypercubeReduceRoutine
+            .prepare(&hw, &problem, &hypercube)
+            .map(|_| ())
+    ));
+    let atomic = HypercubeAtomicReduceRoutine.settings(&hw)[0];
+    assert!(declines(
+        HypercubeAtomicReduceRoutine
+            .prepare(&hw, &problem, &atomic)
+            .map(|_| ())
+    ));
+    let unit = UnitReduceRoutine.settings(&hw)[0];
+    assert!(UnitReduceRoutine.prepare(&hw, &problem, &unit).is_ok());
 }
