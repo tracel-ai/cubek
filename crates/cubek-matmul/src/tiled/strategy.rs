@@ -9,7 +9,7 @@ use cubek_std::config::MatmulConfig;
 use cubek_std::{Hardware, InputBinding};
 
 use crate::{
-    definition::{MatmulElems, MatmulSetupError},
+    definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError},
     kernels::{
         CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulRoutine,
         UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings,
@@ -53,6 +53,24 @@ fn read_rounded(client: &Client, dtypes: &mut MatmulElems) {
     }
 }
 
+/// The cube staged routine's planes contract through a matrix instruction, so a device offering
+/// none, as the CPU runtime, lacks a feature: a caller falls back as it does past any other. The
+/// check is the device's, not the elements': a device that rounds `f32` to tf32 still runs it.
+fn matrix_instruction_offered(
+    hw: &Hardware,
+    dtypes: &MatmulElems,
+) -> Result<(), MatmulAvailabilityError> {
+    match hw.offers_matrix_instruction() {
+        true => Ok(()),
+        false => Err(MatmulAvailabilityError::CmmaInstructionUnavailable {
+            lhs: dtypes.lhs_global,
+            rhs: dtypes.rhs_global,
+            output: dtypes.acc_global,
+            size: None,
+        }),
+    }
+}
+
 #[allow(clippy::result_large_err)]
 impl Strategy {
     /// `lhs · rhs` of one element written into `out`, in the element `dtypes` names for it: the
@@ -80,6 +98,7 @@ impl Strategy {
         let out = PlainTensor::new(out, dtypes.acc_global);
         match self {
             Strategy::Cmma(settings) => {
+                matrix_instruction_offered(&hw, dtypes)?;
                 read_rounded(client, dtypes);
                 CubeStagedMatmulRoutine.launch_into(&hw, client, lhs, rhs, out, settings)
             }
