@@ -6,7 +6,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Grid, LastArrival, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{
-    Launcher, Partitioning, Space, StageStorage, Tile, TileSpec, TileTensor, TileTensorLaunch,
+    Launcher, Partitioning, Space, StageStorage, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::matmul::cube::CubeStagedWalk;
@@ -238,7 +238,7 @@ fn hypercube_staged_kernel<EA: Numeric, EL: Numeric, VO: Size>(
         let tile = portion.region(i);
         let (from, steps) = portion.steps(i);
         let merge: LastArrival<'_> = slots.last_arrival::<VO>(&partitioning, &portion, i, arrivals);
-        hypercube_staged_last_arrival_microkernel::<EA, Tile>(
+        hypercube_staged_last_arrival_microkernel::<EA>(
             tile.over(&stages).range(from, steps),
             &a.at(&tile),
             &b.at(&tile),
