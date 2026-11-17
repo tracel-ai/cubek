@@ -14,7 +14,6 @@ use cubecl::tile::launch::{Refusal, TileOperand, Unbound};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::{LocalTuner, TunableSet, local_tuner};
 use cubecl::{AutotuneKey, CubeDim, CubeTuneId, Device};
-use std::sync::Arc;
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation};
 use cubek_std::Hardware;
 use cubek_std::autotune::{
@@ -23,6 +22,7 @@ use cubek_std::autotune::{
 };
 use cubek_std::routine::{EstimatedProblem, Grid, Routine};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// What tells one reduction from another for the autotune: its elements, its operation, how its
 /// lines lie, how many dims its rows run along, how long a row is and how many rows there are.
@@ -42,9 +42,14 @@ pub struct ReduceKey {
     rows: usize,
 }
 
-impl<T> From<&ReduceTensors<T>> for ReduceKey {
-    fn from(tensors: &ReduceTensors<T>) -> Self {
-        let problem = tensors.problem();
+impl<In> From<&ReduceTensors<In>> for ReduceKey {
+    fn from(tensors: &ReduceTensors<In>) -> Self {
+        Self::from(tensors.problem())
+    }
+}
+
+impl From<&ReduceRoutineProblem> for ReduceKey {
+    fn from(problem: &ReduceRoutineProblem) -> Self {
         Self::new(
             problem.elements,
             problem.indices,
@@ -136,24 +141,23 @@ where
         Ok(())
     }
 
-    /// `tensors`, whose input and output the caller binds, reduced at this candidate's setting
+    /// `tensors`, whose input the caller binds, reduced at this candidate's setting
     /// ([`ReduceRoutine::launch_unbound`]).
     ///
     /// # Errors
     ///
-    /// Why the routine cannot run the problem at its setting, or why it cannot read and write
-    /// the caller's operands.
-    pub fn launch_unbound<I: TileOperand, O: TileOperand>(
+    /// Why the routine cannot run the problem at its setting, or why it cannot read the caller's
+    /// input.
+    pub fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-        out: impl FnOnce(Unbound) -> <O::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {
         let (blueprint, grid) =
             self.routine
                 .prepare(&self.hw, tensors.problem(), &self.settings)?;
         self.routine
-            .launch_unbound::<I, O>(tensors, blueprint, grid, input, out)
+            .launch_unbound::<I>(tensors, blueprint, grid, input)
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
@@ -212,26 +216,23 @@ pub enum ReduceCandidate {
 }
 
 impl ReduceCandidate {
-    /// `tensors`, whose input and output the caller binds, reduced at this candidate's setting
+    /// `tensors`, whose input the caller binds, reduced at this candidate's setting
     /// ([`ReduceRoutineCandidate::launch_unbound`]).
     ///
     /// # Errors
     ///
-    /// Why the routine cannot run the problem at its setting, or why it cannot read and write
-    /// the caller's operands.
-    pub fn launch_unbound<I: TileOperand, O: TileOperand>(
+    /// Why the routine cannot run the problem at its setting, or why it cannot read the caller's
+    /// input.
+    pub fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-        out: impl FnOnce(Unbound) -> <O::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {
         match self {
-            Self::Unit(candidate) => candidate.launch_unbound::<I, O>(tensors, input, out),
-            Self::PlaneShuffle(candidate) => candidate.launch_unbound::<I, O>(tensors, input, out),
-            Self::CubeStaged(candidate) => candidate.launch_unbound::<I, O>(tensors, input, out),
-            Self::HypercubeLastArrival(candidate) => {
-                candidate.launch_unbound::<I, O>(tensors, input, out)
-            }
+            Self::Unit(candidate) => candidate.launch_unbound::<I>(tensors, input),
+            Self::PlaneShuffle(candidate) => candidate.launch_unbound::<I>(tensors, input),
+            Self::CubeStaged(candidate) => candidate.launch_unbound::<I>(tensors, input),
+            Self::HypercubeLastArrival(candidate) => candidate.launch_unbound::<I>(tensors, input),
         }
     }
 }
@@ -293,10 +294,10 @@ pub fn launch_tuned(tensors: ReduceTensors, device: &Device) {
 /// `tensors` states on `client`'s `device`, or `None` where no round has settled its key, or the
 /// floor named apart won it: what a fused reduce runs, so it inherits the kernel the unfused round
 /// chose.
-pub fn fastest_reduce_candidate<T>(
+pub fn fastest_reduce_candidate<In>(
     client: &Client,
     device: &Device,
-    tensors: &ReduceTensors<T>,
+    tensors: &ReduceTensors<In>,
 ) -> Option<ReduceCandidate> {
     let id = CubeTuneId::new(client, device);
     let tunables = tunables(&id, client);
@@ -315,9 +316,10 @@ fn tunables(id: &CubeTuneId, client: &Client) -> ReduceTunables {
 /// Every routine's candidates on `hw`, identified by their routine and setting, over the unit
 /// routine as the floor, which serves every problem on every device.
 fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceIdentity> {
-    let mut autotune = Autotune::<ReduceKey, ReduceTensors, (), ReduceIdentity>::new(
-        |tensors: &ReduceTensors| ReduceKey::from(tensors),
-    );
+    let mut autotune =
+        Autotune::<ReduceKey, ReduceTensors, (), ReduceIdentity>::new(|tensors: &ReduceTensors| {
+            ReduceKey::from(tensors)
+        });
     let tile = autotune.group("tile", GroupPriority::DEFAULT);
     let floor_hw = hw.clone();
     autotune

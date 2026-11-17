@@ -1,13 +1,12 @@
 use super::kernel::{plane_reduce_kernel, plane_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem,
-    reduce_widths,
+    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubecl::tile::{Levels, Partitioning};
+use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::plane::{PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings};
 use cubek_std::Hardware;
@@ -113,14 +112,11 @@ impl Routine for PlaneReduceRoutine {
 }
 
 impl ReduceRoutine<PlaneReduceMicrokernel> for PlaneReduceRoutine {
-    fn dispatch<I: TileOperand, O: TileOperand>(
+    fn dispatch<I: TileOperand>(
         &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
-        binding: ReduceBinding<
-            <I::Arg as LaunchArg>::RuntimeArg,
-            <O::Arg as LaunchArg>::RuntimeArg,
-        >,
+        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: PlaneReduceRoutineBlueprint,
         grid: Grid,
     ) {
@@ -130,7 +126,7 @@ impl ReduceRoutine<PlaneReduceMicrokernel> for PlaneReduceRoutine {
         // its tiles; it holds no shared memory.
         match (binding.indices, problem.indices) {
             (Some(indices), Some(index)) => unsafe {
-                plane_reduce_with_indices_kernel::launch_unchecked::<I, O>(
+                plane_reduce_with_indices_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
@@ -144,7 +140,7 @@ impl ReduceRoutine<PlaneReduceMicrokernel> for PlaneReduceRoutine {
                 )
             },
             _ => unsafe {
-                plane_reduce_kernel::launch_unchecked::<I, O>(
+                plane_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,

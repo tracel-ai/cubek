@@ -9,23 +9,24 @@ use cubecl::tile::{Geometry, Launcher};
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
-/// The input and the output of one reduction, and the problem they state: buffers
-/// ([`TensorBinding`]), or the geometries of operands the caller binds once the launch is prepared
-/// ([`Geometry`], [`ReduceRoutine::launch_unbound`](crate::kernels::ReduceRoutine::launch_unbound)).
+/// The input and the output of one reduction, and the problem they state: the input a buffer
+/// ([`TensorBinding`]) or the geometry of an input the caller binds once the launch is prepared
+/// ([`Geometry`], [`ReduceRoutine::launch_unbound`](crate::kernels::ReduceRoutine::launch_unbound)),
+/// the output a buffer.
 ///
 /// Both are read where they lie, at their own strides: every dim of each is an axis of the
 /// problem, so a reduction along any dim of a tensor of any rank binds without a copy.
 #[derive(Clone)]
-pub struct ReduceTensors<T = TensorBinding> {
+pub struct ReduceTensors<In = TensorBinding> {
     client: Client,
-    input: T,
-    out: T,
+    input: In,
+    out: TensorBinding,
     /// The indices written beside the values, laid out as `out`, where they are.
     indices: Option<TensorBinding>,
     problem: ReduceRoutineProblem,
 }
 
-impl<T> core::fmt::Debug for ReduceTensors<T> {
+impl<In> core::fmt::Debug for ReduceTensors<In> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ReduceTensors")
             .field("problem", &self.problem)
@@ -33,7 +34,7 @@ impl<T> core::fmt::Debug for ReduceTensors<T> {
     }
 }
 
-impl<T> ReduceTensors<T> {
+impl<In> ReduceTensors<In> {
     pub fn problem(&self) -> &ReduceRoutineProblem {
         &self.problem
     }
@@ -58,7 +59,7 @@ impl ReduceTensors<TensorBinding> {
         operation: ReduceOperation,
         elements: ReduceElements,
     ) -> Self {
-        let problem = stated_problem(
+        let problem = ReduceRoutineProblem::stated(
             &Geometry::from(&input),
             &Geometry::from(&out),
             axis,
@@ -149,10 +150,9 @@ impl ReduceTensors<TensorBinding> {
 }
 
 impl ReduceTensors<Geometry> {
-    /// `out = operation(input)` along dim `axis`, both operands laid out as `input` and `out` but
-    /// bound by the caller once the launch is prepared, the input read and the output written at
-    /// exactly `widths`: what a fused read and write stand for, whose lines the caller's code
-    /// computes whole.
+    /// `out = operation(input)` along dim `axis`, the input laid out as `input` but bound by the
+    /// caller once the launch is prepared and read at exactly `width`: what a fused read stands
+    /// for, whose lines the caller's code computes whole.
     ///
     /// # Panics
     ///
@@ -160,14 +160,15 @@ impl ReduceTensors<Geometry> {
     pub fn unbound(
         client: &Client,
         input: Geometry,
-        out: Geometry,
-        widths: [usize; 2],
+        width: usize,
+        out: TensorBinding,
         axis: usize,
         operation: ReduceOperation,
         elements: ReduceElements,
     ) -> Self {
-        let mut problem = stated_problem(&input, &out, axis, operation, elements);
-        problem.elem_alignments = widths.map(ElemAlignment::stored_piece);
+        let mut problem =
+            ReduceRoutineProblem::stated(&input, &Geometry::from(&out), axis, operation, elements);
+        problem.elem_alignments[0] = ElemAlignment::stored_piece(width);
         Self {
             client: client.clone(),
             input,
@@ -177,9 +178,13 @@ impl ReduceTensors<Geometry> {
         }
     }
 
-    /// Both operands' specs and geometries as `blueprint` states them, on `grid`, for the caller
-    /// to bind.
-    pub fn bind<M>(&self, blueprint: &ReduceRoutineBlueprint<M>, grid: &Grid) -> ReduceBinding<Unbound> {
+    /// The input's spec and geometry as `blueprint` states them, on `grid`, for the caller to
+    /// bind, and the output bound.
+    pub fn bind<M>(
+        &self,
+        blueprint: &ReduceRoutineBlueprint<M>,
+        grid: &Grid,
+    ) -> ReduceBinding<Unbound, Bound> {
         let launcher = grid.launcher(&self.client, || {
             (
                 self.problem.kernel(&blueprint.partitioning),
@@ -193,10 +198,10 @@ impl ReduceTensors<Geometry> {
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);
         let out = launcher
-            .unbound(&self.out)
+            .arg(self.out.clone(), self.problem.elements.out)
             .axes(&self.problem.out_axes())
             .vectorize(blueprint.out_width)
-            .build_spec()
+            .build()
             .expect(ADMITTED_PLAN_RUNS);
         ReduceBinding {
             launcher,
@@ -204,51 +209,6 @@ impl ReduceTensors<Geometry> {
             out,
             indices: None,
         }
-    }
-}
-
-/// The problem `out = operation(input)` along dim `axis` states, `out` having `input`'s shape with
-/// `axis` as wide as the operation writes per row.
-///
-/// # Panics
-///
-/// Where `out`'s shape is not that.
-fn stated_problem(
-    input: &Geometry,
-    out: &Geometry,
-    axis: usize,
-    operation: ReduceOperation,
-    elements: ReduceElements,
-) -> ReduceRoutineProblem {
-    let shape = input.shape().to_vec();
-    let expected: Vec<usize> = shape
-        .iter()
-        .enumerate()
-        .map(|(d, extent)| match d == axis {
-            true => operation.written_per_row(),
-            false => *extent,
-        })
-        .collect();
-    assert_eq!(
-        out.shape(),
-        expected.as_slice(),
-        "a reduction along dim {axis} writes the input's shape with that dim {} wide",
-        operation.written_per_row()
-    );
-    // A line runs along the innermost dim where both operands step one element along it.
-    let inner = shape.len() - 1;
-    let steps_one =
-        |geometry: &Geometry| geometry.strides()[inner] == 1 || geometry.shape()[inner] == 1;
-    let contiguous = (steps_one(input) && steps_one(out)).then_some(inner);
-    ReduceRoutineProblem {
-        elem_alignments: [input, out]
-            .map(|geometry| ElemAlignment::new(geometry.shape(), geometry.strides())),
-        shape,
-        axis,
-        operation,
-        elements,
-        contiguous,
-        indices: None,
     }
 }
 

@@ -3,16 +3,15 @@
 use crate::kernels::{ReduceBinding, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors};
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
-use cubecl::tile::Geometry;
 use cubecl::tile::launch::{Bound, Refusal, StoredTileOperand, TileOperand, Unbound};
+use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, Routine};
 
-/// Why an unbound reduction declines where its microkernel reads or writes narrower lines than the
-/// caller's operands are stated at ([`ReduceTensors::unbound`]): the caller computes its lines
-/// whole.
+/// Why an unbound reduction declines where its microkernel reads narrower lines than the caller's
+/// input is stated at ([`ReduceTensors::unbound`]): the caller computes its lines whole.
 pub const UNBOUND_LINES_NARROWER: Refusal = Refusal::Declined {
-    why: "the microkernel reads or writes narrower lines than the caller's operands are stated at",
+    why: "the microkernel reads narrower lines than the caller's input is stated at",
 };
 
 /// A routine of this kind around microkernel `M`: it prepares a [`ReduceRoutineBlueprint`] and
@@ -21,25 +20,20 @@ pub trait ReduceRoutine<M>:
     Routine<Problem = ReduceRoutineProblem, Blueprint = ReduceRoutineBlueprint<M>>
 {
     /// Launch the kernel `blueprint` compiles for `problem`, on `grid`, its input served as `I`
-    /// serves it and its output as `O` does, from the arguments `binding` holds.
-    fn dispatch<I: TileOperand, O: TileOperand>(
+    /// serves it, from the arguments `binding` holds.
+    fn dispatch<I: TileOperand>(
         &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
-        binding: ReduceBinding<
-            <I::Arg as LaunchArg>::RuntimeArg,
-            <O::Arg as LaunchArg>::RuntimeArg,
-        >,
+        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: ReduceRoutineBlueprint<M>,
         grid: Grid,
     );
 
     /// `tensors` bound as `blueprint` states them and reduced on `grid`.
     fn launch(&self, tensors: &ReduceTensors, blueprint: ReduceRoutineBlueprint<M>, grid: Grid) {
-        let binding = tensors
-            .bind(&blueprint, &grid)
-            .map(Bound::arg, Bound::arg);
-        self.dispatch::<StoredTileOperand, StoredTileOperand>(
+        let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, Bound::arg);
+        self.dispatch::<StoredTileOperand>(
             tensors.problem(),
             tensors.client(),
             binding,
@@ -48,28 +42,27 @@ pub trait ReduceRoutine<M>:
         );
     }
 
-    /// `tensors`, whose input and output the caller binds, reduced on `grid` as `blueprint` states
-    /// it: `input` and `out` build each operand's argument from the spec and geometry the launch
-    /// derived for it, served as `I` and `O` serve them.
+    /// `tensors`, whose input the caller binds, reduced on `grid` as `blueprint` states it: `input`
+    /// builds the input's argument from the spec and geometry the launch derived for it, served as
+    /// `I` serves it.
     ///
     /// # Errors
     ///
-    /// [`UNBOUND_LINES_NARROWER`] where `blueprint` reads or writes narrower lines than the
-    /// caller's operands are stated at.
-    fn launch_unbound<I: TileOperand, O: TileOperand>(
+    /// [`UNBOUND_LINES_NARROWER`] where `blueprint` reads narrower lines than the caller's input is
+    /// stated at.
+    fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,
         blueprint: ReduceRoutineBlueprint<M>,
         grid: Grid,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-        out: impl FnOnce(Unbound) -> <O::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {
-        let [input_lines, out_lines] = tensors.problem().elem_alignments;
-        if !input_lines.admits(blueprint.width) || !out_lines.admits(blueprint.out_width) {
+        let [input_lines, _] = tensors.problem().elem_alignments;
+        if !input_lines.admits(blueprint.width) {
             return Err(UNBOUND_LINES_NARROWER);
         }
-        let binding = tensors.bind(&blueprint, &grid).map(input, out);
-        self.dispatch::<I, O>(
+        let binding = tensors.bind(&blueprint, &grid).map(input, Bound::arg);
+        self.dispatch::<I>(
             tensors.problem(),
             tensors.client(),
             binding,

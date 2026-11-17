@@ -325,13 +325,13 @@ fn every_routine_reduces_every_dim_like_the_cpu() {
     Routines.check(reductions);
 }
 
-/// A reduce routine of the tile stack launched unbound, its input and output bound by the caller
-/// as plain buffers once the launch is prepared, at the widths the routine picks for them: what a
-/// fused read and write stand in for, against the host.
+/// A reduce routine of the tile stack launched unbound, its input bound by the caller as a plain
+/// buffer once the launch is prepared, at the width the routine picks for it: what a fused read
+/// stands in for, against the host.
 struct UnboundRoutines;
 
-/// `reduction`'s routine launched unbound over `input` and `out`, bound back as the buffers they
-/// are.
+/// `reduction`'s routine launched unbound over `input`, bound back as the buffer it is, into
+/// `out`.
 fn launch_unbound<R: ReduceRoutine<M> + Copy, M>(
     routine: R,
     client: &Client,
@@ -345,33 +345,29 @@ fn launch_unbound<R: ReduceRoutine<M> + Copy, M>(
         out: reduction.out_elem(),
     };
     let (axis, operation) = (reduction.axis, reduction.operation);
-    let buffers = ReduceTensors::new(client, input.clone(), out.clone(), axis, operation, elements);
+    let buffers = ReduceTensors::new(
+        client,
+        input.clone(),
+        out.clone(),
+        axis,
+        operation,
+        elements,
+    );
     let hw = Hardware::from_client(client);
     let (blueprint, _) = routine.prepare_first_served(&hw, buffers.problem())?;
     let tensors = ReduceTensors::unbound(
         client,
         Geometry::from(&input),
-        Geometry::from(&out),
-        [blueprint.width, blueprint.out_width],
+        blueprint.width,
+        out,
         axis,
         operation,
         elements,
     );
     let (blueprint, grid) = routine.prepare_first_served(&hw, tensors.problem())?;
-    routine.launch_unbound::<StoredTileOperand, StoredTileOperand>(
-        &tensors,
-        blueprint,
-        grid,
-        |bound| TileTensorLaunch::new(input.into_tensor_arg(), F32, bound.vector_size, bound.spec),
-        |bound| {
-            TileTensorLaunch::new(
-                out.into_tensor_arg(),
-                elements.out,
-                bound.vector_size,
-                bound.spec,
-            )
-        },
-    )
+    routine.launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, |bound| {
+        TileTensorLaunch::new(input.into_tensor_arg(), F32, bound.vector_size, bound.spec)
+    })
 }
 
 impl ScopeUnderTest for UnboundRoutines {

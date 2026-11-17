@@ -1,12 +1,11 @@
 use super::kernel::{cube_reduce_kernel, cube_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem,
-    reduce_widths,
+    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
-use cubecl::tile::{Levels, Partitioning};
+use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, CubeReduceMicrokernelSettings};
 use cubek_std::Hardware;
@@ -117,14 +116,11 @@ pub(crate) fn slot_bytes(problem: &ReduceRoutineProblem, width: usize) -> usize 
 }
 
 impl ReduceRoutine<CubeReduceMicrokernel> for CubeReduceRoutine {
-    fn dispatch<I: TileOperand, O: TileOperand>(
+    fn dispatch<I: TileOperand>(
         &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
-        binding: ReduceBinding<
-            <I::Arg as LaunchArg>::RuntimeArg,
-            <O::Arg as LaunchArg>::RuntimeArg,
-        >,
+        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: CubeReduceRoutineBlueprint,
         grid: Grid,
     ) {
@@ -135,7 +131,7 @@ impl ReduceRoutine<CubeReduceMicrokernel> for CubeReduceRoutine {
         // counted.
         match (binding.indices, problem.indices) {
             (Some(indices), Some(index)) => unsafe {
-                cube_reduce_with_indices_kernel::launch_unchecked::<I, O>(
+                cube_reduce_with_indices_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
@@ -149,7 +145,7 @@ impl ReduceRoutine<CubeReduceMicrokernel> for CubeReduceRoutine {
                 )
             },
             _ => unsafe {
-                cube_reduce_kernel::launch_unchecked::<I, O>(
+                cube_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
