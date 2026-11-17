@@ -2,7 +2,7 @@
 
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Partitioning, Space};
+use cubecl::tile::{Axis, Geometry, Partitioning, Space};
 use cubecl::tune::Work;
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation, ReduceWorkItem};
 use cubek_std::routine::EstimatedProblem;
@@ -38,6 +38,51 @@ pub struct ReduceRoutineProblem {
 }
 
 impl ReduceRoutineProblem {
+    /// The problem `out = operation(input)` along dim `axis` states, `out` having `input`'s shape
+    /// with `axis` as wide as the operation writes per row.
+    ///
+    /// # Panics
+    ///
+    /// Where `out`'s shape is not that.
+    pub fn stated(
+        input: &Geometry,
+        out: &Geometry,
+        axis: usize,
+        operation: ReduceOperation,
+        elements: ReduceElements,
+    ) -> Self {
+        let shape = input.shape().to_vec();
+        let expected: Vec<usize> = shape
+            .iter()
+            .enumerate()
+            .map(|(d, extent)| match d == axis {
+                true => operation.written_per_row(),
+                false => *extent,
+            })
+            .collect();
+        assert_eq!(
+            out.shape(),
+            expected.as_slice(),
+            "a reduction along dim {axis} writes the input's shape with that dim {} wide",
+            operation.written_per_row()
+        );
+        // A line runs along the innermost dim where both operands step one element along it.
+        let inner = shape.len() - 1;
+        let steps_one =
+            |geometry: &Geometry| geometry.strides()[inner] == 1 || geometry.shape()[inner] == 1;
+        let contiguous = (steps_one(input) && steps_one(out)).then_some(inner);
+        Self {
+            elem_alignments: [input, out]
+                .map(|geometry| ElemAlignment::new(geometry.shape(), geometry.strides())),
+            shape,
+            axis,
+            operation,
+            elements,
+            contiguous,
+            indices: None,
+        }
+    }
+
     /// The reduced axis.
     pub fn reduced(&self) -> Axis {
         dim_axis(self.axis)

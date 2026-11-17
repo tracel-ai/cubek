@@ -2,7 +2,7 @@ use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::routines::cube::slot_bytes;
 use crate::kernels::{
     ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
-    reduce_widths,
+    UNBOUND_LINES_NARROWER, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::ir::Type;
@@ -11,7 +11,7 @@ use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{
     AccumulateArgLaunch, Bound, Refusal, StoredTileOperand, TileOperand, Unbound, Vectorization,
 };
-use cubecl::tile::{Geometry, Levels, Partitioning};
+use cubecl::tile::{Geometry, Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, CubeReduceMicrokernelSettings};
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand, ReduceOperation};
 use cubek_std::Hardware;
@@ -23,7 +23,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// cube each to keep the device busy, as a whole tensor summed into one value.
 ///
 /// The output must hold zero before it runs ([`UnitZeroRoutine`](crate::kernels::UnitZeroRoutine)
-/// zeroes it); a caller never binds it, since it only ever adds. Its cubes run along the reduced
+/// zeroes it), since it only ever adds. Its cubes run along the reduced
 /// dim and at most two row dims; it declines more.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HypercubeAtomicReduceRoutine;
@@ -51,11 +51,6 @@ pub type HypercubeAtomicReduceRoutineBlueprint = ReduceRoutineBlueprint<CubeRedu
 
 /// Most row dims its cubes run along, beside the reduced dim: a launch grid has three.
 const MAX_ROW_DIMS: usize = 2;
-
-/// Why it declines a caller-bound output: it only adds into a buffer it holds at zero.
-pub const ATOMIC_OUTPUT_UNBOUND: Refusal = Refusal::Declined {
-    why: "the atomic hypercube adds into its output, which a caller cannot bind",
-};
 
 impl Routine for HypercubeAtomicReduceRoutine {
     type Problem = ReduceRoutineProblem;
@@ -160,20 +155,17 @@ impl Routine for HypercubeAtomicReduceRoutine {
 }
 
 impl ReduceRoutine<CubeReduceMicrokernel> for HypercubeAtomicReduceRoutine {
-    /// Never reached: [`launch`](Self::launch) binds the output to add into, and
-    /// [`launch_unbound`](Self::launch_unbound) declines.
-    fn dispatch<I: TileOperand, O: TileOperand>(
+    /// Never reached: [`launch`](Self::launch) and [`launch_unbound`](Self::launch_unbound) bind
+    /// the output as the atomic argument the kernel adds into, which a plain output tensor is not.
+    fn dispatch<I: TileOperand>(
         &self,
         _problem: &ReduceRoutineProblem,
         _client: &Client,
-        _binding: ReduceBinding<
-            <I::Arg as LaunchArg>::RuntimeArg,
-            <O::Arg as LaunchArg>::RuntimeArg,
-        >,
+        _binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         _blueprint: HypercubeAtomicReduceRoutineBlueprint,
         _grid: Grid,
     ) {
-        unreachable!("{ATOMIC_OUTPUT_UNBOUND:?}")
+        unreachable!("the atomic hypercube binds its output in `launch` and `launch_unbound`")
     }
 
     /// `tensors` reduced on `grid`, each cube's total added into the output.
@@ -183,41 +175,77 @@ impl ReduceRoutine<CubeReduceMicrokernel> for HypercubeAtomicReduceRoutine {
         blueprint: HypercubeAtomicReduceRoutineBlueprint,
         grid: Grid,
     ) {
-        let problem = tensors.problem();
-        let elements = problem.elements;
-        let binding = tensors
-            .bind(&blueprint, &grid)
-            .map(Bound::arg, |out: Bound| {
-                let (spec, width) = (out.spec.clone(), out.vector_size);
-                AccumulateArgLaunch::new(out.tensor(), width, spec)
-            });
-        // SAFETY: both operands are bound through the launcher, which masks the reads and writes
-        // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
-        // its tiles; the output only receives atomic adds. Its shared memory is the slots its
-        // microkernel declares, which the grid counted.
-        unsafe {
-            hypercube_atomic_reduce_kernel::launch_unchecked::<StoredTileOperand>(
-                tensors.client(),
-                grid.launch.cube_count,
-                grid.launch.cube_dim,
-                blueprint.width,
-                binding.input,
-                binding.out,
-                binding.launcher.partitioning_arg(),
-                blueprint.microkernel,
-                [elements.input, elements.accumulator, elements.out],
-            )
-        }
+        let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, accumulate);
+        launch_atomic::<StoredTileOperand>(
+            tensors.problem(),
+            tensors.client(),
+            binding,
+            blueprint,
+            grid,
+        );
     }
 
-    fn launch_unbound<I: TileOperand, O: TileOperand>(
+    /// `tensors`, whose input the caller binds, reduced on `grid`, each cube's total added into
+    /// the output.
+    ///
+    /// # Errors
+    ///
+    /// [`UNBOUND_LINES_NARROWER`] where `blueprint` reads narrower lines than the caller's input is
+    /// stated at.
+    fn launch_unbound<I: TileOperand>(
         &self,
-        _tensors: &ReduceTensors<Geometry>,
-        _blueprint: HypercubeAtomicReduceRoutineBlueprint,
-        _grid: Grid,
-        _input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-        _out: impl FnOnce(Unbound) -> <O::Arg as LaunchArg>::RuntimeArg,
+        tensors: &ReduceTensors<Geometry>,
+        blueprint: HypercubeAtomicReduceRoutineBlueprint,
+        grid: Grid,
+        input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {
-        Err(ATOMIC_OUTPUT_UNBOUND)
+        let [input_lines, _] = tensors.problem().elem_alignments;
+        if !input_lines.admits(blueprint.width) {
+            return Err(UNBOUND_LINES_NARROWER);
+        }
+        let binding = tensors.bind(&blueprint, &grid).map(input, accumulate);
+        launch_atomic::<I>(
+            tensors.problem(),
+            tensors.client(),
+            binding,
+            blueprint,
+            grid,
+        );
+        Ok(())
+    }
+}
+
+/// `out` as the atomic argument the kernel adds into.
+fn accumulate(out: Bound) -> AccumulateArgLaunch {
+    let (spec, width) = (out.spec.clone(), out.vector_size);
+    AccumulateArgLaunch::new(out.tensor(), width, spec)
+}
+
+/// The kernel `blueprint` compiles for `problem`, launched on `grid`, its input served as `I`
+/// serves it.
+fn launch_atomic<I: TileOperand>(
+    problem: &ReduceRoutineProblem,
+    client: &Client,
+    binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, AccumulateArgLaunch>,
+    blueprint: HypercubeAtomicReduceRoutineBlueprint,
+    grid: Grid,
+) {
+    let elements = problem.elements;
+    // SAFETY: both operands are bound through the launcher, which masks the reads and writes of a
+    // tile the problem's edge cuts short, and the kernel indexes no buffer but through its tiles;
+    // the output only receives atomic adds. Its shared memory is the slots its microkernel
+    // declares, which the grid counted.
+    unsafe {
+        hypercube_atomic_reduce_kernel::launch_unchecked::<I>(
+            client,
+            grid.launch.cube_count,
+            grid.launch.cube_dim,
+            blueprint.width,
+            binding.input,
+            binding.out,
+            binding.launcher.partitioning_arg(),
+            blueprint.microkernel,
+            [elements.input, elements.accumulator, elements.out],
+        )
     }
 }
