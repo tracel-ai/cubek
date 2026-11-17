@@ -210,9 +210,9 @@ pub fn scales_view(
     quant_scheme: &QuantScheme,
 ) -> ScalesViewLaunch {
     let layout = scales_layout(&values, &scales, scales_vector_size, quant_scheme);
-    let len = scales.shape.iter().product::<usize>();
-    let buffer = unsafe { BufferArg::from_raw_parts_binding(scales.handle, len) };
-    ScalesViewLaunch::new_array::<ScalesLayout>(buffer, layout)
+    // The kernel sees the whole handle: a broadcast scales tensor's shape holds more scalars
+    // than its memory, so its shape's product is no length to declare.
+    ScalesViewLaunch::new_array::<ScalesLayout>(scales.into_buffer_arg(), layout)
 }
 
 pub fn scales_layout(
