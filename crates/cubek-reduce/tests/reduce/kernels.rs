@@ -11,7 +11,7 @@ use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_reduce::kernels::{
-    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements,
+    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceKernel,
     ReduceKernelHeuristic, ReduceOpStrategy, ReduceRoutine, ReduceRoutineProblem, ReduceTensors,
     UnitReduceRoutine, launch_reduce_routine, launch_tuned, select,
 };
@@ -455,6 +455,23 @@ fn unbound_routines_reduce_like_the_cpu() {
         }
     }
     UnboundRoutines.check(reductions);
+}
+
+/// The atomic hypercube sums rows split into parts, each part added into the zeroed output: one
+/// long row, rows along the contiguous dim, and rows across it. It must launch wherever the device
+/// adds floats atomically; a sum is the only operation it serves.
+#[test]
+fn the_atomic_hypercube_sums_split_rows_like_the_cpu() {
+    let mut reductions = Vec::new();
+    for (shape, axis) in [([1, 1, 9000], 2), ([2, 3, 5000], 2), ([3, 2100, 4], 1)] {
+        reductions.push(Reduction {
+            scope: Scope::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)),
+            shape: shape.to_vec(),
+            axis,
+            operation: ReduceOperation::Sum,
+        });
+    }
+    Routines.check_some(reductions);
 }
 
 /// The hypercube splits rows into parts, the last one short, and merges them: a `[2, 3, 5000]`
