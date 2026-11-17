@@ -417,12 +417,12 @@ impl CubeStagedMicrokernel {
         // table sees one launch rather than timing its twins.
         let (storage, stage_layout) = match fill.delivery {
             CubeStagedDelivery::Tma => (
-                self.plane.landed_stage_storage(hw, stage),
+                self.plane.landed_stage_storage(stage),
                 CubeStagedMicrokernelSettings::SWIZZLED,
             ),
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => (
                 self.plane
-                    .stage_storage(hw, self.stage_layout, fill.delivery.fills(), stage),
+                    .stage_storage(self.stage_layout, fill.delivery.fills(), stage),
                 self.stage_layout,
             ),
         };

@@ -129,7 +129,6 @@ impl<'a> CubeStagedPlacement<'a> {
         Delivery::Tma.holds(microkernel.ring.prefetch)?;
         let orders = microkernel.plane.orders;
         if let Some(refusal) = CubeStagedTmaRefusal::new(
-            hw,
             &self.contracted,
             &self.problem.buffers(orders),
             &self.cube_space,

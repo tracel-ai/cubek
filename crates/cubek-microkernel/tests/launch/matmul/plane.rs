@@ -72,7 +72,6 @@ impl PlaneFragmentLaunch {
             plane_width as usize,
         );
         let storage = microkernel.stage_storage(
-            hw,
             CubeStagedMicrokernelSettings::SWIZZLED,
             Delivery::SyncPerUnit,
             &stage,

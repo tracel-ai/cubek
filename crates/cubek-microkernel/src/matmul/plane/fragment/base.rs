@@ -816,7 +816,6 @@ impl PlaneFragmentMicrokernel {
     /// stated over, their rows arranged as its instruction reads them (`read_by`).
     pub fn stage_storage(
         &self,
-        hw: &Hardware,
         layout: StageLayout,
         delivery: Delivery,
         stage: &MatmulStage,
@@ -827,14 +826,14 @@ impl PlaneFragmentMicrokernel {
                 .stage_tile(&beside, stage.axes(), self.settings.rows_along),
             &self.k_axes(1),
         );
-        self.read_by(hw, layout.storage(stage.space(), tile), delivery)
+        self.read_by(layout.storage(stage.space(), tile), delivery)
     }
 
     /// How a stage it reads holds its cells where one TMA box lands it whole
     /// ([`PlaneFragmentInstruction::landed_stage_tile`]): each tile the whole stage deep along
     /// every axis `K` is stated over, its rows swizzled where its instruction reads them so and in
     /// order where it cannot, since a box lands no padding (`read_by`).
-    pub(crate) fn landed_stage_storage(&self, hw: &Hardware, stage: &MatmulStage) -> StageStorage {
+    pub(crate) fn landed_stage_storage(&self, stage: &MatmulStage) -> StageStorage {
         let (beside, axes): (Vec<Axis>, _) = (stage.beside().collect(), stage.axes());
         let whole_k: Vec<_> = self
             .k_axes(1)
@@ -851,19 +850,15 @@ impl PlaneFragmentMicrokernel {
             block: Self::over_k(tile, &whole_k),
             chunks: RowChunks::Swizzled,
         };
-        self.read_by(hw, swizzled, Delivery::Tma)
+        self.read_by(swizzled, Delivery::Tma)
     }
 
-    /// `stated` as a stage this plane reads and `delivery` fills lays it: arranged by the tile
-    /// for the instruction computing its Step ([`ProductStep::stage_storage`]), or for the
-    /// instruction it states ([`StageStorage::read_by`]).
-    fn read_by(&self, hw: &Hardware, stated: StageStorage, delivery: Delivery) -> StageStorage {
-        match self.step {
-            Some(step) => step
-                .stage_storage(stated, delivery, &hw.properties, &hw.target)
-                .expect("a plane's Step is one the tile computes, which its cost asked"),
-            None => stated.read_by(self.instruction.tile_instruction(), delivery),
-        }
+    /// `stated` as a stage this plane reads and `delivery` fills lays it, its rows arranged by the
+    /// tile for the instruction its fragments load through ([`StageStorage::read_by`]): the
+    /// tile's pick for how its kernel opens the sum, a kept sum's included, which its Step alone
+    /// would not say.
+    pub fn read_by(&self, stated: StageStorage, delivery: Delivery) -> StageStorage {
+        stated.read_by(self.tile_instruction(), delivery)
     }
 
     /// `tile` with its extents along `K` restated as `k_axes`: an instruction tiles `K` as one
