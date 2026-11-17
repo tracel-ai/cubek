@@ -527,13 +527,13 @@ impl PackedTensor {
         step: usize,
     ) -> Vec<(Dimension, usize, usize)> {
         let mut dims = Vec::new();
-        for ((dim, extent), dim_step) in [(rows, step), (columns, 1)] {
+        for ((dimension, extent), dimension_step) in [(rows, step), (columns, 1)] {
             let [(blocks, block_count), (inside, inside_count)] =
-                self.operand.dimensions(dim, extent);
+                self.operand.dimensions(dimension, extent);
             if block_count > 1 {
-                dims.push((blocks, block_count, inside_count * dim_step));
+                dims.push((blocks, block_count, inside_count * dimension_step));
             }
-            dims.push((inside, inside_count, dim_step));
+            dims.push((inside, inside_count, dimension_step));
         }
         dims
     }
