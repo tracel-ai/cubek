@@ -1,7 +1,8 @@
 //! The zero microkernels on one launch: `out[o, c]`, every row's cells zeroed by its owner.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::kind::Boundary;
+use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
 use cubecl::tile::space::UnitCube;
 use cubecl::tile::{
     Dimension, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
@@ -46,9 +47,15 @@ pub fn launch_unit_zero(
         cube_dim: partitioning.cube_dim(plane_width),
     };
     let launcher = Launcher::new(client, partitioning, &space, grid)?;
-    let out = TileTensorLaunch::new(out, element, 1, TileSpec::direct(&[ROWS, CELLS]));
-    // SAFETY: the output is bound through the launcher at its own extents, and the kernel indexes
-    // no buffer but through its tile.
+    // A cube's units past the last row write nothing: their writes are masked.
+    let out = TileTensorLaunch::new(
+        out,
+        element,
+        1,
+        TileSpec::direct(&[ROWS, CELLS]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
+    );
+    // SAFETY: the output is bound through the launcher, which masks the writes of the units past
+    // its last row, and the kernel indexes no buffer but through its tile.
     unsafe {
         unit_zero_kernel::launch_unchecked(
             client,
