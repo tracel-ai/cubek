@@ -110,7 +110,7 @@ impl Routine for CubeStagedReduceRoutine {
 const MAX_ROW_DIMS: usize = 3;
 
 impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
-    const NAME: &'static str = "cube_staged_reduce";
+    const NAME: &'static str = "cube-staged-reduce";
 
     fn dispatch<I: TileOperand>(
         &self,

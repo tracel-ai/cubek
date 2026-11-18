@@ -115,7 +115,7 @@ impl Routine for PlaneShuffleReduceRoutine {
 }
 
 impl ReduceLauncher<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine {
-    const NAME: &'static str = "plane_shuffle_reduce";
+    const NAME: &'static str = "plane-shuffle-reduce";
 
     fn dispatch<I: TileOperand>(
         &self,

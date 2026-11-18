@@ -15,7 +15,7 @@ use cubek_std::routine::{Grid, Routine};
 pub(crate) trait ReduceLauncher<M>:
     Routine<Problem = ReduceRoutineProblem, Blueprint = ReduceBlueprint<M>>
 {
-    /// The routine's prefix in snake case, which names its tunables (`"cube_staged_reduce"`).
+    /// The routine's prefix in kebab case, which names its tunables (`"cube-staged-reduce"`).
     const NAME: &'static str;
 
     /// Launch the kernel `blueprint` compiles for `problem`, on `grid`, its input served as `I`

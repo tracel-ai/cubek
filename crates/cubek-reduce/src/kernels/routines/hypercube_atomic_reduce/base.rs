@@ -158,7 +158,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
 }
 
 impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutine {
-    const NAME: &'static str = "hypercube_atomic_reduce";
+    const NAME: &'static str = "hypercube-atomic-reduce";
 
     /// Never reached: [`launch`](Self::launch) and [`launch_unbound`](Self::launch_unbound) bind
     /// the output as the atomic argument the kernel adds into, which a plain output tensor is not.

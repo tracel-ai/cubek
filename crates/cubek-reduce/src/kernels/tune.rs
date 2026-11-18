@@ -255,9 +255,7 @@ impl ReduceCandidate {
     /// has settled the key, or the floor named apart won it: what a fused reduce runs, so it
     /// inherits the kernel the unfused round chose.
     pub fn fastest(client: &Client, device: &Device, key: &ReduceKey) -> Option<Self> {
-        let id = CubeTuneId::new(client, device);
-        let tunables = tunables(&id, client);
-        TUNER.fastest_identity(&id, &tunables, key)?.routine()
+        fastest_tuned(client, device, key)
     }
 
     /// The candidate a routine at one setting is, launched through `dispatch`.
@@ -383,6 +381,14 @@ pub(crate) fn launch_tuned(tensors: ReduceTensors, device: &Device) {
     TUNER.execute(&id, &client, tunables, tensors);
 }
 
+/// The candidate the tuner on `client`'s `device` found fastest for `key`, if a round settled it
+/// ([`ReduceCandidate::fastest`]).
+fn fastest_tuned(client: &Client, device: &Device, key: &ReduceKey) -> Option<ReduceCandidate> {
+    let id = CubeTuneId::new(client, device);
+    let tunables = tunables(&id, client);
+    TUNER.fastest_identity(&id, &tunables, key)?.routine()
+}
+
 /// The autotune for the device `id` names, built on first touch. The one place it is built: a
 /// tuner caches a set per initializer *type*, so a second `init` site would build a second set.
 fn tunables(id: &CubeTuneId, client: &Client) -> ReduceTunables {
@@ -454,7 +460,7 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
             work: tensors.problem().demand(),
         })
         .floor(ReduceIdentity::named(
-            "unit_direct_reduce floor",
+            "unit-direct-reduce floor",
             move |tensors: ReduceTensors| {
                 ReduceKernel::Unit
                     .launch(&floor_hw, &tensors)

@@ -112,7 +112,7 @@ impl Routine for UnitDirectZeroRoutine {
 }
 
 impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroRoutine {
-    const NAME: &'static str = "unit_direct_zero";
+    const NAME: &'static str = "unit-direct-zero";
 
     /// The output zeroed; the input is never read.
     fn dispatch<I: TileOperand>(

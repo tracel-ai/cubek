@@ -115,7 +115,7 @@ impl Routine for UnitDirectReduceRoutine {
 }
 
 impl ReduceLauncher<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
-    const NAME: &'static str = "unit_direct_reduce";
+    const NAME: &'static str = "unit-direct-reduce";
 
     fn dispatch<I: TileOperand>(
         &self,

@@ -201,7 +201,7 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
 }
 
 impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArrivalReduceRoutine {
-    const NAME: &'static str = "hypercube_last_arrival_reduce";
+    const NAME: &'static str = "hypercube-last-arrival-reduce";
 
     fn dispatch<I: TileOperand>(
         &self,
