@@ -29,7 +29,11 @@ const UNTOUCHED: f32 = 100.0;
 
 type Window = ConvolutionArgs<2>;
 
-const fn window(stride: [usize; 2], padding: [usize; 2], dilation: [usize; 2]) -> Window {
+const fn window<const N: usize>(
+    stride: [usize; N],
+    padding: [usize; N],
+    dilation: [usize; N],
+) -> ConvolutionArgs<N> {
     ConvolutionArgs {
         stride,
         padding,
@@ -42,17 +46,22 @@ const VALID: Window = window([1, 1], [0, 0], [1, 1]);
 const STRIDE_2: Window = window([2, 2], [1, 1], [1, 1]);
 const DILATION_2: Window = window([1, 1], [2, 2], [2, 2]);
 const DILATION_UNEQUAL: Window = window([1, 1], [1, 2], [1, 2]);
+const SAME_1D: ConvolutionArgs<1> = window([1], [1], [1]);
+const SAME_3D: ConvolutionArgs<3> = window([1; 3], [1; 3], [1; 3]);
+const STRIDE_2_3D: ConvolutionArgs<3> = window([2; 3], [1; 3], [1; 3]);
+const ASYMMETRIC_3D: ConvolutionArgs<3> = window([1, 2, 1], [0, 1, 2], [2, 1, 1]);
+const ASYMMETRIC_STRIDE_1_3D: ConvolutionArgs<3> = window([1; 3], [0, 1, 2], [2, 1, 1]);
 
 /// A convolution of `element`, `channels` in and `filters` out, whose values the host sums
 /// exactly.
-fn conv_of(
+fn conv_of<const N: usize>(
     element: ElemType,
     batch: usize,
     (channels, filters): (usize, usize),
-    input: [usize; 2],
-    kernel: [usize; 2],
-    args: Window,
-) -> Conv<2> {
+    input: [usize; N],
+    kernel: [usize; N],
+    args: ConvolutionArgs<N>,
+) -> Conv<N> {
     Conv::of(element)
         .batches(batch)
         .spatial(input)
@@ -66,24 +75,24 @@ fn conv_of(
 }
 
 /// A convolution of half precision.
-fn conv(
+fn conv<const N: usize>(
     batch: usize,
     channels: (usize, usize),
-    input: [usize; 2],
-    kernel: [usize; 2],
-    args: Window,
-) -> Conv<2> {
+    input: [usize; N],
+    kernel: [usize; N],
+    args: ConvolutionArgs<N>,
+) -> Conv<N> {
     conv_of(F16, batch, channels, input, kernel, args)
 }
 
 /// [`conv`] over `f32`, which the CPU runtime runs.
-fn conv32(
+fn conv32<const N: usize>(
     batch: usize,
     channels: (usize, usize),
-    input: [usize; 2],
-    kernel: [usize; 2],
-    args: Window,
-) -> Conv<2> {
+    input: [usize; N],
+    kernel: [usize; N],
+    args: ConvolutionArgs<N>,
+) -> Conv<N> {
     conv_of(F32, batch, channels, input, kernel, args)
 }
 
@@ -165,7 +174,7 @@ impl<const N: usize> ConvRoutine<N> for Tile {
 }
 
 /// `conv`'s `pass` through `strategy` matches the host's, where the device serves it.
-fn check(pass: Pass, strategy: Strategy, accepts: Accepts, conv: Conv<2>) {
+fn check<const N: usize>(pass: Pass, strategy: Strategy, accepts: Accepts, conv: Conv<N>) {
     let scope = Convolves::new(Tile { strategy, accepts }, Declines::AsItStates);
     scope.check([ConvCase { conv, pass }]);
 }
@@ -213,6 +222,10 @@ mod cube {
         padded_channels: conv(2, (60, 32), [6, 7], [3, 3], SAME).stored(Storage::Padded);
         gapped: conv(2, (64, 32), [6, 7], [3, 3], SAME).stored(Storage::Gapped);
         offset: conv(2, (64, 32), [6, 7], [3, 3], SAME).stored(Storage::Offset);
+        conv_1d_overhanging: conv(2, (64, 32), [37], [3], SAME_1D);
+        conv_1d_three_batches: conv(3, (64, 32), [37], [3], SAME_1D);
+        conv_3d_stride_2: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], STRIDE_2_3D);
+        conv_3d_asymmetric: conv(2, (32, 32), [7, 9, 7], [3, 3, 3], ASYMMETRIC_3D);
     }
 
     cube! {
@@ -230,6 +243,9 @@ mod cube {
         padded_out_grad: conv(2, (64, 30), [5, 12], [3, 3], SAME).out_grad_stored(Storage::Padded);
         gapped_out_grad: conv(2, (64, 32), [5, 12], [3, 3], SAME).out_grad_stored(Storage::Gapped);
         offset: conv(2, (64, 32), [5, 12], [3, 3], SAME).stored(Storage::Offset);
+        conv_1d_overhanging: conv(2, (64, 32), [37], [3], SAME_1D);
+        conv_3d_stride_2: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], STRIDE_2_3D);
+        conv_3d_asymmetric: conv(2, (32, 32), [7, 9, 7], [3, 3, 3], ASYMMETRIC_3D);
     }
 
     cube! {
@@ -245,6 +261,9 @@ mod cube {
         padded_out_grad: conv(2, (64, 30), [5, 12], [3, 3], SAME).out_grad_stored(Storage::Padded);
         gapped_out_grad: conv(2, (64, 32), [5, 12], [3, 3], SAME).out_grad_stored(Storage::Gapped);
         offset: conv(2, (64, 32), [5, 12], [3, 3], SAME).stored(Storage::Offset);
+        conv_1d_overhanging: conv(2, (64, 32), [37], [3], SAME_1D);
+        conv_3d_padded: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], SAME_3D);
+        conv_3d_asymmetric: conv(2, (32, 32), [7, 9, 7], [3, 3, 3], ASYMMETRIC_STRIDE_1_3D);
     }
 
     // A few channels make a step of taps, which the fragment API declines by name and a device
@@ -364,6 +383,10 @@ mod unit_registers {
         stride_unequal: conv32(2, (64, 32), [12, 15], [3, 3], window([1, 2], [1, 1], [1, 1]));
         dilation_unequal: conv32(2, (64, 32), [12, 12], [3, 3], DILATION_UNEQUAL);
         ragged_57x5: conv32(2, (64, 32), [57, 5], [3, 3], SAME);
+        conv_1d_overhanging: conv32(2, (64, 32), [57], [3], SAME_1D);
+        conv_1d_three_batches: conv32(3, (64, 32), [57], [3], SAME_1D);
+        conv_3d_stride_2: conv32(2, (16, 12), [5, 6, 7], [3, 3, 3], STRIDE_2_3D);
+        conv_3d_asymmetric: conv32(2, (16, 12), [7, 9, 7], [3, 3, 3], ASYMMETRIC_3D);
     }
 
     unit! {
@@ -376,6 +399,9 @@ mod unit_registers {
         channels_3: conv32(2, (3, 10), [6, 12], [3, 3], SAME);
         ragged_57x5: conv32(2, (64, 32), [57, 5], [3, 3], SAME);
         channels_first_output: conv32(1, (2, 2), [5, 5], [3, 3], VALID).stored(Storage::ChannelsFirst);
+        conv_1d_overhanging: conv32(2, (64, 32), [57], [3], SAME_1D);
+        conv_3d_stride_2: conv32(2, (16, 12), [5, 6, 7], [3, 3, 3], STRIDE_2_3D);
+        conv_3d_asymmetric: conv32(2, (16, 12), [7, 9, 7], [3, 3, 3], ASYMMETRIC_3D);
     }
 
     unit! {
@@ -387,6 +413,9 @@ mod unit_registers {
         non_square_kernel: conv32(2, (32, 24), [6, 12], [5, 3], window([1, 1], [2, 1], [1, 1]));
         channels_3: conv32(2, (3, 16), [6, 12], [3, 3], SAME);
         ragged_57x5: conv32(2, (64, 32), [57, 5], [3, 3], SAME);
+        conv_1d_overhanging: conv32(2, (64, 32), [57], [3], SAME_1D);
+        conv_3d_padded: conv32(2, (16, 12), [5, 6, 7], [3, 3, 3], SAME_3D);
+        conv_3d_asymmetric: conv32(2, (16, 12), [7, 9, 7], [3, 3, 3], ASYMMETRIC_STRIDE_1_3D);
     }
 }
 
@@ -395,9 +424,9 @@ fn client() -> Client {
 }
 
 /// `shape` of `element`, all `value`, stored dense.
-fn filled(client: &Client, shape: [usize; 4], value: f32) -> TensorHandle {
+fn filled(client: &Client, shape: &[usize], value: f32) -> TensorHandle {
     let values = vec![value; shape.iter().product()];
-    Conv::<2>::of(F16).store(client, &shape, &values, Storage::Dense)
+    Conv::<2>::of(F16).store(client, shape, &values, Storage::Dense)
 }
 
 /// The inputs of `pass`: its lhs and rhs, and the output it writes.
@@ -461,7 +490,7 @@ impl Refused {
         let client = client();
         let [lhs, rhs, out] = self
             .shapes
-            .map(|shape| filled(&client, shape, 0.0).binding());
+            .map(|shape| filled(&client, &shape, 0.0).binding());
         let lhs = match self.quantized {
             false => InputBinding::new(lhs, F16),
             true => InputBinding::Quantized {
@@ -537,19 +566,38 @@ refusals! {
     data_grad_dilation_of_zero: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], window([1, 1], [1, 1], [0, 1]) => ConvDecline::WindowStepZero;
 }
 
+/// Tensors of one more dim than the window gives are refused by name; `Refused` states rank 4
+/// shapes, so this launch is its own.
+#[test]
+fn tensors_of_another_rank_than_the_window_are_refused() {
+    let client = client();
+    let dense = |shape: [usize; 5]| filled(&client, &shape, 0.0).binding();
+    let operands = inputs(
+        Forward,
+        InputBinding::new(dense([1, 6, 6, 6, 64]), F16),
+        InputBinding::new(dense([32, 3, 3, 3, 64]), F16),
+        dense([1, 6, 6, 6, 32]),
+    );
+    let message = launch(&tuned(), &client, operands, SAME).expect_err("the launch was accepted");
+    assert!(
+        message.contains(why(ConvDecline::RankMismatch)),
+        "{message}"
+    );
+}
+
 /// An output with no element has nothing to compute: the launch returns and writes nowhere, as
 /// the sentinel the output's buffer starts as shows.
 #[test]
 fn an_empty_output_launches_nothing() {
     let client = client();
-    let sentinel = filled(&client, [1, 1, 1, 1], UNTOUCHED);
+    let sentinel = filled(&client, &[1, 1, 1, 1], UNTOUCHED);
     let empty = TensorHandle::new(
         sentinel.handle.clone(),
         vec![1, 0, 0, 32],
         Strides::new(&[1, 1, 1, 1]),
         F16,
     );
-    let dense = |shape| InputBinding::new(filled(&client, shape, 1.0).binding(), F16);
+    let dense = |shape: [usize; 4]| InputBinding::new(filled(&client, &shape, 1.0).binding(), F16);
     let operands = inputs(
         Forward,
         dense([1, 2, 2, 64]),
