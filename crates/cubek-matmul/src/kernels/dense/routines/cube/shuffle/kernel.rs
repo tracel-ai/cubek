@@ -24,7 +24,6 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
     let dest = O::serve::<E, VO>(out, &partitioning);
-    let c = dest.tile();
 
     // A persistent cube's run of the boxes, whole boxes each, the cube level sharing them as one
     // index; every other cube's one box.
@@ -34,9 +33,9 @@ pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
         partitioning.walk()
     };
     for cube in cubes {
-        cube_shuffle_microkernel::<EA>(
+        cube_shuffle_microkernel::<EA, O::Served<E>>(
             &cube,
-            &c.at(&cube),
+            &dest,
             &a.at(&cube),
             &b.at(&cube),
             block,

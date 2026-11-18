@@ -211,51 +211,54 @@ impl CubeStagedWalk {
         }
     }
 
-    /// `c = a · b` over `run`, stored by the TMA engine out of a box in shared memory laid as `c`:
+    /// `c = a · b` over `run`, drained into a box in shared memory laid as `c` and handed to
+    /// `dest` at `cube`, which a storing destination over a tensor map bulk-stores: the box
     /// declared after the walk where planes are set aside to fill, so it takes the ring's bytes,
     /// before it otherwise.
-    fn store_by_tma<EA: Numeric>(
+    fn store_by_tma<EA: Numeric, D: ServedDestination>(
         run: Walk,
         a: &Tile,
         b: &Tile,
-        c: &Tile,
+        dest: &D,
+        cube: &Region,
         #[comptime] walk: CubeStagedWalk,
         #[comptime] storage: StageStorage,
     ) {
         if walk.filling_planes > 0 {
-            Self::stage_after_walk::<EA>(run, a, b, c, walk, storage)
+            Self::stage_after_walk::<EA, D>(run, a, b, dest, cube, walk, storage)
         } else {
-            Self::stage_before_walk::<EA>(run, a, b, c, walk, storage)
+            Self::stage_before_walk::<EA, D>(run, a, b, dest, cube, walk, storage)
         }
     }
 
-    fn stage_after_walk<EA: Numeric>(
+    fn stage_after_walk<EA: Numeric, D: ServedDestination>(
         run: Walk,
         a: &Tile,
         b: &Tile,
-        c: &Tile,
+        dest: &D,
+        cube: &Region,
         #[comptime] walk: CubeStagedWalk,
         #[comptime] storage: StageStorage,
     ) {
-        let mut c = c.clone();
+        let c = dest.tile().at(cube);
         let sum = Self::sum_planes::<EA>(run, a, b, &c, walk, storage);
         let staged = c.smem_box();
         sum.drained_into(&staged);
-        c.copy_from(&staged);
+        staged.consumed_by::<D>(dest, cube);
     }
 
-    fn stage_before_walk<EA: Numeric>(
+    fn stage_before_walk<EA: Numeric, D: ServedDestination>(
         run: Walk,
         a: &Tile,
         b: &Tile,
-        c: &Tile,
+        dest: &D,
+        cube: &Region,
         #[comptime] walk: CubeStagedWalk,
         #[comptime] storage: StageStorage,
     ) {
-        let mut c = c.clone();
-        let staged = c.smem_box();
+        let staged = dest.tile().at(cube).smem_box();
         Self::sum_planes::<EA>(run, a, b, &staged, walk, storage).drained_into(&staged);
-        c.copy_from(&staged);
+        staged.consumed_by::<D>(dest, cube);
     }
 
     /// One stage contracted into `sum_stage`, the sum's window of it: every plane runs the plane
@@ -288,14 +291,13 @@ impl CubeStagedWalk {
 /// which the instruction cannot take, leave for the sum and are applied once, as it is written
 /// ([`Tile::factor`]).
 ///
-/// The cube's sum is handed to `dest` at `cube`, where each plane drains its fragments
-/// ([`CubeStagedStore::Fragments`]); each plane drains into a box in shared memory laid as the
-/// output's, which the whole cube, filling planes too, then stores in one bulk copy
-/// ([`CubeStagedStore::Tma`]), the box taking the ring's bytes beside planes set aside to fill;
-/// or, splitting `K`, each adds its partial into one accumulator in shared memory, atomically,
-/// which the cube copies out once it has synchronized ([`CubeStagedDrain::Merged`]). Planes
-/// merging along `K` are never stored by the TMA engine. The box and the accumulator still store,
-/// so a destination that fuses must not be launched with them.
+/// The cube's result is handed to `dest` at `cube` wherever it ends: each plane's fragments
+/// ([`CubeStagedStore::Fragments`]); a box in shared memory laid as the output's, which the
+/// planes drain into and the whole cube, filling planes too, hands over, a storing destination
+/// bulk-storing it ([`CubeStagedStore::Tma`]), the box taking the ring's bytes beside planes set
+/// aside to fill; or, splitting `K`, one accumulator in shared memory each plane adds its partial
+/// into, atomically, handed over once the cube has synchronized ([`CubeStagedDrain::Merged`]).
+/// Planes merging along `K` are never stored by the TMA engine.
 #[cube]
 pub fn cube_staged_microkernel<EA: Numeric, D: ServedDestination>(
     run: Walk,
@@ -306,7 +308,7 @@ pub fn cube_staged_microkernel<EA: Numeric, D: ServedDestination>(
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,
 ) {
-    let mut c = dest.tile().at(cube);
+    let c = dest.tile().at(cube);
 
     match (walk.drain, walk.store) {
         (CubeStagedDrain::EachPlane, CubeStagedStore::Fragments) => {
@@ -314,7 +316,7 @@ pub fn cube_staged_microkernel<EA: Numeric, D: ServedDestination>(
                 .consumed_by::<D>(dest, cube);
         }
         (CubeStagedDrain::EachPlane, CubeStagedStore::Tma) => {
-            CubeStagedWalk::store_by_tma::<EA>(run, a, b, &c, walk, storage);
+            CubeStagedWalk::store_by_tma::<EA, D>(run, a, b, dest, cube, walk, storage);
         }
         (CubeStagedDrain::Merged, _) => {
             let accumulator = c.smem_accumulation::<EA>();
@@ -323,7 +325,7 @@ pub fn cube_staged_microkernel<EA: Numeric, D: ServedDestination>(
 
             sync_cube();
 
-            c.copy_from(&accumulator.source);
+            accumulator.source.consumed_by::<D>(dest, cube);
         }
     }
 }
