@@ -484,38 +484,39 @@ fn unbound_routines_reduce_like_the_cpu() {
     UnboundRoutines.check(reductions);
 }
 
-/// The atomic hypercube sums rows split into parts, each part added into the zeroed output: one
-/// long row, rows along the contiguous dim, and rows across it. It must launch wherever the device
-/// adds floats atomically; a sum is the only operation it serves.
-#[test]
-fn the_atomic_hypercube_sums_split_rows_like_the_cpu() {
-    let mut reductions = Vec::new();
-    for (shape, axis) in [([1, 1, 9000], 2), ([2, 3, 5000], 2), ([3, 2100, 4], 1)] {
-        reductions.push(Reduction {
+/// The sums the atomic hypercube is checked on: one long row; rows along the contiguous dim; rows
+/// across it; and four rows of a matrix, whose output's rows lie side by side in memory.
+fn atomic_sums() -> Vec<Reduction> {
+    let shapes: [(&[usize], usize); 4] = [
+        (&[1, 1, 9000], 2),
+        (&[2, 3, 5000], 2),
+        (&[3, 2100, 4], 1),
+        (&[4, 9000], 1),
+    ];
+    shapes
+        .into_iter()
+        .map(|(shape, axis)| Reduction {
             scope: Scope::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)),
             shape: shape.to_vec(),
             axis,
             operation: ReduceOperation::Sum,
-        });
-    }
-    Routines.check_some(reductions);
+        })
+        .collect()
+}
+
+/// The atomic hypercube sums rows split into parts, each part added into the zeroed output, on
+/// [`atomic_sums`]. It must launch wherever the device adds floats atomically; a sum is the only
+/// operation it serves.
+#[test]
+fn the_atomic_hypercube_sums_split_rows_like_the_cpu() {
+    Routines.check_some(atomic_sums());
 }
 
 /// The atomic hypercube launched unbound sums as it does bound, into an output that starts away
-/// from zero, so the zeroing before it is checked too: one long row, rows along the contiguous
-/// dim, and rows across it.
+/// from zero, so the zeroing before it is checked too, on [`atomic_sums`].
 #[test]
 fn the_atomic_hypercube_sums_an_unbound_input_like_the_cpu() {
-    let mut reductions = Vec::new();
-    for (shape, axis) in [([1, 1, 9000], 2), ([2, 3, 5000], 2), ([3, 2100, 4], 1)] {
-        reductions.push(Reduction {
-            scope: Scope::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)),
-            shape: shape.to_vec(),
-            axis,
-            operation: ReduceOperation::Sum,
-        });
-    }
-    UnboundRoutines.check_some(reductions);
+    UnboundRoutines.check_some(atomic_sums());
 }
 
 /// The hypercube splits rows into parts, the last one short, and merges them: a `[2, 3, 5000]`
