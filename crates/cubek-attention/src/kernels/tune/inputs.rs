@@ -300,7 +300,7 @@ impl AttentionTuneInputs {
     /// stands for, [`CHUNK_QUERIES`](AttentionKey::CHUNK_QUERIES) over
     /// [`CHUNK_PREFIX`](AttentionKey::CHUNK_PREFIX), not the key's extents: the anchor rounds
     /// those up to its bucket's edge, which past the default level is no chunk a prompt is cut
-    /// into. At `extensive` 512 queries over 8192 keys anchor to 657 over 11223, a second box of
+    /// into. At `extensive` 512 queries over 32768 keys anchor to 657 over 37877, a second box of
     /// 145 queries the routines rank differently than any call runs them. Over the call's own
     /// keys, the key's extents, the bucket's longest.
     fn chunk_extents(&self, key: &AttentionKey) -> (usize, usize) {
@@ -506,7 +506,7 @@ mod tests {
         use crate::kernels::{AttentionScoring, AttentionVisibility, QueryPlacement};
         use core::num::NonZeroUsize;
         use cubecl::ir::{ElemType, FloatKind};
-        use cubek_test_utils::client;
+        use cubek_test_utils::{TestOutcome, ValidationResult, client};
 
         const F16: ElemType = ElemType::Float(FloatKind::F16);
         /// Query heads, key heads and head dim: a GQA group of four.
@@ -622,13 +622,13 @@ mod tests {
 
         /// **A round over a cache measures what its key stands for, whatever bucket holds it.**
         /// An anchor finer than the default rounds the chunk and the decode prefix a key over a
-        /// cache stands for up to extents no call has (512 queries over 8192 keys to 657 over
-        /// 11223, 2048 keys to 2217); the rounds still measure that chunk and that prefix, the
+        /// cache stands for up to extents no call has (512 queries over 32768 keys to 657 over
+        /// 37877, 2048 keys to 2217); the rounds still measure that chunk and that prefix, the
         /// decode's the depth its work is priced at.
         #[test]
         fn a_round_over_a_cache_measures_what_its_key_stands_for() {
             let chunk = inputs(512, 4096, None);
-            let key = chunk.key_of(657, 11223);
+            let key = chunk.key_of(657, 37877);
             assert!(key.chunk());
             let round = AttentionTuneInputs::many_queries_representative(&key, &chunk);
             assert_eq!(round.query.shape()[2], AttentionKey::CHUNK_QUERIES);
@@ -643,7 +643,8 @@ mod tests {
         /// **Each side of a cache is keyed and measured at its own element.** A chunk and a decode
         /// step over `f16` keys and values, over `e4m3` keys beside `f16` values, and over both
         /// `e4m3`, tune under three keys: a winner over one reads the others' operands differently
-        /// or not at all. Each round measures every side at the element its call reads it at.
+        /// or not at all. Each round measures every side at the element its call reads it at. A
+        /// cache whose element the runtime declines to store is a skip, not a failure.
         #[test]
         fn each_side_of_a_cache_is_keyed_and_measured_at_its_own_element() {
             let e4m3 = ElemType::Float(FloatKind::E4M3);
@@ -666,11 +667,13 @@ mod tests {
                     None,
                     AttentionScoring::standard(visibility, head_dim),
                 )
-                .expect("an even group of float elements")
             };
             for queries in [1, 512] {
                 let caches = [(F16, F16), (e4m3, F16), (e4m3, e4m3)].map(|(key, value)| {
-                    let inputs = over(queries, key, value);
+                    let inputs = match over(queries, key, value) {
+                        Err(Refusal::Declined { why }) => return Err(why),
+                        inputs => inputs.expect("an even group of float elements"),
+                    };
                     let (keyed, round) = match queries {
                         1 => {
                             let keyed = inputs.one_query_key();
@@ -690,11 +693,24 @@ mod tests {
                         (F16, key, value),
                         "{queries} queries: the round measures another cache"
                     );
-                    keyed
+                    Ok(keyed)
                 });
-                assert_ne!(caches[0], caches[1], "{queries} queries");
-                assert_ne!(caches[1], caches[2], "{queries} queries");
-                assert_ne!(caches[0], caches[2], "{queries} queries");
+                let keyed: Vec<_> = caches
+                    .into_iter()
+                    .filter_map(|cache| {
+                        cache
+                            .inspect_err(|why| {
+                                TestOutcome::Validated(ValidationResult::Skipped(why.to_string()))
+                                    .enforce()
+                            })
+                            .ok()
+                    })
+                    .collect();
+                for (index, key) in keyed.iter().enumerate() {
+                    for other in &keyed[index + 1..] {
+                        assert_ne!(key, other, "{queries} queries");
+                    }
+                }
             }
         }
 

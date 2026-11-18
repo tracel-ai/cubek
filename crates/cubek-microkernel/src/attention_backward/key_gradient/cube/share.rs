@@ -1,5 +1,4 @@
 use crate::attention::{D, DV, Q, S};
-use crate::attention_backward::key_gradient::plane::PlaneKeyGradientMicrokernel;
 use crate::attention_backward::{ScoreWindows, scale_rows};
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::{
@@ -82,16 +81,18 @@ impl QueryGradientShare {
         let score_gradient = score_gradient.at(&score_gradient.over(&own).region(row));
 
         // The part is the plane's own, on the product's grid with no planes above it.
+        let levels = comptime!(product.tile_levels(&[]));
         let part = ScoreWindows::contract_held::<EA>(
             &score_gradient,
             &key.at(&key.over(&run).region(column)),
             comptime!(sum.space()),
-            product,
-            comptime!(PlaneKeyGradientMicrokernel::grid_levels(product, &[])),
+            levels.clone(),
         );
 
         scale_rows::<EA>(&part, scale, share);
-        ScoreWindows::store_cast(&sum, &part, product);
+        // The window on the part's grid is the plane's part of the sum: drained at the depth the
+        // part sits.
+        part.drained_into(&sum.with_levels(1usize, levels));
     }
 
     /// The share of `stage`, whose planes each add theirs.

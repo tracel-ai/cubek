@@ -144,6 +144,7 @@ pub fn cpu_12() -> Hardware {
         max_units_per_cube: 12,
         max_cube_dim: (12, 12, 12),
         num_cpu_cores: Some(12),
+        num_cpu_physical_cores: None,
         last_level_cache_size: Some(32 * 1024 * 1024),
         max_vector_size: usize::MAX,
         ..gpu(1, 64 * 1024)
