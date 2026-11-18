@@ -101,11 +101,7 @@ impl RoutedCandidates {
     pub(crate) fn new(hw: &Hardware) -> Self {
         let plane_shuffle = Listing::float_then_packed(
             PlaneShuffleMatmulRoutine::settings(hw),
-            [
-                PlaneShuffleMatmulRoutine::packed_settings(),
-                PlaneShuffleMatmulRoutine::packed_by_block_settings(),
-            ]
-            .concat(),
+            PlaneShuffleMatmulRoutine::indexed_packed_settings(),
         );
         let mut packed = CubeStagedMatmulRoutine.packed_one_step_settings();
         let rest: Vec<_> = CubeStagedMatmulRoutine

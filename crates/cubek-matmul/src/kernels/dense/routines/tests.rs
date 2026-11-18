@@ -126,10 +126,7 @@ mod plane_shuffle {
         let hw = devices::m2_pro();
         for m in [1, 8] {
             for (name, problem) in problems(m) {
-                for settings in PlaneShuffleMatmulRoutine::packed_settings()
-                    .into_iter()
-                    .chain(PlaneShuffleMatmulRoutine::packed_by_block_settings())
-                {
+                for settings in PlaneShuffleMatmulRoutine::indexed_packed_settings() {
                     let prepared = PlaneShuffleMatmulRoutine::prepare(&hw, &problem, &settings);
                     if !PlaneShuffleMatmulRoutine::sizes_packed(&settings, &problem) {
                         assert!(prepared.is_err(), "{name} at {settings} sized a plane");

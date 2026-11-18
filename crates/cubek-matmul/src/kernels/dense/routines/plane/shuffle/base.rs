@@ -150,15 +150,16 @@ impl PlaneShuffleMatmulRoutine {
         ]
     }
 
-    /// The packed settings reading the rhs a scale block at a time
-    /// ([`by_block`](PlaneShuffleMicrokernelSettings::by_block)): they close a `K` that is no whole
-    /// number of words of scales, a tensor-parallel slice of an expert. Raced by the routed
-    /// autotune alone, so no other packed table pays their tuning.
-    pub fn packed_by_block_settings() -> Vec<PlaneShuffleMatmulRoutineSettings> {
-        vec![
+    /// The [packed settings](Self::packed_settings), then those reading the rhs a scale block at a
+    /// time ([`by_block`](PlaneShuffleMicrokernelSettings::by_block)), which close a `K` that is
+    /// no whole number of words of scales, a tensor-parallel slice of an expert. What the routed
+    /// and m-grouped products race, so the dense packed tables never pay the by-block tuning.
+    pub fn indexed_packed_settings() -> Vec<PlaneShuffleMatmulRoutineSettings> {
+        let by_block = [
             PlaneShuffleMatmulRoutineSettings::PACKED_BY_BLOCK,
             PlaneShuffleMatmulRoutineSettings::BY_BLOCK_TWO_COLUMNS,
-        ]
+        ];
+        [Self::packed_settings(), by_block.to_vec()].concat()
     }
 
     /// Whether `settings` sizes a plane against `problem`'s packed rhs on a device committing to
@@ -807,10 +808,7 @@ mod tests {
             .into_iter()
             .chain([devices::wgpu_no_subgroups(), devices::rdna_range()])
         {
-            for settings in PlaneShuffleMatmulRoutine::packed_settings()
-                .into_iter()
-                .chain(PlaneShuffleMatmulRoutine::packed_by_block_settings())
-            {
+            for settings in PlaneShuffleMatmulRoutine::indexed_packed_settings() {
                 let declines_rhs = settings.microkernel.by_block && problem.rhs_by_block().is_err();
                 let unread = MatmulRoutineProblem::RHS_UNREAD_BY_BLOCK;
                 match (
