@@ -2,7 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::TileOperand;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microkernel};
+use cubek_microkernel::reduce::unit::UnitReduceMicrokernel;
 
 /// Every unit of the launch, reducing its rows into the carrier its operation accumulates into.
 ///
@@ -11,7 +11,13 @@ use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microke
 ///   its place (`I`).
 /// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k).
 #[cube(launch_unchecked)]
-pub fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size, I: TileOperand>(
+pub(crate) fn unit_direct_reduce_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    I: TileOperand,
+>(
     input: &I::Arg,
     out: &TileTensor<'_>,
     partitioning: Partitioning,
@@ -25,12 +31,9 @@ pub fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size, I: T
         // One output: the indices are never written, so they get the output's own window.
         let mut unwritten = o.at(&unit);
         let rows = x.at(&unit);
-        unit_reduce_microkernel::<In, Acc, Out, Out, N>(
-            &rows,
-            &mut rows_out,
-            &mut unwritten,
-            microkernel,
-        );
+        microkernel
+            .runtime()
+            .execute::<In, Acc, Out, Out, N>(&rows, &mut rows_out, &mut unwritten);
     }
 }
 
@@ -43,7 +46,7 @@ pub fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size, I: T
 /// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k).
 /// - `indices`: one tensor laid out as `out`.
 #[cube(launch_unchecked)]
-pub fn unit_reduce_with_indices_kernel<
+pub(crate) fn unit_direct_reduce_with_indices_kernel<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -65,11 +68,10 @@ pub fn unit_reduce_with_indices_kernel<
         let mut rows_out = o.at(&unit);
         let mut rows_indices = i.at(&unit);
         let rows = x.at(&unit);
-        unit_reduce_microkernel::<In, Acc, Out, Idx, N>(
+        microkernel.runtime().execute::<In, Acc, Out, Idx, N>(
             &rows,
             &mut rows_out,
             &mut rows_indices,
-            microkernel,
         );
     }
 }

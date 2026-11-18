@@ -1,8 +1,9 @@
 //! The reduce family's rule: which routine runs a problem when nothing is measured.
 
 use crate::kernels::{
-    CubeReduceRoutine, HypercubeReduceRoutine, HypercubeReduceSettings, ReduceKernel,
-    ReduceRoutine, ReduceRoutineProblem, ReduceSplitExtents, ReduceTensors, UnitReduceRoutine,
+    CubeStagedReduceRoutine, HypercubeLastArrivalReduceRoutine, HypercubeLastArrivalReduceSettings,
+    ReduceKernel, ReduceLauncher, ReduceRoutineProblem, ReduceSplitExtents, ReduceTensors,
+    UnitDirectReduceRoutine,
 };
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::reduce::{ReduceCarrier, ReduceLayout};
@@ -22,21 +23,21 @@ use cubek_std::routine::Routine;
 /// # Errors
 ///
 /// Why the unit routine cannot run the problem here, which no device refuses.
-pub fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
+pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
     let problem = tensors.problem();
-    if let Ok((blueprint, grid)) = UnitReduceRoutine.prepare_first_served(hw, problem)
+    if let Ok((blueprint, grid)) = UnitDirectReduceRoutine.prepare_first_served(hw, problem)
         && short_of_the_device(hw, &grid.launch) == 0
         && unit_keeps_up(hw, problem, blueprint.width)
     {
-        UnitReduceRoutine.launch(tensors, blueprint, grid);
+        UnitDirectReduceRoutine.launch(tensors, blueprint, grid);
         return Ok(());
     }
     if let Some((blueprint, grid)) = hypercube_filling_the_device(hw, tensors) {
-        HypercubeReduceRoutine.launch(tensors, blueprint, grid);
+        HypercubeLastArrivalReduceRoutine.launch(tensors, blueprint, grid);
         return Ok(());
     }
-    if let Ok((blueprint, grid)) = CubeReduceRoutine.prepare_first_served(hw, problem) {
-        CubeReduceRoutine.launch(tensors, blueprint, grid);
+    if let Ok((blueprint, grid)) = CubeStagedReduceRoutine.prepare_first_served(hw, problem) {
+        CubeStagedReduceRoutine.launch(tensors, blueprint, grid);
         return Ok(());
     }
     ReduceKernel::Unit.launch(hw, tensors)
@@ -67,24 +68,25 @@ fn hypercube_filling_the_device(
     hw: &Hardware,
     tensors: &ReduceTensors,
 ) -> Option<(
-    <HypercubeReduceRoutine as Routine>::Blueprint,
+    <HypercubeLastArrivalReduceRoutine as Routine>::Blueprint,
     cubek_std::routine::Grid,
 )> {
     let problem = tensors.problem();
-    let routine = HypercubeReduceRoutine;
+    let routine = HypercubeLastArrivalReduceRoutine;
     let mut most_cubes = None;
     let longest_only = matches!(
         problem.operation.carrier(),
         ReduceCarrier::TopK { .. } | ReduceCarrier::TopValues { .. }
     );
     let settings = routine.settings(hw).into_iter().filter(|settings| {
-        !longest_only || settings.unit_lines == HypercubeReduceSettings::UNIT_LINES[0]
+        !longest_only || settings.unit_lines == HypercubeLastArrivalReduceSettings::UNIT_LINES[0]
     });
     for settings in settings {
         let Ok((blueprint, grid)) = routine.prepare(hw, problem, &settings) else {
             continue;
         };
-        let units = (blueprint.microkernel.part.lanes * blueprint.microkernel.part.planes) as u32;
+        let units =
+            (blueprint.microkernel.part().lanes() * blueprint.microkernel.part().planes()) as u32;
         let fill = hw.cubes_to_fill(units)? as usize;
         let boxes = ReduceSplitExtents::row_boxes(problem, blueprint.width);
         let parts = ReduceSplitExtents::new(problem, &blueprint.partitioning, blueprint.width).parts

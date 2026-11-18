@@ -1,24 +1,24 @@
-//! The reduce routine trait: what a routine states, and the launch of one on tensors.
+//! The trait every reduce routine implements: how it launches what it prepared.
 
-use crate::kernels::{ReduceBinding, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors};
+use crate::kernels::{
+    ReduceBinding, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
+    UNBOUND_LINES_NARROWER,
+};
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
+use cubecl::tile::Geometry;
+use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{Bound, Refusal, StoredTileOperand, TileOperand, Unbound};
-use cubecl::tile::{Geometry, TileTensorLaunch};
-use cubek_std::Hardware;
 use cubek_std::routine::{Grid, Routine};
 
-/// Why an unbound reduction declines where its microkernel reads narrower lines than the caller's
-/// input is stated at ([`ReduceTensors::unbound`]): the caller computes its lines whole.
-pub const UNBOUND_LINES_NARROWER: Refusal = Refusal::Declined {
-    why: "the microkernel reads narrower lines than the caller's input is stated at",
-};
-
-/// A routine of this kind around microkernel `M`: it prepares a [`ReduceRoutineBlueprint`] and
-/// launches it on tensors.
-pub trait ReduceRoutine<M>:
+/// A reduce routine around microkernel `M`, as a launcher: it launches the
+/// [`ReduceRoutineBlueprint`] it prepared on tensors.
+pub(crate) trait ReduceLauncher<M>:
     Routine<Problem = ReduceRoutineProblem, Blueprint = ReduceRoutineBlueprint<M>>
 {
+    /// The routine's prefix in snake case, which names its tunables (`"cube_staged_reduce"`).
+    const NAME: &'static str;
+
     /// Launch the kernel `blueprint` compiles for `problem`, on `grid`, its input served as `I`
     /// serves it, from the arguments `binding` holds.
     fn dispatch<I: TileOperand>(
@@ -71,20 +71,4 @@ pub trait ReduceRoutine<M>:
         );
         Ok(())
     }
-}
-
-/// `tensors` reduced by `routine` at `settings` on this device.
-///
-/// # Errors
-///
-/// Why the routine cannot run the problem here.
-pub fn launch_reduce_routine<R: ReduceRoutine<M>, M>(
-    routine: &R,
-    tensors: &ReduceTensors,
-    settings: &R::Settings,
-) -> Result<(), Refusal> {
-    let hw = Hardware::from_client(tensors.client());
-    let (blueprint, grid) = routine.prepare(&hw, tensors.problem(), settings)?;
-    routine.launch(tensors, blueprint, grid);
-    Ok(())
 }

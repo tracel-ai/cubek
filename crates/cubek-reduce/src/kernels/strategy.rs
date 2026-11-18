@@ -4,8 +4,9 @@
 //! families.
 
 use crate::kernels::{
-    CubeReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine,
-    ReduceRoutine, ReduceTensors, UnitReduceRoutine, UnitZeroRoutine,
+    CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
+    PlaneShuffleReduceRoutine, ReduceLauncher, ReduceTensors, UnitDirectReduceRoutine,
+    UnitDirectZeroRoutine,
 };
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
@@ -38,18 +39,18 @@ pub enum ReduceKernelHeuristic {
 /// routine's settings that serves the problem.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReduceKernel {
-    /// [`UnitReduceRoutine`]: a unit reads a whole row. Asks nothing of the device, so it serves
+    /// [`UnitDirectReduceRoutine`]: a unit reads a whole row. Asks nothing of the device, so it serves
     /// every problem everywhere.
     Unit,
-    /// [`PlaneReduceRoutine`]: a plane reads a row, its lanes' partials meeting through plane
+    /// [`PlaneShuffleReduceRoutine`]: a plane reads a row, its lanes' partials meeting through plane
     /// instructions.
     PlaneShuffle,
-    /// [`CubeReduceRoutine`]: a cube reads a row, its planes' partials meeting in shared memory.
+    /// [`CubeStagedReduceRoutine`]: a cube reads a row, its planes' partials meeting in shared memory.
     CubeStaged,
-    /// [`HypercubeReduceRoutine`]: a row split across cubes, the last cube to arrive merging
+    /// [`HypercubeLastArrivalReduceRoutine`]: a row split across cubes, the last cube to arrive merging
     /// every part.
     HypercubeLastArrival,
-    /// [`HypercubeAtomicReduceRoutine`] after [`UnitZeroRoutine`]: a row split across cubes, each
+    /// [`HypercubeAtomicReduceRoutine`] after [`UnitDirectZeroRoutine`]: a row split across cubes, each
     /// adding its part into the zeroed output. Sums only.
     HypercubeAtomic,
 }
@@ -126,12 +127,14 @@ impl ReduceKernel {
     /// Why its routine cannot run the problem here.
     pub fn launch(&self, hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
         match self {
-            Self::Unit => launch_first_served(&UnitReduceRoutine, hw, tensors),
-            Self::PlaneShuffle => launch_first_served(&PlaneReduceRoutine, hw, tensors),
-            Self::CubeStaged => launch_first_served(&CubeReduceRoutine, hw, tensors),
-            Self::HypercubeLastArrival => launch_first_served(&HypercubeReduceRoutine, hw, tensors),
+            Self::Unit => launch_first_served(&UnitDirectReduceRoutine, hw, tensors),
+            Self::PlaneShuffle => launch_first_served(&PlaneShuffleReduceRoutine, hw, tensors),
+            Self::CubeStaged => launch_first_served(&CubeStagedReduceRoutine, hw, tensors),
+            Self::HypercubeLastArrival => {
+                launch_first_served(&HypercubeLastArrivalReduceRoutine, hw, tensors)
+            }
             Self::HypercubeAtomic => {
-                launch_first_served(&UnitZeroRoutine, hw, tensors)?;
+                launch_first_served(&UnitDirectZeroRoutine, hw, tensors)?;
                 launch_first_served(&HypercubeAtomicReduceRoutine, hw, tensors)
             }
         }
@@ -139,7 +142,7 @@ impl ReduceKernel {
 }
 
 /// `tensors` reduced by `routine` at the first of its settings `hw` prepares them at.
-fn launch_first_served<R: ReduceRoutine<M>, M>(
+fn launch_first_served<R: ReduceLauncher<M>, M>(
     routine: &R,
     hw: &Hardware,
     tensors: &ReduceTensors,

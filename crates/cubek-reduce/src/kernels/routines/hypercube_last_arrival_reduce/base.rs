@@ -1,9 +1,9 @@
 use super::kernel::{
-    ReduceSplit, ReduceSplitExtents, ReduceSplitExtentsLaunch, hypercube_reduce_kernel,
-    hypercube_reduce_with_indices_kernel,
+    HypercubeLastArrivalReduceDecisions, ReduceSplit, ReduceSplitExtents, ReduceSplitExtentsLaunch,
+    hypercube_last_arrival_reduce_kernel, hypercube_last_arrival_reduce_with_indices_kernel,
 };
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
+    ReduceBinding, ReduceLauncher, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::bytes::Bytes;
 use cubecl::client::Client;
@@ -26,28 +26,28 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, CubeResources, Grid, Routine};
 ///
 /// Its cubes run along the reduced dim and at most two row dims; it declines more row dims.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct HypercubeReduceRoutine;
+pub(crate) struct HypercubeLastArrivalReduceRoutine;
 
 /// The cube microkernel's planes, and how many lines each unit reads of a part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HypercubeReduceSettings {
+pub struct HypercubeLastArrivalReduceSettings {
     pub microkernel: CubeReduceMicrokernelSettings,
     pub unit_lines: usize,
 }
 
-impl HypercubeReduceSettings {
+impl HypercubeLastArrivalReduceSettings {
     /// Lines each unit reads of a part, the longest parts first: the fewest partials that still
     /// spread a row over the device.
     pub const UNIT_LINES: [usize; 3] = [32, 8, 2];
 }
 
-impl core::fmt::Display for HypercubeReduceSettings {
+impl core::fmt::Display for HypercubeLastArrivalReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} unit_lines={}", self.microkernel, self.unit_lines)
     }
 }
 
-pub type HypercubeReduceBlueprint = ReduceRoutineBlueprint<HypercubeReduceMicrokernel>;
+pub type HypercubeLastArrivalReduceBlueprint = ReduceRoutineBlueprint<HypercubeReduceMicrokernel>;
 
 impl ReduceSplit {
     /// Where the cubes of `problem`'s hypercube sit.
@@ -106,11 +106,11 @@ fn partial_extent(problem: &ReduceRoutineProblem, part: usize, width: usize) -> 
 /// Most row dims a hypercube's cubes run along, beside the reduced dim: a launch grid has three.
 const MAX_ROW_DIMS: usize = 2;
 
-impl Routine for HypercubeReduceRoutine {
+impl Routine for HypercubeLastArrivalReduceRoutine {
     type Problem = ReduceRoutineProblem;
     type Microkernel = HypercubeReduceMicrokernel;
-    type Settings = HypercubeReduceSettings;
-    type Blueprint = HypercubeReduceBlueprint;
+    type Settings = HypercubeLastArrivalReduceSettings;
+    type Blueprint = HypercubeLastArrivalReduceBlueprint;
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes, each with the longest parts first.
@@ -118,9 +118,11 @@ impl Routine for HypercubeReduceRoutine {
         HypercubeReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
-                HypercubeReduceSettings::UNIT_LINES.map(|unit_lines| HypercubeReduceSettings {
-                    microkernel,
-                    unit_lines,
+                HypercubeLastArrivalReduceSettings::UNIT_LINES.map(|unit_lines| {
+                    HypercubeLastArrivalReduceSettings {
+                        microkernel,
+                        unit_lines,
+                    }
                 })
             })
             .collect()
@@ -152,7 +154,7 @@ impl Routine for HypercubeReduceRoutine {
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widths = reduce_widths(hw, problem, vectorization);
-        let units = microkernel.part.lanes * microkernel.part.planes;
+        let units = microkernel.part().lanes() * microkernel.part().planes();
         // Along, a line holds `width` values of the row; across, one.
         let part = units
             * settings.unit_lines
@@ -192,13 +194,15 @@ impl Routine for HypercubeReduceRoutine {
     }
 }
 
-impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
+impl ReduceLauncher<HypercubeReduceMicrokernel> for HypercubeLastArrivalReduceRoutine {
+    const NAME: &'static str = "hypercube_last_arrival_reduce";
+
     fn dispatch<I: TileOperand>(
         &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
-        blueprint: HypercubeReduceBlueprint,
+        blueprint: HypercubeLastArrivalReduceBlueprint,
         grid: Grid,
     ) {
         let elements = problem.elements;
@@ -243,7 +247,7 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
         // shared memory is the slots its microkernel declares, which the grid counted.
         match (binding.indices, problem.indices) {
             (Some(indices), Some(index)) => unsafe {
-                hypercube_reduce_with_indices_kernel::launch_unchecked::<I>(
+                hypercube_last_arrival_reduce_with_indices_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
@@ -260,13 +264,15 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
                         extents.values,
                         extents.inner_boxes,
                     ),
-                    ReduceSplit::new(problem),
-                    blueprint.microkernel,
+                    HypercubeLastArrivalReduceDecisions {
+                        microkernel: blueprint.microkernel,
+                        split: ReduceSplit::new(problem),
+                    },
                     [elements.input, elements.accumulator, elements.out, index],
                 )
             },
             _ => unsafe {
-                hypercube_reduce_kernel::launch_unchecked::<I>(
+                hypercube_last_arrival_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
@@ -282,8 +288,10 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
                         extents.values,
                         extents.inner_boxes,
                     ),
-                    ReduceSplit::new(problem),
-                    blueprint.microkernel,
+                    HypercubeLastArrivalReduceDecisions {
+                        microkernel: blueprint.microkernel,
+                        split: ReduceSplit::new(problem),
+                    },
                     [elements.input, elements.accumulator, elements.out],
                 )
             },

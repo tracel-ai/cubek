@@ -25,7 +25,7 @@ pub struct ReduceRoutineBlueprint<M> {
 /// the requirements the microkernel enqueued in `vectorization`, the binding adds each buffer's
 /// alignment, and a line that never runs past a row along the reduced dim, or past the rows across
 /// it. Settled before the partitioning, whose owners hold a line of rows across the reduced dim.
-pub fn reduce_widths(
+pub(crate) fn reduce_widths(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
     mut vectorization: Vectorization<ReduceOperand>,

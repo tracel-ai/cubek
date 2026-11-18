@@ -19,7 +19,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-pub fn hypercube_reduce_microkernel<
+pub(crate) fn hypercube_reduce_microkernel<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -39,7 +39,7 @@ pub fn hypercube_reduce_microkernel<
     values: usize,
     #[comptime] microkernel: HypercubeReduceMicrokernel,
 ) {
-    match microkernel.part.item.operation.carrier() {
+    match microkernel.part().item().operation.carrier() {
         ReduceCarrier::Values => hypercube_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
             input,
             out,
@@ -127,10 +127,10 @@ fn hypercube_reduce<
     values: usize,
     #[comptime] microkernel: HypercubeReduceMicrokernel,
 ) {
-    let cube_part = microkernel.part;
-    let operation = cube_part.item.operation;
+    let cube_part = microkernel.part();
+    let operation = cube_part.item().operation;
     let monoid = operation.monoid();
-    let layout = cube_part.item.layout;
+    let layout = cube_part.item().layout;
     let first_unit = PLANE_POS == 0 && UNIT_POS_PLANE == 0;
 
     // The tile reads zero past the row's end, which no carrier holds as its identity.
@@ -174,7 +174,7 @@ fn hypercube_reduce<
                 values,
                 layout,
                 operation,
-                cube_part.item.writes(),
+                cube_part.item().writes(),
             );
             arrivals[counter].store(0u32);
         }

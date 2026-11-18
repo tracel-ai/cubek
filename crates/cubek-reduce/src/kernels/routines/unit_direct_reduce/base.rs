@@ -1,56 +1,62 @@
-use super::kernel::{cube_reduce_kernel, cube_reduce_with_indices_kernel};
+use super::kernel::{unit_direct_reduce_kernel, unit_direct_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
+    ReduceBinding, ReduceLauncher, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
+use cubecl::tile::space::UnitCube;
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
-use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, CubeReduceMicrokernelSettings};
+use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, UnitReduceMicrokernelSettings};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
-/// Every owner a cube, whose units reduce its rows together: few long rows, a cube each. The
-/// cube's units are its `x`, as many as its microkernel's planes hold, and the hardware splits them
-/// into its planes. Its cubes run along at most three row dims; it declines more.
+/// Every owner a unit of the launch, which reduces its rows alone: many short rows, a unit each.
+/// The launch groups its units in cubes of `planes` planes as wide as the device dispatches one.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct CubeReduceRoutine;
+pub(crate) struct UnitDirectReduceRoutine;
 
-/// The cube microkernel's planes.
+/// How many planes of units a cube holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeReduceSettings {
-    pub microkernel: CubeReduceMicrokernelSettings,
+pub struct UnitDirectReduceSettings {
+    pub microkernel: UnitReduceMicrokernelSettings,
+    pub planes: usize,
 }
 
-impl core::fmt::Display for CubeReduceSettings {
+impl core::fmt::Display for UnitDirectReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.microkernel)
+        write!(f, "{} planes={}", self.microkernel, self.planes)
     }
 }
 
-pub type CubeReduceBlueprint = ReduceRoutineBlueprint<CubeReduceMicrokernel>;
+pub type UnitDirectReduceBlueprint = ReduceRoutineBlueprint<UnitReduceMicrokernel>;
 
-impl Routine for CubeReduceRoutine {
+impl Routine for UnitDirectReduceRoutine {
     type Problem = ReduceRoutineProblem;
-    type Microkernel = CubeReduceMicrokernel;
-    type Settings = CubeReduceSettings;
-    type Blueprint = CubeReduceBlueprint;
+    type Microkernel = UnitReduceMicrokernel;
+    type Settings = UnitDirectReduceSettings;
+    type Blueprint = UnitDirectReduceBlueprint;
     type Partitioning = Partitioning;
 
-    /// Its microkernel's planes: it has no knob of its own.
+    /// Four planes of units a cube by default, then one and eight.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        CubeReduceMicrokernel::settings(hw)
+        UnitReduceMicrokernel::settings(hw)
             .into_iter()
-            .map(|microkernel| CubeReduceSettings { microkernel })
+            .flat_map(|microkernel| {
+                [4, 1, 8].map(|planes| UnitDirectReduceSettings {
+                    microkernel,
+                    planes,
+                })
+            })
             .collect()
     }
 
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         &self,
-        microkernel: &CubeReduceMicrokernel,
+        microkernel: &UnitReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
     ) {
@@ -63,25 +69,31 @@ impl Routine for CubeReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        if problem.owner_axes().len() > MAX_ROW_DIMS {
-            return Err(Refusal::Declined {
-                why: "the cube reduce runs a cube per box of rows along at most three row dims",
-            });
-        }
         let microkernel =
-            CubeReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+            UnitReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widths = reduce_widths(hw, problem, vectorization);
+        let plane_width = hw.dispatch_plane_size() as usize;
+        // Innermost row axis first, so neighbouring units take neighbouring rows: a plane's
+        // reads land a row apart instead of a whole outer dim apart.
+        let mut owners = problem.owner_axes();
+        owners.reverse();
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
-                .cubes(&problem.owner_axes())
+                .launch_units(
+                    &owners,
+                    UnitCube {
+                        plane_width,
+                        planes: settings.planes,
+                    },
+                )
                 .build(),
         );
         let cube = CubeResources {
-            plane_width: (microkernel.lanes * microkernel.planes) as u32,
-            shared_memory: microkernel.shared_memory_bytes_at_width(widths[0]),
+            plane_width: plane_width as u32,
+            shared_memory: 0,
         };
         let grid = Grid::new(hw, &partitioning, cube)?;
         Ok((
@@ -103,26 +115,24 @@ impl Routine for CubeReduceRoutine {
     }
 }
 
-/// Most row dims the cubes run along: a launch grid has three.
-const MAX_ROW_DIMS: usize = 3;
+impl ReduceLauncher<UnitReduceMicrokernel> for UnitDirectReduceRoutine {
+    const NAME: &'static str = "unit_direct_reduce";
 
-impl ReduceRoutine<CubeReduceMicrokernel> for CubeReduceRoutine {
     fn dispatch<I: TileOperand>(
         &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
-        blueprint: CubeReduceBlueprint,
+        blueprint: UnitDirectReduceBlueprint,
         grid: Grid,
     ) {
         let elements = problem.elements;
         // SAFETY: both operands are bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
-        // its tiles; its shared memory is the slots its microkernel declares, which the grid
-        // counted.
+        // its tiles; it holds no shared memory.
         match (binding.indices, problem.indices) {
             (Some(indices), Some(index)) => unsafe {
-                cube_reduce_with_indices_kernel::launch_unchecked::<I>(
+                unit_direct_reduce_with_indices_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
@@ -136,7 +146,7 @@ impl ReduceRoutine<CubeReduceMicrokernel> for CubeReduceRoutine {
                 )
             },
             _ => unsafe {
-                cube_reduce_kernel::launch_unchecked::<I>(
+                unit_direct_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,

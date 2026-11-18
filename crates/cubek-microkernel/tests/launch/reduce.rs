@@ -13,16 +13,10 @@ use cubecl::tile::{
     Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
-use cubek_microkernel::reduce::cube::{
-    CubeReduceMicrokernel, CubeReduceMicrokernelSettings, cube_reduce_microkernel,
-};
-use cubek_microkernel::reduce::hypercube::{
-    HypercubeReduceMicrokernel, hypercube_reduce_microkernel,
-};
-use cubek_microkernel::reduce::plane::{
-    PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings, plane_reduce_microkernel,
-};
-use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microkernel};
+use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, CubeReduceMicrokernelSettings};
+use cubek_microkernel::reduce::hypercube::HypercubeReduceMicrokernel;
+use cubek_microkernel::reduce::plane::{PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings};
+use cubek_microkernel::reduce::unit::UnitReduceMicrokernel;
 use cubek_microkernel::reduce::{O, R, ReduceLayout, ReduceWorkItem};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
@@ -79,18 +73,18 @@ impl ReduceLaunch {
         let plane_width = match scope {
             ReduceScope::Unit => hw.plane_dim().unwrap_or(1),
             ReduceScope::Plane => {
-                PlaneReduceMicrokernel::best(hw, &item, &PlaneReduceMicrokernelSettings)?.lanes
+                PlaneReduceMicrokernel::best(hw, &item, &PlaneReduceMicrokernelSettings)?.lanes()
                     as u32
             }
             ReduceScope::Cube { planes } => {
                 CubeReduceMicrokernel::best(hw, &item, &CubeReduceMicrokernelSettings { planes })?
-                    .lanes as u32
+                    .lanes() as u32
             }
             ReduceScope::Hypercube { planes, .. } => {
                 let settings = CubeReduceMicrokernelSettings { planes };
                 HypercubeReduceMicrokernel::best(hw, &item, &settings)?
-                    .part
-                    .lanes as u32
+                    .part()
+                    .lanes() as u32
             }
         };
         Ok(Self {
@@ -181,7 +175,7 @@ impl ReduceLaunch {
                     input,
                     out,
                     launcher.partitioning_arg(),
-                    UnitReduceMicrokernel { item: self.item },
+                    UnitReduceMicrokernel::new(self.item),
                     elements,
                 ),
                 ReduceScope::Plane => plane_reduce_kernel::launch_unchecked(
@@ -192,10 +186,7 @@ impl ReduceLaunch {
                     input,
                     out,
                     launcher.partitioning_arg(),
-                    PlaneReduceMicrokernel {
-                        item: self.item,
-                        lanes,
-                    },
+                    PlaneReduceMicrokernel::new(self.item, lanes),
                     elements,
                 ),
                 ReduceScope::Cube { planes } => cube_reduce_kernel::launch_unchecked(
@@ -206,11 +197,7 @@ impl ReduceLaunch {
                     input,
                     out,
                     launcher.partitioning_arg(),
-                    CubeReduceMicrokernel {
-                        item: self.item,
-                        lanes,
-                        planes,
-                    },
+                    CubeReduceMicrokernel::new(self.item, lanes, planes),
                     elements,
                 ),
                 ReduceScope::Hypercube { .. } => unreachable!("a hypercube splits its rows apart"),
@@ -284,13 +271,11 @@ impl ReduceLaunch {
                 TileSpec::direct(axes).boundary(BoundaryPolicy::Every(Boundary::Zero)),
             )
         };
-        let microkernel = HypercubeReduceMicrokernel {
-            part: CubeReduceMicrokernel {
-                item: self.item,
-                lanes: self.plane_width as usize,
-                planes,
-            },
-        };
+        let microkernel = HypercubeReduceMicrokernel::new(CubeReduceMicrokernel::new(
+            self.item,
+            self.plane_width as usize,
+            planes,
+        ));
         // SAFETY: every operand but the counters is bound through the launcher at the problem's
         // own extents, and the kernel indexes no buffer but through its tiles and the counters,
         // one a row, each owner's at its first row.
@@ -346,11 +331,10 @@ fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
             let mut unwritten = o.at(&plane);
             let row = x.at(&plane);
 
-            unit_reduce_microkernel::<In, Acc, Out, Out, N>(
+            microkernel.runtime().execute::<In, Acc, Out, Out, N>(
                 &row,
                 &mut row_out,
                 &mut unwritten,
-                microkernel,
             );
         }
     }
@@ -374,12 +358,9 @@ fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         let mut unwritten = o.at(&plane);
         let row = x.at(&plane);
 
-        plane_reduce_microkernel::<In, Acc, Out, Out, N>(
-            &row,
-            &mut row_out,
-            &mut unwritten,
-            microkernel,
-        );
+        microkernel
+            .runtime()
+            .execute::<In, Acc, Out, Out, N>(&row, &mut row_out, &mut unwritten);
     }
 }
 
@@ -401,12 +382,9 @@ fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         let mut unwritten = o.at(&cube);
         let row = x.at(&cube);
 
-        cube_reduce_microkernel::<In, Acc, Out, Out, N>(
-            &row,
-            &mut row_out,
-            &mut unwritten,
-            microkernel,
-        );
+        microkernel
+            .runtime()
+            .execute::<In, Acc, Out, Out, N>(&row, &mut row_out, &mut unwritten);
     }
 }
 
@@ -442,7 +420,7 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         let part = cube.origin(P);
         let first_line = part * part_lines;
 
-        hypercube_reduce_microkernel::<In, Acc, Out, Out, N>(
+        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
             &row,
             &mut row_out,
             &mut unwritten,
@@ -454,7 +432,6 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
             parts,
             first_line,
             values,
-            microkernel,
         );
     }
 }

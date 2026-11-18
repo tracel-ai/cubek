@@ -245,7 +245,7 @@ impl ReduceRoutineProblem {
 }
 
 /// The axis of dim `d`.
-pub fn dim_axis(d: usize) -> Axis {
+pub(crate) fn dim_axis(d: usize) -> Axis {
     Axis(u8::try_from(d).expect("a tensor has fewer than 256 dims"))
 }
 

@@ -2,9 +2,10 @@
 //! problem, over the unit routine as the floor.
 
 use crate::kernels::{
-    CubeReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine,
-    ReduceElements, ReduceKernel, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem,
-    ReduceTensors, UnitReduceRoutine, UnitZeroRoutine,
+    CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
+    PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceLauncher,
+    ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors, UnitDirectReduceRoutine,
+    UnitDirectZeroRoutine,
 };
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
@@ -101,26 +102,28 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
 /// One candidate of the autotune: a routine at one of its settings, on the device the autotune is
 /// built for.
 #[derive(Debug, Clone)]
-pub struct ReduceRoutineCandidate<R: Routine> {
+pub(crate) struct ReduceRoutineCandidate<R: Routine> {
     routine: R,
     settings: R::Settings,
-    /// The kernel and its setting: what the tuning cache names the candidate by.
+    /// The routine's prefix and its setting: what the tuning cache names the candidate by.
     name: String,
     hw: Hardware,
 }
 
-impl<R: Routine + Copy> ReduceRoutineCandidate<R>
+impl<R, M> ReduceRoutineCandidate<R>
 where
+    R: ReduceLauncher<M> + Routine<Microkernel = M> + Copy,
     R::Settings: core::fmt::Display,
 {
-    /// Every setting `routine`, the kernel `kernel` names, lists on `hw`, as candidates.
-    pub fn list(routine: R, kernel: ReduceKernel, hw: &Hardware) -> Vec<Self> {
+    /// Every setting `routine` lists on `hw`, as candidates, each named by the routine's prefix
+    /// and its setting.
+    pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
         routine
             .settings(hw)
             .into_iter()
             .map(|settings| Self {
                 routine,
-                name: format!("{} {settings}", kernel.name()),
+                name: format!("{} {settings}", R::NAME),
                 settings,
                 hw: hw.clone(),
             })
@@ -130,7 +133,7 @@ where
 
 impl<R, M> ReduceRoutineCandidate<R>
 where
-    R: ReduceRoutine<M> + Routine<Microkernel = M>,
+    R: ReduceLauncher<M> + Routine<Microkernel = M>,
 {
     /// `tensors` reduced at this candidate's setting.
     fn run(&self, tensors: ReduceTensors) -> Result<(), String> {
@@ -143,7 +146,7 @@ where
     }
 
     /// `tensors`, whose input the caller binds, reduced at this candidate's setting
-    /// ([`ReduceRoutine::launch_unbound`]).
+    /// ([`ReduceLauncher::launch_unbound`]).
     ///
     /// # Errors
     ///
@@ -187,8 +190,8 @@ impl ReduceRoutineCandidate<HypercubeAtomicReduceRoutine> {
             self.routine
                 .prepare(&self.hw, tensors.problem(), &self.settings)?;
         let (zero_blueprint, zero_grid) =
-            UnitZeroRoutine.prepare_first_served(&self.hw, tensors.problem())?;
-        UnitZeroRoutine.zero_unbound(tensors, zero_blueprint, zero_grid);
+            UnitDirectZeroRoutine.prepare_first_served(&self.hw, tensors.problem())?;
+        UnitDirectZeroRoutine.zero_unbound(tensors, zero_blueprint, zero_grid);
         self.routine
             .launch_unbound::<I>(tensors, blueprint, grid, input)
     }
@@ -196,7 +199,7 @@ impl ReduceRoutineCandidate<HypercubeAtomicReduceRoutine> {
 
 impl<R, M: PartialEq> TuneCandidate for ReduceRoutineCandidate<R>
 where
-    R: ReduceRoutine<M> + Routine<Microkernel = M>,
+    R: ReduceLauncher<M> + Routine<Microkernel = M>,
 {
     type Strategy = String;
     type Key = ReduceKey;
@@ -229,22 +232,12 @@ where
 /// candidate by, and what the tuner hands back for the one it found fastest
 /// ([`fastest_reduce_candidate`]), so a launch outside a round, a fused one, runs the winner.
 #[derive(Debug, Clone)]
-pub enum ReduceCandidate {
-    /// [`ReduceKernel::Unit`].
-    Unit(ReduceRoutineCandidate<UnitReduceRoutine>),
-    /// [`ReduceKernel::PlaneShuffle`].
-    PlaneShuffle(ReduceRoutineCandidate<PlaneReduceRoutine>),
-    /// [`ReduceKernel::CubeStaged`].
-    CubeStaged(ReduceRoutineCandidate<CubeReduceRoutine>),
-    /// [`ReduceKernel::HypercubeLastArrival`].
-    HypercubeLastArrival(ReduceRoutineCandidate<HypercubeReduceRoutine>),
-    /// [`ReduceKernel::HypercubeAtomic`], run after the output is zeroed.
-    HypercubeAtomic(ReduceRoutineCandidate<HypercubeAtomicReduceRoutine>),
+pub struct ReduceCandidate {
+    launcher: ReduceCandidateLauncher,
 }
 
 impl ReduceCandidate {
-    /// `tensors`, whose input the caller binds, reduced at this candidate's setting
-    /// ([`ReduceRoutineCandidate::launch_unbound`]).
+    /// `tensors`, whose input the caller binds, reduced at this candidate's setting.
     ///
     /// # Errors
     ///
@@ -255,57 +248,111 @@ impl ReduceCandidate {
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {
-        match self {
-            Self::Unit(candidate) => candidate.launch_unbound::<I>(tensors, input),
-            Self::PlaneShuffle(candidate) => candidate.launch_unbound::<I>(tensors, input),
-            Self::CubeStaged(candidate) => candidate.launch_unbound::<I>(tensors, input),
-            Self::HypercubeLastArrival(candidate) => candidate.launch_unbound::<I>(tensors, input),
-            Self::HypercubeAtomic(candidate) => {
-                candidate.launch_zeroed_unbound::<I>(tensors, input)
-            }
+        self.launcher.launch_unbound::<I>(tensors, input)
+    }
+
+    /// The candidate a routine at one setting is, launched through `dispatch`.
+    fn launching(dispatch: ReduceCandidateLauncherDispatch) -> Self {
+        Self {
+            launcher: ReduceCandidateLauncher { dispatch },
         }
     }
 }
 
-/// The candidate's name: its kernel and setting, which the tuning cache is keyed by.
+/// The candidate's name: its routine's prefix and setting, which the tuning cache is keyed by.
 impl core::fmt::Display for ReduceCandidate {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let name = match self {
-            Self::Unit(candidate) => candidate.strategy(),
-            Self::PlaneShuffle(candidate) => candidate.strategy(),
-            Self::CubeStaged(candidate) => candidate.strategy(),
-            Self::HypercubeLastArrival(candidate) => candidate.strategy(),
-            Self::HypercubeAtomic(candidate) => candidate.strategy(),
-        };
-        f.write_str(name)
+        f.write_str(self.launcher.name())
     }
 }
 
-impl From<ReduceRoutineCandidate<UnitReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineCandidate<UnitReduceRoutine>) -> Self {
-        Self::Unit(candidate)
+/// Launches a [`ReduceCandidate`] through whichever routine it holds.
+#[derive(Debug, Clone)]
+struct ReduceCandidateLauncher {
+    dispatch: ReduceCandidateLauncherDispatch,
+}
+
+/// The routine a [`ReduceCandidateLauncher`] launches through, one variant a routine.
+#[derive(Debug, Clone)]
+enum ReduceCandidateLauncherDispatch {
+    UnitDirect(ReduceRoutineCandidate<UnitDirectReduceRoutine>),
+    PlaneShuffle(ReduceRoutineCandidate<PlaneShuffleReduceRoutine>),
+    CubeStaged(ReduceRoutineCandidate<CubeStagedReduceRoutine>),
+    HypercubeLastArrival(ReduceRoutineCandidate<HypercubeLastArrivalReduceRoutine>),
+    /// Run after the output is zeroed.
+    HypercubeAtomic(ReduceRoutineCandidate<HypercubeAtomicReduceRoutine>),
+}
+
+impl ReduceCandidateLauncher {
+    /// `tensors`, whose input the caller binds, reduced at the candidate's setting
+    /// ([`ReduceRoutineCandidate::launch_unbound`]).
+    fn launch_unbound<I: TileOperand>(
+        &self,
+        tensors: &ReduceTensors<Geometry>,
+        input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
+    ) -> Result<(), Refusal> {
+        match &self.dispatch {
+            ReduceCandidateLauncherDispatch::UnitDirect(candidate) => {
+                candidate.launch_unbound::<I>(tensors, input)
+            }
+            ReduceCandidateLauncherDispatch::PlaneShuffle(candidate) => {
+                candidate.launch_unbound::<I>(tensors, input)
+            }
+            ReduceCandidateLauncherDispatch::CubeStaged(candidate) => {
+                candidate.launch_unbound::<I>(tensors, input)
+            }
+            ReduceCandidateLauncherDispatch::HypercubeLastArrival(candidate) => {
+                candidate.launch_unbound::<I>(tensors, input)
+            }
+            ReduceCandidateLauncherDispatch::HypercubeAtomic(candidate) => {
+                candidate.launch_zeroed_unbound::<I>(tensors, input)
+            }
+        }
+    }
+
+    /// The candidate's name, which the tuning cache is keyed by.
+    fn name(&self) -> &str {
+        match &self.dispatch {
+            ReduceCandidateLauncherDispatch::UnitDirect(candidate) => candidate.strategy(),
+            ReduceCandidateLauncherDispatch::PlaneShuffle(candidate) => candidate.strategy(),
+            ReduceCandidateLauncherDispatch::CubeStaged(candidate) => candidate.strategy(),
+            ReduceCandidateLauncherDispatch::HypercubeLastArrival(candidate) => {
+                candidate.strategy()
+            }
+            ReduceCandidateLauncherDispatch::HypercubeAtomic(candidate) => candidate.strategy(),
+        }
     }
 }
 
-impl From<ReduceRoutineCandidate<PlaneReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineCandidate<PlaneReduceRoutine>) -> Self {
+impl From<ReduceRoutineCandidate<UnitDirectReduceRoutine>> for ReduceCandidateLauncherDispatch {
+    fn from(candidate: ReduceRoutineCandidate<UnitDirectReduceRoutine>) -> Self {
+        Self::UnitDirect(candidate)
+    }
+}
+
+impl From<ReduceRoutineCandidate<PlaneShuffleReduceRoutine>> for ReduceCandidateLauncherDispatch {
+    fn from(candidate: ReduceRoutineCandidate<PlaneShuffleReduceRoutine>) -> Self {
         Self::PlaneShuffle(candidate)
     }
 }
 
-impl From<ReduceRoutineCandidate<CubeReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineCandidate<CubeReduceRoutine>) -> Self {
+impl From<ReduceRoutineCandidate<CubeStagedReduceRoutine>> for ReduceCandidateLauncherDispatch {
+    fn from(candidate: ReduceRoutineCandidate<CubeStagedReduceRoutine>) -> Self {
         Self::CubeStaged(candidate)
     }
 }
 
-impl From<ReduceRoutineCandidate<HypercubeReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineCandidate<HypercubeReduceRoutine>) -> Self {
+impl From<ReduceRoutineCandidate<HypercubeLastArrivalReduceRoutine>>
+    for ReduceCandidateLauncherDispatch
+{
+    fn from(candidate: ReduceRoutineCandidate<HypercubeLastArrivalReduceRoutine>) -> Self {
         Self::HypercubeLastArrival(candidate)
     }
 }
 
-impl From<ReduceRoutineCandidate<HypercubeAtomicReduceRoutine>> for ReduceCandidate {
+impl From<ReduceRoutineCandidate<HypercubeAtomicReduceRoutine>>
+    for ReduceCandidateLauncherDispatch
+{
     fn from(candidate: ReduceRoutineCandidate<HypercubeAtomicReduceRoutine>) -> Self {
         Self::HypercubeAtomic(candidate)
     }
@@ -320,7 +367,7 @@ type ReduceTunables = Arc<TunableSet<ReduceKey, ReduceTensors, (), ReduceIdentit
 static TUNER: LocalTuner<ReduceKey, CubeTuneId> = local_tuner!("reduce");
 
 /// `tensors` reduced by the routine the autotune finds fastest for them on `device`.
-pub fn launch_tuned(tensors: ReduceTensors, device: &Device) {
+pub(crate) fn launch_tuned(tensors: ReduceTensors, device: &Device) {
     let client = tensors.client().clone();
     let id = CubeTuneId::new(&client, device);
     let tunables = tunables(&id, &client);
@@ -361,46 +408,48 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
     autotune
         .identified(
             &tile,
-            ReduceRoutineCandidate::list(UnitReduceRoutine, ReduceKernel::Unit, &hw),
-            |candidate| ReduceIdentity::Routine(candidate.clone().into()),
+            ReduceRoutineCandidate::list(UnitDirectReduceRoutine, &hw),
+            |candidate| {
+                ReduceIdentity::Routine(ReduceCandidate::launching(candidate.clone().into()))
+            },
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::list(PlaneReduceRoutine, ReduceKernel::PlaneShuffle, &hw),
-            |candidate| ReduceIdentity::Routine(candidate.clone().into()),
+            ReduceRoutineCandidate::list(PlaneShuffleReduceRoutine, &hw),
+            |candidate| {
+                ReduceIdentity::Routine(ReduceCandidate::launching(candidate.clone().into()))
+            },
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::list(CubeReduceRoutine, ReduceKernel::CubeStaged, &hw),
-            |candidate| ReduceIdentity::Routine(candidate.clone().into()),
+            ReduceRoutineCandidate::list(CubeStagedReduceRoutine, &hw),
+            |candidate| {
+                ReduceIdentity::Routine(ReduceCandidate::launching(candidate.clone().into()))
+            },
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::list(
-                HypercubeReduceRoutine,
-                ReduceKernel::HypercubeLastArrival,
-                &hw,
-            ),
-            |candidate| ReduceIdentity::Routine(candidate.clone().into()),
+            ReduceRoutineCandidate::list(HypercubeLastArrivalReduceRoutine, &hw),
+            |candidate| {
+                ReduceIdentity::Routine(ReduceCandidate::launching(candidate.clone().into()))
+            },
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::list(
-                HypercubeAtomicReduceRoutine,
-                ReduceKernel::HypercubeAtomic,
-                &hw,
-            ),
-            |candidate| ReduceIdentity::Routine(candidate.clone().into()),
+            ReduceRoutineCandidate::list(HypercubeAtomicReduceRoutine, &hw),
+            |candidate| {
+                ReduceIdentity::Routine(ReduceCandidate::launching(candidate.clone().into()))
+            },
             move |candidate, tensors| {
                 // It only adds into the output, which the zeroing, timed with it, sets first.
-                let (blueprint, grid) = UnitZeroRoutine
+                let (blueprint, grid) = UnitDirectZeroRoutine
                     .prepare_first_served(&zero_hw, tensors.problem())
                     .map_err(|refusal| refusal.to_string())?;
-                UnitZeroRoutine.launch(&tensors, blueprint, grid);
+                UnitDirectZeroRoutine.launch(&tensors, blueprint, grid);
                 candidate.run(tensors)
             },
         )
@@ -410,7 +459,7 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
             work: tensors.problem().demand(),
         })
         .floor(ReduceIdentity::named(
-            "unit-reduce-floor",
+            "unit_direct_reduce floor",
             move |tensors: ReduceTensors| {
                 ReduceKernel::Unit
                     .launch(&floor_hw, &tensors)

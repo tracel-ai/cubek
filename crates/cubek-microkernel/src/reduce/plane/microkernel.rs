@@ -11,13 +11,19 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-pub fn plane_reduce_microkernel<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+pub(crate) fn plane_reduce_microkernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+>(
     input: &Tile,
     out: &mut Tile,
     indices: &mut Tile,
     #[comptime] microkernel: PlaneReduceMicrokernel,
 ) {
-    match microkernel.item.operation.carrier() {
+    match microkernel.item().operation.carrier() {
         ReduceCarrier::Values => {
             plane_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(input, out, indices, microkernel)
         }
@@ -54,10 +60,10 @@ fn plane_reduce<
     indices: &mut Tile,
     #[comptime] microkernel: PlaneReduceMicrokernel,
 ) {
-    let operation = microkernel.item.operation;
+    let operation = microkernel.item().operation;
     let monoid = operation.monoid();
-    let layout = microkernel.item.layout;
-    let lanes = microkernel.lanes;
+    let layout = microkernel.item().layout;
+    let lanes = microkernel.lanes();
 
     let lane = UNIT_POS_PLANE as usize;
 
@@ -90,7 +96,7 @@ fn plane_reduce<
             values,
             layout,
             operation,
-            microkernel.item.writes(),
+            microkernel.item().writes(),
         );
     }
 }

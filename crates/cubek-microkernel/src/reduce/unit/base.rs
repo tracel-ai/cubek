@@ -1,5 +1,8 @@
+use super::microkernel::unit_reduce_microkernel;
 use crate::reduce::{ReduceOperand, ReduceWorkItem};
+use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
+use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
@@ -9,9 +12,40 @@ use cubek_std::microkernel::{
 /// Across rows, its lines hold a row a lane, so one unit reduces `width` rows at once.
 ///
 /// Every device runs it: it asks nothing of the plane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitReduceMicrokernel {
-    pub item: ReduceWorkItem,
+    #[cube(comptime)]
+    item: ReduceWorkItem,
+}
+
+impl UnitReduceMicrokernel {
+    /// A unit reducing `item`.
+    pub fn new(item: ReduceWorkItem) -> Self {
+        Self { item }
+    }
+
+    /// Its `item`.
+    pub fn item(&self) -> ReduceWorkItem {
+        self.item
+    }
+}
+
+#[cube]
+impl UnitReduceMicrokernel {
+    /// One unit's row of `input` reduced into `out` and `indices` ([`unit_reduce_microkernel`]).
+    pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+        &self,
+        input: &Tile,
+        out: &mut Tile,
+        indices: &mut Tile,
+    ) {
+        unit_reduce_microkernel::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            comptime!(UnitReduceMicrokernel { item: self.item }),
+        )
+    }
 }
 
 /// A unit's microkernel has nothing a measurement settles.

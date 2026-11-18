@@ -3,15 +3,21 @@
 use crate::kernels::{ReduceElements, ReduceRoutineBlueprint, ReduceRoutineProblem};
 use cubecl::client::Client;
 use cubecl::prelude::TensorBinding;
-use cubecl::tile::launch::{Bound, Unbound};
+use cubecl::tile::launch::{Bound, Refusal, Unbound};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Geometry, Launcher};
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
+/// Why an unbound reduction declines where its microkernel reads narrower lines than the caller's
+/// input is stated at ([`ReduceTensors::unbound`]): the caller computes its lines whole.
+pub const UNBOUND_LINES_NARROWER: Refusal = Refusal::Declined {
+    why: "the microkernel reads narrower lines than the caller's input is stated at",
+};
+
 /// The input and the output of one reduction, and the problem they state: the input a buffer
 /// ([`TensorBinding`]) or the geometry of an input the caller binds once the launch is prepared
-/// ([`Geometry`], [`ReduceRoutine::launch_unbound`](crate::kernels::ReduceRoutine::launch_unbound)),
+/// ([`Geometry`], [`ReduceLauncher::launch_unbound`](crate::kernels::ReduceLauncher::launch_unbound)),
 /// the output a buffer.
 ///
 /// Both are read where they lie, at their own strides: every dim of each is an axis of the

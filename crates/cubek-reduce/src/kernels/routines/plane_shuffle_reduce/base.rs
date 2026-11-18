@@ -1,51 +1,51 @@
-use super::kernel::{unit_reduce_kernel, unit_reduce_with_indices_kernel};
+use super::kernel::{plane_shuffle_reduce_kernel, plane_shuffle_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
+    ReduceBinding, ReduceLauncher, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
-use cubecl::tile::space::UnitCube;
+use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
-use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, UnitReduceMicrokernelSettings};
+use cubek_microkernel::reduce::plane::{PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
-/// Every owner a unit of the launch, which reduces its rows alone: many short rows, a unit each.
-/// The launch groups its units in cubes of `planes` planes as wide as the device dispatches one.
+/// Every owner a plane of the launch, which reduces its rows with the plane microkernel; the
+/// launch groups `planes` of them in a cube along the innermost row axis.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct UnitReduceRoutine;
+pub(crate) struct PlaneShuffleReduceRoutine;
 
-/// How many planes of units a cube holds.
+/// How many of the launch's planes a cube holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UnitReduceSettings {
-    pub microkernel: UnitReduceMicrokernelSettings,
+pub struct PlaneShuffleReduceSettings {
+    pub microkernel: PlaneReduceMicrokernelSettings,
     pub planes: usize,
 }
 
-impl core::fmt::Display for UnitReduceSettings {
+impl core::fmt::Display for PlaneShuffleReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} planes={}", self.microkernel, self.planes)
     }
 }
 
-pub type UnitReduceBlueprint = ReduceRoutineBlueprint<UnitReduceMicrokernel>;
+pub type PlaneShuffleReduceBlueprint = ReduceRoutineBlueprint<PlaneReduceMicrokernel>;
 
-impl Routine for UnitReduceRoutine {
+impl Routine for PlaneShuffleReduceRoutine {
     type Problem = ReduceRoutineProblem;
-    type Microkernel = UnitReduceMicrokernel;
-    type Settings = UnitReduceSettings;
-    type Blueprint = UnitReduceBlueprint;
+    type Microkernel = PlaneReduceMicrokernel;
+    type Settings = PlaneShuffleReduceSettings;
+    type Blueprint = PlaneShuffleReduceBlueprint;
     type Partitioning = Partitioning;
 
-    /// Four planes of units a cube by default, then one and eight.
+    /// Four planes a cube by default, then one and eight.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        UnitReduceMicrokernel::settings(hw)
+        PlaneReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
-                [4, 1, 8].map(|planes| UnitReduceSettings {
+                [4, 1, 8].map(|planes| PlaneShuffleReduceSettings {
                     microkernel,
                     planes,
                 })
@@ -56,7 +56,7 @@ impl Routine for UnitReduceRoutine {
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         &self,
-        microkernel: &UnitReduceMicrokernel,
+        microkernel: &PlaneReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
     ) {
@@ -70,29 +70,25 @@ impl Routine for UnitReduceRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         let microkernel =
-            UnitReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+            PlaneReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widths = reduce_widths(hw, problem, vectorization);
-        let plane_width = hw.dispatch_plane_size() as usize;
-        // Innermost row axis first, so neighbouring units take neighbouring rows: a plane's
-        // reads land a row apart instead of a whole outer dim apart.
-        let mut owners = problem.owner_axes();
-        owners.reverse();
+        let owners = problem.owner_axes();
+        let innermost = *owners
+            .last()
+            .expect("a problem places its owners along an axis");
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
-                .launch_units(
+                .launch_planes(
                     &owners,
-                    UnitCube {
-                        plane_width,
-                        planes: settings.planes,
-                    },
+                    PlaneOrder::new(&[(innermost, settings.planes)], CubeOrder::RowMajor),
                 )
                 .build(),
         );
         let cube = CubeResources {
-            plane_width: plane_width as u32,
+            plane_width: microkernel.lanes() as u32,
             shared_memory: 0,
         };
         let grid = Grid::new(hw, &partitioning, cube)?;
@@ -115,13 +111,15 @@ impl Routine for UnitReduceRoutine {
     }
 }
 
-impl ReduceRoutine<UnitReduceMicrokernel> for UnitReduceRoutine {
+impl ReduceLauncher<PlaneReduceMicrokernel> for PlaneShuffleReduceRoutine {
+    const NAME: &'static str = "plane_shuffle_reduce";
+
     fn dispatch<I: TileOperand>(
         &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
-        blueprint: UnitReduceBlueprint,
+        blueprint: PlaneShuffleReduceBlueprint,
         grid: Grid,
     ) {
         let elements = problem.elements;
@@ -130,7 +128,7 @@ impl ReduceRoutine<UnitReduceMicrokernel> for UnitReduceRoutine {
         // its tiles; it holds no shared memory.
         match (binding.indices, problem.indices) {
             (Some(indices), Some(index)) => unsafe {
-                unit_reduce_with_indices_kernel::launch_unchecked::<I>(
+                plane_shuffle_reduce_with_indices_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
@@ -144,7 +142,7 @@ impl ReduceRoutine<UnitReduceMicrokernel> for UnitReduceRoutine {
                 )
             },
             _ => unsafe {
-                unit_reduce_kernel::launch_unchecked::<I>(
+                plane_shuffle_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,

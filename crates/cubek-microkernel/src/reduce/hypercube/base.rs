@@ -1,6 +1,9 @@
+use super::microkernel::hypercube_reduce_microkernel;
 use crate::reduce::cube::{CubeReduceMicrokernel, CubeReduceMicrokernelSettings};
 use crate::reduce::{ReduceOperand, ReduceWorkItem};
+use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
+use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
@@ -13,10 +16,61 @@ use cubek_std::microkernel::{
 /// launch (`device_memory_scope`), which is how the cubes meet: on WGSL, whose storage barrier
 /// orders a workgroup's own memory only, the last cube was seen reading another's partial as the
 /// zero it held before the write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeReduceMicrokernel {
     /// The cube microkernel each cube reduces its part with.
-    pub part: CubeReduceMicrokernel,
+    #[cube(comptime)]
+    part: CubeReduceMicrokernel,
+}
+
+impl HypercubeReduceMicrokernel {
+    /// A hypercube whose cubes each reduce their part with `part`.
+    pub fn new(part: CubeReduceMicrokernel) -> Self {
+        Self { part }
+    }
+
+    /// Its `part`.
+    pub fn part(&self) -> CubeReduceMicrokernel {
+        self.part
+    }
+}
+
+#[cube]
+impl HypercubeReduceMicrokernel {
+    /// One cube's part of a row of `input`, the row's last cube writing it to `out` and `indices` ([`hypercube_reduce_microkernel`]).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the operands and the cube's place in its row, as the microkernel takes them"
+    )]
+    pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+        &self,
+        input: &Tile,
+        out: &mut Tile,
+        indices: &mut Tile,
+        partials: &mut Tile,
+        partial_indices: &mut Tile,
+        arrivals: &[Atomic<u32>],
+        counter: usize,
+        part: usize,
+        parts: usize,
+        first_line: usize,
+        values: usize,
+    ) {
+        hypercube_reduce_microkernel::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            partials,
+            partial_indices,
+            arrivals,
+            counter,
+            part,
+            parts,
+            first_line,
+            values,
+            comptime!(HypercubeReduceMicrokernel { part: self.part }),
+        )
+    }
 }
 
 impl HypercubeReduceMicrokernel {
@@ -71,7 +125,7 @@ impl Microkernel for HypercubeReduceMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        let slots = self.part.item.operation.written_per_row() as u32;
+        let slots = self.part.item().operation.written_per_row() as u32;
         estimate.work = Some(UnitWork {
             instruction: ArithmeticInstruction::Vector,
             registers: 4 * slots + 2,

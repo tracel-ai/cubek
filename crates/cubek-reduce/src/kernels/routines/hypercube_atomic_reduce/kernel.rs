@@ -2,7 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::{AccumulateArg, TileOperand};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, cube_reduce_microkernel};
+use cubek_microkernel::reduce::cube::CubeReduceMicrokernel;
 
 /// Every cube of the launch, reducing its part of its rows as the cube microkernel reduces a row,
 /// its total added into `out`, which holds zero before the launch.
@@ -12,7 +12,7 @@ use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, cube_reduce_microke
 ///   its place (`I`).
 /// - `out`: one tensor of the input's shape, the reduced dim one cell wide, at zero.
 #[cube(launch_unchecked)]
-pub fn hypercube_atomic_reduce_kernel<
+pub(crate) fn hypercube_atomic_reduce_kernel<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -32,11 +32,8 @@ pub fn hypercube_atomic_reduce_kernel<
         // One output: the indices are never written, so they get the output's own window.
         let mut unwritten = o.at(&cube);
         let part = x.at(&cube);
-        cube_reduce_microkernel::<In, Acc, Out, Out, N>(
-            &part,
-            &mut rows_out,
-            &mut unwritten,
-            microkernel,
-        );
+        microkernel
+            .runtime()
+            .execute::<In, Acc, Out, Out, N>(&part, &mut rows_out, &mut unwritten);
     }
 }

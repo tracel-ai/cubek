@@ -11,13 +11,19 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-pub fn cube_reduce_microkernel<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+pub(crate) fn cube_reduce_microkernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+>(
     input: &Tile,
     out: &mut Tile,
     indices: &mut Tile,
     #[comptime] microkernel: CubeReduceMicrokernel,
 ) {
-    match microkernel.item.operation.carrier() {
+    match microkernel.item().operation.carrier() {
         ReduceCarrier::Values => {
             cube_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(input, out, indices, microkernel)
         }
@@ -54,8 +60,8 @@ fn cube_reduce<
     indices: &mut Tile,
     #[comptime] microkernel: CubeReduceMicrokernel,
 ) {
-    let operation = microkernel.item.operation;
-    let layout = microkernel.item.layout;
+    let operation = microkernel.item().operation;
+    let layout = microkernel.item().layout;
     let count = input.flat::<In, N>().shape();
 
     let total = cube_reduce_part::<In, Acc, N, C>(input, 0, count, microkernel);
@@ -72,7 +78,7 @@ fn cube_reduce<
             values,
             layout,
             operation,
-            microkernel.item.writes(),
+            microkernel.item().writes(),
         );
     }
 }
@@ -89,12 +95,12 @@ pub(crate) fn cube_reduce_part<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccu
     count: usize,
     #[comptime] microkernel: CubeReduceMicrokernel,
 ) -> C {
-    let operation = microkernel.item.operation;
+    let operation = microkernel.item().operation;
     let monoid = operation.monoid();
-    let layout = microkernel.item.layout;
-    let units = microkernel.lanes * microkernel.planes;
+    let layout = microkernel.item().layout;
+    let units = microkernel.lanes() * microkernel.planes();
 
-    let unit = PLANE_POS as usize * microkernel.lanes + UNIT_POS_PLANE as usize;
+    let unit = PLANE_POS as usize * microkernel.lanes() + UNIT_POS_PLANE as usize;
 
     let lines = input.flat::<In, N>();
 
@@ -111,5 +117,5 @@ pub(crate) fn cube_reduce_part<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccu
     }
 
     let plane = C::across(acc, UnitShare::Plane, monoid);
-    C::across_planes(plane, microkernel.planes, monoid)
+    C::across_planes(plane, microkernel.planes(), monoid)
 }

@@ -3,9 +3,7 @@ use cubecl::tile::launch::TileOperand;
 use cubecl::tile::{Axis, Partitioning, Region, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::ReduceLayout;
-use cubek_microkernel::reduce::hypercube::{
-    HypercubeReduceMicrokernel, hypercube_reduce_microkernel,
-};
+use cubek_microkernel::reduce::hypercube::HypercubeReduceMicrokernel;
 
 /// Where a hypercube's cubes sit, compiled into its kernel: the reduced axis cut into parts, a cube
 /// a part, and the row axes, at most two, outermost first, that its boxes of rows lie along.
@@ -13,6 +11,14 @@ use cubek_microkernel::reduce::hypercube::{
 pub struct ReduceSplit {
     pub reduced: Axis,
     pub rows: Vec<Axis>,
+}
+
+/// What a hypercube launch compiles beside its partitioning, crossing the launch as one argument:
+/// the microkernel each cube runs, and where the cubes sit.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HypercubeLastArrivalReduceDecisions {
+    pub microkernel: HypercubeReduceMicrokernel,
+    pub split: ReduceSplit,
 }
 
 /// The extents a hypercube launch is handed at run time, which its kernel does not compile.
@@ -75,7 +81,13 @@ fn split_place<N: Size>(
 /// - `extents`: three scalars, the parts a row splits into, the values a row holds and the boxes
 ///   of rows along the inner row dim.
 #[cube(launch_unchecked)]
-pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size, I: TileOperand>(
+pub(crate) fn hypercube_last_arrival_reduce_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    I: TileOperand,
+>(
     input: &I::Arg,
     out: &TileTensor<'_>,
     partials: &TileTensor<'_>,
@@ -83,8 +95,7 @@ pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     extents: ReduceSplitExtents,
-    #[comptime] split: ReduceSplit,
-    #[comptime] microkernel: HypercubeReduceMicrokernel,
+    #[comptime] decisions: HypercubeLastArrivalReduceDecisions,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = I::tile::<In>(input, &partitioning);
@@ -92,31 +103,38 @@ pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size,
     let p = partials.tile(&partitioning);
     let pi = partial_indices.tile(&partitioning);
     for cube in &partitioning {
-        let place = split_place::<N>(&cube, &extents, split.clone(), microkernel.part.item.layout);
+        let place = split_place::<N>(
+            &cube,
+            &extents,
+            decisions.split.clone(),
+            decisions.microkernel.part().item().layout,
+        );
         let mut rows_out = o.at(&cube);
         // One output: the indices are never written, so they get the output's own window.
         let mut unwritten = o.at(&cube);
         let rows = x.at(&cube);
         let mut slots = p.at(&cube);
         let mut slot_indices = pi.at(&cube);
-        hypercube_reduce_microkernel::<In, Acc, Out, Out, N>(
-            &rows,
-            &mut rows_out,
-            &mut unwritten,
-            &mut slots,
-            &mut slot_indices,
-            arrivals,
-            place.counter,
-            place.part,
-            extents.parts as usize,
-            place.first_line,
-            extents.values as usize,
-            microkernel,
-        );
+        decisions
+            .microkernel
+            .runtime()
+            .execute::<In, Acc, Out, Out, N>(
+                &rows,
+                &mut rows_out,
+                &mut unwritten,
+                &mut slots,
+                &mut slot_indices,
+                arrivals,
+                place.counter,
+                place.part,
+                extents.parts as usize,
+                place.first_line,
+                extents.values as usize,
+            );
     }
 }
 
-/// Every cube's part of its rows, as [`hypercube_reduce_kernel()`] reduces it, the values written to
+/// Every cube's part of its rows, as [`hypercube_last_arrival_reduce_kernel()`] reduces it, the values written to
 /// `out` and their indices to `indices`, laid out as `out`.
 ///
 /// Its operands' leaves:
@@ -130,7 +148,7 @@ pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size,
 /// - `extents`: three scalars, the parts a row splits into, the values a row holds and the boxes
 ///   of rows along the inner row dim.
 #[cube(launch_unchecked)]
-pub fn hypercube_reduce_with_indices_kernel<
+pub(crate) fn hypercube_last_arrival_reduce_with_indices_kernel<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -146,8 +164,7 @@ pub fn hypercube_reduce_with_indices_kernel<
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     extents: ReduceSplitExtents,
-    #[comptime] split: ReduceSplit,
-    #[comptime] microkernel: HypercubeReduceMicrokernel,
+    #[comptime] decisions: HypercubeLastArrivalReduceDecisions,
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
     let x = I::tile::<In>(input, &partitioning);
@@ -156,25 +173,32 @@ pub fn hypercube_reduce_with_indices_kernel<
     let p = partials.tile(&partitioning);
     let pi = partial_indices.tile(&partitioning);
     for cube in &partitioning {
-        let place = split_place::<N>(&cube, &extents, split.clone(), microkernel.part.item.layout);
+        let place = split_place::<N>(
+            &cube,
+            &extents,
+            decisions.split.clone(),
+            decisions.microkernel.part().item().layout,
+        );
         let mut rows_out = o.at(&cube);
         let mut rows_indices = i.at(&cube);
         let rows = x.at(&cube);
         let mut slots = p.at(&cube);
         let mut slot_indices = pi.at(&cube);
-        hypercube_reduce_microkernel::<In, Acc, Out, Idx, N>(
-            &rows,
-            &mut rows_out,
-            &mut rows_indices,
-            &mut slots,
-            &mut slot_indices,
-            arrivals,
-            place.counter,
-            place.part,
-            extents.parts as usize,
-            place.first_line,
-            extents.values as usize,
-            microkernel,
-        );
+        decisions
+            .microkernel
+            .runtime()
+            .execute::<In, Acc, Out, Idx, N>(
+                &rows,
+                &mut rows_out,
+                &mut rows_indices,
+                &mut slots,
+                &mut slot_indices,
+                arrivals,
+                place.counter,
+                place.part,
+                extents.parts as usize,
+                place.first_line,
+                extents.values as usize,
+            );
     }
 }

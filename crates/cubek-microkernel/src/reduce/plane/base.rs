@@ -1,5 +1,8 @@
+use super::microkernel::plane_reduce_microkernel;
 use crate::reduce::{ReduceOperand, ReduceWorkItem};
+use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
+use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
@@ -10,11 +13,51 @@ use cubek_std::microkernel::{
 ///
 /// It runs where the device commits to a plane width: the partials meet across the plane, so a
 /// plane launched wider than the device runs would leave part of the row out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneReduceMicrokernel {
-    pub item: ReduceWorkItem,
+    #[cube(comptime)]
+    item: ReduceWorkItem,
     /// Units of the plane, as wide as the device commits to.
-    pub lanes: usize,
+    #[cube(comptime)]
+    lanes: usize,
+}
+
+impl PlaneReduceMicrokernel {
+    /// A plane of `lanes` units reducing `item`.
+    pub fn new(item: ReduceWorkItem, lanes: usize) -> Self {
+        Self { item, lanes }
+    }
+
+    /// Its `item`.
+    pub fn item(&self) -> ReduceWorkItem {
+        self.item
+    }
+
+    /// Its `lanes`.
+    pub fn lanes(&self) -> usize {
+        self.lanes
+    }
+}
+
+#[cube]
+impl PlaneReduceMicrokernel {
+    /// One plane's row of `input` reduced into `out` and `indices` ([`plane_reduce_microkernel`]).
+    pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+        &self,
+        input: &Tile,
+        out: &mut Tile,
+        indices: &mut Tile,
+    ) {
+        plane_reduce_microkernel::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            comptime!(PlaneReduceMicrokernel {
+                item: self.item,
+                lanes: self.lanes
+            }),
+        )
+    }
 }
 
 /// A plane's microkernel has nothing a measurement settles: its lanes are the device's.

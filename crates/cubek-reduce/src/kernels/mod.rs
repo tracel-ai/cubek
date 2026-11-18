@@ -5,20 +5,20 @@
 
 mod blueprint;
 mod entry;
-mod launch;
 mod problem;
 mod routines;
 mod select;
 mod strategy;
 mod tensors;
+#[cfg(test)]
+mod tests;
 mod tune;
 
 pub use blueprint::*;
 pub use entry::*;
-pub use launch::*;
 pub use problem::*;
 pub use routines::*;
-pub use select::*;
+pub(crate) use select::*;
 pub use strategy::*;
 pub use tensors::*;
 pub use tune::*;

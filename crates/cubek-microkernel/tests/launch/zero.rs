@@ -7,7 +7,7 @@ use cubecl::tile::{
     Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
-use cubek_microkernel::zero::unit::unit_zero_microkernel;
+use cubek_microkernel::zero::unit::UnitZeroMicrokernel;
 
 /// The rows of the output, a plane each.
 const O: Axis = Axis(0);
@@ -50,6 +50,7 @@ pub fn launch_unit_zero(
             launcher.cube_dim(),
             out,
             launcher.partitioning_arg(),
+            UnitZeroMicrokernel {},
         );
     }
     Ok(())
@@ -57,12 +58,16 @@ pub fn launch_unit_zero(
 
 /// Every plane's row, zeroed by its first unit alone.
 #[cube(launch_unchecked)]
-fn unit_zero_kernel(out: &TileTensor<'_>, partitioning: Partitioning) {
+fn unit_zero_kernel(
+    out: &TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] microkernel: UnitZeroMicrokernel,
+) {
     let o = out.tile(&partitioning);
     for plane in &partitioning {
         if UNIT_POS_PLANE == 0 {
             let mut cells = o.at(&plane);
-            unit_zero_microkernel(&mut cells);
+            microkernel.runtime().execute(&mut cells);
         }
     }
 }

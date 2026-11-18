@@ -1,5 +1,8 @@
+use super::microkernel::cube_reduce_microkernel;
 use crate::reduce::{ReduceOperand, ReduceWorkItem};
+use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
+use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
@@ -10,13 +13,64 @@ use cubek_std::microkernel::{
 /// shared memory, one slot of the carrier a plane.
 ///
 /// It runs where the device commits to a plane width, as the plane's does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeReduceMicrokernel {
-    pub item: ReduceWorkItem,
+    #[cube(comptime)]
+    item: ReduceWorkItem,
     /// Units of a plane, as wide as the device commits to.
-    pub lanes: usize,
+    #[cube(comptime)]
+    lanes: usize,
     /// Planes of the cube.
-    pub planes: usize,
+    #[cube(comptime)]
+    planes: usize,
+}
+
+impl CubeReduceMicrokernel {
+    /// A cube of `planes` planes of `lanes` units reducing `item`.
+    pub fn new(item: ReduceWorkItem, lanes: usize, planes: usize) -> Self {
+        Self {
+            item,
+            lanes,
+            planes,
+        }
+    }
+
+    /// Its `item`.
+    pub fn item(&self) -> ReduceWorkItem {
+        self.item
+    }
+
+    /// Its `lanes`.
+    pub fn lanes(&self) -> usize {
+        self.lanes
+    }
+
+    /// Its `planes`.
+    pub fn planes(&self) -> usize {
+        self.planes
+    }
+}
+
+#[cube]
+impl CubeReduceMicrokernel {
+    /// One cube's row of `input` reduced into `out` and `indices` ([`cube_reduce_microkernel`]).
+    pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+        &self,
+        input: &Tile,
+        out: &mut Tile,
+        indices: &mut Tile,
+    ) {
+        cube_reduce_microkernel::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            comptime!(CubeReduceMicrokernel {
+                item: self.item,
+                lanes: self.lanes,
+                planes: self.planes
+            }),
+        )
+    }
 }
 
 /// How many planes a cube runs.

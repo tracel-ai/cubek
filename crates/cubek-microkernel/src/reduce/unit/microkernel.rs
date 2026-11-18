@@ -9,13 +9,19 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-pub fn unit_reduce_microkernel<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+pub(crate) fn unit_reduce_microkernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+>(
     input: &Tile,
     out: &mut Tile,
     indices: &mut Tile,
     #[comptime] microkernel: UnitReduceMicrokernel,
 ) {
-    match microkernel.item.operation.carrier() {
+    match microkernel.item().operation.carrier() {
         ReduceCarrier::Values => {
             unit_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(input, out, indices, microkernel)
         }
@@ -52,9 +58,9 @@ fn unit_reduce<
     indices: &mut Tile,
     #[comptime] microkernel: UnitReduceMicrokernel,
 ) {
-    let operation = microkernel.item.operation;
+    let operation = microkernel.item().operation;
     let monoid = operation.monoid();
-    let layout = microkernel.item.layout;
+    let layout = microkernel.item().layout;
 
     let lines = input.flat::<In, N>();
     let count = lines.shape();
@@ -80,6 +86,6 @@ fn unit_reduce<
         values,
         layout,
         operation,
-        microkernel.item.writes(),
+        microkernel.item().writes(),
     );
 }

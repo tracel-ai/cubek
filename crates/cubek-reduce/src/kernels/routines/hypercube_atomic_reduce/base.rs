@@ -1,6 +1,6 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
+    ReduceBinding, ReduceLauncher, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
     UNBOUND_LINES_NARROWER, reduce_widths,
 };
 use core::convert::identity;
@@ -22,32 +22,32 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// routine reduces a row and adds its total into the output: a sum of few rows, too long for one
 /// cube each to keep the device busy, as a whole tensor summed into one value.
 ///
-/// The output must hold zero before it runs ([`UnitZeroRoutine`](crate::kernels::UnitZeroRoutine)
+/// The output must hold zero before it runs ([`UnitDirectZeroRoutine`](crate::kernels::UnitDirectZeroRoutine)
 /// zeroes it), since it only ever adds. Its cubes run along the reduced
 /// dim and at most two row dims; it declines more.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct HypercubeAtomicReduceRoutine;
+pub(crate) struct HypercubeAtomicReduceRoutine;
 
 /// The cube microkernel's planes, and how many lines each unit reads of a part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HypercubeAtomicReduceRoutineSettings {
+pub struct HypercubeAtomicReduceSettings {
     pub microkernel: CubeReduceMicrokernelSettings,
     pub unit_lines: usize,
 }
 
-impl HypercubeAtomicReduceRoutineSettings {
+impl HypercubeAtomicReduceSettings {
     /// Lines each unit reads of a part, the longest parts first: the fewest atomic adds that still
     /// spread a row over the device.
     pub const UNIT_LINES: [usize; 3] = [32, 8, 2];
 }
 
-impl core::fmt::Display for HypercubeAtomicReduceRoutineSettings {
+impl core::fmt::Display for HypercubeAtomicReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} unit_lines={}", self.microkernel, self.unit_lines)
     }
 }
 
-pub type HypercubeAtomicReduceRoutineBlueprint = ReduceRoutineBlueprint<CubeReduceMicrokernel>;
+pub type HypercubeAtomicReduceBlueprint = ReduceRoutineBlueprint<CubeReduceMicrokernel>;
 
 /// Most row dims its cubes run along, beside the reduced dim: a launch grid has three.
 const MAX_ROW_DIMS: usize = 2;
@@ -55,8 +55,8 @@ const MAX_ROW_DIMS: usize = 2;
 impl Routine for HypercubeAtomicReduceRoutine {
     type Problem = ReduceRoutineProblem;
     type Microkernel = CubeReduceMicrokernel;
-    type Settings = HypercubeAtomicReduceRoutineSettings;
-    type Blueprint = HypercubeAtomicReduceRoutineBlueprint;
+    type Settings = HypercubeAtomicReduceSettings;
+    type Blueprint = HypercubeAtomicReduceBlueprint;
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes, each with the longest parts first.
@@ -64,8 +64,8 @@ impl Routine for HypercubeAtomicReduceRoutine {
         CubeReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
-                HypercubeAtomicReduceRoutineSettings::UNIT_LINES.map(|unit_lines| {
-                    HypercubeAtomicReduceRoutineSettings {
+                HypercubeAtomicReduceSettings::UNIT_LINES.map(|unit_lines| {
+                    HypercubeAtomicReduceSettings {
                         microkernel,
                         unit_lines,
                     }
@@ -114,7 +114,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widths = reduce_widths(hw, problem, vectorization);
-        let units = microkernel.lanes * microkernel.planes;
+        let units = microkernel.lanes() * microkernel.planes();
         // Along, a line holds `width` values of the row; across, one.
         let part = units
             * settings.unit_lines
@@ -154,7 +154,9 @@ impl Routine for HypercubeAtomicReduceRoutine {
     }
 }
 
-impl ReduceRoutine<CubeReduceMicrokernel> for HypercubeAtomicReduceRoutine {
+impl ReduceLauncher<CubeReduceMicrokernel> for HypercubeAtomicReduceRoutine {
+    const NAME: &'static str = "hypercube_atomic_reduce";
+
     /// Never reached: [`launch`](Self::launch) and [`launch_unbound`](Self::launch_unbound) bind
     /// the output as the atomic argument the kernel adds into, which a plain output tensor is not.
     fn dispatch<I: TileOperand>(
@@ -162,7 +164,7 @@ impl ReduceRoutine<CubeReduceMicrokernel> for HypercubeAtomicReduceRoutine {
         _problem: &ReduceRoutineProblem,
         _client: &Client,
         _binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
-        _blueprint: HypercubeAtomicReduceRoutineBlueprint,
+        _blueprint: HypercubeAtomicReduceBlueprint,
         _grid: Grid,
     ) {
         unreachable!("the atomic hypercube binds its output in `launch` and `launch_unbound`")
@@ -172,7 +174,7 @@ impl ReduceRoutine<CubeReduceMicrokernel> for HypercubeAtomicReduceRoutine {
     fn launch(
         &self,
         tensors: &ReduceTensors,
-        blueprint: HypercubeAtomicReduceRoutineBlueprint,
+        blueprint: HypercubeAtomicReduceBlueprint,
         grid: Grid,
     ) {
         let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, identity);
@@ -195,7 +197,7 @@ impl ReduceRoutine<CubeReduceMicrokernel> for HypercubeAtomicReduceRoutine {
     fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,
-        blueprint: HypercubeAtomicReduceRoutineBlueprint,
+        blueprint: HypercubeAtomicReduceBlueprint,
         grid: Grid,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {
@@ -221,7 +223,7 @@ fn launch_atomic<I: TileOperand>(
     problem: &ReduceRoutineProblem,
     client: &Client,
     binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, Bound>,
-    blueprint: HypercubeAtomicReduceRoutineBlueprint,
+    blueprint: HypercubeAtomicReduceBlueprint,
     grid: Grid,
 ) {
     let elements = problem.elements;

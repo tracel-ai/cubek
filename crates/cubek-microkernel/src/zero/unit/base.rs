@@ -1,5 +1,8 @@
+use super::microkernel::unit_zero_microkernel;
 use crate::zero::ZeroOperand;
+use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
+use cubecl::{self as cubecl, CubeType, IntoRuntime, cube};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
@@ -7,8 +10,16 @@ use cubek_std::microkernel::{
 
 /// A window of an output zeroed by one unit alone. Every device runs it: it asks nothing of the
 /// plane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UnitZeroMicrokernel;
+#[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UnitZeroMicrokernel {}
+
+#[cube]
+impl UnitZeroMicrokernel {
+    /// A unit's window `out`, every cell set to zero ([`unit_zero_microkernel`]).
+    pub fn execute(&self, out: &mut Tile) {
+        unit_zero_microkernel(out)
+    }
+}
 
 /// A unit's zeroing has nothing a measurement settles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,7 +48,7 @@ impl Microkernel for UnitZeroMicrokernel {
         _item: &(),
         _settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        core::iter::once(Self)
+        core::iter::once(Self {})
     }
 
     /// It reads nothing, and writes at whatever width its output is bound at.
