@@ -29,7 +29,7 @@ use std::sync::Arc;
 /// What makes two norms want the same kernel.
 ///
 /// The row width is **exact**: it is a `d_model` or a `head_dim`, fixed by the model config, and
-/// every owner sizes its registers by it. The row count is anchored — it is the axis a caller
+/// every owner sizes its registers by it. The row count is anchored — it is the dimension a caller
 /// varies freely (batch × sequence) and the one that decides whether the grid is full.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct RmsNormKey {

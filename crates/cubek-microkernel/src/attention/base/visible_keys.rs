@@ -2,7 +2,7 @@ use crate::attention::{AttentionVisibility, B, G, Q, QueryPlacement, S};
 use cubecl::tile::procedural::{
     MemoryValues, Procedural, Reads, Recipe, RecipeCoords, RecipeExpand,
 };
-use cubecl::tile::{Axis, Partitioning, Region, Space, Tile};
+use cubecl::tile::{Dimension, Partitioning, Region, Space, Tile};
 use cubecl::{self as cubecl, cube, ir::Scope, prelude::*};
 
 /// Which keys a query sees, and the bias its scores are summed with: zero at a key it sees, the
@@ -270,9 +270,11 @@ impl<E: Numeric> Recipe<E> for VisibleKeys {
 }
 
 impl Reads for VisibleKeysExpand {
-    fn reads(&self, _scope: &Scope, axis: Axis) -> bool {
+    fn reads(&self, _scope: &Scope, dimension: Dimension) -> bool {
         let masked = self.mask.is_some();
-        axis == S || ((self.visibility.is_causal() || masked) && axis == Q) || (masked && axis == G)
+        dimension == S
+            || ((self.visibility.is_causal() || masked) && dimension == Q)
+            || (masked && dimension == G)
     }
 }
 
@@ -280,8 +282,8 @@ impl Reads for VisibleKeysExpand {
 /// `seen_by_all` keys, which every query of the walk's region sees, sums its scores with
 /// `unmasked`, zero everywhere, which the softmax takes as no bias ([`Procedural::zero`]): the max
 /// over the raw scores, scaled once a row, and each cell's exponential one multiply-add. Any other
-/// with `masked`, the visibility's, read at each cell. The unmasked steps of a walk in key order come first
-/// ([`unmasked_steps`](Self::unmasked_steps)).
+/// with `masked`, the visibility's, read at each cell. The unmasked steps of a walk in key order
+/// come first ([`unmasked_steps`](Self::unmasked_steps)).
 #[derive(CubeType, Clone)]
 pub struct StepBias {
     pub masked: Tile,

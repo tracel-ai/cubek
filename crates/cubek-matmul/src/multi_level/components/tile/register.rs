@@ -105,14 +105,14 @@ impl TileVariant for RegisterMatmul {
             MatrixLayout::RowMajor => {
                 if !k.is_multiple_of(lhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Tile shape in vectorized axis k({k:?}) should be divisible by vector size lhs({lhs:?})"
+                        "Tile shape in vectorized dimension k({k:?}) should be divisible by vector size lhs({lhs:?})"
                     ))));
                 }
             }
             MatrixLayout::ColMajor => {
                 if !m.is_multiple_of(lhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Tile shape in vectorized axis m({m:?}) should be divisible by vector size lhs({lhs:?})"
+                        "Tile shape in vectorized dimension m({m:?}) should be divisible by vector size lhs({lhs:?})"
                     ))));
                 }
             }
@@ -121,14 +121,14 @@ impl TileVariant for RegisterMatmul {
             MatrixLayout::RowMajor => {
                 if !n.is_multiple_of(rhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Tile shape in vectorized axis n({n:?}) should be divisible by vector size rhs({rhs:?})"
+                        "Tile shape in vectorized dimension n({n:?}) should be divisible by vector size rhs({rhs:?})"
                     ))));
                 }
             }
             MatrixLayout::ColMajor => {
                 if !k.is_multiple_of(rhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Tile shape in vectorized axis k({k:?}) should be divisible by vector size rhs({rhs:?})"
+                        "Tile shape in vectorized dimension k({k:?}) should be divisible by vector size rhs({rhs:?})"
                     ))));
                 }
             }
@@ -136,7 +136,7 @@ impl TileVariant for RegisterMatmul {
 
         if !n.is_multiple_of(out) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Tile shape in vectorized axis n({n:?}) should be divisible by vector size out({out:?})"
+                "Tile shape in vectorized dimension n({n:?}) should be divisible by vector size out({out:?})"
             ))));
         }
 

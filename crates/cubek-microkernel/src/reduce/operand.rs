@@ -1,4 +1,4 @@
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 
 /// One of a reduction's operands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -10,6 +10,6 @@ pub enum ReduceOperand {
 }
 
 /// The rows: each one reduced on its own.
-pub const O: Axis = Axis(0);
-/// The reduced axis.
-pub const R: Axis = Axis(1);
+pub const O: Dimension = Dimension(0);
+/// The reduced dimension.
+pub const R: Dimension = Dimension(1);

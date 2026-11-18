@@ -15,7 +15,7 @@ use cubek_std::autotune::{Autotune, GroupPriority};
 use serde::{Deserialize, Serialize};
 
 use crate::kernels::indexed::routed::{RoutedCandidates, RoutedFloors, RoutedMatmulTensors};
-use crate::kernels::indexed::stack::SlabAxis;
+use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
@@ -43,10 +43,10 @@ pub struct RoutedMatmulKey {
     /// Whether the stack is float or packed, and how: a packed stack is read packed, by other
     /// kernels than a float one.
     stack: OperandKind,
-    /// Which axis the stack lines along.
+    /// Which dimension the stack lines along.
     lines: OperandLayout,
-    /// Which axis the slabs lie along.
-    slabs: SlabAxis,
+    /// Which dimension the slabs lie along.
+    slabs: SlabDimension,
 }
 
 /// The routed product `tensors` states, through whichever setting measures fastest for it on

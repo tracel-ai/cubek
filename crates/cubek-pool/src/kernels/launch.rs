@@ -2,7 +2,7 @@
 
 use crate::definition::{MaxPoolOptions, PoolWindow};
 use crate::kernels::PoolRoutineProblem;
-use crate::kernels::space::{self, BATCH, CHANNEL, OUTPUT_H, OUTPUT_W, WindowAxis};
+use crate::kernels::space::{self, BATCH, CHANNEL, OUTPUT_H, OUTPUT_W, WindowDimension};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
@@ -58,7 +58,7 @@ impl PoolTensors {
             input: [input.shape[1], input.shape[2]],
             output: [output.shape[1], output.shape[2]],
             channels: input.shape[3],
-            windows: window_axes(&options.window, options.dilation),
+            windows: window_dimensions(&options.window, options.dilation),
             element,
             elem_alignments: [&input, &output]
                 .map(|binding| ElemAlignment::new(&binding.shape, &binding.strides)),
@@ -107,7 +107,7 @@ impl PoolTensors {
             .expect(ADMITTED_PLAN_RUNS);
         let output = launcher
             .arg(self.output.clone(), problem.element)
-            .axes(&[BATCH, OUTPUT_H, OUTPUT_W, CHANNEL])
+            .dimensions(&[BATCH, OUTPUT_H, OUTPUT_W, CHANNEL])
             .vectorize(width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -120,8 +120,8 @@ impl PoolTensors {
 }
 
 /// The window along the rows, then the columns.
-fn window_axes(window: &PoolWindow<2>, dilation: [usize; 2]) -> [WindowAxis; 2] {
-    [0, 1].map(|axis| WindowAxis {
+fn window_dimensions(window: &PoolWindow<2>, dilation: [usize; 2]) -> [WindowDimension; 2] {
+    [0, 1].map(|axis| WindowDimension {
         taps: window.kernel_size[axis],
         stride: window.stride[axis],
         dilation: dilation[axis],

@@ -11,9 +11,9 @@ pub struct MatmulBuffers {
     pub stored_tiles: MatmulOperands<Option<MatmulStoredTile>>,
 }
 
-/// The tile an operand is stored in, over the axes it is bound along: `rows` of its rows' axis by
-/// `columns` of `K`, each row of a tile one contiguous run, the tiles laid one after another. A
-/// descriptor over the tiles lands a stage of whole tiles row by row, as it lands rows.
+/// The tile an operand is stored in, over the dimensions it is bound along: `rows` of its rows'
+/// dimension by `columns` of `K`, each row of a tile one contiguous run, the tiles laid one after
+/// another. A descriptor over the tiles lands a stage of whole tiles row by row, as it lands rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MatmulStoredTile {
     pub rows: usize,

@@ -7,16 +7,16 @@
 //! over channels, so a stage hierarchy sized for one has nothing to size here.
 //!
 //! What it is instead: a dense convolution contracts input channels into output channels, so the
-//! channel pair appears in the two operands and not in the accumulator. A depthwise one has no
-//! such pairing — each channel carries its own filter and reaches exactly one output channel — so
-//! a single channel axis appears in *all three* operands. That makes it a batch axis, and the
-//! contraction is over the window taps alone. Written that way it is a space and a projection,
+//! channel pair appears in the two operands and not in the accumulator. A depthwise one has no such
+//! pairing — each channel carries its own filter and reaches exactly one output channel — so a
+//! single channel dimension appears in *all three* operands. That makes it a batch dimension, and
+//! the contraction is over the window taps alone. Written that way it is a space and a projection,
 //! and `Tile::mma` is the whole body.
 //!
-//! Everything about the layout follows from that one axis. Channels stay innermost (NHWC) and are
-//! what the units are spent on, so consecutive units read consecutive channels of one pixel and
-//! the read coalesces; and they are what every operand is *lined* along, so one instruction moves
-//! a unit's whole cell. A depthwise pass has too little arithmetic per byte to be anything but
+//! Everything about the layout follows from that one dimension. Channels stay innermost (NHWC) and
+//! are what the units are spent on, so consecutive units read consecutive channels of one pixel and
+//! the read coalesces; and they are what every operand is *lined* along, so one instruction moves a
+//! unit's whole cell. A depthwise pass has too little arithmetic per byte to be anything but
 //! bandwidth-bound, and both of those are what let it reach the bandwidth.
 
 use cubecl::tile::kind::Boundary;
@@ -41,20 +41,20 @@ use crate::{components::ConvSetupError, launch::ConvolutionArgs};
 /// not along `K`.
 const SOFTWARE_MATMUL: SoftwareMatmul = SoftwareMatmul::new(64).split_edge();
 
-// Output positions, the channel axis every operand shares, and the window taps.
-const B: Axis = Axis(0);
-const OH: Axis = Axis(1);
-const OW: Axis = Axis(2);
-const C: Axis = Axis(3);
-const RH: Axis = Axis(4);
-const RW: Axis = Axis(5);
+// Output positions, the channel dimension every operand shares, and the window taps.
+const B: Dimension = Dimension(0);
+const OH: Dimension = Dimension(1);
+const OW: Dimension = Dimension(2);
+const C: Dimension = Dimension(3);
+const RH: Dimension = Dimension(4);
+const RW: Dimension = Dimension(5);
 
-/// What a partitioning over these axes prints as ([`Partitioning::labelled`]): an [`Axis`] is an
-/// index, and only the kernel that assigned it knows what it stands for.
+/// What a partitioning over these dimensions prints as ([`Partitioning::labelled`]): a
+/// [`Dimension`] is an index, and only the kernel that assigned it knows what it stands for.
 ///
 /// Only tests print one today. It widens when a caller does.
 #[cfg(test)]
-const LABELS: [(Axis, &str); 6] = [
+const LABELS: [(Dimension, &str); 6] = [
     (B, "b"),
     (OH, "oh"),
     (OW, "ow"),
@@ -82,8 +82,8 @@ pub struct DepthwiseSpace {
 }
 
 impl DepthwiseSpace {
-    /// The space's axes and their extents, every one static.
-    pub fn extents(&self) -> Vec<(Axis, usize)> {
+    /// The space's dimensions and their extents, every one static.
+    pub fn extents(&self) -> Vec<(Dimension, usize)> {
         vec![
             (B, self.b),
             (OH, self.oh),
@@ -103,7 +103,7 @@ impl DepthwiseSpace {
     /// The levels, stated **from the leaf up, in counts**: one unit's channel line by the
     /// cube's columns by one row; the plane's units across channels, in turns; the channel lines
     /// a unit holds past its first, where the tile is wider than the plane; the cube's rows
-    /// across its planes; and a cube per box, the taps whole. The channel axis takes `X` so
+    /// across its planes; and a cube per box, the taps whole. The channel dimension takes `X` so
     /// that the fastest-moving cube index is the one memory is contiguous along.
     ///
     /// Round-robin across the units, so a unit holding several channel lines takes every
@@ -166,12 +166,12 @@ impl DepthwiseSpace {
 /// `out[b, oh, ow, c] = Σ_{rh, rw} w[rh, rw, c] · input[b, oh*sh + rh*dh - ph, ow*sw + rw*dw - pw,
 /// c]`
 ///
-/// The same leaf the dense convolution runs. `C` being one of the accumulator's own axes is what
-/// makes it batched rather than contracted; the leaf reads that off the spaces.
+/// The same leaf the dense convolution runs. `C` being one of the accumulator's own dimensions is
+/// what makes it batched rather than contracted; the leaf reads that off the spaces.
 ///
 /// The filter is the *lhs* and the map the rhs, which is not arbitrary: the leaf serves the rhs in
-/// lines along the accumulator's innermost axis, and that axis is the channel. The filter follows
-/// it there (one filter value per channel of the cell), which is what a batched contraction
+/// lines along the accumulator's innermost dimension, and that dimension is the channel. The filter
+/// follows it there (one filter value per channel of the cell), which is what a batched contraction
 /// needs and what a width over one is.
 ///
 /// Three levels: this cube's box of the output with the taps whole, this plane's row of it, then
@@ -233,11 +233,11 @@ pub struct DepthwiseTiling {
 impl Default for DepthwiseTiling {
     /// Four planes of one row each, four output columns per unit, scalar channels.
     ///
-    /// Small on both spatial axes on purpose: the window overlaps, so a cube's halo is what it
-    /// re-reads, but a *wide* tile is also what pushes its far corner past the padded border and
-    /// costs every instance in it the guarded walk. Four each is where those two meet on the
-    /// shapes an encoder actually runs. The line width is the knob worth deciding per problem,
-    /// which [`for_problem`](Self::for_problem) is.
+    /// Small on both spatial dimensions on purpose: the window overlaps, so a cube's halo is what
+    /// it re-reads, but a *wide* tile is also what pushes its far corner past the padded border and
+    /// costs every instance in it the guarded walk. Four each is where those two meet on the shapes
+    /// an encoder actually runs. The line width is the knob worth deciding per problem, which
+    /// [`for_problem`](Self::for_problem) is.
     fn default() -> Self {
         Self {
             rows: 4,
@@ -255,7 +255,7 @@ impl DepthwiseTiling {
     /// reaches it.
     const INSTRUCTION_BOUND_TAPS: usize = 25;
 
-    /// ...and the channel axis has to stay wide enough to fill the grid once a wide line has
+    /// ...and the channel dimension has to stay wide enough to fill the grid once a wide line has
     /// divided its parallelism. Below this many cube-widths of channels, widening starves the
     /// grid instead of the bus.
     const WIDE_BLOCK_UNIT_MULTIPLE: usize = 8;
@@ -350,7 +350,7 @@ impl DepthwiseTiling {
 /// positional triple lets two of them be swapped without a word from the compiler.
 ///
 /// NHWC maps, and Burn's `[out_channels, kh, kw, in_channels / groups]` filter — whose trailing
-/// axis is 1 for a depthwise convolution.
+/// dimension is 1 for a depthwise convolution.
 pub struct DepthwiseTensors {
     pub input: TensorBinding,
     pub weight: TensorBinding,
@@ -429,11 +429,11 @@ pub fn launch_depthwise(
         )?
     };
 
-    // A tile that does not divide its axis leaves the last cube short, and a short cube's
+    // A tile that does not divide its dimension leaves the last cube short, and a short cube's
     // terminal tile is still the full comptime size — so the cells past the end are addressed and
-    // have to be guarded. Per axis, because the guard is real work per access and the axes that
-    // need one are rarely the same: a 48x48 map divides evenly by any tile here while a
-    // 24-channel block never fills one plane's width of channels.
+    // have to be guarded. Per dimension, because the guard is real work per access and the
+    // dimensions that need one are rarely the same: a 48x48 map divides evenly by any tile here
+    // while a 24-channel block never fills one plane's width of channels.
     let ragged_c = !geometry.c.is_multiple_of(tile_c);
     let ragged_oh = !geometry.oh.is_multiple_of(tiling.rows);
     let ragged_ow = !geometry.ow.is_multiple_of(tiling.cols);
@@ -445,8 +445,8 @@ pub fn launch_depthwise(
 
     // Two gathered physical axes, one per spatial pair, each carrying its padding as the
     // projection's constant term. Batch and channel ride identity. The channel comes last in the
-    // logical order because that is the axis the operand lines along, and the innermost logical
-    // axis is the one a line covers.
+    // logical order because that is the dimension the operand lines along, and the innermost
+    // logical dimension is the one a line covers.
     let in_spec = TileSpec::new(Projection::new(
         &[B, OH, OW, RH, RW, C],
         &[
@@ -545,7 +545,7 @@ impl Geometry {
             ow: tensors.out.shape[2],
             c: input_channels,
             // Burn hands weights as [out_channels, kh, kw, in_channels / groups]; depthwise makes
-            // that last axis 1, so the filter is [c, kh, kw] with the channel outermost.
+            // that last dimension 1, so the filter is [c, kh, kw] with the channel outermost.
             rh: tensors.weight.shape[1],
             rw: tensors.weight.shape[2],
             stride: args.stride,
@@ -640,12 +640,12 @@ fn plane_units(client: &Client) -> usize {
     client.properties().hardware.plane_size_max as usize
 }
 
-/// The boundary an axis needs, or `None` when every read along it is in bounds by construction.
+/// The boundary a dimension needs, or `None` when every read along it is in bounds by construction.
 fn guard(ragged: bool) -> Option<Boundary> {
     ragged.then_some(Boundary::Zero)
 }
 
-/// The widest line the channel axis can be served in across all three operands, up to what the
+/// The widest line the channel dimension can be served in across all three operands, up to what the
 /// tiling asked for.
 ///
 /// Every gate below the request is a fact about the buffers rather than a preference: the channel
@@ -702,7 +702,7 @@ mod tests {
     }
 
     /// The three levels as a table, leaf up: each row's tile is the row below it times the count
-    /// beside it, so a tiling that stops dividing an axis where it meant to keep going shows up
+    /// beside it, so a tiling that stops dividing a dimension where it meant to keep going shows up
     /// as a row that no longer multiplies out. The taps never divide: they are the contraction,
     /// and every one accumulates into the same register.
     #[test]

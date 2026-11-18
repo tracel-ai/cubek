@@ -10,7 +10,7 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
-use cubek_std::matmul_axes::{K, M, N, NB, NI};
+use cubek_std::matmul_dimensions::{K, M, N, NB, NI};
 use cubek_test_utils::{QuantizedTileInput, RunSamples, TileInput};
 
 use super::problem::TileQuantStageProblem;
@@ -131,7 +131,7 @@ impl TileQuantStageBench {
     ///
     /// `N` is split into its scale blocks (`NB` of `bn` columns, `NI` inside one), so a block's
     /// scale is looked up at the value's own coordinate.
-    fn extents(&self) -> Vec<(Axis, usize)> {
+    fn extents(&self) -> Vec<(Dimension, usize)> {
         let bn = self.bn();
         vec![(M, self.m), (NB, self.n / bn), (NI, bn), (K, self.k)]
     }
@@ -200,7 +200,7 @@ impl Benchmark for TileQuantStageBench {
         let element = f32::elem_type_native();
         let a = launcher
             .arg(a.handle().binding(), element)
-            .axes(&[M, K])
+            .dimensions(&[M, K])
             .build()
             .map_err(|refusal| refusal.to_string())?;
         let b_projection = Projection::new(&[K, NB, NI], &[PhysicalAxisMap::of(K), self.n_dim()]);

@@ -1,4 +1,4 @@
-use crate::matmul::{MatmulAxes, MatmulLayout, MatmulWorkItem};
+use crate::matmul::{MatmulDimensions, MatmulLayout, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::Space;
 use cubecl::tile::layout::{Run, VectorTile};
@@ -232,7 +232,7 @@ impl PlaneShuffleKSplit {
     ) -> usize {
         let element = item.elements.rhs;
         let step = depth.get() * hw.vector_ceiling(element);
-        let MatmulAxes { n, k, .. } = item.axes;
+        let MatmulDimensions { n, k, .. } = item.dimensions;
         let (read, plane) = match item.layouts.rhs {
             MatmulLayout::Col => (
                 VectorTile::run(k, step),

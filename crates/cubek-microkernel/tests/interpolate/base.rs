@@ -1,7 +1,7 @@
 //! What every interpolate microkernel computes alone: each output cell its window's taps inside
 //! the input, each weighted, summed.
 
-use crate::launch::interpolate::{Channels, InterpolateLaunch, WindowAxis};
+use crate::launch::interpolate::{Channels, InterpolateLaunch, WindowDimension};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
@@ -43,7 +43,7 @@ impl HostInterpolate {
         let ([h, w], c) = (windowed.input, windowed.channels);
         let [rows, cols] = windowed.windows;
         let [out_h, out_w] = windowed.outputs();
-        let inside = |window: WindowAxis, output: usize, tap: usize, extent: usize| {
+        let inside = |window: WindowDimension, output: usize, tap: usize, extent: usize| {
             (output * window.stride + tap * window.dilation)
                 .checked_sub(window.padding)
                 .filter(|&at| at < extent)
@@ -82,7 +82,7 @@ pub(crate) struct Interpolate {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct InterpolateCase {
     pub element: ElemType,
-    pub windows: [WindowAxis; 2],
+    pub windows: [WindowDimension; 2],
     pub input: [usize; 2],
     /// Channels per unit of the plane: the case has `channel_block · plane · walks` channels.
     pub channel_block: usize,

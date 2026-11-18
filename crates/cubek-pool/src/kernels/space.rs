@@ -1,27 +1,29 @@
 use super::geometry::TileGeometry;
-use cubecl::tile::{Axis, Level, Levels, Partitioning, Projection, Space, layout::PhysicalAxisMap};
+use cubecl::tile::{
+    Dimension, Level, Levels, Partitioning, Projection, Space, layout::PhysicalAxisMap,
+};
 use cubek_microkernel::pool::PoolWorkItem;
 
-pub const BATCH: Axis = Axis(0);
-pub const OUTPUT_H: Axis = Axis(1);
-pub const OUTPUT_W: Axis = Axis(2);
-pub const TAP_H: Axis = Axis(3);
-pub const TAP_W: Axis = Axis(4);
-pub const CHANNEL: Axis = Axis(5);
+pub const BATCH: Dimension = Dimension(0);
+pub const OUTPUT_H: Dimension = Dimension(1);
+pub const OUTPUT_W: Dimension = Dimension(2);
+pub const TAP_H: Dimension = Dimension(3);
+pub const TAP_W: Dimension = Dimension(4);
+pub const CHANNEL: Dimension = Dimension(5);
 
-/// How a window of one pooled axis lands on the input: output position `o` and tap `t` read input
-/// position `o · stride + t · dilation - padding`.
+/// How a window of one pooled dimension lands on the input: output position `o` and tap `t` read
+/// input position `o · stride + t · dilation - padding`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct WindowAxis {
+pub struct WindowDimension {
     pub taps: usize,
     pub stride: usize,
     pub dilation: usize,
     pub padding: usize,
 }
 
-impl WindowAxis {
-    /// The input axis this window reads, as the gather maps it from `output` and `tap`.
-    pub fn input_axis(&self, output: Axis, tap: Axis) -> PhysicalAxisMap {
+impl WindowDimension {
+    /// The input dimension this window reads, as the gather maps it from `output` and `tap`.
+    pub fn input_dimension(&self, output: Dimension, tap: Dimension) -> PhysicalAxisMap {
         PhysicalAxisMap::affine(&[(output, self.stride), (tap, self.dilation)])
             .shifted(-(self.padding as isize))
     }
@@ -46,8 +48,8 @@ pub struct PoolSpace {
 }
 
 impl PoolSpace {
-    /// The space's axes and their extents, every one static.
-    pub fn extents(&self) -> Vec<(Axis, usize)> {
+    /// The space's dimensions and their extents, every one static.
+    pub fn extents(&self) -> Vec<(Dimension, usize)> {
         vec![
             (BATCH, self.batch),
             (OUTPUT_H, self.height),
@@ -69,7 +71,7 @@ impl PoolSpace {
             "PoolSpace: the unit split covers {} of the plane's {plane_size} units",
             geometry.unit_cols * geometry.unit_channels
         );
-        let plane_units: Vec<(Axis, usize)> = [
+        let plane_units: Vec<(Dimension, usize)> = [
             (OUTPUT_W, geometry.unit_cols),
             (CHANNEL, geometry.unit_channels),
         ]
@@ -110,13 +112,13 @@ pub fn work_item(partitioning: &Partitioning) -> PoolWorkItem {
 }
 
 /// The NHWC input as every output position's window reads it.
-pub fn input_projection(rows: WindowAxis, cols: WindowAxis) -> Projection {
+pub fn input_projection(rows: WindowDimension, cols: WindowDimension) -> Projection {
     Projection::new(
         &[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W, CHANNEL],
         &[
             PhysicalAxisMap::of(BATCH),
-            rows.input_axis(OUTPUT_H, TAP_H),
-            cols.input_axis(OUTPUT_W, TAP_W),
+            rows.input_dimension(OUTPUT_H, TAP_H),
+            cols.input_dimension(OUTPUT_W, TAP_W),
             PhysicalAxisMap::of(CHANNEL),
         ],
     )

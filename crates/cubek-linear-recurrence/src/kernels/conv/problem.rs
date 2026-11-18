@@ -11,7 +11,7 @@ use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Space};
+use cubecl::tile::{Dimension, Space};
 use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_microkernel::linear_recurrence::conv::cube::QkNormedConvWorkItem;
@@ -154,10 +154,10 @@ impl QkNormedConvProblem {
         }
     }
 
-    /// Every axis of the problem at its extent.
+    /// Every dimension of the problem at its extent.
     pub(crate) fn space(&self) -> Space {
         let heads = &self.heads;
-        let mut axes = vec![
+        let mut dimensions = vec![
             (BATCH, self.batch),
             (KEY_HEAD, heads.key_heads),
             (HEAD_IN_GROUP, heads.heads_per_group),
@@ -169,21 +169,21 @@ impl QkNormedConvProblem {
         ];
         match self.past {
             GatedDeltaConvPast::Window { slots, columns } => {
-                axes.extend([(STORE_SLOT, slots.get()), (RING_COLUMN, columns)]);
+                dimensions.extend([(STORE_SLOT, slots.get()), (RING_COLUMN, columns)]);
             }
-            GatedDeltaConvPast::Stream { positions } => axes.extend([
+            GatedDeltaConvPast::Stream { positions } => dimensions.extend([
                 (POSITION, positions),
                 (STREAM_POSITION, self.past.stream_len(self.taps)),
             ]),
         }
-        Space::new(&axes)
+        Space::new(&dimensions)
     }
 
-    /// The axes of a cube's leaf: its key head, every channel and tap, `width` of the head's
+    /// The dimensions of a cube's leaf: its key head, every channel and tap, `width` of the head's
     /// channels.
-    pub(crate) fn leaf(&self, width: usize) -> Vec<(Axis, usize)> {
+    pub(crate) fn leaf(&self, width: usize) -> Vec<(Dimension, usize)> {
         let heads = &self.heads;
-        let mut axes = vec![
+        let mut dimensions = vec![
             (KEY_HEAD, 1),
             (HEAD_IN_GROUP, heads.heads_per_group),
             (KEY_FEATURE, heads.key_features),
@@ -193,9 +193,9 @@ impl QkNormedConvProblem {
             (TAP, self.taps),
         ];
         if let GatedDeltaConvPast::Stream { .. } = self.past {
-            axes.insert(0, (POSITION, 1));
+            dimensions.insert(0, (POSITION, 1));
         }
-        axes
+        dimensions
     }
 
     /// A problem of dense operands, each starting where its buffer does.
