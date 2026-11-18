@@ -27,14 +27,7 @@ pub fn first_served<T>(
     attempts: impl IntoIterator<Item = Result<T, Refusal>>,
     none: Refusal,
 ) -> Result<T, Refusal> {
-    let mut declined = none;
-    for attempt in attempts {
-        match attempt {
-            Ok(served) => return Ok(served),
-            Err(why) => declined = why,
-        }
-    }
-    Err(declined)
+    first_serving(attempts).map_err(|declined| declined.unwrap_or(none))
 }
 
 /// [`first_served`] over attempts that always hold a floor, whose refusal is the answer where no
@@ -50,6 +43,15 @@ pub fn first_served<T>(
 pub fn first_served_on_floor<T>(
     attempts: impl IntoIterator<Item = Result<T, Refusal>>,
 ) -> Result<T, Refusal> {
+    first_serving(attempts)
+        .map_err(|declined| declined.expect("attempts that hold a floor are never empty"))
+}
+
+/// The one loop of both: the first attempt that serves, else the last refusal, `None` where there
+/// were no attempts.
+fn first_serving<T>(
+    attempts: impl IntoIterator<Item = Result<T, Refusal>>,
+) -> Result<T, Option<Refusal>> {
     let mut declined = None;
     for attempt in attempts {
         match attempt {
@@ -57,7 +59,7 @@ pub fn first_served_on_floor<T>(
             Err(why) => declined = Some(why),
         }
     }
-    Err(declined.expect("attempts that hold a floor are never empty"))
+    Err(declined)
 }
 
 /// A whole kernel written around one microkernel.
