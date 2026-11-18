@@ -219,6 +219,8 @@ mod cube {
         weight_grad, BackwardWeight;
         whole_channels: conv(2, (64, 64), [4, 12], [3, 3], SAME);
         stride_2: conv(2, (64, 32), [6, 20], [3, 3], STRIDE_2);
+        dilation_2: conv(2, (64, 32), [12, 12], [3, 3], DILATION_2);
+        dilation_unequal: conv(2, (64, 32), [12, 12], [3, 3], DILATION_UNEQUAL);
         no_padding: conv(2, (32, 32), [5, 12], [3, 3], VALID);
         overhang_channels_and_filters: conv(2, (40, 48), [9, 11], [5, 3], window([1, 1], [2, 1], [1, 1]));
         channels_3: conv(2, (3, 10), [6, 12], [3, 3], SAME);
@@ -234,6 +236,7 @@ mod cube {
         data_grad, BackwardData;
         whole_channels: conv(2, (64, 64), [6, 12], [3, 3], SAME);
         no_padding: conv(2, (32, 32), [7, 12], [3, 3], VALID);
+        dilation_2: conv(2, (64, 32), [8, 17], [3, 3], DILATION_2);
         overhanging_filters: conv(2, (32, 24), [6, 12], [3, 3], SAME);
         channels_3: conv(2, (3, 16), [6, 12], [3, 3], SAME);
         batch_3: conv(3, (32, 16), [4, 12], [3, 3], SAME);
@@ -367,6 +370,8 @@ mod unit_registers {
         weight_grad, BackwardWeight;
         same_3x3: conv32(2, (64, 32), [6, 12], [3, 3], SAME);
         stride_2: conv32(2, (32, 32), [7, 21], [3, 3], STRIDE_2);
+        dilation_2: conv32(2, (64, 32), [12, 12], [3, 3], DILATION_2);
+        dilation_unequal: conv32(2, (64, 32), [12, 12], [3, 3], DILATION_UNEQUAL);
         overhanging_channels_and_filters: conv32(2, (40, 12), [9, 11], [5, 3], window([1, 1], [2, 1], [1, 1]));
         channels_3: conv32(2, (3, 10), [6, 12], [3, 3], SAME);
         ragged_57x5: conv32(2, (64, 32), [57, 5], [3, 3], SAME);
