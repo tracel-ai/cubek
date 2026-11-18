@@ -62,13 +62,26 @@ impl ReduceRoutineProblem {
             .collect()
     }
 
-    /// The axes the owners are placed along: the row axes, or the slots where there is none, a
-    /// tensor of one dim reduced whole into its one row.
+    /// The axes the owners are placed along, outermost first: the row axes, or the slots where
+    /// there is none, a tensor of one dim reduced whole into its one row.
     pub fn owner_axes(&self) -> Vec<Axis> {
         match self.rows() {
             rows if rows.is_empty() => vec![self.slots()],
             rows => rows,
         }
+    }
+
+    /// [`owner_axes`](Self::owner_axes), innermost first. A launch deals its owners first axis
+    /// fastest, so neighbouring units and planes take neighbouring rows: their reads land a row
+    /// apart instead of a whole outer dim apart. Rows across the reduced dim share their lines'
+    /// memory, so there it is what keeps a unit or plane routine level with a kernel reading
+    /// the rows in order (on Metal, a strided f16 sum: 1083 µs outermost first, 752 µs innermost
+    /// first). A cube routine, whose cube spreads one owner's rows over all its units, measured
+    /// slower this way (1045 µs to 1236 µs), so it keeps them outermost first.
+    pub fn owner_axes_innermost_first(&self) -> Vec<Axis> {
+        let mut axes = self.owner_axes();
+        axes.reverse();
+        axes
     }
 
     /// The input's axes, one a dim.

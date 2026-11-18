@@ -73,9 +73,9 @@ impl Routine for PlaneReduceRoutine {
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widths = reduce_widths(hw, problem, vectorization);
-        let owners = problem.owner_axes();
+        let owners = problem.owner_axes_innermost_first();
         let innermost = *owners
-            .last()
+            .first()
             .expect("a problem places its owners along an axis");
         let partitioning = Partitioning::new(
             problem.space(),
