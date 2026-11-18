@@ -40,5 +40,6 @@ fn an_aligned_gate_slice_is_not_copied() {
     .grouped(128);
     let tensors = RmsNormTensors::new(&Hardware::from_client(&client), &call)
         .expect("the device runs the norm");
-    assert_ne!(tensors.problem().start_bytes.gate, 0, "the gate was copied");
+    let gate = tensors.problem().gate.expect("the norm is gated");
+    assert_ne!(gate.placement.start_bytes, 0, "the gate was copied");
 }

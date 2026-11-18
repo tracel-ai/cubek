@@ -1,7 +1,8 @@
 //! How an RMS-norm launch reads its operands and binds them.
 
 use crate::kernels::{
-    RMS_NORM_OUTPUT_UNSUPPORTED, RmsNormBlueprint, RmsNormCall, RmsNormRoutineProblem,
+    RMS_NORM_OUTPUT_UNSUPPORTED, RmsNormBlueprint, RmsNormCall, RmsNormGateOperand,
+    RmsNormRoutineProblem,
 };
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
@@ -227,33 +228,22 @@ impl RmsNormInputs {
     /// `store` says.
     fn problem(&self, out: Placement, store: RowStore) -> RmsNormRoutineProblem {
         let (input, weight) = (&self.input, self.weight.tensor());
-        // An ungated norm binds no gate, so nothing reads the dense rows its place is stated as.
-        let gate = self
-            .gate
-            .as_ref()
-            .map_or(Placement::dense_rows(self.dim), |gate| {
-                Placement::from(&gate.tensor)
-            });
         RmsNormRoutineProblem {
             batch: self.batch,
             rows: self.rows,
             dim: self.dim,
             element: self.input.elem,
             output_element: self.output_element,
-            elem_alignments: RmsNormOperands {
-                input: input.elem_alignment(),
-                weight: weight.elem_alignment(),
-                gate: gate.elem_alignment,
-                out: out.elem_alignment,
-            },
-            start_bytes: RmsNormOperands {
-                input: input.start_bytes(),
-                weight: weight.start_bytes(),
-                gate: gate.start_bytes,
-                out: out.start_bytes,
+            placements: RmsNormOperands {
+                input: Placement::from(input),
+                weight: Placement::from(weight),
+                out,
             },
             store,
-            gate: self.gate.as_ref().map(|gate| gate.order),
+            gate: self.gate.as_ref().map(|gate| RmsNormGateOperand {
+                order: gate.order,
+                placement: Placement::from(&gate.tensor),
+            }),
         }
     }
 }

@@ -4,10 +4,9 @@ use crate::kernels::RMS_NORM_ELEMENT_UNVERIFIED;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Space;
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::Work;
-use cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE;
-use cubek_microkernel::rms_norm::{B, GateOrder, RmsNormOperands, RmsNormWorkItem};
+use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, Placement};
+use cubek_microkernel::rms_norm::{B, GateOrder, RmsNormOperand, RmsNormOperands, RmsNormWorkItem};
 use cubek_microkernel::row_store::RowStore;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
@@ -22,6 +21,13 @@ pub const RMS_NORM_OUTPUT_UNSUPPORTED: Refusal = Refusal::Declined {
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 
+/// A gate's order and where its view lies: what a gated problem states of its gate operand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RmsNormGateOperand {
+    pub order: GateOrder,
+    pub placement: Placement,
+}
+
 /// `out[b, r] = input[b, r] / sqrt(mean(input[b, r]²) + epsilon) · weight` over `batch` entries
 /// of `rows` rows of `dim` elements, as the host describes it, the rows gated by `silu(gate)` where
 /// [`gate`](Self::gate) says.
@@ -34,14 +40,12 @@ pub struct RmsNormRoutineProblem {
     pub element: ElemType,
     /// The element the output is written at: `element`, or `f32`.
     pub output_element: ElemType,
-    /// The alignment of each operand's buffer in elements, over the axes this kind names.
-    pub elem_alignments: RmsNormOperands<ElemAlignment>,
-    /// Bytes each operand's view starts past its buffer's own start.
-    pub start_bytes: RmsNormOperands<u64>,
+    /// Where each operand every norm binds lies.
+    pub placements: RmsNormOperands<Placement>,
     /// How the output's rows are stored.
     pub store: RowStore,
     /// Whether the rows are gated, and where the gate enters.
-    pub gate: Option<GateOrder>,
+    pub gate: Option<RmsNormGateOperand>,
 }
 
 impl RmsNormRoutineProblem {
@@ -51,6 +55,24 @@ impl RmsNormRoutineProblem {
         self.batch * self.rows == 0
     }
 
+    /// The order the gate enters at, where the rows are gated.
+    pub fn gate_order(&self) -> Option<GateOrder> {
+        self.gate.map(|gate| gate.order)
+    }
+
+    /// Each operand the norm binds with where it lies, in the order [`RmsNormOperand::of`] names
+    /// them: the gate only where the rows are gated.
+    pub fn bound_placements(&self) -> Vec<(RmsNormOperand, Placement)> {
+        [
+            (RmsNormOperand::Input, self.placements.input),
+            (RmsNormOperand::Weight, self.placements.weight),
+        ]
+        .into_iter()
+        .chain(self.gate.map(|gate| (RmsNormOperand::Gate, gate.placement)))
+        .chain([(RmsNormOperand::Out, self.placements.out)])
+        .collect()
+    }
+
     /// What every microkernel of this problem is handed.
     pub fn work_item(&self) -> RmsNormWorkItem {
         RmsNormWorkItem {
@@ -58,7 +80,7 @@ impl RmsNormRoutineProblem {
             output_element: self.output_element,
             dim: self.dim,
             store: self.store,
-            gate: self.gate,
+            gate: self.gate_order(),
         }
     }
 
@@ -103,24 +125,17 @@ impl RmsNormRoutineProblem {
     /// batch entry holding every row: what a key describes, and what a routine's pure tests
     /// prepare against.
     pub fn dense(rows: usize, dim: usize, element: ElemType) -> Self {
-        let row = ElemAlignment::dense_rows(dim);
+        let row = Placement::dense_rows(dim);
         Self {
             batch: 1,
             rows,
             dim,
             element,
             output_element: element,
-            elem_alignments: RmsNormOperands {
+            placements: RmsNormOperands {
                 input: row,
                 weight: row,
-                gate: row,
                 out: row,
-            },
-            start_bytes: RmsNormOperands {
-                input: 0,
-                weight: 0,
-                gate: 0,
-                out: 0,
             },
             store: RowStore::Plain,
             gate: None,

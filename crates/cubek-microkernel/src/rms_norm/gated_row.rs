@@ -29,7 +29,7 @@ impl Gate {
         match tile {
             ComptimeOption::Some(tile) => ComptimeOption::new_Some(Gate {
                 tile,
-                order: comptime!(order.expect("a bound gate tile has an order")),
+                order: order.expect("a bound gate tile has an order"),
             }),
             ComptimeOption::None => Gate::unbound(order),
         }

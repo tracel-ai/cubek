@@ -44,23 +44,10 @@ impl RmsNormOperand {
     }
 }
 
-/// One value per operand.
+/// One value per operand every norm binds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RmsNormOperands<T> {
     pub input: T,
     pub weight: T,
-    pub gate: T,
     pub out: T,
-}
-
-impl<T: Copy> RmsNormOperands<T> {
-    /// The value `operand` holds.
-    pub fn get(&self, operand: RmsNormOperand) -> T {
-        match operand {
-            RmsNormOperand::Input => self.input,
-            RmsNormOperand::Weight => self.weight,
-            RmsNormOperand::Gate => self.gate,
-            RmsNormOperand::Out => self.out,
-        }
-    }
 }

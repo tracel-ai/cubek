@@ -6,8 +6,8 @@
 use crate::kernels::{
     CubeGroupsRmsNormRoutine, CubeGroupsRmsNormRoutineSettings, CubeRmsNormRoutine,
     CubeRmsNormRoutineSettings, PlaneRmsNormRoutine, PlaneRmsNormRoutineSettings,
-    RMS_NORM_SINK_TAKES_NO_ROWS, RmsNormBinding, RmsNormBlueprint, RmsNormGate, RmsNormRoutine,
-    RmsNormRoutineProblem, RmsNormRoutineSinkLaunch, RmsNormTensors,
+    RMS_NORM_SINK_TAKES_NO_ROWS, RmsNormBinding, RmsNormBlueprint, RmsNormGate, RmsNormGateOperand,
+    RmsNormRoutine, RmsNormRoutineProblem, RmsNormRoutineSinkLaunch, RmsNormTensors,
 };
 use cubecl::Device;
 use cubecl::client::Client;
@@ -18,7 +18,7 @@ use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, SinkLaunchVisit
 use cubecl::tune::{AutotuneOutput, LocalTuner, TunableSet, local_tuner};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::{self as cubecl, AutotuneKey, CubeDim, CubeTuneId};
-use cubek_matmul::kernels::tensor::{LhsOutput, PackedTensor, PlainTensor};
+use cubek_matmul::kernels::tensor::{LhsOutput, PackedTensor, Placement, PlainTensor};
 use cubek_microkernel::rms_norm::GateOrder;
 use cubek_microkernel::row_store::Encoded;
 use cubek_std::Hardware;
@@ -100,7 +100,10 @@ impl From<&RmsNormKey> for RmsNormRoutineProblem {
     fn from(key: &RmsNormKey) -> Self {
         Self {
             output_element: key.output_element,
-            gate: key.gate,
+            gate: key.gate.map(|order| RmsNormGateOperand {
+                order,
+                placement: Placement::dense_rows(key.dim),
+            }),
             ..Self::dense(key.rows, key.dim, key.elem)
         }
     }
@@ -762,7 +765,7 @@ mod tests {
         }
         assert_eq!(RmsNormRoutineProblem::from(&widened).output_element, f32);
         assert_eq!(
-            RmsNormRoutineProblem::from(&before).gate,
+            RmsNormRoutineProblem::from(&before).gate_order(),
             Some(GateOrder::GateThenNorm)
         );
     }

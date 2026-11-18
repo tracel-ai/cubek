@@ -43,15 +43,15 @@ impl<M> RmsNormBlueprint<M> {
         mut vectorization: Vectorization<RmsNormOperand>,
     ) -> Self {
         let item = problem.work_item();
-        for &operand in RmsNormOperand::of(problem.gate) {
+        for (operand, placement) in problem.bound_placements() {
             vectorization.require(VectorRequirement::Aligned {
                 operand,
-                alignment: problem.elem_alignments.get(operand),
+                alignment: placement.elem_alignment,
             });
             vectorization.require(VectorRequirement::Aligned {
                 operand,
                 alignment: ElemAlignment::at_start(
-                    problem.start_bytes.get(operand),
+                    placement.start_bytes,
                     item.element_of(operand).size(),
                 ),
             });
