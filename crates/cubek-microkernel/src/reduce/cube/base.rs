@@ -1,5 +1,5 @@
-use super::microkernel::cube_staged_reduce_microkernel;
-use crate::reduce::{ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS};
+use super::microkernel::{cube_staged_reduce_microkernel, cube_staged_reduce_part};
+use crate::reduce::{ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS};
 use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
@@ -77,6 +77,28 @@ impl CubeStagedReduceMicrokernel {
             input,
             out,
             indices,
+            comptime!(CubeStagedReduceMicrokernel {
+                item: self.item,
+                lanes: self.lanes,
+                planes: self.planes,
+                lane_slots: self.lane_slots
+            }),
+        )
+    }
+
+    /// The first `count` lines of `input` accumulated by the cube into `C`, the line at `l` read
+    /// as line `first_line + l` of its row: a part of a row that cubes split, which every unit of
+    /// the cube is left holding ([`cube_staged_reduce_part`]).
+    pub fn reduce_part<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+        &self,
+        input: &Tile,
+        first_line: usize,
+        count: usize,
+    ) -> C {
+        cube_staged_reduce_part::<In, Acc, N, C>(
+            input,
+            first_line,
+            count,
             comptime!(CubeStagedReduceMicrokernel {
                 item: self.item,
                 lanes: self.lanes,

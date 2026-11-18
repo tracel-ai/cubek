@@ -1,5 +1,4 @@
 use super::base::HypercubeLastArrivalReduceMicrokernel;
-use crate::reduce::cube::cube_staged_reduce_part;
 use crate::reduce::{ReduceAccumulator, ReduceCarrier};
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -135,7 +134,9 @@ fn hypercube_last_arrival_reduce<
     // leaves the carrier as it is: every line of the window is read.
     let count = input.flat::<In, N>().shape();
 
-    let total = cube_staged_reduce_part::<In, Acc, N, C>(input, first_line, count, cube_part);
+    let total = cube_part
+        .runtime()
+        .reduce_part::<In, Acc, N, C>(input, first_line, count);
     store_partial::<Acc, N, C>(total, partials, partial_indices, part);
 
     // The partial lands at device scope before the cube counts itself in.
