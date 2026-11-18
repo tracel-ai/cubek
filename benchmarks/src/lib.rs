@@ -42,7 +42,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::pool::Category,
         &crate::quantized_matmul::Category,
         &crate::random::Category,
-        &crate::reduce::Category,
+        &crate::reduce::ReduceCategory,
         &crate::split_cubes::Category,
         &crate::split_k::Category,
         &crate::tile_quant_stage::Category,

@@ -1,26 +1,22 @@
 use cubek_test_utils::{HostData, Progress};
 
-use super::{build_f32_output, for_each_output_coord, output_shape, should_replace_min};
+use super::{
+    best_of, build_f32_output, bump, for_each_output_coord, output_shape, row_along,
+    should_replace_min,
+};
 
 pub fn reference_min(input: &HostData, axis: usize, progress: Option<&Progress>) -> HostData {
-    let axis_len = input.shape[axis];
     let out_shape_vec = output_shape(&input.shape, axis);
     let mut data = vec![f32::INFINITY; out_shape_vec.iter().product()];
 
     for_each_output_coord(&out_shape_vec, |linear, out_coord| {
-        let mut coord = out_coord.to_vec();
-        let mut best = f32::INFINITY;
-        for i in 0..axis_len {
-            coord[axis] = i;
-            let v = input.get_f32(&coord);
-            if should_replace_min(best, v) {
-                best = v;
-            }
-        }
-        data[linear] = best;
-        if let Some(p) = progress {
-            p.bump();
-        }
+        data[linear] = best_of(
+            row_along(input, axis, out_coord),
+            f32::INFINITY,
+            should_replace_min,
+        )
+        .1;
+        bump(progress);
     });
 
     build_f32_output(input, axis, data)

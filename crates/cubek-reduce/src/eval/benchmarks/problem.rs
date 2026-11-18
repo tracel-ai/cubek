@@ -211,7 +211,13 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
 
     // The shapes the default sweep spreads over, beside the one above: many short rows, few long
     // rows, rows across the contiguous dim (strided), and a whole tensor summed into one value.
-    let spread = |name: &str, text: &str, shape: Vec<usize>, axis, operation| {
+    let spread = |SpreadShape {
+                      name,
+                      text,
+                      shape,
+                      axis,
+                      operation,
+                  }: SpreadShape| {
         let dims = shape
             .iter()
             .map(|extent| extent.to_string())
@@ -230,41 +236,41 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
         )
     };
     entries.extend([
-        spread(
-            "sum_many_short_rows",
-            "Sum, many short rows,",
-            vec![262_144, 64],
-            1,
-            ReduceOperation::Sum,
-        ),
-        spread(
-            "sum_few_long_rows",
-            "Sum, few long rows,",
-            vec![4, 4_194_304],
-            1,
-            ReduceOperation::Sum,
-        ),
-        spread(
-            "sum_strided",
-            "Sum, strided rows,",
-            vec![32, 4095, 512],
-            1,
-            ReduceOperation::Sum,
-        ),
-        spread(
-            "arg_topk1_strided",
-            "ArgTopK(1), strided rows,",
-            vec![32, 4095, 512],
-            1,
-            ReduceOperation::ArgTopK { k: 1 },
-        ),
-        spread(
-            "sum_whole_tensor",
-            "Sum, a whole tensor,",
-            vec![1, 16_777_216],
-            1,
-            ReduceOperation::Sum,
-        ),
+        spread(SpreadShape {
+            name: "sum_many_short_rows",
+            text: "Sum, many short rows,",
+            shape: vec![262_144, 64],
+            axis: 1,
+            operation: ReduceOperation::Sum,
+        }),
+        spread(SpreadShape {
+            name: "sum_few_long_rows",
+            text: "Sum, few long rows,",
+            shape: vec![4, 4_194_304],
+            axis: 1,
+            operation: ReduceOperation::Sum,
+        }),
+        spread(SpreadShape {
+            name: "sum_strided",
+            text: "Sum, strided rows,",
+            shape: vec![32, 4095, 512],
+            axis: 1,
+            operation: ReduceOperation::Sum,
+        }),
+        spread(SpreadShape {
+            name: "arg_topk1_strided",
+            text: "ArgTopK(1), strided rows,",
+            shape: vec![32, 4095, 512],
+            axis: 1,
+            operation: ReduceOperation::ArgTopK { k: 1 },
+        }),
+        spread(SpreadShape {
+            name: "sum_whole_tensor",
+            text: "Sum, a whole tensor,",
+            shape: vec![1, 16_777_216],
+            axis: 1,
+            operation: ReduceOperation::Sum,
+        }),
     ]);
 
     // A decode sampler's row: one row of logits over a vocabulary, which one cube walks alone
@@ -291,4 +297,14 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
     ));
 
     entries
+}
+
+/// One shape of the default sweep: its catalogue id `name`, its label `text`, and the reduction
+/// along `axis` by `operation`.
+struct SpreadShape {
+    pub name: &'static str,
+    pub text: &'static str,
+    pub shape: Vec<usize>,
+    pub axis: usize,
+    pub operation: ReduceOperation,
 }

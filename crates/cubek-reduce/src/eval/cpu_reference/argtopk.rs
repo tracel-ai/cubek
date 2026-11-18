@@ -1,7 +1,7 @@
 use cubecl::zspace::Shape;
 use cubek_test_utils::{HostData, HostDataVec, Progress};
 
-use super::contiguous_strides;
+use super::{bump, contiguous_strides};
 
 /// ArgTopK returns the `k` axis indices of the top values per output slice.
 /// The output shape has `axis` set to `k` (rather than `1` as for scalar reductions).
@@ -49,14 +49,8 @@ pub fn reference_argtopk(
                 .zip(out_strides.iter())
                 .map(|(c, s)| c * s)
                 .sum::<usize>();
-            data[idx] = if i < pairs.len() {
-                pairs[i].1 as f32
-            } else {
-                u32::MAX as f32
-            };
-            if let Some(p) = progress {
-                p.bump();
-            }
+            data[idx] = pairs.get(i).map_or(u32::MAX, |&(_, index)| index) as f32;
+            bump(progress);
         }
     }
 
