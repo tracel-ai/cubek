@@ -1,14 +1,6 @@
-use cubecl::{
-    features::Plane,
-    zspace::{Shape, Strides},
-};
+use cubecl::zspace::{Shape, Strides};
 
 use super::test_case::{PLANE, TestCase, UNIT};
-
-fn supports_plane() -> bool {
-    let client = cubecl::test_device().client();
-    client.properties().features.plane.contains(Plane::Ops)
-}
 
 fn supports_f16_arithmetic() -> bool {
     cubek_test_utils::supports_f16_arithmetic(&cubecl::test_device().client())
@@ -55,9 +47,6 @@ fn unit_parallel_f32() {
 
 #[test]
 fn plane_parallel_f32() {
-    if !supports_plane() {
-        return;
-    }
     run_nan_extrema(plane_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
 }
 
@@ -68,9 +57,6 @@ fn unit_parallel_mixed_nan_f32() {
 
 #[test]
 fn plane_parallel_mixed_nan_f32() {
-    if !supports_plane() {
-        return;
-    }
     run_mixed_nan_extrema(plane_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
 }
 
@@ -94,31 +80,22 @@ fn unit_parallel_signed_zero_f32() {
 
 #[test]
 fn plane_parallel_signed_zero_f32() {
-    if !supports_plane() {
-        return;
-    }
     run_signed_zero_extrema(plane_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
 }
 
 #[test]
 fn plane_perpendicular_f32() {
-    if !supports_plane() {
-        return;
-    }
     run_nan_extrema(plane_case(Shape::new([64, 9]), Strides::new(&[9, 1]), 0));
 }
 
 #[test]
 fn plane_strided_f32() {
-    if !supports_plane() {
-        return;
-    }
     run_nan_extrema(plane_case(Shape::new([9, 64]), Strides::new(&[128, 2]), 1));
 }
 
 #[test]
 fn plane_parallel_f16() {
-    if !supports_plane() || !supports_f16_arithmetic() {
+    if !supports_f16_arithmetic() {
         return;
     }
     run_nan_extrema(TestCase::new::<half::f16>(
@@ -131,9 +108,6 @@ fn plane_parallel_f16() {
 
 #[test]
 fn integer_extrema_control_i32() {
-    if !supports_plane() {
-        return;
-    }
     let shape = Shape::new([9, 64]);
     let data = integer_extrema_data(&shape);
     let case = TestCase::new::<i32>(shape, Strides::new(&[64, 1]), Some(1), PLANE);
@@ -169,9 +143,6 @@ mod heavy {
 
     #[test]
     fn cube_f32() {
-        if !supports_plane() {
-            return;
-        }
         run_nan_extrema(TestCase::new::<f32>(
             Shape::new([9, 256]),
             Strides::new(&[256, 1]),
@@ -267,10 +238,10 @@ fn integer_extrema_data(shape: &Shape) -> Vec<f32> {
 fn max_abs_short_axis_nan() {
     let shape = Shape::new([2, 3]);
     let strides = Strides::new(&[3, 1]);
-    let mut cases = vec![unit_case(shape.clone(), strides.clone(), 1)];
-    if supports_plane() {
-        cases.push(plane_case(shape.clone(), strides.clone(), 1));
-    }
+    let cases = [
+        unit_case(shape.clone(), strides.clone(), 1),
+        plane_case(shape.clone(), strides.clone(), 1),
+    ];
     for case in cases {
         case.with_data(vec![1.0, f32::NAN, -3.0, 1.0, -4.0, 3.0])
             .test_max_abs();

@@ -4,18 +4,10 @@
 //! output holds 36 scalars, a multiple of 4, while a run of 9 is not: a vector of 4 rows starting
 //! at row 8 would spill into the next slot's run.
 
-use cubecl::{
-    features::Plane,
-    zspace::{Shape, Strides},
-};
+use cubecl::zspace::{Shape, Strides};
 use cubek_reduce::kernels::ReduceOpStrategy;
 
 use super::test_case::{CUBE, PLANE, RULE, TestCase, UNIT};
-
-fn supports_plane() -> bool {
-    let client = cubecl::test_device().client();
-    client.properties().features.plane.contains(Plane::Ops)
-}
 
 fn run_topk(strategy: ReduceOpStrategy, rows: usize, k: usize) {
     let case = TestCase::new::<f32>(
@@ -29,14 +21,10 @@ fn run_topk(strategy: ReduceOpStrategy, rows: usize, k: usize) {
     case.test_topk_with_indices(k);
 }
 
-/// The unit kernel and the rule everywhere, the plane and cube kernels where the device has
+/// The unit kernel and the rule, and the plane and cube kernels, which skip where the device has no
 /// planes.
 fn strategies() -> Vec<ReduceOpStrategy> {
-    let mut strategies = vec![UNIT, RULE];
-    if supports_plane() {
-        strategies.extend([PLANE, CUBE]);
-    }
-    strategies
+    vec![UNIT, RULE, PLANE, CUBE]
 }
 
 #[test]

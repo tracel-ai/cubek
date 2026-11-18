@@ -18,6 +18,7 @@ mod topk_negative_infinity;
 mod topk_unroll_limit;
 mod topk_vectorized_output;
 mod topk_with_indices_cube;
+mod topk_with_indices_hypercube;
 mod with_indices_validation;
 
 macro_rules! testgen_reduce {

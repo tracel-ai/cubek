@@ -27,6 +27,9 @@ pub const UNIT: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::Unit
 pub const PLANE: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::PlaneShuffle);
 /// The cube kernel: a cube reduces each row, its planes meeting through shared memory.
 pub const CUBE: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::CubeStaged);
+/// The last-arrival hypercube: a row split across cubes, the last cube to arrive merging the parts.
+pub const HYPERCUBE: ReduceOpStrategy =
+    ReduceOpStrategy::Specific(ReduceKernel::HypercubeLastArrival);
 /// The rule, which picks among the kernels by the problem and the device.
 pub const RULE: ReduceOpStrategy = ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile);
 

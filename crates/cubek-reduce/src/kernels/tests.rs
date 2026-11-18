@@ -9,7 +9,8 @@ use crate::kernels::{
     UnitDirectZeroReduceRoutine, launch_tuned, select,
 };
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, FloatKind, IntKind};
+use cubecl::ir::features::AtomicUsage;
+use cubecl::ir::{ElemType, FloatKind, IntKind, Type};
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Refusal, StoredTileOperand, Unbound};
 use cubecl::tile::layout::ElemAlignment;
@@ -154,23 +155,31 @@ enum Scope {
 }
 
 impl Scope {
-    /// `routine` at the setting this scope picks, launched on `tensors`.
+    /// `R` at the setting this scope picks, launched on `tensors`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Where the routine prepares no setting for the problem, or the launch fails.
-    fn launch_with<R: ReduceLauncher<M>, M>(self, hw: &Hardware, tensors: &ReduceTensors) {
+    /// Why `R` prepares no setting for the problem on this device, which the check reports as a
+    /// skip.
+    fn launch_with<R: ReduceLauncher<M>, M>(
+        self,
+        hw: &Hardware,
+        tensors: &ReduceTensors,
+    ) -> Result<(), Refusal> {
         let problem = tensors.problem();
         let mut settings = R::settings(hw);
         if let Scope::Hypercube = self {
             settings.reverse();
         }
-        let settings = settings
-            .into_iter()
-            .find(|settings| R::prepare(hw, problem, settings).is_ok())
-            .unwrap_or_else(|| panic!("{} prepares no setting for {problem:?}", R::NAME));
-        launch_reduce_routine::<R, M>(tensors, &settings)
-            .unwrap_or_else(|why| panic!("{} {problem:?}: {why:?}", R::NAME));
+        let (blueprint, grid) = settings
+            .iter()
+            .map(|settings| R::prepare(hw, problem, settings))
+            .reduce(|first, next| first.or(next))
+            .unwrap_or(Err(Refusal::Declined {
+                why: "the routine lists no setting on this device",
+            }))?;
+        R::launch(tensors, blueprint, grid);
+        Ok(())
     }
 }
 
@@ -236,11 +245,11 @@ impl ScopeUnderTest for Routines {
         );
         let scope = reduction.scope;
         match scope {
-            Scope::Unit => scope.launch_with::<UnitDirectReduceRoutine, _>(&hw, &tensors),
-            Scope::Plane => scope.launch_with::<PlaneShuffleReduceRoutine, _>(&hw, &tensors),
-            Scope::Cube => scope.launch_with::<CubeStagedReduceRoutine, _>(&hw, &tensors),
+            Scope::Unit => scope.launch_with::<UnitDirectReduceRoutine, _>(&hw, &tensors)?,
+            Scope::Plane => scope.launch_with::<PlaneShuffleReduceRoutine, _>(&hw, &tensors)?,
+            Scope::Cube => scope.launch_with::<CubeStagedReduceRoutine, _>(&hw, &tensors)?,
             Scope::Hypercube => {
-                scope.launch_with::<HypercubeLastArrivalReduceRoutine, _>(&hw, &tensors)
+                scope.launch_with::<HypercubeLastArrivalReduceRoutine, _>(&hw, &tensors)?
             }
             Scope::Picked(ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile)) => {
                 select(&hw, &tensors)?
@@ -296,15 +305,11 @@ impl ScopeUnderTest for Routines {
 }
 
 /// Every routine reduces a `[2, 5, 300]` tensor along each dim, every operation whose rows hold
-/// what it writes: along the contiguous dim, and across it, each lane its own row. The plane and the cube where the device
-/// commits to a plane width.
+/// what it writes: along the contiguous dim, and across it, each lane its own row. The plane and the
+/// cube skip where the device commits to no plane width.
 #[test]
 fn every_routine_reduces_every_dim_like_the_cpu() {
-    let hw = Hardware::from_client(&cubecl::test_device().client());
-    let mut scopes = vec![Scope::Unit];
-    if hw.plane_dim().is_ok() {
-        scopes.extend([Scope::Plane, Scope::Cube]);
-    }
+    let scopes = [Scope::Unit, Scope::Plane, Scope::Cube];
     let mut reductions = Vec::new();
     for scope in scopes {
         for axis in [2, 1, 0] {
@@ -465,14 +470,10 @@ impl ScopeUnderTest for UnboundRoutines {
 
 /// The unit, plane and cube routines launched unbound reduce a `[2, 5, 300]` tensor along its
 /// contiguous dim and across it as they do bound: a sum, a max, a mean and an argmax. The plane
-/// and the cube where the device commits to a plane width.
+/// and the cube skip where the device commits to no plane width.
 #[test]
 fn unbound_routines_reduce_like_the_cpu() {
-    let hw = Hardware::from_client(&cubecl::test_device().client());
-    let mut scopes = vec![Scope::Unit];
-    if hw.plane_dim().is_ok() {
-        scopes.extend([Scope::Plane, Scope::Cube]);
-    }
+    let scopes = [Scope::Unit, Scope::Plane, Scope::Cube];
     let mut reductions = Vec::new();
     for scope in scopes {
         for axis in [2, 1] {
@@ -519,26 +520,40 @@ fn atomic_sums() -> Vec<Reduction> {
 /// operation it serves.
 #[test]
 fn the_atomic_hypercube_sums_split_rows_like_the_cpu() {
-    Routines.check_some(atomic_sums());
+    match adds_floats_atomically() {
+        true => Routines.check_some(atomic_sums()),
+        false => Routines.check(atomic_sums()),
+    }
 }
 
 /// The atomic hypercube launched unbound sums as it does bound, into an output that starts away
 /// from zero, so the zeroing before it is checked too, on [`atomic_sums`].
 #[test]
 fn the_atomic_hypercube_sums_an_unbound_input_like_the_cpu() {
-    UnboundRoutines.check_some(atomic_sums());
+    match adds_floats_atomically() {
+        true => UnboundRoutines.check_some(atomic_sums()),
+        false => UnboundRoutines.check(atomic_sums()),
+    }
+}
+
+/// Whether the test device runs the atomic hypercube's sums: a plane width it commits to, for the
+/// cube microkernel each cube runs, and an atomic add of floats. Where it does, a sum must launch;
+/// where it does not, the routine's decline is a skip.
+fn adds_floats_atomically() -> bool {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    hw.plane_dim().is_ok()
+        && hw
+            .properties
+            .atomic_type_usage(Type::atomic(F32))
+            .contains(AtomicUsage::Add)
 }
 
 /// The hypercube splits rows into parts, the last one short, and merges them: a `[2, 3, 5000]`
 /// tensor along its contiguous dim, in three parts; across it, a `[3, 2100, 4]` tensor along its
-/// middle dim, in five; and a row of one part. Where the device commits to a plane width and one
-/// cube's stores reach another within a launch.
+/// middle dim, in five; and a row of one part. It skips where the device commits to no plane width
+/// or one cube's stores do not reach another within a launch.
 #[test]
 fn the_hypercube_reduces_split_rows_like_the_cpu() {
-    let hw = Hardware::from_client(&cubecl::test_device().client());
-    if hw.plane_dim().is_err() || !hw.properties.features.device_memory_scope {
-        return;
-    }
     let mut reductions = Vec::new();
     for (shape, axis) in [([2, 3, 5000], 2), ([3, 2100, 4], 1), ([2, 3, 5000], 1)] {
         for operation in OPERATIONS {
@@ -647,8 +662,8 @@ fn routines_decline_more_row_dims_than_the_grid_holds() {
 }
 
 /// On a device lacking every Feature the routines read (planes, one cube's stores reaching
-/// another within a launch, atomic adds), every routine but the unit one declines, and the unit
-/// one still prepares: a sum, which every routine computes.
+/// another within a launch, atomic adds), every routine but the unit ones declines, and the unit
+/// reduction and the unit zeroing still prepare: a sum, which every routine computes.
 #[test]
 fn routines_decline_on_a_device_without_their_features() {
     let mut hw = devices::m2_pro();
@@ -685,19 +700,6 @@ fn routines_decline_on_a_device_without_their_features() {
     ));
     let unit = UnitDirectReduceRoutine::settings(&hw)[0];
     assert!(UnitDirectReduceRoutine::prepare(&hw, &problem, &unit).is_ok());
-}
-
-/// `tensors` reduced by `routine` at `settings` on this device.
-///
-/// # Errors
-///
-/// Why the routine cannot run the problem here.
-fn launch_reduce_routine<R: ReduceLauncher<M>, M>(
-    tensors: &ReduceTensors,
-    settings: &R::Settings,
-) -> Result<(), Refusal> {
-    let hw = Hardware::from_client(tensors.client());
-    let (blueprint, grid) = R::prepare(&hw, tensors.problem(), settings)?;
-    R::launch(tensors, blueprint, grid);
-    Ok(())
+    let zero = UnitDirectZeroReduceRoutine::settings(&hw)[0];
+    assert!(UnitDirectZeroReduceRoutine::prepare(&hw, &problem, &zero).is_ok());
 }
