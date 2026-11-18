@@ -10,7 +10,7 @@ use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
+use cubecl::tile::{Dimension, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::striding::row_major_contiguous_strides;
@@ -25,8 +25,8 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 /// The inputs of a conv: the `q|k|v` stream, the filters `[conv_dim, taps]` (a unit dim between
 /// allowed) and the past, all in one element. Over a window the stream holds the newest values
 /// `[rows, conv_dim]`; over a stream, every sequence's `[batch, positions + taps - 1, conv_dim]`,
-/// context columns first. They are read where they lie, the innermost axis contiguous; a padded row
-/// or an off-line start narrows the conv's lines.
+/// context columns first. They are read where they lie, the innermost dimension contiguous; a
+/// padded row or an off-line start narrows the conv's lines.
 #[derive(Clone)]
 pub struct QkNormedConvInputs {
     /// The client every operand lives on.
@@ -218,7 +218,7 @@ impl QkNormedConvTensors {
     ///
     /// # Panics
     ///
-    /// On operands whose shapes disagree with the heads, whose innermost axis is strided, on
+    /// On operands whose shapes disagree with the heads, whose innermost dimension is strided, on
     /// operands of different elements, on tables that are not `u32`, and on a store of no slot.
     pub fn new(inputs: QkNormedConvInputs) -> Result<Self, Refusal> {
         let QkNormedConvInputs {
@@ -238,7 +238,7 @@ impl QkNormedConvTensors {
             assert_eq!(tensor.elem, element, "the conv's operands share an element");
             assert!(
                 tensor.binding.strides.last() == Some(&1),
-                "the innermost axis of an operand of the conv is contiguous"
+                "the innermost dimension of an operand of the conv is contiguous"
             );
         }
         if !qkv.runs_on(&client) {
@@ -253,7 +253,7 @@ impl QkNormedConvTensors {
                     .all(|&e| e == 1),
             "the filters are [conv_dim, taps]"
         );
-        let taps = *filter_shape.last().expect("filters have a tap axis");
+        let taps = *filter_shape.last().expect("filters have a tap dimension");
         let filters = filters.viewed(Metadata::new(
             vec![conv_dim, taps],
             vec![filters.binding.strides[0], 1],
@@ -417,10 +417,10 @@ impl QkNormedConvTensors {
     ) -> QkNormedConvBinding {
         let launcher = blueprint.launcher(&self.client, grid);
         let width = blueprint.width;
-        let bind = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
-            Self::bound(&launcher, tensor, axes, width)
+        let bind = |tensor: &PlainTensor, dimensions: &'static [Dimension], width: usize| {
+            Self::bound(&launcher, tensor, dimensions, width)
         };
-        let (qkv, keyed, valued): (&[Axis], &[Axis], &[Axis]) = match self.past {
+        let (qkv, keyed, valued): (&[Dimension], &[Dimension], &[Dimension]) = match self.past {
             GatedDeltaConvPastInputs::Window { .. } => (
                 &[BATCH, CHANNEL],
                 &[BATCH, KEY_HEAD, KEY_FEATURE],
@@ -445,16 +445,16 @@ impl QkNormedConvTensors {
         }
     }
 
-    /// `tensor` bound under `launcher` along `axes`, `width` values a line.
+    /// `tensor` bound under `launcher` along `dimensions`, `width` values a line.
     fn bound(
         launcher: &Launcher,
         tensor: &PlainTensor,
-        axes: &'static [Axis],
+        dimensions: &'static [Dimension],
         width: usize,
     ) -> TileTensorLaunch {
         launcher
             .arg(tensor.binding.clone(), tensor.elem)
-            .axes(axes)
+            .dimensions(dimensions)
             .vectorize(width)
             .build()
             .expect(ADMITTED_PLAN_RUNS)

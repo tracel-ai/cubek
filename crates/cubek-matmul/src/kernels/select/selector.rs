@@ -17,7 +17,7 @@ use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
 use cubek_std::block_scaled_for;
 use cubek_std::layout::stored::Operand;
-use cubek_std::matmul_axes::K;
+use cubek_std::matmul_dimensions::K;
 use cubek_std::plan::{InOrder, Then};
 
 /// The autotune `strategy`'s plan for `problem` on `hw` is, where its plan is one autotune alone:
@@ -195,8 +195,10 @@ fn packed_plan(
 /// the blocks, or none, is the product's to apply.
 fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bool {
     let input = |input: MatmulOperand| match problem.operands.get(input) {
-        OperandKind::Quantized(scheme) if Operand::axis_of(&scheme, input.axes()) == Some(K) => {
-            let operand = Operand::of_scheme(&scheme, K, input.axes())?;
+        OperandKind::Quantized(scheme)
+            if Operand::dimension_of(&scheme, input.dimensions()) == Some(K) =>
+        {
+            let operand = Operand::of_scheme(&scheme, K, input.dimensions())?;
             let block = operand.scale(K)?;
             Some((scheme, block, block * operand.scales_per_word()))
         }

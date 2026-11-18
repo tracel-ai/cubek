@@ -78,7 +78,7 @@ impl Routine for UnitReduceRoutine {
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
                 .launch_units(
-                    &problem.owner_axes_innermost_first(),
+                    &problem.owner_dimensions_innermost_first(),
                     UnitCube {
                         plane_width,
                         planes: settings.planes,

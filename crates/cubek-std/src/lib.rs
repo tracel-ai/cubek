@@ -5,7 +5,7 @@ pub mod devices;
 pub mod launch;
 pub mod layout;
 pub mod legacy;
-pub mod matmul_axes;
+pub mod matmul_dimensions;
 pub mod microkernel;
 pub mod plan;
 pub mod routine;

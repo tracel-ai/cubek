@@ -91,14 +91,14 @@ fn indexed_store(start: usize, gap: usize) {
     .expect(ADMITTED_PLAN_RUNS);
     let entries = launcher
         .arg(table.binding.clone(), ElemType::UInt(UIntKind::U32))
-        .axes(&[BATCH])
+        .dimensions(&[BATCH])
         .vectorize(1)
         .build()
         .expect(ADMITTED_PLAN_RUNS)
         .arg();
     let store_arg = launcher
         .arg(store.binding.clone(), RECURRENCE_WALK_ELEMENT)
-        .axes(&[STORE_SLOT, KEY_FEATURE, VALUE_FEATURE])
+        .dimensions(&[STORE_SLOT, KEY_FEATURE, VALUE_FEATURE])
         .vectorize(1)
         .build()
         .expect(ADMITTED_PLAN_RUNS)

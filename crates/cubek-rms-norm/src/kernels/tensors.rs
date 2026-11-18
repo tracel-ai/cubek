@@ -7,7 +7,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{
-    Axis, Geometry, Launcher,
+    Dimension, Geometry, Launcher,
     launch::{Bound, Unbound},
 };
 use cubecl::zspace::metadata::Metadata;
@@ -235,7 +235,7 @@ impl RmsNormTensors {
         let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
         let out = launcher
             .arg(self.out.rows.binding.clone(), self.problem.element)
-            .axes(&[B, R, D])
+            .dimensions(&[B, R, D])
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -274,7 +274,7 @@ impl RmsNormTensors<Geometry> {
         let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
         let out = launcher
             .unbound(&self.out)
-            .axes(&[B, R, D])
+            .dimensions(&[B, R, D])
             .vectorize(blueprint.width)
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);
@@ -293,8 +293,8 @@ impl RmsNormTensors<Geometry> {
 }
 
 impl RmsNormTensors<PackedRows> {
-    /// The norm of `input`'s last dim, scaled by `weight`, encoded into `out`, a packed
-    /// `[rows, dim]` matrix over a product's lhs axes the caller allocated under one level of block
+    /// The norm of `input`'s last dim, scaled by `weight`, encoded into `out`, a packed `[rows,
+    /// dim]` matrix over a product's lhs dimensions the caller allocated under one level of block
     /// scales along each row. The rows are staged in each cube's shared memory, dense, and encoded
     /// from there.
     ///
@@ -403,18 +403,18 @@ impl<Out> RmsNormTensors<Out> {
             )
         });
         // Each operand as the store states the rows: as it lies, or its row split into blocks.
-        let bind = |tensor: &PlainTensor, leading: &[Axis]| {
-            let (meta, axes) = self.problem.store.restated(&tensor.meta(), leading);
+        let bind = |tensor: &PlainTensor, leading: &[Dimension]| {
+            let (meta, dimensions) = self.problem.store.restated(&tensor.meta(), leading);
             launcher
                 .arg(tensor.bound_as(meta), self.problem.element)
-                .axes(&axes)
+                .dimensions(&dimensions)
                 .vectorize(blueprint.width)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)
         };
         let operands = [
             bind(&self.input, &[B, R]),
-            bind(self.weight.tensor(), self.weight.leading_axes()),
+            bind(self.weight.tensor(), self.weight.leading_dimensions()),
         ];
         (launcher, operands)
     }
@@ -463,8 +463,8 @@ impl RmsNormWeight {
         }
     }
 
-    /// The axes the weight runs along before the dim: none, or each row's.
-    fn leading_axes(&self) -> &'static [Axis] {
+    /// The dimensions the weight runs along before the dim: none, or each row's.
+    fn leading_dimensions(&self) -> &'static [Dimension] {
         match self {
             Self::Shared(_) => &[],
             Self::PerRow(_) => &[R],

@@ -3,7 +3,7 @@
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Space};
+use cubecl::tile::{Dimension, Space};
 use cubek_microkernel::attention::{AttentionVisibility, B, D, DV, G, KV, Q, S};
 use cubek_microkernel::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardOperands, AttentionBackwardWorkItem,
@@ -66,7 +66,7 @@ impl AttentionBackwardProblem {
         }
     }
 
-    /// Every axis of the problem at its extent: what a routine partitions.
+    /// Every dimension of the problem at its extent: what a routine partitions.
     pub(crate) fn space(&self) -> Space {
         Space::new(&[
             (B, self.batch),
@@ -82,8 +82,8 @@ impl AttentionBackwardProblem {
     /// One stage of the operands a walk holds `extent` of along `walked`, a row of each spanning
     /// `D` and `DV`: the keys and values the query walk stages, or the queries and output
     /// gradient the key walk does.
-    pub(crate) fn stage(&self, walked: Axis, extent: usize) -> [StagedOperand; 2] {
-        let operand = |row: Axis, width: usize| {
+    pub(crate) fn stage(&self, walked: Dimension, extent: usize) -> [StagedOperand; 2] {
+        let operand = |row: Dimension, width: usize| {
             StagedOperand::new(
                 self.element,
                 Space::new(&[(walked, extent), (row, width)]),

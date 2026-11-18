@@ -51,7 +51,7 @@ impl MatmulCall {
     /// as the key's bucket stands for, or the call's lhs where none can be laid out alike.
     pub fn representative(key: &MatmulTuneKey, call: &Self) -> Self {
         let grown = match &call.lhs.tensor {
-            // The rows lie along the lhs's second-to-last axis.
+            // The rows lie along the lhs's second-to-last dimension.
             StoredTensor::Plain(lhs) => (lhs.binding.shape.len().checked_sub(2))
                 .and_then(|rows| lhs.zeros_grown(&call.client, rows, key.m)),
             StoredTensor::Packed(_) => None,

@@ -1,7 +1,7 @@
 use crate::matmul::{MatmulOperand, MatmulOperands, MatmulStage, MatmulWorkItem};
 use cubecl::tile::Space;
 use cubek_std::layout::BindingOrder;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, StageRing};
 
 /// How a kernel's cubes stage their boxes through `K`, as the component that places the stage's
@@ -27,10 +27,10 @@ pub struct MatmulStagingCount {
 }
 
 impl MatmulStagingCount {
-    /// What a cube staging the space `cube_space` through `ring` a step of `stage` at a
-    /// time counts, bound in the order `orders` says: both operands read once a cube, in runs along
-    /// their contiguous axis over the whole walk, and the output written once in runs of `out_run`
-    /// elements.
+    /// What a cube staging the space `cube_space` through `ring` a step of `stage` at a time
+    /// counts, bound in the order `orders` says: both operands read once a cube, in runs along
+    /// their contiguous dimension over the whole walk, and the output written once in runs of
+    /// `out_run` elements.
     pub fn new(
         cube_space: &Space,
         stage: &MatmulStage,

@@ -10,7 +10,7 @@ use cubek_microkernel::matmul::unit::{
     UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings, unit_registers_microkernel,
 };
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{M, N};
+use cubek_std::matmul_dimensions::{M, N};
 use cubek_std::microkernel::Microkernel;
 
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperands};

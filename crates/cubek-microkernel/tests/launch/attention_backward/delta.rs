@@ -81,8 +81,8 @@ impl PlaneDeltaLaunch {
             cube_dim: partitioning.cube_dim(self.plane_width),
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
-        let bound = |arg, element, axes: &[_]| {
-            TileTensorLaunch::new(arg, element, 1, TileSpec::direct(axes))
+        let bound = |arg, element, dimensions: &[_]| {
+            TileTensorLaunch::new(arg, element, 1, TileSpec::direct(dimensions))
         };
         let (element, sum) = (self.item.element, self.item.sum);
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and

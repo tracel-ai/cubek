@@ -8,10 +8,10 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Levels, SoftwareMatmul, Space};
+use cubecl::tile::{Dimension, LaneMap, Levels, SoftwareMatmul, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::matmul_axes::{K, blocked};
+use cubek_std::matmul_dimensions::{K, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// Every row of a run of the output's columns, owned by one cube: its planes each run their plane
@@ -47,9 +47,6 @@ pub struct CubeShuffleMicrokernel {
     /// Whether it reads a packed rhs a scale block at a time
     /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)).
     pub by_block: bool,
-    /// Whether its planes take the steps along the split cyclically rather than each a run of
-    /// them ([`CubeShuffleMicrokernelSettings::planes_in_turns`]).
-    pub planes_in_turns: bool,
 }
 
 /// The plane microkernel a cube shuffle's planes run.
@@ -101,13 +98,6 @@ pub struct CubeShuffleMicrokernelSettings {
     /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)): the plane's units
     /// side by side then read one run of a column a load.
     pub by_block: bool,
-    /// Whether its `P` planes take the steps of `K` cyclically, plane `p` the steps `p`, `p + P`,
-    /// `p + 2P`…, rather than each a contiguous run of them. Each plane's loads coalesce the same
-    /// either way; what changes is what the cube reads at once: `P` neighbouring steps, one
-    /// contiguous run of memory where the rhs lays its steps of `K` one after another, as tile
-    /// order lays a strip's tiles, rather than `P` pieces a run apart. The bytes and the
-    /// transactions are the same; their locality in DRAM is what differs.
-    pub planes_in_turns: bool,
 }
 
 /// The settings of the plane microkernel a cube shuffle's planes run.
@@ -143,7 +133,6 @@ impl CubeShuffleMicrokernelSettings {
             plane,
             planes_along_k: NonZeroUsize::new(planes_along_k).unwrap(),
             by_block: false,
-            planes_in_turns: false,
         }
     }
 
@@ -155,26 +144,11 @@ impl CubeShuffleMicrokernelSettings {
             ..self
         }
     }
-
-    /// These settings with the planes taking the steps of `K` in turns
-    /// ([`planes_in_turns`](Self::planes_in_turns)).
-    pub const fn in_turns(self) -> Self {
-        Self {
-            planes_in_turns: true,
-            ..self
-        }
-    }
 }
 
 impl core::fmt::Display for CubeShuffleMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        cube_label(
-            f,
-            &self.plane,
-            self.planes_along_k,
-            self.by_block,
-            self.planes_in_turns,
-        )
+        cube_label(f, &self.plane, self.planes_along_k, self.by_block)
     }
 }
 
@@ -185,14 +159,10 @@ fn cube_label(
     plane: &dyn core::fmt::Display,
     planes_along_k: NonZeroUsize,
     by_block: bool,
-    planes_in_turns: bool,
 ) -> core::fmt::Result {
     write!(f, "{plane} planes_along_k={planes_along_k}")?;
     if by_block {
         write!(f, " by_block")?;
-    }
-    if planes_in_turns {
-        write!(f, " in_turns")?;
     }
     Ok(())
 }
@@ -269,11 +239,11 @@ impl CubeShuffleMicrokernel {
         settings
     }
 
-    /// The axis its planes split `K` along: `K` itself, or a packed rhs's scale blocks.
-    pub fn split(&self) -> Axis {
+    /// The dimension its planes split `K` along: `K` itself, or a packed rhs's scale blocks.
+    pub fn split(&self) -> Dimension {
         match self.plane {
             CubeShufflePlane::Shuffle(plane) => match plane.blocks {
-                None => plane.axes.k,
+                None => plane.dimensions.k,
                 Some(_) => blocked(K).0,
             },
             CubeShufflePlane::Fragment(_) => blocked(K).0,
@@ -298,7 +268,6 @@ impl CubeShuffleMicrokernel {
         settings: &PlaneShuffleMicrokernelSettings,
         target: usize,
         by_block: bool,
-        planes_in_turns: bool,
     ) -> impl Iterator<Item = Self> {
         let col_weight = item.layouts.rhs == MatmulLayout::Col;
         let meet = CubeMeet::of(hw);
@@ -323,7 +292,6 @@ impl CubeShuffleMicrokernel {
                     planes_along_k,
                     meet,
                     by_block,
-                    planes_in_turns,
                 })
         })
     }
@@ -341,13 +309,12 @@ impl CubeShuffleMicrokernel {
             .is_ok()
             .then(|| PlaneFragmentMicrokernel::candidates(hw, item, settings));
         planes.into_iter().flatten().filter_map(move |plane| {
-            let windows = item.blocks?.k / plane.tile_extent(plane.axes.k);
+            let windows = item.blocks?.k / plane.tile_extent(plane.dimensions.k);
             Some(Self {
                 plane: CubeShufflePlane::Fragment(plane),
                 planes_along_k: NonZeroUsize::new(target.min(windows))?,
                 meet,
                 by_block: false,
-                planes_in_turns: false,
             })
         })
     }
@@ -363,11 +330,11 @@ impl CubeShufflePlane {
         .expect("candidates hold a plane whose steps walk K")
     }
 
-    /// The one of the axes `N` is split into that the plane's columns land on.
-    pub fn column_axis(&self) -> Axis {
+    /// The one of the dimensions `N` is split into that the plane's columns land on.
+    pub fn column_dimension(&self) -> Dimension {
         match self {
             CubeShufflePlane::Shuffle(plane) => plane.column_cut().0,
-            CubeShufflePlane::Fragment(plane) => plane.axes.n,
+            CubeShufflePlane::Fragment(plane) => plane.dimensions.n,
         }
     }
 
@@ -375,18 +342,18 @@ impl CubeShufflePlane {
     pub fn columns(&self) -> usize {
         match self {
             CubeShufflePlane::Shuffle(plane) => plane.columns(),
-            CubeShufflePlane::Fragment(plane) => plane.tile_extent(plane.axes.n),
+            CubeShufflePlane::Fragment(plane) => plane.tile_extent(plane.dimensions.n),
         }
     }
 
     /// Values of `K` one step of the plane covers, `leaf` its step's box: a unit's slice by the
-    /// units sharing a step, over both axes a packed rhs's `K` is split into, or a fragment's
+    /// units sharing a step, over both dimensions a packed rhs's `K` is split into, or a fragment's
     /// depth.
     pub fn step_depth(&self, leaf: &Space) -> usize {
         match self {
             CubeShufflePlane::Shuffle(plane) => {
                 let depth = match plane.blocks {
-                    None => leaf.extent(plane.axes.k),
+                    None => leaf.extent(plane.dimensions.k),
                     Some(_) => {
                         let (blocks, inside) = blocked(K);
                         leaf.extent(blocks) * leaf.extent(inside)
@@ -394,16 +361,16 @@ impl CubeShufflePlane {
                 };
                 depth * plane.units_along_k
             }
-            CubeShufflePlane::Fragment(plane) => plane.tile_extent(plane.axes.k),
+            CubeShufflePlane::Fragment(plane) => plane.tile_extent(plane.dimensions.k),
         }
     }
 
-    /// The plane width the plane is compiled for: the tensor-core plane's, the only width its
-    /// decoding instruction's lane runs are laid over.
+    /// The plane width the plane is compiled for: the tensor-core plane's, the width its decoding
+    /// instruction's lane runs are laid over ([`LaneMap::PLANE_UNITS`]).
     pub fn plane_width(&self) -> usize {
         match self {
             CubeShufflePlane::Shuffle(plane) => plane.plane_width(),
-            CubeShufflePlane::Fragment(_) => PlaneFragmentMicrokernel::DECODING_PLANE_UNITS,
+            CubeShufflePlane::Fragment(_) => LaneMap::PLANE_UNITS,
         }
     }
 
@@ -462,7 +429,7 @@ impl Microkernel for CubeShuffleMicrokernel {
         ]
     }
 
-    /// Its planes' items: of a float rhs on matmul's own axes and in cols
+    /// Its planes' items: of a float rhs on matmul's own dimensions and in cols
     /// ([`ROW_RHS_UNSUPPORTED`](Self::ROW_RHS_UNSUPPORTED)), or of a packed rhs on its
     /// block-split space, either way its words lie, which one of its planes admits.
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
@@ -505,13 +472,9 @@ impl Microkernel for CubeShuffleMicrokernel {
                     plane,
                     target,
                     settings.by_block,
-                    settings.planes_in_turns,
                 )),
                 None,
             ),
-            // Tensor-core planes split `K` in windows sized for contiguous runs: taken cyclically
-            // they size none.
-            CubeShufflePlaneSettings::Fragment(_) if settings.planes_in_turns => (None, None),
             CubeShufflePlaneSettings::Fragment(plane) => {
                 (None, Some(Self::fragment_cubes(hw, item, plane, target)))
             }
@@ -568,34 +531,30 @@ impl Microkernel for CubeShuffleMicrokernel {
 /// Its planes' microkernel, and how many share a run.
 impl core::fmt::Display for CubeShuffleMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        cube_label(
-            f,
-            &self.plane,
-            self.planes_along_k,
-            self.by_block,
-            self.planes_in_turns,
-        )
+        cube_label(f, &self.plane, self.planes_along_k, self.by_block)
     }
 }
 
 impl MatmulMicrokernel for CubeShuffleMicrokernel {
     /// The levels inside one cube's run, which a routine states the cubes around: its planes'
-    /// steps through all of `K`, dealt to the planes along [`split`](Self::split) in contiguous
-    /// runs, or cyclically ([`planes_in_turns`](Self::planes_in_turns)), so the planes need not
-    /// divide them.
+    /// steps through all of `K`, split between the planes along [`split`](Self::split). Software
+    /// planes take the steps in turns, plane `p` the steps `p`, `p + P`, `p + 2P`…, so the cube
+    /// reads `P` neighbouring steps at once, one run of memory where the rhs lays its steps of
+    /// `K` one after another, and the planes need not divide them. Tensor-core planes take each
+    /// a contiguous run: they split `K` in windows sized for one.
     fn tiling(&self) -> Levels {
         let levels = self
             .plane
             .step_levels()
             .planes_across(self.split(), self.planes_along_k.get());
-        match self.planes_in_turns {
-            true => levels.interleaved(self.split()),
-            false => levels,
+        match self.plane {
+            CubeShufflePlane::Shuffle(_) => levels.interleaved(self.split()),
+            CubeShufflePlane::Fragment(_) => levels,
         }
     }
 
     /// Its planes' orders: a float rhs's as the plane shuffle binds it, a packed rhs's
-    /// words over the axes the product names.
+    /// words over the dimensions the product names.
     fn orders(&self) -> MatmulOperands<BindingOrder> {
         match self.plane {
             CubeShufflePlane::Shuffle(plane) => plane.orders,
@@ -611,7 +570,7 @@ impl MatmulMicrokernel for CubeShuffleMicrokernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::matmul::{MatmulAxes, MatmulDestination, MatmulReading, MatmulRows};
+    use crate::matmul::{MatmulDestination, MatmulDimensions, MatmulReading, MatmulRows};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
 
@@ -638,10 +597,10 @@ mod tests {
         }
     }
 
-    /// Settings taking `K` cyclically size cubes that do, and their levels still build: the
-    /// interleaving is the planes', over the split they share.
+    /// Software planes take the steps of `K` in turns, and their levels build: the interleaving is
+    /// the planes', over the split they share.
     #[test]
-    fn planes_in_turns_reach_the_cubes() {
+    fn software_planes_take_k_in_turns() {
         let f16 = ElemType::Float(FloatKind::F16);
         let item = MatmulWorkItem {
             elements: MatmulOperands::all(f16),
@@ -653,21 +612,15 @@ mod tests {
             blocks: None,
             rows: MatmulRows::Whole(1),
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes::MNK,
+            dimensions: MatmulDimensions::MNK,
             reading: MatmulReading::AsStored,
         };
         let hw = devices::m2_pro();
-        for in_turns in [false, true] {
-            let settings = match in_turns {
-                true => CubeShuffleMicrokernelSettings::DEFAULT.in_turns(),
-                false => CubeShuffleMicrokernelSettings::DEFAULT,
-            };
-            let cubes: Vec<_> = CubeShuffleMicrokernel::candidates(&hw, &item, &settings).collect();
-            assert!(!cubes.is_empty());
-            for cube in cubes {
-                assert_eq!(cube.planes_in_turns, in_turns, "{cube}");
-                assert!(!cube.tiling().build().is_empty(), "{cube}");
-            }
+        let settings = CubeShuffleMicrokernelSettings::DEFAULT;
+        let cubes: Vec<_> = CubeShuffleMicrokernel::candidates(&hw, &item, &settings).collect();
+        assert!(!cubes.is_empty());
+        for cube in cubes {
+            assert!(!cube.tiling().build().is_empty(), "{cube}");
         }
     }
 }

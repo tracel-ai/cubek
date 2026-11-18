@@ -61,15 +61,15 @@ impl SwigluLaunch {
         let store = self.item.store;
         let space = Space::new(
             &[
-                store.rows_axes(self.rows),
+                store.rows_dimensions(self.rows),
                 vec![(H, 2)],
-                store.width_axes(self.item.dim),
+                store.width_dimensions(self.item.dim),
             ]
             .concat(),
         );
         let run_box = [
             vec![(R, 1), (H, 2)],
-            store.width_axes(self.microkernel.run()),
+            store.width_dimensions(self.microkernel.run()),
         ]
         .concat();
         let partitioning = SwigluPartitioning::new(

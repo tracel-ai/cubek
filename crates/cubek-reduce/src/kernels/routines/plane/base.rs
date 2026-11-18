@@ -13,7 +13,7 @@ use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Every owner a plane of the launch, which reduces its rows with the plane microkernel; the
-/// launch groups `planes` of them in a cube along the innermost row axis.
+/// launch groups `planes` of them in a cube along the innermost row dimension.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PlaneReduceRoutine;
 
@@ -73,10 +73,10 @@ impl Routine for PlaneReduceRoutine {
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widths = reduce_widths(hw, problem, vectorization);
-        let owners = problem.owner_axes_innermost_first();
+        let owners = problem.owner_dimensions_innermost_first();
         let innermost = *owners
             .first()
-            .expect("a problem places its owners along an axis");
+            .expect("a problem places its owners along a dimension");
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))

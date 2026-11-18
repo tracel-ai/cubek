@@ -13,11 +13,11 @@ use cubek_microkernel::matmul::plane::{
     PlaneShuffleMicrokernelSettings, plane_fragment_microkernel, plane_shuffle_microkernel,
 };
 use cubek_microkernel::matmul::{
-    MatmulAxes, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
+    MatmulDimensions, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
     MatmulStage,
 };
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{Microkernel, StageRing};
 
 use super::{MatmulElements, MatmulLaunch, OneCube, WholeRows};
@@ -54,8 +54,8 @@ impl PlaneFragmentLaunch {
     ) -> Result<Self, Refusal> {
         let item = elements.work_item();
         let microkernel = PlaneFragmentMicrokernel::best(hw, &item, settings)?;
-        let [m, n, k] = [M, N, K].map(|axis| microkernel.tile_extent(axis));
-        let stage = MatmulStage::new(Space::new(&[(M, m), (N, n), (K, k)]), MatmulAxes::MNK);
+        let [m, n, k] = [M, N, K].map(|dimension| microkernel.tile_extent(dimension));
+        let stage = MatmulStage::new(Space::new(&[(M, m), (N, n), (K, k)]), MatmulDimensions::MNK);
         let plane_width = microkernel.instruction.units(hw)?;
         // The launch stages the plane's operands itself, as a cube staged fill would.
         let mut vectorization = Vectorization::new();
@@ -74,7 +74,7 @@ impl PlaneFragmentLaunch {
             stage.space(),
             microkernel.instruction.stage_tile(
                 &[],
-                MatmulAxes::MNK,
+                MatmulDimensions::MNK,
                 microkernel.settings.rows_along,
             ),
         );

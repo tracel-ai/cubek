@@ -9,7 +9,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 use cubecl::tile::launch::Refusal;
 use cubek_std::{Hardware, Instructions};
 use cubek_test_utils::client;
@@ -116,13 +116,14 @@ fn each_group_contracts_its_own_rows_into_its_slab() {
 #[test]
 fn an_operand_stored_in_tiles_is_refused() {
     let client = client();
-    let (row_axis, col_axis) = (Axis(0), Axis(1));
+    let (row_dimension, col_dimension) = (Dimension(0), Dimension(1));
     let ones = || f32s(&client, [32, 32], &[1.0; 32 * 32]);
-    let storage = StorageLevels::new(&[(col_axis, 16), (row_axis, 16)]).grid(&[col_axis, row_axis]);
+    let storage = StorageLevels::new(&[(col_dimension, 16), (row_dimension, 16)])
+        .grid(&[col_dimension, row_dimension]);
     let tiled = tile(
         &client,
         ones().binding,
-        &[row_axis, col_axis],
+        &[row_dimension, col_dimension],
         F32,
         None,
         storage,

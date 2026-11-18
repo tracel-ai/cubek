@@ -23,7 +23,7 @@
 //!
 //! # The grid is stated twice and checked
 //!
-//! The division counts the grid; the space states it, on whichever axes the cut puts it; the
+//! The division counts the grid; the space states it, on whichever dimensions the cut puts it; the
 //! derivation asserts the two agree and holds every candidate to the device's caps
 //! ([`LaunchSettings::validate`]). A grid this device does not launch declines that candidate.
 //!

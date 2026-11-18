@@ -10,7 +10,7 @@ use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Space};
+use cubecl::tile::{Dimension, Space};
 use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_microkernel::linear_recurrence::walk::{RecurrenceWalkOperand, RecurrenceWalkOperandMap};
@@ -82,16 +82,16 @@ impl RecurrenceWalkStateLayout {
         }
     }
 
-    /// The axis a level cuts for the kept states, and its extent: the owned walk's.
-    pub fn kept_axis(&self) -> Option<(Axis, usize)> {
+    /// The dimension a level cuts for the kept states, and its extent: the owned walk's.
+    pub fn kept_dimension(&self) -> Option<(Dimension, usize)> {
         match self {
             Self::Owned { kept } => Some((KEPT_STATE, kept.get())),
             Self::Slots { .. } => None,
         }
     }
 
-    /// The axis of a store's slots, and its extent: no level cuts it.
-    pub fn store_axis(&self) -> Option<(Axis, usize)> {
+    /// The dimension of a store's slots, and its extent: no level cuts it.
+    pub fn store_dimension(&self) -> Option<(Dimension, usize)> {
         match self {
             Self::Owned { .. } => None,
             Self::Slots { slots } => Some((STORE_SLOT, slots.get())),
@@ -129,8 +129,8 @@ impl From<RecurrenceWalkStateLayout> for RecurrenceWalkStateKind {
 }
 
 /// The gated delta rule over `batch` sequences of `positions` positions, as the host describes it:
-/// `key_heads · heads_per_group` value heads, each reading the queries and keys of the key head it is
-/// grouped under.
+/// `key_heads · heads_per_group` value heads, each reading the queries and keys of the key head it
+/// is grouped under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecurrenceWalkProblem {
     pub batch: usize,
@@ -140,8 +140,8 @@ pub struct RecurrenceWalkProblem {
     pub output_element: ElemType,
     /// Where the states live, and how many are kept.
     pub state: RecurrenceWalkStateLayout,
-    /// The alignment of each operand's buffer in elements, over the axes the walk names. The kept
-    /// states are bound by the owned walk alone: a walk in a store's slots holds
+    /// The alignment of each operand's buffer in elements, over the dimensions the walk names. The
+    /// kept states are bound by the owned walk alone: a walk in a store's slots holds
     /// [`ElemAlignment::ONE`] for them, which nothing reads.
     pub alignments: RecurrenceWalkOperandMap<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start.
@@ -221,11 +221,11 @@ impl RecurrenceWalkProblem {
             .map(|_| ())
     }
 
-    /// Every axis of the problem at its extent: what a routine partitions. The kept states sit
+    /// Every dimension of the problem at its extent: what a routine partitions. The kept states sit
     /// outside the state's rows and columns, so each is a whole state.
     pub fn space(&self) -> Space {
         let heads = &self.heads;
-        let mut axes = vec![
+        let mut dimensions = vec![
             (BATCH, self.batch),
             (POSITION, self.positions),
             (KEY_HEAD, heads.key_heads),
@@ -233,13 +233,13 @@ impl RecurrenceWalkProblem {
             (KEY_FEATURE, heads.key_features),
             (VALUE_FEATURE, heads.value_features),
         ];
-        axes.extend(
+        dimensions.extend(
             self.state
-                .kept_axis()
+                .kept_dimension()
                 .into_iter()
-                .chain(self.state.store_axis()),
+                .chain(self.state.store_dimension()),
         );
-        Space::new(&axes)
+        Space::new(&dimensions)
     }
 
     /// A problem of dense operands, each starting where its buffer does: what a key describes, and
@@ -272,7 +272,7 @@ impl RecurrenceWalkProblem {
                 decay: rows(&[batch, positions, key_heads, heads_per_group]),
                 strength: rows(&[batch, positions, key_heads, heads_per_group]),
                 state: rows(&[
-                    state.store_axis().map_or(batch, |(_, slots)| slots),
+                    state.store_dimension().map_or(batch, |(_, slots)| slots),
                     key_heads,
                     heads_per_group,
                     key_features,
