@@ -1,6 +1,6 @@
 //! The problem a routine computes.
 
-use cubecl::ir::ElemType;
+use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Geometry, Partitioning, Space};
 use cubecl::tune::Work;
@@ -14,6 +14,63 @@ pub struct ReduceElements {
     pub input: ElemType,
     pub accumulator: ElemType,
     pub out: ElemType,
+}
+
+impl ReduceElements {
+    /// The elements a reduction of `input` by `operation` runs in. It writes `out` where it writes
+    /// no value of the input (an index, or the flag of `Any` and `All`), and the input's element
+    /// otherwise. A sum, a product or a mean accumulates in [`widened`] elements, every other
+    /// operation in the input's own: an extremum gains nothing from a wider carrier, and an index
+    /// or a flag is carried apart from the values.
+    ///
+    /// # Panics
+    ///
+    /// Where `operation` writes an index or a flag and `out` is `None`, or `input` is a boolean or
+    /// a complex number.
+    pub fn for_operation(
+        operation: ReduceOperation,
+        input: ElemType,
+        out: Option<ElemType>,
+    ) -> Self {
+        let out = match operation {
+            ReduceOperation::ArgMax
+            | ReduceOperation::ArgMin
+            | ReduceOperation::ArgTopK { .. }
+            | ReduceOperation::Any
+            | ReduceOperation::All => {
+                out.expect("ArgMax, ArgMin, ArgTopK, Any and All write an element the caller names")
+            }
+            _ => input,
+        };
+        let accumulator = match operation {
+            ReduceOperation::Sum | ReduceOperation::Prod | ReduceOperation::Mean => widened(input),
+            _ => input,
+        };
+        Self {
+            input,
+            accumulator,
+            out,
+        }
+    }
+}
+
+/// What a sum of `input`'s elements accumulates in: `f32` for a float narrower than 64 bits,
+/// `i32` or `u32` for a narrower integer, the element itself otherwise.
+///
+/// # Panics
+///
+/// Where `input` is a boolean or a complex number, which no reduction sums.
+fn widened(input: ElemType) -> ElemType {
+    match input {
+        ElemType::Float(FloatKind::F64)
+        | ElemType::Int(IntKind::I64)
+        | ElemType::UInt(UIntKind::U64)
+        | ElemType::Index => input,
+        ElemType::Float(_) => ElemType::Float(FloatKind::F32),
+        ElemType::Int(_) => ElemType::Int(IntKind::I32),
+        ElemType::UInt(_) => ElemType::UInt(UIntKind::U32),
+        ElemType::Bool | ElemType::Complex(_) => panic!("{input:?} is not reduced"),
+    }
 }
 
 /// `out = operation(input)` along dim `axis` of an input of `shape`, as the host describes it:
@@ -258,5 +315,61 @@ impl EstimatedProblem for ReduceRoutineProblem {
             compute_ops: values,
             bytes: values * self.elements.input.size() + cells * self.elements.out.size(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const F16: ElemType = ElemType::Float(FloatKind::F16);
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+    const U32: ElemType = ElemType::UInt(UIntKind::U32);
+
+    #[test]
+    fn a_sum_of_halves_accumulates_in_f32() {
+        let elements = ReduceElements::for_operation(ReduceOperation::Sum, F16, None);
+        assert_eq!(
+            elements,
+            ReduceElements {
+                input: F16,
+                accumulator: F32,
+                out: F16
+            }
+        );
+    }
+
+    #[test]
+    fn an_extremum_accumulates_in_its_input() {
+        let elements = ReduceElements::for_operation(ReduceOperation::Max, F16, Some(U32));
+        assert_eq!(
+            elements,
+            ReduceElements {
+                input: F16,
+                accumulator: F16,
+                out: F16
+            }
+        );
+    }
+
+    #[test]
+    fn an_index_is_written_in_the_element_the_caller_names() {
+        let elements =
+            ReduceElements::for_operation(ReduceOperation::ArgTopK { k: 3 }, F16, Some(U32));
+        assert_eq!(
+            elements,
+            ReduceElements {
+                input: F16,
+                accumulator: F16,
+                out: U32
+            }
+        );
+    }
+
+    #[test]
+    fn a_narrow_integer_sum_accumulates_in_i32() {
+        let i8 = ElemType::Int(IntKind::I8);
+        let elements = ReduceElements::for_operation(ReduceOperation::Mean, i8, None);
+        assert_eq!(elements.accumulator, ElemType::Int(IntKind::I32));
     }
 }
