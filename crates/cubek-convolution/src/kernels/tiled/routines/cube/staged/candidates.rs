@@ -184,7 +184,7 @@ impl<'a> CubeStagedConvCandidates<'a> {
 
     /// Registers of a unit the accumulators of its plane's fragments may take. No runtime reports
     /// a unit's register file, so this assumes the one [`UNIT_REGISTERS`] names for every device.
-    fn register_budget(&self) -> usize {
+    fn accumulator_register_budget(&self) -> usize {
         UNIT_REGISTERS as usize / ACCUMULATOR_REGISTER_SHARE
     }
 
@@ -196,7 +196,7 @@ impl<'a> CubeStagedConvCandidates<'a> {
     /// The most fragments of `shape` a plane holds along the rows with one along the columns,
     /// within the register budget.
     fn fragments_in_budget(&self, shape: &InstructionShape) -> usize {
-        (self.register_budget() / self.fragment_registers(shape)).max(1)
+        (self.accumulator_register_budget() / self.fragment_registers(shape)).max(1)
     }
 
     /// The planes a cube holds along the across axis at most: the device's count of planes for a
@@ -235,7 +235,7 @@ impl<'a> CubeStagedConvCandidates<'a> {
             .microkernel
             .ring
             .bytes((positions + columns) * shape.depth * Self::widest_element_bytes());
-        registers <= self.register_budget()
+        registers <= self.accumulator_register_budget()
             && settings.planes() <= self.hw.full_cube_planes()
             && step <= self.hw.shared_memory_budget()
     }
