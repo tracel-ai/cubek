@@ -219,7 +219,7 @@ struct SpatialAxes {
     taps: Vec<Axis>,
 }
 
-/// The axes of `parts` one after the other.
+/// The axes of `parts` one after the other; the slices let arrays and `Vec`s mix in one list.
 fn joined(parts: &[&[Axis]]) -> Vec<Axis> {
     parts.concat()
 }
@@ -278,7 +278,7 @@ impl ConvRoles {
         let contracted = joined(&[&spatial.taps, &[CI]]);
         Self {
             spatial_dims: spatial.spatial_dims,
-            space: joined(&[&free, &contracted]),
+            space: [&free[..], &contracted[..]].concat(),
             free: ConvFreeAxes::split(&free),
             contracted: ConvContractedAxes::split(&contracted),
             lhs: joined(&[&[B], &spatial.outs, &spatial.taps, &[CI]]),
@@ -307,7 +307,7 @@ impl ConvRoles {
         let contracted = joined(&[&[B], &spatial.outs]);
         Self {
             spatial_dims: spatial.spatial_dims,
-            space: joined(&[&contracted, &free]),
+            space: [&contracted[..], &free[..]].concat(),
             free: ConvFreeAxes::split(&free),
             contracted: ConvContractedAxes::split(&contracted),
             lhs: joined(&[&spatial.taps, &[B], &spatial.outs, &[CI]]),
@@ -336,7 +336,7 @@ impl ConvRoles {
         let contracted = joined(&[&spatial.taps, &[CO]]);
         Self {
             spatial_dims: spatial.spatial_dims,
-            space: joined(&[&free, &contracted]),
+            space: [&free[..], &contracted[..]].concat(),
             free: ConvFreeAxes::split(&free),
             contracted: ConvContractedAxes::split(&contracted),
             lhs: joined(&[&[B], &spatial.outs, &spatial.taps, &[CO]]),
@@ -503,7 +503,7 @@ mod tests {
         );
     }
 
-    /// Over two spatial dims the roles are the tables the tiled convolution stated for 2D alone.
+    /// Over two spatial dims the roles are the 2D tables.
     #[test]
     fn two_spatial_dims_state_the_two_dimensional_tables() {
         let [[oh, rh], [ow, rw]] =

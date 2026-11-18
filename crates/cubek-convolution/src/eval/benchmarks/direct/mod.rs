@@ -8,7 +8,7 @@ use cubecl::prelude::*;
 use cubek_matmul::definition::MatmulGlobalElems;
 use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
-use crate::definition::ConvCost;
+use crate::definition::{ConvCost, ConvCostDim};
 
 pub struct Category;
 
@@ -48,10 +48,15 @@ impl cubek_test_utils::Category for Category {
         let cost = ConvCost {
             batch: problem.batch,
             channels_in: problem.channels_in,
-            spatial_in: vec![problem.size; 2],
             channels_out: problem.channels_out,
-            kernel: vec![problem.kernel; 2],
-            spatial_out: vec![out; 2],
+            spatial: vec![
+                ConvCostDim {
+                    input: problem.size,
+                    kernel: problem.kernel,
+                    out,
+                };
+                2
+            ],
             bias_elems: 0,
             elems: MatmulGlobalElems {
                 lhs: dtype,

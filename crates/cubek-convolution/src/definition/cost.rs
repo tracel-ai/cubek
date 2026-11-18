@@ -10,22 +10,32 @@ use cubek_matmul::definition::{MatmulCost, MatmulGlobalElems};
 /// dims: the shapes it moves and the element types it moves them in.
 #[derive(Debug, Clone)]
 pub struct ConvCost {
-    /// Batch, input channels, and the input's spatial extent.
     pub batch: usize,
     pub channels_in: usize,
-    pub spatial_in: Vec<usize>,
-    /// Output channels and the filter's spatial extent.
     pub channels_out: usize,
-    pub kernel: Vec<usize>,
-    /// The output's spatial extent, which stride, padding and dilation decide.
-    pub spatial_out: Vec<usize>,
+    /// The extents along each spatial dim.
+    pub spatial: Vec<ConvCostDim>,
     /// Elements of the bias, zero when the convolution has none.
     pub bias_elems: usize,
     /// Global element types of the operands.
     pub elems: MatmulGlobalElems,
 }
 
+/// The extents one spatial dim of a convolution moves.
+#[derive(Debug, Clone, Copy)]
+pub struct ConvCostDim {
+    pub input: usize,
+    pub kernel: usize,
+    /// Which stride, padding and dilation decide.
+    pub out: usize,
+}
+
 impl ConvCost {
+    /// The product of `extent` over the spatial dims.
+    fn positions(&self, extent: impl Fn(&ConvCostDim) -> usize) -> usize {
+        self.spatial.iter().map(extent).product()
+    }
+
     /// The implicit gemm this convolution is: one output pixel per row, one
     /// output channel per column, contracting over the filter's input window.
     ///
@@ -35,9 +45,9 @@ impl ConvCost {
     fn gemm(&self) -> MatmulCost {
         MatmulCost {
             batches: 1,
-            m: self.batch * self.spatial_out.iter().product::<usize>(),
+            m: self.batch * self.positions(|dim| dim.out),
             n: self.channels_out,
-            k: self.channels_in * self.kernel.iter().product::<usize>(),
+            k: self.channels_in * self.positions(|dim| dim.kernel),
             elems: self.elems.clone(),
         }
     }
@@ -65,11 +75,9 @@ impl ConvCost {
     /// re-read every overlapping window, which is the implementation's choice
     /// rather than the convolution's cost.
     pub fn traffic(&self) -> (usize, usize) {
-        let positions = |extent: &[usize]| extent.iter().product::<usize>();
-
-        let input = self.batch * self.channels_in * positions(&self.spatial_in);
-        let filter = self.channels_out * self.channels_in * positions(&self.kernel);
-        let output = self.batch * self.channels_out * positions(&self.spatial_out);
+        let input = self.batch * self.channels_in * self.positions(|dim| dim.input);
+        let filter = self.channels_out * self.channels_in * self.positions(|dim| dim.kernel);
+        let output = self.batch * self.channels_out * self.positions(|dim| dim.out);
 
         (
             input * self.elems.lhs.size()
@@ -158,10 +166,15 @@ mod tests {
         ConvCost {
             batch: 2,
             channels_in: 3,
-            spatial_in: vec![8, 8],
             channels_out: 4,
-            kernel: vec![3, 3],
-            spatial_out: vec![6, 6],
+            spatial: vec![
+                ConvCostDim {
+                    input: 8,
+                    kernel: 3,
+                    out: 6
+                };
+                2
+            ],
             bias_elems: 0,
             elems: MatmulGlobalElems {
                 lhs: f16,

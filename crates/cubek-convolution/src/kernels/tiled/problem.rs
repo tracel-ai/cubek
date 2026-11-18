@@ -1,6 +1,6 @@
 use super::{ConvGather, ConvRoles};
 use crate::components::ConvolutionOperation;
-use crate::definition::ConvCost;
+use crate::definition::{ConvCost, ConvCostDim};
 use crate::launch::SpatialWindow;
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::{ElemAlignment, PhysicalAxisMap};
@@ -242,22 +242,22 @@ impl EstimatedProblem for ConvProblem {
     fn demand(&self) -> Work {
         // The data backward is the forward convolution of the gradient's shape over the input's.
         let gather = self.roles().gather;
-        let (spatial_in, spatial_out) = self
-            .spatial
-            .iter()
-            .map(|conv_dim| gather.window_ends(conv_dim))
-            .unzip();
         ConvCost {
             batch: self.batch,
             channels_in: self.channels_in,
-            spatial_in,
             channels_out: self.channels_out,
-            kernel: self
+            spatial: self
                 .spatial
                 .iter()
-                .map(|conv_dim| conv_dim.kernel)
+                .map(|conv_dim| {
+                    let (input, out) = gather.window_ends(conv_dim);
+                    ConvCostDim {
+                        input,
+                        kernel: conv_dim.kernel,
+                        out,
+                    }
+                })
                 .collect(),
-            spatial_out,
             bias_elems: 0,
             elems: MatmulGlobalElems {
                 lhs: self.elements.lhs,
