@@ -3,15 +3,91 @@ use crate::rms_norm::GateOrder;
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
-/// A row of the norm's input and, where the norm is gated, of its gate. It yields the lines the
-/// norm sums and scales, gated where the gate comes first, and gates the lines the norm writes
+/// A gate's tile and where it enters the norm, held together so a gated row cannot carry one
+/// without the other.
+#[derive(CubeType, Clone)]
+pub struct Gate {
+    tile: Tile,
+    #[cube(comptime)]
+    order: GateOrder,
+}
+
+impl core::fmt::Debug for Gate {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Gate").finish_non_exhaustive()
+    }
+}
+
+#[cube]
+impl Gate {
+    /// The gate a launch binds: `tile` entering at `order`. A launch binds a tile exactly where
+    /// its blueprint states an order.
+    pub fn bound(
+        tile: ComptimeOption<Tile>,
+        #[comptime] order: Option<GateOrder>,
+    ) -> ComptimeOption<Gate> {
+        #[comptime]
+        match tile {
+            ComptimeOption::Some(tile) => ComptimeOption::new_Some(Gate {
+                tile,
+                order: comptime!(order.expect("a bound gate tile has an order")),
+            }),
+            ComptimeOption::None => Gate::unbound(order),
+        }
+    }
+
+    /// No gate, where a launch binds no tile and so states no order.
+    fn unbound(#[comptime] order: Option<GateOrder>) -> ComptimeOption<Gate> {
+        comptime!(assert!(order.is_none(), "a gate order has a bound tile"));
+        ComptimeOption::new_None()
+    }
+
+    /// This gate windowed to `region`.
+    pub fn at(&self, region: &Region) -> Gate {
+        Gate {
+            tile: self.tile.at(region),
+            order: comptime!(self.order),
+        }
+    }
+
+    /// `row`'s line `line`, of element `E`, held as `Held`: multiplied by the silu of the gate's
+    /// where the gate comes first.
+    fn before_norm<E: Float, Held: Float, N: Size>(
+        &self,
+        row: Vector<E, N>,
+        line: usize,
+    ) -> Vector<Held, N> {
+        match comptime!(self.order) {
+            GateOrder::GateThenNorm => Vector::<Held, N>::cast_from(activation::silu_gated::<N>(
+                Vector::<f32, N>::cast_from(row),
+                self.line::<E, N>(line),
+            )),
+            GateOrder::NormThenGate => Vector::<Held, N>::cast_from(row),
+        }
+    }
+
+    /// `scaled`, the norm's line `line`, multiplied by the silu of the gate's where the gate comes
+    /// last.
+    fn after_norm<E: Float, N: Size>(&self, scaled: Vector<f32, N>, line: usize) -> Vector<f32, N> {
+        match comptime!(self.order) {
+            GateOrder::NormThenGate => activation::silu_gated::<N>(scaled, self.line::<E, N>(line)),
+            GateOrder::GateThenNorm => scaled,
+        }
+    }
+
+    /// Line `line` of the gate, its tile of element `E`, as `f32`.
+    fn line<E: Float, N: Size>(&self, line: usize) -> Vector<f32, N> {
+        Vector::<f32, N>::cast_from(self.tile.flat::<E, N>().read(line))
+    }
+}
+
+/// A row of the norm's input and, where the norm is gated, of its [`Gate`]. It yields the lines
+/// the norm sums and scales, gated where the gate comes first, and gates the lines the norm writes
 /// where it comes last.
 #[derive(CubeType)]
 pub struct GatedRow {
     input: Tile,
-    gate: ComptimeOption<Tile>,
-    #[cube(comptime)]
-    order: Option<GateOrder>,
+    gate: ComptimeOption<Gate>,
 }
 
 impl core::fmt::Debug for GatedRow {
@@ -22,23 +98,27 @@ impl core::fmt::Debug for GatedRow {
 
 #[cube]
 impl GatedRow {
-    /// The row of `input` and, where the norm is gated, `gate`, both windowed to the owner's
-    /// run.
-    pub fn new(
-        input: &Tile,
-        gate: &ComptimeOption<Tile>,
-        #[comptime] order: Option<GateOrder>,
-    ) -> Self {
+    /// The row of `input`, gated by `gate` where there is one.
+    pub fn new(input: &Tile, gate: ComptimeOption<Gate>) -> Self {
         GatedRow {
             input: input.clone(),
-            gate: gate.clone(),
-            order,
+            gate,
         }
     }
 
-    /// `gate`, where there is one, windowed to `region` as the input is.
-    pub fn windowed(gate: &ComptimeOption<Tile>, region: &Region) -> ComptimeOption<Tile> {
-        gate.clone().map(|gate| gate.at(region))
+    /// This row and its gate windowed to `region`.
+    pub fn at(&self, region: &Region) -> GatedRow {
+        let gate = {
+            #[comptime]
+            match &self.gate {
+                ComptimeOption::Some(gate) => ComptimeOption::new_Some(gate.at(region)),
+                ComptimeOption::None => ComptimeOption::new_None(),
+            }
+        };
+        GatedRow {
+            input: self.input.at(region),
+            gate,
+        }
     }
 
     /// Elements of a line.
@@ -46,12 +126,13 @@ impl GatedRow {
         self.input.vector_size()
     }
 
-    /// Line `line` of the row the norm reads, held as `H`: the input is of element `E`.
-    pub fn line<E: Float, H: Float, N: Size>(&self, line: usize) -> Vector<H, N> {
+    /// Line `line` of the row the norm reads, held as `Held`: the input is of element `E`.
+    pub fn line<E: Float, Held: Float, N: Size>(&self, line: usize) -> Vector<Held, N> {
         let row = self.input.flat::<E, N>().read(line);
-        match comptime!(self.order) {
-            Some(GateOrder::GateThenNorm) => self.gated_line::<E, H, N>(row, line),
-            Some(GateOrder::NormThenGate) | None => Vector::<H, N>::cast_from(row),
+        #[comptime]
+        match &self.gate {
+            ComptimeOption::Some(gate) => gate.before_norm::<E, Held, N>(row, line),
+            ComptimeOption::None => Vector::<Held, N>::cast_from(row),
         }
     }
 
@@ -62,39 +143,10 @@ impl GatedRow {
         line: usize,
         scaled: Vector<f32, N>,
     ) -> Vector<f32, N> {
-        match comptime!(self.order) {
-            Some(GateOrder::NormThenGate) => self.gated_scaled::<E, N>(scaled, line),
-            Some(GateOrder::GateThenNorm) | None => scaled,
-        }
-    }
-
-    fn gated_line<E: Float, H: Float, N: Size>(
-        &self,
-        row: Vector<E, N>,
-        line: usize,
-    ) -> Vector<H, N> {
-        let gate = self.gate_line::<E, N>(line);
-        let gated = activation::gated::<N>(Vector::<f32, N>::cast_from(row), gate);
-        Vector::<H, N>::cast_from(gated)
-    }
-
-    fn gated_scaled<E: Float, N: Size>(
-        &self,
-        scaled: Vector<f32, N>,
-        line: usize,
-    ) -> Vector<f32, N> {
-        activation::gated::<N>(scaled, self.gate_line::<E, N>(line))
-    }
-
-    fn gate_line<E: Float, N: Size>(&self, line: usize) -> Vector<f32, N> {
         #[comptime]
         match &self.gate {
-            ComptimeOption::Some(gate) => Self::line_as_f32::<E, N>(gate, line),
-            ComptimeOption::None => panic!("a gated norm binds its gate"),
+            ComptimeOption::Some(gate) => gate.after_norm::<E, N>(scaled, line),
+            ComptimeOption::None => scaled,
         }
-    }
-
-    fn line_as_f32<E: Float, N: Size>(tile: &Tile, line: usize) -> Vector<f32, N> {
-        Vector::<f32, N>::cast_from(tile.flat::<E, N>().read(line))
     }
 }

@@ -40,27 +40,27 @@ impl HeldRowShape {
 
 /// One unit's share of an owner's row, in registers between the row's two passes: read once,
 /// squared into the unit's partial in `f32` as it lands, then scaled and written out of the
-/// registers, held as `H`. An `f16` square-sum would overflow at a magnitude of about 256.
+/// registers, held as `Held`. An `f16` square-sum would overflow at a magnitude of about 256.
 ///
 /// Unit `unit` holds lines `unit + i · units` of a [`GatedRow`] ([`HeldRowShape`]).
 #[derive(CubeType)]
-pub(crate) struct HeldRow<H: Float, N: Size> {
-    lines: Array<Vector<H, N>>,
+pub(crate) struct HeldRow<Held: Float, N: Size> {
+    lines: Array<Vector<Held, N>>,
     #[cube(comptime)]
     shape: HeldRowShape,
 }
 
-impl<H: Float, N: Size> core::fmt::Debug for HeldRow<H, N> {
+impl<Held: Float, N: Size> core::fmt::Debug for HeldRow<Held, N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("HeldRow").finish_non_exhaustive()
     }
 }
 
 #[cube]
-impl<H: Float, N: Size> HeldRow<H, N> {
+impl<Held: Float, N: Size> HeldRow<Held, N> {
     /// Registers for one unit's share of a row laid out as `shape` says, holding nothing yet.
     pub fn new(#[comptime] shape: HeldRowShape) -> Self {
-        HeldRow::<H, N> {
+        HeldRow::<Held, N> {
             lines: Array::new(shape.per_unit()),
             shape,
         }
@@ -81,7 +81,7 @@ impl<H: Float, N: Size> HeldRow<H, N> {
         #[unroll]
         for i in 0..shape.per_unit() {
             let line = unit + i * shape.units;
-            let held = gated.line::<E, H, N>(min(line, shape.lines - 1));
+            let held = gated.line::<E, Held, N>(min(line, shape.lines - 1));
             self.lines[i] = held;
             if shape.lines.is_multiple_of(shape.units) || line < shape.lines {
                 let wide = Vector::<f32, N>::cast_from(held);
@@ -92,10 +92,10 @@ impl<H: Float, N: Size> HeldRow<H, N> {
         partial
     }
 
-    /// Unit `unit`'s lines written into `out` at `W`, each scaled by `factor` and multiplied by its
+    /// Unit `unit`'s lines written into `out` at `Out`, each scaled by `factor` and multiplied by its
     /// line of `weight`, of element `E`, in `f32`, and gated where the gate comes last, then
     /// rounded once. `out` and `weight` are the owner's run, and a line past it is not written.
-    pub fn write<E: Float, W: Float>(
+    pub fn write<E: Float, Out: Float>(
         &self,
         gated: &GatedRow,
         weight: &Tile,
@@ -114,7 +114,7 @@ impl<H: Float, N: Size> HeldRow<H, N> {
                     * Vector::<f32, N>::cast_from(factor)
                     * Vector::<f32, N>::cast_from(weights.read(line));
                 let written = gated.written::<E, N>(line, scaled);
-                out.write::<W, N>(line, Vector::<W, N>::cast_from(written));
+                out.write::<Out, N>(line, Vector::<Out, N>::cast_from(written));
             }
         }
     }

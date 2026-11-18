@@ -276,7 +276,7 @@ struct Block {
 
 impl Block {
     /// What each setting runs, and what the default one runs.
-    fn every() -> [Self; 3] {
+    fn every() -> [Self; 4] {
         let orders = [
             None,
             Some(GateOrder::GateThenNorm),
@@ -301,6 +301,32 @@ impl Block {
                     Rows::new(1, 4100),
                     Rows::new(2, 8192),
                     Rows::new(6, 128).weight_a_row(),
+                ],
+            },
+            // Every setting's partitioning under a gate: before the norm, which holds an `f16` row
+            // in `f32` and halves the lines a unit holds, and after it into an `f32` output, at a
+            // decode row, prompt rows, a prime row, and rows on either side of the halved cap of a
+            // 32-lane plane of 128-bit reads.
+            Self {
+                every_setting: true,
+                runs: vec![
+                    Run {
+                        element: F16,
+                        output_element: F16,
+                        order: Some(GateOrder::GateThenNorm),
+                    },
+                    Run {
+                        element: F16,
+                        output_element: F32,
+                        order: Some(GateOrder::NormThenGate),
+                    },
+                ],
+                rows: vec![
+                    Rows::new(1, 2560),
+                    Rows::new(37, 1024),
+                    Rows::new(2, 111),
+                    Rows::new(3, 2048),
+                    Rows::new(2, 2056),
                 ],
             },
             // Each order at each element pair, plain and grouped.

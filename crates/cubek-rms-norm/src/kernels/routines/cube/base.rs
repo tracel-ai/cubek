@@ -92,6 +92,7 @@ impl Routine for CubeRmsNormRoutine {
         problem: &RmsNormRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        problem.admit(hw)?;
         let microkernel =
             CubeRmsNormMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let store = problem.store;

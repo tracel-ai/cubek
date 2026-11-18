@@ -17,3 +17,14 @@ fn a_plane_normalizes_every_row_like_the_host() {
         .map(RmsNormSettings::Plane);
     RmsNorm { hw }.check(RmsNormCase::every_shape(settings));
 }
+
+/// A plane gates its rows before the norm and after it, and writes them wider than it reads them,
+/// as the host does, at each of its settings.
+#[test]
+fn a_plane_gates_and_widens_every_row_like_the_host() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let settings = PlaneRmsNormMicrokernel::settings(&hw)
+        .into_iter()
+        .map(RmsNormSettings::Plane);
+    RmsNorm { hw }.check(RmsNormCase::gated_and_widened(settings));
+}

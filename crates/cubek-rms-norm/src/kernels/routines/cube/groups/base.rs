@@ -17,21 +17,6 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
-/// Whether `hw` runs the norm `problem` states: what a caller asks before it falls back to composed
-/// ops. The floor serves every float row on every device, so this is the elements and the store.
-/// A tiled or sink output is known only at launch, which declines an `f32` output into one.
-///
-/// # Errors
-///
-/// What [`RmsNormRoutineProblem::admit`] declines, or what the floor declines the problem
-/// with.
-pub fn serves_rms_norm(hw: &Hardware, problem: &RmsNormRoutineProblem) -> Result<(), Refusal> {
-    problem.admit(hw)?;
-    CubeGroupsRmsNormRoutine
-        .prepare(hw, problem, &CubeGroupsRmsNormRoutineSettings::DEFAULT)
-        .map(|_| ())
-}
-
 /// The norm with every row owned by a group of units, a cube holding several groups side by
 /// side. Into a plain output it asks nothing of the hardware, so it runs everywhere: this kind's
 /// floor. Into a packed one it needs plane instructions, and a cube holds the rows its stage fits.
@@ -146,6 +131,7 @@ impl Routine for CubeGroupsRmsNormRoutine {
         problem: &RmsNormRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        problem.admit(hw)?;
         let microkernel =
             CubeGroupsRmsNormMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let store = problem.store;
@@ -222,13 +208,17 @@ impl RmsNormRoutine<CubeGroupsRmsNormMicrokernel> for CubeGroupsRmsNormRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::RMS_NORM_OUTPUT_UNSUPPORTED;
     use crate::kernels::problem::tests::running;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_matmul::kernels::tensor::ELEMENT_NOT_ON_DEVICE;
     use cubek_microkernel::rms_norm::HeldRowShape;
+    use cubek_microkernel::row_store::RowStore;
     use cubek_std::devices;
 
     const CHANNELS_PER_GROUP: usize = 128;
+    /// Rows of the grouped norm, a count no power of two.
+    const GROUPED_ROWS: usize = 37 * 20;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
     const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -369,17 +359,44 @@ mod tests {
         );
     }
 
-    /// A device running the floats serves a norm over groups of channels, which are rows of the
-    /// group's size; one that does not run them refuses it.
+    /// The floor prepares a norm over groups of channels, rows of the group's size, on every
+    /// device running the floats, and declines it on one that does not run them.
     #[test]
-    fn it_serves_what_the_device_runs() {
-        let grouped = RmsNormRoutineProblem::dense(37 * 20, CHANNELS_PER_GROUP, F16);
+    fn the_floor_serves_what_the_device_runs() {
+        let floor = |hw: &Hardware, problem: &RmsNormRoutineProblem| {
+            CubeGroupsRmsNormRoutine
+                .prepare(hw, problem, &CubeGroupsRmsNormRoutineSettings::DEFAULT)
+                .map(|_| ())
+        };
+        let grouped = RmsNormRoutineProblem::dense(GROUPED_ROWS, CHANNELS_PER_GROUP, F16);
         for hw in [devices::h100(), devices::strix_halo(), devices::cpu_12()] {
-            assert_eq!(serves_rms_norm(&running(hw), &grouped), Ok(()));
+            assert_eq!(floor(&running(hw), &grouped), Ok(()));
         }
         assert_eq!(
-            serves_rms_norm(&devices::h100(), &grouped),
+            floor(&devices::h100(), &grouped),
             Err(ELEMENT_NOT_ON_DEVICE)
+        );
+    }
+
+    /// The floor declines an `f32` output into a packed store, whatever the device runs.
+    #[test]
+    fn the_floor_declines_an_f32_output_into_a_packed_store() {
+        let store = RowStore::Packed {
+            block: 32,
+            scales_per_word: 4,
+        };
+        let mut problem =
+            RmsNormRoutineProblem::dense(GROUPED_ROWS, CHANNELS_PER_GROUP, F16).stored(store);
+        problem.output_element = F32;
+        assert_eq!(
+            CubeGroupsRmsNormRoutine
+                .prepare(
+                    &running(devices::h100()),
+                    &problem,
+                    &CubeGroupsRmsNormRoutineSettings::DEFAULT
+                )
+                .err(),
+            Some(RMS_NORM_OUTPUT_UNSUPPORTED)
         );
     }
 }

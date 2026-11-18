@@ -18,3 +18,14 @@ fn a_cube_normalizes_every_row_like_the_host() {
         .map(RmsNormSettings::Cube);
     RmsNorm { hw }.check(RmsNormCase::every_shape(settings));
 }
+
+/// A cube gates its rows before the norm and after it, and writes them wider than it reads them,
+/// as the host does, at each of its settings.
+#[test]
+fn a_cube_gates_and_widens_every_row_like_the_host() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let settings = CubeRmsNormMicrokernel::settings(&hw)
+        .into_iter()
+        .map(RmsNormSettings::Cube);
+    RmsNorm { hw }.check(RmsNormCase::gated_and_widened(settings));
+}

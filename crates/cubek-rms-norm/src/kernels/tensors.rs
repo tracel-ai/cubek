@@ -74,14 +74,12 @@ pub struct RmsNormTensors<Out = RmsNormOutputBuffer> {
     problem: RmsNormRoutineProblem,
 }
 
-const GATE_FIELD: &str = "gate";
-
 impl<Out: core::fmt::Debug> core::fmt::Debug for RmsNormTensors<Out> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("RmsNormTensors")
             .field("input", &self.input)
             .field("weight", &self.weight)
-            .field(GATE_FIELD, &self.gate)
+            .field("gate", &self.gate)
             .field("out", &self.out)
             .field("problem", &self.problem)
             .finish_non_exhaustive()
@@ -562,7 +560,6 @@ fn reads_whole(rows: &PlainTensor, dim: usize, read_bytes: u64) -> bool {
         && (entries == 1 || entry_bytes.is_multiple_of(read))
 }
 
-/// `tensor` copied into dense rows starting on a read, as `[1, rows, dim]`.
 /// `tensor` viewed as entries of `each` rows, made dense first where it lies in several.
 fn regroup(
     client: &Client,
@@ -586,6 +583,7 @@ fn regroup(
     ))
 }
 
+/// `tensor` copied into dense rows starting on a read, as `[1, rows, dim]`.
 fn dense_entries(client: &Client, tensor: PlainTensor, dim: usize, read_bytes: u64) -> PlainTensor {
     tensor
         .into_dense_at(client, read_bytes)

@@ -17,7 +17,7 @@ pub fn silu(x: f32) -> f32 {
 
 /// `x · silu(gate)` element by element of a line.
 #[cube]
-pub fn gated<N: Size>(x: Vector<f32, N>, gate: Vector<f32, N>) -> Vector<f32, N> {
+pub fn silu_gated<N: Size>(x: Vector<f32, N>, gate: Vector<f32, N>) -> Vector<f32, N> {
     let mut out = Vector::<f32, N>::empty();
     #[unroll]
     for element in 0..N::value() {

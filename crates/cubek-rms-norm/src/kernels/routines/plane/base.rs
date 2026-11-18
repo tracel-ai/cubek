@@ -109,6 +109,7 @@ impl Routine for PlaneRmsNormRoutine {
         problem: &RmsNormRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        problem.admit(hw)?;
         if problem.store != RowStore::Plain {
             return Err(PACKED_STORE_NEEDS_A_CUBE);
         }

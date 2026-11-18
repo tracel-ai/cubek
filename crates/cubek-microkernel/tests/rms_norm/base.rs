@@ -1,12 +1,14 @@
 //! What every RMS norm microkernel computes alone: each row divided by its root mean square and
-//! scaled by the weight, `out = x / sqrt(mean(x²) + ε) · γ`.
+//! scaled by the weight, `out = x / sqrt(mean(x²) + ε) · γ`, gated by `silu(gate)` before the norm
+//! or after it.
 
 use crate::launch::RowBatch;
-use crate::launch::rms_norm::{RmsNormLaunch, RmsNormSettings};
+use crate::launch::rms_norm::{RmsNormElements, RmsNormLaunch, RmsNormSettings};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::shape;
+use cubek_microkernel::rms_norm::GateOrder;
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
@@ -20,10 +22,19 @@ const EPSILON: f32 = 1e-5;
 /// than a plane's lanes.
 pub(crate) const SHAPES: [(usize, usize); 3] = [(1, 1024), (3, 1000), (2, 70)];
 
-/// An RMS norm on the host: its rows and weight, eighths exact in `f16`, and what it writes.
+/// The shape the gated and widened cases run at: several rows, a width no wide read divides.
+const GATED_SHAPE: RowBatch = RowBatch { rows: 3, dim: 1000 };
+
+/// `x · sigmoid(x)`.
+fn silu(x: f32) -> f32 {
+    x / (1.0 + (-x).exp())
+}
+
+/// An RMS norm on the host: its rows, weight and gate, eighths exact in `f16`, and what it writes.
 struct HostRmsNorm {
     input: Vec<f32>,
     weight: Vec<f32>,
+    gate: Vec<f32>,
     batch: RowBatch,
 }
 
@@ -35,22 +46,39 @@ impl HostRmsNorm {
                 .map(|i| ((i * 37) % 65) as f32 / 8.0 - 4.0)
                 .collect(),
             weight: (0..dim).map(|i| ((i * 11) % 17) as f32 / 8.0).collect(),
+            gate: (0..rows * dim)
+                .map(|i| ((i * 23) % 49) as f32 / 8.0 - 3.0)
+                .collect(),
             batch,
         }
     }
 
-    /// Every row normalized and scaled, `[1, rows, dim]`.
-    fn out(&self) -> HostData {
+    /// Every row normalized and scaled, gated as `gate` says, `[1, rows, dim]`.
+    fn out(&self, gate: Option<GateOrder>) -> HostData {
         let RowBatch { rows, dim } = self.batch;
+        let gates = self.gate.chunks(dim);
         let out = self
             .input
             .chunks(dim)
-            .flat_map(|row| {
+            .zip(gates)
+            .flat_map(|(row, gates)| {
+                let row: Vec<f32> = match gate {
+                    Some(GateOrder::GateThenNorm) => {
+                        row.iter().zip(gates).map(|(x, z)| x * silu(*z)).collect()
+                    }
+                    Some(GateOrder::NormThenGate) | None => row.to_vec(),
+                };
                 let mean = row.iter().map(|x| x * x).sum::<f32>() / dim as f32;
                 let factor = 1.0 / (mean + EPSILON).sqrt();
-                row.iter()
+                let after = match gate {
+                    Some(GateOrder::NormThenGate) => gates.iter().map(|z| silu(*z)).collect(),
+                    Some(GateOrder::GateThenNorm) | None => vec![1.0; dim],
+                };
+                row.into_iter()
                     .zip(&self.weight)
-                    .map(move |(x, w)| x * factor * w)
+                    .zip(after)
+                    .map(move |((x, w), g)| x * factor * w * g)
+                    .collect::<Vec<_>>()
             })
             .collect();
         HostData::row_major(HostDataVec::F32(out), shape![1, rows, dim])
@@ -62,10 +90,12 @@ pub(crate) struct RmsNorm {
     pub hw: Hardware,
 }
 
-/// Rows of `element`, `dim` wide, normalized by the microkernel `settings` pick.
+/// Rows read and written at `elements`, `dim` wide, gated as `gate` says and normalized by the
+/// microkernel `settings` pick.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RmsNormCase {
-    pub element: ElemType,
+    pub elements: RmsNormElements,
+    pub gate: Option<GateOrder>,
     pub batch: RowBatch,
     pub settings: RmsNormSettings,
 }
@@ -78,12 +108,42 @@ impl RmsNormCase {
             .flat_map(|settings| {
                 [F16, F32].into_iter().flat_map(move |element| {
                     SHAPES.map(|(rows, dim)| Self {
-                        element,
+                        elements: RmsNormElements {
+                            input: element,
+                            output: element,
+                        },
+                        gate: None,
                         batch: RowBatch { rows, dim },
                         settings,
                     })
                 })
             })
+            .collect()
+    }
+
+    /// `f16` rows gated before the norm and after it, written in `f16` and in `f32`, at each of
+    /// `settings`: the row held wider than it is read, and the output wider than the input.
+    pub(crate) fn gated_and_widened(
+        settings: impl IntoIterator<Item = RmsNormSettings>,
+    ) -> Vec<Self> {
+        let gates = [
+            None,
+            Some(GateOrder::GateThenNorm),
+            Some(GateOrder::NormThenGate),
+        ];
+        settings
+            .into_iter()
+            .flat_map(|settings| {
+                gates.into_iter().flat_map(move |gate| {
+                    [F16, F32].map(|output| Self {
+                        elements: RmsNormElements { input: F16, output },
+                        gate,
+                        batch: GATED_SHAPE,
+                        settings,
+                    })
+                })
+            })
+            .filter(|case| case.gate.is_some() || case.elements.output == F32)
             .collect()
     }
 }
@@ -93,7 +153,13 @@ impl RmsNorm {
     ///
     /// Why the device runs no RMS norm microkernel at `case`.
     fn launch_at(&self, case: &RmsNormCase) -> Result<RmsNormLaunch, Refusal> {
-        RmsNormLaunch::new(&self.hw, case.element, case.batch, &case.settings)
+        RmsNormLaunch::new(
+            &self.hw,
+            case.elements,
+            case.gate,
+            case.batch,
+            &case.settings,
+        )
     }
 }
 
@@ -103,22 +169,28 @@ impl ScopeUnderTest for RmsNorm {
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
         let launch = self.launch_at(case)?;
         let host = HostRmsNorm::new(case.batch);
-        let tensor = |values: Vec<f32>, shape| {
+        let tensor = |values: Vec<f32>, element, shape| {
             TestInput::builder(client.clone(), shape)
-                .dtype(case.element)
+                .dtype(element)
                 .custom(values)
                 .generate_without_host_data()
         };
-        let input = tensor(host.input, shape![1, case.batch.rows, case.batch.dim]);
-        let weight = tensor(host.weight, shape![case.batch.dim]);
+        let (rows, dim) = (case.batch.rows, case.batch.dim);
+        let input = tensor(host.input, case.elements.input, shape![1, rows, dim]);
+        let weight = tensor(host.weight, case.elements.input, shape![dim]);
+        let gate = case
+            .gate
+            .map(|_| tensor(host.gate, case.elements.input, shape![1, rows, dim]));
         let out = tensor(
-            vec![-7.0; case.batch.rows * case.batch.dim],
-            shape![1, case.batch.rows, case.batch.dim],
+            vec![-7.0; rows * dim],
+            case.elements.output,
+            shape![1, rows, dim],
         );
         launch.launch(
             client,
             input.binding().into_tensor_arg(),
             weight.binding().into_tensor_arg(),
+            gate.map(|gate| gate.binding().into_tensor_arg()),
             out.clone().binding().into_tensor_arg(),
             EPSILON,
         )?;
@@ -130,12 +202,12 @@ impl ScopeUnderTest for RmsNorm {
     }
 
     fn reference(&self, case: &Self::Case) -> Vec<HostData> {
-        vec![HostRmsNorm::new(case.batch).out()]
+        vec![HostRmsNorm::new(case.batch).out(case.gate)]
     }
 
     /// The output's own rounding: `f16` keeps ten bits.
     fn tolerance(&self, case: &Self::Case) -> f32 {
-        match case.element {
+        match case.elements.output {
             F32 => 1e-4,
             _ => 4e-3,
         }

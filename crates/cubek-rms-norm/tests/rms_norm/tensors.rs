@@ -3,6 +3,7 @@
 use cubek_microkernel::rms_norm::GateOrder;
 use cubek_rms_norm::kernels::{RmsNormCall, RmsNormGate, RmsNormTensors};
 use cubek_std::Hardware;
+use cubek_test_utils::{TestOutcome, ValidationResult};
 
 use crate::rms_norm::{EPSILON, F16, Run, view};
 
@@ -17,6 +18,10 @@ fn an_aligned_gate_slice_is_not_copied() {
         order: Some(GateOrder::GateThenNorm),
     };
     if !run.runs_on(&client) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "the device does not run f16".to_string(),
+        ))
+        .enforce();
         return;
     }
     let (rows, dim) = (5, 1024);

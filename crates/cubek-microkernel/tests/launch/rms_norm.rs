@@ -1,7 +1,8 @@
 //! The RMS norm microkernels on their work item: `rows` rows of `dim`, each normalized by its own
 //! root mean square and scaled by one weight row, `out = x / rms(x) · γ`. A plane takes a row, a
 //! cube one row across its planes, a cube of groups one row a group; every output is written
-//! straight into a plain output.
+//! straight into a plain output. A gate multiplies by `silu(gate)` the row before the norm or its
+//! output after it, and the output may be written at another element than the input's.
 
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
@@ -15,7 +16,9 @@ use cubek_microkernel::rms_norm::cube::{
 use cubek_microkernel::rms_norm::plane::{
     PlaneRmsNormMicrokernel, PlaneRmsNormMicrokernelSettings, plane_rms_norm_microkernel,
 };
-use cubek_microkernel::rms_norm::{B, D, R, RmsNormPartitioning, RmsNormScale, RmsNormWorkItem};
+use cubek_microkernel::rms_norm::{
+    B, D, Gate, GateOrder, GatedRow, R, RmsNormPartitioning, RmsNormScale, RmsNormWorkItem,
+};
 use cubek_microkernel::row_store::{CubeStage, OwnerLines, RowStore};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
@@ -38,6 +41,13 @@ pub enum RmsNormMicrokernel {
     CubeGroups(CubeGroupsRmsNormMicrokernel),
 }
 
+/// The element a norm reads its input, weight and gate at, and the one it writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RmsNormElements {
+    pub input: ElemType,
+    pub output: ElemType,
+}
+
 /// An RMS norm microkernel ready to launch over `rows` rows.
 #[derive(Debug, Clone, Copy)]
 pub struct RmsNormLaunch {
@@ -47,24 +57,26 @@ pub struct RmsNormLaunch {
 }
 
 impl RmsNormLaunch {
-    /// The RMS norm microkernel `hw` runs at `settings` over `batch`'s rows of `element`.
+    /// The RMS norm microkernel `hw` runs at `settings` over `batch`'s rows, read and written at
+    /// `elements` and gated as `gate` says.
     ///
     /// # Errors
     ///
     /// Why the device runs none.
     pub fn new(
         hw: &Hardware,
-        element: ElemType,
+        elements: RmsNormElements,
+        gate: Option<GateOrder>,
         batch: RowBatch,
         settings: &RmsNormSettings,
     ) -> Result<Self, Refusal> {
         let RowBatch { rows, dim } = batch;
         let item = RmsNormWorkItem {
-            element,
-            output_element: element,
+            element: elements.input,
+            output_element: elements.output,
             dim,
             store: RowStore::Plain,
-            gate: None,
+            gate,
         };
         let microkernel = match settings {
             RmsNormSettings::Plane(settings) => {
@@ -93,8 +105,9 @@ impl RmsNormLaunch {
         }
     }
 
-    /// `out[r, d] = input[r, d] / sqrt(mean_d input[r, d]² + epsilon) · weight[d]`, `input` and
-    /// `out` `[1, rows, dim]` and `weight` `[dim]`, all row-major.
+    /// `out[r, d] = input[r, d] / sqrt(mean_d input[r, d]² + epsilon) · weight[d]`, `input`,
+    /// `gate` where the norm is gated, and `out` `[1, rows, dim]` and `weight` `[dim]`, all
+    /// row-major.
     ///
     /// # Errors
     ///
@@ -104,6 +117,7 @@ impl RmsNormLaunch {
         client: &Client,
         input: TensorArg,
         weight: TensorArg,
+        gate: Option<TensorArg>,
         out: TensorArg,
         epsilon: f32,
     ) -> Result<(), Refusal> {
@@ -143,13 +157,16 @@ impl RmsNormLaunch {
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         let (element, width) = (self.item.element, self.width());
-        let bound =
-            |arg, axes: &[_]| TileTensorLaunch::new(arg, element, width, TileSpec::direct(axes));
+        let (held, written) = (self.item.held_element(), self.item.output_element);
+        let bound = |arg, element, axes: &[_]| {
+            TileTensorLaunch::new(arg, element, width, TileSpec::direct(axes))
+        };
         let (input, weight, out) = (
-            bound(input, &[B, R, D]),
-            bound(weight, &[D]),
-            bound(out, &[B, R, D]),
+            bound(input, element, &[B, R, D]),
+            bound(weight, element, &[D]),
+            bound(out, written, &[B, R, D]),
         );
+        let gate = gate.map(|gate| bound(gate, element, &[B, R, D]));
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles; a plain store stages nothing.
         unsafe {
@@ -161,11 +178,14 @@ impl RmsNormLaunch {
                     width,
                     input,
                     weight,
+                    gate.into(),
                     out,
                     epsilon,
                     launcher.partitioning_arg(),
                     microkernel,
                     element,
+                    held,
+                    written,
                 ),
                 RmsNormMicrokernel::Cube(microkernel) => cube_rms_norm_kernel::launch_unchecked(
                     client,
@@ -174,11 +194,14 @@ impl RmsNormLaunch {
                     width,
                     input,
                     weight,
+                    gate.into(),
                     out,
                     epsilon,
                     launcher.partitioning_arg(),
                     microkernel,
                     element,
+                    held,
+                    written,
                 ),
                 RmsNormMicrokernel::CubeGroups(microkernel) => {
                     cube_groups_rms_norm_kernel::launch_unchecked(
@@ -188,11 +211,14 @@ impl RmsNormLaunch {
                         width,
                         input,
                         weight,
+                        gate.into(),
                         out,
                         epsilon,
                         launcher.partitioning_arg(),
                         microkernel,
                         element,
+                        held,
+                        written,
                     )
                 }
             }
@@ -203,26 +229,28 @@ impl RmsNormLaunch {
 
 /// The one plane normalizing its row.
 #[cube(launch_unchecked)]
-fn plane_rms_norm_kernel<E: Float, N: Size>(
+fn plane_rms_norm_kernel<E: Float, Held: Float, Out: Float, N: Size>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,
+    gate: ComptimeOption<&TileTensor<'static>>,
     out: &TileTensor<'_>,
     epsilon: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneRmsNormMicrokernel,
     #[define(E)] _element: ElemType,
+    #[define(Held)] _held_element: ElemType,
+    #[define(Out)] _output_element: ElemType,
 ) {
-    let (x, w, o) = (
-        input.tile(&partitioning),
-        weight.tile(&partitioning),
-        out.tile(&partitioning),
+    let (w, o) = (weight.tile(&partitioning), out.tile(&partitioning));
+    let gated = GatedRow::new(
+        &input.tile(&partitioning),
+        Gate::bound(gate.map(|gate| gate.tile(&partitioning)), microkernel.gate),
     );
     let scale = RmsNormScale::new(epsilon, microkernel.dim);
     for plane in &partitioning {
         let mut row_out = OwnerLines::window(o.at(&plane));
-        plane_rms_norm_microkernel::<E, E, E, N>(
-            &x.at(&plane),
-            &ComptimeOption::new_None(),
+        plane_rms_norm_microkernel::<E, Held, Out, N>(
+            &gated.at(&plane),
             &w.at(&plane),
             &mut row_out,
             &scale,
@@ -233,26 +261,31 @@ fn plane_rms_norm_kernel<E: Float, N: Size>(
 
 /// Every cube normalizing its row across its planes, written straight into the output.
 #[cube(launch_unchecked)]
-fn cube_rms_norm_kernel<E: Float, N: Size>(
+fn cube_rms_norm_kernel<E: Float, Held: Float, Out: Float, N: Size>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,
+    gate: ComptimeOption<&TileTensor<'static>>,
     out: &TileTensor<'_>,
     epsilon: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeRmsNormMicrokernel,
     #[define(E)] _element: ElemType,
+    #[define(Held)] _held_element: ElemType,
+    #[define(Out)] _output_element: ElemType,
 ) {
-    let (x, w, o) = (
-        input.tile(&partitioning),
-        weight.tile(&partitioning),
-        out.tile(&partitioning),
+    let (w, o) = (weight.tile(&partitioning), out.tile(&partitioning));
+    let gated = GatedRow::new(
+        &input.tile(&partitioning),
+        Gate::bound(
+            gate.map(|gate| gate.tile(&partitioning)),
+            microkernel.plane.gate,
+        ),
     );
     let scale = RmsNormScale::new(epsilon, microkernel.plane.dim);
     for cube in &partitioning {
-        cube_rms_norm_microkernel::<E, E, E, N>(
+        cube_rms_norm_microkernel::<E, Held, Out, N>(
             &cube,
-            &x.at(&cube),
-            &ComptimeOption::new_None(),
+            &gated.at(&cube),
             &w.at(&cube),
             &o.at(&cube),
             &scale,
@@ -264,26 +297,28 @@ fn cube_rms_norm_kernel<E: Float, N: Size>(
 
 /// Every cube normalizing its group's row, written straight into the output.
 #[cube(launch_unchecked)]
-fn cube_groups_rms_norm_kernel<E: Float, N: Size>(
+fn cube_groups_rms_norm_kernel<E: Float, Held: Float, Out: Float, N: Size>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,
+    gate: ComptimeOption<&TileTensor<'static>>,
     out: &TileTensor<'_>,
     epsilon: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeGroupsRmsNormMicrokernel,
     #[define(E)] _element: ElemType,
+    #[define(Held)] _held_element: ElemType,
+    #[define(Out)] _output_element: ElemType,
 ) {
-    let (x, w, o) = (
-        input.tile(&partitioning),
-        weight.tile(&partitioning),
-        out.tile(&partitioning),
+    let (w, o) = (weight.tile(&partitioning), out.tile(&partitioning));
+    let gated = GatedRow::new(
+        &input.tile(&partitioning),
+        Gate::bound(gate.map(|gate| gate.tile(&partitioning)), microkernel.gate),
     );
     let scale = RmsNormScale::new(epsilon, microkernel.dim);
     for cube in &partitioning {
-        cube_groups_rms_norm_microkernel::<E, E, E, N>(
+        cube_groups_rms_norm_microkernel::<E, Held, Out, N>(
             &cube,
-            &x.at(&cube),
-            &ComptimeOption::new_None(),
+            &gated.at(&cube),
             &w.at(&cube),
             &o.at(&cube),
             &scale,

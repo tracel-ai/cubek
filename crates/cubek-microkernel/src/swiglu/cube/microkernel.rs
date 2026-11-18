@@ -36,20 +36,13 @@ pub fn cube_swiglu_microkernel<E: Float, N: Size>(
         for i in 0..microkernel.lines_per_unit() {
             let line = unit + i * units;
             if run_lines.is_multiple_of(units) || line < run_lines {
-                let (gate, up) = (halves.read(line), halves.read(line + run_lines));
-                run_out.write::<E, N>(line, gated::<E, N>(gate, up));
+                let gate = Vector::<f32, N>::cast_from(halves.read(line));
+                let up = Vector::<f32, N>::cast_from(halves.read(line + run_lines));
+                let gated = activation::silu_gated::<N>(up, gate);
+                run_out.write::<E, N>(line, Vector::<E, N>::cast_from(gated));
             }
         }
     }
 
     store.finish();
-}
-
-/// `silu(g) · u` per element of the line, in `f32`.
-#[cube]
-fn gated<E: Float, N: Size>(gate: Vector<E, N>, up: Vector<E, N>) -> Vector<E, N> {
-    Vector::<E, N>::cast_from(activation::gated::<N>(
-        Vector::<f32, N>::cast_from(up),
-        Vector::<f32, N>::cast_from(gate),
-    ))
 }
