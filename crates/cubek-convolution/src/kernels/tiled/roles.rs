@@ -354,10 +354,10 @@ impl ConvRoles {
         ConvAxis::spatial(self.dims)
     }
 
-    /// The axis a kernel leaves to its launch: the batch where it is a free axis, which no
-    /// vectorization or overhang decision reads. The weight backward contracts it, and the tile
-    /// DSL's gather reads the extents of the axes it gathers over at expansion, so it stays
-    /// compiled in.
+    /// The axis a kernel leaves to its launch: the batch where it is a free axis. No vectorization
+    /// decision reads it, and over one spatial dim, where it is the across axis, its overhang is
+    /// read off the problem's own space. The weight backward contracts it, and the tile DSL's
+    /// gather reads the extents of the axes it gathers over at expansion, so it stays compiled in.
     pub fn dynamic(&self) -> Option<Axis> {
         self.free.in_order().contains(&B).then_some(B)
     }
