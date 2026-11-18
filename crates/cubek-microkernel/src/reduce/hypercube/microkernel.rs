@@ -13,7 +13,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// row to `out`, and to `indices` where both halves are written, as the cube's microkernel writes
 /// a row, a mean dividing by `values`, the values the whole row holds.
 ///
-/// `arrivals` holds a counter for every row, at zero; the row's last cube leaves it at zero again.
+/// `arrivals` holds a counter for every row, at zero, which serves this launch alone.
 /// The cube meets on `sync_storage` before it counts, so its partial lands first, and again before
 /// the last cube reads the others'.
 ///
@@ -176,7 +176,6 @@ fn hypercube_reduce<
                 operation,
                 cube_part.item().writes(),
             );
-            arrivals[counter].store(0u32);
         }
     }
 }
