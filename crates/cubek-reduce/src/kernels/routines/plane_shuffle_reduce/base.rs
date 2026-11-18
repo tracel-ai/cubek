@@ -1,6 +1,7 @@
 use super::kernel::{plane_shuffle_reduce_kernel, plane_shuffle_reduce_with_indices_kernel};
 use crate::kernels::{
-    LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
+    BATCH, LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
+    reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -87,16 +88,12 @@ impl Routine for PlaneShuffleReduceRoutine {
             .operation
             .widest_line_at_lane_slots(settings.lane_slots);
         let widths = reduce_widths(hw, problem, vectorization, widest);
-        let owners = problem.owner_dimensions_innermost_first();
-        let innermost = *owners
-            .first()
-            .expect("a problem places its owners along a dimension");
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
                 .launch_planes(
-                    &owners,
-                    PlaneOrder::new(&[(innermost, settings.planes)], CubeOrder::RowMajor),
+                    &[BATCH],
+                    PlaneOrder::new(&[(BATCH, settings.planes)], CubeOrder::RowMajor),
                 )
                 .build(),
         );

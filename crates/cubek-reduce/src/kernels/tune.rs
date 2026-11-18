@@ -56,7 +56,7 @@ impl From<&ReduceRoutineProblem> for ReduceKey {
             problem.indices,
             problem.operation,
             problem.layout(),
-            problem.rows().len(),
+            problem.shape.len().saturating_sub(1),
             problem.reduced_extent(),
             problem.row_count(),
         )

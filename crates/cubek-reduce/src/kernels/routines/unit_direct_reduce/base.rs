@@ -1,6 +1,7 @@
 use super::kernel::{unit_direct_reduce_kernel, unit_direct_reduce_with_indices_kernel};
 use crate::kernels::{
-    LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
+    BATCH, LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
+    reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -92,7 +93,7 @@ impl Routine for UnitDirectReduceRoutine {
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
                 .launch_units(
-                    &problem.owner_dimensions_innermost_first(),
+                    &[BATCH],
                     UnitCube {
                         plane_width,
                         planes: settings.planes,

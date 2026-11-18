@@ -1,6 +1,6 @@
 //! How a reduce launch reads its operands and binds them.
 
-use crate::kernels::{ReduceBlueprint, ReduceElements, ReduceRoutineProblem};
+use crate::kernels::{REDUCED, ReduceBlueprint, ReduceElements, ReduceRoutineProblem, TOP};
 use cubecl::client::Client;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Bound, Refusal, Unbound};
@@ -122,26 +122,32 @@ impl ReduceTensors<TensorBinding> {
             )
         });
         let input = launcher
-            .arg(self.input.clone(), self.problem.elements.input)
-            .dimensions(&self.problem.input_dimensions())
+            .arg(
+                self.problem.fold(self.input.clone()),
+                self.problem.elements.input,
+            )
+            .dimensions(&self.problem.dimensions(REDUCED))
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
         let out = launcher
-            .arg(self.out.clone(), self.problem.elements.out)
-            .dimensions(&self.problem.out_dimensions())
+            .arg(
+                self.problem.fold(self.out.clone()),
+                self.problem.elements.out,
+            )
+            .dimensions(&self.problem.dimensions(TOP))
             .vectorize(blueprint.out_width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
         let indices = self.indices.as_ref().map(|indices| {
             launcher
                 .arg(
-                    indices.clone(),
+                    self.problem.fold(indices.clone()),
                     self.problem
                         .indices
                         .expect("indices beside the values have an element"),
                 )
-                .dimensions(&self.problem.out_dimensions())
+                .dimensions(&self.problem.dimensions(TOP))
                 .vectorize(blueprint.out_width)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)
@@ -198,14 +204,17 @@ impl ReduceTensors<Geometry> {
             )
         });
         let input = launcher
-            .unbound(&self.input)
-            .dimensions(&self.problem.input_dimensions())
+            .unbound(&self.problem.fold_geometry(&self.input))
+            .dimensions(&self.problem.dimensions(REDUCED))
             .vectorize(blueprint.width)
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);
         let out = launcher
-            .arg(self.out.clone(), self.problem.elements.out)
-            .dimensions(&self.problem.out_dimensions())
+            .arg(
+                self.problem.fold(self.out.clone()),
+                self.problem.elements.out,
+            )
+            .dimensions(&self.problem.dimensions(TOP))
             .vectorize(blueprint.out_width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
