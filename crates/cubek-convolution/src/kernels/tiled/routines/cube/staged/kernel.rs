@@ -1,4 +1,4 @@
-use cubecl::tile::{Partitioning, Scratch, StageStorage, TileTensor};
+use cubecl::tile::{Partitioning, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeStagedWalk, cube_staged_microkernel};
 
@@ -23,11 +23,6 @@ pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric>(
     let out = out.tile(&partitioning);
 
     for cube in &partitioning {
-        // Lets the window reuse the stages' bytes; safe while the trip count is uniform over the
-        // cube.
-        if walk.scratch != Scratch::None {
-            sync_cube();
-        }
         cube_staged_microkernel::<EA>(
             cube.walk(),
             &input.at(&cube),
