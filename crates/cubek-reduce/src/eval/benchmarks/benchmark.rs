@@ -9,13 +9,14 @@ use cubecl::{
 };
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::components::instructions::ReduceOperationConfig;
+use crate::ReduceOperation;
 use crate::eval::benchmarks::correctness::ReduceCorrectness;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
-use crate::eval::cpu_reference::ReduceEntry;
+use crate::eval::cpu_reference::{accumulation_dtype, output_dtype_for};
+use crate::kernels::{self, ReduceElements, ReduceOpStrategy};
 
 pub fn bench(
-    strategy: &ReduceEntry,
+    strategy: &ReduceOpStrategy,
     problem: &ReduceProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
@@ -27,10 +28,10 @@ pub fn bench(
     let bench = ReduceBench {
         shape: problem.shape.clone(),
         axis: problem.axis,
-        config: problem.config,
+        operation: problem.operation,
         kind: problem.kind,
         value_dtype: problem.precision.dtype(),
-        strategy: strategy.clone(),
+        strategy: *strategy,
         device,
         client,
         samples: num_samples,
@@ -49,20 +50,17 @@ pub fn bench(
 }
 
 /// The pair of single-output configs a caller runs today to get both halves of
-/// `config`.
-fn two_launch_configs(
-    config: ReduceOperationConfig,
-) -> (ReduceOperationConfig, ReduceOperationConfig) {
-    match config {
-        ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k) => (
-            ReduceOperationConfig::TopK(k),
-            ReduceOperationConfig::ArgTopK(k),
-        ),
-        ReduceOperationConfig::Max | ReduceOperationConfig::ArgMax => {
-            (ReduceOperationConfig::Max, ReduceOperationConfig::ArgMax)
+/// `operation`.
+fn two_launch_operations(operation: ReduceOperation) -> (ReduceOperation, ReduceOperation) {
+    match operation {
+        ReduceOperation::TopK { k } | ReduceOperation::ArgTopK { k } => {
+            (ReduceOperation::TopK { k }, ReduceOperation::ArgTopK { k })
         }
-        ReduceOperationConfig::Min | ReduceOperationConfig::ArgMin => {
-            (ReduceOperationConfig::Min, ReduceOperationConfig::ArgMin)
+        ReduceOperation::Max | ReduceOperation::ArgMax => {
+            (ReduceOperation::Max, ReduceOperation::ArgMax)
+        }
+        ReduceOperation::Min | ReduceOperation::ArgMin => {
+            (ReduceOperation::Min, ReduceOperation::ArgMin)
         }
         other => panic!("{other:?} has no values/indices pair to compare"),
     }
@@ -122,13 +120,36 @@ impl InputOrder {
 struct ReduceBench {
     shape: Vec<usize>,
     axis: usize,
-    config: ReduceOperationConfig,
+    operation: ReduceOperation,
     kind: ReduceBenchKind,
     value_dtype: ElemType,
-    strategy: ReduceEntry,
+    strategy: ReduceOpStrategy,
     device: cubecl::Device,
     client: Client,
     samples: usize,
+}
+
+impl ReduceBench {
+    /// `input` reduced into `out` by `operation`, in `elements`, at this bench's strategy.
+    fn reduce(
+        &self,
+        input: TensorHandle,
+        out: TensorHandle,
+        operation: ReduceOperation,
+        elements: ReduceElements,
+    ) -> Result<(), String> {
+        kernels::reduce(
+            &self.client,
+            &self.device,
+            input.binding(),
+            out.binding(),
+            self.axis,
+            self.strategy,
+            operation,
+            elements,
+        )
+        .map_err(|err| format!("{err}"))
+    }
 }
 
 impl Benchmark for ReduceBench {
@@ -141,7 +162,7 @@ impl Benchmark for ReduceBench {
     fn prepare(&self) -> Self::Input {
         let client = self.device.client();
         let elem = self.value_dtype;
-        let output_elem = crate::eval::cpu_reference::output_dtype_for(&self.config, elem);
+        let output_elem = output_dtype_for(self.operation, elem);
 
         let builder =
             TestInput::builder(client.clone(), Shape::from(self.shape.clone())).dtype(elem);
@@ -151,12 +172,7 @@ impl Benchmark for ReduceBench {
         }
         .generate_without_host_data();
         let mut shape_out = self.shape.clone();
-        let reduce_len = match self.config {
-            ReduceOperationConfig::ArgTopK(len) => len,
-            ReduceOperationConfig::TopK(len) => len,
-            _ => 1,
-        };
-        shape_out[self.axis] = reduce_len;
+        shape_out[self.axis] = self.operation.written_per_row();
         let out = TensorHandle::empty(&client, shape_out.clone(), output_elem);
         let indices = TensorHandle::empty(&client, shape_out, u32::elem_type_native());
 
@@ -166,78 +182,39 @@ impl Benchmark for ReduceBench {
     fn execute(&self, (input, out, indices): Self::Input) -> Result<(), String> {
         let value_dtype = self.value_dtype;
         let index_dtype = u32::elem_type_native();
-        let acc_dtype = crate::eval::cpu_reference::accumulation_dtype();
+        let elements = |out: ElemType| ReduceElements {
+            input: value_dtype,
+            accumulator: accumulation_dtype(),
+            out,
+        };
 
         match self.kind {
-            ReduceBenchKind::Single => {
-                let output_dtype =
-                    crate::eval::cpu_reference::output_dtype_for(&self.config, value_dtype);
-                self.strategy
-                    .reduce(
-                        &self.client,
-                        input.binding(),
-                        out.binding(),
-                        self.axis,
-                        self.config,
-                        crate::ReduceDtypes {
-                            input: value_dtype,
-                            output: output_dtype,
-                            accumulation: acc_dtype,
-                        },
-                    )
-                    .map_err(|err| format!("{err}"))?;
-            }
-            // What a caller needing both halves does today: run the whole
+            ReduceBenchKind::Single => self.reduce(
+                input,
+                out,
+                self.operation,
+                elements(output_dtype_for(self.operation, value_dtype)),
+            )?,
+            // What a caller needing both halves does without the fused launch: run the whole
             // reduction twice, discarding half of each result.
             ReduceBenchKind::TwoLaunch => {
-                let (values_config, indices_config) = two_launch_configs(self.config);
-                self.strategy
-                    .reduce(
-                        &self.client,
-                        input.clone().binding(),
-                        out.binding(),
-                        self.axis,
-                        values_config,
-                        crate::ReduceDtypes {
-                            input: value_dtype,
-                            output: value_dtype,
-                            accumulation: acc_dtype,
-                        },
-                    )
-                    .map_err(|err| format!("{err}"))?;
-                self.strategy
-                    .reduce(
-                        &self.client,
-                        input.binding(),
-                        indices.binding(),
-                        self.axis,
-                        indices_config,
-                        crate::ReduceDtypes {
-                            input: value_dtype,
-                            output: index_dtype,
-                            accumulation: acc_dtype,
-                        },
-                    )
-                    .map_err(|err| format!("{err}"))?;
+                let (values_operation, indices_operation) = two_launch_operations(self.operation);
+                self.reduce(input.clone(), out, values_operation, elements(value_dtype))?;
+                self.reduce(input, indices, indices_operation, elements(index_dtype))?;
             }
-            ReduceBenchKind::Fused => {
-                self.strategy
-                    .reduce_with_indices(
-                        &self.client,
-                        input.binding(),
-                        out.binding(),
-                        indices.binding(),
-                        self.axis,
-                        self.config,
-                        crate::ReduceWithIndicesDtypes {
-                            input: value_dtype,
-                            values: value_dtype,
-                            indices: index_dtype,
-                            accumulation: acc_dtype,
-                        },
-                    )
-                    .map_err(|err| format!("{err}"))?;
-            }
+            ReduceBenchKind::Fused => kernels::reduce_with_indices(
+                &self.client,
+                &self.device,
+                input.binding(),
+                out.binding(),
+                indices.binding(),
+                self.axis,
+                self.strategy,
+                self.operation,
+                elements(value_dtype),
+                index_dtype,
+            )
+            .map_err(|err| format!("{err}"))?,
         }
 
         Ok(())
@@ -254,19 +231,14 @@ impl Benchmark for ReduceBench {
     }
 
     fn name(&self) -> String {
-        // Only the tile runs are named apart, so today's keep the names saved runs know them by.
-        let strategy = match &self.strategy {
-            ReduceEntry::Kernels(strategy) => format!("{strategy:?}"),
-            ReduceEntry::Tiles(strategy) => strategy.name().to_string(),
-            ReduceEntry::SharedSum(cubes) => format!("shared-sum-{cubes}"),
-        };
-        let entry = match self.strategy {
-            ReduceEntry::Kernels(_) | ReduceEntry::SharedSum(_) => "",
-            ReduceEntry::Tiles(_) => "-tiles",
-        };
         format!(
-            "reduce-axis({})-{}-{:?}-{strategy}-{:?}-{:?}{entry}",
-            self.axis, self.value_dtype, self.shape, self.config, self.kind,
+            "reduce-axis({})-{}-{:?}-{}-{:?}-{:?}",
+            self.axis,
+            self.value_dtype,
+            self.shape,
+            self.strategy.name(),
+            self.operation,
+            self.kind,
         )
         .to_lowercase()
     }

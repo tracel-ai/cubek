@@ -13,15 +13,14 @@ pub use strategy::strategies;
 use cubecl::benchmark::TimingMethod;
 use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
-use crate::eval::cpu_reference::{ReduceEntry, accumulation_dtype, output_dtype_for};
-use crate::launch::ReduceDtypes;
-use crate::routines::ReduceCost;
+use crate::eval::cpu_reference::{accumulation_dtype, output_dtype_for};
+use crate::kernels::ReduceOpStrategy;
 
 pub struct Category;
 
 impl cubek_test_utils::Category for Category {
     type Problem = ReduceProblem;
-    type Strategy = ReduceEntry;
+    type Strategy = ReduceOpStrategy;
 
     fn id(&self) -> &'static str {
         "reduce"
@@ -35,13 +34,13 @@ impl cubek_test_utils::Category for Category {
         problems()
     }
 
-    fn strategies(&self) -> Vec<CatalogEntry<ReduceEntry>> {
+    fn strategies(&self) -> Vec<CatalogEntry<ReduceOpStrategy>> {
         strategies()
     }
 
     fn bench(
         &self,
-        strategy: &ReduceEntry,
+        strategy: &ReduceOpStrategy,
         problem: &ReduceProblem,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
@@ -54,28 +53,20 @@ impl cubek_test_utils::Category for Category {
 
     fn correctness(
         &self,
-    ) -> Option<&dyn cubek_test_utils::Correctness<Problem = ReduceProblem, Strategy = ReduceEntry>>
-    {
+    ) -> Option<
+        &dyn cubek_test_utils::Correctness<Problem = ReduceProblem, Strategy = ReduceOpStrategy>,
+    > {
         Some(&ReduceCorrectness)
     }
 
-    /// Scaled by the passes the harness makes over the cost model: a two-launch
-    /// reduction reads and writes twice, which is the harness's doing.
+    /// Every value read once and accumulated once, every cell written once, scaled by the passes
+    /// the harness makes: a two-launch reduction reads and writes twice, which is the harness's
+    /// doing.
     fn work(&self, problem: &ReduceProblem) -> Option<CategoryWork> {
         let value_dtype = problem.precision.dtype();
-        let input_elems: usize = problem.shape.iter().product();
-        let reduce_len = problem.shape[problem.axis];
-
-        let cost = ReduceCost {
-            reduce_len,
-            reduce_count: input_elems / reduce_len,
-            instruction: problem.config,
-            dtypes: ReduceDtypes {
-                input: value_dtype,
-                output: output_dtype_for(&problem.config, value_dtype),
-                accumulation: accumulation_dtype(),
-            },
-        };
+        let values: usize = problem.shape.iter().product();
+        let cells = values / problem.shape[problem.axis] * problem.operation.written_per_row();
+        let out_dtype = output_dtype_for(problem.operation, value_dtype);
 
         let (read_passes, write_passes) = match problem.kind {
             ReduceBenchKind::Single => (1, 1),
@@ -83,15 +74,10 @@ impl cubek_test_utils::Category for Category {
             ReduceBenchKind::Fused => (1, 2),
         };
 
-        let (bytes_read, bytes_written) = cost.traffic();
-
         Some(CategoryWork {
-            compute: Some(ComputeWork {
-                ops: cost.compute_ops(),
-                key: cost.compute_key(),
-            }),
-            bytes_read: read_passes * bytes_read,
-            bytes_written: write_passes * bytes_written,
+            compute: Some(ComputeWork::direct(values, accumulation_dtype())),
+            bytes_read: read_passes * values * value_dtype.size(),
+            bytes_written: write_passes * cells * out_dtype.size(),
         })
     }
 }

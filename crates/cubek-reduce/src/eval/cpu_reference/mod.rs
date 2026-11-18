@@ -1,8 +1,8 @@
 //! CPU reference and seeded "produce a HostData" primitives for reduce.
 //!
 //! Both [`strategy_result`] and [`cpu_reference_result`] build the same input
-//! bits from `(input, shape, axis, config)` so the two `HostData`s they return
-//! are directly comparable for the same `axis`/`config`.
+//! bits from `(input, shape, axis, operation)` so the two `HostData`s they return
+//! are directly comparable for the same `axis`/`operation`.
 
 mod all;
 mod any;
@@ -40,11 +40,8 @@ use cubek_test_utils::{
     launch_and_capture_outcome,
 };
 
-use crate::{
-    ReduceDtypes, ReduceError, ReduceStrategy, ReduceWithIndicesDtypes,
-    components::instructions::ReduceOperationConfig, kernels, launch::RoutineStrategy, reduce,
-    reduce_with_indices,
-};
+use crate::ReduceOperation;
+use crate::kernels::{self, ReduceElements, ReduceOpStrategy};
 
 /// The bits a comparison runs on: the kernel launch and the CPU reference each
 /// build their input from this alone, so the two see the same values.
@@ -108,137 +105,18 @@ fn ramp(elems: usize) -> Vec<f32> {
 /// the accumulating ones round, and over tens of millions of f32 elements some
 /// kernels accumulate noticeable noise; tightening those belongs in the
 /// per-routine integration tests.
-pub fn comparison_epsilon(config: ReduceOperationConfig) -> f32 {
-    match config {
-        ReduceOperationConfig::Sum | ReduceOperationConfig::Mean | ReduceOperationConfig::Prod => {
-            1.0
-        }
-        ReduceOperationConfig::Max
-        | ReduceOperationConfig::Min
-        | ReduceOperationConfig::MaxAbs
-        | ReduceOperationConfig::ArgMax
-        | ReduceOperationConfig::ArgMin
-        | ReduceOperationConfig::TopK(_)
-        | ReduceOperationConfig::ArgTopK(_)
-        | ReduceOperationConfig::Any
-        | ReduceOperationConfig::All => 0.0,
-    }
-}
-
-/// What the suite and the benchmarks launch: today's kernels at an old [`ReduceStrategy`], or the
-/// tile routines ([`kernels`]) at a [`ReduceOpStrategy`](kernels::ReduceOpStrategy).
-#[derive(Debug, Clone)]
-pub enum ReduceEntry {
-    Kernels(ReduceStrategy),
-    Tiles(kernels::ReduceOpStrategy),
-    /// Today's whole-tensor sum in one launch ([`shared_sum`](crate::shared_sum)) over that many
-    /// cubes, which adds into an output of one value: for measuring the atomic hypercube against.
-    SharedSum(u32),
-}
-
-/// Why [`ReduceEntry::SharedSum`] refuses anything but a whole tensor summed into one value.
-const SHARED_SUM_SUMS_A_WHOLE_TENSOR: ReduceError = ReduceError::Validation {
-    details: "shared_sum sums a whole tensor into one value, and writes no indices",
-};
-
-/// Today's kernels at `strategy`, or, when `CUBEK_REDUCE_ON_TILES` is set, the tile strategy
-/// standing for it: the unit kernel, the plane kernel, or for the cube the rule, which reaches the
-/// cube and the hypercube.
-impl From<ReduceStrategy> for ReduceEntry {
-    fn from(strategy: ReduceStrategy) -> Self {
-        if std::env::var_os("CUBEK_REDUCE_ON_TILES").is_none() {
-            return ReduceEntry::Kernels(strategy);
-        }
-        ReduceEntry::Tiles(match strategy.routine {
-            RoutineStrategy::Unit(_) => {
-                kernels::ReduceOpStrategy::Specific(kernels::ReduceKernel::Unit)
-            }
-            RoutineStrategy::Plane(_) => {
-                kernels::ReduceOpStrategy::Specific(kernels::ReduceKernel::PlaneShuffle)
-            }
-            RoutineStrategy::Cube(_) => {
-                kernels::ReduceOpStrategy::Heuristic(kernels::ReduceKernelHeuristic::Tile)
-            }
-        })
-    }
-}
-
-impl ReduceEntry {
-    /// [`reduce`], or [`kernels::reduce`] on the test device.
-    pub fn reduce(
-        &self,
-        client: &Client,
-        input: TensorBinding,
-        output: TensorBinding,
-        axis: usize,
-        operation: ReduceOperationConfig,
-        dtypes: ReduceDtypes,
-    ) -> Result<(), ReduceError> {
-        match self {
-            ReduceEntry::Kernels(strategy) => reduce(
-                client,
-                input,
-                output,
-                axis,
-                strategy.clone(),
-                operation,
-                dtypes,
-            ),
-            ReduceEntry::Tiles(strategy) => kernels::reduce(
-                client,
-                &cubecl::test_device(),
-                input,
-                output,
-                axis,
-                *strategy,
-                operation,
-                dtypes,
-            ),
-            ReduceEntry::SharedSum(cubes) => match (operation, output.shape.iter().product()) {
-                (ReduceOperationConfig::Sum, 1usize) => {
-                    crate::shared_sum(client, input, output, *cubes, dtypes.input)
-                }
-                _ => Err(SHARED_SUM_SUMS_A_WHOLE_TENSOR),
-            },
-        }
-    }
-
-    /// [`reduce_with_indices`], or [`kernels::reduce_with_indices`] on the test device.
-    #[allow(clippy::too_many_arguments)]
-    pub fn reduce_with_indices(
-        &self,
-        client: &Client,
-        input: TensorBinding,
-        values: TensorBinding,
-        indices: TensorBinding,
-        axis: usize,
-        operation: ReduceOperationConfig,
-        dtypes: ReduceWithIndicesDtypes,
-    ) -> Result<(), ReduceError> {
-        match self {
-            ReduceEntry::Kernels(strategy) => reduce_with_indices(
-                client,
-                input,
-                values,
-                indices,
-                axis,
-                strategy.clone(),
-                operation,
-                dtypes,
-            ),
-            ReduceEntry::Tiles(strategy) => kernels::reduce_with_indices(
-                client,
-                &cubecl::test_device(),
-                input,
-                values,
-                indices,
-                axis,
-                *strategy,
-                operation,
-                dtypes,
-            ),
-            ReduceEntry::SharedSum(_) => Err(SHARED_SUM_SUMS_A_WHOLE_TENSOR),
-        }
+pub fn comparison_epsilon(operation: ReduceOperation) -> f32 {
+    match operation {
+        ReduceOperation::Sum | ReduceOperation::Mean | ReduceOperation::Prod => 1.0,
+        ReduceOperation::Max
+        | ReduceOperation::Min
+        | ReduceOperation::MaxAbs
+        | ReduceOperation::ArgMax
+        | ReduceOperation::ArgMin
+        | ReduceOperation::TopK { .. }
+        | ReduceOperation::ArgTopK { .. }
+        | ReduceOperation::Any
+        | ReduceOperation::All => 0.0,
     }
 }
 
@@ -247,42 +125,42 @@ pub fn strategy_result(
     client: Client,
     shape: Vec<usize>,
     axis: usize,
-    strategy: impl Into<ReduceEntry>,
-    config: ReduceOperationConfig,
+    strategy: ReduceOpStrategy,
+    operation: ReduceOperation,
     input: ReduceInput,
 ) -> Result<HostData, String> {
-    let entry = strategy.into();
     let input_dtype = input.dtype;
-    let output_dtype = output_dtype_for(&config, input_dtype);
+    let output_dtype = output_dtype_for(operation, input_dtype);
     let accumulation_dtype = accumulation_dtype();
 
     let input_handle = input
         .tensor(client.clone(), shape.clone())
         .generate_without_host_data();
 
-    let out_shape = output_shape_for(&shape, axis, &config);
+    let out_shape = output_shape_for(&shape, axis, operation);
     let output_handle = TestInput::builder(client.clone(), out_shape)
         .dtype(output_dtype)
         .zeros()
         .generate_without_host_data();
 
-    let dtypes = ReduceDtypes {
+    let elements = ReduceElements {
         input: input_dtype,
-        output: output_dtype,
-        accumulation: accumulation_dtype,
+        accumulator: accumulation_dtype,
+        out: output_dtype,
     };
 
     let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-        entry
-            .reduce(
-                c,
-                input_handle.clone().binding(),
-                output_handle.clone().binding(),
-                axis,
-                config,
-                dtypes,
-            )
-            .into()
+        kernels::reduce(
+            c,
+            &cubecl::test_device(),
+            input_handle.clone().binding(),
+            output_handle.clone().binding(),
+            axis,
+            strategy,
+            operation,
+            elements,
+        )
+        .into()
     });
 
     match outcome {
@@ -305,11 +183,10 @@ pub fn strategy_result_with_indices(
     client: Client,
     shape: Vec<usize>,
     axis: usize,
-    strategy: impl Into<ReduceEntry>,
-    config: ReduceOperationConfig,
+    strategy: ReduceOpStrategy,
+    operation: ReduceOperation,
     input: ReduceInput,
 ) -> Result<HostData, String> {
-    let entry = strategy.into();
     let input_dtype = input.dtype;
     let index_dtype = u32::elem_type_native();
     let accumulation_dtype = accumulation_dtype();
@@ -318,7 +195,7 @@ pub fn strategy_result_with_indices(
         .tensor(client.clone(), shape.clone())
         .generate_without_host_data();
 
-    let out_shape = output_shape_for(&shape, axis, &config);
+    let out_shape = output_shape_for(&shape, axis, operation);
     let values_handle = TestInput::builder(client.clone(), out_shape.clone())
         .dtype(input_dtype)
         .zeros()
@@ -328,28 +205,29 @@ pub fn strategy_result_with_indices(
         .zeros()
         .generate_without_host_data();
 
-    let dtypes = ReduceWithIndicesDtypes {
+    let elements = ReduceElements {
         input: input_dtype,
-        values: input_dtype,
-        indices: index_dtype,
-        accumulation: accumulation_dtype,
+        accumulator: accumulation_dtype,
+        out: input_dtype,
     };
 
     let outcome = launch_and_capture_outcome(
         &client,
         &[&values_handle.handle, &indices_handle.handle],
         |c| {
-            entry
-                .reduce_with_indices(
-                    c,
-                    input_handle.clone().binding(),
-                    values_handle.clone().binding(),
-                    indices_handle.clone().binding(),
-                    axis,
-                    config,
-                    dtypes,
-                )
-                .into()
+            kernels::reduce_with_indices(
+                c,
+                &cubecl::test_device(),
+                input_handle.clone().binding(),
+                values_handle.clone().binding(),
+                indices_handle.clone().binding(),
+                axis,
+                strategy,
+                operation,
+                elements,
+                index_dtype,
+            )
+            .into()
         },
     );
 
@@ -370,12 +248,12 @@ pub fn cpu_reference_result(
     client: Client,
     shape: Vec<usize>,
     axis: usize,
-    config: ReduceOperationConfig,
+    operation: ReduceOperation,
     input: ReduceInput,
     progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     if let Some(p) = progress {
-        let out_shape = output_shape_for(&shape, axis, &config);
+        let out_shape = output_shape_for(&shape, axis, operation);
         let total: usize = out_shape.iter().product();
         p.set_total(total as u64);
     }
@@ -384,54 +262,56 @@ pub fn cpu_reference_result(
     // tensor ended up holding rather than what the generator was handed.
     let (_input_handle, input_host) = input.tensor(client, shape).generate_with_f32_host_data();
 
-    Ok(reference_for_config(&input_host, axis, config, progress))
+    Ok(reference_for_operation(
+        &input_host,
+        axis,
+        operation,
+        progress,
+    ))
 }
 
-fn reference_for_config(
+fn reference_for_operation(
     input: &HostData,
     axis: usize,
-    config: ReduceOperationConfig,
+    operation: ReduceOperation,
     progress: Option<&Progress>,
 ) -> HostData {
-    match config {
-        ReduceOperationConfig::Sum => reference_sum(input, axis, progress),
-        ReduceOperationConfig::Mean => reference_mean(input, axis, progress),
-        ReduceOperationConfig::Prod => reference_prod(input, axis, progress),
-        ReduceOperationConfig::Min => reference_min(input, axis, progress),
-        ReduceOperationConfig::Max => reference_max(input, axis, progress),
-        ReduceOperationConfig::MaxAbs => reference_max_abs(input, axis, progress),
-        ReduceOperationConfig::ArgMax => reference_argmax(input, axis, progress),
-        ReduceOperationConfig::ArgMin => reference_argmin(input, axis, progress),
-        ReduceOperationConfig::ArgTopK(k) => reference_argtopk(input, axis, k, progress),
-        ReduceOperationConfig::TopK(k) => reference_topk(input, axis, k, progress),
-        ReduceOperationConfig::Any => reference_any(input, axis, progress),
-        ReduceOperationConfig::All => reference_all(input, axis, progress),
+    match operation {
+        ReduceOperation::Sum => reference_sum(input, axis, progress),
+        ReduceOperation::Mean => reference_mean(input, axis, progress),
+        ReduceOperation::Prod => reference_prod(input, axis, progress),
+        ReduceOperation::Min => reference_min(input, axis, progress),
+        ReduceOperation::Max => reference_max(input, axis, progress),
+        ReduceOperation::MaxAbs => reference_max_abs(input, axis, progress),
+        ReduceOperation::ArgMax => reference_argmax(input, axis, progress),
+        ReduceOperation::ArgMin => reference_argmin(input, axis, progress),
+        ReduceOperation::ArgTopK { k } => reference_argtopk(input, axis, k, progress),
+        ReduceOperation::TopK { k } => reference_topk(input, axis, k, progress),
+        ReduceOperation::Any => reference_any(input, axis, progress),
+        ReduceOperation::All => reference_all(input, axis, progress),
     }
 }
 
 /// Number of progress bumps the reduce reference will produce: one per output
 /// cell.
-pub fn cpu_reference_total(shape: &[usize], axis: usize, config: &ReduceOperationConfig) -> u64 {
-    let out_shape = output_shape_for(shape, axis, config);
+pub fn cpu_reference_total(shape: &[usize], axis: usize, operation: ReduceOperation) -> u64 {
+    let out_shape = output_shape_for(shape, axis, operation);
     out_shape.iter().product::<usize>() as u64
 }
 
-fn output_shape_for(shape: &[usize], axis: usize, config: &ReduceOperationConfig) -> Vec<usize> {
+fn output_shape_for(shape: &[usize], axis: usize, operation: ReduceOperation) -> Vec<usize> {
     let mut out = shape.to_vec();
-    out[axis] = match config {
-        ReduceOperationConfig::ArgTopK(k) | ReduceOperationConfig::TopK(k) => *k,
-        _ => 1,
-    };
+    out[axis] = operation.written_per_row();
     out
 }
 
-/// What a `reduce` of `config` writes: a coordinate for the `Arg*` family, the
+/// What a `reduce` of `operation` writes: a coordinate for the `Arg*` family, the
 /// input's own element type for everything else.
-pub fn output_dtype_for(config: &ReduceOperationConfig, input_dtype: ElemType) -> ElemType {
-    match config {
-        ReduceOperationConfig::ArgMax
-        | ReduceOperationConfig::ArgMin
-        | ReduceOperationConfig::ArgTopK(_) => u32::elem_type_native(),
+pub fn output_dtype_for(operation: ReduceOperation, input_dtype: ElemType) -> ElemType {
+    match operation {
+        ReduceOperation::ArgMax | ReduceOperation::ArgMin | ReduceOperation::ArgTopK { .. } => {
+            u32::elem_type_native()
+        }
         _ => input_dtype,
     }
 }
