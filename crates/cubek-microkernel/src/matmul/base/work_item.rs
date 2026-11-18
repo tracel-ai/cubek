@@ -299,7 +299,9 @@ pub enum MatmulDestination {
     /// A buffer: an address every write lands at.
     Buffer,
     /// A call each line of the product is handed to, with no address and nothing to read back: a
-    /// fused element-wise tail runs in it. It is written a line at a time, each cell once.
+    /// fused element-wise tail runs in it. It is written a line at a time, each cell once. A sink
+    /// may also consume each finished tile instead of storing it, so a routine that accepts one
+    /// hands it every result it computes rather than writing through its tile.
     Sink,
 }
 

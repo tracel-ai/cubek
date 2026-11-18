@@ -1,22 +1,23 @@
 use super::base::CubeMeet;
 use crate::matmul::plane::plane_shuffle_microkernel;
 use crate::matmul::{MatmulOperands, MatmulRead};
+use cubecl::tile::launch::{ServedDestination, ServedDestinationExpand};
 use cubecl::tile::{Dimension, Region, Semiring, SoftwareMatmul, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's run of the output: `c = a · b` over `cube`, its planes each summing their slice of
 /// every step in `EA`, adding their partials into one accumulator in shared memory as `meet` says,
-/// and the sum copied into `c` once the cube has synchronized, so a half-precision cell rounds
-/// once. What `factor` takes out of the operands, nothing for operands decoded as they are read,
+/// and the total handed to `dest` at `cube` once the cube has synchronized, so a half-precision
+/// cell rounds once. What `factor` takes out of the operands, nothing for operands decoded as they are read,
 /// is applied as each plane adds its partial.
 ///
 /// Two levels under the cube: its `planes` planes, each walking its run of the steps along
 /// `split`, then their units. Each plane's drain merges its units' partials across the plane,
 /// then adds into the accumulator. The units read each operand as `reads` says.
 #[cube]
-pub fn cube_shuffle_microkernel<EA: Numeric>(
+pub fn cube_shuffle_microkernel<EA: Numeric, D: ServedDestination>(
     cube: &Region,
-    c: &Tile,
+    dest: &D,
     a: &Tile,
     b: &Tile,
     #[comptime] block: Option<SoftwareMatmul>,
@@ -25,7 +26,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
     #[comptime] planes: usize,
     #[comptime] reads: MatmulOperands<MatmulRead>,
 ) {
-    let mut c = c.clone();
+    let c = dest.tile().at(cube);
 
     match meet {
         CubeMeet::Atomic => {
@@ -45,7 +46,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
 
             sync_cube();
 
-            c.copy_from(&accumulator.source);
+            accumulator.source.consumed_by::<D>(dest, cube);
         }
         CubeMeet::InSlots => {
             let accumulator = c.smem_slots_accumulation::<EA>(planes);
@@ -63,7 +64,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
             }
 
             accumulator.drain(&sum.scaled(&a_factor).scaled(&b_factor), writer);
-            c.copy_from(&accumulator.source);
+            accumulator.source.consumed_by::<D>(dest, cube);
         }
     }
 }
