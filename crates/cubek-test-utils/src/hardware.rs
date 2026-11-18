@@ -42,6 +42,7 @@ pub const NEON: HardwareProperties = HardwareProperties {
     max_units_per_cube: 8,
     max_cube_dim: (8, 8, 8),
     num_cpu_cores: Some(8),
+    num_cpu_physical_cores: None,
     ..AVX2
 };
 

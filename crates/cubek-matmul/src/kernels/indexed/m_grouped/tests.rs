@@ -179,7 +179,8 @@ fn a_packed_stack_is_asked_every_plane_shuffle_floor_and_the_packed_cube_staged_
         plane_shuffle,
         [
             MGroupedSettings::PLANE_SHUFFLE,
-            MGroupedSettings::PLANE_SHUFFLE_PACKED
+            MGroupedSettings::PLANE_SHUFFLE_PACKED,
+            MGroupedSettings::PLANE_SHUFFLE_PACKED_BY_BLOCK
         ]
     );
     assert_eq!(cube_staged, [MGroupedSettings::CUBE_STAGED_PACKED]);

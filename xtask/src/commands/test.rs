@@ -23,7 +23,6 @@ pub(crate) fn handle_command(
                 "cubek-attention",
                 "cubek-convolution",
                 "cubek-fft",
-                "cubek-linear-recurrence",
                 "cubek-interpolate",
                 "cubek-matmul",
                 "cubek-pool",
