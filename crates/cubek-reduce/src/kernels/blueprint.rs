@@ -6,13 +6,17 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand};
 use cubek_std::Hardware;
 
+/// The top-k slots a thread keeps across a line's lanes that autotune tries, a setting of every
+/// reducing routine.
+pub(crate) const LANE_SLOTS: [usize; 1] = [32];
+
 /// What a launch of this kind compiles: the microkernel, the partitioning that places its owners,
 /// and the width each operand binds at.
 ///
 /// One type for every routine of this kind, named per routine by an alias: what differs between
 /// them is the microkernel.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReduceRoutineBlueprint<M> {
+pub struct ReduceBlueprint<M> {
     pub microkernel: M,
     pub partitioning: Partitioning,
     /// The input's width: what a line of it holds.
@@ -21,7 +25,7 @@ pub struct ReduceRoutineBlueprint<M> {
     pub out_width: usize,
 }
 
-/// The widths the operands bind at on `hw`, at most the widest line the operation keeps apart: to
+/// The widths the operands bind at on `hw`, at most `widest_line`, the widest line the carrier keeps apart: to
 /// the requirements the microkernel enqueued in `vectorization`, the binding adds each buffer's
 /// alignment, and a line that never runs past a row along the reduced dim, or past the rows across
 /// it. Settled before the partitioning, whose owners hold a line of rows across the reduced dim.
@@ -29,6 +33,7 @@ pub(crate) fn reduce_widths(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
     mut vectorization: Vectorization<ReduceOperand>,
+    widest_line: Option<usize>,
 ) -> [usize; 2] {
     for (operand, alignment) in [ReduceOperand::Input, ReduceOperand::Out]
         .into_iter()
@@ -45,15 +50,12 @@ pub(crate) fn reduce_widths(
         elements: line_stays_in,
     });
     let ceiling = hw.vector_ceiling(problem.elements.input);
-    let widest = problem
-        .operation
-        .widest_line()
-        .map_or(ceiling, |widest| widest.min(ceiling));
+    let widest = widest_line.map_or(ceiling, |widest| widest.min(ceiling));
     [ReduceOperand::Input, ReduceOperand::Out]
         .map(|operand| vectorization.width(operand, |_| widest))
 }
 
-impl<M> ReduceRoutineBlueprint<M> {
+impl<M> ReduceBlueprint<M> {
     /// `microkernel` placed by `partitioning`, its operands bound at `widths`.
     pub fn new(microkernel: M, partitioning: Partitioning, widths: [usize; 2]) -> Self {
         let [width, out_width] = widths;

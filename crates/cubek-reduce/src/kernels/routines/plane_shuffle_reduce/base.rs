@@ -1,6 +1,6 @@
 use super::kernel::{plane_shuffle_reduce_kernel, plane_shuffle_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceLauncher, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
+    LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -23,15 +23,21 @@ pub(crate) struct PlaneShuffleReduceRoutine;
 pub struct PlaneShuffleReduceSettings {
     pub microkernel: PlaneReduceMicrokernelSettings,
     pub planes: usize,
+    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
+    pub lane_slots: usize,
 }
 
 impl core::fmt::Display for PlaneShuffleReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} planes={}", self.microkernel, self.planes)
+        write!(
+            f,
+            "{} planes={} lane_slots={}",
+            self.microkernel, self.planes, self.lane_slots
+        )
     }
 }
 
-pub type PlaneShuffleReduceBlueprint = ReduceRoutineBlueprint<PlaneReduceMicrokernel>;
+pub type PlaneShuffleReduceBlueprint = ReduceBlueprint<PlaneReduceMicrokernel>;
 
 impl Routine for PlaneShuffleReduceRoutine {
     type Problem = ReduceRoutineProblem;
@@ -44,10 +50,12 @@ impl Routine for PlaneShuffleReduceRoutine {
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         PlaneReduceMicrokernel::settings(hw)
             .into_iter()
-            .flat_map(|microkernel| {
-                [4, 1, 8].map(|planes| PlaneShuffleReduceSettings {
+            .flat_map(|microkernel| [4, 1, 8].map(|planes| (microkernel, planes)))
+            .flat_map(|(microkernel, planes)| {
+                LANE_SLOTS.map(|lane_slots| PlaneShuffleReduceSettings {
                     microkernel,
                     planes,
+                    lane_slots,
                 })
             })
             .collect()
@@ -73,7 +81,10 @@ impl Routine for PlaneShuffleReduceRoutine {
             PlaneReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
-        let widths = reduce_widths(hw, problem, vectorization);
+        let widest = problem
+            .operation
+            .widest_line_at_lane_slots(settings.lane_slots);
+        let widths = reduce_widths(hw, problem, vectorization, widest);
         let owners = problem.owner_dimensions_innermost_first();
         let innermost = *owners
             .first()
@@ -93,7 +104,7 @@ impl Routine for PlaneShuffleReduceRoutine {
         };
         let grid = Grid::new(hw, &partitioning, cube)?;
         Ok((
-            ReduceRoutineBlueprint::new(microkernel, partitioning, widths),
+            ReduceBlueprint::new(microkernel, partitioning, widths),
             grid,
         ))
     }

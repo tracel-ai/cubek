@@ -1,7 +1,7 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::{
-    ReduceBinding, ReduceLauncher, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
-    UNBOUND_LINES_NARROWER, reduce_widths,
+    LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
+    ReduceTensors, UNBOUND_LINES_NARROWER, reduce_widths,
 };
 use core::convert::identity;
 use cubecl::client::Client;
@@ -33,6 +33,8 @@ pub(crate) struct HypercubeAtomicReduceRoutine;
 pub struct HypercubeAtomicReduceSettings {
     pub microkernel: CubeReduceMicrokernelSettings,
     pub unit_lines: usize,
+    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
+    pub lane_slots: usize,
 }
 
 impl HypercubeAtomicReduceSettings {
@@ -43,11 +45,15 @@ impl HypercubeAtomicReduceSettings {
 
 impl core::fmt::Display for HypercubeAtomicReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} unit_lines={}", self.microkernel, self.unit_lines)
+        write!(
+            f,
+            "{} unit_lines={} lane_slots={}",
+            self.microkernel, self.unit_lines, self.lane_slots
+        )
     }
 }
 
-pub type HypercubeAtomicReduceBlueprint = ReduceRoutineBlueprint<CubeReduceMicrokernel>;
+pub type HypercubeAtomicReduceBlueprint = ReduceBlueprint<CubeReduceMicrokernel>;
 
 /// Most row dims its cubes run along, beside the reduced dim: a launch grid has three.
 const MAX_ROW_DIMS: usize = 2;
@@ -64,11 +70,14 @@ impl Routine for HypercubeAtomicReduceRoutine {
         CubeReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
-                HypercubeAtomicReduceSettings::UNIT_LINES.map(|unit_lines| {
-                    HypercubeAtomicReduceSettings {
-                        microkernel,
-                        unit_lines,
-                    }
+                HypercubeAtomicReduceSettings::UNIT_LINES
+                    .map(|unit_lines| (microkernel, unit_lines))
+            })
+            .flat_map(|(microkernel, unit_lines)| {
+                LANE_SLOTS.map(|lane_slots| HypercubeAtomicReduceSettings {
+                    microkernel,
+                    unit_lines,
+                    lane_slots,
                 })
             })
             .collect()
@@ -113,7 +122,10 @@ impl Routine for HypercubeAtomicReduceRoutine {
             CubeReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
-        let widths = reduce_widths(hw, problem, vectorization);
+        let widest = problem
+            .operation
+            .widest_line_at_lane_slots(settings.lane_slots);
+        let widths = reduce_widths(hw, problem, vectorization, widest);
         let units = microkernel.lanes() * microkernel.planes();
         // Along, a line holds `width` values of the row; across, one.
         let part = units
@@ -136,7 +148,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
         };
         let grid = Grid::new(hw, &partitioning, cube)?;
         Ok((
-            ReduceRoutineBlueprint::new(microkernel, partitioning, widths),
+            ReduceBlueprint::new(microkernel, partitioning, widths),
             grid,
         ))
     }

@@ -3,9 +3,8 @@
 
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
-    PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceLauncher,
-    ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors, UnitDirectReduceRoutine,
-    UnitDirectZeroRoutine,
+    PlaneShuffleReduceRoutine, ReduceBlueprint, ReduceElements, ReduceKernel, ReduceLauncher,
+    ReduceRoutineProblem, ReduceTensors, UnitDirectReduceRoutine, UnitDirectZeroRoutine,
 };
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
@@ -166,7 +165,7 @@ where
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device.
-    fn prepared(&self, key: &ReduceKey) -> Option<(ReduceRoutineBlueprint<M>, Grid)> {
+    fn prepared(&self, key: &ReduceKey) -> Option<(ReduceBlueprint<M>, Grid)> {
         self.routine
             .prepare(&self.hw, &ReduceRoutineProblem::from(key), &self.settings)
             .ok()
@@ -205,7 +204,7 @@ where
     type Key = ReduceKey;
     /// The blueprint and the cube: two settings preparing one blueprint can still launch
     /// different cubes.
-    type Blueprint = (ReduceRoutineBlueprint<M>, CubeDim);
+    type Blueprint = (ReduceBlueprint<M>, CubeDim);
 
     fn strategy(&self) -> &String {
         &self.name

@@ -1,6 +1,6 @@
 use super::kernel::{unit_direct_reduce_kernel, unit_direct_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceLauncher, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
+    LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -23,15 +23,21 @@ pub(crate) struct UnitDirectReduceRoutine;
 pub struct UnitDirectReduceSettings {
     pub microkernel: UnitReduceMicrokernelSettings,
     pub planes: usize,
+    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
+    pub lane_slots: usize,
 }
 
 impl core::fmt::Display for UnitDirectReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} planes={}", self.microkernel, self.planes)
+        write!(
+            f,
+            "{} planes={} lane_slots={}",
+            self.microkernel, self.planes, self.lane_slots
+        )
     }
 }
 
-pub type UnitDirectReduceBlueprint = ReduceRoutineBlueprint<UnitReduceMicrokernel>;
+pub type UnitDirectReduceBlueprint = ReduceBlueprint<UnitReduceMicrokernel>;
 
 impl Routine for UnitDirectReduceRoutine {
     type Problem = ReduceRoutineProblem;
@@ -44,10 +50,12 @@ impl Routine for UnitDirectReduceRoutine {
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         UnitReduceMicrokernel::settings(hw)
             .into_iter()
-            .flat_map(|microkernel| {
-                [4, 1, 8].map(|planes| UnitDirectReduceSettings {
+            .flat_map(|microkernel| [4, 1, 8].map(|planes| (microkernel, planes)))
+            .flat_map(|(microkernel, planes)| {
+                LANE_SLOTS.map(|lane_slots| UnitDirectReduceSettings {
                     microkernel,
                     planes,
+                    lane_slots,
                 })
             })
             .collect()
@@ -73,7 +81,10 @@ impl Routine for UnitDirectReduceRoutine {
             UnitReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
-        let widths = reduce_widths(hw, problem, vectorization);
+        let widest = problem
+            .operation
+            .widest_line_at_lane_slots(settings.lane_slots);
+        let widths = reduce_widths(hw, problem, vectorization, widest);
         let plane_width = hw.dispatch_plane_size() as usize;
         let partitioning = Partitioning::new(
             problem.space(),
@@ -93,7 +104,7 @@ impl Routine for UnitDirectReduceRoutine {
         };
         let grid = Grid::new(hw, &partitioning, cube)?;
         Ok((
-            ReduceRoutineBlueprint::new(microkernel, partitioning, widths),
+            ReduceBlueprint::new(microkernel, partitioning, widths),
             grid,
         ))
     }

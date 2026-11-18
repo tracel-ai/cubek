@@ -1,8 +1,7 @@
 //! The trait every reduce routine implements: how it launches what it prepared.
 
 use crate::kernels::{
-    ReduceBinding, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
-    UNBOUND_LINES_NARROWER,
+    ReduceBinding, ReduceBlueprint, ReduceRoutineProblem, ReduceTensors, UNBOUND_LINES_NARROWER,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -12,9 +11,9 @@ use cubecl::tile::launch::{Bound, Refusal, StoredTileOperand, TileOperand, Unbou
 use cubek_std::routine::{Grid, Routine};
 
 /// A reduce routine around microkernel `M`, as a launcher: it launches the
-/// [`ReduceRoutineBlueprint`] it prepared on tensors.
+/// [`ReduceBlueprint`] it prepared on tensors.
 pub(crate) trait ReduceLauncher<M>:
-    Routine<Problem = ReduceRoutineProblem, Blueprint = ReduceRoutineBlueprint<M>>
+    Routine<Problem = ReduceRoutineProblem, Blueprint = ReduceBlueprint<M>>
 {
     /// The routine's prefix in snake case, which names its tunables (`"cube_staged_reduce"`).
     const NAME: &'static str;
@@ -26,12 +25,12 @@ pub(crate) trait ReduceLauncher<M>:
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
-        blueprint: ReduceRoutineBlueprint<M>,
+        blueprint: ReduceBlueprint<M>,
         grid: Grid,
     );
 
     /// `tensors` bound as `blueprint` states them and reduced on `grid`.
-    fn launch(&self, tensors: &ReduceTensors, blueprint: ReduceRoutineBlueprint<M>, grid: Grid) {
+    fn launch(&self, tensors: &ReduceTensors, blueprint: ReduceBlueprint<M>, grid: Grid) {
         let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, Bound::arg);
         self.dispatch::<StoredTileOperand>(
             tensors.problem(),
@@ -53,7 +52,7 @@ pub(crate) trait ReduceLauncher<M>:
     fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,
-        blueprint: ReduceRoutineBlueprint<M>,
+        blueprint: ReduceBlueprint<M>,
         grid: Grid,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {

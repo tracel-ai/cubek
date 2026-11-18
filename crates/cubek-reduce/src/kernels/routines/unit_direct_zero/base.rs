@@ -1,6 +1,6 @@
 use super::kernel::unit_direct_zero_kernel;
 use crate::kernels::{
-    ReduceBinding, ReduceLauncher, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
     reduce_widths,
 };
 use cubecl::client::Client;
@@ -32,7 +32,7 @@ impl core::fmt::Display for UnitDirectZeroSettings {
     }
 }
 
-pub type UnitDirectZeroBlueprint = ReduceRoutineBlueprint<UnitZeroMicrokernel>;
+pub type UnitDirectZeroBlueprint = ReduceBlueprint<UnitZeroMicrokernel>;
 
 impl Routine for UnitDirectZeroRoutine {
     type Problem = ReduceRoutineProblem;
@@ -72,7 +72,8 @@ impl Routine for UnitDirectZeroRoutine {
         let microkernel = UnitZeroMicrokernel::best(hw, &(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         problem.work_item().require(&mut vectorization);
-        let widths = reduce_widths(hw, problem, vectorization);
+        // It zeroes a sum's output ahead of the atomic routine, which no top-k bounds.
+        let widths = reduce_widths(hw, problem, vectorization, None);
         let plane_width = hw.dispatch_plane_size() as usize;
         let partitioning = Partitioning::new(
             problem.space(),
@@ -92,7 +93,7 @@ impl Routine for UnitDirectZeroRoutine {
         };
         let grid = Grid::new(hw, &partitioning, cube)?;
         Ok((
-            ReduceRoutineBlueprint::new(microkernel, partitioning, widths),
+            ReduceBlueprint::new(microkernel, partitioning, widths),
             grid,
         ))
     }

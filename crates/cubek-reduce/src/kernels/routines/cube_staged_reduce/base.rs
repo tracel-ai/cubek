@@ -1,6 +1,6 @@
 use super::kernel::{cube_staged_reduce_kernel, cube_staged_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceLauncher, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
+    LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -22,15 +22,17 @@ pub(crate) struct CubeStagedReduceRoutine;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeStagedReduceSettings {
     pub microkernel: CubeReduceMicrokernelSettings,
+    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
+    pub lane_slots: usize,
 }
 
 impl core::fmt::Display for CubeStagedReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.microkernel)
+        write!(f, "{} lane_slots={}", self.microkernel, self.lane_slots)
     }
 }
 
-pub type CubeStagedReduceBlueprint = ReduceRoutineBlueprint<CubeReduceMicrokernel>;
+pub type CubeStagedReduceBlueprint = ReduceBlueprint<CubeReduceMicrokernel>;
 
 impl Routine for CubeStagedReduceRoutine {
     type Problem = ReduceRoutineProblem;
@@ -43,7 +45,12 @@ impl Routine for CubeStagedReduceRoutine {
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         CubeReduceMicrokernel::settings(hw)
             .into_iter()
-            .map(|microkernel| CubeStagedReduceSettings { microkernel })
+            .flat_map(|microkernel| {
+                LANE_SLOTS.map(|lane_slots| CubeStagedReduceSettings {
+                    microkernel,
+                    lane_slots,
+                })
+            })
             .collect()
     }
 
@@ -72,7 +79,10 @@ impl Routine for CubeStagedReduceRoutine {
             CubeReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
-        let widths = reduce_widths(hw, problem, vectorization);
+        let widest = problem
+            .operation
+            .widest_line_at_lane_slots(settings.lane_slots);
+        let widths = reduce_widths(hw, problem, vectorization, widest);
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
@@ -85,7 +95,7 @@ impl Routine for CubeStagedReduceRoutine {
         };
         let grid = Grid::new(hw, &partitioning, cube)?;
         Ok((
-            ReduceRoutineBlueprint::new(microkernel, partitioning, widths),
+            ReduceBlueprint::new(microkernel, partitioning, widths),
             grid,
         ))
     }

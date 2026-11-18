@@ -1,10 +1,5 @@
 use cubecl::tile::{Monoid, TOP_K_UNROLL_BUDGET};
 
-/// The top-k slots a thread keeps across the lanes of a line, `k` values and as many indices a
-/// lane, before the line narrows: past it they spill out of registers. Scalar, a top-20 of a
-/// 151936-wide row ran 2.4 times faster than at width 8 on a GP100.
-pub const TOP_K_LANE_SLOTS: usize = 32;
-
 /// A reduction along one dimension: a map on each value as it is read, a monoid that combines the
 /// values, and a last step on the total.
 ///
@@ -140,16 +135,16 @@ impl ReduceOperation {
         matches!(self, Self::Mean)
     }
 
-    /// The widest line its accumulator keeps apart, where the carrier bounds it. A top-k keeps `k`
-    /// values and their indices for every lane of a line: past [`TOP_K_LANE_SLOTS`] slots a
-    /// thread they spill out of registers, so the line narrows, and once its `k`-by-`k` walks
-    /// stay loops ([`TOP_K_UNROLL_BUDGET`]) its lists are indexed at run time, out of local memory,
-    /// so the line is one value.
-    pub const fn widest_line(self) -> Option<usize> {
+    /// The widest line its accumulator keeps apart, where the carrier bounds it, for a thread
+    /// keeping `lane_slots` top-k slots across a line's lanes. A top-k keeps `k` values and their
+    /// indices for every lane of a line: past `lane_slots` they spill out of registers, so the line
+    /// narrows, and once its `k`-by-`k` walks stay loops ([`TOP_K_UNROLL_BUDGET`]) its lists are
+    /// indexed at run time, out of local memory, so the line is one value.
+    pub const fn widest_line_at_lane_slots(self, lane_slots: usize) -> Option<usize> {
         match self {
             Self::TopK { k } | Self::ArgTopK { k } => match k * k > TOP_K_UNROLL_BUDGET {
                 true => Some(1),
-                false => Some(TOP_K_LANE_SLOTS / k),
+                false => Some(lane_slots / k),
             },
             _ => None,
         }

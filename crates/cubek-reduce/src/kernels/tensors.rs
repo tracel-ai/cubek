@@ -1,6 +1,6 @@
 //! How a reduce launch reads its operands and binds them.
 
-use crate::kernels::{ReduceElements, ReduceRoutineBlueprint, ReduceRoutineProblem};
+use crate::kernels::{ReduceBlueprint, ReduceElements, ReduceRoutineProblem};
 use cubecl::client::Client;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Bound, Refusal, Unbound};
@@ -114,7 +114,7 @@ impl ReduceTensors<TensorBinding> {
     }
 
     /// Both operands bound as `blueprint` states them, on `grid`.
-    pub fn bind<M>(&self, blueprint: &ReduceRoutineBlueprint<M>, grid: &Grid) -> ReduceBinding {
+    pub fn bind<M>(&self, blueprint: &ReduceBlueprint<M>, grid: &Grid) -> ReduceBinding {
         let launcher = grid.launcher(&self.client, || {
             (
                 self.problem.kernel(&blueprint.partitioning),
@@ -188,7 +188,7 @@ impl ReduceTensors<Geometry> {
     /// bind, and the output bound.
     pub fn bind<M>(
         &self,
-        blueprint: &ReduceRoutineBlueprint<M>,
+        blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
     ) -> ReduceBinding<Unbound, Bound> {
         let launcher = grid.launcher(&self.client, || {
