@@ -28,8 +28,8 @@ use std::sync::Arc;
 /// What tells one reduction from another for the autotune: its elements, its operation, how its
 /// lines lie, how many dims its rows run along, how long a row is and how many rows there are.
 ///
-/// The row dims are kept whole, since the cube and the hypercube decline more than they place
-/// their cubes along: a winner for a matrix would otherwise be launched on a tensor of more dims.
+/// The row dims are kept whole: rows lying on both sides of the reduced dim split each row's
+/// coordinate across them, a cost a winner measured on a matrix never paid.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct ReduceKey {
     elements: ReduceElements,
@@ -56,7 +56,7 @@ impl From<&ReduceRoutineProblem> for ReduceKey {
             problem.indices,
             problem.operation,
             problem.layout(),
-            problem.rows().len(),
+            problem.shape.len().saturating_sub(1),
             problem.reduced_extent(),
             problem.row_count(),
         )

@@ -1,6 +1,6 @@
 use super::kernel::unit_direct_zero_kernel;
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
+    BATCH, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
     reduce_widths,
 };
 use cubecl::client::Client;
@@ -79,7 +79,7 @@ impl Routine for UnitDirectZeroRoutine {
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
                 .launch_units(
-                    &problem.owner_dimensions_innermost_first(),
+                    &[BATCH],
                     UnitCube {
                         plane_width,
                         planes: settings.planes,

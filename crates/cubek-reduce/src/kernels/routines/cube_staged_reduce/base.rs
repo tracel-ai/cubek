@@ -1,6 +1,6 @@
 use super::kernel::{cube_staged_reduce_kernel, cube_staged_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
+    BATCH, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -65,11 +65,6 @@ impl Routine for CubeStagedReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        if problem.owner_dimensions().len() > MAX_ROW_DIMS {
-            return Err(Refusal::Declined {
-                why: "the cube reduce runs a cube per box of rows along at most three row dims",
-            });
-        }
         let microkernel =
             CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
@@ -79,7 +74,7 @@ impl Routine for CubeStagedReduceRoutine {
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
-                .cubes(&problem.owner_dimensions())
+                .cubes(&[BATCH])
                 .build(),
         );
         let cube = CubeResources {
@@ -105,9 +100,6 @@ impl Routine for CubeStagedReduceRoutine {
             .estimate(&problem.work_item(), &(), grid.planes(), estimate);
     }
 }
-
-/// Most row dims the cubes run along: a launch grid has three.
-const MAX_ROW_DIMS: usize = 3;
 
 impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
     const NAME: &'static str = "cube-staged-reduce";
