@@ -664,6 +664,7 @@ fn candidates(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::problem::tests::running;
     use cubecl::ir::FloatKind;
     use cubek_std::devices;
 
@@ -685,11 +686,11 @@ mod tests {
             RmsNormKey::new(F16, F16, None, WIDE_DIM, 1),
         ] {
             for hw in [
-                devices::rdna_range(),
-                devices::cdna_wave64(),
-                devices::h100(),
-                devices::wgpu_no_subgroups(),
-                devices::cpu_12(),
+                running(devices::rdna_range()),
+                running(devices::cdna_wave64()),
+                running(devices::h100()),
+                running(devices::wgpu_no_subgroups()),
+                running(devices::cpu_12()),
             ] {
                 for floor in RmsNormRoutineCandidate::list(CubeGroupsRmsNormRoutine, &hw) {
                     assert!(floor.blueprint(&key).is_some(), "{}", floor.strategy());
@@ -725,7 +726,7 @@ mod tests {
             }
             (seen.len(), listed)
         }
-        let hw = devices::h100();
+        let hw = running(devices::h100());
 
         let key = RmsNormKey::new(F16, F16, None, SQUARE_EXTENT, SQUARE_EXTENT);
         let (cubes, listed) = distinct(
@@ -774,7 +775,7 @@ mod tests {
     /// rows fill it.
     #[test]
     fn the_priority_reads_how_far_the_grid_falls_short() {
-        let hw = devices::strix_halo();
+        let hw = running(devices::strix_halo());
         let lead = RmsNormRoutineCandidate::list(PlaneRmsNormRoutine, &hw).swap_remove(0);
         assert_eq!(
             lead.priority(&RmsNormKey::new(F16, F16, None, HEAD_DIM, PROMPT_ROWS)),

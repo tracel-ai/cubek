@@ -239,11 +239,11 @@ mod tests {
     #[test]
     fn the_floor_prepares_everywhere() {
         for hw in [
-            devices::wgpu_no_subgroups(),
-            devices::rdna_range(),
-            devices::cdna_wave64(),
-            devices::strix_halo(),
-            devices::cpu_12(),
+            running(devices::wgpu_no_subgroups()),
+            running(devices::rdna_range()),
+            running(devices::cdna_wave64()),
+            running(devices::strix_halo()),
+            running(devices::cpu_12()),
         ] {
             for settings in CubeGroupsRmsNormRoutine.settings(&hw) {
                 for problem in problems() {
@@ -259,7 +259,7 @@ mod tests {
     /// a prime row binds one element wide, so its lines are its elements.
     #[test]
     fn a_group_is_no_wider_than_its_row() {
-        let hw = devices::strix_halo();
+        let hw = running(devices::strix_halo());
         let units = |dim: usize, element| {
             let problem = RmsNormRoutineProblem::dense(1, dim, element);
             let (blueprint, _) = CubeGroupsRmsNormRoutine
@@ -276,7 +276,7 @@ mod tests {
     /// its share's cap, whatever the setting targets: a target is not a demand.
     #[test]
     fn a_group_grows_to_hold_its_row() {
-        let hw = devices::strix_halo();
+        let hw = running(devices::strix_halo());
         let one_a_row = CubeGroupsRmsNormRoutineSettings {
             microkernel: CubeGroupsRmsNormMicrokernelSettings {
                 units: NonZeroUsize::MIN,
@@ -312,7 +312,7 @@ mod tests {
     fn a_prime_row_binds_one_element_wide() {
         let (blueprint, _) = CubeGroupsRmsNormRoutine
             .prepare(
-                &devices::strix_halo(),
+                &running(devices::strix_halo()),
                 &RmsNormRoutineProblem::dense(2, 111, F32),
                 &CubeGroupsRmsNormRoutineSettings::DEFAULT,
             )
@@ -323,7 +323,7 @@ mod tests {
     /// The default leads the list and no setting is listed twice.
     #[test]
     fn the_default_leads_and_no_setting_repeats() {
-        let settings = CubeGroupsRmsNormRoutine.settings(&devices::strix_halo());
+        let settings = CubeGroupsRmsNormRoutine.settings(&running(devices::strix_halo()));
         assert_eq!(settings[0], CubeGroupsRmsNormRoutineSettings::DEFAULT);
         let names: std::collections::HashSet<_> =
             settings.iter().map(ToString::to_string).collect();
@@ -345,7 +345,7 @@ mod tests {
             microkernel: CubeGroupsRmsNormMicrokernelSettings::new(16),
             groups: NonZeroUsize::new(64).unwrap(),
         };
-        let hw = devices::rdna_range();
+        let hw = running(devices::rdna_range());
         let (blueprint, grid) = CubeGroupsRmsNormRoutine
             .prepare(&hw, &problem, &settings)
             .expect("the groups fit a cube's stage");
@@ -353,7 +353,7 @@ mod tests {
         assert_eq!(grid.planes().count, hw.shared_memory_budget() / per_group);
         assert_eq!(
             CubeGroupsRmsNormRoutine
-                .prepare(&devices::wgpu_no_subgroups(), &problem, &settings)
+                .prepare(&running(devices::wgpu_no_subgroups()), &problem, &settings)
                 .err(),
             Some(PACKED_STORE_NEEDS_PLANES)
         );

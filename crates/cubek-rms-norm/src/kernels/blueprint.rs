@@ -87,6 +87,7 @@ impl<M> RmsNormBlueprint<M> {
 
 #[cfg(test)]
 mod tests {
+    use crate::kernels::problem::tests::running;
     use crate::kernels::{
         CubeGroupsRmsNormRoutine, CubeRmsNormRoutine, PlaneRmsNormRoutine, RmsNormRoutineProblem,
     };
@@ -109,11 +110,11 @@ mod tests {
         // Each routine prepares somewhere, so the check is never vacuous.
         let mut prepared = [0usize; 3];
         for hw in [
-            devices::strix_halo(),
-            devices::rdna_range(),
-            devices::cdna_wave64(),
-            devices::wgpu_no_subgroups(),
-            devices::cpu_12(),
+            running(devices::strix_halo()),
+            running(devices::rdna_range()),
+            running(devices::cdna_wave64()),
+            running(devices::wgpu_no_subgroups()),
+            running(devices::cpu_12()),
         ] {
             for (rows, dim) in [(1, 96), (1, 1003), (7, 2560), (3, 4097), (1, 11008)] {
                 let problem = RmsNormRoutineProblem::dense(rows, dim, element);

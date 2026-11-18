@@ -171,6 +171,7 @@ impl RmsNormRoutine<PlaneRmsNormMicrokernel> for PlaneRmsNormRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::problem::tests::running;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
 
@@ -182,11 +183,11 @@ mod tests {
     fn it_runs_where_the_device_commits_to_a_width() {
         let problem = RmsNormRoutineProblem::dense(512 * 24, 128, F16);
         for hw in [
-            devices::strix_halo(),
-            devices::cdna_wave64(),
-            devices::h100(),
-            devices::wgpu_no_subgroups(),
-            devices::rdna_range(),
+            running(devices::strix_halo()),
+            running(devices::cdna_wave64()),
+            running(devices::h100()),
+            running(devices::wgpu_no_subgroups()),
+            running(devices::rdna_range()),
         ] {
             for settings in PlaneRmsNormRoutine.settings(&hw) {
                 match (
@@ -206,7 +207,7 @@ mod tests {
     /// A row longer than a plane's registers hold is the cube's, and the plane declines it.
     #[test]
     fn a_long_row_outgrows_the_plane() {
-        let hw = devices::strix_halo();
+        let hw = running(devices::strix_halo());
         let long = RmsNormRoutineProblem::dense(1, 8192, F16);
         let prepared =
             PlaneRmsNormRoutine.prepare(&hw, &long, &PlaneRmsNormRoutineSettings::DEFAULT);

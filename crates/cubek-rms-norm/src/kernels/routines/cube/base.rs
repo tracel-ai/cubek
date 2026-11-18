@@ -158,6 +158,7 @@ impl RmsNormRoutine<CubeRmsNormMicrokernel> for CubeRmsNormRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::problem::tests::running;
     use core::num::NonZeroUsize;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
@@ -168,7 +169,7 @@ mod tests {
     /// whatever the target.
     #[test]
     fn the_planes_divide_the_row() {
-        let hw = devices::strix_halo();
+        let hw = running(devices::strix_halo());
         let planes = |dim: usize, target: usize| {
             let settings = CubeRmsNormRoutineSettings {
                 microkernel: CubeRmsNormMicrokernelSettings {
@@ -191,7 +192,10 @@ mod tests {
     #[test]
     fn it_runs_where_its_plane_does() {
         let problem = RmsNormRoutineProblem::dense(1, 2560, F16);
-        for hw in [devices::wgpu_no_subgroups(), devices::rdna_range()] {
+        for hw in [
+            running(devices::wgpu_no_subgroups()),
+            running(devices::rdna_range()),
+        ] {
             let prepared =
                 CubeRmsNormRoutine.prepare(&hw, &problem, &CubeRmsNormRoutineSettings::DEFAULT);
             assert!(
@@ -200,9 +204,9 @@ mod tests {
             );
         }
         for hw in [
-            devices::strix_halo(),
-            devices::cdna_wave64(),
-            devices::h100(),
+            running(devices::strix_halo()),
+            running(devices::cdna_wave64()),
+            running(devices::h100()),
         ] {
             assert!(
                 CubeRmsNormRoutine
