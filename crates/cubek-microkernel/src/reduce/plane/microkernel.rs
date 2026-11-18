@@ -1,4 +1,4 @@
-use super::base::PlaneReduceMicrokernel;
+use super::base::PlaneShuffleReduceMicrokernel;
 use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
@@ -11,7 +11,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-pub(crate) fn plane_reduce_microkernel<
+pub(crate) fn plane_shuffle_reduce_microkernel<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -21,22 +21,33 @@ pub(crate) fn plane_reduce_microkernel<
     input: &Tile,
     out: &mut Tile,
     indices: &mut Tile,
-    #[comptime] microkernel: PlaneReduceMicrokernel,
+    #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
     match microkernel.item().operation.carrier() {
-        ReduceCarrier::Values => {
-            plane_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(input, out, indices, microkernel)
-        }
-        ReduceCarrier::Indexed => {
-            plane_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(input, out, indices, microkernel)
-        }
+        ReduceCarrier::Values => plane_shuffle_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
+            input,
+            out,
+            indices,
+            microkernel,
+        ),
+        ReduceCarrier::Indexed => plane_shuffle_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
+            input,
+            out,
+            indices,
+            microkernel,
+        ),
         ReduceCarrier::TopK { k } => {
             let size!(K) = k;
-            plane_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+            plane_shuffle_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
+                input,
+                out,
+                indices,
+                microkernel,
+            )
         }
         ReduceCarrier::TopValues { k } => {
             let size!(K) = k;
-            plane_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+            plane_shuffle_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
                 input,
                 out,
                 indices,
@@ -47,7 +58,7 @@ pub(crate) fn plane_reduce_microkernel<
 }
 
 #[cube]
-fn plane_reduce<
+fn plane_shuffle_reduce<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -58,7 +69,7 @@ fn plane_reduce<
     input: &Tile,
     out: &mut Tile,
     indices: &mut Tile,
-    #[comptime] microkernel: PlaneReduceMicrokernel,
+    #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
     let operation = microkernel.item().operation;
     let monoid = operation.monoid();

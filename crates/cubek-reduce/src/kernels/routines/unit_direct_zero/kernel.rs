@@ -1,7 +1,7 @@
 use cubecl::ir::ElemType;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::zero::unit::UnitZeroMicrokernel;
+use cubek_microkernel::zero::unit::UnitDirectZeroMicrokernel;
 
 /// Every unit of the launch, zeroing its cells of `out`.
 ///
@@ -15,7 +15,7 @@ use cubek_microkernel::zero::unit::UnitZeroMicrokernel;
 pub(crate) fn unit_direct_zero_kernel<Out: Numeric>(
     out: &TileTensor<'_>,
     partitioning: Partitioning,
-    #[comptime] microkernel: UnitZeroMicrokernel,
+    #[comptime] microkernel: UnitDirectZeroMicrokernel,
     #[define(Out)] _element: ElemType,
 ) {
     let o = out.tile(&partitioning);

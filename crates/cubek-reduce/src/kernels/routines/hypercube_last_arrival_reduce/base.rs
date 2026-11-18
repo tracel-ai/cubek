@@ -13,8 +13,8 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
-use cubek_microkernel::reduce::cube::CubeReduceMicrokernelSettings;
-use cubek_microkernel::reduce::hypercube::HypercubeReduceMicrokernel;
+use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernelSettings;
+use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -31,7 +31,7 @@ pub(crate) struct HypercubeLastArrivalReduceRoutine;
 /// The cube microkernel's planes, and how many lines each unit reads of a part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeLastArrivalReduceSettings {
-    pub microkernel: CubeReduceMicrokernelSettings,
+    pub microkernel: CubeStagedReduceMicrokernelSettings,
     pub unit_lines: usize,
     /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
     pub lane_slots: usize,
@@ -53,7 +53,8 @@ impl core::fmt::Display for HypercubeLastArrivalReduceSettings {
     }
 }
 
-pub type HypercubeLastArrivalReduceBlueprint = ReduceBlueprint<HypercubeReduceMicrokernel>;
+pub type HypercubeLastArrivalReduceBlueprint =
+    ReduceBlueprint<HypercubeLastArrivalReduceMicrokernel>;
 
 impl ReduceSplit {
     /// Where the cubes of `problem`'s hypercube sit.
@@ -114,14 +115,14 @@ const MAX_ROW_DIMS: usize = 2;
 
 impl Routine for HypercubeLastArrivalReduceRoutine {
     type Problem = ReduceRoutineProblem;
-    type Microkernel = HypercubeReduceMicrokernel;
+    type Microkernel = HypercubeLastArrivalReduceMicrokernel;
     type Settings = HypercubeLastArrivalReduceSettings;
     type Blueprint = HypercubeLastArrivalReduceBlueprint;
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes, each with the longest parts first.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        HypercubeReduceMicrokernel::settings(hw)
+        HypercubeLastArrivalReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
                 HypercubeLastArrivalReduceSettings::UNIT_LINES
@@ -140,7 +141,7 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         &self,
-        microkernel: &HypercubeReduceMicrokernel,
+        microkernel: &HypercubeLastArrivalReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
     ) {
@@ -158,8 +159,11 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
                 why: "the hypercube reduce runs its cubes along at most two row dims",
             });
         }
-        let microkernel =
-            HypercubeReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+        let microkernel = HypercubeLastArrivalReduceMicrokernel::best(
+            hw,
+            &problem.work_item(),
+            &settings.microkernel,
+        )?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widest = problem
@@ -206,7 +210,7 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
     }
 }
 
-impl ReduceLauncher<HypercubeReduceMicrokernel> for HypercubeLastArrivalReduceRoutine {
+impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArrivalReduceRoutine {
     const NAME: &'static str = "hypercube_last_arrival_reduce";
 
     fn dispatch<I: TileOperand>(

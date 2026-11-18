@@ -1,4 +1,4 @@
-use super::base::UnitReduceMicrokernel;
+use super::base::UnitDirectReduceMicrokernel;
 use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -9,7 +9,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-pub(crate) fn unit_reduce_microkernel<
+pub(crate) fn unit_direct_reduce_microkernel<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -19,22 +19,33 @@ pub(crate) fn unit_reduce_microkernel<
     input: &Tile,
     out: &mut Tile,
     indices: &mut Tile,
-    #[comptime] microkernel: UnitReduceMicrokernel,
+    #[comptime] microkernel: UnitDirectReduceMicrokernel,
 ) {
     match microkernel.item().operation.carrier() {
-        ReduceCarrier::Values => {
-            unit_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(input, out, indices, microkernel)
-        }
-        ReduceCarrier::Indexed => {
-            unit_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(input, out, indices, microkernel)
-        }
+        ReduceCarrier::Values => unit_direct_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
+            input,
+            out,
+            indices,
+            microkernel,
+        ),
+        ReduceCarrier::Indexed => unit_direct_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
+            input,
+            out,
+            indices,
+            microkernel,
+        ),
         ReduceCarrier::TopK { k } => {
             let size!(K) = k;
-            unit_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+            unit_direct_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
+                input,
+                out,
+                indices,
+                microkernel,
+            )
         }
         ReduceCarrier::TopValues { k } => {
             let size!(K) = k;
-            unit_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+            unit_direct_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
                 input,
                 out,
                 indices,
@@ -45,7 +56,7 @@ pub(crate) fn unit_reduce_microkernel<
 }
 
 #[cube]
-fn unit_reduce<
+fn unit_direct_reduce<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -56,7 +67,7 @@ fn unit_reduce<
     input: &Tile,
     out: &mut Tile,
     indices: &mut Tile,
-    #[comptime] microkernel: UnitReduceMicrokernel,
+    #[comptime] microkernel: UnitDirectReduceMicrokernel,
 ) {
     let operation = microkernel.item().operation;
     let monoid = operation.monoid();

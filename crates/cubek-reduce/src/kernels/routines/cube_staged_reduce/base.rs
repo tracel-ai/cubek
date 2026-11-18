@@ -7,7 +7,9 @@ use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
-use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, CubeReduceMicrokernelSettings};
+use cubek_microkernel::reduce::cube::{
+    CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -21,7 +23,7 @@ pub(crate) struct CubeStagedReduceRoutine;
 /// The cube microkernel's planes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeStagedReduceSettings {
-    pub microkernel: CubeReduceMicrokernelSettings,
+    pub microkernel: CubeStagedReduceMicrokernelSettings,
     /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
     pub lane_slots: usize,
 }
@@ -32,18 +34,18 @@ impl core::fmt::Display for CubeStagedReduceSettings {
     }
 }
 
-pub type CubeStagedReduceBlueprint = ReduceBlueprint<CubeReduceMicrokernel>;
+pub type CubeStagedReduceBlueprint = ReduceBlueprint<CubeStagedReduceMicrokernel>;
 
 impl Routine for CubeStagedReduceRoutine {
     type Problem = ReduceRoutineProblem;
-    type Microkernel = CubeReduceMicrokernel;
+    type Microkernel = CubeStagedReduceMicrokernel;
     type Settings = CubeStagedReduceSettings;
     type Blueprint = CubeStagedReduceBlueprint;
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes: it has no knob of its own.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        CubeReduceMicrokernel::settings(hw)
+        CubeStagedReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
                 LANE_SLOTS.map(|lane_slots| CubeStagedReduceSettings {
@@ -57,7 +59,7 @@ impl Routine for CubeStagedReduceRoutine {
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         &self,
-        microkernel: &CubeReduceMicrokernel,
+        microkernel: &CubeStagedReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
     ) {
@@ -76,7 +78,7 @@ impl Routine for CubeStagedReduceRoutine {
             });
         }
         let microkernel =
-            CubeReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+            CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widest = problem
@@ -116,7 +118,7 @@ impl Routine for CubeStagedReduceRoutine {
 /// Most row dims the cubes run along: a launch grid has three.
 const MAX_ROW_DIMS: usize = 3;
 
-impl ReduceLauncher<CubeReduceMicrokernel> for CubeStagedReduceRoutine {
+impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
     const NAME: &'static str = "cube_staged_reduce";
 
     fn dispatch<I: TileOperand>(

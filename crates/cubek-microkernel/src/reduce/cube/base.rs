@@ -1,4 +1,4 @@
-use super::microkernel::cube_reduce_microkernel;
+use super::microkernel::cube_staged_reduce_microkernel;
 use crate::reduce::{ReduceOperand, ReduceWorkItem};
 use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
@@ -14,7 +14,7 @@ use cubek_std::microkernel::{
 ///
 /// It runs where the device commits to a plane width, as the plane's does.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeReduceMicrokernel {
+pub struct CubeStagedReduceMicrokernel {
     #[cube(comptime)]
     item: ReduceWorkItem,
     /// Units of a plane, as wide as the device commits to.
@@ -25,7 +25,7 @@ pub struct CubeReduceMicrokernel {
     planes: usize,
 }
 
-impl CubeReduceMicrokernel {
+impl CubeStagedReduceMicrokernel {
     /// A cube of `planes` planes of `lanes` units reducing `item`.
     pub fn new(item: ReduceWorkItem, lanes: usize, planes: usize) -> Self {
         Self {
@@ -52,19 +52,19 @@ impl CubeReduceMicrokernel {
 }
 
 #[cube]
-impl CubeReduceMicrokernel {
-    /// One cube's row of `input` reduced into `out` and `indices` ([`cube_reduce_microkernel`]).
+impl CubeStagedReduceMicrokernel {
+    /// One cube's row of `input` reduced into `out` and `indices` ([`cube_staged_reduce_microkernel`]).
     pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         input: &Tile,
         out: &mut Tile,
         indices: &mut Tile,
     ) {
-        cube_reduce_microkernel::<In, Acc, Out, Idx, N>(
+        cube_staged_reduce_microkernel::<In, Acc, Out, Idx, N>(
             input,
             out,
             indices,
-            comptime!(CubeReduceMicrokernel {
+            comptime!(CubeStagedReduceMicrokernel {
                 item: self.item,
                 lanes: self.lanes,
                 planes: self.planes
@@ -75,16 +75,16 @@ impl CubeReduceMicrokernel {
 
 /// How many planes a cube runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeReduceMicrokernelSettings {
+pub struct CubeStagedReduceMicrokernelSettings {
     pub planes: usize,
 }
 
-impl CubeReduceMicrokernelSettings {
+impl CubeStagedReduceMicrokernelSettings {
     /// The planes worth trying: a cube of four, then of eight.
     pub const ALL: [Self; 2] = [Self { planes: 4 }, Self { planes: 8 }];
 }
 
-impl CubeReduceMicrokernel {
+impl CubeStagedReduceMicrokernel {
     /// Bytes of shared memory it allocates with its lines `width` lanes wide: one slot of the
     /// carrier a plane, which its planes meet through.
     pub fn shared_memory_bytes_at_width(&self, width: usize) -> usize {
@@ -97,13 +97,13 @@ impl CubeReduceMicrokernel {
     }
 }
 
-impl core::fmt::Display for CubeReduceMicrokernelSettings {
+impl core::fmt::Display for CubeStagedReduceMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "planes={}", self.planes)
     }
 }
 
-impl core::fmt::Display for CubeReduceMicrokernel {
+impl core::fmt::Display for CubeStagedReduceMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
@@ -113,16 +113,16 @@ impl core::fmt::Display for CubeReduceMicrokernel {
     }
 }
 
-impl Microkernel for CubeReduceMicrokernel {
+impl Microkernel for CubeStagedReduceMicrokernel {
     type WorkItem = ReduceWorkItem;
-    type Settings = CubeReduceMicrokernelSettings;
+    type Settings = CubeStagedReduceMicrokernelSettings;
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
     const DECLINE: &'static str = "the cube reduce needs a plane width the device commits to, and a cube that holds its planes";
 
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
-        CubeReduceMicrokernelSettings::ALL.to_vec()
+        CubeStagedReduceMicrokernelSettings::ALL.to_vec()
     }
 
     fn candidates(
@@ -166,8 +166,10 @@ impl Microkernel for CubeReduceMicrokernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reduce::plane::{PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings};
-    use crate::reduce::unit::{UnitReduceMicrokernel, UnitReduceMicrokernelSettings};
+    use crate::reduce::plane::{
+        PlaneShuffleReduceMicrokernel, PlaneShuffleReduceMicrokernelSettings,
+    };
+    use crate::reduce::unit::{UnitDirectReduceMicrokernel, UnitDirectReduceMicrokernelSettings};
     use crate::reduce::{ReduceLayout, ReduceOperation};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
@@ -197,15 +199,25 @@ mod tests {
         ] {
             let commits = hw.plane_dim().is_ok();
             assert!(
-                UnitReduceMicrokernel::best(&hw, &item(), &UnitReduceMicrokernelSettings).is_ok()
+                UnitDirectReduceMicrokernel::best(
+                    &hw,
+                    &item(),
+                    &UnitDirectReduceMicrokernelSettings
+                )
+                .is_ok()
             );
             assert_eq!(
-                PlaneReduceMicrokernel::best(&hw, &item(), &PlaneReduceMicrokernelSettings).is_ok(),
+                PlaneShuffleReduceMicrokernel::best(
+                    &hw,
+                    &item(),
+                    &PlaneShuffleReduceMicrokernelSettings
+                )
+                .is_ok(),
                 commits,
                 "{hw:?}"
             );
-            for settings in CubeReduceMicrokernel::settings(&hw) {
-                let cube = CubeReduceMicrokernel::best(&hw, &item(), &settings);
+            for settings in CubeStagedReduceMicrokernel::settings(&hw) {
+                let cube = CubeStagedReduceMicrokernel::best(&hw, &item(), &settings);
                 assert_eq!(cube.is_ok(), commits, "{settings} on {hw:?}");
                 if let Ok(cube) = cube {
                     assert_eq!(cube.lanes as u32, hw.plane_dim().unwrap());
@@ -219,7 +231,7 @@ mod tests {
     fn a_cube_the_device_cannot_hold_declines() {
         let hw = devices::m2_pro();
         let planes = hw.full_cube_planes() + 1;
-        let settings = CubeReduceMicrokernelSettings { planes };
-        assert!(CubeReduceMicrokernel::best(&hw, &item(), &settings).is_err());
+        let settings = CubeStagedReduceMicrokernelSettings { planes };
+        assert!(CubeStagedReduceMicrokernel::best(&hw, &item(), &settings).is_err());
     }
 }

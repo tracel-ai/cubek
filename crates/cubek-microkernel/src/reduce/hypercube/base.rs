@@ -1,5 +1,5 @@
-use super::microkernel::hypercube_reduce_microkernel;
-use crate::reduce::cube::{CubeReduceMicrokernel, CubeReduceMicrokernelSettings};
+use super::microkernel::hypercube_last_arrival_reduce_microkernel;
+use crate::reduce::cube::{CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings};
 use crate::reduce::{ReduceOperand, ReduceWorkItem};
 use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
@@ -17,27 +17,27 @@ use cubek_std::microkernel::{
 /// orders a workgroup's own memory only, the last cube was seen reading another's partial as the
 /// zero it held before the write.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HypercubeReduceMicrokernel {
+pub struct HypercubeLastArrivalReduceMicrokernel {
     /// The cube microkernel each cube reduces its part with.
     #[cube(comptime)]
-    part: CubeReduceMicrokernel,
+    part: CubeStagedReduceMicrokernel,
 }
 
-impl HypercubeReduceMicrokernel {
+impl HypercubeLastArrivalReduceMicrokernel {
     /// A hypercube whose cubes each reduce their part with `part`.
-    pub fn new(part: CubeReduceMicrokernel) -> Self {
+    pub fn new(part: CubeStagedReduceMicrokernel) -> Self {
         Self { part }
     }
 
     /// Its `part`.
-    pub fn part(&self) -> CubeReduceMicrokernel {
+    pub fn part(&self) -> CubeStagedReduceMicrokernel {
         self.part
     }
 }
 
 #[cube]
-impl HypercubeReduceMicrokernel {
-    /// One cube's part of a row of `input`, the row's last cube writing it to `out` and `indices` ([`hypercube_reduce_microkernel`]).
+impl HypercubeLastArrivalReduceMicrokernel {
+    /// One cube's part of a row of `input`, the row's last cube writing it to `out` and `indices` ([`hypercube_last_arrival_reduce_microkernel`]).
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"
@@ -56,7 +56,7 @@ impl HypercubeReduceMicrokernel {
         first_line: usize,
         values: usize,
     ) {
-        hypercube_reduce_microkernel::<In, Acc, Out, Idx, N>(
+        hypercube_last_arrival_reduce_microkernel::<In, Acc, Out, Idx, N>(
             input,
             out,
             indices,
@@ -68,12 +68,12 @@ impl HypercubeReduceMicrokernel {
             parts,
             first_line,
             values,
-            comptime!(HypercubeReduceMicrokernel { part: self.part }),
+            comptime!(HypercubeLastArrivalReduceMicrokernel { part: self.part }),
         )
     }
 }
 
-impl HypercubeReduceMicrokernel {
+impl HypercubeLastArrivalReduceMicrokernel {
     /// Bytes of shared memory each cube allocates with its lines `width` lanes wide: its part's,
     /// and the slot its first unit hands the cube its arrival through.
     pub fn shared_memory_bytes_at_width(&self, width: usize) -> usize {
@@ -81,15 +81,15 @@ impl HypercubeReduceMicrokernel {
     }
 }
 
-impl core::fmt::Display for HypercubeReduceMicrokernel {
+impl core::fmt::Display for HypercubeLastArrivalReduceMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.part)
     }
 }
 
-impl Microkernel for HypercubeReduceMicrokernel {
+impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
     type WorkItem = ReduceWorkItem;
-    type Settings = CubeReduceMicrokernelSettings;
+    type Settings = CubeStagedReduceMicrokernelSettings;
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
@@ -97,7 +97,7 @@ impl Microkernel for HypercubeReduceMicrokernel {
 
     /// The cube microkernel's.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
-        CubeReduceMicrokernel::settings(hw)
+        CubeStagedReduceMicrokernel::settings(hw)
     }
 
     fn candidates(
@@ -107,7 +107,7 @@ impl Microkernel for HypercubeReduceMicrokernel {
     ) -> impl Iterator<Item = Self> {
         // The cubes meet through device memory, which must stay coherent across them in a launch.
         let meets = hw.properties.features.device_memory_scope;
-        CubeReduceMicrokernel::candidates(hw, item, settings)
+        CubeStagedReduceMicrokernel::candidates(hw, item, settings)
             .filter(move |_| meets)
             .map(|part| Self { part })
     }

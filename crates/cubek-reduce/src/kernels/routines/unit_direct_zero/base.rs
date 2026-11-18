@@ -9,7 +9,7 @@ use cubecl::tile::launch::{Refusal, TileOperand, Unbound, Vectorization};
 use cubecl::tile::space::UnitCube;
 use cubecl::tile::{Geometry, Launcher, Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::zero::ZeroOperand;
-use cubek_microkernel::zero::unit::{UnitZeroMicrokernel, UnitZeroMicrokernelSettings};
+use cubek_microkernel::zero::unit::{UnitDirectZeroMicrokernel, UnitDirectZeroMicrokernelSettings};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -22,7 +22,7 @@ pub(crate) struct UnitDirectZeroRoutine;
 /// The zero microkernel's setting, and how many planes each cube runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitDirectZeroSettings {
-    pub microkernel: UnitZeroMicrokernelSettings,
+    pub microkernel: UnitDirectZeroMicrokernelSettings,
     pub planes: usize,
 }
 
@@ -32,18 +32,18 @@ impl core::fmt::Display for UnitDirectZeroSettings {
     }
 }
 
-pub type UnitDirectZeroBlueprint = ReduceBlueprint<UnitZeroMicrokernel>;
+pub type UnitDirectZeroBlueprint = ReduceBlueprint<UnitDirectZeroMicrokernel>;
 
 impl Routine for UnitDirectZeroRoutine {
     type Problem = ReduceRoutineProblem;
-    type Microkernel = UnitZeroMicrokernel;
+    type Microkernel = UnitDirectZeroMicrokernel;
     type Settings = UnitDirectZeroSettings;
     type Blueprint = UnitDirectZeroBlueprint;
     type Partitioning = Partitioning;
 
     /// Cubes of four planes: a zeroing is one write a unit, which no setting speeds up.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        UnitZeroMicrokernel::settings(hw)
+        UnitDirectZeroMicrokernel::settings(hw)
             .into_iter()
             .map(|microkernel| UnitDirectZeroSettings {
                 microkernel,
@@ -54,7 +54,7 @@ impl Routine for UnitDirectZeroRoutine {
 
     fn vectorize(
         &self,
-        microkernel: &UnitZeroMicrokernel,
+        microkernel: &UnitDirectZeroMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ZeroOperand>,
     ) {
@@ -69,7 +69,7 @@ impl Routine for UnitDirectZeroRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let microkernel = UnitZeroMicrokernel::best(hw, &(), &settings.microkernel)?;
+        let microkernel = UnitDirectZeroMicrokernel::best(hw, &(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         problem.work_item().require(&mut vectorization);
         // It zeroes a sum's output ahead of the atomic routine, which no top-k bounds.
@@ -111,7 +111,7 @@ impl Routine for UnitDirectZeroRoutine {
     }
 }
 
-impl ReduceLauncher<UnitZeroMicrokernel> for UnitDirectZeroRoutine {
+impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroRoutine {
     const NAME: &'static str = "unit_direct_zero";
 
     /// The output zeroed; the input is never read.

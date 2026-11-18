@@ -2,7 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::{AccumulateArg, TileOperand};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::reduce::cube::CubeReduceMicrokernel;
+use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernel;
 
 /// Every cube of the launch, reducing its part of its rows as the cube microkernel reduces a row,
 /// its total added into `out`, which holds zero before the launch.
@@ -22,7 +22,7 @@ pub(crate) fn hypercube_atomic_reduce_kernel<
     input: &I::Arg,
     out: &AccumulateArg<'_, Out>,
     partitioning: Partitioning,
-    #[comptime] microkernel: CubeReduceMicrokernel,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = I::tile::<In>(input, &partitioning);

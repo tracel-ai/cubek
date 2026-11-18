@@ -12,7 +12,9 @@ use cubecl::tile::launch::{
     AccumulateArgLaunch, Bound, Refusal, StoredTileOperand, TileOperand, Unbound, Vectorization,
 };
 use cubecl::tile::{Geometry, Levels, Partitioning, TileTensorLaunch};
-use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, CubeReduceMicrokernelSettings};
+use cubek_microkernel::reduce::cube::{
+    CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings,
+};
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand, ReduceOperation};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -31,7 +33,7 @@ pub(crate) struct HypercubeAtomicReduceRoutine;
 /// The cube microkernel's planes, and how many lines each unit reads of a part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeAtomicReduceSettings {
-    pub microkernel: CubeReduceMicrokernelSettings,
+    pub microkernel: CubeStagedReduceMicrokernelSettings,
     pub unit_lines: usize,
     /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
     pub lane_slots: usize,
@@ -53,21 +55,21 @@ impl core::fmt::Display for HypercubeAtomicReduceSettings {
     }
 }
 
-pub type HypercubeAtomicReduceBlueprint = ReduceBlueprint<CubeReduceMicrokernel>;
+pub type HypercubeAtomicReduceBlueprint = ReduceBlueprint<CubeStagedReduceMicrokernel>;
 
 /// Most row dims its cubes run along, beside the reduced dim: a launch grid has three.
 const MAX_ROW_DIMS: usize = 2;
 
 impl Routine for HypercubeAtomicReduceRoutine {
     type Problem = ReduceRoutineProblem;
-    type Microkernel = CubeReduceMicrokernel;
+    type Microkernel = CubeStagedReduceMicrokernel;
     type Settings = HypercubeAtomicReduceSettings;
     type Blueprint = HypercubeAtomicReduceBlueprint;
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes, each with the longest parts first.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        CubeReduceMicrokernel::settings(hw)
+        CubeStagedReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
                 HypercubeAtomicReduceSettings::UNIT_LINES
@@ -86,7 +88,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         &self,
-        microkernel: &CubeReduceMicrokernel,
+        microkernel: &CubeStagedReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
     ) {
@@ -119,7 +121,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
             });
         }
         let microkernel =
-            CubeReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+            CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widest = problem
@@ -166,7 +168,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
     }
 }
 
-impl ReduceLauncher<CubeReduceMicrokernel> for HypercubeAtomicReduceRoutine {
+impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutine {
     const NAME: &'static str = "hypercube_atomic_reduce";
 
     /// Never reached: [`launch`](Self::launch) and [`launch_unbound`](Self::launch_unbound) bind

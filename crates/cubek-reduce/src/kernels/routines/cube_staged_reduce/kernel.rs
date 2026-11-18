@@ -2,7 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::TileOperand;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::reduce::cube::CubeReduceMicrokernel;
+use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernel;
 
 /// Every cube of the launch, reducing its rows into the carrier its operation accumulates into.
 ///
@@ -21,7 +21,7 @@ pub(crate) fn cube_staged_reduce_kernel<
     input: &I::Arg,
     out: &TileTensor<'_>,
     partitioning: Partitioning,
-    #[comptime] microkernel: CubeReduceMicrokernel,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = I::tile::<In>(input, &partitioning);
@@ -58,7 +58,7 @@ pub(crate) fn cube_staged_reduce_with_indices_kernel<
     out: &TileTensor<'_>,
     indices: &TileTensor<'_>,
     partitioning: Partitioning,
-    #[comptime] microkernel: CubeReduceMicrokernel,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
     let x = I::tile::<In>(input, &partitioning);

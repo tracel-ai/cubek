@@ -1,4 +1,4 @@
-use super::microkernel::unit_reduce_microkernel;
+use super::microkernel::unit_direct_reduce_microkernel;
 use crate::reduce::{ReduceOperand, ReduceWorkItem};
 use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
@@ -13,12 +13,12 @@ use cubek_std::microkernel::{
 ///
 /// Every device runs it: it asks nothing of the plane.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UnitReduceMicrokernel {
+pub struct UnitDirectReduceMicrokernel {
     #[cube(comptime)]
     item: ReduceWorkItem,
 }
 
-impl UnitReduceMicrokernel {
+impl UnitDirectReduceMicrokernel {
     /// A unit reducing `item`.
     pub fn new(item: ReduceWorkItem) -> Self {
         Self { item }
@@ -31,49 +31,49 @@ impl UnitReduceMicrokernel {
 }
 
 #[cube]
-impl UnitReduceMicrokernel {
-    /// One unit's row of `input` reduced into `out` and `indices` ([`unit_reduce_microkernel`]).
+impl UnitDirectReduceMicrokernel {
+    /// One unit's row of `input` reduced into `out` and `indices` ([`unit_direct_reduce_microkernel`]).
     pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         input: &Tile,
         out: &mut Tile,
         indices: &mut Tile,
     ) {
-        unit_reduce_microkernel::<In, Acc, Out, Idx, N>(
+        unit_direct_reduce_microkernel::<In, Acc, Out, Idx, N>(
             input,
             out,
             indices,
-            comptime!(UnitReduceMicrokernel { item: self.item }),
+            comptime!(UnitDirectReduceMicrokernel { item: self.item }),
         )
     }
 }
 
 /// A unit's microkernel has nothing a measurement settles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UnitReduceMicrokernelSettings;
+pub struct UnitDirectReduceMicrokernelSettings;
 
-impl core::fmt::Display for UnitReduceMicrokernelSettings {
+impl core::fmt::Display for UnitDirectReduceMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("one-unit")
     }
 }
 
-impl core::fmt::Display for UnitReduceMicrokernel {
+impl core::fmt::Display for UnitDirectReduceMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:?} {:?}", self.item.operation, self.item.layout)
     }
 }
 
-impl Microkernel for UnitReduceMicrokernel {
+impl Microkernel for UnitDirectReduceMicrokernel {
     type WorkItem = ReduceWorkItem;
-    type Settings = UnitReduceMicrokernelSettings;
+    type Settings = UnitDirectReduceMicrokernelSettings;
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
     const DECLINE: &'static str = "the unit reduce runs on every device";
 
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
-        vec![UnitReduceMicrokernelSettings]
+        vec![UnitDirectReduceMicrokernelSettings]
     }
 
     fn candidates(

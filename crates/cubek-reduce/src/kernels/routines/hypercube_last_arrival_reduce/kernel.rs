@@ -3,7 +3,7 @@ use cubecl::tile::launch::TileOperand;
 use cubecl::tile::{Dimension, Partitioning, Region, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::ReduceLayout;
-use cubek_microkernel::reduce::hypercube::HypercubeReduceMicrokernel;
+use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
 
 /// Where a hypercube's cubes sit, compiled into its kernel: the reduced dimension cut into parts, a
 /// cube a part, and the row dimensions, at most two, outermost first, that its boxes of rows lie
@@ -18,7 +18,7 @@ pub struct ReduceSplit {
 /// the microkernel each cube runs, and where the cubes sit.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HypercubeLastArrivalReduceDecisions {
-    pub microkernel: HypercubeReduceMicrokernel,
+    pub microkernel: HypercubeLastArrivalReduceMicrokernel,
     pub split: ReduceSplit,
 }
 

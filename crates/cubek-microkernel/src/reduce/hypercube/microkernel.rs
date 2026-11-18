@@ -1,5 +1,5 @@
-use super::base::HypercubeReduceMicrokernel;
-use crate::reduce::cube::cube_reduce_part;
+use super::base::HypercubeLastArrivalReduceMicrokernel;
+use crate::reduce::cube::cube_staged_reduce_part;
 use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout};
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -19,7 +19,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-pub(crate) fn hypercube_reduce_microkernel<
+pub(crate) fn hypercube_last_arrival_reduce_microkernel<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -37,40 +37,44 @@ pub(crate) fn hypercube_reduce_microkernel<
     parts: usize,
     first_line: usize,
     values: usize,
-    #[comptime] microkernel: HypercubeReduceMicrokernel,
+    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
 ) {
     match microkernel.part().item().operation.carrier() {
-        ReduceCarrier::Values => hypercube_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
-            input,
-            out,
-            indices,
-            partials,
-            partial_indices,
-            arrivals,
-            counter,
-            part,
-            parts,
-            first_line,
-            values,
-            microkernel,
-        ),
-        ReduceCarrier::Indexed => hypercube_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
-            input,
-            out,
-            indices,
-            partials,
-            partial_indices,
-            arrivals,
-            counter,
-            part,
-            parts,
-            first_line,
-            values,
-            microkernel,
-        ),
+        ReduceCarrier::Values => {
+            hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
+                input,
+                out,
+                indices,
+                partials,
+                partial_indices,
+                arrivals,
+                counter,
+                part,
+                parts,
+                first_line,
+                values,
+                microkernel,
+            )
+        }
+        ReduceCarrier::Indexed => {
+            hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
+                input,
+                out,
+                indices,
+                partials,
+                partial_indices,
+                arrivals,
+                counter,
+                part,
+                parts,
+                first_line,
+                values,
+                microkernel,
+            )
+        }
         ReduceCarrier::TopK { k } => {
             let size!(K) = k;
-            hypercube_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
+            hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
                 input,
                 out,
                 indices,
@@ -87,7 +91,7 @@ pub(crate) fn hypercube_reduce_microkernel<
         }
         ReduceCarrier::TopValues { k } => {
             let size!(K) = k;
-            hypercube_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+            hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
                 input,
                 out,
                 indices,
@@ -106,7 +110,7 @@ pub(crate) fn hypercube_reduce_microkernel<
 }
 
 #[cube]
-fn hypercube_reduce<
+fn hypercube_last_arrival_reduce<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -125,7 +129,7 @@ fn hypercube_reduce<
     parts: usize,
     first_line: usize,
     values: usize,
-    #[comptime] microkernel: HypercubeReduceMicrokernel,
+    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
 ) {
     let cube_part = microkernel.part();
     let operation = cube_part.item().operation;
@@ -140,7 +144,7 @@ fn hypercube_reduce<
     };
     let count = input.flat::<In, N>().shape().min(row_lines - first_line);
 
-    let total = cube_reduce_part::<In, Acc, N, C>(input, first_line, count, cube_part);
+    let total = cube_staged_reduce_part::<In, Acc, N, C>(input, first_line, count, cube_part);
 
     if first_unit {
         C::store(total, partials, partial_indices, part);

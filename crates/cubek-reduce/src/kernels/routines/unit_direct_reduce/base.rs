@@ -8,7 +8,9 @@ use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
 use cubecl::tile::space::UnitCube;
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
-use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, UnitReduceMicrokernelSettings};
+use cubek_microkernel::reduce::unit::{
+    UnitDirectReduceMicrokernel, UnitDirectReduceMicrokernelSettings,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -21,7 +23,7 @@ pub(crate) struct UnitDirectReduceRoutine;
 /// How many planes of units a cube holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitDirectReduceSettings {
-    pub microkernel: UnitReduceMicrokernelSettings,
+    pub microkernel: UnitDirectReduceMicrokernelSettings,
     pub planes: usize,
     /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
     pub lane_slots: usize,
@@ -37,18 +39,18 @@ impl core::fmt::Display for UnitDirectReduceSettings {
     }
 }
 
-pub type UnitDirectReduceBlueprint = ReduceBlueprint<UnitReduceMicrokernel>;
+pub type UnitDirectReduceBlueprint = ReduceBlueprint<UnitDirectReduceMicrokernel>;
 
 impl Routine for UnitDirectReduceRoutine {
     type Problem = ReduceRoutineProblem;
-    type Microkernel = UnitReduceMicrokernel;
+    type Microkernel = UnitDirectReduceMicrokernel;
     type Settings = UnitDirectReduceSettings;
     type Blueprint = UnitDirectReduceBlueprint;
     type Partitioning = Partitioning;
 
     /// Four planes of units a cube by default, then one and eight.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        UnitReduceMicrokernel::settings(hw)
+        UnitDirectReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| [4, 1, 8].map(|planes| (microkernel, planes)))
             .flat_map(|(microkernel, planes)| {
@@ -64,7 +66,7 @@ impl Routine for UnitDirectReduceRoutine {
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         &self,
-        microkernel: &UnitReduceMicrokernel,
+        microkernel: &UnitDirectReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
     ) {
@@ -78,7 +80,7 @@ impl Routine for UnitDirectReduceRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         let microkernel =
-            UnitReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+            UnitDirectReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widest = problem
@@ -122,7 +124,7 @@ impl Routine for UnitDirectReduceRoutine {
     }
 }
 
-impl ReduceLauncher<UnitReduceMicrokernel> for UnitDirectReduceRoutine {
+impl ReduceLauncher<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
     const NAME: &'static str = "unit_direct_reduce";
 
     fn dispatch<I: TileOperand>(

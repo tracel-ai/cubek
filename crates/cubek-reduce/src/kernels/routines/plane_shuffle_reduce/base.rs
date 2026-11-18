@@ -8,7 +8,9 @@ use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
-use cubek_microkernel::reduce::plane::{PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings};
+use cubek_microkernel::reduce::plane::{
+    PlaneShuffleReduceMicrokernel, PlaneShuffleReduceMicrokernelSettings,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -21,7 +23,7 @@ pub(crate) struct PlaneShuffleReduceRoutine;
 /// How many of the launch's planes a cube holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleReduceSettings {
-    pub microkernel: PlaneReduceMicrokernelSettings,
+    pub microkernel: PlaneShuffleReduceMicrokernelSettings,
     pub planes: usize,
     /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
     pub lane_slots: usize,
@@ -37,18 +39,18 @@ impl core::fmt::Display for PlaneShuffleReduceSettings {
     }
 }
 
-pub type PlaneShuffleReduceBlueprint = ReduceBlueprint<PlaneReduceMicrokernel>;
+pub type PlaneShuffleReduceBlueprint = ReduceBlueprint<PlaneShuffleReduceMicrokernel>;
 
 impl Routine for PlaneShuffleReduceRoutine {
     type Problem = ReduceRoutineProblem;
-    type Microkernel = PlaneReduceMicrokernel;
+    type Microkernel = PlaneShuffleReduceMicrokernel;
     type Settings = PlaneShuffleReduceSettings;
     type Blueprint = PlaneShuffleReduceBlueprint;
     type Partitioning = Partitioning;
 
     /// Four planes a cube by default, then one and eight.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        PlaneReduceMicrokernel::settings(hw)
+        PlaneShuffleReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| [4, 1, 8].map(|planes| (microkernel, planes)))
             .flat_map(|(microkernel, planes)| {
@@ -64,7 +66,7 @@ impl Routine for PlaneShuffleReduceRoutine {
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         &self,
-        microkernel: &PlaneReduceMicrokernel,
+        microkernel: &PlaneShuffleReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
     ) {
@@ -78,7 +80,7 @@ impl Routine for PlaneShuffleReduceRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         let microkernel =
-            PlaneReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+            PlaneShuffleReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widest = problem
@@ -122,7 +124,7 @@ impl Routine for PlaneShuffleReduceRoutine {
     }
 }
 
-impl ReduceLauncher<PlaneReduceMicrokernel> for PlaneShuffleReduceRoutine {
+impl ReduceLauncher<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine {
     const NAME: &'static str = "plane_shuffle_reduce";
 
     fn dispatch<I: TileOperand>(
