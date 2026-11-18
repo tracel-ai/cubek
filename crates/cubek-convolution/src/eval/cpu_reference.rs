@@ -529,7 +529,8 @@ pub fn naive_weight_grad(
 }
 
 /// `in_grad[b, y, x, ci] = sum over co, ky, kx of out_grad[b, gy, gx, co] * weights[co, ky, kx,
-/// ci]` where `g = y + padding - tap * dilation`, the positions outside the gradient skipped.
+/// ci]` over the output positions `g` whose window reads input `y` at tap `k`, that is
+/// `g * stride = y + padding - k * dilation`; the others are skipped.
 pub fn naive_data_grad(
     out_grad: HostTensor,
     weights: HostTensor,
@@ -546,15 +547,14 @@ pub fn naive_data_grad(
                     let mut sum = 0.0;
                     for ky in 0..kh {
                         for kx in 0..kw {
-                            let (gy, gx) = (
-                                args.gradient_position(0, y, ky),
-                                args.gradient_position(1, x, kx),
-                            );
-                            if gy < 0 || gx < 0 || gy >= oh as isize || gx >= ow as isize {
+                            let (Some(gy), Some(gx)) = (
+                                output_reading(args, 0, y, ky, oh),
+                                output_reading(args, 1, x, kx, ow),
+                            ) else {
                                 continue;
-                            }
+                            };
                             for o in 0..co {
-                                let at = ((b * oh + gy as usize) * ow + gx as usize) * co + o;
+                                let at = ((b * oh + gy) * ow + gx) * co + o;
                                 sum += out_grad.values[at]
                                     * weights.values[((o * kh + ky) * kw + kx) * c + i];
                             }
@@ -566,4 +566,22 @@ pub fn naive_data_grad(
         }
     }
     grad
+}
+
+/// The output position along spatial `dim` whose window, at tap `tap`, reads input position `pos`
+/// of an output `extent` long, if there is one.
+fn output_reading(
+    args: &ConvolutionArgs<2>,
+    dim: usize,
+    pos: usize,
+    tap: usize,
+    extent: usize,
+) -> Option<usize> {
+    let reach = (pos + args.padding[dim]) as isize - (tap * args.dilation[dim]) as isize;
+    let stride = args.stride[dim] as isize;
+    let at = usize::try_from(reach)
+        .ok()
+        .filter(|_| reach % stride == 0)?
+        / stride as usize;
+    (at < extent).then_some(at)
 }
