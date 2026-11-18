@@ -1,7 +1,7 @@
 use cubecl::tile::launch::Refusal;
 
-/// What a launch declines before preparing anything, whatever the device: operands, arguments or
-/// extents that do not state one convolution the tiled kernels compute.
+/// Why the tiled convolution declines a launch: operands, arguments or extents that do not state
+/// one convolution it computes, or a setting the device cannot serve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConvDecline {
     /// A bias, which is not part of the contraction.
