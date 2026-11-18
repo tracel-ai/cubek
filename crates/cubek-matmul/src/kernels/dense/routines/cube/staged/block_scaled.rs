@@ -86,7 +86,6 @@ const ADDRESSING_REGISTERS: u32 = 64;
 /// block-scaled instruction has no step, and lists none.
 pub(crate) fn block_scaled_settings<R>(
     hw: &Hardware,
-    routine: R,
     shapes: &[StagedShape],
     settings: impl Fn(CubeStagedMicrokernelSettings) -> R::Settings,
 ) -> Vec<R::Settings>
@@ -109,9 +108,8 @@ where
             let by_units = CubeStagedMatmulRoutineSettings::on_grid(microkernel);
             if !listed.contains(&setting)
                 && fits(&step, &inputs, &microkernel, |problem| {
-                    routine
-                        .prepare(hw, problem, &setting)
-                        .or_else(|_| CubeStagedMatmulRoutine.prepare(hw, problem, &by_units))
+                    R::prepare(hw, problem, &setting)
+                        .or_else(|_| CubeStagedMatmulRoutine::prepare(hw, problem, &by_units))
                         .ok()
                 })
             {

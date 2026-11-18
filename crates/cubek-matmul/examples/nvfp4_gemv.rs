@@ -317,7 +317,7 @@ fn candidates<'a>(hw: &'a Hardware, client: &'a Client) -> Vec<(String, Launch<'
     let mut out: Vec<(String, Launch<'a>)> = Vec::new();
     let plane_settings = match std::env::var("NVFP4_EXPLORE").as_deref() {
         Ok("planes") => explored_planes(),
-        _ => PlaneShuffleMatmulRoutine.packed_settings(),
+        _ => PlaneShuffleMatmulRoutine::packed_settings(),
     };
     for settings in plane_settings {
         let launch: Launch<'a> = Box::new(move |d: &Device| {
@@ -336,7 +336,7 @@ fn candidates<'a>(hw: &'a Hardware, client: &'a Client) -> Vec<(String, Launch<'
     }
     let cube_settings = match std::env::var_os("NVFP4_EXPLORE") {
         Some(_) => explored(),
-        None => CubeShuffleMatmulRoutine.packed_settings(hw),
+        None => CubeShuffleMatmulRoutine::packed_settings(hw),
     };
     for settings in cube_settings {
         let launch: Launch<'a> = Box::new(move |d: &Device| {

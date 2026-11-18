@@ -148,7 +148,7 @@ fn launch_first_served<R: ReduceRoutine<M>, M>(
     tensors: &ReduceTensors,
 ) -> Result<(), Refusal> {
     let hw = Hardware::from_client(tensors.client());
-    let (blueprint, grid) = routine.prepare_first_served(&hw, tensors.problem())?;
+    let (blueprint, grid) = R::prepare_first_served(&hw, tensors.problem())?;
     routine.launch(tensors, blueprint, grid);
     Ok(())
 }
@@ -162,8 +162,8 @@ fn launch_cube_or_split(tensors: &ReduceTensors) -> Result<(), Refusal> {
     let problem = tensors.problem();
     let routine = HypercubeReduceRoutine;
     let mut most_cubes = None;
-    for settings in routine.settings(&hw) {
-        let Ok((blueprint, grid)) = routine.prepare(&hw, problem, &settings) else {
+    for settings in HypercubeReduceRoutine::settings(&hw) {
+        let Ok((blueprint, grid)) = HypercubeReduceRoutine::prepare(&hw, problem, &settings) else {
             continue;
         };
         let units = (blueprint.microkernel.lanes * blueprint.microkernel.planes) as u32;

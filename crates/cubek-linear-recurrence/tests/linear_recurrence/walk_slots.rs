@@ -365,8 +365,7 @@ impl SlotCase {
 fn the_slots_walk_matches_the_reference() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    let settings: Vec<_> = CubeDeltaWalkRoutine
-        .settings(&hw)
+    let settings: Vec<_> = CubeDeltaWalkRoutine::settings(&hw)
         .into_iter()
         .chain([CubeDeltaWalkRoutineSettings::FLOOR])
         .collect();

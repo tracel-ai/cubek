@@ -81,7 +81,7 @@ impl Routine for CubeStagedAttentionRoutine {
     /// device's tail; without one the order changes nothing. On an RTX PRO 6000, a 6016 by 8192
     /// causal `f16` prompt (32/8 heads, head dim 128) takes 8 to 10% less time last first on
     /// every setting tried.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         let last_first = CubeAttentionMicrokernelSettings::FRAGMENT
             .listed(hw)
             .into_iter()
@@ -96,7 +96,6 @@ impl Routine for CubeStagedAttentionRoutine {
 
     /// Nothing of its own: it walks cubes, and its microkernel makes every access.
     fn vectorize(
-        &self,
         microkernel: &CubeAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
@@ -106,7 +105,6 @@ impl Routine for CubeStagedAttentionRoutine {
 
     /// Nothing of its own: the cube microkernel places the staging and its planes the work.
     fn estimate(
-        &self,
         problem: &AttentionRoutineProblem,
         blueprint: &CubeStagedAttentionRoutineBlueprint,
         grid: &Grid,
@@ -126,7 +124,6 @@ impl Routine for CubeStagedAttentionRoutine {
     /// its planes read them, the cubes taking the boxes in the settings' order. Its planes read
     /// the stage as it is laid out, and merge their queries where they split the keys.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
@@ -161,7 +158,7 @@ impl Routine for CubeStagedAttentionRoutine {
             microkernel.plane.merges_rows()?;
         }
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(
             hw,
             problem,

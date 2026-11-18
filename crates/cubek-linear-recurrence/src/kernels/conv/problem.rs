@@ -119,9 +119,7 @@ impl QkNormedConvProblem {
     /// What admission declines: no head, no row or position, an unsupported element, a filter or
     /// window the taps cannot be read back from, more buffers than the device binds.
     pub fn admit(&self, hw: &Hardware) -> Result<(), Refusal> {
-        CubeQkNormedConvRoutine
-            .prepare_first_served(hw, self)
-            .map(|_| ())
+        CubeQkNormedConvRoutine::prepare_first_served(hw, self).map(|_| ())
     }
 
     /// What every launch declines a problem with before it places anything.

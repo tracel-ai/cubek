@@ -116,8 +116,9 @@ mod tests {
         ] {
             for (rows, dim) in [(1, 96), (1, 1003), (7, 2560), (3, 4097), (1, 11008)] {
                 let problem = RmsNormRoutineProblem::dense(rows, dim, element);
-                for settings in CubeRmsNormRoutine.settings(&hw) {
-                    if let Ok((blueprint, _)) = CubeRmsNormRoutine.prepare(&hw, &problem, &settings)
+                for settings in CubeRmsNormRoutine::settings(&hw) {
+                    if let Ok((blueprint, _)) =
+                        CubeRmsNormRoutine::prepare(&hw, &problem, &settings)
                     {
                         assert!(
                             !overhangs(&blueprint.partitioning),
@@ -126,9 +127,9 @@ mod tests {
                         prepared[0] += 1;
                     }
                 }
-                for settings in CubeGroupsRmsNormRoutine.settings(&hw) {
+                for settings in CubeGroupsRmsNormRoutine::settings(&hw) {
                     if let Ok((blueprint, _)) =
-                        CubeGroupsRmsNormRoutine.prepare(&hw, &problem, &settings)
+                        CubeGroupsRmsNormRoutine::prepare(&hw, &problem, &settings)
                     {
                         assert!(
                             !overhangs(&blueprint.partitioning),
@@ -137,9 +138,9 @@ mod tests {
                         prepared[1] += 1;
                     }
                 }
-                for settings in PlaneRmsNormRoutine.settings(&hw) {
+                for settings in PlaneRmsNormRoutine::settings(&hw) {
                     if let Ok((blueprint, _)) =
-                        PlaneRmsNormRoutine.prepare(&hw, &problem, &settings)
+                        PlaneRmsNormRoutine::prepare(&hw, &problem, &settings)
                     {
                         assert!(
                             !overhangs(&blueprint.partitioning),

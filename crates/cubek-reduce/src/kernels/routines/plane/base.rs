@@ -40,7 +40,7 @@ impl Routine for PlaneReduceRoutine {
     type Partitioning = Partitioning;
 
     /// Four planes a cube by default, then one and eight.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         PlaneReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
@@ -54,7 +54,6 @@ impl Routine for PlaneReduceRoutine {
 
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &PlaneReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
@@ -63,7 +62,6 @@ impl Routine for PlaneReduceRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -98,7 +96,6 @@ impl Routine for PlaneReduceRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,

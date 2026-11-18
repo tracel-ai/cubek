@@ -271,7 +271,7 @@ fn held_state_recalls_answers_and_writes_like_the_host() {
         ] {
             let o = case.operands();
             let tensors = RecurrenceWalkTensors::new(case.inputs(&client, &o, F32)).unwrap();
-            let prepared = CubeDeltaWalkRoutine.prepare(&hw, tensors.problem(), &settings);
+            let prepared = CubeDeltaWalkRoutine::prepare(&hw, tensors.problem(), &settings);
             let (blueprint, grid) = match prepared {
                 Ok(prepared) => prepared,
                 Err(why) => {

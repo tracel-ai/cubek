@@ -30,7 +30,7 @@ pub fn launch_pool_routine<R: PoolRoutine>(
     tensors: &PoolTensors,
     settings: &R::Settings,
 ) -> Result<(), Refusal> {
-    let (blueprint, grid) = routine.prepare(hw, tensors.problem(), settings)?;
+    let (blueprint, grid) = R::prepare(hw, tensors.problem(), settings)?;
     routine.dispatch(tensors, blueprint, grid);
     Ok(())
 }

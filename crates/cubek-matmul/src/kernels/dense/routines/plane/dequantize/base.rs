@@ -80,7 +80,7 @@ impl PlaneDequantizeMatmulRoutine {
                 ..MatmulOperands::all(None)
             },
         );
-        let (blueprint, grid) = self.prepare(hw, problem, settings)?;
+        let (blueprint, grid) = PlaneDequantizeMatmulRoutine::prepare(hw, problem, settings)?;
         let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
         let lined = packing.operand.lined();
         // Rows of the dimension the words do not run along, a line of the dimension they do in
@@ -137,13 +137,12 @@ impl Routine for PlaneDequantizeMatmulRoutine {
     type Partitioning = MatmulPartitioning;
 
     /// [`SETTINGS`](Self::SETTINGS) alone.
-    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         vec![Self::SETTINGS]
     }
 
     /// Nothing of its own: it walks cubes and planes, and its microkernel makes every access.
     fn vectorize(
-        &self,
         microkernel: &PlaneShuffleMicrokernel,
         _: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -154,7 +153,6 @@ impl Routine for PlaneDequantizeMatmulRoutine {
     /// Each cube reads the words and scales of its columns once, and writes them decoded, a
     /// value of the decoded element each. Then its microkernel, for the work.
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &PlaneDequantizeMatmulRoutineBlueprint,
         grid: &Grid,
@@ -192,7 +190,6 @@ impl Routine for PlaneDequantizeMatmulRoutine {
     /// (`PlaneShufflePackedPlacement`): the same microkernel and planes over the same space, one
     /// row, the planes in cubes.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,

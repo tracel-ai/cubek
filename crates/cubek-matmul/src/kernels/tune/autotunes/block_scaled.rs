@@ -103,9 +103,8 @@ where
                 None => MatmulTensors::written_in(&call.client, lhs, rhs, call.out),
             }
             .map_err(declined)?;
-            let (blueprint, grid) = routine
-                .prepare(&hw, &tensors.problem(), &settings)
-                .map_err(declined)?;
+            let (blueprint, grid) =
+                R::prepare(&hw, &tensors.problem(), &settings).map_err(declined)?;
             routine.dispatch_into_buffer(&tensors, blueprint, grid);
             let handle = match call.destination {
                 Some(destination) => destination,

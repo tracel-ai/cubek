@@ -502,8 +502,7 @@ impl ScopeUnderTest for Walks {
 fn the_cube_walk_matches_the_reference() {
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
-    let reaches: Vec<Reach> = CubeDeltaWalkRoutine
-        .settings(&hw)
+    let reaches: Vec<Reach> = CubeDeltaWalkRoutine::settings(&hw)
         .into_iter()
         .map(Reach::Setting)
         .collect();
@@ -556,8 +555,7 @@ fn a_masked_walk_passes_the_state_through() {
         kept: 3,
         masked: vec![0, 1, 2, 3],
     };
-    let reaches: Vec<Reach> = CubeDeltaWalkRoutine
-        .settings(&hw)
+    let reaches: Vec<Reach> = CubeDeltaWalkRoutine::settings(&hw)
         .into_iter()
         .map(Reach::Setting)
         .collect();

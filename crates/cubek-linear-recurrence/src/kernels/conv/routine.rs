@@ -32,7 +32,8 @@ impl CubeQkNormedConvRoutine {
         inputs: QkNormedConvInputs,
     ) -> Result<QkNormedConvOutputs, Refusal> {
         let tensors = QkNormedConvTensors::new(inputs)?;
-        let (blueprint, grid) = self.prepare_first_served(hw, tensors.problem())?;
+        let (blueprint, grid) =
+            CubeQkNormedConvRoutine::prepare_first_served(hw, tensors.problem())?;
         Ok(self.launch(tensors, blueprint, grid))
     }
 
@@ -48,8 +49,7 @@ impl CubeQkNormedConvRoutine {
         inputs: QkNormedConvInputs,
     ) -> Result<QkNormedConvOutputs, Refusal> {
         let tensors = QkNormedConvTensors::new(inputs)?;
-        let (blueprint, grid) =
-            prepared.prepare(self, hw, tensors.problem(), &QkNormedConvSettings)?;
+        let (blueprint, grid) = prepared.prepare(hw, tensors.problem(), &QkNormedConvSettings)?;
         Ok(self.launch(tensors, blueprint, grid))
     }
 
@@ -107,12 +107,11 @@ impl Routine for CubeQkNormedConvRoutine {
     type Blueprint = QkNormedConvBlueprint;
     type Partitioning = QkNormedConvPartitioning;
 
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeQkNormedConvMicrokernel::settings(hw)
     }
 
     fn vectorize(
-        &self,
         microkernel: &CubeQkNormedConvMicrokernel,
         _: &QkNormedConvPartitioning,
         vectorization: &mut Vectorization<QkNormedConvOperand>,
@@ -121,7 +120,6 @@ impl Routine for CubeQkNormedConvRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &QkNormedConvProblem,
         blueprint: &QkNormedConvBlueprint,
         grid: &Grid,
@@ -168,7 +166,6 @@ impl Routine for CubeQkNormedConvRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &QkNormedConvProblem,
         settings: &Self::Settings,
@@ -245,7 +242,7 @@ mod tests {
     fn the_floor_prepares_everything_admission_admits() {
         for hw in fleet() {
             for problem in problems() {
-                let prepared = CubeQkNormedConvRoutine.prepare_first_served(&hw, &problem);
+                let prepared = CubeQkNormedConvRoutine::prepare_first_served(&hw, &problem);
                 assert_eq!(problem.admit(&hw), prepared.clone().map(|_| ()));
                 let (blueprint, grid) =
                     prepared.unwrap_or_else(|why| panic!("{problem:?}: {why:?}"));
@@ -267,7 +264,7 @@ mod tests {
                 let cubes = problem.batch * positions * problem.heads.key_heads;
                 assert_eq!(grid.cubes(), Some(cubes as u64));
                 let mut estimate = KernelEstimate::from(&grid);
-                CubeQkNormedConvRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
+                CubeQkNormedConvRoutine::estimate(&problem, &blueprint, &grid, &mut estimate);
                 let staging = estimate.staging.as_ref().expect("staging");
                 let performed = staging.operations * estimate.cubes.expect("a static grid") as f64;
                 assert!(performed >= problem.demand().compute_ops as f64 * 0.5);

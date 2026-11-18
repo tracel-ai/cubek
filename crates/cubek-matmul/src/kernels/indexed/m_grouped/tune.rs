@@ -101,9 +101,9 @@ pub fn launch_tuned_padded(
     let stack = Product::of([tensors.stack_kind()]);
     let floors = MGroupedFloors::LISTED;
     let plane_shuffle = Listing::admitted(&floors.plane_shuffle, stack)
-        .map(|floor| tensors.served_by(&hw, &PlaneShuffleMatmulRoutine, &floor.settings));
+        .map(|floor| tensors.served_by::<_, _, PlaneShuffleMatmulRoutine>(&hw, &floor.settings));
     let cube_staged = Listing::admitted(&floors.cube_staged, stack)
-        .map(|floor| tensors.served_by(&hw, &CubeStagedMatmulRoutine, &floor.settings));
+        .map(|floor| tensors.served_by::<_, _, CubeStagedMatmulRoutine>(&hw, &floor.settings));
     first_served(plane_shuffle.chain(cube_staged))?;
 
     // Named rather than `module_path!()`, so the cached winners stay this autotune's wherever the

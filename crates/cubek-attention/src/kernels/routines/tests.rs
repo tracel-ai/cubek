@@ -12,15 +12,14 @@ use cubek_std::{Hardware, devices};
 use std::collections::BTreeSet;
 
 /// The keys a step covers and the query positions a cube's box holds, at every setting
-/// `routine` lists that prepares for `problem` on `hw`.
+/// `R` lists that prepares for `problem` on `hw`.
 fn reach<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
-    routine: R,
     hw: &Hardware,
     problem: &AttentionRoutineProblem,
 ) -> (BTreeSet<usize>, BTreeSet<usize>) {
     let (mut steps, mut queries) = (BTreeSet::new(), BTreeSet::new());
-    for settings in routine.settings(hw) {
-        if let Ok((blueprint, _)) = routine.prepare(hw, problem, &settings) {
+    for settings in R::settings(hw) {
+        if let Ok((blueprint, _)) = R::prepare(hw, problem, &settings) {
             steps.insert(blueprint.partitioning.stage().extent(S));
             queries.insert(blueprint.partitioning.cube_space().extent(Q));
         }
@@ -34,13 +33,9 @@ fn reach<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
 fn a_prompt_reaches_wide_steps_and_narrow_boxes() {
     let hw = offering(devices::h100(), 16);
     let prompt = qwen(512, 512);
-    let (cube_steps, _) = reach(CubeStagedAttentionRoutine, &hw, &prompt);
+    let (cube_steps, _) = reach::<_, _, CubeStagedAttentionRoutine>(&hw, &prompt);
     assert!(cube_steps.contains(&256), "cube steps {cube_steps:?}");
-    let (_, few) = reach(
-        HypercubeLastArrivalShuffleAttentionRoutine::new(),
-        &hw,
-        &qwen(4, 512),
-    );
+    let (_, few) = reach::<_, _, HypercubeLastArrivalShuffleAttentionRoutine>(&hw, &qwen(4, 512));
     assert!(
         few.iter().any(|&queries| queries <= 4),
         "hypercube boxes {few:?}"
@@ -53,7 +48,7 @@ fn a_prompt_reaches_wide_steps_and_narrow_boxes() {
 #[test]
 fn a_decode_step_reaches_every_split_and_step() {
     let hw = offering(devices::m2_pro(), 8);
-    let settings = HypercubeLastArrivalShuffleAttentionRoutine::new().settings(&hw);
+    let settings = HypercubeLastArrivalShuffleAttentionRoutine::settings(&hw);
     let cubes: BTreeSet<usize> = settings.iter().map(|s| s.cubes_along_keys.get()).collect();
     for count in [2, 4, 8, 16, 32] {
         assert!(cubes.contains(&count), "cubes along keys {cubes:?}");
@@ -68,17 +63,13 @@ fn a_decode_step_reaches_every_split_and_step() {
             "planes along keys {cube_planes:?}"
         );
     }
-    let planes: BTreeSet<usize> = CubeShuffleAttentionRoutine
-        .settings(&hw)
+    let planes: BTreeSet<usize> = CubeShuffleAttentionRoutine::settings(&hw)
         .iter()
         .map(|s| s.microkernel.planes_along_keys.get())
         .collect();
     assert!(planes.contains(&8), "planes along keys {planes:?}");
-    let (steps, _) = reach(
-        HypercubeLastArrivalShuffleAttentionRoutine::new(),
-        &hw,
-        &qwen(1, 4096),
-    );
+    let (steps, _) =
+        reach::<_, _, HypercubeLastArrivalShuffleAttentionRoutine>(&hw, &qwen(1, 4096));
     assert!(
         steps.first() <= Some(&2) && steps.last() >= Some(&32),
         "hypercube steps {steps:?}"
@@ -92,7 +83,7 @@ fn a_decode_step_reaches_every_split_and_step() {
 #[test]
 fn the_cube_reaches_every_ring_and_layout() {
     let hw = offering(devices::m2_pro(), 8);
-    let settings = CubeStagedAttentionRoutine.settings(&hw);
+    let settings = CubeStagedAttentionRoutine::settings(&hw);
     let lead = CubeStagedAttentionRoutineSettings::DEFAULT.microkernel;
     for ring in [
         StageRing::DOUBLE,
@@ -123,8 +114,7 @@ fn the_cube_reaches_every_ring_and_layout() {
         },
         ..CubeStagedAttentionRoutineSettings::DEFAULT
     };
-    let (blueprint, _) = CubeStagedAttentionRoutine
-        .prepare(&hw, &qwen(512, 512), &prefetching)
+    let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &qwen(512, 512), &prefetching)
         .expect("the lead's box prepares on the M2");
     assert_eq!(blueprint.microkernel.ring.prefetch, Prefetch::InRegisters);
 }
@@ -138,11 +128,11 @@ fn every_hypercube_fragment_setting_prepares() {
         offering(devices::m2_pro(), 8),
         offering(devices::h100(), 16),
     ] {
-        let listed = HypercubeFragmentPartialAttentionRoutine.settings(&hw);
+        let listed = HypercubeFragmentPartialAttentionRoutine::settings(&hw);
         for settings in &listed {
             for problem in [qwen(1, 4096), qwen(16, 1000)] {
                 let prepared =
-                    HypercubeFragmentPartialAttentionRoutine.prepare(&hw, &problem, settings);
+                    HypercubeFragmentPartialAttentionRoutine::prepare(&hw, &problem, settings);
                 assert!(prepared.is_ok(), "{settings} on {hw:?}: {prepared:?}");
             }
         }
@@ -196,25 +186,23 @@ fn offering_fp8() -> Hardware {
     )
 }
 
-/// Whether any setting `routine` lists prepares for `problem` on `hw`.
+/// Whether any setting `R` lists prepares for `problem` on `hw`.
 fn prepares<R: Routine<Problem = AttentionRoutineProblem>>(
-    routine: R,
     hw: &Hardware,
     problem: &AttentionRoutineProblem,
 ) -> bool {
-    routine
-        .settings(hw)
+    R::settings(hw)
         .iter()
-        .any(|settings| routine.prepare(hw, problem, settings).is_ok())
+        .any(|settings| R::prepare(hw, problem, settings).is_ok())
 }
 
 /// The reads the fragment settings that prepare for `problem` on `hw` take.
 fn fragment_reads(hw: &Hardware, problem: &AttentionRoutineProblem) -> BTreeSet<(String, String)> {
-    let fragments = HypercubeFragmentPartialAttentionRoutine;
-    fragments
-        .settings(hw)
+    HypercubeFragmentPartialAttentionRoutine::settings(hw)
         .iter()
-        .filter_map(|settings| fragments.prepare(hw, problem, settings).ok())
+        .filter_map(|settings| {
+            HypercubeFragmentPartialAttentionRoutine::prepare(hw, problem, settings).ok()
+        })
         .map(|(blueprint, _)| {
             let served = blueprint.microkernel.served(&problem.work_item()).elements;
             (format!("{:?}", served.key), format!("{:?}", served.value))
@@ -258,19 +246,15 @@ fn every_fp8_cache_is_read_at_a_prompt_and_at_a_decode_step() {
         for problem in [&prompt, &decode] {
             for (prepared, name) in [
                 (
-                    prepares(HypercubeShufflePartialAttentionRoutine::new(), &hw, problem),
+                    prepares::<HypercubeShufflePartialAttentionRoutine>(&hw, problem),
                     "the split-keys partial shuffle",
                 ),
                 (
-                    prepares(
-                        HypercubeLastArrivalShuffleAttentionRoutine::new(),
-                        &hw,
-                        problem,
-                    ),
+                    prepares::<HypercubeLastArrivalShuffleAttentionRoutine>(&hw, problem),
                     "the last-arrival shuffle",
                 ),
                 (
-                    prepares(CubeShuffleAttentionRoutine, &hw, problem),
+                    prepares::<CubeShuffleAttentionRoutine>(&hw, problem),
                     "the cube shuffle",
                 ),
             ] {
@@ -282,7 +266,7 @@ fn every_fp8_cache_is_read_at_a_prompt_and_at_a_decode_step() {
             }
         }
         assert!(
-            !prepares(UnitAttentionRoutine, &hw, &decode),
+            !prepares::<UnitAttentionRoutine>(&hw, &decode),
             "the unit routine reads {key:?} keys beside {value:?} values"
         );
     }

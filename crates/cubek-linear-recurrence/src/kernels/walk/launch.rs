@@ -35,7 +35,7 @@ pub trait RecurrenceWalkRoutine<M>:
         settings: &Self::Settings,
     ) -> Result<RecurrenceWalkOutputs, Refusal> {
         let tensors = RecurrenceWalkTensors::new(inputs)?;
-        let (blueprint, grid) = self.prepare(hw, tensors.problem(), settings)?;
+        let (blueprint, grid) = Self::prepare(hw, tensors.problem(), settings)?;
         let binding = tensors.bind(&blueprint, &grid);
         self.dispatch(&tensors, binding, blueprint, grid);
         Ok(tensors.into_outputs())
@@ -51,8 +51,7 @@ pub trait RecurrenceWalkRoutine<M>:
         hw: &Hardware,
         inputs: RecurrenceWalkInputs,
     ) -> Result<RecurrenceWalkOutputs, Refusal> {
-        let lead = self
-            .settings(hw)
+        let lead = Self::settings(hw)
             .into_iter()
             .next()
             .ok_or(ROUTINE_LISTS_NO_SETTING)?;

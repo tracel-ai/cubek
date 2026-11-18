@@ -158,13 +158,13 @@ impl Scope {
         tensors: &ReduceTensors,
     ) {
         let problem = tensors.problem();
-        let mut settings = routine.settings(hw);
+        let mut settings = R::settings(hw);
         if let Scope::Hypercube = self {
             settings.reverse();
         }
         let settings = settings
             .into_iter()
-            .find(|settings| routine.prepare(hw, problem, settings).is_ok())
+            .find(|settings| R::prepare(hw, problem, settings).is_ok())
             .unwrap_or_else(|| panic!("{routine:?} prepares no setting for {problem:?}"));
         launch_reduce_routine(routine, tensors, &settings)
             .unwrap_or_else(|why| panic!("{routine:?} {problem:?}: {why:?}"));
@@ -362,9 +362,8 @@ fn every_shape_of_a_layout_compiles_one_kernel() {
     let hw = devices::m2_pro();
     let compiled = |shape: &[usize], axis: usize| {
         let problem = problem(shape, axis);
-        let settings = UnitReduceRoutine.settings(&hw)[0];
-        let (blueprint, _) = UnitReduceRoutine
-            .prepare(&hw, &problem, &settings)
+        let settings = UnitReduceRoutine::settings(&hw)[0];
+        let (blueprint, _) = UnitReduceRoutine::prepare(&hw, &problem, &settings)
             .expect("the unit routine runs everywhere");
         (
             blueprint.microkernel,
@@ -388,18 +387,16 @@ fn routines_decline_more_row_dims_than_the_grid_holds() {
             Err(cubecl::tile::launch::Refusal::Declined { .. })
         )
     };
-    let cube = CubeReduceRoutine.settings(&hw)[0];
+    let cube = CubeReduceRoutine::settings(&hw)[0];
     assert!(declines(
-        CubeReduceRoutine.prepare(&hw, &problem, &cube).map(|_| ())
+        CubeReduceRoutine::prepare(&hw, &problem, &cube).map(|_| ())
     ));
-    let hypercube = HypercubeReduceRoutine.settings(&hw)[0];
+    let hypercube = HypercubeReduceRoutine::settings(&hw)[0];
     assert!(declines(
-        HypercubeReduceRoutine
-            .prepare(&hw, &problem, &hypercube)
-            .map(|_| ())
+        HypercubeReduceRoutine::prepare(&hw, &problem, &hypercube).map(|_| ())
     ));
-    let unit = UnitReduceRoutine.settings(&hw)[0];
-    assert!(UnitReduceRoutine.prepare(&hw, &problem, &unit).is_ok());
-    let plane = PlaneReduceRoutine.settings(&hw)[0];
-    assert!(PlaneReduceRoutine.prepare(&hw, &problem, &plane).is_ok());
+    let unit = UnitReduceRoutine::settings(&hw)[0];
+    assert!(UnitReduceRoutine::prepare(&hw, &problem, &unit).is_ok());
+    let plane = PlaneReduceRoutine::settings(&hw)[0];
+    assert!(PlaneReduceRoutine::prepare(&hw, &problem, &plane).is_ok());
 }

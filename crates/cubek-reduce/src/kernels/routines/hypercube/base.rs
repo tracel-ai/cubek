@@ -114,7 +114,7 @@ impl Routine for HypercubeReduceRoutine {
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes, each with the longest parts first.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         HypercubeReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
@@ -130,7 +130,6 @@ impl Routine for HypercubeReduceRoutine {
 
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &HypercubeReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
@@ -139,7 +138,6 @@ impl Routine for HypercubeReduceRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -193,7 +191,6 @@ impl Routine for HypercubeReduceRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,

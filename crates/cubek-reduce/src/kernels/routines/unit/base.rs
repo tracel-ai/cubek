@@ -40,7 +40,7 @@ impl Routine for UnitReduceRoutine {
     type Partitioning = Partitioning;
 
     /// Four planes of units a cube by default, then one and eight.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         UnitReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
@@ -54,7 +54,6 @@ impl Routine for UnitReduceRoutine {
 
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &UnitReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
@@ -63,7 +62,6 @@ impl Routine for UnitReduceRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -102,7 +100,6 @@ impl Routine for UnitReduceRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,

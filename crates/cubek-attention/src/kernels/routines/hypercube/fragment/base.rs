@@ -73,7 +73,7 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
     /// ([`HypercubeAttentionMicrokernelSettings::listed`]) on eight cubes a box, then four and
     /// sixteen, then seven, ten and thirteen: counts that are no power of two, which may fill the
     /// device's last wave of boxes where a power of two leaves it mostly idle.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         [8, 4, 16, 7, 10, 13]
             .into_iter()
             .flat_map(|cubes| {
@@ -91,7 +91,6 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
     /// Nothing of its own: it only distributes the cubes, and their microkernel makes every
     /// access.
     fn vectorize(
-        &self,
         microkernel: &HypercubeAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
@@ -102,7 +101,6 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
     /// Nothing of its own: its cubes' microkernel walks each cube's run of the keys and counts
     /// each cube's partial.
     fn estimate(
-        &self,
         problem: &AttentionRoutineProblem,
         blueprint: &HypercubeFragmentPartialAttentionRoutineBlueprint,
         grid: &Grid,
@@ -123,7 +121,6 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
     /// autotune key prepares its candidates at one representative for every call of its bucket.
     /// The merge after it is prepared by the strategy that launches it.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
@@ -150,7 +147,7 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(
             hw,
             problem,

@@ -39,7 +39,7 @@ impl Routine for CubeReduceRoutine {
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes: it has no knob of its own.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeReduceMicrokernel::settings(hw)
             .into_iter()
             .map(|microkernel| CubeReduceRoutineSettings { microkernel })
@@ -48,7 +48,6 @@ impl Routine for CubeReduceRoutine {
 
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &CubeReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
@@ -57,7 +56,6 @@ impl Routine for CubeReduceRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -90,7 +88,6 @@ impl Routine for CubeReduceRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,

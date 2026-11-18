@@ -185,7 +185,7 @@ fn check_packed(case: Case) {
     }
 
     let mut read = 0;
-    for settings in CubeStagedAttentionRoutine.settings(&hw) {
+    for settings in CubeStagedAttentionRoutine::settings(&hw) {
         let lengths = TestInput::builder(client.clone(), Shape::new([1]))
             .dtype(u32::elem_type_native())
             .custom(vec![seq_kv as f32])

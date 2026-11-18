@@ -43,8 +43,7 @@ impl<R: Routine> RecurrenceWalkCandidate<R> {
 impl<R: Routine + Copy> RecurrenceWalkCandidate<R> {
     /// Every setting `routine` lists on `hw`, as candidates of the autotune, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        routine
-            .settings(hw)
+        R::settings(hw)
             .into_iter()
             .map(|settings| Self::new(routine, settings, hw))
             .collect()
@@ -65,7 +64,7 @@ where
         let tensors = RecurrenceWalkTensors::new(inputs)?;
         let (blueprint, grid) =
             self.prepared
-                .prepare(&self.routine, &self.hw, tensors.problem(), &self.settings)?;
+                .prepare(&self.hw, tensors.problem(), &self.settings)?;
         let binding = tensors.bind(&blueprint, &grid);
         self.routine.dispatch(&tensors, binding, blueprint, grid);
         Ok(tensors.into_outputs())
@@ -75,9 +74,7 @@ where
     /// routine declines it on this device. Not held: a key's problem places the candidate in a
     /// round, and may never be launched.
     fn prepared(&self, key: &RecurrenceWalkKey) -> Option<(RecurrenceWalkBlueprint<M>, Grid)> {
-        self.routine
-            .prepare(&self.hw, &RecurrenceWalkProblem::from(key), &self.settings)
-            .ok()
+        R::prepare(&self.hw, &RecurrenceWalkProblem::from(key), &self.settings).ok()
     }
 
     pub(super) fn run(

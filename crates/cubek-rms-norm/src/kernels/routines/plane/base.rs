@@ -62,7 +62,7 @@ impl Routine for PlaneRmsNormRoutine {
 
     /// Planes a cube, the one dimension this routine has: one, which spreads a few rows over the
     /// most cubes, to eight, which spawns the fewest for a prompt's many.
-    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         [4, 1, 2, 8]
             .into_iter()
             .map(|planes| Self::Settings {
@@ -74,7 +74,6 @@ impl Routine for PlaneRmsNormRoutine {
 
     /// Nothing of its own: it walks the launch's planes, and its microkernel makes every access.
     fn vectorize(
-        &self,
         microkernel: &PlaneRmsNormMicrokernel,
         _: &RmsNormPartitioning,
         vectorization: &mut Vectorization<RmsNormOperand>,
@@ -85,7 +84,6 @@ impl Routine for PlaneRmsNormRoutine {
     /// Each cube reads its planes' rows once, straight from global memory, the weight once, and
     /// writes the rows once. Then its microkernel, for the work.
     fn estimate(
-        &self,
         problem: &RmsNormRoutineProblem,
         blueprint: &PlaneRmsNormRoutineBlueprint,
         grid: &Grid,
@@ -104,7 +102,6 @@ impl Routine for PlaneRmsNormRoutine {
     /// The plane is launched as wide as the device commits to, its lanes summing across exactly
     /// that many; a row the bound width leaves too many lines a lane for its registers declines.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &RmsNormRoutineProblem,
         settings: &Self::Settings,
@@ -125,7 +122,7 @@ impl Routine for PlaneRmsNormRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
             RmsNormBlueprint::new(hw, problem, microkernel, partitioning, vectorization)
                 .planned_at(microkernel.width)?;
@@ -184,9 +181,9 @@ mod tests {
             devices::wgpu_no_subgroups(),
             devices::rdna_range(),
         ] {
-            for settings in PlaneRmsNormRoutine.settings(&hw) {
+            for settings in PlaneRmsNormRoutine::settings(&hw) {
                 match (
-                    PlaneRmsNormRoutine.prepare(&hw, &problem, &settings),
+                    PlaneRmsNormRoutine::prepare(&hw, &problem, &settings),
                     hw.plane_dim().is_ok(),
                 ) {
                     (Ok(_), true) => {}
@@ -205,12 +202,11 @@ mod tests {
         let hw = devices::strix_halo();
         let long = RmsNormRoutineProblem::dense(1, 8192, F16);
         let prepared =
-            PlaneRmsNormRoutine.prepare(&hw, &long, &PlaneRmsNormRoutineSettings::DEFAULT);
+            PlaneRmsNormRoutine::prepare(&hw, &long, &PlaneRmsNormRoutineSettings::DEFAULT);
         assert!(prepared.is_err(), "{prepared:?}");
         let model = RmsNormRoutineProblem::dense(1, 2560, F16);
         assert!(
-            PlaneRmsNormRoutine
-                .prepare(&hw, &model, &PlaneRmsNormRoutineSettings::DEFAULT)
+            PlaneRmsNormRoutine::prepare(&hw, &model, &PlaneRmsNormRoutineSettings::DEFAULT)
                 .is_ok()
         );
     }

@@ -132,7 +132,7 @@ fn a_cube_staged_launch_holds_the_rows_its_groups_were_padded_to() {
         };
         let chunk = padded.layout().align();
         let problem = MatmulRoutineProblem::dense(chunk, n, k, ElemType::Float(FloatKind::F32));
-        let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings.routine)
+        let Ok((blueprint, _)) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings.routine)
         else {
             continue;
         };
@@ -195,8 +195,7 @@ fn a_cube_staged_launch_over_a_packed_stack_holds_the_rows_its_groups_were_padde
                     ..MatmulOperands::all(None)
                 },
             );
-            let (blueprint, _) = CubeStagedMatmulRoutine
-                .prepare(&hw, &problem, &settings.routine)
+            let (blueprint, _) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings.routine)
                 .expect("the launch prepared these chunk rows");
             assert_eq!(
                 blueprint.partitioning.rows() as usize,

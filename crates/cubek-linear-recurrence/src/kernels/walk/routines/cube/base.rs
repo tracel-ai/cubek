@@ -94,7 +94,7 @@ impl Routine for CubeDeltaWalkRoutine {
 
     /// Each of its microkernel's settings at the default runs, then the default's cells in
     /// cubes of a whole head and of a few runs.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         let default = Self::Settings::DEFAULT;
         CubeDeltaWalkMicrokernel::settings(hw)
             .into_iter()
@@ -108,7 +108,6 @@ impl Routine for CubeDeltaWalkRoutine {
 
     /// Nothing of its own: it walks cubes and runs, and its microkernel makes every access.
     fn vectorize(
-        &self,
         microkernel: &CubeDeltaWalkMicrokernel,
         _: &RecurrenceWalkPartitioning,
         vectorization: &mut Vectorization<RecurrenceWalkOperand>,
@@ -120,7 +119,6 @@ impl Routine for CubeDeltaWalkRoutine {
     /// state once, and writes their outputs and kept states once. Then its microkernel, for the
     /// work.
     fn estimate(
-        &self,
         problem: &RecurrenceWalkProblem,
         blueprint: &CubeDeltaWalkRoutineBlueprint,
         grid: &Grid,
@@ -160,7 +158,6 @@ impl Routine for CubeDeltaWalkRoutine {
     /// A run is launched as the cube's `x`, its units the run's, and the runs along `y`: the
     /// units meet in shared memory, so the width a plane runs at is not read.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &RecurrenceWalkProblem,
         settings: &Self::Settings,
@@ -332,7 +329,7 @@ mod tests {
         for hw in fleet() {
             let cpu = hw.properties.hardware.max_units_per_cube < 256;
             for problem in problems() {
-                let prepared = CubeDeltaWalkRoutine.prepare(&hw, &problem, &floor);
+                let prepared = CubeDeltaWalkRoutine::prepare(&hw, &problem, &floor);
                 let key_features = problem.heads.key_features;
                 if key_features == 100 || (cpu && key_features == 128) {
                     assert_eq!(prepared.as_ref().err(), Some(&declined), "{problem:?}");
@@ -350,16 +347,16 @@ mod tests {
     #[test]
     fn no_setting_past_admission_declines_or_holds_more_lines_than_the_bound() {
         for hw in fleet() {
-            for settings in CubeDeltaWalkRoutine.settings(&hw) {
+            for settings in CubeDeltaWalkRoutine::settings(&hw) {
                 for mut problem in problems() {
                     for start in [0, 4] {
                         problem.start_bytes.state = start;
                         if problem.admit(&hw).is_err() {
                             continue;
                         }
-                        let (blueprint, _) = CubeDeltaWalkRoutine
-                            .prepare(&hw, &problem, &settings)
-                            .unwrap_or_else(|why| panic!("{settings} {problem:?}: {why:?}"));
+                        let (blueprint, _) =
+                            CubeDeltaWalkRoutine::prepare(&hw, &problem, &settings)
+                                .unwrap_or_else(|why| panic!("{settings} {problem:?}: {why:?}"));
                         let held = blueprint.microkernel.held_lines(blueprint.width);
                         assert!(held <= MAX_HELD_LINES_PER_UNIT, "{settings}: {held}");
                     }
@@ -378,9 +375,9 @@ mod tests {
         let shape = |heads: (usize, usize, usize, usize), cells: usize| {
             let settings =
                 CubeDeltaWalkRoutineSettings::new(CubeWalkMicrokernelSettings::new(cells), 8);
-            let (blueprint, _) = CubeDeltaWalkRoutine
-                .prepare(&hw, &walk(1, 7, heads, 1), &settings)
-                .expect("the floor prepares");
+            let (blueprint, _) =
+                CubeDeltaWalkRoutine::prepare(&hw, &walk(1, 7, heads, 1), &settings)
+                    .expect("the floor prepares");
             let microkernel = blueprint.microkernel;
             (microkernel.units, microkernel.rows, microkernel.columns)
         };
@@ -405,9 +402,12 @@ mod tests {
             ((2, 3, 12, 8), false),
         ] {
             let problem = walk(1, 7, heads, 1);
-            let (blueprint, grid) = CubeDeltaWalkRoutine
-                .prepare(&hw, &problem, &CubeDeltaWalkRoutineSettings::DEFAULT)
-                .expect("prepares");
+            let (blueprint, grid) = CubeDeltaWalkRoutine::prepare(
+                &hw,
+                &problem,
+                &CubeDeltaWalkRoutineSettings::DEFAULT,
+            )
+            .expect("prepares");
             let microkernel = blueprint.microkernel;
             let partitioning = blueprint.partitioning.as_cubek();
             assert_eq!(partitioning.leaf().extent(KEY_FEATURE), microkernel.rows);
@@ -435,17 +435,19 @@ mod tests {
         for heads in [(2, 3, 12, 8), (2, 3, 40, 36), (2, 3, 100, 12)] {
             let problem = walk(1, 7, heads, 1);
             assert_eq!(
-                CubeDeltaWalkRoutine
-                    .prepare(&hw, &problem, &CubeDeltaWalkRoutineSettings::FLOOR)
+                CubeDeltaWalkRoutine::prepare(&hw, &problem, &CubeDeltaWalkRoutineSettings::FLOOR)
                     .err(),
                 Some(declined.clone()),
                 "{heads:?}"
             );
             assert_eq!(problem.admit(&hw), Err(declined.clone()), "{heads:?}");
             assert!(
-                CubeDeltaWalkRoutine
-                    .prepare(&hw, &problem, &CubeDeltaWalkRoutineSettings::DEFAULT)
-                    .is_ok(),
+                CubeDeltaWalkRoutine::prepare(
+                    &hw,
+                    &problem,
+                    &CubeDeltaWalkRoutineSettings::DEFAULT
+                )
+                .is_ok(),
                 "{heads:?}"
             );
         }
@@ -458,12 +460,10 @@ mod tests {
         let hw = devices::h100();
         let settings = CubeDeltaWalkRoutineSettings::DEFAULT;
         let mut problem = walk(1, 7, (2, 3, 128, 128), 1);
-        let (aligned, _) = CubeDeltaWalkRoutine
-            .prepare(&hw, &problem, &settings)
-            .expect("prepares");
+        let (aligned, _) =
+            CubeDeltaWalkRoutine::prepare(&hw, &problem, &settings).expect("prepares");
         problem.start_bytes.state = 4;
-        let (offset, _) = CubeDeltaWalkRoutine
-            .prepare(&hw, &problem, &settings)
+        let (offset, _) = CubeDeltaWalkRoutine::prepare(&hw, &problem, &settings)
             .expect("an offset view is served at the same setting");
         assert!(offset.width < aligned.width);
         assert!(offset.microkernel.rows < aligned.microkernel.rows);
@@ -476,9 +476,12 @@ mod tests {
     fn the_cube_asks_the_shared_memory_its_microkernel_counts() {
         let hw = devices::h100();
         for problem in problems() {
-            let (blueprint, grid) = CubeDeltaWalkRoutine
-                .prepare(&hw, &problem, &CubeDeltaWalkRoutineSettings::DEFAULT)
-                .expect("prepares");
+            let (blueprint, grid) = CubeDeltaWalkRoutine::prepare(
+                &hw,
+                &problem,
+                &CubeDeltaWalkRoutineSettings::DEFAULT,
+            )
+            .expect("prepares");
             assert_eq!(
                 grid.shared_memory,
                 blueprint.microkernel.shared_memory(blueprint.runs)
@@ -492,15 +495,15 @@ mod tests {
     fn every_routine_estimates_every_setting_whole() {
         let hw = devices::h100();
         let mut prepared = 0;
-        for settings in CubeDeltaWalkRoutine.settings(&hw) {
+        for settings in CubeDeltaWalkRoutine::settings(&hw) {
             for problem in problems() {
-                let Ok((blueprint, grid)) = CubeDeltaWalkRoutine.prepare(&hw, &problem, &settings)
+                let Ok((blueprint, grid)) = CubeDeltaWalkRoutine::prepare(&hw, &problem, &settings)
                 else {
                     continue;
                 };
                 prepared += 1;
                 let mut estimate = KernelEstimate::from(&grid);
-                CubeDeltaWalkRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
+                CubeDeltaWalkRoutine::estimate(&problem, &blueprint, &grid, &mut estimate);
                 assert!(estimate.work.is_some(), "{settings}: no work");
                 let staging = estimate.staging.as_ref().expect("staging");
                 assert!(

@@ -110,8 +110,8 @@ mod tests {
         ] {
             for (rows, dim) in [(1, 96), (1, 1003), (7, 2816), (3, 5003), (1, 11008)] {
                 let problem = SwigluRoutineProblem::dense(rows, dim, element);
-                for settings in CubeSwigluRoutine.settings(&hw) {
-                    if let Ok((blueprint, _)) = CubeSwigluRoutine.prepare(&hw, &problem, &settings)
+                for settings in CubeSwigluRoutine::settings(&hw) {
+                    if let Ok((blueprint, _)) = CubeSwigluRoutine::prepare(&hw, &problem, &settings)
                     {
                         let overhangs = blueprint.partitioning.as_tile().overhangs(WIDTH);
                         assert!(!overhangs, "{dim} {settings:?}");

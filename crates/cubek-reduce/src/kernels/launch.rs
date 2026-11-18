@@ -37,7 +37,7 @@ pub fn launch_reduce_routine<R: ReduceRoutine<M>, M>(
     settings: &R::Settings,
 ) -> Result<(), Refusal> {
     let hw = Hardware::from_client(tensors.client());
-    let (blueprint, grid) = routine.prepare(&hw, tensors.problem(), settings)?;
+    let (blueprint, grid) = R::prepare(&hw, tensors.problem(), settings)?;
     routine.launch(tensors, blueprint, grid);
     Ok(())
 }

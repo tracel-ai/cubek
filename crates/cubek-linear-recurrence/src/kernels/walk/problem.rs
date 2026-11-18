@@ -216,9 +216,7 @@ impl RecurrenceWalkProblem {
     ///
     /// What the floor declines, [`admit_launch`](Self::admit_launch)'s among them.
     pub fn admit(&self, hw: &Hardware) -> Result<(), Refusal> {
-        CubeDeltaWalkRoutine
-            .prepare(hw, self, &CubeDeltaWalkRoutineSettings::FLOOR)
-            .map(|_| ())
+        CubeDeltaWalkRoutine::prepare(hw, self, &CubeDeltaWalkRoutineSettings::FLOOR).map(|_| ())
     }
 
     /// Every dimension of the problem at its extent: what a routine partitions. The kept states sit

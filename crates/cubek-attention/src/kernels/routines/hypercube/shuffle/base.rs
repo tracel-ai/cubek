@@ -107,7 +107,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     /// key. A step spans one key a team to thirty-two a plane.
     ///
     /// Nothing where the device cannot merge this way, where every one of them declines.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if M::MERGE.admits(hw).is_err() {
             return Vec::new();
         }
@@ -165,7 +165,6 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     /// Nothing of its own: it only distributes the cubes, and their microkernel makes every
     /// access.
     fn vectorize(
-        &self,
         microkernel: &HypercubeAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
@@ -176,7 +175,6 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     /// Nothing of its own: its cubes' microkernel walks each cube's run of the keys and counts
     /// each cube's partial.
     fn estimate(
-        &self,
         problem: &AttentionRoutineProblem,
         blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
         grid: &Grid,
@@ -197,7 +195,6 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     /// autotune key prepares its candidates at one representative for every call of its bucket.
     /// A second launch's merge is prepared by the strategy that launches it.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
@@ -223,7 +220,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(
             hw,
             problem,
@@ -298,17 +295,16 @@ mod tests {
         }
     }
 
-    /// Every setting `routine` lists on each of `devices` prepares.
-    fn assert_every_setting_prepares<M: HypercubeShuffleMerge>(
-        routine: HypercubeShuffleAttentionRoutine<M>,
+    /// Every setting `R` lists on each of `devices` prepares.
+    fn assert_every_setting_prepares<R: Routine<Problem = AttentionRoutineProblem>>(
         devices: &[Hardware],
     ) {
         for hw in devices {
-            let settings = routine.settings(hw);
+            let settings = R::settings(hw);
             assert!(!settings.is_empty());
             for settings in settings {
                 for problem in problems() {
-                    let prepared = routine.prepare(hw, &problem, &settings);
+                    let prepared = R::prepare(hw, &problem, &settings);
                     assert!(prepared.is_ok(), "{settings} on {hw:?}: {prepared:?}");
                 }
             }
@@ -320,11 +316,12 @@ mod tests {
     #[test]
     fn every_setting_prepares() {
         let devices = [devices::m2_pro(), devices::h100()];
-        assert_every_setting_prepares(HypercubeLastArrivalShuffleAttentionRoutine::new(), &devices);
-        assert_every_setting_prepares(
-            HypercubeShufflePartialAttentionRoutine::new(),
-            &[devices::m2_pro(), devices::h100(), unmet(devices::m2_pro())],
-        );
+        assert_every_setting_prepares::<HypercubeLastArrivalShuffleAttentionRoutine>(&devices);
+        assert_every_setting_prepares::<HypercubeShufflePartialAttentionRoutine>(&[
+            devices::m2_pro(),
+            devices::h100(),
+            unmet(devices::m2_pro()),
+        ]);
     }
 
     /// Every setting serves a cache of any length, down to one key, and a prompt whose boxes of
@@ -333,10 +330,9 @@ mod tests {
     #[test]
     fn every_setting_serves_any_cache_length_and_fill() {
         let hw = devices::h100();
-        let routine = HypercubeShufflePartialAttentionRoutine::new();
         let decode = |keys| AttentionRoutineProblem::dense((1, 32, 8), (1, keys), (128, 128), F16);
         let prompt = AttentionRoutineProblem::dense((1, 32, 32), (4096, 4096), (128, 128), F16);
-        for settings in routine.settings(&hw) {
+        for settings in HypercubeShufflePartialAttentionRoutine::settings(&hw) {
             for problem in [
                 decode(1),
                 decode(5),
@@ -344,7 +340,8 @@ mod tests {
                 decode(1500),
                 prompt.clone(),
             ] {
-                let prepared = routine.prepare(&hw, &problem, &settings);
+                let prepared =
+                    HypercubeShufflePartialAttentionRoutine::prepare(&hw, &problem, &settings);
                 assert!(prepared.is_ok(), "{settings}: {:?}", prepared.err());
             }
         }
@@ -354,18 +351,18 @@ mod tests {
     /// on lanes it would misread.
     #[test]
     fn every_setting_declines_without_a_plane_width() {
-        fn declines<M: HypercubeShuffleMerge>(routine: HypercubeShuffleAttentionRoutine<M>) {
+        fn declines<R: Routine<Problem = AttentionRoutineProblem>>() {
             for hw in [devices::wgpu_no_subgroups(), devices::rdna_range()] {
-                for settings in routine.settings(&devices::m2_pro()) {
+                for settings in R::settings(&devices::m2_pro()) {
                     for problem in problems() {
-                        let declined = routine.prepare(&hw, &problem, &settings);
+                        let declined = R::prepare(&hw, &problem, &settings);
                         assert!(declined.is_err(), "{settings} on {hw:?}: {declined:?}");
                     }
                 }
             }
         }
-        declines(HypercubeLastArrivalShuffleAttentionRoutine::new());
-        declines(HypercubeShufflePartialAttentionRoutine::new());
+        declines::<HypercubeLastArrivalShuffleAttentionRoutine>();
+        declines::<HypercubeShufflePartialAttentionRoutine>();
     }
 
     /// The last arrival's last cube reads the others' slots within the launch, so where one cube's
@@ -373,10 +370,9 @@ mod tests {
     #[test]
     fn the_last_arrival_declines_where_cubes_cannot_meet() {
         let hw = unmet(devices::m2_pro());
-        let routine = HypercubeLastArrivalShuffleAttentionRoutine::new();
-        assert!(routine.settings(&hw).is_empty());
+        assert!(HypercubeLastArrivalShuffleAttentionRoutine::settings(&hw).is_empty());
         let [problem, _] = problems();
-        let declined = routine.prepare(
+        let declined = HypercubeLastArrivalShuffleAttentionRoutine::prepare(
             &hw,
             &problem,
             &HypercubeShuffleAttentionRoutineSettings::DEFAULT,
@@ -390,13 +386,12 @@ mod tests {
     #[test]
     fn the_cubes_share_a_box_along_the_keys() {
         let [problem, _] = problems();
-        let (blueprint, grid) = HypercubeLastArrivalShuffleAttentionRoutine::new()
-            .prepare(
-                &devices::m2_pro(),
-                &problem,
-                &HypercubeShuffleAttentionRoutineSettings::DEFAULT,
-            )
-            .expect("the default prepares on the M2");
+        let (blueprint, grid) = HypercubeLastArrivalShuffleAttentionRoutine::prepare(
+            &devices::m2_pro(),
+            &problem,
+            &HypercubeShuffleAttentionRoutineSettings::DEFAULT,
+        )
+        .expect("the default prepares on the M2");
         let partitioning = &blueprint.partitioning;
         assert_eq!(partitioning.cubes_along_keys().get(), 32);
         assert_eq!(partitioning.stage().extent(S), 4);
@@ -416,13 +411,12 @@ mod tests {
             cache: AttentionCacheLayout::Pages { page_size: 64 },
             ..decode
         };
-        let (blueprint, _) = HypercubeLastArrivalShuffleAttentionRoutine::new()
-            .prepare(
-                &devices::m2_pro(),
-                &paged,
-                &HypercubeShuffleAttentionRoutineSettings::DEFAULT,
-            )
-            .expect("the default prepares on the M2");
+        let (blueprint, _) = HypercubeLastArrivalShuffleAttentionRoutine::prepare(
+            &devices::m2_pro(),
+            &paged,
+            &HypercubeShuffleAttentionRoutineSettings::DEFAULT,
+        )
+        .expect("the default prepares on the M2");
         let partitioning = &blueprint.partitioning;
         assert_eq!(
             blueprint

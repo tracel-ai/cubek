@@ -158,8 +158,7 @@ impl SwigluRoutineCandidate<CubeSwigluRoutine> {
 impl<R: Routine + Copy> SwigluRoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, as candidates of the autotune, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        routine
-            .settings(hw)
+        R::settings(hw)
             .into_iter()
             .map(|settings| Self::new(routine, settings, hw))
             .collect()
@@ -250,17 +249,14 @@ where
         &self,
         problem: &SwigluRoutineProblem,
     ) -> Result<(SwigluBlueprint<M>, Grid), Refusal> {
-        self.prepared
-            .prepare(&self.routine, &self.hw, problem, &self.settings)
+        self.prepared.prepare(&self.hw, problem, &self.settings)
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device. Not held: a key's problem places the candidate in a
     /// round, and may never be launched.
     fn prepared(&self, key: &SwigluKey) -> Option<(SwigluBlueprint<M>, Grid)> {
-        self.routine
-            .prepare(&self.hw, &SwigluRoutineProblem::from(key), &self.settings)
-            .ok()
+        R::prepare(&self.hw, &SwigluRoutineProblem::from(key), &self.settings).ok()
     }
 
     /// The gate of `call` at this candidate's setting.
