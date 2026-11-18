@@ -6,7 +6,9 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::ops::matmul::MmaIo;
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{BlockScaledOperands, Dimension, Instruction, MmaOperands, StageStorage};
+use cubecl::tile::{
+    BlockScaledOperands, Dimension, Instruction, MmaOperands, StageStorage, StepCost,
+};
 use cubecl::wgmma::PLANE_GROUP_UNITS;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{ArithmeticInstruction, SWIZZLED_STAGE_UNREAD, StageLayout};
@@ -114,12 +116,17 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// How the instruction's accumulator reaches its destination.
-    pub fn drain(self) -> PlaneFragmentDrain {
-        match self {
-            Self::Cmma { .. } => PlaneFragmentDrain::Bounce,
-            Self::Mma { .. } | Self::Wgmma { .. } => PlaneFragmentDrain::CellByCell,
-        }
+    /// What the instruction spends where its sum is drained: a cmma fragment hides which unit
+    /// holds a cell, so its sum bounces through shared memory one call's cell at a time; the
+    /// others' units write their own cells. The cost of a plane that states its instruction; a
+    /// plane that states its Step asks the tile
+    /// ([`ProductStep::cost`](cubecl::tile::ProductStep::cost)).
+    pub fn cost(self) -> StepCost {
+        let bounced_cell = match self {
+            Self::Cmma { shape } => Some([shape.m as usize, shape.n as usize]),
+            Self::Mma { .. } | Self::Wgmma { .. } => None,
+        };
+        StepCost { bounced_cell }
     }
 
     /// Which of the device's arithmetic rates the instruction runs at.
@@ -284,20 +291,6 @@ impl PlaneFragmentInstruction {
             operands: MmaOperands::BlockScaled(instruction.form),
         }
     }
-}
-
-/// How an instruction's accumulator reaches its destination.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PlaneFragmentDrain {
-    /// Through the fragment's own store, which writes its whole window, where the destination
-    /// replaces and the window lies inside it; elsewhere through a window of shared memory, since
-    /// a cmma fragment hides which unit holds a cell: each fragment is spilled there and its cells
-    /// written on from it.
-    Bounce,
-    /// Each unit writing its own cells through the destination's write, one element at a time,
-    /// so the destination is bound one element wide: a manual mma fragment knows which unit
-    /// holds a cell, and its store reaches memory no other way.
-    CellByCell,
 }
 
 impl core::fmt::Display for PlaneFragmentInstruction {
