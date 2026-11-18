@@ -58,6 +58,21 @@ impl PlaneShuffleMatmulRoutineSettings {
         planes_per_worker: None,
     };
 
+    /// [`PACKED`](Self::PACKED) reading the rhs a scale block at a time, which closes a `K` that
+    /// is no whole number of words of scales.
+    pub const PACKED_BY_BLOCK: Self = Self {
+        microkernel: Self::PACKED.microkernel.by_block(),
+        ..Self::PACKED
+    };
+
+    /// Two columns a unit on four planes, reading the rhs a scale block at a time: on an RTX 2060
+    /// the fastest routed NVFP4 decode at a `k` of 160, ten experts of one token.
+    pub const BY_BLOCK_TWO_COLUMNS: Self = Self {
+        microkernel: PlaneShuffleMicrokernelSettings::stepping(2, None).by_block(),
+        planes: NonZeroUsize::new(4).unwrap(),
+        planes_per_worker: None,
+    };
+
     /// [`PACKED`](Self::PACKED) on a launch of 32 planes a compute unit, its planes walking the
     /// runs of columns: on a Radeon 8060S, an NVFP4 decode against Qwen3-8B's projections read
     /// 3% (gate/up) to 20% (o) faster than a plane a run, flat from 24 to 32 planes a unit and
@@ -135,23 +150,45 @@ impl PlaneShuffleMatmulRoutine {
         ]
     }
 
+    /// The packed settings reading the rhs a scale block at a time
+    /// ([`by_block`](PlaneShuffleMicrokernelSettings::by_block)): they close a `K` that is no whole
+    /// number of words of scales, a tensor-parallel slice of an expert. Raced by the routed
+    /// autotune alone, so no other packed table pays their tuning.
+    pub fn packed_by_block_settings(&self) -> Vec<PlaneShuffleMatmulRoutineSettings> {
+        vec![
+            PlaneShuffleMatmulRoutineSettings::PACKED_BY_BLOCK,
+            PlaneShuffleMatmulRoutineSettings::BY_BLOCK_TWO_COLUMNS,
+        ]
+    }
+
     /// Whether `settings` sizes a plane against `problem`'s packed rhs on a device committing to
-    /// a plane width: every packed setting does, but one tile
-    /// ([`OneTile`](cubek_microkernel::matmul::plane::PlaneShuffleKSplit::OneTile)) only where
-    /// the rhs is stored in tiles holding more than one read down `K`. In rows it declines,
-    /// rather than size the one-read kernel a second time.
+    /// a plane width: every packed setting does, but one stored tile
+    /// ([`Run::StoredTile`](cubecl::tile::layout::Run::StoredTile)) only where the rhs is stored
+    /// in tiles holding more than one read down `K`, and a setting reading by block only where the
+    /// rhs reads so. In rows one stored tile declines, rather than size the
+    /// one-read kernel a second time.
     #[cfg(test)]
     pub(crate) fn sizes_packed(
         settings: &PlaneShuffleMatmulRoutineSettings,
         problem: &MatmulRoutineProblem,
     ) -> bool {
+        use cubecl::tile::layout::Run;
         use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
-        settings.microkernel.k_split != PlaneShuffleKSplit::OneTile
-            || problem
-                .packings
-                .rhs
-                .as_ref()
-                .is_some_and(|packing| packing.operand.reads_down_a_tile(K) > 1)
+        let rhs = problem.packings.rhs.as_ref();
+        let one_tile = PlaneShuffleKSplit::Run(Run::StoredTile);
+        (settings.microkernel.k_split != one_tile
+            || rhs.is_some_and(|packing| {
+                let matrix = (problem.k, problem.n);
+                let reads = packing.operand.reads_down_k(
+                    Run::StoredTile,
+                    N,
+                    matrix,
+                    packing.value_bits(),
+                    cubek_std::GPU_TRANSACTION_BYTES,
+                );
+                reads.is_some_and(|reads| reads > 1)
+            }))
+            && (!settings.microkernel.by_block || problem.rhs_by_block().is_ok())
     }
 
     /// `microkernel` placed by `partitioning`, its widths settled.
@@ -307,6 +344,10 @@ impl PlaneShuffleMatmulRoutine {
         packing: &Packing,
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Refusal> {
+        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
+        let read = problem.rhs_read(settings.microkernel.by_block)?;
+        let problem: &MatmulRoutineProblem = &read;
+        let packing = problem.packings.rhs.as_ref().unwrap_or(packing);
         let PlaneShufflePackedPlacement {
             microkernel,
             columns,
@@ -533,6 +574,7 @@ mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+    use cubecl::tile::layout::Run;
     use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
@@ -713,7 +755,7 @@ mod tests {
             .expect("an rhs lined along a dimension")
             .work_item();
             let plane_width = 32;
-            PlaneShuffleKSplit::OneTransaction.units(&hw, &item, depth, plane_width)
+            PlaneShuffleKSplit::Run(Run::Transaction).units(&hw, &item, depth, plane_width)
         };
         let reads = |count| NonZeroUsize::new(count).unwrap();
         let f32 = ElemType::Float(FloatKind::F32);
@@ -780,13 +822,20 @@ mod tests {
             .into_iter()
             .chain([devices::wgpu_no_subgroups(), devices::rdna_range()])
         {
-            for settings in PlaneShuffleMatmulRoutine.packed_settings() {
+            for settings in PlaneShuffleMatmulRoutine
+                .packed_settings()
+                .into_iter()
+                .chain(PlaneShuffleMatmulRoutine.packed_by_block_settings())
+            {
+                let declines_rhs = settings.microkernel.by_block && problem.rhs_by_block().is_err();
+                let unread = MatmulRoutineProblem::RHS_UNREAD_BY_BLOCK;
                 match (
                     PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings),
                     hw.plane_size().is_ok()
                         && PlaneShuffleMatmulRoutine::sizes_packed(&settings, &problem),
                 ) {
                     (Ok(_), true) => {}
+                    (Err(why), false) if declines_rhs => assert_eq!(why, unread, "{settings}"),
                     (Err(Refusal::Declined { why: details }), false) => {
                         assert_eq!(details, PlaneShuffleMicrokernel::DECLINE, "{settings}")
                     }

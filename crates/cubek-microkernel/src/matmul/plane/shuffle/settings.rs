@@ -1,5 +1,7 @@
-use crate::matmul::{MatmulLayout, MatmulWorkItem};
+use crate::matmul::{MatmulDimensions, MatmulLayout, MatmulWorkItem};
 use core::num::NonZeroUsize;
+use cubecl::tile::Space;
+use cubecl::tile::layout::{Run, VectorTile};
 use cubek_std::Hardware;
 
 /// One unit's step, `columns × depth`, and how the plane's units share `K`.
@@ -22,6 +24,11 @@ pub struct PlaneShuffleMicrokernelSettings {
     /// where `None`. Fewer rows a unit hold fewer sums in its registers, and leave fewer of the
     /// plane's units to share `K`.
     pub rows_per_unit: Option<NonZeroUsize>,
+    /// Whether a packed rhs is read a scale block at a time
+    /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)): the step along `K`
+    /// is one block rather than a word of scales, so a `K` that is no whole number of words
+    /// closes. Declined against an rhs that reads none so.
+    pub by_block: bool,
 }
 
 impl PlaneShuffleMicrokernelSettings {
@@ -32,6 +39,7 @@ impl PlaneShuffleMicrokernelSettings {
         depth: NonZeroUsize::new(4).unwrap(),
         k_split: PlaneShuffleKSplit::WholePlane,
         rows_per_unit: None,
+        by_block: false,
     };
 
     /// One read deep.
@@ -54,7 +62,7 @@ impl PlaneShuffleMicrokernelSettings {
 
     /// A transaction's worth of units along `K`.
     pub const ONE_TRANSACTION: Self = Self {
-        k_split: PlaneShuffleKSplit::OneTransaction,
+        k_split: PlaneShuffleKSplit::Run(Run::Transaction),
         ..Self::DEFAULT
     };
 
@@ -62,7 +70,7 @@ impl PlaneShuffleMicrokernelSettings {
     /// read at eight rows of `K` with the lhs beside them in one vector.
     pub const EIGHT_READS_ONE_TRANSACTION: Self = Self {
         depth: NonZeroUsize::new(8).unwrap(),
-        k_split: PlaneShuffleKSplit::OneTransaction,
+        k_split: PlaneShuffleKSplit::Run(Run::Transaction),
         ..Self::DEFAULT
     };
 
@@ -70,7 +78,7 @@ impl PlaneShuffleMicrokernelSettings {
     /// share a column, so the most columns a plane.
     pub const ONE_READ_ONE_TRANSACTION: Self = Self {
         depth: NonZeroUsize::MIN,
-        k_split: PlaneShuffleKSplit::OneTransaction,
+        k_split: PlaneShuffleKSplit::Run(Run::Transaction),
         ..Self::DEFAULT
     };
 
@@ -112,23 +120,33 @@ impl PlaneShuffleMicrokernelSettings {
                 Some(rows) => Some(NonZeroUsize::new(rows).unwrap()),
                 None => None,
             },
+            by_block: false,
         }
     }
 
-    /// These settings with as few units along `K` as fill one memory transaction, the rest of
-    /// the plane along `N` ([`PlaneShuffleKSplit::OneTransaction`]).
+    /// These settings reading a packed rhs a scale block at a time
+    /// ([`by_block`](Self::by_block)).
+    pub const fn by_block(self) -> Self {
+        Self {
+            by_block: true,
+            ..self
+        }
+    }
+
+    /// These settings with as many units along `K` as read one memory transaction whole, the rest
+    /// of the plane along `N` ([`Run::Transaction`]).
     pub const fn one_transaction(self) -> Self {
         Self {
-            k_split: PlaneShuffleKSplit::OneTransaction,
+            k_split: PlaneShuffleKSplit::Run(Run::Transaction),
             ..self
         }
     }
 
     /// These settings with as many units along `K` as read one stored tile of a packed rhs whole,
-    /// the rest of the plane along `N` ([`PlaneShuffleKSplit::OneTile`]).
+    /// the rest of the plane along `N` ([`Run::StoredTile`]).
     pub const fn one_tile(self) -> Self {
         Self {
-            k_split: PlaneShuffleKSplit::OneTile,
+            k_split: PlaneShuffleKSplit::Run(Run::StoredTile),
             ..self
         }
     }
@@ -153,37 +171,39 @@ impl core::fmt::Display for PlaneShuffleMicrokernelSettings {
             "block={}x{} k_split={}",
             self.columns, self.depth, self.k_split
         )?;
-        match self.rows_per_unit {
-            Some(rows) => write!(f, " rows_per_unit={rows}"),
-            None => Ok(()),
+        if let Some(rows) = self.rows_per_unit {
+            write!(f, " rows_per_unit={rows}")?;
+        }
+        match self.by_block {
+            true => write!(f, " by_block"),
+            false => Ok(()),
         }
     }
 }
 
-/// How many of a plane's units share one run of columns, each taking its turn of `K`, named by
-/// what it fills rather than counted: the count each names moves with the device and the element.
+/// How many of a plane's units share one run of columns, each taking its turn of `K`: the whole
+/// plane, or as many as read one [`Run`] of the rhs whole, the rest of the plane beside them along
+/// `N`. The run is named rather than counted: how many reads it holds follows from how the rhs is
+/// stored ([`VectorTile::run_loads`]), and moves with the device and the element.
+///
+/// A transaction runs where the rhs lays its bytes together: down `K` for a col rhs, across the
+/// rows for a row rhs, whose units beside each other already fill it, so it takes one unit; in
+/// tile order, across the rows a tile lays side by side, then down `K`. A stored tile is read whole
+/// by as many units as reads it holds down `K`, every transaction of it in flight at once; it sizes
+/// no plane where no tile is stored, nor against a float rhs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlaneShuffleKSplit {
     /// The whole plane: one run of columns a plane, its units reading `K` together.
     WholePlane,
-    /// The fewest units whose steps fill one memory transaction between them, and the rest of the
-    /// plane beside them along `N`. A col rhs's columns run down `K`, so it takes as many units
-    /// as one transaction holds a column's step; a row rhs's run along `N`, where the units
-    /// beside each other already fill it, so it takes one.
-    OneTransaction,
-    /// As many units as read one stored tile of a packed rhs between them, beside the rows it
-    /// lays side by side, and the rest of the plane along `N`: where tile order lays a tile as one
-    /// contiguous run, a plane's load is the whole tile, every transaction of it coalesced and in
-    /// flight at once, and each unit walks a tile's share of `K`'s steps. Sizes no plane where no
-    /// tile lies so, nor against a float rhs, where it would be
-    /// [`OneTransaction`](Self::OneTransaction) again.
-    OneTile,
+    /// As many units as read one run of the rhs whole.
+    Run(Run),
 }
 
 impl PlaneShuffleKSplit {
     /// Units along `K` on `hw`, a plane `plane_width` units wide, for a block `depth` reads deep of
-    /// `item`'s rhs: a divisor of the plane, since the rest of it lies along `N`. Against a float
-    /// rhs, which [`OneTile`](Self::OneTile) sizes no plane for, it is one transaction's.
+    /// `item`'s float rhs, which is stored in rows: a unit's step is one read of the run, and the
+    /// plane's steps the window it runs through. A divisor of the plane, since the rest of it lies
+    /// along `N`.
     pub fn units(
         self,
         hw: &Hardware,
@@ -191,19 +211,46 @@ impl PlaneShuffleKSplit {
         depth: NonZeroUsize,
         plane_width: usize,
     ) -> usize {
-        let column_step_bytes =
-            depth.get() * hw.vector_ceiling(item.elements.rhs) * item.elements.rhs.size();
-        let wanted = match (self, item.layouts.rhs) {
-            (Self::WholePlane, _) => plane_width,
-            (Self::OneTransaction | Self::OneTile, MatmulLayout::Col) => {
-                hw.transaction_bytes() / column_step_bytes.max(1)
-            }
-            (Self::OneTransaction | Self::OneTile, MatmulLayout::Row | MatmulLayout::Strided) => 1,
+        let wanted = match self {
+            Self::WholePlane => plane_width,
+            Self::Run(run) => Self::steps_down_k(run, hw, item, depth, plane_width),
         };
         (1..=wanted.clamp(1, plane_width))
             .rev()
             .find(|units| plane_width.is_multiple_of(*units))
             .unwrap_or(1)
+    }
+
+    /// Steps down `K` one `run` of `item`'s float rhs holds, a step `depth` reads deep, over the
+    /// window a plane `plane_width` units wide reads: one where the rhs runs across `K`.
+    fn steps_down_k(
+        run: Run,
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        depth: NonZeroUsize,
+        plane_width: usize,
+    ) -> usize {
+        let element = item.elements.rhs;
+        let step = depth.get() * hw.vector_ceiling(element);
+        let MatmulDimensions { n, k, .. } = item.dimensions;
+        let (read, plane) = match item.layouts.rhs {
+            MatmulLayout::Col => (
+                VectorTile::run(k, step),
+                Space::new(&[(n, 1), (k, step * plane_width)]),
+            ),
+            MatmulLayout::Row | MatmulLayout::Strided => (
+                VectorTile::run(n, step),
+                Space::new(&[(k, plane_width), (n, step)]),
+            ),
+        };
+        read.run_loads(run, &plane, element.size_bits(), hw.transaction_bytes())
+            .map_or(1, |steps| {
+                steps
+                    .into_iter()
+                    .filter(|&(axis, _)| axis == k)
+                    .map(|(_, steps)| steps)
+                    .product()
+            })
     }
 }
 
@@ -211,8 +258,9 @@ impl core::fmt::Display for PlaneShuffleKSplit {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
             Self::WholePlane => "whole-plane",
-            Self::OneTransaction => "one-transaction",
-            Self::OneTile => "one-tile",
+            Self::Run(Run::Load) => "one-load",
+            Self::Run(Run::Transaction) => "one-transaction",
+            Self::Run(Run::StoredTile) => "one-tile",
         })
     }
 }

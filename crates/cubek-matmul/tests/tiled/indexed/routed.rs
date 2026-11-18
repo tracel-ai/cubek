@@ -62,6 +62,18 @@ fn the_routed_autotune_reads_each_route_s_slab() {
     );
 }
 
+/// An NVFP4 stack whose `k` is 2.5 words of scales, which only a rhs read a scale block at a time
+/// closes: the autotune still reaches a setting that serves it.
+#[test]
+fn the_routed_autotune_reads_an_nvfp4_stack_whose_k_is_no_whole_number_of_words() {
+    TunedRouted.check([Routed {
+        k: 160,
+        n: 96,
+        ..Routed::MOE
+    }
+    .packed(PackedFormat::Nvfp4)]);
+}
+
 /// The routed product through the routed autotune, which picks the routine and its setting.
 struct TunedRouted;
 

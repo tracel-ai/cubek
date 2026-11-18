@@ -126,7 +126,11 @@ mod plane_shuffle {
         let hw = devices::m2_pro();
         for m in [1, 8] {
             for (name, problem) in problems(m) {
-                for settings in PlaneShuffleMatmulRoutine.packed_settings() {
+                for settings in PlaneShuffleMatmulRoutine
+                    .packed_settings()
+                    .into_iter()
+                    .chain(PlaneShuffleMatmulRoutine.packed_by_block_settings())
+                {
                     let prepared = PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
                     if !PlaneShuffleMatmulRoutine::sizes_packed(&settings, &problem) {
                         assert!(prepared.is_err(), "{name} at {settings} sized a plane");
@@ -134,10 +138,14 @@ mod plane_shuffle {
                     }
                     let (blueprint, _) =
                         prepared.unwrap_or_else(|error| panic!("{name} at {settings}: {error:?}"));
+                    let read = match settings.microkernel.by_block {
+                        true => problem.rhs_by_block().expect("sized on an rhs read so"),
+                        false => problem.clone(),
+                    };
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
-                            whole_steps(&step(&hw, &problem), &space),
+                            whole_steps(&step(&hw, &read), &space),
                             "{name} at {settings}: {space:?}"
                         );
                     }
@@ -169,7 +177,8 @@ mod cube_shuffle {
                     };
                     prepared += 1;
                     let read = match settings.microkernel.by_block {
-                        true => CubeShuffleMatmulRoutine::rhs_by_block(&problem)
+                        true => problem
+                            .rhs_by_block()
                             .expect("a by-block setting prepared on an rhs read so"),
                         false => problem.clone(),
                     };
