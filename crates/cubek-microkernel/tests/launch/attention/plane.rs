@@ -123,8 +123,11 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         let served = self.microkernel.served(item);
         let delivery = self.microkernel.delivery(&widths, item);
-        let bound = |tensor: TensorBinding, element, width, axes: &'static [_]| {
-            launcher.arg(tensor, element).axes(axes).vectorize(width)
+        let bound = |tensor: TensorBinding, element, width, dimensions: &'static [_]| {
+            launcher
+                .arg(tensor, element)
+                .dimensions(dimensions)
+                .vectorize(width)
         };
         let query = bound(
             query,

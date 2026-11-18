@@ -3,7 +3,7 @@
 use super::{MGroupedFloors, MGroupedMatmulTensors, MGroupedSettings, launch_tuned};
 use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
 use crate::kernels::indexed::m_grouped::upload;
-use crate::kernels::indexed::stack::SlabAxis;
+use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::{Listing, Product};
 use crate::tiled::storage::{StorageLevels, tile};
@@ -11,7 +11,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 use cubecl::tile::launch::Refusal;
 use cubek_std::autotune::GroupPriority;
 use cubek_test_utils::client;
@@ -36,7 +36,7 @@ fn launch(
     lhs: PlainTensor,
     rhs: PlainTensor,
     ends: PlainTensor,
-    along: SlabAxis,
+    along: SlabDimension,
 ) -> Result<TensorHandle, Refusal> {
     let tensors = MGroupedMatmulTensors::new(client, lhs, StoredTensor::Plain(rhs), ends, along)?;
     launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT)
@@ -72,7 +72,7 @@ fn each_row_contracts_against_its_groups_slab() {
         f32s(&client, [rows, k], [k, 1], &x),
         f32s(&client, [k, groups * n], [1, k], &buffer),
         u32s(&client, &ends),
-        SlabAxis::Output,
+        SlabDimension::Output,
     )
     .expect("a col stack derives a grouped launch");
     assert_eq!(out.shape().to_vec(), vec![rows, n]);
@@ -103,7 +103,7 @@ fn no_rows_return_an_empty_output() {
             &vec![1.0; k * groups * n],
         ),
         u32s(&client, &[0, 0]),
-        SlabAxis::Output,
+        SlabDimension::Output,
     )
     .expect("no row declines nothing");
     assert_eq!(out.shape().to_vec(), vec![0, n]);
@@ -115,18 +115,19 @@ fn no_rows_return_an_empty_output() {
 fn a_stack_stored_in_tiles_is_refused() {
     let client = client();
     let (rows, k, n, groups) = (8, 32, 32, 2);
-    let (row_axis, col_axis) = (Axis(0), Axis(1));
+    let (row_dimension, col_dimension) = (Dimension(0), Dimension(1));
     let stack = f32s(
         &client,
         [k, groups * n],
         [groups * n, 1],
         &vec![1.0; k * groups * n],
     );
-    let storage = StorageLevels::new(&[(col_axis, 16), (row_axis, 16)]).grid(&[col_axis, row_axis]);
+    let storage = StorageLevels::new(&[(col_dimension, 16), (row_dimension, 16)])
+        .grid(&[col_dimension, row_dimension]);
     let tiled = tile(
         &client,
         stack.binding,
-        &[row_axis, col_axis],
+        &[row_dimension, col_dimension],
         F32,
         None,
         storage,
@@ -137,7 +138,7 @@ fn a_stack_stored_in_tiles_is_refused() {
         f32s(&client, [rows, k], [k, 1], &vec![1.0; rows * k]),
         PlainTensor::of_handle(tiled),
         u32s(&client, &[4, 8]),
-        SlabAxis::Output,
+        SlabDimension::Output,
     );
     assert!(
         matches!(declined, Err(MATMUL_SLABS_TAKE_NO_STORED_TILES)),
@@ -199,7 +200,7 @@ fn the_key_anchors_its_rows_to_a_power_of_two() {
             f32s(&client, [rows, k], [k, 1], &vec![1.0; rows * k]),
             StoredTensor::Plain(f32s(&client, [k, 2 * n], [1, k], &vec![1.0; 2 * n * k])),
             u32s(&client, &ends),
-            SlabAxis::Output,
+            SlabDimension::Output,
         )
         .expect("float operands the routines read")
         .key()

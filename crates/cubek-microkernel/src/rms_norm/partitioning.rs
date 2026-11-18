@@ -1,17 +1,17 @@
 use crate::row_store::{ROWS, RowStore, WIDTH};
 use cubecl::tile::{
-    Axis, Levels, Partitioning, Space,
+    Dimension, Levels, Partitioning, Space,
     space::{ComputeScope, PlaneOrder},
 };
-use cubek_std::matmul_axes::batch_axis;
+use cubek_std::matmul_dimensions::batch_dimension;
 
-/// A row: the axis the norm is taken independently along, the rows of the product it feeds.
-pub const R: Axis = ROWS;
+/// A row: the dimension the norm is taken independently along, the rows of the product it feeds.
+pub const R: Dimension = ROWS;
 /// The normalized dim, which every row spans and the weight runs along: the contraction of the
-/// product it feeds. A packed store states it as its blocks ([`RowStore::width_axes`]).
-pub const D: Axis = WIDTH;
+/// product it feeds. A packed store states it as its blocks ([`RowStore::width_dimensions`]).
+pub const D: Dimension = WIDTH;
 /// The batch the rows come in: each entry's rows lie at their own stride from the last entry's.
-pub const B: Axis = batch_axis(0);
+pub const B: Dimension = batch_dimension(0);
 
 /// How a routine of this kind places its microkernel's rows over a problem: a cube for every box
 /// of rows of every batch entry, and inside the cube's box the levels the routine and its
@@ -26,7 +26,7 @@ pub struct RmsNormPartitioning {
 }
 
 impl RmsNormPartitioning {
-    /// `space`, every axis of the problem, partitioned with `inside` a cube's box, its rows
+    /// `space`, every dimension of the problem, partitioned with `inside` a cube's box, its rows
     /// stored as `store` says.
     pub fn new(space: Space, inside: Levels, store: RowStore) -> Self {
         Self {
@@ -61,11 +61,11 @@ impl RmsNormPartitioning {
         }
     }
 
-    /// The partitioning a kernel compiles against: the batch and the rows of a plain store left
-    /// to the launch ([`RowStore::dynamic_axes`]), the dim compiled in, since every owner sizes its
-    /// registers by it.
+    /// The partitioning a kernel compiles against: the batch and the rows of a plain store left to
+    /// the launch ([`RowStore::dynamic_dimensions`]), the dim compiled in, since every owner sizes
+    /// its registers by it.
     pub fn kernel(&self) -> Partitioning {
-        let dynamic = [&[B], self.store.dynamic_axes()].concat();
+        let dynamic = [&[B], self.store.dynamic_dimensions()].concat();
         Partitioning::new(
             self.partitioning.space().clone().with_dynamic(&dynamic),
             self.partitioning.levels().to_vec(),

@@ -1,33 +1,33 @@
 use super::fragments::fragments;
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 use cubecl::zspace::metadata::Metadata;
 
-/// The one reading of which axis an operand is contiguous along: the axis whose fragments hold the
-/// unit-strided dim, over the trailing two logical dims named `axes`, or `None` where no fragment
-/// of extent past one strides by one — a strided or broadcast view, which the kernels stage or
-/// decline rather than walk in lines. A fragment of one addresses nothing and is not counted, so
-/// a `[m, 1]` operand at strides `[1, 1]` is contiguous along `M`.
+/// The one reading of which dimension an operand is contiguous along: the dimension whose fragments
+/// hold the unit-strided dim, over the trailing two logical dims named `dimensions`, or `None`
+/// where no fragment of extent past one strides by one — a strided or broadcast view, which the
+/// kernels stage or decline rather than walk in lines. A fragment of one addresses nothing and is
+/// not counted, so a `[m, 1]` operand at strides `[1, 1]` is contiguous along `M`.
 ///
 /// Read off the operand's [`fragments`], so a plain buffer, one fragment a dim, and a buffer
 /// stored in tiles, several, answer the same way: a `[k, n]` weight stored in `8 × 8` tiles a row
 /// at a time is contiguous along `N`.
 ///
-/// Every consumer of the fact (the key, the order the plane shuffle reads a weight in, the axis a
-/// packed operand's words run along) reads it through this, so no two of them can disagree about
-/// the same layout. The batch dims are left out on purpose: they broadcast, and a leading stride
-/// says nothing about which way the product's own dims run.
-pub fn contiguous(meta: &Metadata, axes: [Axis; 2]) -> Option<Axis> {
+/// Every consumer of the fact (the key, the order the plane shuffle reads a weight in, the
+/// dimension a packed operand's words run along) reads it through this, so no two of them can
+/// disagree about the same layout. The batch dims are left out on purpose: they broadcast, and a
+/// leading stride says nothing about which way the product's own dims run.
+pub fn contiguous(meta: &Metadata, dimensions: [Dimension; 2]) -> Option<Dimension> {
     let dims = fragments(meta);
-    let mut lined = axes
+    let mut lined = dimensions
         .into_iter()
         .zip(&dims[dims.len() - 2..])
         .filter(|(_, dim)| {
             dim.iter()
                 .any(|&(extent, stride)| extent > 1 && stride == 1)
         })
-        .map(|(axis, _)| axis);
+        .map(|(dimension, _)| dimension);
     match (lined.next(), lined.next()) {
-        (Some(axis), None) => Some(axis),
+        (Some(dimension), None) => Some(dimension),
         _ => None,
     }
 }
@@ -35,7 +35,7 @@ pub fn contiguous(meta: &Metadata, axes: [Axis; 2]) -> Option<Axis> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::matmul_axes::{K, M, N};
+    use crate::matmul_dimensions::{K, M, N};
     use cubecl::zspace::{Shape, Strides, Tiling};
 
     /// A plain buffer of `shape` at `strides`.
@@ -44,12 +44,12 @@ mod tests {
     }
 
     /// The production weight and its artifact form are the same shape under
-    /// opposite strides, and the key tells them apart by the axis each is
+    /// opposite strides, and the key tells them apart by the dimension each is
     /// contiguous along, which decides the order the plane shuffle reads it in,
     /// so a record shared between them would hand one the other's
     /// winner.
     #[test]
-    fn a_weight_keys_by_the_axis_it_is_contiguous_along() {
+    fn a_weight_keys_by_the_dimension_it_is_contiguous_along() {
         let (k, n) = (4096, 6144);
         // `[n, k]` behind a `[k, n]` view: `k` strides by one.
         assert_eq!(contiguous(&plain(&[k, n], &[1, k]), [K, N]), Some(K));
@@ -69,7 +69,7 @@ mod tests {
         assert_eq!(contiguous(&plain(&[m, k], &[1, m]), [M, K]), Some(M));
         assert_eq!(contiguous(&plain(&[m, k], &[2 * k, 2]), [M, K]), None);
         // A degenerate extent strides by one too, and does not count: a dim
-        // of one addresses nothing, so the other axis is the contiguous one.
+        // of one addresses nothing, so the other dimension is the contiguous one.
         assert_eq!(contiguous(&plain(&[m, 1], &[1, 1]), [M, K]), Some(M));
     }
 

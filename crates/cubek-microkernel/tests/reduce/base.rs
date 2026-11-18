@@ -1,7 +1,7 @@
 //! What every reduce microkernel computes alone: each row's cells, one or `k` for a top-k, values
-//! or indices. Along the reduced axis, `input[o, r]` and `out[o, s]`; across it, `input[r, o]` and
-//! `out[s, o]`. A hypercube's input splits the reduced axis into its parts, `input[o, p, r]` or
-//! `input[p, r, o]`, a cube a part.
+//! or indices. Along the reduced dimension, `input[o, r]` and `out[o, s]`; across it, `input[r, o]`
+//! and `out[s, o]`. A hypercube's input splits the reduced dimension into its parts, `input[o, p,
+//! r]` or `input[p, r, o]`, a cube a part.
 
 use crate::launch::reduce::{ReduceLaunch, ReduceScope};
 use cubecl::ir::{ElemType, FloatKind, IntKind};
@@ -37,7 +37,7 @@ pub(crate) struct Reduce {
 }
 
 /// One operation over rows `len` values long, read `width` values a line, laid along or across
-/// the reduced axis, reduced by `scope`.
+/// the reduced dimension, reduced by `scope`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReduceCase {
     pub operation: ReduceOperation,
@@ -48,8 +48,8 @@ pub(crate) struct ReduceCase {
 }
 
 impl ReduceCase {
-    /// Every operation over `(len, width)` rows reduced by `scope` along the reduced axis, then
-    /// across it at `across`.
+    /// Every operation over `(len, width)` rows reduced by `scope` along the reduced dimension,
+    /// then across it at `across`.
     pub(crate) fn every_operation(
         scope: ReduceScope,
         along: &[(usize, usize)],
@@ -90,11 +90,11 @@ struct HostReduce {
 }
 
 impl HostReduce {
-    /// Rows of `len` values: small whole numbers, so every sum is exact; one row with ties at
-    /// both ends, one with a NaN, one all `-inf`, one with zeros; for a product, values `±1`, and
-    /// `2` and `0.5` in turn, so no partial product of a long row overflows, whatever order it
-    /// multiplies in. Across the reduced axis, every row a column: as many rows as a whole number
-    /// of lines.
+    /// Rows of `len` values: small whole numbers, so every sum is exact; one row with ties at both
+    /// ends, one with a NaN, one all `-inf`, one with zeros; for a product, values `±1`, and `2`
+    /// and `0.5` in turn, so no partial product of a long row overflows, whatever order it
+    /// multiplies in. Across the reduced dimension, every row a column: as many rows as a whole
+    /// number of lines.
     fn new(case: ReduceCase) -> Self {
         let len = case.len;
         let base: Vec<f32> = match case.operation {

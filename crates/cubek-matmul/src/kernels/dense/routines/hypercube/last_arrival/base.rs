@@ -14,7 +14,7 @@ use cubek_microkernel::matmul::hypercube::{
 };
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand, MatmulRowsKind};
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, KB, KI, M, N};
+use cubek_std::matmul_dimensions::{K, KB, KI, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
@@ -101,9 +101,9 @@ impl HypercubeLastArrivalMatmulRoutine {
         let space = partitioning.as_tile().space();
         let (boxes_m, boxes_n) = partitioning.cubes();
         let batches: usize = partitioning
-            .batch_axes()
+            .batch_dimensions()
             .iter()
-            .map(|&axis| space.extent(axis))
+            .map(|&dimension| space.extent(dimension))
             .product();
         let tiles = boxes_m * boxes_n * batches;
         let cube = partitioning.cube_space().space;
@@ -113,7 +113,7 @@ impl HypercubeLastArrivalMatmulRoutine {
         MatmulPartitioning::new(
             partitioning.as_tile().clone(),
             Space::new(&[(M, cube.extent(M)), (N, cube.extent(N)), (K, run)]),
-            partitioning.batch_axes().to_vec(),
+            partitioning.batch_dimensions().to_vec(),
             partitioning.rows_kind(),
         )
     }
@@ -220,20 +220,20 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         let target = Self::cubes(hw, settings)?;
         // Against packed inputs each cube contracts them as its microkernel reads them, over the
         // block-split space, its share of the walk whole blocks of `K`.
-        let axes = [item.axes.m, item.axes.n];
+        let dimensions = [item.dimensions.m, item.dimensions.n];
         let resolved = microkernel.cube.resolve(
             hw,
             &microkernel.cube.contracted(&item),
             &view
-                .shared_partitioning(microkernel.cube.tiling(), &axes, target)
+                .shared_partitioning(microkernel.cube.tiling(), &dimensions, target)
                 .cube_space(),
         )?;
         let partitioning =
-            view.shared_partitioning(resolved.microkernel.launch_tiling(), &axes, target);
+            view.shared_partitioning(resolved.microkernel.launch_tiling(), &dimensions, target);
         let past_k = || {
             [KB, KI]
                 .into_iter()
-                .any(|axis| partitioning.as_tile().overhangs(axis))
+                .any(|dimension| partitioning.as_tile().overhangs(dimension))
         };
         if item.blocks.is_some() && past_k() {
             return Err(MATMUL_PACKED_WALK_PAST_K);
@@ -304,11 +304,11 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastAr
             .kernel_elements();
         let merge = tensors.bind_last_arrival(&blueprint, &binding.launcher);
         let out_width = blueprint.widths.out;
-        // SAFETY: every operand is bound through the launcher, which masks the reads and writes
-        // of a tile the problem's edge cuts short; the kernel indexes no buffer but through its tiles and the
-        // arrival counter of each tile its run touches. Its shared memory is sized by the planes of
-        // the grid it launches on: the stage fill counts `grid.launch.cube_dim`'s units, the
-        // scratch windows `grid.planes()`. The counters arrive holding zero.
+        // SAFETY: every operand is bound through the launcher, which masks the reads and writes of
+        // a tile the problem's edge cuts short; the kernel indexes no buffer but through its tiles
+        // and the arrival counter of each tile its run touches. Its shared memory is sized by the
+        // planes of the grid it launches on: the stage fill counts `grid.launch.cube_dim`'s units,
+        // the scratch windows `grid.planes()`. The counters arrive holding zero.
         unsafe {
             hypercube_last_arrival_matmul_kernel::launch_unchecked::<O>(
                 tensors.client(),

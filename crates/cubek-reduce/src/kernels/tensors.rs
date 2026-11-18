@@ -11,8 +11,8 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
 /// The input and the output of one reduction, and the problem they state.
 ///
-/// Both are read where they lie, at their own strides: every dim of each is an axis of the
-/// problem, so a reduction along any dim of a tensor of any rank binds without a copy.
+/// Both are read where they lie, at their own strides: every axis of each is a dimension of the
+/// problem, so a reduction along any axis of a tensor of any rank binds without a copy.
 #[derive(Clone)]
 pub struct ReduceTensors {
     client: Client,
@@ -32,7 +32,7 @@ impl core::fmt::Debug for ReduceTensors {
 }
 
 impl ReduceTensors {
-    /// `out = operation(input)` along dim `axis`: `out` has `input`'s shape, `axis` one wide, or
+    /// `out = operation(input)` along axis `axis`: `out` has `input`'s shape, `axis` one wide, or
     /// `k` wide for a top-k.
     ///
     /// # Panics
@@ -58,7 +58,7 @@ impl ReduceTensors {
         assert_eq!(
             out.shape.to_vec(),
             expected,
-            "a reduction along dim {axis} writes the input's shape with that dim {} wide",
+            "a reduction along axis {axis} writes the input's shape with that axis {} wide",
             operation.written_per_row()
         );
         // A line runs along the innermost dim where both operands step one element along it.
@@ -85,7 +85,7 @@ impl ReduceTensors {
         }
     }
 
-    /// `values = operation(input)` along dim `axis`, and the indices of those values to
+    /// `values = operation(input)` along axis `axis`, and the indices of those values to
     /// `indices`, in `index_element`, from one launch: `indices` has `values`' shape and strides.
     ///
     /// # Panics
@@ -135,13 +135,13 @@ impl ReduceTensors {
         });
         let input = launcher
             .arg(self.input.clone(), self.problem.elements.input)
-            .axes(&self.problem.input_axes())
+            .dimensions(&self.problem.input_dimensions())
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
         let out = launcher
             .arg(self.out.clone(), self.problem.elements.out)
-            .axes(&self.problem.out_axes())
+            .dimensions(&self.problem.out_dimensions())
             .vectorize(blueprint.out_width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -153,7 +153,7 @@ impl ReduceTensors {
                         .indices
                         .expect("indices beside the values have an element"),
                 )
-                .axes(&self.problem.out_axes())
+                .dimensions(&self.problem.out_dimensions())
                 .vectorize(blueprint.out_width)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)

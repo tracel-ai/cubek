@@ -5,7 +5,7 @@ use cubecl::tile::{Monoid, TOP_K_UNROLL_BUDGET};
 /// 151936-wide row ran 2.4 times faster than at width 8 on a GP100.
 pub const TOP_K_LANE_SLOTS: usize = 32;
 
-/// A reduction along one axis: a map on each value as it is read, a monoid that combines the
+/// A reduction along one dimension: a map on each value as it is read, a monoid that combines the
 /// values, and a last step on the total.
 ///
 /// | operation | map on read | monoid | carrier | last step |

@@ -55,7 +55,7 @@ pub const SCALED_PACKED_UNREAD: Refusal = Refusal::Declined {
 ///
 /// A source only says how a tile of positions `[p, p + T)` of sequence `b` and key head `h` is
 /// loaded: the attention gives the same answer wherever the pages break, so neither the pages nor
-/// the index list is an axis of the attention's space.
+/// the index list is a dimension of the attention's space.
 #[derive(Debug, Clone)]
 pub struct KvSource {
     pub cache: AttentionCache,

@@ -3,17 +3,17 @@ use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProb
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{
-    Axis, Levels, Partitioning, Space,
+    Dimension, Levels, Partitioning, Space,
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::{
-    MatmulAxes, MatmulBlocks, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
+    MatmulBlocks, MatmulDimensions, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
     MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::config::MatmulConfig;
 use cubek_std::layout::stored::Operand;
-use cubek_std::matmul_axes::{K, M, N, blocked};
+use cubek_std::matmul_dimensions::{K, M, N, blocked};
 
 /// What a launch holding every row whole declines whatever the device: an lhs or an output
 /// that does not hold every batch, whose batches no merge makes rows of one matrix.
@@ -22,7 +22,7 @@ pub const MATMUL_WHOLE_ROWS_BATCHES_UNMERGED: Refusal = Refusal::Declined {
 };
 
 /// What a launch holding every row whole declines whatever the device: an rhs held per batch,
-/// since such a launch reads one rhs matrix against every row, and none has a batch axis to
+/// since such a launch reads one rhs matrix against every row, and none has a batch dimension to
 /// step through several.
 pub const MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH: Refusal = Refusal::Declined {
     why: "a launch holding every row whole reads one rhs matrix against every row, so it reads no rhs held per batch",
@@ -68,7 +68,7 @@ impl<'a> MatmulView<'a> {
     ///
     /// [`MATMUL_PACKED_BLOCKS_DISAGREE`], for two packed operands whose scales cut `K` apart.
     /// Where every row is held whole: [`MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED`], for a
-    /// rhs lined along neither axis; [`MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH`], for one held per
+    /// rhs lined along neither dimension; [`MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH`], for one held per
     /// batch; [`MATMUL_WHOLE_ROWS_BATCHES_UNMERGED`], for an lhs or an output that does not
     /// hold every batch, unless a table is read per batch, which keeps the batches apart.
     pub fn new(
@@ -109,8 +109,8 @@ impl<'a> MatmulView<'a> {
         self.read().rows
     }
 
-    /// The problem partitioned with `inside` a cube's box, the cubes cutting `axes` and taking
-    /// their boxes in `order`, and `cubes_along_k` of them sharing every box
+    /// The problem partitioned with `inside` a cube's box, the cubes cutting `dimensions` and
+    /// taking their boxes in `order`, and `cubes_along_k` of them sharing every box
     /// ([`ONE_CUBE_A_BOX`](Self::ONE_CUBE_A_BOX) for a box to itself), each taking a run of its `K`
     /// walk (the tile DSL's [`Levels::across`]). A box's cubes ride the grid's third dimension
     /// beside the batches, so an order still strips the first two. Where every row is held whole,
@@ -125,28 +125,28 @@ impl<'a> MatmulView<'a> {
     pub fn partitioning(
         &self,
         inside: Levels,
-        axes: &[Axis],
+        dimensions: &[Dimension],
         order: CubeOrder,
         cubes_along_k: NonZeroUsize,
     ) -> MatmulPartitioning {
-        let distributed_batch_axes = self.distributed_batch_axes();
+        let distributed_batch_dimensions = self.distributed_batch_dimensions();
         let walked = self.walked();
         let cubes = match cubes_along_k.get() {
-            1 => inside.cubes(axes),
+            1 => inside.cubes(dimensions),
             cubes => inside
-                .cubes(&[axes, &[walked]].concat())
+                .cubes(&[dimensions, &[walked]].concat())
                 .across(walked, cubes),
         };
         let levels = cubes
             .ordered(order)
-            .batches(&distributed_batch_axes)
+            .batches(&distributed_batch_dimensions)
             .build();
         let partitioning = Partitioning::new(self.space(), levels);
         let tile = self.one_slab(partitioning.box_of(ComputeScope::Cube));
         let cube = match cubes_along_k.get() {
             1 => tile,
-            // The cube level's own tile is one step of the walked axis where cubes share a box,
-            // distributed in runs: the box states the run, as long as the longest cube's.
+            // The cube level's own tile is one step of the walked dimension where cubes share a
+            // box, distributed in runs: the box states the run, as long as the longest cube's.
             cubes => {
                 let step = tile.extent(walked);
                 let run = self
@@ -160,19 +160,26 @@ impl<'a> MatmulView<'a> {
                     &tile
                         .extents()
                         .into_iter()
-                        .map(|(axis, extent)| (axis, if axis == walked { run } else { extent }))
+                        .map(|(dimension, extent)| {
+                            (dimension, if dimension == walked { run } else { extent })
+                        })
                         .collect::<Vec<_>>(),
                 )
             }
         };
-        MatmulPartitioning::new(partitioning, cube, distributed_batch_axes, self.rows_kind)
+        MatmulPartitioning::new(
+            partitioning,
+            cube,
+            distributed_batch_dimensions,
+            self.rows_kind,
+        )
     }
 
-    /// The problem partitioned with `inside` a cube's box, `cubes` cubes cutting `axes` and
+    /// The problem partitioned with `inside` a cube's box, `cubes` cubes cutting `dimensions` and
     /// sharing its boxes as one flat index (the tile DSL's [`Levels::shared_by`]): each cube walks
     /// a run of whole boxes, as a persistent kernel's do, so what a cube holds across boxes, an
     /// lhs every box reads alike, it reads once. Its kernel walks the runs
-    /// (`Walk::portion_of`). The cubes cut whole boxes only, so the axes are the output's.
+    /// (`Walk::portion_of`). The cubes cut whole boxes only, so the dimensions are the output's.
     ///
     /// # Panics
     ///
@@ -180,85 +187,95 @@ impl<'a> MatmulView<'a> {
     pub fn persistent_partitioning(
         &self,
         inside: Levels,
-        axes: &[Axis],
+        dimensions: &[Dimension],
         cubes: NonZeroUsize,
     ) -> MatmulPartitioning {
-        let distributed_batch_axes = self.distributed_batch_axes();
+        let distributed_batch_dimensions = self.distributed_batch_dimensions();
         assert!(
-            distributed_batch_axes.is_empty(),
-            "persistent_partitioning: a run of boxes walks one axis, not batches beside it"
+            distributed_batch_dimensions.is_empty(),
+            "persistent_partitioning: a run of boxes walks one dimension, not batches beside it"
         );
-        let levels = inside.cubes(axes).shared_by(cubes.get()).build();
+        let levels = inside.cubes(dimensions).shared_by(cubes.get()).build();
         let partitioning = Partitioning::new(self.space(), levels);
         let cube = self.one_slab(partitioning.box_of(ComputeScope::Cube));
-        MatmulPartitioning::new(partitioning, cube, distributed_batch_axes, self.rows_kind)
+        MatmulPartitioning::new(
+            partitioning,
+            cube,
+            distributed_batch_dimensions,
+            self.rows_kind,
+        )
     }
 
-    /// The axis a cube's run of `K` walks: `K`, or the blocks a block-split space states it in,
-    /// so cubes sharing a box each take whole blocks under their scales.
-    fn walked(&self) -> Axis {
+    /// The dimension a cube's run of `K` walks: `K`, or the blocks a block-split space states it
+    /// in, so cubes sharing a box each take whole blocks under their scales.
+    fn walked(&self) -> Dimension {
         match self.blocks() {
             None => K,
             Some(_) => blocked(K).0,
         }
     }
 
-    /// The problem partitioned with `inside` a plane's box, every box `axes` cut a plane of the
-    /// launch's, the planes taking them in `order`: what a routine whose planes share nothing
+    /// The problem partitioned with `inside` a plane's box, every box `dimensions` cut a plane of
+    /// the launch's, the planes taking them in `order`: what a routine whose planes share nothing
     /// launches, which cube holds a plane being the launch's grouping alone. The batches ride
     /// outermost, each plane one batch's box. A cube's box is a block's of the order.
     pub fn plane_partitioning(
         &self,
         inside: Levels,
-        axes: &[Axis],
+        dimensions: &[Dimension],
         order: PlaneOrder,
     ) -> MatmulPartitioning {
-        let distributed_batch_axes = self.distributed_batch_axes();
+        let distributed_batch_dimensions = self.distributed_batch_dimensions();
         let levels = inside
-            .launch_planes(&[axes, &distributed_batch_axes].concat(), order.clone())
+            .launch_planes(
+                &[dimensions, &distributed_batch_dimensions].concat(),
+                order.clone(),
+            )
             .build();
         MatmulPartitioning::of_launch_planes(
             Partitioning::new(self.space(), levels),
             &order,
-            distributed_batch_axes,
+            distributed_batch_dimensions,
             self.rows_kind,
         )
     }
 
-    /// The problem partitioned with `inside` a cube's box, the cubes cutting `axes`, every box's
-    /// steps of `K` laid end to end and shared between `cubes` cubes, each taking a run of them
-    /// that may start inside one box and end inside another (the tile DSL's [`Levels::shared_by`]).
-    /// A cube's box holds the whole of `K`. The runs follow the boxes in the order of the line, so
-    /// no cube order applies.
+    /// The problem partitioned with `inside` a cube's box, the cubes cutting `dimensions`, every
+    /// box's steps of `K` laid end to end and shared between `cubes` cubes, each taking a run of
+    /// them that may start inside one box and end inside another (the tile DSL's
+    /// [`Levels::shared_by`]). A cube's box holds the whole of `K`. The runs follow the boxes in
+    /// the order of the line, so no cube order applies.
     pub fn shared_partitioning(
         &self,
         inside: Levels,
-        axes: &[Axis],
+        dimensions: &[Dimension],
         cubes: NonZeroUsize,
     ) -> MatmulPartitioning {
-        let distributed_batch_axes = self.distributed_batch_axes();
+        let distributed_batch_dimensions = self.distributed_batch_dimensions();
         let levels = inside
-            .cubes(axes)
+            .cubes(dimensions)
             .shared_by(cubes.get())
-            .batches(&distributed_batch_axes)
+            .batches(&distributed_batch_dimensions)
             .build();
         MatmulPartitioning::of_cubes(
             Partitioning::new(self.space(), levels),
-            distributed_batch_axes,
+            distributed_batch_dimensions,
             self.rows_kind,
         )
     }
 
-    /// `tile`, one slab wide along the axis a table's entry picks along: no level cuts that axis,
-    /// so a box spans every slab, but each cube's tile holds the one its entry names, and so does
-    /// the stage it fills. Any other tile as it is.
+    /// `tile`, one slab wide along the dimension a table's entry picks along: no level cuts that
+    /// dimension, so a box spans every slab, but each cube's tile holds the one its entry names,
+    /// and so does the stage it fills. Any other tile as it is.
     fn one_slab(&self, tile: Space) -> Space {
-        match self.problem.index.and_then(|index| index.axis()) {
+        match self.problem.index.and_then(|index| index.dimension()) {
             Some((stacked, _)) => Space::new(
                 &tile
                     .extents()
                     .into_iter()
-                    .map(|(axis, extent)| (axis, if axis == stacked { 1 } else { extent }))
+                    .map(|(dimension, extent)| {
+                        (dimension, if dimension == stacked { 1 } else { extent })
+                    })
                     .collect::<Vec<_>>(),
             ),
             None => tile,
@@ -268,17 +285,17 @@ impl<'a> MatmulView<'a> {
     /// The space a launch cuts: the batches its cubes are handed one of, then the rows, `n` and
     /// `k`. Against a packed operand, each of the three is the tiles its scales are constant
     /// inside and the position within one, so a microkernel's tiles land on whole scale tiles.
-    /// Last, the axis a table's entry picks along, which no level cuts: a stacked rhs's slabs.
+    /// Last, the dimension a table's entry picks along, which no level cuts: a stacked rhs's slabs.
     pub fn space(&self) -> Space {
         let product = [(M, self.rows()), (N, self.problem.n), (K, self.problem.k)];
         let product = match self.blocks() {
             None => product.to_vec(),
             Some(blocks) => [M, N, K]
                 .into_iter()
-                .flat_map(|axis| blocks.axes(axis))
+                .flat_map(|dimension| blocks.dimensions(dimension))
                 .collect(),
         };
-        let indexed = self.problem.index.and_then(|index| index.axis());
+        let indexed = self.problem.index.and_then(|index| index.dimension());
         Space::new(
             &[
                 self.distributed_batches(),
@@ -311,12 +328,12 @@ impl<'a> MatmulView<'a> {
         )
     }
 
-    /// What every microkernel is handed, summing in the problem's [`sum`](MatmulRoutineProblem::sum):
-    /// its rows held whole, every one, or tiled. Against a packed operand, the operands' blocks
-    /// ([`MatmulBlocks`]), over the axes inside a block. Its float inputs may be read rounded where
-    /// the process allows tf32 ([`MatmulConfig::allow_tf32`]), as the multi-level routines read
-    /// them, but under a table: a rounded input is bound as its words, which a table's entry
-    /// cannot index along a line of.
+    /// What every microkernel is handed, summing in the problem's
+    /// [`sum`](MatmulRoutineProblem::sum): its rows held whole, every one, or tiled. Against a
+    /// packed operand, the operands' blocks ([`MatmulBlocks`]), over the dimensions inside a block.
+    /// Its float inputs may be read rounded where the process allows tf32
+    /// ([`MatmulConfig::allow_tf32`]), as the multi-level routines read them, but under a table: a
+    /// rounded input is bound as its words, which a table's entry cannot index along a line of.
     pub fn work_item(&self) -> MatmulWorkItem {
         let blocks = self.blocks();
         MatmulWorkItem {
@@ -327,9 +344,9 @@ impl<'a> MatmulView<'a> {
             elements: self.problem.elements,
             sum: self.problem.sum(),
             layouts: self.problem.layouts,
-            axes: match blocks {
-                None => MatmulAxes::MNK,
-                Some(_) => MatmulAxes::INSIDE_BLOCKS,
+            dimensions: match blocks {
+                None => MatmulDimensions::MNK,
+                Some(_) => MatmulDimensions::INSIDE_BLOCKS,
             },
             blocks,
             rows: self.read().work_item_rows,
@@ -380,22 +397,22 @@ impl<'a> MatmulView<'a> {
         }
     }
 
-    /// The batch axes the cubes are handed one of.
-    pub(crate) fn distributed_batch_axes(&self) -> Vec<Axis> {
+    /// The batch dimensions the cubes are handed one of.
+    pub(crate) fn distributed_batch_dimensions(&self) -> Vec<Dimension> {
         self.distributed_batches()
             .into_iter()
-            .map(|(axis, _)| axis)
+            .map(|(dimension, _)| dimension)
             .collect()
     }
 
-    /// The batch axes the cubes are handed one of, with their extents: in a tiled launch those
-    /// longer than one; a launch holding every row whole has merged them into its rows. Under a
-    /// table, every one, of one batch too: the table's dims are the batches, all cut at the level
+    /// The batch dimensions the cubes are handed one of, with their extents: in a tiled launch
+    /// those longer than one; a launch holding every row whole has merged them into its rows. Under
+    /// a table, every one, of one batch too: the table's dims are the batches, all cut at the level
     /// that reads its entry.
-    fn distributed_batches(&self) -> Vec<(Axis, usize)> {
+    fn distributed_batches(&self) -> Vec<(Dimension, usize)> {
         let batches = self
             .problem
-            .batch_axes()
+            .batch_dimensions()
             .into_iter()
             .zip(self.problem.batches.iter().copied());
         match (self.rows_kind, self.problem.index) {
@@ -437,7 +454,7 @@ mod tests {
     use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::matmul::{MatmulOperands, MatmulRows};
-    use cubek_std::matmul_axes::{EXPERT, batch_axis};
+    use cubek_std::matmul_dimensions::{EXPERT, batch_dimension};
 
     fn shape(batch: usize, batching: MatmulBatching) -> MatmulShape {
         MatmulShape {
@@ -498,11 +515,11 @@ mod tests {
         assert!(!whole.space().is_dynamic(M));
         assert!(whole.space().is_dynamic(N) && whole.space().is_dynamic(K));
         let tiled = kernel(MatmulRowsKind::Tiled);
-        let batch = problem.batch_axes()[0];
+        let batch = problem.batch_dimensions()[0];
         assert!(
             [M, N, K, batch]
                 .into_iter()
-                .all(|axis| tiled.space().is_dynamic(axis))
+                .all(|dimension| tiled.space().is_dynamic(dimension))
         );
     }
 
@@ -532,7 +549,7 @@ mod tests {
     }
 
     /// An lhs broadcast along the batches holds fewer rows than the output, so no merge
-    /// makes them one matrix of rows; tiled, the batch is a grid axis and nothing merges.
+    /// makes them one matrix of rows; tiled, the batch is a grid dimension and nothing merges.
     #[test]
     fn a_broadcast_lhs_does_not_merge() {
         let problem = MatmulRoutineProblem::from(&shape(4, MatmulBatching::Shared));
@@ -610,9 +627,9 @@ mod tests {
         };
         for rows_kind in [MatmulRowsKind::Whole, MatmulRowsKind::Tiled] {
             let space = MatmulView::new(&problem, rows_kind).unwrap().space();
-            let [first, second] = [batch_axis(0), batch_axis(1)];
+            let [first, second] = [batch_dimension(0), batch_dimension(1)];
             assert_eq!(
-                [first, second, M, N, K, EXPERT].map(|axis| space.extent(axis)),
+                [first, second, M, N, K, EXPERT].map(|dimension| space.extent(dimension)),
                 [5, 1, 1, 48, 64, 4],
                 "{rows_kind:?}"
             );

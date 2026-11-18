@@ -167,7 +167,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
             &cube
                 .extents()
                 .into_iter()
-                .map(|(axis, extent)| (axis, if axis == S { run } else { extent }))
+                .map(|(dimension, extent)| (dimension, if dimension == S { run } else { extent }))
                 .collect::<Vec<_>>(),
         );
         blueprint
