@@ -496,7 +496,8 @@ mod tests {
     /// Over two spatial dims the roles are the tables the tiled convolution stated for 2D alone.
     #[test]
     fn two_spatial_dims_state_the_two_dimensional_tables() {
-        let [[oh, rh], [ow, rw]] = [0, 1].map(|dim| [ConvAxis::Out(dim).axis(), ConvAxis::Tap(dim).axis()]);
+        let [[oh, rh], [ow, rw]] =
+            [0, 1].map(|dim| [ConvAxis::Out(dim).axis(), ConvAxis::Tap(dim).axis()]);
         let roles = |operation| ConvRoles::of(operation, 2).expect("a served operation");
 
         let forward = roles(Forward);

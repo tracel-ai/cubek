@@ -1,7 +1,7 @@
-//! The unit window microkernel alone: the units of one plane each accumulating their block of the
+//! The plane window microkernel alone: the units of one plane each accumulating their block of the
 //! output as a memory window, on a depth of `K` no step of a block divides.
 
-use crate::launch::matmul::{MatmulElements, MatmulLaunch, UnitWindowLaunch};
+use crate::launch::matmul::{MatmulElements, MatmulLaunch, PlaneWindowLaunch};
 use crate::matmul::{F16, F32, HostMatmul};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
@@ -20,13 +20,13 @@ struct WindowCase {
     depth: usize,
 }
 
-struct UnitWindow {
+struct PlaneWindow {
     hw: Hardware,
 }
 
-impl UnitWindow {
-    fn launch_of(&self, case: &WindowCase) -> Result<UnitWindowLaunch, Refusal> {
-        UnitWindowLaunch::new(
+impl PlaneWindow {
+    fn launch_of(&self, case: &WindowCase) -> Result<PlaneWindowLaunch, Refusal> {
+        PlaneWindowLaunch::new(
             &self.hw,
             case.elements,
             &case.settings,
@@ -61,7 +61,7 @@ impl UnitWindow {
     }
 }
 
-impl ScopeUnderTest for UnitWindow {
+impl ScopeUnderTest for PlaneWindow {
     type Case = WindowCase;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
@@ -82,8 +82,8 @@ impl ScopeUnderTest for UnitWindow {
 }
 
 #[test]
-fn unit_window_accumulates_every_unit_block_of_a_plane() {
-    let window = UnitWindow {
+fn plane_window_accumulates_every_unit_block_of_a_plane() {
+    let window = PlaneWindow {
         hw: Hardware::from_client(&cubecl::test_device().client()),
     };
     window.check_some(window.every_case());

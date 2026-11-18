@@ -1,6 +1,6 @@
 use cubecl::tile::{Axis, Partitioning, SoftwareMatmul, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::matmul::unit::unit_window_microkernel;
+use cubek_microkernel::matmul::plane::plane_window_microkernel;
 
 /// Every plane of the launch, each of its units contracting its block of the output against the
 /// gathered input and the rhs, read straight from global memory. The block is accumulated as a
@@ -38,7 +38,7 @@ pub fn unit_registers_conv_kernel<EA: Numeric, EL: Numeric>(
             inside = inside && plane.origin(axis) < *extents.index(i);
         }
         if inside {
-            unit_window_microkernel(plane, &input, &rhs, &out, block);
+            plane_window_microkernel(plane, &input, &rhs, &out, block);
         }
     }
 }
