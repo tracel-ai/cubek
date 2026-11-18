@@ -52,16 +52,19 @@ impl ConvAxis {
             B => Self::Batch,
             CO => Self::ChannelsOut,
             CI => Self::ChannelsIn,
-            Axis(label) if label >= Self::FIRST_SPATIAL => {
-                let offset = label - Self::FIRST_SPATIAL;
-                let dim = usize::from(offset / Self::PER_SPATIAL_DIM);
-                if offset % Self::PER_SPATIAL_DIM == 0 {
-                    Self::Out(dim)
-                } else {
-                    Self::Tap(dim)
-                }
-            }
+            Axis(label) if label >= Self::FIRST_SPATIAL => Self::of_spatial(label),
             _ => panic!("{axis:?} is not an axis of a convolution"),
+        }
+    }
+
+    /// The measure of a spatial `label`.
+    fn of_spatial(label: u8) -> Self {
+        let offset = label - Self::FIRST_SPATIAL;
+        let dim = usize::from(offset / Self::PER_SPATIAL_DIM);
+        if offset.is_multiple_of(Self::PER_SPATIAL_DIM) {
+            Self::Out(dim)
+        } else {
+            Self::Tap(dim)
         }
     }
 
