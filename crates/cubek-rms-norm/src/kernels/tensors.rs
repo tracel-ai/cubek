@@ -8,7 +8,6 @@ use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{
     Axis, Geometry, Launcher,
     launch::{Bound, Unbound},
@@ -228,6 +227,13 @@ impl RmsNormInputs {
     /// `store` says.
     fn problem(&self, out: Placement, store: RowStore) -> RmsNormRoutineProblem {
         let (input, weight) = (&self.input, self.weight.tensor());
+        // An ungated norm binds no gate, so nothing reads the dense rows its place is stated as.
+        let gate = self
+            .gate
+            .as_ref()
+            .map_or(Placement::dense_rows(self.dim), |gate| {
+                Placement::from(&gate.tensor)
+            });
         RmsNormRoutineProblem {
             batch: self.batch,
             rows: self.rows,
@@ -237,21 +243,13 @@ impl RmsNormInputs {
             elem_alignments: RmsNormOperands {
                 input: input.elem_alignment(),
                 weight: weight.elem_alignment(),
-                gate: self
-                    .gate
-                    .as_ref()
-                    .map_or(ElemAlignment::dense_rows(self.dim), |gate| {
-                        gate.tensor.elem_alignment()
-                    }),
+                gate: gate.elem_alignment,
                 out: out.elem_alignment,
             },
             start_bytes: RmsNormOperands {
                 input: input.start_bytes(),
                 weight: weight.start_bytes(),
-                gate: self
-                    .gate
-                    .as_ref()
-                    .map_or(0, |gate| gate.tensor.start_bytes()),
+                gate: gate.start_bytes,
                 out: out.start_bytes,
             },
             store,

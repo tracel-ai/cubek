@@ -5,7 +5,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::rms_norm::cube::{
     CubeGroupsRmsNormMicrokernel, cube_groups_rms_norm_microkernel,
 };
-use cubek_microkernel::rms_norm::{Gate, GatedRow, RmsNormScale};
+use cubek_microkernel::rms_norm::{GatedRow, RmsNormScale};
 use cubek_microkernel::row_store::CubeStage;
 
 /// Every cube, running its groups' rows, written out as `stage` says.
@@ -26,7 +26,8 @@ pub fn cube_groups_rms_norm_kernel<E: Float, Held: Float, Out: Float, N: Size, O
 ) {
     let gated = GatedRow::new(
         &input.tile(&partitioning),
-        Gate::bound(gate.map(|gate| gate.tile(&partitioning)), microkernel.gate),
+        gate.map(|gate| gate.tile(&partitioning)),
+        microkernel.gate,
     );
     let w = weight.tile(&partitioning);
     let dest = O::serve::<Out, N>(out, &partitioning);

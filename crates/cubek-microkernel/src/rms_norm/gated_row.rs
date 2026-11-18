@@ -6,7 +6,7 @@ use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 /// A gate's tile and where it enters the norm, held together so a gated row cannot carry one
 /// without the other.
 #[derive(CubeType, Clone)]
-pub struct Gate {
+struct Gate {
     tile: Tile,
     #[cube(comptime)]
     order: GateOrder,
@@ -20,9 +20,8 @@ impl core::fmt::Debug for Gate {
 
 #[cube]
 impl Gate {
-    /// The gate a launch binds: `tile` entering at `order`. A launch binds a tile exactly where
-    /// its blueprint states an order.
-    pub fn bound(
+    /// The gate a launch binds: `tile` entering at `order`.
+    fn bound(
         tile: ComptimeOption<Tile>,
         #[comptime] order: Option<GateOrder>,
     ) -> ComptimeOption<Gate> {
@@ -43,7 +42,7 @@ impl Gate {
     }
 
     /// This gate windowed to `region`.
-    pub fn at(&self, region: &Region) -> Gate {
+    fn at(&self, region: &Region) -> Gate {
         Gate {
             tile: self.tile.at(region),
             order: comptime!(self.order),
@@ -98,11 +97,16 @@ impl core::fmt::Debug for GatedRow {
 
 #[cube]
 impl GatedRow {
-    /// The row of `input`, gated by `gate` where there is one.
-    pub fn new(input: &Tile, gate: ComptimeOption<Gate>) -> Self {
+    /// The row of `input`, gated by `gate` entering at `order`. A launch binds a gate exactly
+    /// where its blueprint states an order.
+    pub fn new(
+        input: &Tile,
+        gate: ComptimeOption<Tile>,
+        #[comptime] order: Option<GateOrder>,
+    ) -> Self {
         GatedRow {
             input: input.clone(),
-            gate,
+            gate: Gate::bound(gate, order),
         }
     }
 

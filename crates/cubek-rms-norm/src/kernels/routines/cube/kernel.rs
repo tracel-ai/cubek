@@ -3,7 +3,7 @@ use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpa
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::rms_norm::cube::{CubeRmsNormMicrokernel, cube_rms_norm_microkernel};
-use cubek_microkernel::rms_norm::{Gate, GatedRow, RmsNormScale};
+use cubek_microkernel::rms_norm::{GatedRow, RmsNormScale};
 use cubek_microkernel::row_store::CubeStage;
 
 /// Every cube, running its row, written out as `stage` says.
@@ -23,10 +23,8 @@ pub fn cube_rms_norm_kernel<E: Float, Held: Float, Out: Float, N: Size, O: Desti
 ) {
     let gated = GatedRow::new(
         &input.tile(&partitioning),
-        Gate::bound(
-            gate.map(|gate| gate.tile(&partitioning)),
-            microkernel.plane.gate,
-        ),
+        gate.map(|gate| gate.tile(&partitioning)),
+        microkernel.plane.gate,
     );
     let w = weight.tile(&partitioning);
     let dest = O::serve::<Out, N>(out, &partitioning);

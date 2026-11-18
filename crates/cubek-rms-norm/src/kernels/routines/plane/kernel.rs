@@ -3,7 +3,7 @@ use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpa
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::rms_norm::plane::{PlaneRmsNormMicrokernel, plane_rms_norm_microkernel};
-use cubek_microkernel::rms_norm::{Gate, GatedRow, RmsNormScale};
+use cubek_microkernel::rms_norm::{GatedRow, RmsNormScale};
 use cubek_microkernel::row_store::OwnerLines;
 
 /// Every plane of the launch, running its row.
@@ -22,7 +22,8 @@ pub fn plane_rms_norm_kernel<E: Float, Held: Float, Out: Float, N: Size, O: Dest
 ) {
     let gated = GatedRow::new(
         &input.tile(&partitioning),
-        Gate::bound(gate.map(|gate| gate.tile(&partitioning)), microkernel.gate),
+        gate.map(|gate| gate.tile(&partitioning)),
+        microkernel.gate,
     );
     let w = weight.tile(&partitioning);
     let dest = O::serve::<Out, N>(out, &partitioning);

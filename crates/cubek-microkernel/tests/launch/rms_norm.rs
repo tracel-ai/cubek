@@ -17,7 +17,7 @@ use cubek_microkernel::rms_norm::plane::{
     PlaneRmsNormMicrokernel, PlaneRmsNormMicrokernelSettings, plane_rms_norm_microkernel,
 };
 use cubek_microkernel::rms_norm::{
-    B, D, Gate, GateOrder, GatedRow, R, RmsNormPartitioning, RmsNormScale, RmsNormWorkItem,
+    B, D, GateOrder, GatedRow, R, RmsNormPartitioning, RmsNormScale, RmsNormWorkItem,
 };
 use cubek_microkernel::row_store::{CubeStage, OwnerLines, RowStore};
 use cubek_std::Hardware;
@@ -244,7 +244,8 @@ fn plane_rms_norm_kernel<E: Float, Held: Float, Out: Float, N: Size>(
     let (w, o) = (weight.tile(&partitioning), out.tile(&partitioning));
     let gated = GatedRow::new(
         &input.tile(&partitioning),
-        Gate::bound(gate.map(|gate| gate.tile(&partitioning)), microkernel.gate),
+        gate.map(|gate| gate.tile(&partitioning)),
+        microkernel.gate,
     );
     let scale = RmsNormScale::new(epsilon, microkernel.dim);
     for plane in &partitioning {
@@ -276,10 +277,8 @@ fn cube_rms_norm_kernel<E: Float, Held: Float, Out: Float, N: Size>(
     let (w, o) = (weight.tile(&partitioning), out.tile(&partitioning));
     let gated = GatedRow::new(
         &input.tile(&partitioning),
-        Gate::bound(
-            gate.map(|gate| gate.tile(&partitioning)),
-            microkernel.plane.gate,
-        ),
+        gate.map(|gate| gate.tile(&partitioning)),
+        microkernel.plane.gate,
     );
     let scale = RmsNormScale::new(epsilon, microkernel.plane.dim);
     for cube in &partitioning {
@@ -312,7 +311,8 @@ fn cube_groups_rms_norm_kernel<E: Float, Held: Float, Out: Float, N: Size>(
     let (w, o) = (weight.tile(&partitioning), out.tile(&partitioning));
     let gated = GatedRow::new(
         &input.tile(&partitioning),
-        Gate::bound(gate.map(|gate| gate.tile(&partitioning)), microkernel.gate),
+        gate.map(|gate| gate.tile(&partitioning)),
+        microkernel.gate,
     );
     let scale = RmsNormScale::new(epsilon, microkernel.dim);
     for cube in &partitioning {
