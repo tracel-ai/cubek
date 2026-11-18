@@ -53,7 +53,10 @@ pub(crate) fn tile_kind_to_dispatch(kind: AcceleratedTileKind) -> TileMatmulKind
 }
 
 /// `inputs` launched by the tiled `routine`.
-#[allow(clippy::result_large_err)]
+#[allow(
+    clippy::result_large_err,
+    reason = "the launch error carries the refusal; boxing it would change every launch fn's signature"
+)]
 fn launch_tile<const N_SPATIAL: usize>(
     routine: &ConvRoutineKind,
     client: &Client,
