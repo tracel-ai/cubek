@@ -3,7 +3,7 @@
 //! and `out[s, o]`. A hypercube's input splits the reduced dimension into its parts, `input[o, p,
 //! r]` or `input[p, r, o]`, a cube a part.
 
-use crate::launch::reduce::{ReduceLaunch, ReduceScope};
+use crate::launch::reduce::{ReduceLaunch, TestedMicrokernel};
 use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
@@ -31,27 +31,27 @@ pub(crate) const OPERATIONS: [ReduceOperation; 12] = [
     ReduceOperation::ArgTopK { k: 3 },
 ];
 
-/// The reduce microkernel `hw` runs at each case's scope.
+/// The reduce microkernel `hw` runs each case names.
 pub(crate) struct Reduce {
     pub hw: Hardware,
 }
 
 /// One operation over rows `len` values long, read `width` values a line, laid along or across
-/// the reduced dimension, reduced by `scope`.
+/// the reduced dimension, reduced by `microkernel`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReduceCase {
     pub operation: ReduceOperation,
-    pub scope: ReduceScope,
+    pub microkernel: TestedMicrokernel,
     pub len: usize,
     pub width: usize,
     pub layout: ReduceLayout,
 }
 
 impl ReduceCase {
-    /// Every operation over `(len, width)` rows reduced by `scope` along the reduced dimension,
+    /// Every operation over `(len, width)` rows reduced by `microkernel` along the reduced dimension,
     /// then across it at `across`.
     pub(crate) fn every_operation(
-        scope: ReduceScope,
+        microkernel: TestedMicrokernel,
         along: &[(usize, usize)],
         across: &[(usize, usize)],
     ) -> Vec<Self> {
@@ -61,7 +61,7 @@ impl ReduceCase {
                 .flat_map(move |&(len, width)| {
                     OPERATIONS.map(|operation| Self {
                         operation,
-                        scope,
+                        microkernel,
                         len,
                         width,
                         layout,
@@ -132,14 +132,16 @@ impl HostReduce {
     /// The input's shape and its values in that order.
     fn input(&self) -> (Shape, Vec<f32>) {
         let (rows, len) = (self.rows.len(), self.case.len);
-        match (self.case.layout, self.case.scope) {
-            (ReduceLayout::Along, ReduceScope::Hypercube { parts, .. }) => {
+        match (self.case.layout, self.case.microkernel) {
+            (ReduceLayout::Along, TestedMicrokernel::HypercubeLastArrival { parts, .. }) => {
                 (shape![rows, parts, len / parts], self.rows.concat())
             }
             (ReduceLayout::Along, _) => (shape![rows, len], self.rows.concat()),
-            (ReduceLayout::Across, scope) => {
-                let shape = match scope {
-                    ReduceScope::Hypercube { parts, .. } => shape![parts, len / parts, rows],
+            (ReduceLayout::Across, microkernel) => {
+                let shape = match microkernel {
+                    TestedMicrokernel::HypercubeLastArrival { parts, .. } => {
+                        shape![parts, len / parts, rows]
+                    }
                     _ => shape![len, rows],
                 };
                 let values = (0..len)
@@ -238,7 +240,7 @@ impl ScopeUnderTest for Reduce {
         let launch = ReduceLaunch::new(
             &self.hw,
             item,
-            case.scope,
+            case.microkernel,
             host.rows.len(),
             case.len,
             case.width,

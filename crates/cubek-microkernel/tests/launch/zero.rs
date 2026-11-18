@@ -2,20 +2,20 @@
 
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
-use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::space::UnitCube;
 use cubecl::tile::{
     Dimension, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::zero::unit::UnitDirectZeroMicrokernel;
 
-/// The rows of the output, a plane each.
-const O: Dimension = Dimension(0);
+/// The rows of the output, a unit each.
+const ROWS: Dimension = Dimension(0);
 /// The cells of a row.
-const C: Dimension = Dimension(1);
+const CELLS: Dimension = Dimension(1);
 
-/// `out`, `rows` rows of `cells` cells in `element`, row-major, zeroed by the first unit of each
-/// row's plane.
+/// `out`, `rows` rows of `cells` cells in `element`, row-major, each row zeroed by a unit of its
+/// own, a cube of one plane of `plane_width` units holding as many rows.
 ///
 /// # Errors
 ///
@@ -28,11 +28,17 @@ pub fn launch_unit_zero(
     cells: usize,
     plane_width: u32,
 ) -> Result<(), Refusal> {
-    let space = Space::new(&[(O, rows), (C, cells)]);
+    let space = Space::new(&[(ROWS, rows), (CELLS, cells)]);
     let partitioning = Partitioning::new(
         space.clone(),
-        Levels::leaf(&[(O, 1), (C, cells)])
-            .launch_planes(&[O], PlaneOrder::new(&[(O, 1)], CubeOrder::RowMajor))
+        Levels::leaf(&[(ROWS, 1), (CELLS, cells)])
+            .launch_units(
+                &[ROWS],
+                UnitCube {
+                    plane_width: plane_width as usize,
+                    planes: 1,
+                },
+            )
             .build(),
     );
     let grid = Grid::Stated {
@@ -40,7 +46,7 @@ pub fn launch_unit_zero(
         cube_dim: partitioning.cube_dim(plane_width),
     };
     let launcher = Launcher::new(client, partitioning, &space, grid)?;
-    let out = TileTensorLaunch::new(out, element, 1, TileSpec::direct(&[O, C]));
+    let out = TileTensorLaunch::new(out, element, 1, TileSpec::direct(&[ROWS, CELLS]));
     // SAFETY: the output is bound through the launcher at its own extents, and the kernel indexes
     // no buffer but through its tile.
     unsafe {
@@ -56,7 +62,10 @@ pub fn launch_unit_zero(
     Ok(())
 }
 
-/// Every plane's row, zeroed by its first unit alone.
+/// Every unit's row, zeroed by the unit.
+///
+/// Its operands' leaves:
+/// - `out`: one tensor of `rows` rows of `cells` cells, row-major.
 #[cube(launch_unchecked)]
 fn unit_zero_kernel(
     out: &TileTensor<'_>,
@@ -64,10 +73,8 @@ fn unit_zero_kernel(
     #[comptime] microkernel: UnitDirectZeroMicrokernel,
 ) {
     let o = out.tile(&partitioning);
-    for plane in &partitioning {
-        if UNIT_POS_PLANE == 0 {
-            let mut cells = o.at(&plane);
-            microkernel.runtime().execute(&mut cells);
-        }
+    for unit in &partitioning {
+        let mut cells = o.at(&unit);
+        microkernel.runtime().execute(&mut cells);
     }
 }

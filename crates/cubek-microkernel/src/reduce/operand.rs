@@ -10,6 +10,6 @@ pub enum ReduceOperand {
 }
 
 /// The rows: each one reduced on its own.
-pub const O: Dimension = Dimension(0);
+pub const ROWS: Dimension = Dimension(0);
 /// The reduced dimension.
-pub const R: Dimension = Dimension(1);
+pub const REDUCED: Dimension = Dimension(1);

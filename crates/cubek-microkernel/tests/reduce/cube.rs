@@ -1,6 +1,6 @@
 //! The cube reduce microkernel alone: a cube of four planes reduces its row.
 
-use crate::launch::reduce::ReduceScope;
+use crate::launch::reduce::TestedMicrokernel;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 
@@ -12,7 +12,7 @@ use crate::reduce::{Reduce, ReduceCase};
 fn a_cube_reduces_every_operation_like_the_cpu() {
     let hw = Hardware::from_client(&cubecl::test_device().client());
     let cases = ReduceCase::every_operation(
-        ReduceScope::Cube { planes: 4 },
+        TestedMicrokernel::CubeStaged { planes: 4 },
         &[(37, 1), (4096, 4)],
         &[(37, 1), (300, 4)],
     );

@@ -1,6 +1,6 @@
 //! The unit reduce microkernel alone: a plane's first unit reduces its row.
 
-use crate::launch::reduce::ReduceScope;
+use crate::launch::reduce::TestedMicrokernel;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 
@@ -11,7 +11,10 @@ use crate::reduce::{Reduce, ReduceCase};
 #[test]
 fn a_unit_reduces_every_operation_like_the_cpu() {
     let hw = Hardware::from_client(&cubecl::test_device().client());
-    let cases =
-        ReduceCase::every_operation(ReduceScope::Unit, &[(37, 1), (64, 4)], &[(37, 1), (300, 4)]);
+    let cases = ReduceCase::every_operation(
+        TestedMicrokernel::UnitDirect,
+        &[(37, 1), (64, 4)],
+        &[(37, 1), (300, 4)],
+    );
     Reduce { hw }.check(cases);
 }
