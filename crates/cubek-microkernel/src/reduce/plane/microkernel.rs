@@ -1,5 +1,5 @@
 use super::base::PlaneShuffleReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
+use crate::reduce::{ReduceAccumulator, ReduceCarrier, read_mapped, row_values};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -37,23 +37,15 @@ pub(crate) fn plane_shuffle_reduce_microkernel<
             microkernel,
         ),
         ReduceCarrier::TopK { k } => {
-            let size!(K) = k;
-            plane_shuffle_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
-                input,
-                out,
-                indices,
-                microkernel,
-            )
+            plane_shuffle_reduce_top_k::<In, Acc, Out, Idx, N>(input, out, indices, microkernel, k)
         }
-        ReduceCarrier::TopValues { k } => {
-            let size!(K) = k;
-            plane_shuffle_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
-                input,
-                out,
-                indices,
-                microkernel,
-            )
-        }
+        ReduceCarrier::TopValues { k } => plane_shuffle_reduce_top_values::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            microkernel,
+            k,
+        ),
     }
 }
 
@@ -72,34 +64,12 @@ fn plane_shuffle_reduce<
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
     let operation = microkernel.item().operation;
-    let monoid = operation.monoid();
     let layout = microkernel.item().layout;
-    let lanes = microkernel.lanes();
+    let count = input.flat::<In, N>().shape();
+    let total = plane_shuffle_reduce_part::<In, Acc, N, C>(input, count, microkernel);
+    let values = row_values::<N>(count, layout);
 
-    let lane = UNIT_POS_PLANE as usize;
-
-    let lines = input.flat::<In, N>();
-    let count = lines.shape();
-
-    let mut acc = C::identity(monoid);
-    for step in 0..count.div_ceil(lanes) {
-        let line = lane + step * lanes;
-        if line < count {
-            let read = read_mapped::<Acc, N>(
-                Vector::<Acc, N>::cast_from(lines.read(line)),
-                operation.read_map(),
-            );
-            C::accumulate(&mut acc, read, line, layout, monoid);
-        }
-    }
-
-    let total = C::across(acc, UnitShare::Plane, monoid);
-
-    if lane == 0 {
-        let values = match layout {
-            ReduceLayout::Along => count * N::value(),
-            ReduceLayout::Across => count,
-        };
+    if UNIT_POS_PLANE == 0 {
         C::write::<Out, Idx>(
             total,
             out,
@@ -110,4 +80,78 @@ fn plane_shuffle_reduce<
             microkernel.item().writes(),
         );
     }
+}
+
+/// The `count` lines of `input` accumulated by the plane into `C`: each lane takes every
+/// `lanes`-th line, consecutive lanes reading consecutive lines, and the lanes meet across the
+/// plane. Every lane is left with the total.
+#[cube]
+fn plane_shuffle_reduce_part<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+    input: &Tile,
+    count: usize,
+    #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
+) -> C {
+    let operation = microkernel.item().operation;
+    let monoid = operation.monoid();
+    let layout = microkernel.item().layout;
+    let lanes = microkernel.lanes();
+    let lane = UNIT_POS_PLANE as usize;
+    let lines = input.flat::<In, N>();
+
+    let mut acc = C::identity(monoid);
+    for step in 0..count.div_ceil(lanes) {
+        let line = lane + step * lanes;
+        if line < count {
+            C::accumulate(
+                &mut acc,
+                read_mapped::<Acc, N>(
+                    Vector::<Acc, N>::cast_from(lines.read(line)),
+                    operation.read_map(),
+                ),
+                line,
+                layout,
+                monoid,
+            );
+        }
+    }
+
+    C::across(acc, UnitShare::Plane, monoid)
+}
+
+/// [`plane_shuffle_reduce`] into a top-k of `k` slots, `K` bound in the function that uses it.
+#[cube]
+fn plane_shuffle_reduce_top_k<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    plane_shuffle_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+}
+
+/// [`plane_shuffle_reduce`] into a top-k of `k` values without their indices, `K` bound in the
+/// function that uses it.
+#[cube]
+fn plane_shuffle_reduce_top_values<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    plane_shuffle_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+        input,
+        out,
+        indices,
+        microkernel,
+    )
 }

@@ -1,5 +1,5 @@
 use super::base::UnitDirectReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
+use crate::reduce::{ReduceAccumulator, ReduceCarrier, read_mapped, row_values};
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -35,23 +35,15 @@ pub(crate) fn unit_direct_reduce_microkernel<
             microkernel,
         ),
         ReduceCarrier::TopK { k } => {
-            let size!(K) = k;
-            unit_direct_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
-                input,
-                out,
-                indices,
-                microkernel,
-            )
+            unit_direct_reduce_top_k::<In, Acc, Out, Idx, N>(input, out, indices, microkernel, k)
         }
-        ReduceCarrier::TopValues { k } => {
-            let size!(K) = k;
-            unit_direct_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
-                input,
-                out,
-                indices,
-                microkernel,
-            )
-        }
+        ReduceCarrier::TopValues { k } => unit_direct_reduce_top_values::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            microkernel,
+            k,
+        ),
     }
 }
 
@@ -85,10 +77,7 @@ fn unit_direct_reduce<
         C::accumulate(&mut acc, read, line, layout, monoid);
     }
 
-    let values = match layout {
-        ReduceLayout::Along => count * N::value(),
-        ReduceLayout::Across => count,
-    };
+    let values = row_values::<N>(count, layout);
 
     C::write::<Out, Idx>(
         acc,
@@ -99,4 +88,36 @@ fn unit_direct_reduce<
         operation,
         microkernel.item().writes(),
     );
+}
+
+/// [`unit_direct_reduce`] into a top-k of `k` slots, `K` bound in the function that uses it.
+#[cube]
+fn unit_direct_reduce_top_k<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: UnitDirectReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    unit_direct_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+}
+
+/// [`unit_direct_reduce`] into a top-k of `k` values without their indices, `K` bound in the
+/// function that uses it.
+#[cube]
+fn unit_direct_reduce_top_values<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: UnitDirectReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    unit_direct_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+        input,
+        out,
+        indices,
+        microkernel,
+    )
 }
