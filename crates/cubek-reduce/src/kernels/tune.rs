@@ -4,7 +4,7 @@
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceBlueprint, ReduceElements, ReduceKernel, ReduceLauncher,
-    ReduceRoutineProblem, ReduceTensors, UnitDirectReduceRoutine, UnitDirectZeroRoutine,
+    ReduceRoutineProblem, ReduceTensors, UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine,
 };
 use core::marker::PhantomData;
 use cubecl::client::Client;
@@ -173,9 +173,9 @@ impl ReduceRoutineCandidate<HypercubeAtomicReduceRoutine> {
             HypercubeAtomicReduceRoutine::prepare(&self.hw, tensors.problem(), &self.settings)
                 .map_err(|refusal| refusal.to_string())?;
         let (zero_blueprint, zero_grid) =
-            UnitDirectZeroRoutine::prepare_first_served(&self.hw, tensors.problem())
+            UnitDirectZeroReduceRoutine::prepare_first_served(&self.hw, tensors.problem())
                 .map_err(|refusal| refusal.to_string())?;
-        UnitDirectZeroRoutine::launch(&tensors, zero_blueprint, zero_grid);
+        UnitDirectZeroReduceRoutine::launch(&tensors, zero_blueprint, zero_grid);
         HypercubeAtomicReduceRoutine::launch(&tensors, blueprint, grid);
         Ok(())
     }
@@ -195,8 +195,8 @@ impl ReduceRoutineCandidate<HypercubeAtomicReduceRoutine> {
         let (blueprint, grid) =
             HypercubeAtomicReduceRoutine::prepare(&self.hw, tensors.problem(), &self.settings)?;
         let (zero_blueprint, zero_grid) =
-            UnitDirectZeroRoutine::prepare_first_served(&self.hw, tensors.problem())?;
-        UnitDirectZeroRoutine::zero_unbound(tensors, zero_blueprint, zero_grid);
+            UnitDirectZeroReduceRoutine::prepare_first_served(&self.hw, tensors.problem())?;
+        UnitDirectZeroReduceRoutine::zero_unbound(tensors, zero_blueprint, zero_grid);
         HypercubeAtomicReduceRoutine::launch_unbound::<I>(tensors, blueprint, grid, input)
     }
 }

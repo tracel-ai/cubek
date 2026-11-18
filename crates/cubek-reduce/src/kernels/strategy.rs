@@ -7,7 +7,7 @@ use crate::ReduceError;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceLauncher, ReduceTensors, UnitDirectReduceRoutine,
-    UnitDirectZeroRoutine, launch_tuned, select,
+    UnitDirectZeroReduceRoutine, launch_tuned, select,
 };
 use cubecl::Device;
 use cubecl::tile::launch::Refusal;
@@ -53,7 +53,7 @@ pub enum ReduceKernel {
     /// [`HypercubeLastArrivalReduceRoutine`]: a row split across cubes, the last cube to arrive merging
     /// every part.
     HypercubeLastArrival,
-    /// [`HypercubeAtomicReduceRoutine`] after [`UnitDirectZeroRoutine`]: a row split across cubes, each
+    /// [`HypercubeAtomicReduceRoutine`] after [`UnitDirectZeroReduceRoutine`]: a row split across cubes, each
     /// adding its part into the zeroed output. Sums only.
     HypercubeAtomic,
 }
@@ -159,10 +159,10 @@ impl ReduceKernel {
 /// before either launches, so a refusal leaves the output as the caller gave it.
 fn launch_zeroed_atomic(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
     let (zero_blueprint, zero_grid) =
-        UnitDirectZeroRoutine::prepare_first_served(hw, tensors.problem())?;
+        UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
     let (blueprint, grid) =
         HypercubeAtomicReduceRoutine::prepare_first_served(hw, tensors.problem())?;
-    UnitDirectZeroRoutine::launch(tensors, zero_blueprint, zero_grid);
+    UnitDirectZeroReduceRoutine::launch(tensors, zero_blueprint, zero_grid);
     HypercubeAtomicReduceRoutine::launch(tensors, blueprint, grid);
     Ok(())
 }

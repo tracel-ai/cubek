@@ -6,7 +6,7 @@ use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceLauncher,
     ReduceOpStrategy, ReduceRoutineProblem, ReduceTensors, UnitDirectReduceRoutine,
-    UnitDirectZeroRoutine, launch_tuned, select,
+    UnitDirectZeroReduceRoutine, launch_tuned, select,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, IntKind};
@@ -398,8 +398,8 @@ fn launch_atomic_unbound(
     let (blueprint, grid) =
         HypercubeAtomicReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
     let (zero_blueprint, zero_grid) =
-        UnitDirectZeroRoutine::prepare_first_served(&hw, tensors.problem())?;
-    UnitDirectZeroRoutine::zero_unbound(&tensors, zero_blueprint, zero_grid);
+        UnitDirectZeroReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
+    UnitDirectZeroReduceRoutine::zero_unbound(&tensors, zero_blueprint, zero_grid);
     HypercubeAtomicReduceRoutine::launch_unbound::<StoredTileOperand>(
         &tensors,
         blueprint,

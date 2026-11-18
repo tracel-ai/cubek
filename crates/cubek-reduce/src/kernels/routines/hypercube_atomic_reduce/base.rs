@@ -24,7 +24,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// routine reduces a row and adds its total into the output: a sum of few rows, too long for one
 /// cube each to keep the device busy, as a whole tensor summed into one value.
 ///
-/// The output must hold zero before it runs ([`UnitDirectZeroRoutine`](crate::kernels::UnitDirectZeroRoutine)
+/// The output must hold zero before it runs ([`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine)
 /// zeroes it), since it only ever adds. Its cubes run along the reduced
 /// dim and at most two row dims; it declines more.
 #[derive(Debug, Clone, Copy, Default)]

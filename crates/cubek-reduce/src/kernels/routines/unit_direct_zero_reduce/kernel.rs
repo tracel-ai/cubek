@@ -12,7 +12,7 @@ use cubek_microkernel::zero::unit::UnitDirectZeroMicrokernel;
     reason = "`Out` is the output's element, set by `#[define]`"
 )]
 #[cube(launch_unchecked)]
-pub(crate) fn unit_direct_zero_kernel<Out: Numeric>(
+pub(crate) fn unit_direct_zero_reduce_kernel<Out: Numeric>(
     out: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitDirectZeroMicrokernel,

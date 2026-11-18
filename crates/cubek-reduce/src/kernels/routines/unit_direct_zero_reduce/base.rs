@@ -1,4 +1,4 @@
-use super::kernel::unit_direct_zero_kernel;
+use super::kernel::unit_direct_zero_reduce_kernel;
 use crate::kernels::{
     ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
     reduce_widths,
@@ -17,35 +17,35 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// A reduction's output zeroed, a unit per box of rows' cells: what a reduction that adds its
 /// parts into the output starts from ([`HypercubeAtomicReduceRoutine`](crate::kernels::HypercubeAtomicReduceRoutine)).
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct UnitDirectZeroRoutine;
+pub(crate) struct UnitDirectZeroReduceRoutine;
 
 /// The zero microkernel's setting, and how many planes each cube runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UnitDirectZeroSettings {
+pub struct UnitDirectZeroReduceSettings {
     pub microkernel: UnitDirectZeroMicrokernelSettings,
     pub planes: usize,
 }
 
-impl core::fmt::Display for UnitDirectZeroSettings {
+impl core::fmt::Display for UnitDirectZeroReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} planes={}", self.microkernel, self.planes)
     }
 }
 
-pub type UnitDirectZeroBlueprint = ReduceBlueprint<UnitDirectZeroMicrokernel>;
+pub type UnitDirectZeroReduceBlueprint = ReduceBlueprint<UnitDirectZeroMicrokernel>;
 
-impl Routine for UnitDirectZeroRoutine {
+impl Routine for UnitDirectZeroReduceRoutine {
     type Problem = ReduceRoutineProblem;
     type Microkernel = UnitDirectZeroMicrokernel;
-    type Settings = UnitDirectZeroSettings;
-    type Blueprint = UnitDirectZeroBlueprint;
+    type Settings = UnitDirectZeroReduceSettings;
+    type Blueprint = UnitDirectZeroReduceBlueprint;
     type Partitioning = Partitioning;
 
     /// Cubes of four planes: a zeroing is one write a unit, which no setting speeds up.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         UnitDirectZeroMicrokernel::settings(hw)
             .into_iter()
-            .map(|microkernel| UnitDirectZeroSettings {
+            .map(|microkernel| UnitDirectZeroReduceSettings {
                 microkernel,
                 planes: 4,
             })
@@ -108,15 +108,15 @@ impl Routine for UnitDirectZeroRoutine {
     }
 }
 
-impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroRoutine {
-    const NAME: &'static str = "unit-direct-zero";
+impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroReduceRoutine {
+    const NAME: &'static str = "unit-direct-zero-reduce";
 
     /// The output zeroed; the input is never read.
     fn dispatch<I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
-        blueprint: UnitDirectZeroBlueprint,
+        blueprint: UnitDirectZeroReduceBlueprint,
         grid: Grid,
     ) {
         launch_zero(
@@ -132,7 +132,7 @@ impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroRoutine {
     /// The output zeroed. The caller's input is never read, so `input` is never called.
     fn launch_unbound<I: TileOperand>(
         tensors: &ReduceTensors<Geometry>,
-        blueprint: UnitDirectZeroBlueprint,
+        blueprint: UnitDirectZeroReduceBlueprint,
         grid: Grid,
         _input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {
@@ -141,11 +141,11 @@ impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroRoutine {
     }
 }
 
-impl UnitDirectZeroRoutine {
+impl UnitDirectZeroReduceRoutine {
     /// The output of `tensors`, whose input the caller binds, zeroed on `grid`.
     pub fn zero_unbound(
         tensors: &ReduceTensors<Geometry>,
-        blueprint: UnitDirectZeroBlueprint,
+        blueprint: UnitDirectZeroReduceBlueprint,
         grid: Grid,
     ) {
         let binding = tensors.bind(&blueprint, &grid);
@@ -164,7 +164,7 @@ impl UnitDirectZeroRoutine {
 fn launch_zero(
     client: &Client,
     problem: &ReduceRoutineProblem,
-    blueprint: &UnitDirectZeroBlueprint,
+    blueprint: &UnitDirectZeroReduceBlueprint,
     out: TileTensorLaunch,
     launcher: &Launcher,
     grid: Grid,
@@ -173,7 +173,7 @@ fn launch_zero(
     // problem's edge cuts short, and the kernel indexes no buffer but through its tile; it holds
     // no shared memory.
     unsafe {
-        unit_direct_zero_kernel::launch_unchecked(
+        unit_direct_zero_reduce_kernel::launch_unchecked(
             client,
             grid.launch.cube_count,
             grid.launch.cube_dim,
