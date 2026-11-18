@@ -18,7 +18,7 @@ pub const CO: Axis = Axis(1);
 pub const CI: Axis = Axis(2);
 
 /// What an axis of the space measures: the one place that numbers the labels of the axes.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConvAxis {
     Batch,
     ChannelsOut,
@@ -30,14 +30,19 @@ pub(crate) enum ConvAxis {
 }
 
 impl ConvAxis {
+    /// The label of the first spatial axis, which follows the three channel and batch labels.
+    const FIRST_SPATIAL: u8 = CI.0 + 1;
+    /// A spatial dim takes two labels: its out axis, then its tap axis.
+    const PER_SPATIAL_DIM: u8 = 2;
+
     /// The axis of this measure, the label [`Self::of`] reads back.
     pub const fn axis(self) -> Axis {
         match self {
             Self::Batch => B,
             Self::ChannelsOut => CO,
             Self::ChannelsIn => CI,
-            Self::Out(dim) => Axis(3 + 2 * dim as u8),
-            Self::Tap(dim) => Axis(4 + 2 * dim as u8),
+            Self::Out(dim) => Axis(Self::FIRST_SPATIAL + Self::PER_SPATIAL_DIM * dim as u8),
+            Self::Tap(dim) => Axis(Self::FIRST_SPATIAL + Self::PER_SPATIAL_DIM * dim as u8 + 1),
         }
     }
 
@@ -47,8 +52,15 @@ impl ConvAxis {
             B => Self::Batch,
             CO => Self::ChannelsOut,
             CI => Self::ChannelsIn,
-            Axis(label) if label >= 3 && label % 2 == 1 => Self::Out(usize::from(label - 3) / 2),
-            Axis(label) if label >= 3 => Self::Tap(usize::from(label - 4) / 2),
+            Axis(label) if label >= Self::FIRST_SPATIAL => {
+                let offset = label - Self::FIRST_SPATIAL;
+                let dim = usize::from(offset / Self::PER_SPATIAL_DIM);
+                if offset % Self::PER_SPATIAL_DIM == 0 {
+                    Self::Out(dim)
+                } else {
+                    Self::Tap(dim)
+                }
+            }
             _ => panic!("{axis:?} is not an axis of a convolution"),
         }
     }
@@ -275,6 +287,25 @@ mod tests {
     use crate::eval::benchmarks::{Conv2dElement, Conv2dProblem};
     use crate::launch::ConvolutionArgs;
     use ConvolutionOperation::{BackwardData, BackwardWeight, Forward};
+
+    #[test]
+    fn every_axis_reads_back_as_the_measure_that_made_it() {
+        for spatial_dims in 1..=3 {
+            let spatial =
+                (0..spatial_dims).flat_map(|dim| [ConvAxis::Out(dim), ConvAxis::Tap(dim)]);
+            let measures = [ConvAxis::Batch, ConvAxis::ChannelsOut, ConvAxis::ChannelsIn]
+                .into_iter()
+                .chain(spatial);
+            let mut labels = Vec::new();
+            for measure in measures {
+                assert_eq!(ConvAxis::of(measure.axis()), measure);
+                labels.push(measure.axis().0);
+            }
+            labels.sort_unstable();
+            labels.dedup();
+            assert_eq!(labels.len(), 3 + 2 * spatial_dims);
+        }
+    }
 
     /// Each operation reads the batch, the channels and the spatial extents from the dims of its
     /// own operands: the data backward gathers the output gradient and writes the input's shape.
