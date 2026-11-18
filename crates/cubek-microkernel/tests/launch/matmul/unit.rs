@@ -3,11 +3,12 @@
 
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Refusal, Vectorization};
-use cubecl::tile::space::{ComputeScope, UnitCube};
-use cubecl::tile::{Partitioning, Semiring, TileTensor};
+use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder, UnitCube};
+use cubecl::tile::{Partitioning, Semiring, SoftwareMatmul, TileTensor};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::matmul::unit::{
     UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings, unit_registers_microkernel,
+    unit_window_microkernel,
 };
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{M, N};
@@ -130,5 +131,104 @@ fn unit_registers_kernel<EA: Numeric, E: Numeric>(
             unit_registers_microkernel(&step, &sum, &a, &b);
         }
         sum.drained_into(&c);
+    }
+}
+
+/// One unit window microkernel ready to launch on one plane's block of the output: `blocks` blocks
+/// along the columns dealt to `units` units, `depth` deep along `K`, every operand one value a
+/// line.
+#[derive(Debug, Clone)]
+pub struct UnitWindowLaunch {
+    pub microkernel: UnitRegistersMicrokernel,
+    pub elements: MatmulElements,
+    units: u32,
+    one_cube: OneCube,
+}
+
+impl UnitWindowLaunch {
+    /// # Errors
+    ///
+    /// Why the device runs none.
+    pub fn new(
+        hw: &Hardware,
+        elements: MatmulElements,
+        settings: &UnitRegistersMicrokernelSettings,
+        blocks: usize,
+        units: u32,
+        depth: usize,
+    ) -> Result<Self, Refusal> {
+        let microkernel = UnitRegistersMicrokernel::best(hw, &elements.work_item(), settings)?;
+        let levels = microkernel
+            .block_tiling()
+            .units_distributed(N, blocks)
+            .launch_planes(&[M, N], PlaneOrder::new(&[], CubeOrder::RowMajor))
+            .build();
+        Ok(Self {
+            microkernel,
+            elements,
+            units,
+            one_cube: OneCube::deep(levels, ComputeScope::Plane, depth),
+        })
+    }
+}
+
+impl MatmulLaunch for UnitWindowLaunch {
+    fn elements(&self) -> MatmulElements {
+        self.elements
+    }
+
+    fn shape(&self) -> [usize; 3] {
+        self.one_cube.shape
+    }
+
+    fn launch(
+        &self,
+        client: &Client,
+        lhs: TensorArg,
+        rhs: TensorArg,
+        out: TensorArg,
+    ) -> Result<(), Refusal> {
+        let launcher = self.one_cube.launcher(client, self.units)?;
+        let [lhs, rhs, out] =
+            self.elements
+                .bound([lhs, rhs, out], self.rhs_layout(), MatmulOperands::all(1));
+        // SAFETY: every operand is bound through the launcher at the problem's own extents, and
+        // the kernel indexes no buffer but through its tiles; it holds no shared memory.
+        unsafe {
+            unit_window_kernel::launch_unchecked(
+                client,
+                launcher.cube_count(),
+                launcher.cube_dim(),
+                lhs,
+                rhs,
+                out,
+                launcher.partitioning_arg(),
+                self.microkernel.software_matmul().split_edge(),
+                [self.elements.sum, self.elements.out],
+            );
+        }
+        Ok(())
+    }
+}
+
+/// The plane's units accumulating their blocks of `out`, which the launch opened at zero.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
+#[cube(launch_unchecked)]
+fn unit_window_kernel<EA: Numeric, E: Numeric>(
+    lhs: &TileTensor<'_>,
+    rhs: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] block: SoftwareMatmul,
+    #[define(EA, E)] _elements: [ElemType; 2],
+) {
+    let a = lhs.tile(&partitioning);
+    let b = rhs.tile(&partitioning);
+    let c = out.tile(&partitioning);
+    for plane in &partitioning {
+        unit_window_microkernel(plane, &a, &b, &c, block);
     }
 }
