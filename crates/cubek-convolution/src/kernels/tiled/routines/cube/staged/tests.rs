@@ -10,7 +10,7 @@ use crate::kernels::tiled::routines::test_support::{
 };
 use crate::kernels::tiled::{ConvDecline, ConvProblem};
 use cubecl::tile::launch::Refusal;
-use cubek_std::devices::topology;
+use cubek_std::devices::{self, topology};
 use cubek_std::microkernel::KernelEstimate;
 use cubek_std::routine::EstimatedProblem;
 use cubek_std::routine::Routine;
@@ -57,6 +57,23 @@ fn only_a_cmma_output_is_masked_to_bounce() {
     };
     assert!(masks_out(nvidia()));
     assert!(!masks_out(mma_only()));
+}
+
+/// A device with no matrix instruction and no plane operations, as a CPU runtime, is declined by
+/// name before anything is placed.
+#[test]
+fn a_device_with_no_matrix_instruction_or_planes_declines_every_problem() {
+    let hw = devices::cpu_12();
+    for (name, problem) in staged_problems() {
+        let declined = ROUTINE
+            .prepare(&hw, &problem, &settings::F2X2_P2X2_T16)
+            .err();
+        assert_eq!(
+            declined,
+            Some(Refusal::from(ConvDecline::InstructionUnoffered)),
+            "{name}"
+        );
+    }
 }
 
 /// A split holding more planes than a cube of the device spawns is refused by name before any
