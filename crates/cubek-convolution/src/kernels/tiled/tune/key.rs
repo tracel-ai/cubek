@@ -18,20 +18,20 @@ use serde::{Deserialize, Serialize};
 /// lets it be read, the output's excepted: the cube staged routine writes it one element at a time.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct CubeStagedConvTuneKey {
-    operation: ConvolutionOperation,
-    lhs: ElemType,
-    rhs: ElemType,
-    out: ElemType,
-    sum: ElemType,
-    batch: usize,
-    gathered: [usize; 2],
-    out_extent: [usize; 2],
-    kernel: [usize; 2],
-    channels_in: usize,
-    channels_out: usize,
-    window: ConvolutionArgs<2>,
-    lhs_width: usize,
-    rhs_width: usize,
+    pub operation: ConvolutionOperation,
+    pub lhs: ElemType,
+    pub rhs: ElemType,
+    pub out: ElemType,
+    pub sum: ElemType,
+    pub batch: usize,
+    pub gathered: [usize; 2],
+    pub out_extent: [usize; 2],
+    pub kernel: [usize; 2],
+    pub channels_in: usize,
+    pub channels_out: usize,
+    pub window: ConvolutionArgs<2>,
+    pub lhs_width: usize,
+    pub rhs_width: usize,
 }
 
 impl CubeStagedConvTuneKey {
