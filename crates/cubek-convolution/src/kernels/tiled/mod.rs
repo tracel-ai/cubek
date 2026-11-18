@@ -29,6 +29,6 @@ pub(crate) use launch::ConvRoutine;
 pub(crate) use partitioning::{ConvPartitioning, ConvTiles, InstructionShape};
 pub(crate) use problem::{B, CI, CO, ConvAxis, ConvDim, ConvProblem};
 pub(crate) use roles::{ConvGather, ConvRoles};
-pub(crate) use routines::{CubeStagedConvRoutine, UnitRegistersConvRoutine};
+pub(crate) use routines::{CubeStagedConvRoutine, PlaneWindowConvRoutine};
 pub(crate) use staging::ConvStaging;
 pub(crate) use tune::launch_tuned;

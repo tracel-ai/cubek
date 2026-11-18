@@ -1,6 +1,6 @@
 use super::{CubeStagedConvCandidate, CubeStagedConvTuneKey};
 use crate::kernels::tiled::{
-    ConvRoutine, ConvTensors, CubeStagedConvSettings, UnitRegistersConvRoutine,
+    ConvRoutine, ConvTensors, CubeStagedConvSettings, PlaneWindowConvRoutine,
 };
 use cubecl::client::Client;
 use cubecl::tile::launch::Refusal;
@@ -37,11 +37,11 @@ fn listed(id: &ServiceId, hw: &Hardware) -> Arc<[CubeStagedConvCandidate]> {
 /// routine's listed settings on `hw`.
 ///
 /// Where no listed setting serves the problem, or the one the autotune settled for its key does
-/// not, the first that does launches, and the unit registers routine is the floor under them all.
+/// not, the first that does launches, and the plane window routine is the floor under them all.
 ///
 /// # Errors
 ///
-/// The unit registers routine's refusal where nothing serves the problem.
+/// The plane window routine's refusal where nothing serves the problem.
 pub fn launch_tuned(hw: &Hardware, tensors: ConvTensors) -> Result<(), Refusal> {
     let client = tensors.client().clone();
     let id = client.service_id();
@@ -86,7 +86,7 @@ fn run_tuned(
     Ok(())
 }
 
-/// `tensors` at the first of `list` that serves them, or on the unit registers routine where none
+/// `tensors` at the first of `list` that serves them, or on the plane window routine where none
 /// does.
 fn launch_floor(
     list: &[CubeStagedConvCandidate],
@@ -97,7 +97,7 @@ fn launch_floor(
         .iter()
         .map(|candidate| candidate.launch(tensors.clone()));
     let floor =
-        std::iter::once_with(|| UnitRegistersConvRoutine.launch_first_served(hw, tensors.clone()));
+        std::iter::once_with(|| PlaneWindowConvRoutine.launch_first_served(hw, tensors.clone()));
     first_served(listed.chain(floor), ROUTINE_LISTS_NO_SETTING)
 }
 

@@ -1,6 +1,6 @@
 use super::block::{BlockDepth, BlockForm};
-use super::kernel::unit_registers_conv_kernel;
-use super::settings::{UnitBlock, UnitRegistersConvSettings};
+use super::kernel::plane_window_conv_kernel;
+use super::settings::{PlaneWindowConvSettings, UnitBlock};
 use crate::kernels::tiled::{
     ConvBinding, ConvPartitioning, ConvProblem, ConvRoles, ConvRoutine, ConvStaging,
     TileConvBlueprint,
@@ -116,9 +116,9 @@ impl PlaneDeal {
 /// An operand whose buffer does not run along the axis a register block reads it in is read one
 /// element at a time.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct UnitRegistersConvRoutine;
+pub struct PlaneWindowConvRoutine;
 
-impl UnitRegistersConvRoutine {
+impl PlaneWindowConvRoutine {
     /// How a cube laid out as `planes` takes the tiles of `microkernel`'s blocks, `blocks` along
     /// the columns to a plane, as `hw` runs them.
     fn plane_deal(
@@ -229,10 +229,10 @@ impl UnitRegistersConvRoutine {
     }
 }
 
-impl Routine for UnitRegistersConvRoutine {
+impl Routine for PlaneWindowConvRoutine {
     type Problem = ConvProblem;
     type Microkernel = UnitRegistersMicrokernel;
-    type Settings = UnitRegistersConvSettings;
+    type Settings = PlaneWindowConvSettings;
     type Blueprint = TileConvBlueprint<UnitRegistersMicrokernel>;
     type Partitioning = ConvPartitioning;
 
@@ -345,7 +345,7 @@ impl Routine for UnitRegistersConvRoutine {
     }
 }
 
-impl ConvRoutine<UnitRegistersMicrokernel> for UnitRegistersConvRoutine {
+impl ConvRoutine<UnitRegistersMicrokernel> for PlaneWindowConvRoutine {
     /// Every plane of the launch, its units each on a block of the output.
     fn dispatch(
         &self,
@@ -364,7 +364,7 @@ impl ConvRoutine<UnitRegistersMicrokernel> for UnitRegistersConvRoutine {
         // box reaches past its tensor; the kernel indexes no buffer but through those tiles and
         // holds no shared memory.
         unsafe {
-            unit_registers_conv_kernel::launch_unchecked(
+            plane_window_conv_kernel::launch_unchecked(
                 launcher.client(),
                 launcher.cube_count(),
                 launcher.cube_dim(),

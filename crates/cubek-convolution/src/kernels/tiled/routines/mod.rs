@@ -2,13 +2,13 @@
 
 mod cube;
 mod kind;
+mod plane;
 mod settings;
-mod unit;
 
 pub use cube::*;
 pub use kind::*;
+pub use plane::*;
 pub use settings::*;
-pub use unit::*;
 
 #[cfg(test)]
 pub(crate) mod test_support;

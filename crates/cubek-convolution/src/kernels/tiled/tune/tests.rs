@@ -4,7 +4,7 @@ use crate::eval::benchmarks::settings;
 use crate::eval::benchmarks::{Conv2dElement, Conv2dProblem};
 use crate::kernels::tiled::routines::test_support::{cmma_8x32_only, dense, nvidia, problems};
 use crate::kernels::tiled::{
-    ConvProblem, CubeStagedConvRoutine, CubeStagedConvSettings, UnitRegistersConvRoutine,
+    ConvProblem, CubeStagedConvRoutine, CubeStagedConvSettings, PlaneWindowConvRoutine,
 };
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings as Fragments;
@@ -211,7 +211,7 @@ fn the_list_and_its_set_are_built_in_one_order() {
 
 /// Whether the unit routine, the floor under every tuned launch, serves `problem` on `hw`.
 fn floor_serves(hw: &Hardware, problem: &Conv2dProblem) -> bool {
-    UnitRegistersConvRoutine
+    PlaneWindowConvRoutine
         .prepare_first_served(hw, &ConvProblem::from(problem))
         .is_ok()
 }

@@ -26,7 +26,7 @@ impl core::fmt::Display for UnitBlock {
 /// How a unit's block is chosen and how the planes that own the blocks are laid out. The block's
 /// depth is the device's ([`BlockDepth`](super::block::BlockDepth)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UnitRegistersConvSettings {
+pub struct PlaneWindowConvSettings {
     pub block: UnitBlock,
     /// How the planes one cube groups are laid out over the output.
     pub planes: MatmulPlaneLayout,
@@ -36,11 +36,11 @@ pub struct UnitRegistersConvSettings {
     pub cube_order: CubeOrder,
 }
 
-impl core::fmt::Display for UnitRegistersConvSettings {
+impl core::fmt::Display for PlaneWindowConvSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "unit-registers-conv block={} {} blocks_per_plane={}{}",
+            "plane-window-conv block={} {} blocks_per_plane={}{}",
             self.block,
             self.planes,
             self.blocks_per_plane,

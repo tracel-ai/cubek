@@ -101,8 +101,8 @@ fn pinned(settings: CubeStagedConvSettings) -> Strategy {
 }
 
 /// The unit registers routine, which reads every operand from global memory.
-fn unit_registers() -> Strategy {
-    Strategy::Tile(ConvRoutineKind::UnitRegisters)
+fn plane_window() -> Strategy {
+    Strategy::Tile(ConvRoutineKind::PlaneWindow)
 }
 
 /// The setting the autotune finds fastest.
@@ -353,7 +353,7 @@ mod cube {
 }
 
 /// The unit registers routine in `f32`, which runs on the CPU runtime.
-mod unit_registers {
+mod plane_window {
     use super::*;
 
     /// A row of a table: the unit registers routine, which refuses nothing here.
@@ -364,7 +364,7 @@ mod unit_registers {
 
                 $(#[test]
                 fn $name() {
-                    let scope = Convolves::new(ByStrategy(unit_registers()), Declines::Never);
+                    let scope = Convolves::new(ByStrategy(plane_window()), Declines::Never);
                     scope.check([ConvCase { conv: $conv, pass: Pass::$pass }]);
                 })*
             }

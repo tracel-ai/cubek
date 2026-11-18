@@ -1,4 +1,4 @@
-//! Pure tests for the unit registers routine: the decisions a correctness run cannot see.
+//! Pure tests for the plane window routine: the decisions a correctness run cannot see.
 
 use super::block::{BlockDepth, BlockForm};
 use super::*;
@@ -12,7 +12,7 @@ use cubek_std::devices;
 use cubek_std::routine::Routine;
 use cubek_std::{Hardware, UnitDispatch};
 
-const ROUTINE: UnitRegistersConvRoutine = UnitRegistersConvRoutine;
+const ROUTINE: PlaneWindowConvRoutine = PlaneWindowConvRoutine;
 const THREADS: u32 = 12;
 const CORES: u32 = 12;
 const SMT_THREADS: u32 = 32;
@@ -41,7 +41,7 @@ fn layer(operation: ConvolutionOperation, channels_in: usize) -> ConvProblem {
     })
 }
 
-/// A CPU runtime offers no plane instruction, so the default tile strategy is the unit routine's.
+/// A CPU runtime offers no plane instruction, so the default tile strategy is the plane window routine's.
 #[test]
 fn only_a_device_with_no_plane_instruction_leaves_the_default_to_the_unit_routine() {
     assert!(
@@ -134,7 +134,7 @@ fn an_input_vector_not_dividing_the_rows_is_narrowed_not_declined() {
             .prepare(&hw, &problem, &settings)
             .expect("the setting prepares");
         assert!(
-            UnitRegistersConvRoutine::check_lhs_vector_axis(&problem, blueprint.widths.lhs).is_ok()
+            PlaneWindowConvRoutine::check_lhs_vector_axis(&problem, blueprint.widths.lhs).is_ok()
         );
     }
 }
@@ -240,7 +240,7 @@ fn planes_of(
         .levels()
         .iter()
         .find_map(|level| level.plane_order())
-        .expect("the unit routine launches planes");
+        .expect("the plane window routine launches planes");
     AcrossCounts {
         rows: order.block_along(roles.axes().m),
         across: order.block_along(roles.free.across),
@@ -258,7 +258,7 @@ fn units_of(
         .levels()
         .iter()
         .find_map(|level| level.plane_order())
-        .expect("the unit routine launches planes");
+        .expect("the plane window routine launches planes");
     for axis in problem.roles().plane_axes() {
         assert_eq!(order.block_along(axis), 1, "{axis:?}");
     }

@@ -6,7 +6,7 @@ use crate::{
     kernels::tiled::{ConvRoutineKind, CubeStagedConvSettings},
 };
 
-const UNIT_REGISTERS_LABEL: &str = "Unit registers, at the device's settings";
+const PLANE_WINDOW_LABEL: &str = "Plane window, at the device's settings";
 const UNIT_BALANCED_LABEL: &str = "Unit / balanced tiling";
 
 /// The settings pinned, beside the tuned row: the base setting at both widths, two tiles of rows
@@ -24,7 +24,7 @@ const PINNED: [CubeStagedConvSettings; 8] = [
 ];
 
 /// A row of the cube staged routine, named by its strategy: the routine and, where pinned, its
-/// settings. Without settings it is the tuned launch, which floors on the unit routine.
+/// settings. Without settings it is the tuned launch, which floors on the plane window routine.
 fn cube_staged(settings: Option<CubeStagedConvSettings>) -> CatalogEntry<Strategy> {
     let (routine, label) = match settings {
         Some(settings) => (
@@ -33,7 +33,7 @@ fn cube_staged(settings: Option<CubeStagedConvSettings>) -> CatalogEntry<Strateg
         ),
         None => (
             ConvRoutineKind::Tuned,
-            "Tuned: cube staged settings the device offers, the unit routine where none serves"
+            "Tuned: cube staged settings the device offers, the plane window routine where none serves"
                 .to_string(),
         ),
     };
@@ -41,10 +41,10 @@ fn cube_staged(settings: Option<CubeStagedConvSettings>) -> CatalogEntry<Strateg
     CatalogEntry::new(strategy.to_string(), label, strategy)
 }
 
-/// The unit routine of the tile convolution at the settings it derives from the device.
-fn unit_registers() -> CatalogEntry<Strategy> {
-    let strategy = Strategy::Tile(ConvRoutineKind::UnitRegisters);
-    CatalogEntry::new(strategy.to_string(), UNIT_REGISTERS_LABEL, strategy)
+/// The plane window routine of the tile convolution at the settings it derives from the device.
+fn plane_window() -> CatalogEntry<Strategy> {
+    let strategy = Strategy::Tile(ConvRoutineKind::PlaneWindow);
+    CatalogEntry::new(strategy.to_string(), PLANE_WINDOW_LABEL, strategy)
 }
 
 /// The register-tiled `f32` convolution at its balanced tiling, which a device with no matrix
@@ -73,7 +73,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             },
         ),
         cube_staged(None),
-        unit_registers(),
+        plane_window(),
         unit_balanced(),
     ];
     strategies.extend(

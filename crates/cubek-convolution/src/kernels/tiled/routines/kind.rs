@@ -1,4 +1,4 @@
-use super::{CubeStagedConvRoutine, UnitRegistersConvRoutine};
+use super::{CubeStagedConvRoutine, PlaneWindowConvRoutine};
 use crate::kernels::tiled::{ConvRoutine, ConvTensors, CubeStagedConvSettings, launch_tuned};
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
@@ -10,10 +10,10 @@ pub enum ConvRoutineKind {
     /// the convolution where none is.
     CubeStaged(Option<CubeStagedConvSettings>),
     /// The setting the autotune finds fastest among those [`CubeStagedConvRoutine`] lists, and
-    /// [`UnitRegistersConvRoutine`] where none of them serves the convolution.
+    /// [`PlaneWindowConvRoutine`] where none of them serves the convolution.
     Tuned,
-    /// [`UnitRegistersConvRoutine`] at the first of its settings that serves the convolution.
-    UnitRegisters,
+    /// [`PlaneWindowConvRoutine`] at the first of its settings that serves the convolution.
+    PlaneWindow,
 }
 
 impl core::fmt::Display for ConvRoutineKind {
@@ -22,7 +22,7 @@ impl core::fmt::Display for ConvRoutineKind {
             Self::CubeStaged(None) => write!(f, "cube_staged"),
             Self::CubeStaged(Some(settings)) => write!(f, "cube_staged_{settings}"),
             Self::Tuned => write!(f, "tuned"),
-            Self::UnitRegisters => write!(f, "unit_registers"),
+            Self::PlaneWindow => write!(f, "plane_window"),
         }
     }
 }
@@ -42,7 +42,7 @@ impl ConvRoutineKind {
             Self::CubeStaged(Some(pinned)) => CubeStagedConvRoutine.launch_on(hw, tensors, pinned),
             Self::CubeStaged(None) => CubeStagedConvRoutine.launch_first_served(hw, tensors),
             Self::Tuned => launch_tuned(hw, tensors),
-            Self::UnitRegisters => UnitRegistersConvRoutine.launch_first_served(hw, tensors),
+            Self::PlaneWindow => PlaneWindowConvRoutine.launch_first_served(hw, tensors),
         }
     }
 }
