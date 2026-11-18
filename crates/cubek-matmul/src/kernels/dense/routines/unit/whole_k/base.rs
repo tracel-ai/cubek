@@ -14,7 +14,7 @@ use cubek_microkernel::matmul::{
 };
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 

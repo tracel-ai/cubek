@@ -141,8 +141,9 @@ impl RmsNormLaunch {
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         let (element, width) = (self.item.element, self.width());
-        let bound =
-            |arg, axes: &[_]| TileTensorLaunch::new(arg, element, width, TileSpec::direct(axes));
+        let bound = |arg, dimensions: &[_]| {
+            TileTensorLaunch::new(arg, element, width, TileSpec::direct(dimensions))
+        };
         let (input, weight, out) = (
             bound(input, &[B, R, D]),
             bound(weight, &[D]),

@@ -10,9 +10,10 @@
 //!
 //! - `data_parallel`: `K` walked whole by each cube. The baseline, and the mapping that needs no
 //!   combine because there is nothing to combine.
-//! - `workspace`: `K` spelled as two axes, `(KB, KI)`, with the output bound over `[KB, M, N]` so
-//!   it *spans* the split. Nothing is partial, at the price of a `splits × m × n` buffer and a
-//!   second pass to sum it away. Both launches are timed, because both are the cost.
+//! - `workspace`: `K` spelled as two dimensions, `(KB, KI)`, with the output bound over
+//!   `[KB, M, N]` so it *spans* the split. Nothing is partial, at the price of a
+//!   `splits × m × n` buffer and a second pass to sum it away. Both launches are timed, because
+//!   both are the cost.
 //! - `atomic`: `K` cut at cube scope and the drain merging each cube's slice into the output
 //!   atomically. One launch, one buffer, and a result that is not bit-identical run to run.
 //!
@@ -37,7 +38,7 @@ use cubecl::{
     ir::{ElemType, FloatKind, Type},
     prelude::*,
 };
-use cubek_std::matmul_axes::{K, KB, KI, M, N};
+use cubek_std::matmul_dimensions::{K, KB, KI, M, N};
 use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
@@ -119,7 +120,7 @@ fn sum_splits(partials: &TileTensor<'_>, out: &TileTensor<'_>, space: Partitioni
     let out = out.tile(&space);
     for region in space {
         let mut out_cube = out.at(&region);
-        out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
+        out_cube.reduce_dimension(&partials.at(&region), Monoid::Sum);
     }
 }
 
@@ -237,7 +238,7 @@ impl Mapping {
         }
     }
 
-    /// The lhs spec: `[M, K]` in memory either way, addressed by one logical axis or two.
+    /// The lhs spec: `[M, K]` in memory either way, addressed by one dimension or two.
     fn lhs_spec(self, inside: usize) -> TileSpec {
         match self {
             Mapping::DataParallel | Mapping::Atomic { .. } | Mapping::AtomicUnits { .. } => {
@@ -323,9 +324,9 @@ impl Bound {
         let b = TileInput::builder(client, Space::new(&[(K, k), (N, n)]))
             .untiled()
             .uniform(RHS_SEED, 0.0, 1.0);
-        // The contraction's destination: `[KB, M, N]` where the split is an axis of it, the plain
-        // output otherwise. Zeroed either way, which the atomic drain needs and the others do not
-        // mind.
+        // The contraction's destination: `[KB, M, N]` where the split is a dimension of it, the
+        // plain output otherwise. Zeroed either way, which the atomic drain needs and the others do
+        // not mind.
         let c = match mapping {
             Mapping::Workspace { .. } => {
                 TileInput::builder(client, Space::new(&[(KB, splits), (M, m), (N, n)]))

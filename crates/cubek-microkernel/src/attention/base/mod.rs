@@ -1,4 +1,4 @@
-mod axes;
+mod dimensions;
 mod microkernel;
 mod operand;
 mod staging_count;
@@ -6,7 +6,7 @@ mod visibility;
 mod visible_keys;
 mod work_item;
 
-pub use axes::*;
+pub use dimensions::*;
 pub use microkernel::*;
 pub use operand::*;
 pub use staging_count::*;

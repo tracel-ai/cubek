@@ -1,40 +1,40 @@
-//! A window over a pooled or resampled axis, and the axes such a launch runs over: an NHWC input
-//! gathered over every output position's taps.
+//! A window over a pooled or resampled dimension, and the dimensions such a launch runs over: an
+//! NHWC input gathered over every output position's taps.
 
 use cubecl::prelude::*;
 use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
 use cubecl::tile::layout::PhysicalAxisMap;
 use cubecl::tile::{
-    Axis, Launcher, Levels, Partitioning, Projection, Space, TileSpec, TileTensorLaunch,
+    Dimension, Launcher, Levels, Partitioning, Projection, Space, TileSpec, TileTensorLaunch,
 };
 use cubek_std::Hardware;
 
-pub(crate) const BATCH: Axis = Axis(0);
-pub(crate) const OUTPUT_H: Axis = Axis(1);
-pub(crate) const OUTPUT_W: Axis = Axis(2);
-pub(crate) const TAP_H: Axis = Axis(3);
-pub(crate) const TAP_W: Axis = Axis(4);
-pub(crate) const CHANNEL: Axis = Axis(5);
+pub(crate) const BATCH: Dimension = Dimension(0);
+pub(crate) const OUTPUT_H: Dimension = Dimension(1);
+pub(crate) const OUTPUT_W: Dimension = Dimension(2);
+pub(crate) const TAP_H: Dimension = Dimension(3);
+pub(crate) const TAP_W: Dimension = Dimension(4);
+pub(crate) const CHANNEL: Dimension = Dimension(5);
 
-/// How a window of one axis lands on the input: output position `o` and tap `t` read input
+/// How a window of one dimension lands on the input: output position `o` and tap `t` read input
 /// position `o · stride + t · dilation - padding`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WindowAxis {
+pub struct WindowDimension {
     pub taps: usize,
     pub stride: usize,
     pub dilation: usize,
     pub padding: usize,
 }
 
-impl WindowAxis {
+impl WindowDimension {
     /// Output positions over an input `input` long.
     pub fn outputs(&self, input: usize) -> usize {
         (input + 2 * self.padding - self.dilation * (self.taps - 1) - 1) / self.stride + 1
     }
 
-    /// The input axis this window reads, from `output` and `tap`.
-    fn input_axis(&self, output: Axis, tap: Axis) -> PhysicalAxisMap {
+    /// The input dimension this window reads, from `output` and `tap`.
+    fn input_dimension(&self, output: Dimension, tap: Dimension) -> PhysicalAxisMap {
         PhysicalAxisMap::affine(&[(output, self.stride), (tap, self.dilation)])
             .shifted(-(self.padding as isize))
     }
@@ -53,7 +53,7 @@ pub struct Channels {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowedLaunch {
     /// The window along the rows, then the columns.
-    pub windows: [WindowAxis; 2],
+    pub windows: [WindowDimension; 2],
     /// The input's rows and columns.
     pub input: [usize; 2],
     pub channels: usize,
@@ -68,7 +68,7 @@ impl WindowedLaunch {
     /// Why the `channels` do not walk in whole blocks of the plane.
     pub(crate) fn new(
         hw: &Hardware,
-        windows: [WindowAxis; 2],
+        windows: [WindowDimension; 2],
         input: [usize; 2],
         channels: Channels,
     ) -> Result<Self, Refusal> {
@@ -93,7 +93,7 @@ impl WindowedLaunch {
 
     /// The output's rows and columns.
     pub fn outputs(&self) -> [usize; 2] {
-        [0, 1].map(|axis| self.windows[axis].outputs(self.input[axis]))
+        [0, 1].map(|dimension| self.windows[dimension].outputs(self.input[dimension]))
     }
 
     /// The launcher of the launch on `client`.
@@ -140,8 +140,8 @@ impl WindowedLaunch {
             &[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W, CHANNEL],
             &[
                 PhysicalAxisMap::of(BATCH),
-                rows.input_axis(OUTPUT_H, TAP_H),
-                cols.input_axis(OUTPUT_W, TAP_W),
+                rows.input_dimension(OUTPUT_H, TAP_H),
+                cols.input_dimension(OUTPUT_W, TAP_W),
                 PhysicalAxisMap::of(CHANNEL),
             ],
         );

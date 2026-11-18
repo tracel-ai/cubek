@@ -23,8 +23,8 @@ pub struct TileStepReads<E: Float> {
 impl<E: Float> TileStepReads<E> {
     /// `operand`'s lines, the scale it is stored under over the whole tensor taken out of it and
     /// read once, for the sums its lines enter, held in the units' own registers, to take on
-    /// ([`StepReads::per_tensor_scale`]). A scale that varies along an axis stays on the operand,
-    /// which a flat read refuses.
+    /// ([`StepReads::per_tensor_scale`]). A scale that varies along a dimension stays on the
+    /// operand, which a flat read refuses.
     pub fn new(operand: &Tile) -> TileStepReads<E> {
         let (tile, factor) = operand.factor_whole();
         TileStepReads::<E> {

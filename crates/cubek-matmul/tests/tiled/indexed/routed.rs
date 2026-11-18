@@ -7,7 +7,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubek_matmul::kernels::indexed::routed::{RoutedMatmulTensors, launch_tuned};
-use cubek_matmul::kernels::indexed::stack::SlabAxis;
+use cubek_matmul::kernels::indexed::stack::SlabDimension;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine};
 use cubek_std::Hardware;
@@ -117,7 +117,7 @@ impl ScopeUnderTest for TunedRouted {
             stored,
             upload(client, &[tokens, picks], &routed.routes()),
             slabs,
-            SlabAxis::Output,
+            SlabDimension::Output,
         )
         .expect("a stack of whole slabs derives a routed launch");
         let hw = Hardware::from_client(client);

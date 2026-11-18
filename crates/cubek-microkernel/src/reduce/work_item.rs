@@ -2,14 +2,14 @@ use crate::reduce::{ReduceOperand, ReduceOperation, ReduceWrites};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 
-/// How a reduction's lines lie against the axis it reduces.
+/// How a reduction's lines lie against the dimension it reduces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReduceLayout {
-    /// The reduced axis is the contiguous one: a line is `width` consecutive values of one row,
-    /// whose lanes reduce to one value at the end.
+    /// The reduced dimension is the contiguous one: a line is `width` consecutive values of one
+    /// row, whose lanes reduce to one value at the end.
     Along,
-    /// Another axis is the contiguous one: a line is one position of `width` rows side by side,
-    /// each lane its own row's, and nothing reduces across lanes.
+    /// Another dimension is the contiguous one: a line is one position of `width` rows side by
+    /// side, each lane its own row's, and nothing reduces across lanes.
     Across,
 }
 
@@ -39,7 +39,7 @@ impl ReduceWorkItem {
         }
     }
 
-    /// What every microkernel of this kind asks of the operands: along the reduced axis, the
+    /// What every microkernel of this kind asks of the operands: along the reduced dimension, the
     /// output takes one cell per row (`k` for a top-k); across it, a line of the input is a line
     /// of the output, one row a lane. That a line never runs past a row is the launch's to
     /// require, which knows the rows' length.

@@ -28,7 +28,7 @@ use cubek_microkernel::matmul::{
 };
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::matmul_axes::{K, KB, KI, MI, N, NI};
+use cubek_std::matmul_dimensions::{K, KB, KI, MI, N, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid};
 
@@ -95,7 +95,7 @@ impl<'a> CubeStagedPlacement<'a> {
         let cube_space = view
             .partitioning(
                 microkernel.tiling(),
-                &[item.axes.m, item.axes.n],
+                &[item.dimensions.m, item.dimensions.n],
                 cube_order,
                 MatmulView::ONE_CUBE_A_BOX,
             )
@@ -178,7 +178,7 @@ impl<'a> CubeStagedPlacement<'a> {
         )?;
         let partitioning = view.partitioning(
             microkernel.launch_tiling(),
-            &[item.axes.m, item.axes.n],
+            &[item.dimensions.m, item.dimensions.n],
             cube_order,
             MatmulView::ONE_CUBE_A_BOX,
         );
@@ -187,7 +187,7 @@ impl<'a> CubeStagedPlacement<'a> {
         let past_k = || {
             [KB, KI]
                 .into_iter()
-                .any(|axis| partitioning.as_tile().overhangs(axis))
+                .any(|dimension| partitioning.as_tile().overhangs(dimension))
         };
         if item.blocks.is_some() && past_k() {
             return Err(MATMUL_PACKED_WALK_PAST_K);
@@ -206,8 +206,8 @@ impl<'a> CubeStagedPlacement<'a> {
     }
 }
 
-/// Whether the TMA engine can store `microkernel`'s box of `problem`, stated as `contracted`, in the
-/// box `cube_space`, each cube writing its own box once ([`CubeStagedTmaStoreRefusal`]), the
+/// Whether the TMA engine can store `microkernel`'s box of `problem`, stated as `contracted`, in
+/// the box `cube_space`, each cube writing its own box once ([`CubeStagedTmaStoreRefusal`]), the
 /// output's rows more than one element wide.
 fn check_tma_store(
     hw: &Hardware,
@@ -365,11 +365,11 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
     }
 }
 
-/// A cube staged routine's estimate over a block-split space: each cube reads its box's rows of the lhs
-/// and its columns of the rhs over the whole of `K`, a packed input its words and a float one
-/// its values, a stage's depth of `K` at a time, and writes its box of the output once. Then
-/// its planes, for the work, on the item they contract: the packed inputs decoded where its
-/// stages decode them, read as stored where it stages them as they lie.
+/// A cube staged routine's estimate over a block-split space: each cube reads its box's rows of the
+/// lhs and its columns of the rhs over the whole of `K`, a packed input its words and a float one
+/// its values, a stage's depth of `K` at a time, and writes its box of the output once. Then its
+/// planes, for the work, on the item they contract: the packed inputs decoded where its stages
+/// decode them, read as stored where it stages them as they lie.
 fn estimate_in_blocks(
     problem: &MatmulRoutineProblem,
     blueprint: &CubeStagedMatmulRoutineBlueprint,
@@ -385,8 +385,8 @@ fn estimate_in_blocks(
     let stage = blueprint.partitioning.stage();
     let stage_depth: usize = [KB, KI]
         .into_iter()
-        .filter(|&axis| stage.space().contains(axis))
-        .map(|axis| stage.extent(axis))
+        .filter(|&dimension| stage.space().contains(dimension))
+        .map(|dimension| stage.extent(dimension))
         .product();
     let k = problem.k;
     let size = |operand: MatmulOperand| item.elements.get(operand).size();
@@ -466,7 +466,7 @@ fn blueprint_in_blocks(
 /// what [`blueprint_in_blocks`] holds, and every routine whose cubes
 /// run that microkernel over such a space. A packed input its fill decodes binds at
 /// [`decoded_width`]; every other input at a device's load of the element
-/// its planes contract it at, at most a block, a float one narrowed as its axes require
+/// its planes contract it at, at most a block, a float one narrowed as its dimensions require
 /// ([`float_width_in_blocks`]); the output one value wide.
 pub(crate) fn widths_in_blocks(
     hw: &Hardware,
@@ -505,8 +505,8 @@ pub(crate) fn widths_in_blocks(
 /// The width float `operand` of `problem` binds at over its block-split space `blocks`, at most
 /// `widest`. Restated there it lies as its own dense rows
 /// ([`PlainTensor::restated`](crate::kernels::tensor::PlainTensor::restated)), along the inside
-/// of its columns' axis: the lhs's `KI`, which a box holds whole blocks of, and the rhs's
-/// `NI`, its buffer's rows, which a box may reach past. So it owes that axis what any operand
+/// of its columns' dimension: the lhs's `KI`, which a box holds whole blocks of, and the rhs's
+/// `NI`, its buffer's rows, which a box may reach past. So it owes that dimension what any operand
 /// owes its innermost one ([`MatmulBlueprint::new`]): its buffer's alignment and its start's,
 /// and, where the tiles overhang it, a width dividing its extent, the widest line the tile
 /// engine masks at an edge.
@@ -521,7 +521,7 @@ fn float_width_in_blocks(
         MatmulOperand::Lhs => K,
         _ => N,
     };
-    let [_, (inside, _)] = blocks.axes(columns);
+    let [_, (inside, _)] = blocks.dimensions(columns);
     let mut vectorization = Vectorization::new();
     vectorization.require(VectorRequirement::Aligned {
         operand,
