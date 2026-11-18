@@ -162,20 +162,32 @@ impl PlaneShuffleMatmulRoutine {
     }
 
     /// Whether `settings` sizes a plane against `problem`'s packed rhs on a device committing to
-    /// a plane width: every packed setting does, but one tile
-    /// ([`OneTile`](cubek_microkernel::matmul::plane::PlaneShuffleKSplit::OneTile)) only where
-    /// the rhs is stored in tiles holding more than one read down `K`, and a setting reading by
-    /// block only where the rhs reads so. In rows one tile declines, rather than size the
+    /// a plane width: every packed setting does, but one stored tile
+    /// ([`Run::StoredTile`](cubecl::tile::layout::Run::StoredTile)) only where the rhs is stored
+    /// in tiles holding more than one read down `K`, and a setting reading by block only where the
+    /// rhs reads so. In rows one stored tile declines, rather than size the
     /// one-read kernel a second time.
     #[cfg(test)]
     pub(crate) fn sizes_packed(
         settings: &PlaneShuffleMatmulRoutineSettings,
         problem: &MatmulRoutineProblem,
     ) -> bool {
+        use cubecl::tile::layout::Run;
         use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
         let rhs = problem.packings.rhs.as_ref();
-        (settings.microkernel.k_split != PlaneShuffleKSplit::OneTile
-            || rhs.is_some_and(|packing| packing.operand.reads_down_a_tile(K) > 1))
+        let one_tile = PlaneShuffleKSplit::Run(Run::StoredTile);
+        (settings.microkernel.k_split != one_tile
+            || rhs.is_some_and(|packing| {
+                let matrix = (problem.k, problem.n);
+                let reads = packing.operand.reads_down_k(
+                    Run::StoredTile,
+                    N,
+                    matrix,
+                    packing.value_bits(),
+                    cubek_std::GPU_TRANSACTION_BYTES,
+                );
+                reads.is_some_and(|reads| reads > 1)
+            }))
             && (!settings.microkernel.by_block || problem.rhs_by_block().is_ok())
     }
 
@@ -562,6 +574,7 @@ mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+    use cubecl::tile::layout::Run;
     use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
@@ -742,7 +755,7 @@ mod tests {
             .expect("an rhs lined along an axis")
             .work_item();
             let plane_width = 32;
-            PlaneShuffleKSplit::OneTransaction.units(&hw, &item, depth, plane_width)
+            PlaneShuffleKSplit::Run(Run::Transaction).units(&hw, &item, depth, plane_width)
         };
         let reads = |count| NonZeroUsize::new(count).unwrap();
         let f32 = ElemType::Float(FloatKind::F32);
