@@ -9,7 +9,7 @@ use crate::matmul::cube::CubeStagedDelivery;
 use crate::split_keys_merge::SlotShape;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Vectorization};
-use cubecl::tile::{Axis, Levels, Space, StageStorage};
+use cubecl::tile::{Dimension, Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageRing, StagedOperand};
@@ -75,9 +75,9 @@ impl CubeAttentionMicrokernel {
         self.plane.tiling().planes(&self.planes())
     }
 
-    /// Its planes along each axis of its box: a plane for every head it holds, along every plane
-    /// of a head's queries, along every plane of the same rows' keys.
-    pub fn planes(&self) -> Vec<(Axis, usize)> {
+    /// Its planes along each dimension of its box: a plane for every head it holds, along every
+    /// plane of a head's queries, along every plane of the same rows' keys.
+    pub fn planes(&self) -> Vec<(Dimension, usize)> {
         vec![
             (G, self.heads),
             (Q, self.settings.planes_along_queries.get()),

@@ -14,7 +14,7 @@ use cubek_matmul::kernels::MatmulRoutine;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_dimensions::{K, N};
 use cubek_test_utils::{HostData, HostDataVec};
 use half::bf16;
 
@@ -33,7 +33,7 @@ pub(crate) enum Stored {
     Nvfp4 { seed: usize },
     /// An NVFP4 rhs `[n, k]` packed along `k`, seen through the transposed view `[k, n]` a
     /// framework hands a tied embedding to the vocabulary head: its words run along the view's
-    /// first axis.
+    /// first dimension.
     Nvfp4ViewedTransposed { seed: usize },
 }
 
@@ -167,7 +167,7 @@ impl PackedProduct {
     }
 
     /// `matrix`, `[n, k]` packed along `k`, as a framework's transpose restates it: bound as
-    /// `[k, n]` under swapped strides, its blocks and words along its first axis.
+    /// `[k, n]` under swapped strides, its blocks and words along its first dimension.
     fn viewed_transposed(client: &Client, matrix: PackedTensor, k: usize) -> PackedTensor {
         let mut scheme = matrix.scheme();
         scheme.swap_block_dims(2, 0, 1);

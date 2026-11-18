@@ -11,7 +11,7 @@ use cubek_test_utils::client;
 
 use super::tune::spread_routes;
 use super::{RoutedFloors, RoutedMatmulTensors, launch_tuned};
-use crate::kernels::indexed::stack::SlabAxis;
+use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::{Listing, Product};
 use crate::kernels::{
@@ -54,7 +54,7 @@ fn routed_by(client: &Client, rows: usize, slots: usize, routes: &[u32]) -> Rout
         )),
         u32s(client, [rows, slots], routes),
         experts,
-        SlabAxis::Output,
+        SlabDimension::Output,
     )
     .expect("float operands the routines read")
 }
@@ -185,7 +185,7 @@ fn no_rows_return_an_empty_output() {
             ElemType::UInt(UIntKind::U32),
         )),
         experts,
-        SlabAxis::Output,
+        SlabDimension::Output,
     )
     .expect("no row declines nothing");
     let out = launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT)

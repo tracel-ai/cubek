@@ -7,7 +7,7 @@ use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSet
 use crate::matmul::{MatmulDim, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Level, Levels, Partitioning, Scratch};
+use cubecl::tile::{Dimension, Level, Levels, Partitioning, Scratch};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -130,12 +130,12 @@ impl PlaneKeyGradientMicrokernel {
     }
 
     /// The score's grid below the walker's level of planes, `planes` its counts.
-    pub fn score_levels(&self, planes: &[(Axis, usize)]) -> Vec<Level> {
+    pub fn score_levels(&self, planes: &[(Dimension, usize)]) -> Vec<Level> {
         self.score.tile_levels(planes)
     }
 
     /// The grid of the gradient against the probabilities below the walker's level of planes.
-    pub fn score_gradient_levels(&self, planes: &[(Axis, usize)]) -> Vec<Level> {
+    pub fn score_gradient_levels(&self, planes: &[(Dimension, usize)]) -> Vec<Level> {
         self.score_gradient.tile_levels(planes)
     }
 
@@ -233,7 +233,7 @@ impl PlaneKeyGradientMicrokernel {
                 depth,
                 ..score.settings
             },
-            axes: product.axes,
+            dimensions: product.dimensions,
             blocks: None,
             k_stated: crate::matmul::plane::PlaneFragmentKStatement::Caller,
             unit: crate::matmul::plane::PlaneUnit::Instruction,

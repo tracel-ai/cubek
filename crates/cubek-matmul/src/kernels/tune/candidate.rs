@@ -9,7 +9,7 @@ use cubecl::CubeDim;
 use cubecl::ir::{ElemType, FloatKind};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::routine::{PreparedLaunches, Routine};
 use cubek_std::{Hardware, Instructions, manual_mma};
 use std::sync::Arc;

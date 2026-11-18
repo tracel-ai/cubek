@@ -8,7 +8,7 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, ScaleDtype},
 };
-use cubek_std::matmul_axes::{M, N};
+use cubek_std::matmul_dimensions::{M, N};
 
 /// Convert the tensor back to a higher precision data type.
 /// Uses the tile-based implementation for dequantization.
@@ -70,14 +70,14 @@ pub fn launch_ref(
          lines hold {max}"
     );
 
-    // One tile covering every axis, walked by a single cube: no level cuts it, so there is
+    // One tile covering every dimension, walked by a single cube: no level cuts it, so there is
     // nothing to list and the grid is one cube.
     let space = Space::new(&[(M, rows), (N, cols)]);
     let plane_size = client.properties().hardware.plane_size_max;
     let (cube_count, cube_dim) = (CubeCount::Static(1, 1, 1), CubeDim::new_2d(plane_size, 1));
     let launch = Launcher::new(
         client,
-        // Static: the decoding copy reads through the values' own axes, which it needs the
+        // Static: the decoding copy reads through the values' own dimensions, which it needs the
         // extents of at expansion, so the kernel is compiled per shape.
         Partitioning::new(space.clone(), vec![]),
         &space,
@@ -87,11 +87,13 @@ pub fn launch_ref(
         },
     )
     .unwrap_or_else(|refusal| panic!("dequantize_tiled: {refusal}"));
-    // One scale for the whole tensor: a scale tile over no axis of the values.
+    // One scale for the whole tensor: a scale tile over no dimension of the values.
     let per_tensor = Projection::new(&[M, N], &[PhysicalAxisMap::broadcast()]);
     let values = quantized_arg(
         scheme,
-        launch.arg(input, u32::elem_type_native()).axes(&[M, N]),
+        launch
+            .arg(input, u32::elem_type_native())
+            .dimensions(&[M, N]),
         [launch
             .arg(scales, u32::elem_type_native())
             .gathered(per_tensor)],

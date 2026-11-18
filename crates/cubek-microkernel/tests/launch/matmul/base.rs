@@ -1,6 +1,6 @@
-//! What every matmul microkernel launched alone shares: `out = lhs · rhs` over one cube's box, `lhs`
-//! row-major `m × k`, `rhs` `k × n` row-major or its transpose and `out` `m × n`, every operand
-//! bound one element a line or as wide as a routine binds it, and the box one cube of the
+//! What every matmul microkernel launched alone shares: `out = lhs · rhs` over one cube's box,
+//! `lhs` row-major `m × k`, `rhs` `k × n` row-major or its transpose and `out` `m × n`, every
+//! operand bound one element a line or as wide as a routine binds it, and the box one cube of the
 //! microkernel's levels covers.
 
 use core::fmt::Debug;
@@ -11,11 +11,11 @@ use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Launcher, Level, Partitioning, Space, TileSpec, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::MatmulCubeSpace;
 use cubek_microkernel::matmul::{
-    MatmulAxes, MatmulAxesKind, MatmulDestination, MatmulLayout, MatmulOperand, MatmulOperands,
-    MatmulReading, MatmulRows, MatmulWorkItem,
+    MatmulDestination, MatmulDimensions, MatmulDimensionsKind, MatmulLayout, MatmulOperand,
+    MatmulOperands, MatmulReading, MatmulRows, MatmulWorkItem,
 };
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 
 use crate::launch::Lines;
 
@@ -72,7 +72,7 @@ impl MatmulElements {
             blocks: None,
             rows,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes::MNK,
+            dimensions: MatmulDimensions::MNK,
             reading: MatmulReading::AsStored,
         }
     }
@@ -146,12 +146,12 @@ impl OneCube {
         }
     }
 
-    /// The box as a matmul microkernel reads it: every axis plain, no batch, no overhang.
+    /// The box as a matmul microkernel reads it: every dimension plain, no batch, no overhang.
     pub fn cube_space(&self) -> MatmulCubeSpace {
         MatmulCubeSpace {
             space: self.partitioning.box_of(ComputeScope::Cube),
             leaf: self.partitioning.leaf(),
-            axes_kind: MatmulAxesKind::Plain,
+            dimensions_kind: MatmulDimensionsKind::Plain,
             overhangs_output: false,
             batched: false,
         }
@@ -181,21 +181,21 @@ impl MatmulElements {
         rhs_layout: MatmulLayout,
         widths: MatmulOperands<usize>,
     ) -> [TileTensorLaunch; 3] {
-        let rhs_axes: &[_] = match rhs_layout {
+        let rhs_dimensions: &[_] = match rhs_layout {
             MatmulLayout::Col => &[N, K],
             _ => &[K, N],
         };
-        let bound = |arg, element, width, axes: &[_]| {
+        let bound = |arg, element, width, dimensions: &[_]| {
             TileTensorLaunch::new(
                 arg,
                 element,
                 width,
-                TileSpec::direct(axes).boundary(BoundaryPolicy::Every(Boundary::Zero)),
+                TileSpec::direct(dimensions).boundary(BoundaryPolicy::Every(Boundary::Zero)),
             )
         };
         [
             bound(lhs, self.input, widths.lhs, &[M, K]),
-            bound(rhs, self.input, widths.rhs, rhs_axes),
+            bound(rhs, self.input, widths.rhs, rhs_dimensions),
             bound(out, self.out, widths.out, &[M, N]),
         ]
     }

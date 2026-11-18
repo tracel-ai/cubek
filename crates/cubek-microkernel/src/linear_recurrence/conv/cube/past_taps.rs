@@ -1,6 +1,6 @@
 use super::tiles::QkNormedConvTiles;
 use crate::linear_recurrence::{POSITION, RING_COLUMN, STREAM_POSITION, walked};
-use cubecl::tile::{Axis, Region, Tile};
+use cubecl::tile::{Dimension, Region, Tile};
 use cubecl::{self as cubecl, CubeType, cube, prelude::*};
 
 /// Where a unit reads the values its taps run over: a row's window, whose ring its newest value
@@ -77,15 +77,15 @@ impl PastTaps {
     }
 }
 
-/// The `line`-th line of the tile at `column` along `axis`.
+/// The `line`-th line of the tile at `column` along `dimension`.
 #[cube]
 fn read_line<E: Float, N: Size>(
     tile: &Tile,
-    #[comptime] axis: Axis,
+    #[comptime] dimension: Dimension,
     column: usize,
     line: usize,
 ) -> Vector<E, N> {
-    let placed = tile.within(axis, column, column + 1);
+    let placed = tile.within(dimension, column, column + 1);
     placed.flat::<E, N>().read(line)
 }
 

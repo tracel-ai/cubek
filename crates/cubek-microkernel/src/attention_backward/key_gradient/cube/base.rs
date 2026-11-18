@@ -6,7 +6,7 @@ use crate::attention_backward::key_gradient::plane::{
 use crate::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
-use cubecl::tile::{Axis, Level, Levels, Partitioning};
+use cubecl::tile::{Dimension, Level, Levels, Partitioning};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -95,7 +95,7 @@ impl CubeKeyGradientMicrokernel {
     }
 
     /// Its planes along the keys.
-    fn planes(&self) -> [(Axis, usize); 1] {
+    fn planes(&self) -> [(Dimension, usize); 1] {
         [(S, self.settings.planes_along_keys.get())]
     }
 }

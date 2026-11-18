@@ -8,10 +8,10 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, LaneMap, Levels, SoftwareMatmul, Space};
+use cubecl::tile::{Dimension, LaneMap, Levels, SoftwareMatmul, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::matmul_axes::{K, blocked};
+use cubek_std::matmul_dimensions::{K, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// Every row of a run of the output's columns, owned by one cube: its planes each run their plane
@@ -244,11 +244,11 @@ impl CubeShuffleMicrokernel {
         settings
     }
 
-    /// The axis its planes split `K` along: `K` itself, or a packed rhs's scale blocks.
-    pub fn split(&self) -> Axis {
+    /// The dimension its planes split `K` along: `K` itself, or a packed rhs's scale blocks.
+    pub fn split(&self) -> Dimension {
         match self.plane {
             CubeShufflePlane::Shuffle(plane) => match plane.blocks {
-                None => plane.axes.k,
+                None => plane.dimensions.k,
                 Some(_) => blocked(K).0,
             },
             CubeShufflePlane::Fragment(_) => blocked(K).0,
@@ -314,7 +314,7 @@ impl CubeShuffleMicrokernel {
             .is_ok()
             .then(|| PlaneFragmentMicrokernel::candidates(hw, item, settings));
         planes.into_iter().flatten().filter_map(move |plane| {
-            let windows = item.blocks?.k / plane.tile_extent(plane.axes.k);
+            let windows = item.blocks?.k / plane.tile_extent(plane.dimensions.k);
             Some(Self {
                 plane: CubeShufflePlane::Fragment(plane),
                 planes_along_k: NonZeroUsize::new(target.min(windows))?,
@@ -335,11 +335,11 @@ impl CubeShufflePlane {
         .expect("candidates hold a plane whose steps walk K")
     }
 
-    /// The one of the axes `N` is split into that the plane's columns land on.
-    pub fn column_axis(&self) -> Axis {
+    /// The one of the dimensions `N` is split into that the plane's columns land on.
+    pub fn column_dimension(&self) -> Dimension {
         match self {
             CubeShufflePlane::Shuffle(plane) => plane.column_cut().0,
-            CubeShufflePlane::Fragment(plane) => plane.axes.n,
+            CubeShufflePlane::Fragment(plane) => plane.dimensions.n,
         }
     }
 
@@ -347,18 +347,18 @@ impl CubeShufflePlane {
     pub fn columns(&self) -> usize {
         match self {
             CubeShufflePlane::Shuffle(plane) => plane.columns(),
-            CubeShufflePlane::Fragment(plane) => plane.tile_extent(plane.axes.n),
+            CubeShufflePlane::Fragment(plane) => plane.tile_extent(plane.dimensions.n),
         }
     }
 
     /// Values of `K` one step of the plane covers, `leaf` its step's box: a unit's slice by the
-    /// units sharing a step, over both axes a packed rhs's `K` is split into, or a fragment's
+    /// units sharing a step, over both dimensions a packed rhs's `K` is split into, or a fragment's
     /// depth.
     pub fn step_depth(&self, leaf: &Space) -> usize {
         match self {
             CubeShufflePlane::Shuffle(plane) => {
                 let depth = match plane.blocks {
-                    None => leaf.extent(plane.axes.k),
+                    None => leaf.extent(plane.dimensions.k),
                     Some(_) => {
                         let (blocks, inside) = blocked(K);
                         leaf.extent(blocks) * leaf.extent(inside)
@@ -366,7 +366,7 @@ impl CubeShufflePlane {
                 };
                 depth * plane.units_along_k
             }
-            CubeShufflePlane::Fragment(plane) => plane.tile_extent(plane.axes.k),
+            CubeShufflePlane::Fragment(plane) => plane.tile_extent(plane.dimensions.k),
         }
     }
 
@@ -434,7 +434,7 @@ impl Microkernel for CubeShuffleMicrokernel {
         ]
     }
 
-    /// Its planes' items: of a float rhs on matmul's own axes and in cols
+    /// Its planes' items: of a float rhs on matmul's own dimensions and in cols
     /// ([`ROW_RHS_UNSUPPORTED`](Self::ROW_RHS_UNSUPPORTED)), or of a packed rhs on its
     /// block-split space, either way its words lie, which one of its planes admits.
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
@@ -559,7 +559,7 @@ impl MatmulMicrokernel for CubeShuffleMicrokernel {
     }
 
     /// Its planes' orders: a float rhs's as the plane shuffle binds it, a packed rhs's
-    /// words over the axes the product names.
+    /// words over the dimensions the product names.
     fn orders(&self) -> MatmulOperands<BindingOrder> {
         match self.plane {
             CubeShufflePlane::Shuffle(plane) => plane.orders,
@@ -575,7 +575,7 @@ impl MatmulMicrokernel for CubeShuffleMicrokernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::matmul::{MatmulAxes, MatmulDestination, MatmulReading, MatmulRows};
+    use crate::matmul::{MatmulDestination, MatmulDimensions, MatmulReading, MatmulRows};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
 
@@ -617,7 +617,7 @@ mod tests {
             blocks: None,
             rows: MatmulRows::Whole(1),
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes::MNK,
+            dimensions: MatmulDimensions::MNK,
             reading: MatmulReading::AsStored,
         };
         let hw = devices::m2_pro();

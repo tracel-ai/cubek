@@ -1,5 +1,5 @@
 use crate::attention::{B, D, DV, G, KV, Q, S};
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 
 /// One of the tensors of attention's backward pass: the forward's operands and its output, the
 /// output's gradient, what each query's softmax leaves, and the three gradients it computes.
@@ -43,8 +43,8 @@ impl AttentionBackwardOperand {
         Self::ValueGradient,
     ];
 
-    /// The axes this operand is bound along, outermost first, as each variant states them.
-    pub fn axes(self) -> &'static [Axis] {
+    /// The dimensions this operand is bound along, outermost first, as each variant states them.
+    pub fn dimensions(self) -> &'static [Dimension] {
         match self {
             Self::Query | Self::QueryGradient => &[B, KV, G, Q, D],
             Self::Key | Self::KeyGradient => &[B, KV, S, D],
@@ -54,10 +54,10 @@ impl AttentionBackwardOperand {
         }
     }
 
-    /// The axis this operand is bound innermost along: the one its lines run along.
-    pub fn innermost(self) -> Axis {
-        let axes = self.axes();
-        axes[axes.len() - 1]
+    /// The dimension this operand is bound innermost along: the one its lines run along.
+    pub fn innermost(self) -> Dimension {
+        let dimensions = self.dimensions();
+        dimensions[dimensions.len() - 1]
     }
 }
 

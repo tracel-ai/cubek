@@ -26,7 +26,7 @@ pub struct InterpolateRoutineProblem {
 }
 
 impl InterpolateRoutineProblem {
-    /// The taps along each resampled axis of one output position.
+    /// The taps along each resampled dimension of one output position.
     pub fn taps(&self) -> usize {
         mode_properties(self.forward.options.mode).taps
     }
@@ -92,7 +92,7 @@ impl InterpolateRoutineProblem {
 
     /// The width both operands bind at on `hw`: to the requirements the routine enqueued in
     /// `vectorization`, the binding adds each buffer's alignment, and a single value where the
-    /// channel axis overhangs, whose masked access counts in lines and would clip wrongly.
+    /// channel dimension overhangs, whose masked access counts in lines and would clip wrongly.
     pub fn width(
         &self,
         hw: &Hardware,

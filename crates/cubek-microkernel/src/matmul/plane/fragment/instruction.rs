@@ -1,11 +1,11 @@
 use crate::matmul::plane::PlaneFragmentRowsAlong;
-use crate::matmul::{MatmulAxes, MatmulDim, MatmulLayout, MatmulOperands};
+use crate::matmul::{MatmulDim, MatmulDimensions, MatmulLayout, MatmulOperands};
 use cubecl::features::{MmaConfig, WgmmaConfig};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::ops::matmul::MmaIo;
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Axis, BlockScaledOperands, Instruction, MmaOperands, StepCost};
+use cubecl::tile::{BlockScaledOperands, Dimension, Instruction, MmaOperands, StepCost};
 use cubecl::wgmma::PLANE_GROUP_UNITS;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::ArithmeticInstruction;
@@ -160,37 +160,37 @@ impl PlaneFragmentInstruction {
     }
 
     /// The tile a fragment loads from a stage the instruction reads: the instruction's shape, its
-    /// rows along `rows`, and one of every batch axis in `batches`, so a fragment loads one
+    /// rows along `rows`, and one of every batch dimension in `batches`, so a fragment loads one
     /// contiguous tile where the stage is blocked.
     pub fn stage_tile(
         self,
-        batches: &[Axis],
-        axes: MatmulAxes,
+        batches: &[Dimension],
+        dimensions: MatmulDimensions,
         rows: PlaneFragmentRowsAlong,
-    ) -> Vec<(Axis, usize)> {
+    ) -> Vec<(Dimension, usize)> {
         batches
             .iter()
-            .map(|&axis| (axis, 1))
-            .chain(axes.name(self.shape_along(rows)))
+            .map(|&dimension| (dimension, 1))
+            .chain(dimensions.name(self.shape_along(rows)))
             .collect()
     }
 
     /// The tile of a stage the instruction reads where one TMA box lands each operand's stage
     /// whole, `depth` of `K` deep: a tile of the instruction along `m` and `n`, the whole stage
     /// deep along `K`, so the tiles stack whole rows one after another as a box lands them, its
-    /// rows along `rows`, and one of every batch axis in `batches`.
+    /// rows along `rows`, and one of every batch dimension in `batches`.
     pub fn landed_stage_tile(
         self,
-        batches: &[Axis],
-        axes: MatmulAxes,
+        batches: &[Dimension],
+        dimensions: MatmulDimensions,
         depth: usize,
         rows: PlaneFragmentRowsAlong,
-    ) -> Vec<(Axis, usize)> {
+    ) -> Vec<(Dimension, usize)> {
         let [m, n, _] = self.shape_along(rows);
         batches
             .iter()
-            .map(|&axis| (axis, 1))
-            .chain(axes.name([m, n, (MatmulDim::K, depth)]))
+            .map(|&dimension| (dimension, 1))
+            .chain(dimensions.name([m, n, (MatmulDim::K, depth)]))
             .collect()
     }
 

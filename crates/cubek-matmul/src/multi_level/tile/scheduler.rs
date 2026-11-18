@@ -37,7 +37,8 @@ impl PartitionScheduler {
                 // M-axis rotation: ensures partitions in the same row start at different M tiles.
                 let m_offset = (partition_index_n / partition_size.k()) % partition_size.m();
 
-                // N-axis rotation: ensures partitions in the same column start at different N tiles.
+                // N-axis rotation: ensures partitions in the same column start at different N
+                // tiles.
                 let n_offset = (partition_index_m / partition_size.k()) % partition_size.n();
 
                 // K-axis rotation: simple offset; same diagonal can share K safely.
@@ -91,7 +92,8 @@ impl PartitionScheduler {
     }
 }
 
-/// Axis-specific scheduler that delegates to either `OffsetAxisScheduler` or `NaiveAxisScheduler`.
+/// Dimension-specific scheduler that delegates to either `OffsetAxisScheduler` or
+/// `NaiveAxisScheduler`.
 #[derive(CubeType)]
 #[allow(unused)]
 pub enum AxisScheduler {

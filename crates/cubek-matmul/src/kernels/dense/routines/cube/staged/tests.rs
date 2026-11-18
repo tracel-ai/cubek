@@ -30,7 +30,7 @@ mod base {
     use cubek_std::layout::stored::{Operand, Packing};
     use cubek_std::layout::tile_order::{TileOrder, TileWords};
     use cubek_std::layout::{BindingOrder, tile_order};
-    use cubek_std::matmul_axes::{K, M, N};
+    use cubek_std::matmul_dimensions::{K, M, N};
     use cubek_std::microkernel::{Microkernel, StageLayout, StageRing};
     use cubek_std::routine::{Grid, Routine};
     use cubek_std::{Hardware, devices};
@@ -1202,7 +1202,7 @@ mod base {
         assert_eq!(CubeStagedDelivery::Tma.bound(), Delivery::SyncPerUnit);
     }
 
-    /// A strip keeps the width its setting asks for whatever the cubes along its axis: the
+    /// A strip keeps the width its setting asks for whatever the cubes along its dimension: the
     /// default's cube box is `128 × 256`, so `512 × 768` is four cubes along `m` and three along
     /// `n`, the strips along `n` one ragged strip.
     #[test]
@@ -1295,8 +1295,8 @@ mod base {
             (widths.lhs, widths.rhs, widths.out)
         };
         assert_eq!(widths(256, 512, 64), (widest, widest, widest));
-        // A `k` the stages overhang masks the lhs, whose contiguous axis it is, at a width that
-        // divides it.
+        // A `k` the stages overhang masks the lhs, whose contiguous dimension it is, at a width
+        // that divides it.
         assert_eq!(widths(256, 512, 24), (widest, widest, widest));
         assert_eq!(widths(256, 512, 20), (4, widest, widest));
         // An `n` the cubes overhang masks the rhs and the output, likewise.
@@ -1449,8 +1449,8 @@ mod base {
             (widths.lhs, widths.rhs, widths.out)
         };
         assert_eq!(widths(256, 512, 64), (widest, widest, 1));
-        // A `k` the stages overhang masks the lhs, whose contiguous axis it is, at a width that
-        // divides it.
+        // A `k` the stages overhang masks the lhs, whose contiguous dimension it is, at a width
+        // that divides it.
         assert_eq!(widths(256, 512, 72), (widest, widest, 1));
     }
 
@@ -1467,8 +1467,9 @@ mod base {
         use cubek_std::microkernel::KernelEstimate;
 
         let hw = devices::offering_nvfp4(devices::h100());
-        let packing = |scheme: cubecl::quant::scheme::QuantScheme, axes| Packing {
-            operand: Operand::of_scheme(&scheme, K, axes).expect("NVFP4 is one block along k"),
+        let packing = |scheme: cubecl::quant::scheme::QuantScheme, dimensions| Packing {
+            operand: Operand::of_scheme(&scheme, K, dimensions)
+                .expect("NVFP4 is one block along k"),
             scheme,
         };
         let problem = MatmulRoutineProblem::packed(
@@ -1612,7 +1613,7 @@ mod base {
         use cubek_microkernel::matmul::cube::CubeStagedDepth;
         use cubek_std::layout::stored::{Operand, Packing};
         use cubek_std::layout::tile_order;
-        use cubek_std::matmul_axes::KI;
+        use cubek_std::matmul_dimensions::KI;
         use cubek_std::microkernel::KernelEstimate;
 
         // The M2 as Metal reports it: its simdgroup matrix, `8 × 8 × 8` over `f16` into `f32`.
@@ -1736,7 +1737,7 @@ mod base {
     fn a_packed_input_prepares_no_walk_past_k() {
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
         use cubek_std::layout::stored::{Operand, Packing};
-        use cubek_std::matmul_axes::{KB, KI};
+        use cubek_std::matmul_dimensions::{KB, KI};
 
         let f16 = ElemType::Float(FloatKind::F16);
         // An L4's instruction: `16 × 8 × 16` over `f16` into `f32`, on 32-unit planes.
@@ -1769,9 +1770,9 @@ mod base {
                 for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
                     match CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings) {
                         Ok((blueprint, _)) => {
-                            let reaches_past = [KB, KI]
-                                .into_iter()
-                                .any(|axis| blueprint.partitioning.as_tile().overhangs(axis));
+                            let reaches_past = [KB, KI].into_iter().any(|dimension| {
+                                blueprint.partitioning.as_tile().overhangs(dimension)
+                            });
                             assert!(!reaches_past, "{settings} at k = {k} walks past k");
                         }
                         Err(refusal) if refusal == MATMUL_PACKED_WALK_PAST_K => {
@@ -1799,8 +1800,9 @@ mod base {
         use cubek_microkernel::matmul::MatmulDim;
 
         let hw = devices::offering_nvfp4(devices::rtx_pro_6000());
-        let packing = |scheme: cubecl::quant::scheme::QuantScheme, axes| Packing {
-            operand: Operand::of_scheme(&scheme, K, axes).expect("NVFP4 is one block along k"),
+        let packing = |scheme: cubecl::quant::scheme::QuantScheme, dimensions| Packing {
+            operand: Operand::of_scheme(&scheme, K, dimensions)
+                .expect("NVFP4 is one block along k"),
             scheme,
         };
         let problem = MatmulRoutineProblem::packed(
@@ -1847,8 +1849,9 @@ mod base {
         use crate::kernels::select::packed::nvfp4_scheme;
 
         let hw = devices::offering_nvfp4(devices::rtx_pro_6000());
-        let packing = |scheme: cubecl::quant::scheme::QuantScheme, axes| Packing {
-            operand: Operand::of_scheme(&scheme, K, axes).expect("NVFP4 is one block along k"),
+        let packing = |scheme: cubecl::quant::scheme::QuantScheme, dimensions| Packing {
+            operand: Operand::of_scheme(&scheme, K, dimensions)
+                .expect("NVFP4 is one block along k"),
             scheme,
         };
         let problem = MatmulRoutineProblem {
@@ -1924,13 +1927,13 @@ mod base {
         let hw = devices::offering_nvfp4(devices::rtx_pro_6000());
         let order = TileOrder::laid(&tile_order::nvfp4_scheme(), TileWords::RowByRow, (128, 8))
             .expect("NVFP4 lays a 128 x 8 tile");
-        // Each input read in tile order across its rows' axis, as a reader reads it off the
-        // matrix, under its scheme as stated over its own axes: the activation packed down its
-        // last, the weight down its first.
+        // Each input read in tile order across its rows' dimension, as a reader reads it off the
+        // matrix, under its scheme as stated over its own dimensions: the activation packed down
+        // its last, the weight down its first.
         let packing = |scheme: cubecl::quant::scheme::QuantScheme,
-                       axes: [cubecl::tile::Axis; 2],
+                       dimensions: [cubecl::tile::Dimension; 2],
                        across| Packing {
-            operand: Operand::of_scheme(&scheme, K, axes)
+            operand: Operand::of_scheme(&scheme, K, dimensions)
                 .and_then(|operand| {
                     operand.in_tile_order(
                         order,
@@ -2002,7 +2005,7 @@ mod base {
     #[test]
     fn a_float_weight_beside_a_packed_activation_binds_past_its_columns_at_a_dividing_width() {
         use crate::kernels::select::packed::nvfp4_scheme;
-        use cubek_std::matmul_axes::NI;
+        use cubek_std::matmul_dimensions::NI;
 
         let bf16 = ElemType::Float(FloatKind::BF16);
         let hw = devices::offering_nvfp4(devices::offering_mma(

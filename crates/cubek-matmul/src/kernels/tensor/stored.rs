@@ -1,7 +1,7 @@
 use super::{PackedTensor, PlainTensor};
 use crate::kernels::select::problem::OperandKind;
 use cubecl::server::BufferBinding;
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 use cubecl::zspace::SmallVec;
 use cubecl::zspace::metadata::Metadata;
 
@@ -36,22 +36,22 @@ impl StoredTensor {
         }
     }
 
-    /// What `axis` measures, of the two `axes` it states last.
+    /// What `dimension` measures, of the two `dimensions` it states last.
     ///
     /// # Panics
     ///
-    /// On an axis not among them.
-    pub fn extent(&self, axes: [Axis; 2], axis: Axis) -> usize {
+    /// On a dimension not among them.
+    pub fn extent(&self, dimensions: [Dimension; 2], dimension: Dimension) -> usize {
         match self {
             Self::Plain(tensor) => {
                 let shape = tensor.shape();
-                let position = axes
+                let position = dimensions
                     .iter()
-                    .position(|&own| own == axis)
-                    .unwrap_or_else(|| panic!("{axis:?} is not one of {axes:?}"));
+                    .position(|&own| own == dimension)
+                    .unwrap_or_else(|| panic!("{dimension:?} is not one of {dimensions:?}"));
                 shape[shape.rank() - 2 + position]
             }
-            Self::Packed(tensor) => tensor.extent(axis),
+            Self::Packed(tensor) => tensor.extent(dimension),
         }
     }
 

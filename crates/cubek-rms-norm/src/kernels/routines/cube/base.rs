@@ -47,7 +47,8 @@ impl Routine for CubeRmsNormRoutine {
     type Blueprint = CubeRmsNormRoutineBlueprint;
     type Partitioning = RmsNormPartitioning;
 
-    /// Its microkernel's settings ([`CubeRmsNormMicrokernel::settings`]): it has no knob of its own.
+    /// Its microkernel's settings ([`CubeRmsNormMicrokernel::settings`]): it has no knob of its
+    /// own.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         CubeRmsNormMicrokernel::settings(hw)
             .into_iter()
@@ -96,7 +97,7 @@ impl Routine for CubeRmsNormRoutine {
             CubeRmsNormMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let store = problem.store;
         store.runs_on(hw)?;
-        let plane_box = [vec![(R, 1)], store.width_axes(microkernel.plane.run)].concat();
+        let plane_box = [vec![(R, 1)], store.width_dimensions(microkernel.plane.run)].concat();
         let partitioning = RmsNormPartitioning::new(
             problem.space(),
             Levels::leaf(&plane_box).planes(&[(store.cut(), microkernel.planes)]),

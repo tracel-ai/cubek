@@ -15,15 +15,15 @@ use cubek_microkernel::matmul::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Packing;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 
 /// `out = lhs · rhs` with every cube owning every row of a run of the output's columns, and its
 /// planes splitting the contraction between them: in software sums
-/// ([`PlaneShuffleMicrokernel`](cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel)), or, against a packed rhs, on the tensor cores, where an NVFP4
-/// rhs against a 16-bit lhs holds up to a fragment's sixteen rows at the cost of
-/// reading the rhs
+/// ([`PlaneShuffleMicrokernel`](cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel)), or,
+/// against a packed rhs, on the tensor cores, where an NVFP4 rhs against a 16-bit lhs holds up to a
+/// fragment's sixteen rows at the cost of reading the rhs
 /// ([`PlaneFragmentMicrokernel`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel)).
 ///
 /// What a product whose runs of columns are too few to fill the device with planes wants: a
@@ -100,7 +100,7 @@ impl CubeShuffleMatmulRoutine {
     /// What a batched product, whose cubes are handed batches beside boxes, declines a capped
     /// launch with.
     pub const CAPPED_BATCHED: Refusal = Refusal::Declined {
-        why: "a cube shuffle's capped launch walks one axis of boxes, not batches beside them",
+        why: "a cube shuffle's capped launch walks one dimension of boxes, not batches beside them",
     };
 
     /// [`Routine::estimate`] against a float rhs: each group of units, across the cube's
@@ -120,7 +120,7 @@ impl CubeShuffleMatmulRoutine {
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let partitioning = &blueprint.partitioning;
         let (cube, leaf) = (&partitioning.cube_space().space, partitioning.leaf());
-        let [rows, columns, k] = [M, N, K].map(|axis| cube.extent(axis) as u64);
+        let [rows, columns, k] = [M, N, K].map(|dimension| cube.extent(dimension) as u64);
         let groups = columns / leaf.extent(N) as u64;
         let planes_along_k = microkernel.planes_along_k.get() as u64;
         let k_per_stage = microkernel.plane.step_depth(&leaf) as u64 * planes_along_k;
@@ -235,7 +235,7 @@ impl CubeShuffleMatmulRoutine {
     }
 
     /// [`Routine::prepare`] against `packing`, a packed rhs: every row in each cube, the cubes
-    /// side by side along the axis its planes' columns land on.
+    /// side by side along the dimension its planes' columns land on.
     fn prepare_packed(
         &self,
         hw: &Hardware,
@@ -251,9 +251,9 @@ impl CubeShuffleMatmulRoutine {
         view.check_steps(hw)?;
         let item = view.work_item();
         let mut microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
-        let columns = microkernel.plane.column_axis();
+        let columns = microkernel.plane.column_dimension();
         let partitioning = match (settings.cubes_per_worker, hw.workers()) {
-            (Some(_), _) if !view.distributed_batch_axes().is_empty() => {
+            (Some(_), _) if !view.distributed_batch_dimensions().is_empty() => {
                 return Err(Self::CAPPED_BATCHED);
             }
             (Some(per), Some(workers)) => {
@@ -557,7 +557,7 @@ mod tests {
         let scheme = tile_order::nvfp4_scheme();
         let words = hw.load_values(ElemType::UInt(UIntKind::U32));
         let operand = Operand::of_scheme(&scheme, K, [K, N])
-            .expect("one axis a block")
+            .expect("one dimension a block")
             .in_tile_order(
                 tile_order::TileOrder::laid(&scheme, tile_order::TileWords::RowByRow, (128, 8))
                     .expect("NVFP4 is tile order"),
