@@ -206,6 +206,41 @@ pub struct ConvRoles {
     pub extent_mismatch: ConvDecline,
 }
 
+/// The out and tap axes of a convolution over `dims` spatial dims, and where their extents sit in
+/// the operands' views.
+#[derive(Debug)]
+struct SpatialAxes {
+    dims: usize,
+    outs: Vec<Axis>,
+    taps: Vec<Axis>,
+}
+
+/// The axes of `parts` one after the other.
+fn joined(parts: &[&[Axis]]) -> Vec<Axis> {
+    parts.concat()
+}
+
+impl SpatialAxes {
+    fn new(dims: usize) -> Self {
+        let (outs, taps) = (0..dims).map(|dim| (out(dim), tap(dim))).unzip();
+        Self { dims, outs, taps }
+    }
+
+    /// The channels dim of `operand`'s view, after the batch or filters and the spatial dims.
+    fn channels(&self, operand: MatmulOperand) -> ViewDim {
+        ViewDim::at(operand, self.dims + 1)
+    }
+
+    /// The spatial dims of `operand`'s view, from `first`.
+    fn run(&self, operand: MatmulOperand, first: usize) -> ViewRun {
+        ViewRun {
+            operand,
+            first,
+            len: self.dims,
+        }
+    }
+}
+
 impl ConvRoles {
     /// The roles `operation` gives the axes of the space of a convolution over `dims` spatial
     /// dims.
@@ -218,103 +253,100 @@ impl ConvRoles {
         if dims == 0 {
             return Err(ConvDecline::NoSpatialDim.into());
         }
-        let (outs, taps): (Vec<Axis>, Vec<Axis>) =
-            (0..dims).map(|dim| (out(dim), tap(dim))).unzip();
-        let join = |parts: &[&[Axis]]| parts.concat();
+        let spatial = SpatialAxes::new(dims);
+        match operation {
+            ConvolutionOperation::Forward => Ok(Self::forward(&spatial)),
+            ConvolutionOperation::BackwardWeight => Ok(Self::backward_weight(&spatial)),
+            ConvolutionOperation::BackwardData => Ok(Self::backward_data(&spatial)),
+            ConvolutionOperation::ForwardTransposed => Err(ConvDecline::Transposed.into()),
+        }
+    }
+
+    fn forward(spatial: &SpatialAxes) -> Self {
         use MatmulOperand::{Lhs, Out, Rhs};
-        let channels = |operand| ViewDim::at(operand, dims + 1);
-        let run = |operand, first| ViewRun {
-            operand,
-            first,
-            len: dims,
-        };
-        let roles = match operation {
-            ConvolutionOperation::Forward => {
-                let free = join(&[&[B], &outs, &[CO]]);
-                let contracted = join(&[&taps, &[CI]]);
-                Self {
-                    dims,
-                    space: join(&[&free, &contracted]),
-                    free: ConvFreeAxes::split(&free),
-                    contracted: ConvContractedAxes::split(&contracted),
-                    lhs: join(&[&[B], &outs, &taps, &[CI]]),
-                    rhs: join(&[&[CO], &taps, &[CI]]),
-                    rhs_order: ViewOrder::Stored,
-                    out_order: ViewOrder::Stored,
-                    inner: MatmulOperands {
-                        lhs: CI,
-                        rhs: CI,
-                        out: CO,
-                    },
-                    gather: ConvGather::Window,
-                    extents: ConvExtents {
-                        channels_in: channels(Lhs),
-                        channels_out: ViewDim::at(Rhs, 0),
-                        kernel: run(Rhs, 1),
-                        out: run(Out, 1),
-                    },
-                    extent_mismatch: ConvDecline::ForwardExtent,
-                }
-            }
-            ConvolutionOperation::BackwardWeight => {
-                let free = join(&[&taps, &[CI, CO]]);
-                let contracted = join(&[&[B], &outs]);
-                Self {
-                    dims,
-                    space: join(&[&contracted, &free]),
-                    free: ConvFreeAxes::split(&free),
-                    contracted: ConvContractedAxes::split(&contracted),
-                    lhs: join(&[&taps, &[B], &outs, &[CI]]),
-                    rhs: join(&[&[B], &outs, &[CO]]),
-                    rhs_order: ViewOrder::Stored,
-                    out_order: ViewOrder::ChannelsOutLast,
-                    inner: MatmulOperands {
-                        lhs: CI,
-                        rhs: CO,
-                        out: CI,
-                    },
-                    gather: ConvGather::Window,
-                    extents: ConvExtents {
-                        channels_in: channels(Lhs),
-                        channels_out: channels(Out),
-                        kernel: run(Out, 0),
-                        out: run(Rhs, 1),
-                    },
-                    extent_mismatch: ConvDecline::WeightGradExtent,
-                }
-            }
-            ConvolutionOperation::BackwardData => {
-                let free = join(&[&[B], &outs, &[CI]]);
-                let contracted = join(&[&taps, &[CO]]);
-                Self {
-                    dims,
-                    space: join(&[&free, &contracted]),
-                    free: ConvFreeAxes::split(&free),
-                    contracted: ConvContractedAxes::split(&contracted),
-                    lhs: join(&[&[B], &outs, &taps, &[CO]]),
-                    rhs: join(&[&taps, &[CO, CI]]),
-                    rhs_order: ViewOrder::ChannelsOutAfterTaps,
-                    out_order: ViewOrder::Stored,
-                    inner: MatmulOperands {
-                        lhs: CO,
-                        rhs: CI,
-                        out: CI,
-                    },
-                    gather: ConvGather::Gradient,
-                    extents: ConvExtents {
-                        channels_in: channels(Out),
-                        channels_out: channels(Lhs),
-                        kernel: run(Rhs, 0),
-                        out: run(Out, 1),
-                    },
-                    extent_mismatch: ConvDecline::DataGradExtent,
-                }
-            }
-            ConvolutionOperation::ForwardTransposed => {
-                return Err(ConvDecline::Transposed.into());
-            }
-        };
-        Ok(roles)
+        let free = joined(&[&[B], &spatial.outs, &[CO]]);
+        let contracted = joined(&[&spatial.taps, &[CI]]);
+        Self {
+            dims: spatial.dims,
+            space: joined(&[&free, &contracted]),
+            free: ConvFreeAxes::split(&free),
+            contracted: ConvContractedAxes::split(&contracted),
+            lhs: joined(&[&[B], &spatial.outs, &spatial.taps, &[CI]]),
+            rhs: joined(&[&[CO], &spatial.taps, &[CI]]),
+            rhs_order: ViewOrder::Stored,
+            out_order: ViewOrder::Stored,
+            inner: MatmulOperands {
+                lhs: CI,
+                rhs: CI,
+                out: CO,
+            },
+            gather: ConvGather::Window,
+            extents: ConvExtents {
+                channels_in: spatial.channels(Lhs),
+                channels_out: ViewDim::at(Rhs, 0),
+                kernel: spatial.run(Rhs, 1),
+                out: spatial.run(Out, 1),
+            },
+            extent_mismatch: ConvDecline::ForwardExtent,
+        }
+    }
+
+    fn backward_weight(spatial: &SpatialAxes) -> Self {
+        use MatmulOperand::{Lhs, Out, Rhs};
+        let free = joined(&[&spatial.taps, &[CI, CO]]);
+        let contracted = joined(&[&[B], &spatial.outs]);
+        Self {
+            dims: spatial.dims,
+            space: joined(&[&contracted, &free]),
+            free: ConvFreeAxes::split(&free),
+            contracted: ConvContractedAxes::split(&contracted),
+            lhs: joined(&[&spatial.taps, &[B], &spatial.outs, &[CI]]),
+            rhs: joined(&[&[B], &spatial.outs, &[CO]]),
+            rhs_order: ViewOrder::Stored,
+            out_order: ViewOrder::ChannelsOutLast,
+            inner: MatmulOperands {
+                lhs: CI,
+                rhs: CO,
+                out: CI,
+            },
+            gather: ConvGather::Window,
+            extents: ConvExtents {
+                channels_in: spatial.channels(Lhs),
+                channels_out: spatial.channels(Out),
+                kernel: spatial.run(Out, 0),
+                out: spatial.run(Rhs, 1),
+            },
+            extent_mismatch: ConvDecline::WeightGradExtent,
+        }
+    }
+
+    fn backward_data(spatial: &SpatialAxes) -> Self {
+        use MatmulOperand::{Lhs, Out, Rhs};
+        let free = joined(&[&[B], &spatial.outs, &[CI]]);
+        let contracted = joined(&[&spatial.taps, &[CO]]);
+        Self {
+            dims: spatial.dims,
+            space: joined(&[&free, &contracted]),
+            free: ConvFreeAxes::split(&free),
+            contracted: ConvContractedAxes::split(&contracted),
+            lhs: joined(&[&[B], &spatial.outs, &spatial.taps, &[CO]]),
+            rhs: joined(&[&spatial.taps, &[CO, CI]]),
+            rhs_order: ViewOrder::ChannelsOutAfterTaps,
+            out_order: ViewOrder::Stored,
+            inner: MatmulOperands {
+                lhs: CO,
+                rhs: CI,
+                out: CI,
+            },
+            gather: ConvGather::Gradient,
+            extents: ConvExtents {
+                channels_in: spatial.channels(Out),
+                channels_out: spatial.channels(Lhs),
+                kernel: spatial.run(Rhs, 0),
+                out: spatial.run(Out, 1),
+            },
+            extent_mismatch: ConvDecline::DataGradExtent,
+        }
     }
 
     /// The spatial `[out, tap]` axis pairs, one per spatial dim of the gathered input.
@@ -412,7 +444,7 @@ impl ConvRoles {
     /// the outer ones.
     pub fn plane_axes(&self) -> Vec<Axis> {
         let free = &self.free;
-        [&[free.m, free.n, free.across], &free.outer[..]].concat()
+        joined(&[&[free.m, free.n, free.across], &free.outer[..]])
     }
 
     /// `rhs` with its dims listed in the order of [`Self::rhs`].
