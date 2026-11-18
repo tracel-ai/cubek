@@ -37,10 +37,10 @@ pub(crate) fn reduce_widths(
     {
         vectorization.require(VectorRequirement::Aligned { operand, alignment });
     }
-    let line_stays_in = match (problem.layout(), problem.contiguous) {
-        (ReduceLayout::Across, Some(inner)) => problem.shape[inner],
-        _ => problem.reduced_extent(),
-    };
+    let line_stays_in = problem
+        .contiguous
+        .filter(|_| problem.layout() == ReduceLayout::Across)
+        .map_or(problem.reduced_extent(), |inner| problem.shape[inner]);
     vectorization.require(VectorRequirement::Access {
         operand: ReduceOperand::Input,
         elements: line_stays_in,

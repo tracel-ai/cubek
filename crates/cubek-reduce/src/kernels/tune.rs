@@ -69,20 +69,9 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
     /// dims, the others one wide: the reduced dim the innermost where the lines lie along it, and
     /// next to it where they lie across it.
     fn from(key: &ReduceKey) -> Self {
-        let mut shape = vec![1; key.row_dims.saturating_sub(1)];
-        let axis = match (key.layout, key.row_dims) {
-            (_, 0) => {
-                shape.push(key.reduced);
-                0
-            }
-            (ReduceLayout::Along, _) => {
-                shape.extend([key.rows, key.reduced]);
-                shape.len() - 1
-            }
-            (ReduceLayout::Across, _) => {
-                shape.extend([key.reduced, key.rows]);
-                shape.len() - 2
-            }
+        let (shape, axis) = match key.row_dims {
+            0 => (vec![key.reduced], 0),
+            _ => shape_with_rows(key),
         };
         let mut out_shape = shape.clone();
         out_shape[axis] = key.operation.written_per_row();
@@ -96,6 +85,22 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
             elements: key.elements,
             indices: key.indices,
         }
+    }
+}
+
+/// The shape of the dense tensor `key` describes, whose rows run along at least one dim, and its
+/// reduced axis: the innermost where the lines lie along it, next to it where they lie across it.
+fn shape_with_rows(key: &ReduceKey) -> (Vec<usize>, usize) {
+    let outer = vec![1; key.row_dims - 1];
+    match key.layout {
+        ReduceLayout::Along => (
+            [outer.as_slice(), &[key.rows, key.reduced]].concat(),
+            key.row_dims,
+        ),
+        ReduceLayout::Across => (
+            [outer.as_slice(), &[key.reduced, key.rows]].concat(),
+            key.row_dims - 1,
+        ),
     }
 }
 

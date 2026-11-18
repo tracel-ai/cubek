@@ -169,10 +169,11 @@ impl ReduceRoutineProblem {
     /// The dimensions the owners are placed along, outermost first: the row
     /// dimensions, or the slots where there is none, a tensor of one axis reduced whole into its one row.
     pub fn owner_dimensions(&self) -> Vec<Dimension> {
-        match self.rows() {
-            rows if rows.is_empty() => vec![self.slots()],
-            rows => rows,
+        let rows = self.rows();
+        if rows.is_empty() {
+            return vec![self.slots()];
         }
+        rows
     }
 
     /// [`owner_dimensions`](Self::owner_dimensions), innermost first. A launch deals its owners
@@ -283,10 +284,9 @@ impl ReduceRoutineProblem {
         let mut extents: Vec<(Dimension, usize)> = (0..self.shape.len())
             .filter(|d| *d != self.axis)
             .map(|d| {
-                let extent = match (self.layout(), self.contiguous) {
-                    (ReduceLayout::Across, Some(inner)) if d == inner => width,
-                    _ => 1,
-                };
+                let across_lines =
+                    self.layout() == ReduceLayout::Across && self.contiguous == Some(d);
+                let extent = if across_lines { width } else { 1 };
                 (axis_dimension(d), extent)
             })
             .collect();

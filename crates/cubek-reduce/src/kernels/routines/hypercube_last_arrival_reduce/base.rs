@@ -205,39 +205,61 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
         // themselves in at by their box's coordinates. A cube writes no partial but its own part's,
         // and the last cube of a box reads them after every cube of the box stored its own. Its
         // shared memory is the slots its microkernel declares, which the grid counted.
-        match (binding.indices, problem.indices, partial_indices) {
-            (Some(indices), Some(index), Some(partial_indices)) => unsafe {
-                hypercube_last_arrival_reduce_with_indices_kernel::launch_unchecked::<I>(
+        let written = partial_indices
+            .map(|partial_indices| (partial_indices, binding.indices.zip(problem.indices)));
+        unsafe {
+            match written {
+                Some((partial_indices, Some((indices, index)))) => {
+                    hypercube_last_arrival_reduce_with_indices_kernel::launch_unchecked::<I>(
+                        client,
+                        grid.launch.cube_count,
+                        grid.launch.cube_dim,
+                        blueprint.width,
+                        binding.input,
+                        binding.out,
+                        indices.arg(),
+                        partials.arg(),
+                        partial_indices.arg(),
+                        arrivals,
+                        binding.launcher.partitioning_arg(),
+                        ReduceSplitExtentsLaunch::new(
+                            extents.parts,
+                            extents.values,
+                            extents.inner_boxes,
+                        ),
+                        blueprint.microkernel,
+                        [elements.input, elements.accumulator, elements.out, index],
+                    )
+                }
+                Some((partial_indices, None)) => {
+                    hypercube_last_arrival_reduce_indexed_kernel::launch_unchecked::<I>(
+                        client,
+                        grid.launch.cube_count,
+                        grid.launch.cube_dim,
+                        blueprint.width,
+                        binding.input,
+                        binding.out,
+                        partials.arg(),
+                        partial_indices.arg(),
+                        arrivals,
+                        binding.launcher.partitioning_arg(),
+                        ReduceSplitExtentsLaunch::new(
+                            extents.parts,
+                            extents.values,
+                            extents.inner_boxes,
+                        ),
+                        blueprint.microkernel,
+                        [elements.input, elements.accumulator, elements.out],
+                    )
+                }
+                None => hypercube_last_arrival_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
                     blueprint.width,
                     binding.input,
                     binding.out,
-                    indices.arg(),
                     partials.arg(),
-                    partial_indices.arg(),
-                    arrivals,
-                    binding.launcher.partitioning_arg(),
-                    ReduceSplitExtentsLaunch::new(
-                        extents.parts,
-                        extents.values,
-                        extents.inner_boxes,
-                    ),
-                    blueprint.microkernel,
-                    [elements.input, elements.accumulator, elements.out, index],
-                )
-            },
-            (_, _, Some(partial_indices)) => unsafe {
-                hypercube_last_arrival_reduce_indexed_kernel::launch_unchecked::<I>(
-                    client,
-                    grid.launch.cube_count,
-                    grid.launch.cube_dim,
-                    blueprint.width,
-                    binding.input,
-                    binding.out,
-                    partials.arg(),
-                    partial_indices.arg(),
                     arrivals,
                     binding.launcher.partitioning_arg(),
                     ReduceSplitExtentsLaunch::new(
@@ -247,28 +269,8 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                     ),
                     blueprint.microkernel,
                     [elements.input, elements.accumulator, elements.out],
-                )
-            },
-            _ => unsafe {
-                hypercube_last_arrival_reduce_kernel::launch_unchecked::<I>(
-                    client,
-                    grid.launch.cube_count,
-                    grid.launch.cube_dim,
-                    blueprint.width,
-                    binding.input,
-                    binding.out,
-                    partials.arg(),
-                    arrivals,
-                    binding.launcher.partitioning_arg(),
-                    ReduceSplitExtentsLaunch::new(
-                        extents.parts,
-                        extents.values,
-                        extents.inner_boxes,
-                    ),
-                    blueprint.microkernel,
-                    [elements.input, elements.accumulator, elements.out],
-                )
-            },
+                ),
+            }
         }
     }
 }

@@ -121,23 +121,23 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles; its shared memory is the slots its microkernel declares, which the grid
         // counted.
-        match (binding.indices, problem.indices) {
-            (Some(indices), Some(index)) => unsafe {
-                cube_staged_reduce_with_indices_kernel::launch_unchecked::<I>(
-                    client,
-                    grid.launch.cube_count,
-                    grid.launch.cube_dim,
-                    blueprint.width,
-                    binding.input,
-                    binding.out,
-                    indices.arg(),
-                    binding.launcher.partitioning_arg(),
-                    blueprint.microkernel,
-                    [elements.input, elements.accumulator, elements.out, index],
-                )
-            },
-            _ => unsafe {
-                cube_staged_reduce_kernel::launch_unchecked::<I>(
+        unsafe {
+            match binding.indices.zip(problem.indices) {
+                Some((indices, index)) => {
+                    cube_staged_reduce_with_indices_kernel::launch_unchecked::<I>(
+                        client,
+                        grid.launch.cube_count,
+                        grid.launch.cube_dim,
+                        blueprint.width,
+                        binding.input,
+                        binding.out,
+                        indices.arg(),
+                        binding.launcher.partitioning_arg(),
+                        blueprint.microkernel,
+                        [elements.input, elements.accumulator, elements.out, index],
+                    )
+                }
+                None => cube_staged_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
@@ -147,8 +147,8 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
                     binding.launcher.partitioning_arg(),
                     blueprint.microkernel,
                     [elements.input, elements.accumulator, elements.out],
-                )
-            },
+                ),
+            }
         }
     }
 }

@@ -106,10 +106,10 @@ fn hypercube_filling_the_device(
         if boxes >= fill {
             return None;
         }
-        if parts < 2 {
+        // A row in one part is the cube routine's, not a split.
+        let Some(cubes) = (parts >= 2).then_some(boxes * parts) else {
             continue;
-        }
-        let cubes = boxes * parts;
+        };
         if cubes >= fill {
             return Some((blueprint, grid));
         }
