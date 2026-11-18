@@ -41,7 +41,7 @@ use cubek_matmul::tiled::storage;
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
 use cubek_std::layout::tile_order::{self, TileWords};
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_dimensions::{K, N};
 use half::f16;
 
 const BLOCK: usize = 16;
@@ -264,7 +264,7 @@ fn in_tile_order(
             client.create_from_slice(words),
             Metadata::new([n, blocks, BLOCK], [k, BLOCK, 1]),
         ),
-        &tile_order::values_axes(N),
+        &tile_order::values_dimensions(N),
         WORD,
         Some(Field::from(scheme.value)),
         order.values_storage(N, words_per_load),
@@ -280,7 +280,7 @@ fn in_tile_order(
                     client.create_from_slice(scales),
                     Metadata::new([n, blocks], [blocks, 1]),
                 ),
-                &tile_order::scales_axes(N),
+                &tile_order::scales_dimensions(N),
                 WORD,
                 Some(Field::of_scale(ScaleDtype::UE4M3)),
                 storage,

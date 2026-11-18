@@ -1,7 +1,7 @@
 use crate::kernels::indexed::m_grouped::{
     MGroupedChunk, MGroupedMatmulKey, MGroupedRowSource, MGroupedSettings, PaddedRows,
 };
-use crate::kernels::indexed::stack::{SlabAxis, SlabView};
+use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
@@ -16,7 +16,7 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::layout::contiguous;
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_dimensions::{K, N};
 
 /// The operands of one grouped product, `out[r] = lhs[r] · rhs[group(r)]`: where the rows come
 /// from, sorted by group, the stack of slabs laid `along`, float or packed, and each group's
@@ -32,7 +32,7 @@ pub struct MGroupedMatmulTensors {
     source: MGroupedRowSource,
     rhs: StoredTensor,
     ends: PlainTensor,
-    along: SlabAxis,
+    along: SlabDimension,
 }
 
 impl MGroupedMatmulTensors {
@@ -42,7 +42,7 @@ impl MGroupedMatmulTensors {
     /// The rows `source` holds against `rhs` on `client`'s device, grouped by `ends` (each group's
     /// cumulative end row as a `u32`, one group a slab), the slabs laid along `along`. A float
     /// stack is read where it lies, and copied only where it overlaps itself or is contiguous
-    /// along neither axis.
+    /// along neither dimension.
     ///
     /// # Errors
     ///
@@ -58,7 +58,7 @@ impl MGroupedMatmulTensors {
         source: impl Into<MGroupedRowSource>,
         rhs: StoredTensor,
         ends: PlainTensor,
-        along: SlabAxis,
+        along: SlabDimension,
     ) -> Result<Self, Refusal> {
         let source = source.into();
         let rows = source.buffer();
@@ -304,7 +304,9 @@ impl MGroupedMatmulTensors {
         let elem = self.source.buffer().elem;
         match &self.rhs {
             StoredTensor::Packed(packed) => {
-                let stack = packed.clone().stacked(self.groups(), self.along.axis())?;
+                let stack = packed
+                    .clone()
+                    .stacked(self.groups(), self.along.dimension())?;
                 let [k, n] = self.slab_shape();
                 let packings = MatmulOperands {
                     rhs: Some(stack.packing()),

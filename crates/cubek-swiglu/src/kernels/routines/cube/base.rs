@@ -168,7 +168,11 @@ impl Routine for CubeSwigluRoutine {
             },
         );
         let groups = settings.groups_of(hw, &microkernel, problem, staged);
-        let run_box = [vec![(R, 1), (H, 2)], store.width_axes(microkernel.run())].concat();
+        let run_box = [
+            vec![(R, 1), (H, 2)],
+            store.width_dimensions(microkernel.run()),
+        ]
+        .concat();
         let partitioning = SwigluPartitioning::new(
             problem.space(),
             Levels::leaf(&run_box).planes(&[(R, groups)]),

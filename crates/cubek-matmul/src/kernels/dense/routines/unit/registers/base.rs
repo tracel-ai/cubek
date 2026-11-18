@@ -13,7 +13,7 @@ use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStagingCount};
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 use cubek_std::selector::divisor_at_most;
@@ -421,7 +421,7 @@ mod tests {
             (widths.lhs, widths.rhs, widths.out)
         };
         assert_eq!(widths(256, 512, 64), (4, 4, 4));
-        // A `k` the steps overhang masks the lhs, whose contiguous axis it is, at a width that
+        // A `k` the steps overhang masks the lhs, whose contiguous dimension it is, at a width that
         // divides it.
         assert_eq!(widths(256, 512, 22), (2, 4, 4));
         // An `n` the planes overhang masks the rhs and the output, likewise.

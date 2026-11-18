@@ -1,6 +1,6 @@
 use crate::Hardware;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::{Axis, Space, StageStorage, stage::Prefetch};
+use cubecl::tile::{Dimension, Space, StageStorage, stage::Prefetch};
 
 /// One operand's box of a stage, as the ring that holds it reads it: what a stage of it costs in
 /// shared memory, and in registers where the next one waits there.
@@ -8,10 +8,10 @@ use cubecl::tile::{Axis, Space, StageStorage, stage::Prefetch};
 pub struct StagedOperand {
     /// The element the stage holds it in.
     pub element: ElemType,
-    /// Its box of one stage, over its own axes.
+    /// Its box of one stage, over its own dimensions.
     pub space: Space,
-    /// The axis it is bound innermost along, which the stage's rows run along.
-    pub innermost: Axis,
+    /// The dimension it is bound innermost along, which the stage's rows run along.
+    pub innermost: Dimension,
     /// What its fill does to it on the way into the stage.
     pub fill: StageFill,
 }
@@ -29,7 +29,7 @@ pub enum StageFill {
 impl StagedOperand {
     /// An operand stored in `element` whose fill converts it only where no buffer stores
     /// `element`, e2m1 or tf32.
-    pub fn new(element: ElemType, space: Space, innermost: Axis) -> Self {
+    pub fn new(element: ElemType, space: Space, innermost: Dimension) -> Self {
         let in_words = [FloatKind::E2M1, FloatKind::TF32]
             .map(ElemType::Float)
             .contains(&element);
@@ -55,8 +55,8 @@ impl StagedOperand {
     /// Elements one stage holds of it.
     pub fn cells(&self) -> usize {
         self.space
-            .axes()
-            .map(|axis| self.space.extent(axis))
+            .dimensions()
+            .map(|dimension| self.space.extent(dimension))
             .product()
     }
 
@@ -74,16 +74,17 @@ impl StagedOperand {
             .expect("a row holds whole bytes")
     }
 
-    /// Its box with the axis it is bound innermost along last, which the stage's rows run along.
+    /// Its box with the dimension it is bound innermost along last, which the stage's rows run
+    /// along.
     fn rows(&self) -> Space {
-        let axes: Vec<(Axis, usize)> = self
+        let dimensions: Vec<(Dimension, usize)> = self
             .space
-            .axes()
-            .filter(|&axis| axis != self.innermost)
+            .dimensions()
+            .filter(|&dimension| dimension != self.innermost)
             .chain([self.innermost])
-            .map(|axis| (axis, self.space.extent(axis)))
+            .map(|dimension| (dimension, self.space.extent(dimension)))
             .collect();
-        Space::new(&axes)
+        Space::new(&dimensions)
     }
 
     /// Scalars one of `units` units holds of a stage of it fetched into registers, at its most

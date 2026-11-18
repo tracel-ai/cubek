@@ -1,5 +1,5 @@
 use crate::matmul::{MatmulOperands, MatmulRead};
-use cubecl::tile::{Axis, Instruction, Region, Space, Tile, Walk};
+use cubecl::tile::{Dimension, Instruction, Region, Space, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One stage of one plane's tile: `a · b` added into `sum`, the operands staged in shared memory,
@@ -8,17 +8,17 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// `plane` is the plane's region of the stage; `sum`, `a` and `b` are already windowed to it.
 ///
-/// `held` is an axis the plane's steps walk that this product does not name, which each step
-/// takes at its first coordinate: where a stage holds two products over one region, as
-/// attention's score and value, each walks its own axes and holds the other's. Each leaf reads
-/// its window of each operand as `reads` says.
+/// `held` is a dimension the plane's steps walk that this product does not name, which each step
+/// takes at its first coordinate: where a stage holds two products over one region, as attention's
+/// score and value, each walks its own dimensions and holds the other's. Each leaf reads its window
+/// of each operand as `reads` says.
 #[cube]
 pub fn plane_fragment_microkernel(
     plane: &Region,
     sum: &Tile,
     a: &Tile,
     b: &Tile,
-    #[comptime] held: Option<Axis>,
+    #[comptime] held: Option<Dimension>,
     #[comptime] reads: MatmulOperands<MatmulRead>,
 ) {
     KWalk::steps(plane, sum, a, b, held, reads);
@@ -31,16 +31,16 @@ enum KWalk {
     Unrolled,
     /// The steps walk `K` alone: a runtime loop over them.
     Rolled,
-    /// The steps also walk the sum's fragments: a runtime loop along this axis of `K`, each of its
-    /// steps' fragments unrolled.
-    Routed(Axis),
+    /// The steps also walk the sum's fragments: a runtime loop along this dimension of `K`, each of
+    /// its steps' fragments unrolled.
+    Routed(Dimension),
 }
 
 impl KWalk {
     /// The walk of a product whose steps take `held` at its first coordinate, out of operands
     /// laid over `a` and `b` into a sum over `sum`. `indexable` says both operands can be read at
     /// a runtime offset, which a fragment in registers cannot.
-    fn new(held: Option<Axis>, indexable: bool, a: &Space, b: &Space, sum: &Space) -> Self {
+    fn new(held: Option<Dimension>, indexable: bool, a: &Space, b: &Space, sum: &Space) -> Self {
         if !indexable {
             return KWalk::Unrolled;
         }
@@ -49,17 +49,18 @@ impl KWalk {
             return KWalk::Rolled;
         };
 
-        let long = |space: &Space, axis| {
-            space.contains(axis) && (space.is_dynamic(axis) || space.extent(axis) > 1)
+        let long = |space: &Space, dimension| {
+            space.contains(dimension)
+                && (space.is_dynamic(dimension) || space.extent(dimension) > 1)
         };
 
-        let mut contracted = a
-            .axes()
-            .filter(|&axis| axis != held && long(a, axis) && long(b, axis) && !long(sum, axis));
+        let mut contracted = a.dimensions().filter(|&dimension| {
+            dimension != held && long(a, dimension) && long(b, dimension) && !long(sum, dimension)
+        });
         match (contracted.next(), contracted.next()) {
             (Some(k), None) => KWalk::Routed(k),
             _ => panic!(
-                "KWalk: a product holding {held:?} contracts one axis of {a:?} and {b:?} into \
+                "KWalk: a product holding {held:?} contracts one dimension of {a:?} and {b:?} into \
                  {sum:?}"
             ),
         }
@@ -75,7 +76,7 @@ impl KWalk {
         sum: &Tile,
         a: &Tile,
         b: &Tile,
-        #[comptime] held: Option<Axis>,
+        #[comptime] held: Option<Dimension>,
         #[comptime] reads: MatmulOperands<MatmulRead>,
     ) {
         let (a_shared, b_shared) = (a.is_shared(), b.is_shared());
@@ -112,9 +113,9 @@ impl KWalk {
     }
 
     /// The steps `plane`'s walk takes, each at `held`'s first coordinate.
-    fn held_steps(plane: &Region, #[comptime] held: Option<Axis>) -> Walk {
+    fn held_steps(plane: &Region, #[comptime] held: Option<Dimension>) -> Walk {
         match held {
-            Some(axis) => plane.walk().routed(axis, 0usize),
+            Some(dimension) => plane.walk().routed(dimension, 0usize),
             None => plane.walk(),
         }
     }

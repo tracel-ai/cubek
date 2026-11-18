@@ -1,7 +1,7 @@
 //! Storing a tensor in storage tiles and back: the tiled buffer holds the tiles it states,
 //! the round trip is the identity, and what cannot be tiled is refused on the host.
 
-use cubecl::tile::{Axis, Geometry, kind::Field, layout::Stagger};
+use cubecl::tile::{Dimension, Geometry, kind::Field, layout::Stagger};
 use cubecl::{
     bytes::Bytes, ir::ElemType, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle,
     zspace::Shape,
@@ -18,11 +18,11 @@ use cubek_std::layout::{
     stored::Operand,
     tile_order::{TileOrder, nvfp4_scheme},
 };
-use cubek_std::{Hardware, matmul_axes::K};
+use cubek_std::{Hardware, matmul_dimensions::K};
 use cubek_test_utils::{HostData, HostDataType, TestInput, client};
 
-const ROWS: Axis = Axis(0);
-const COLS: Axis = Axis(1);
+const ROWS: Dimension = Dimension(0);
+const COLS: Dimension = Dimension(1);
 
 /// Tile, check every cell sits in its tile, untile, check every cell is back. `grid` orders the
 /// tiles, finest first.
@@ -31,7 +31,7 @@ fn round_trip(
     rows: usize,
     cols: usize,
     (tr, tc): (usize, usize),
-    grid: &[Axis],
+    grid: &[Dimension],
 ) {
     let storage = StorageLevels::new(&[(COLS, tc), (ROWS, tr)]).grid(grid);
     round_trip_as(batches, rows, cols, (tr, tc), storage);
@@ -321,26 +321,26 @@ fn a_matrix_is_stored_for_the_read_it_is_read_in() {
     }
 }
 
-/// Where the value at `coords` (one per named axis) sits in a stored tensor, in values: each
-/// coordinate split over its axis's dims, finest last, dotted with their strides.
-fn value_offset(stored: &Geometry, axes: &[Axis], coords: &[usize]) -> usize {
-    let labels = stored.labels(axes);
+/// Where the value at `coords` (one per named dimension) sits in a stored tensor, in values: each
+/// coordinate split over its dimension's dims, finest last, dotted with their strides.
+fn value_offset(stored: &Geometry, dimensions: &[Dimension], coords: &[usize]) -> usize {
+    let labels = stored.labels(dimensions);
     let mut rest = coords.to_vec();
     let mut offset = 0;
     for d in (0..labels.len()).rev() {
-        let a = axes.iter().position(|&a| a == labels[d]).unwrap();
+        let a = dimensions.iter().position(|&a| a == labels[d]).unwrap();
         offset += (rest[a] % stored.shape()[d]) * stored.strides()[d];
         rest[a] /= stored.shape()[d];
     }
     offset
 }
 
-/// Tile a row-major tensor over `extents` (named axes and their sizes) of `field`-wide values
-/// packed along the last axis, as `storage` states, and check every value's field lands where the
-/// statement puts its value, the result stated in values.
-fn packs_and_lands(field: Field, extents: &[(Axis, usize)], storage: StoragePartitioning) {
+/// Tile a row-major tensor over `extents` (named dimensions and their sizes) of `field`-wide values
+/// packed along the last dimension, as `storage` states, and check every value's field lands where
+/// the statement puts its value, the result stated in values.
+fn packs_and_lands(field: Field, extents: &[(Dimension, usize)], storage: StoragePartitioning) {
     let client = client();
-    let axes: Vec<Axis> = extents.iter().map(|&(axis, _)| axis).collect();
+    let dimensions: Vec<Dimension> = extents.iter().map(|&(dimension, _)| dimension).collect();
     let shape: Vec<usize> = extents.iter().map(|&(_, extent)| extent).collect();
     let total: usize = shape.iter().product();
     let (bits, per_word) = (field.size_bits(), field.per_word());
@@ -368,7 +368,7 @@ fn packs_and_lands(field: Field, extents: &[(Axis, usize)], storage: StoragePart
     let tiled = tile(
         &client,
         src.binding(),
-        &axes,
+        &dimensions,
         dtype,
         Some(field),
         storage.clone(),
@@ -381,15 +381,15 @@ fn packs_and_lands(field: Field, extents: &[(Axis, usize)], storage: StoragePart
         let coords: Vec<usize> = (0..shape.len())
             .map(|d| i / strides[d] % shape[d])
             .collect();
-        let at = value_offset(&stored, &axes, &coords);
+        let at = value_offset(&stored, &dimensions, &coords);
         let got = (raw[at / per_word] >> ((at % per_word) * bits)) & mask;
         assert_eq!(got, code(i), "value {coords:?} at {at}");
     }
 }
 
-const N: Axis = Axis(0);
-const KB: Axis = Axis(1);
-const KI: Axis = Axis(2);
+const N: Dimension = Dimension(0);
+const KB: Dimension = Dimension(1);
+const KI: Dimension = Dimension(2);
 
 /// NVFP4 values, 8 to a word along `KI`, stored for a load of 2 words along `KI` by 2 columns:
 /// the words move whole and every value is where the statement puts it, the result stated in
@@ -503,11 +503,11 @@ fn tiling_refuses_packed_values_whose_word_is_not_the_finest_tile() {
     assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
 }
 
-/// A shape, its named trailing axes, how its values pack and the storage they are stated in: one
-/// case of [`an_empty_tensor_lies_as_its_shape_tiled`].
+/// A shape, its named trailing dimensions, how its values pack and the storage they are stated in:
+/// one case of [`an_empty_tensor_lies_as_its_shape_tiled`].
 struct StoredCase {
     shape: Vec<usize>,
-    axes: Vec<Axis>,
+    dimensions: Vec<Dimension>,
     packed: Option<Field>,
     storage: StoragePartitioning,
     dtype: ElemType,
@@ -518,7 +518,7 @@ impl StoredCase {
     fn plain(shape: &[usize], storage: StoragePartitioning) -> Self {
         Self {
             shape: shape.to_vec(),
-            axes: vec![ROWS, COLS],
+            dimensions: vec![ROWS, COLS],
             packed: None,
             storage,
             dtype: f32::elem_type_native(),
@@ -553,7 +553,7 @@ fn an_empty_tensor_lies_as_its_shape_tiled() {
         ),
         StoredCase {
             shape: vec![8, 8, 16],
-            axes: vec![N, KB, KI],
+            dimensions: vec![N, KB, KI],
             packed: Some(Field::Quant(QuantValue::E2M1)),
             storage: StorageLevels::new(&[(KI, 8)])
                 .tile(&[(KI, 2), (N, 2)])
@@ -564,7 +564,7 @@ fn an_empty_tensor_lies_as_its_shape_tiled() {
     ];
     for StoredCase {
         shape,
-        axes,
+        dimensions,
         packed,
         storage,
         dtype,
@@ -593,8 +593,16 @@ fn an_empty_tensor_lies_as_its_shape_tiled() {
                 binding.strides[d] = shape[d + 1..].iter().product();
             }
         }
-        let tiled = tile(&client, binding, &axes, dtype, packed, storage.clone()).unwrap();
-        let fresh = empty(&client, &shape, &axes, dtype, packed, storage).unwrap();
+        let tiled = tile(
+            &client,
+            binding,
+            &dimensions,
+            dtype,
+            packed,
+            storage.clone(),
+        )
+        .unwrap();
+        let fresh = empty(&client, &shape, &dimensions, dtype, packed, storage).unwrap();
         assert_eq!(fresh.metadata, tiled.metadata, "{shape:?} {packed:?}");
         assert_eq!(
             fresh.handle.size(),
@@ -620,9 +628,9 @@ fn an_empty_tensor_refuses_a_tile_that_does_not_divide() {
     assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
 }
 
-/// A shape of fewer dims than the axes it is stated over is refused, not read past its end.
+/// A shape of fewer dims than the dimensions it is stated over is refused, not read past its end.
 #[test]
-fn an_empty_tensor_refuses_a_shape_shorter_than_its_axes() {
+fn an_empty_tensor_refuses_a_shape_shorter_than_its_dimensions() {
     let client = client();
     let storage = StorageLevels::new(&[(COLS, 32), (ROWS, 16)]).grid(&[COLS, ROWS]);
     let refused = empty(
@@ -652,10 +660,11 @@ fn an_empty_tensor_refuses_packed_values_not_in_words() {
     assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
 }
 
-/// A packed tensor packs along the last of its axes, so a packed statement over none is refused,
-/// as is a packed source of fewer dims than its axes, before its contiguous dim is read.
+/// A packed tensor packs along the last of its dimensions, so a packed statement over none is
+/// refused, as is a packed source of fewer dims than its dimensions, before its contiguous dim is
+/// read.
 #[test]
-fn packed_values_without_their_axes_are_refused() {
+fn packed_values_without_their_dimensions_are_refused() {
     let client = client();
     let word = u32::elem_type_native();
     let field = Some(Field::Quant(QuantValue::E2M1));
@@ -685,8 +694,8 @@ fn packed_values_without_their_axes_are_refused() {
     assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
 }
 
-/// A float input is stored in the step a product against it takes, over its own two axes, except
-/// on a device whose TMA engine fills the stages from rows.
+/// A float input is stored in the step a product against it takes, over its own two dimensions,
+/// except on a device whose TMA engine fills the stages from rows.
 #[test]
 fn elements_are_stored_in_the_step_of_their_product() {
     let hw = Hardware::from_client(&client());
@@ -698,9 +707,15 @@ fn elements_are_stored_in_the_step_of_their_product() {
             continue;
         }
         let step = MatmulStep::stored_on(&hw, input, Operand::plain(), f16, f16);
-        let want = step.map(|step| input.axes().map(|axis| (axis, step.along(axis))));
+        let want = step.map(|step| {
+            input
+                .dimensions()
+                .map(|dimension| (dimension, step.along(dimension)))
+        });
         assert_eq!(
-            tile.map(|tile| input.axes().map(|axis| (axis, tile.extent(axis)))),
+            tile.map(|tile| input
+                .dimensions()
+                .map(|dimension| (dimension, tile.extent(dimension)))),
             want,
             "{input:?}"
         );

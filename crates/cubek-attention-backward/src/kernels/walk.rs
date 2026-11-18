@@ -49,8 +49,8 @@ impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
     ///
     /// To the requirements the microkernel enqueues, the binding adds its own: each operand's
     /// buffer alignment, where its view starts, and the masking of an operand whose innermost
-    /// axis the tiles overhang. Each operand then binds at the widest width this device reads its
-    /// element in that they admit.
+    /// dimension the tiles overhang. Each operand then binds at the widest width this device reads
+    /// its element in that they admit.
     pub(crate) fn new(
         hw: &Hardware,
         problem: &AttentionBackwardProblem,

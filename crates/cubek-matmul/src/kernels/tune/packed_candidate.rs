@@ -228,7 +228,7 @@ mod tests {
     use crate::kernels::tune::key::{MatmulBatching, OperandKey};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
-    use cubek_std::matmul_axes::K;
+    use cubek_std::matmul_dimensions::K;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 

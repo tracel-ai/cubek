@@ -107,7 +107,7 @@ impl AttentionBackwardLaunch for HypercubeKeyGradientLaunch {
         let query_sum = OutputArgs::Atomic(AccumulateArgLaunch::new(
             args.query_gradient,
             1,
-            TileSpec::direct(Operand::QueryGradient.axes()),
+            TileSpec::direct(Operand::QueryGradient.dimensions()),
         ));
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles; it only adds into the query's sum,

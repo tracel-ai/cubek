@@ -93,7 +93,7 @@ fn to_u32(extent: usize) -> u32 {
     u32::try_from(extent).expect("a reduced extent fits in 32 bits")
 }
 
-/// Values of a box of rows' partials along the partials axis, for parts of `part` values: a
+/// Values of a box of rows' partials along the partials dimension, for parts of `part` values: a
 /// carrier of the operation's cells a part, each line `width` values of one row along the reduced
 /// dim, one value of `width` rows across it.
 fn partial_extent(problem: &ReduceRoutineProblem, part: usize, width: usize) -> usize {
@@ -177,10 +177,10 @@ impl Routine for HypercubeReduceRoutine {
         let reduced = problem.reduced();
         let owner = [problem.owner_box(widths[0]).as_slice(), &[(reduced, part)]].concat();
         // The parts ride the grid's `X`, the boxes of rows its `Y` and `Z`.
-        let cube_axes = [&[reduced], problem.rows().as_slice()].concat();
+        let cube_dimensions = [&[reduced], problem.rows().as_slice()].concat();
         let partitioning = Partitioning::new(
             problem.split_space(partial_extent(problem, part, widths[0])),
-            Levels::leaf(&owner).cubes(&cube_axes).build(),
+            Levels::leaf(&owner).cubes(&cube_dimensions).build(),
         );
         let cube = CubeResources {
             plane_width: units as u32,
@@ -235,7 +235,7 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
             binding
                 .launcher
                 .arg(handle.binding(), element)
-                .axes(&problem.partial_axes())
+                .dimensions(&problem.partial_dimensions())
                 .vectorize(blueprint.width)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)

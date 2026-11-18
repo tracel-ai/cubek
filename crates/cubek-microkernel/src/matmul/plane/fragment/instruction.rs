@@ -1,12 +1,12 @@
 use crate::matmul::plane::PlaneFragmentRowsAlong;
-use crate::matmul::{MatmulAxes, MatmulDim, MatmulLayout, MatmulOperands};
+use crate::matmul::{MatmulDim, MatmulDimensions, MatmulLayout, MatmulOperands};
 use cubecl::features::{MmaConfig, WgmmaConfig};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::ops::matmul::MmaIo;
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{Axis, BlockScaledOperands, Instruction, MmaOperands, StageStorage};
+use cubecl::tile::{BlockScaledOperands, Dimension, Instruction, MmaOperands, StageStorage};
 use cubecl::wgmma::PLANE_GROUP_UNITS;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{ArithmeticInstruction, SWIZZLED_STAGE_UNREAD, StageLayout};
@@ -185,25 +185,25 @@ impl PlaneFragmentInstruction {
     }
 
     /// The tile a fragment loads from a stage the instruction reads: the instruction's shape, its
-    /// rows along `rows`, and one of every batch axis in `batches`, so a fragment loads one
+    /// rows along `rows`, and one of every batch dimension in `batches`, so a fragment loads one
     /// contiguous tile where the stage is blocked.
     pub fn stage_tile(
         self,
-        batches: &[Axis],
-        axes: MatmulAxes,
+        batches: &[Dimension],
+        dimensions: MatmulDimensions,
         rows: PlaneFragmentRowsAlong,
-    ) -> Vec<(Axis, usize)> {
+    ) -> Vec<(Dimension, usize)> {
         batches
             .iter()
-            .map(|&axis| (axis, 1))
-            .chain(axes.name(self.shape_along(rows)))
+            .map(|&dimension| (dimension, 1))
+            .chain(dimensions.name(self.shape_along(rows)))
             .collect()
     }
 
     /// How a stage the instruction reads holds its cells where one TMA box lands each operand's
     /// stage whole, `depth` of `K` deep: in tiles of a matrix instruction along `m` and `n`, each
     /// the whole stage deep along `K`, so the tiles stack whole rows one after another as a box
-    /// lands them, its rows along `rows`, and one of every batch axis in `batches`. The manual
+    /// lands them, its rows along `rows`, and one of every batch dimension in `batches`. The manual
     /// `mma`'s rows swizzled as the descriptor swizzles them, which keeps the rows a fragment load
     /// reads at once on distinct banks as its own [`stage_layout`](Self::stage_layout) does;
     /// `cmma`'s in order, since a box lands no padding. The plane group MMA's swizzled as the
@@ -211,8 +211,8 @@ impl PlaneFragmentInstruction {
     /// it.
     pub fn landed_stage_storage(
         self,
-        batches: &[Axis],
-        axes: MatmulAxes,
+        batches: &[Dimension],
+        dimensions: MatmulDimensions,
         depth: usize,
         rows: PlaneFragmentRowsAlong,
     ) -> StageStorage {
@@ -224,8 +224,8 @@ impl PlaneFragmentInstruction {
         StageStorage::Tiled {
             block: batches
                 .iter()
-                .map(|&axis| (axis, 1))
-                .chain(axes.name([m, n, (MatmulDim::K, depth)]))
+                .map(|&dimension| (dimension, 1))
+                .chain(dimensions.name([m, n, (MatmulDim::K, depth)]))
                 .collect(),
             chunks,
         }

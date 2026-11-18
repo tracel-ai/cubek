@@ -6,28 +6,28 @@ use cubecl::tile::procedural::{
     AffineCoordinate, Constant, DivGuard, Factors, Phase, Procedural, Reads, Recipe, Sum,
     TapSupport, affine_along, sum_of,
 };
-use cubecl::tile::{Axis, Partitioning, Tile};
+use cubecl::tile::{Dimension, Partitioning, Tile};
 use cubecl_common::Ratio;
 
 use super::{Cubic, Lanczos, Linear};
 
 pub type TapDistance<E> = Sum<AffineCoordinate<E>, Phase<E>>;
-type NearestAxis<E> = Constant<E>;
-type BilinearAxis<E> = Linear<TapDistance<E>>;
-type BicubicAxis<E> = Cubic<TapDistance<E>>;
-type Lanczos3Axis<E> = Lanczos<TapDistance<E>>;
+type NearestDimension<E> = Constant<E>;
+type BilinearDimension<E> = Linear<TapDistance<E>>;
+type BicubicDimension<E> = Cubic<TapDistance<E>>;
+type Lanczos3Dimension<E> = Lanczos<TapDistance<E>>;
 
 #[cube]
 pub trait SeparableFilter<E: Float>: Send + std::marker::Sync + 'static
 where
-    <Self::Axis as CubeType>::ExpandType: Reads,
+    <Self::Dimension as CubeType>::ExpandType: Reads,
 {
-    type Axis: Recipe<E> + 'static;
-    fn along(distance: TapDistance<E>) -> Self::Axis;
+    type Dimension: Recipe<E> + 'static;
+    fn along(distance: TapDistance<E>) -> Self::Dimension;
 }
 
-/// One factor per resampled axis, in the order the contraction walks the tap axes.
-pub type SeparableWeights<E, F> = Factors<<F as SeparableFilter<E>>::Axis>;
+/// One factor per resampled dimension, in the order the contraction walks the tap dimensions.
+pub type SeparableWeights<E, F> = Factors<<F as SeparableFilter<E>>::Dimension>;
 
 /// Bridges host-side mode selection to the element type selected when a kernel is launched.
 pub trait SeparableFilterFamily: Send + std::marker::Sync + 'static {
@@ -44,7 +44,7 @@ pub trait SeparableFilterFamily: Send + std::marker::Sync + 'static {
     }
 }
 
-/// The weights of `F` over the output positions and taps of `partitioning`'s space, both axes
+/// The weights of `F` over the output positions and taps of `partitioning`'s space, both dimensions
 /// resampled as `row` and `col` map an output position to its source.
 #[cube]
 pub fn separable_weights<E: Float, F: SeparableFilterFamily>(
@@ -78,14 +78,14 @@ pub fn separable_weights<E: Float, F: SeparableFilterFamily>(
 /// The distance from a tap to the source coordinate the output position lands on.
 ///
 /// The rational is comptime because it is the same one the gather's projection already carries
-/// ([`Rational::tap_axis`]), and the kernel is already compiled per shape. Handed as launch
+/// ([`Rational::tap_dimension`]), and the kernel is already compiled per shape. Handed as launch
 /// scalars instead, its divisor reaches [`Phase`] as a runtime value: nothing is computed at
 /// compile time, and every output position pays a true integer division for the residue and a
-/// float division to normalize it, per resampled axis.
+/// float division to normalize it, per resampled dimension.
 #[cube]
 fn tap_distance<E: Float>(
-    #[comptime] tap: Axis,
-    #[comptime] output: Axis,
+    #[comptime] tap: Dimension,
+    #[comptime] output: Dimension,
     #[comptime] source: Rational,
     #[comptime] radius: usize,
 ) -> TapDistance<E> {
@@ -96,7 +96,7 @@ fn tap_distance<E: Float>(
             numerator_scale: comptime!(source.scale as u32),
             numerator_offset: comptime!(source.offset as i32),
             divisor: comptime!(source.divisor as u32),
-            axis: output,
+            dimension: output,
         },
     )
 }
@@ -108,9 +108,9 @@ impl SeparableFilterFamily for NearestFilter {
 }
 #[cube]
 impl<E: Float> SeparableFilter<E> for NearestFilter {
-    type Axis = NearestAxis<E>;
-    fn along(_distance: TapDistance<E>) -> Self::Axis {
-        NearestAxis::<E> { value: E::new(1.0) }
+    type Dimension = NearestDimension<E>;
+    fn along(_distance: TapDistance<E>) -> Self::Dimension {
+        NearestDimension::<E> { value: E::new(1.0) }
     }
 }
 
@@ -121,9 +121,9 @@ impl SeparableFilterFamily for BilinearFilter {
 }
 #[cube]
 impl<E: Float> SeparableFilter<E> for BilinearFilter {
-    type Axis = BilinearAxis<E>;
-    fn along(distance: TapDistance<E>) -> Self::Axis {
-        BilinearAxis::<E> {
+    type Dimension = BilinearDimension<E>;
+    fn along(distance: TapDistance<E>) -> Self::Dimension {
+        BilinearDimension::<E> {
             coordinate: distance,
         }
     }
@@ -136,9 +136,9 @@ impl SeparableFilterFamily for BicubicFilter {
 }
 #[cube]
 impl<E: Float> SeparableFilter<E> for BicubicFilter {
-    type Axis = BicubicAxis<E>;
-    fn along(distance: TapDistance<E>) -> Self::Axis {
-        BicubicAxis::<E> {
+    type Dimension = BicubicDimension<E>;
+    fn along(distance: TapDistance<E>) -> Self::Dimension {
+        BicubicDimension::<E> {
             coordinate: distance,
             a: comptime!(Ratio::new(-3, 4)),
         }
@@ -160,9 +160,9 @@ impl SeparableFilterFamily for Lanczos3Filter {
 }
 #[cube]
 impl<E: Float> SeparableFilter<E> for Lanczos3Filter {
-    type Axis = Lanczos3Axis<E>;
-    fn along(distance: TapDistance<E>) -> Self::Axis {
-        Lanczos3Axis::<E> {
+    type Dimension = Lanczos3Dimension<E>;
+    fn along(distance: TapDistance<E>) -> Self::Dimension {
+        Lanczos3Dimension::<E> {
             coordinate: distance,
             lobes: 3,
         }

@@ -180,15 +180,15 @@ impl Routine for CubeDeltaWalkRoutine {
                 .capped_at(MAX_HELD_LINES_PER_UNIT * width),
         )?;
         let runs = settings.runs_of(hw, &microkernel, problem);
-        let mut unit_axes = vec![
+        let mut unit_dimensions = vec![
             (POSITION, 1),
             (KEY_HEAD, 1),
             (HEAD_IN_GROUP, 1),
             (KEY_FEATURE, microkernel.rows),
             (VALUE_FEATURE, microkernel.columns),
         ];
-        unit_axes.extend(problem.state.kept_axis());
-        let unit = Levels::leaf(&unit_axes);
+        unit_dimensions.extend(problem.state.kept_dimension());
+        let unit = Levels::leaf(&unit_dimensions);
         let partitioning = RecurrenceWalkPartitioning::new(
             problem.space(),
             unit.walk_every(&[POSITION])
