@@ -76,7 +76,7 @@ impl Routine for CubeStagedReduceRoutine {
         let widths = reduce_widths(hw, problem, vectorization, widest);
         let partitioning = Partitioning::new(
             problem.space(),
-            Levels::leaf(&problem.owner_box(widths[0]))
+            Levels::leaf(&problem.owner_box_at_width(widths[0]))
                 .cubes(&problem.owner_dimensions())
                 .build(),
         );

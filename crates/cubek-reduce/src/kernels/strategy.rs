@@ -67,7 +67,7 @@ impl ReduceOpStrategy {
     pub(crate) fn launch(self, device: &Device, tensors: ReduceTensors) -> Result<(), ReduceError> {
         let hw = Hardware::from_client(tensors.client());
         match self {
-            Self::Autotune => Ok(launch_tuned(tensors, device)),
+            Self::Autotune => launch_tuned(tensors, device),
             Self::Heuristic(ReduceKernelHeuristic::Tile) => Ok(select(&hw, &tensors)?),
             Self::Specific(kernel) => Ok(kernel.launch(&hw, &tensors)?),
         }

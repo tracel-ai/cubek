@@ -81,7 +81,7 @@ impl Routine for PlaneShuffleReduceRoutine {
             .expect("a problem places its owners along a dimension");
         let partitioning = Partitioning::new(
             problem.space(),
-            Levels::leaf(&problem.owner_box(widths[0]))
+            Levels::leaf(&problem.owner_box_at_width(widths[0]))
                 .launch_planes(
                     &owners,
                     PlaneOrder::new(&[(innermost, settings.planes)], CubeOrder::RowMajor),

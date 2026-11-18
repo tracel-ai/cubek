@@ -58,7 +58,7 @@ impl ReduceSplitExtents {
             .box_of(ComputeScope::Cube)
             .extent(problem.reduced());
         let inner_boxes = problem
-            .row_boxes(width)
+            .row_boxes_at_width(width)
             .last()
             .map_or(1, |&(_, boxes)| boxes);
         Self {
@@ -72,7 +72,7 @@ impl ReduceSplitExtents {
     /// counter.
     pub fn row_boxes(problem: &ReduceRoutineProblem, width: usize) -> usize {
         problem
-            .row_boxes(width)
+            .row_boxes_at_width(width)
             .iter()
             .map(|&(_, boxes)| boxes)
             .product()

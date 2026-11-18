@@ -267,7 +267,7 @@ impl ReduceRoutineProblem {
 
     /// [`space`](Self::space) and a hypercube's partials, `partial_extent` values of each box of
     /// rows' along their dimension.
-    pub fn split_space(&self, partial_extent: usize) -> Space {
+    pub fn split_space_with_partial_extent(&self, partial_extent: usize) -> Space {
         let space = self.space();
         let mut dimensions: Vec<(Dimension, usize)> = space
             .dimensions()
@@ -280,7 +280,7 @@ impl ReduceRoutineProblem {
     /// The box an owner holds: one row, or `width` rows side by side across the reduced axis, and
     /// the cells it writes. It leaves the reduced axis to the space, so every owner spans its rows
     /// whole.
-    pub fn owner_box(&self, width: usize) -> Vec<(Dimension, usize)> {
+    pub fn owner_box_at_width(&self, width: usize) -> Vec<(Dimension, usize)> {
         let mut extents: Vec<(Dimension, usize)> = (0..self.shape.len())
             .filter(|d| *d != self.axis)
             .map(|d| {
@@ -296,8 +296,8 @@ impl ReduceRoutineProblem {
 
     /// How many boxes of rows the owners, `width` rows across the reduced axis, take along each
     /// row dimension, outermost first.
-    pub fn row_boxes(&self, width: usize) -> Vec<(Dimension, usize)> {
-        let owner = self.owner_box(width);
+    pub fn row_boxes_at_width(&self, width: usize) -> Vec<(Dimension, usize)> {
+        let owner = self.owner_box_at_width(width);
         self.rows()
             .into_iter()
             .map(|dimension| {

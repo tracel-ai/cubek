@@ -124,7 +124,11 @@ impl Routine for HypercubeAtomicReduceRoutine {
                 ReduceLayout::Across => 1,
             };
         let reduced = problem.reduced();
-        let owner = [problem.owner_box(widths[0]).as_slice(), &[(reduced, part)]].concat();
+        let owner = [
+            problem.owner_box_at_width(widths[0]).as_slice(),
+            &[(reduced, part)],
+        ]
+        .concat();
         // The parts ride the grid's `X`, the boxes of rows its `Y` and `Z`.
         let cube_axes = [&[reduced], problem.rows().as_slice()].concat();
         let partitioning = Partitioning::new(

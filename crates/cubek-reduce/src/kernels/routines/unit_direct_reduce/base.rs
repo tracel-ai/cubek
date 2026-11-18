@@ -78,7 +78,7 @@ impl Routine for UnitDirectReduceRoutine {
         let plane_width = hw.dispatch_plane_size() as usize;
         let partitioning = Partitioning::new(
             problem.space(),
-            Levels::leaf(&problem.owner_box(widths[0]))
+            Levels::leaf(&problem.owner_box_at_width(widths[0]))
                 .launch_units(
                     &problem.owner_dimensions_innermost_first(),
                     UnitCube {

@@ -122,11 +122,15 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
                 ReduceLayout::Across => 1,
             };
         let reduced = problem.reduced();
-        let owner = [problem.owner_box(widths[0]).as_slice(), &[(reduced, part)]].concat();
+        let owner = [
+            problem.owner_box_at_width(widths[0]).as_slice(),
+            &[(reduced, part)],
+        ]
+        .concat();
         // The parts ride the grid's `X`, the boxes of rows its `Y` and `Z`.
         let cube_dimensions = [&[reduced], problem.rows().as_slice()].concat();
         let partitioning = Partitioning::new(
-            problem.split_space(partial_extent(problem, part, widths[0])),
+            problem.split_space_with_partial_extent(partial_extent(problem, part, widths[0])),
             Levels::leaf(&owner).cubes(&cube_dimensions).build(),
         );
         let cube = CubeResources {

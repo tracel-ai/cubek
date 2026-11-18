@@ -248,6 +248,7 @@ impl ScopeUnderTest for Routines {
             Scope::Picked(ReduceOpStrategy::Specific(kernel)) => kernel.launch(&hw, &tensors)?,
             Scope::Picked(ReduceOpStrategy::Autotune) => {
                 launch_tuned(tensors, &cubecl::test_device())
+                    .expect("the floor serves every problem")
             }
         }
         let host = match out_elem {

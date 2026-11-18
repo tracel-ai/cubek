@@ -2,6 +2,7 @@
 
 use crate::kernels::{ReduceBlueprint, ReduceElements, ReduceRoutineProblem};
 use cubecl::client::Client;
+use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Bound, Refusal, Unbound};
 use cubecl::tile::layout::ElemAlignment;
@@ -115,44 +116,14 @@ impl ReduceTensors<TensorBinding> {
 
     /// Both operands bound as `blueprint` states them, on `grid`.
     pub fn bind<M>(&self, blueprint: &ReduceBlueprint<M>, grid: &Grid) -> ReduceBinding {
-        let launcher = grid.launcher(&self.client, || {
-            (
-                self.problem.kernel(&blueprint.partitioning),
-                blueprint.partitioning.space().clone(),
-            )
-        });
-        let input = launcher
-            .arg(self.input.clone(), self.problem.elements.input)
-            .dimensions(&self.problem.input_dimensions())
-            .boundary(self.problem.input_boundary())
-            .vectorize(blueprint.width)
-            .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        let out = launcher
-            .arg(self.out.clone(), self.problem.elements.out)
-            .dimensions(&self.problem.out_dimensions())
-            .vectorize(blueprint.out_width)
-            .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        let indices = self.indices.as_ref().map(|indices| {
-            launcher
-                .arg(
-                    indices.clone(),
-                    self.problem
-                        .indices
-                        .expect("indices beside the values have an element"),
-                )
-                .dimensions(&self.problem.out_dimensions())
-                .vectorize(blueprint.out_width)
-                .build()
-                .expect(ADMITTED_PLAN_RUNS)
-        });
-        ReduceBinding {
-            launcher,
-            input,
-            out,
-            indices,
-        }
+        ReduceBinding::bound(
+            &self.client,
+            &self.problem,
+            [&self.input, &self.out],
+            self.indices.as_ref(),
+            blueprint,
+            grid,
+        )
     }
 }
 
@@ -192,31 +163,14 @@ impl ReduceTensors<Geometry> {
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
     ) -> ReduceBinding<Unbound, Bound> {
-        let launcher = grid.launcher(&self.client, || {
-            (
-                self.problem.kernel(&blueprint.partitioning),
-                blueprint.partitioning.space().clone(),
-            )
-        });
-        let input = launcher
-            .unbound(&self.input)
-            .dimensions(&self.problem.input_dimensions())
-            .boundary(self.problem.input_boundary())
-            .vectorize(blueprint.width)
-            .build_spec()
-            .expect(ADMITTED_PLAN_RUNS);
-        let out = launcher
-            .arg(self.out.clone(), self.problem.elements.out)
-            .dimensions(&self.problem.out_dimensions())
-            .vectorize(blueprint.out_width)
-            .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        ReduceBinding {
-            launcher,
-            input,
-            out,
-            indices: None,
-        }
+        ReduceBinding::unbound(
+            &self.client,
+            &self.problem,
+            &self.input,
+            &self.out,
+            blueprint,
+            grid,
+        )
     }
 }
 
@@ -244,4 +198,100 @@ impl<In, Out> ReduceBinding<In, Out> {
             indices: self.indices,
         }
     }
+}
+
+impl ReduceBinding {
+    /// `input` and `out`, and `indices` beside them where there are, bound as `blueprint`
+    /// states them for `problem`, on `grid`.
+    fn bound<M>(
+        client: &Client,
+        problem: &ReduceRoutineProblem,
+        [input, out]: [&TensorBinding; 2],
+        indices: Option<&TensorBinding>,
+        blueprint: &ReduceBlueprint<M>,
+        grid: &Grid,
+    ) -> Self {
+        let launcher = launcher_of(client, problem, blueprint, grid);
+        let input = launcher
+            .arg(input.clone(), problem.elements.input)
+            .dimensions(&problem.input_dimensions())
+            .boundary(problem.input_boundary())
+            .vectorize(blueprint.width)
+            .build()
+            .expect(ADMITTED_PLAN_RUNS);
+        let out = out_bound(&launcher, out, problem.elements.out, problem, blueprint);
+        let indices = indices.map(|indices| {
+            let element = problem
+                .indices
+                .expect("indices beside the values have an element");
+            out_bound(&launcher, indices, element, problem, blueprint)
+        });
+        ReduceBinding {
+            launcher,
+            input,
+            out,
+            indices,
+        }
+    }
+}
+
+impl ReduceBinding<Unbound, Bound> {
+    /// The spec and geometry of `input`, which the caller binds, as `blueprint` states them for
+    /// `problem`, on `grid`, and `out` bound.
+    fn unbound<M>(
+        client: &Client,
+        problem: &ReduceRoutineProblem,
+        input: &Geometry,
+        out: &TensorBinding,
+        blueprint: &ReduceBlueprint<M>,
+        grid: &Grid,
+    ) -> Self {
+        let launcher = launcher_of(client, problem, blueprint, grid);
+        let input = launcher
+            .unbound(input)
+            .dimensions(&problem.input_dimensions())
+            .boundary(problem.input_boundary())
+            .vectorize(blueprint.width)
+            .build_spec()
+            .expect(ADMITTED_PLAN_RUNS);
+        let out = out_bound(&launcher, out, problem.elements.out, problem, blueprint);
+        ReduceBinding {
+            launcher,
+            input,
+            out,
+            indices: None,
+        }
+    }
+}
+
+/// The launcher `grid` builds for `problem` placed by `blueprint`.
+fn launcher_of<M>(
+    client: &Client,
+    problem: &ReduceRoutineProblem,
+    blueprint: &ReduceBlueprint<M>,
+    grid: &Grid,
+) -> Launcher {
+    grid.launcher(client, || {
+        (
+            problem.kernel(&blueprint.partitioning),
+            blueprint.partitioning.space().clone(),
+        )
+    })
+}
+
+/// `buffer`, an output of `problem` or the indices laid out as one, bound in `element` at the
+/// output's width.
+fn out_bound<M>(
+    launcher: &Launcher,
+    buffer: &TensorBinding,
+    element: ElemType,
+    problem: &ReduceRoutineProblem,
+    blueprint: &ReduceBlueprint<M>,
+) -> Bound {
+    launcher
+        .arg(buffer.clone(), element)
+        .dimensions(&problem.out_dimensions())
+        .vectorize(blueprint.out_width)
+        .build()
+        .expect(ADMITTED_PLAN_RUNS)
 }
