@@ -1,7 +1,7 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
-    UNBOUND_LINES_NARROWER, reduce_widths,
+    BATCH, REDUCED, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
+    ReduceTensors, UNBOUND_LINES_NARROWER, reduce_widths,
 };
 use core::convert::identity;
 use cubecl::client::Client;
@@ -50,9 +50,6 @@ impl core::fmt::Display for HypercubeAtomicReduceSettings {
 }
 
 pub type HypercubeAtomicReduceBlueprint = ReduceBlueprint<CubeStagedReduceMicrokernel>;
-
-/// Most row dims its cubes run along, beside the reduced dim: a launch grid has three.
-const MAX_ROW_DIMS: usize = 2;
 
 impl Routine for HypercubeAtomicReduceRoutine {
     type Problem = ReduceRoutineProblem;
@@ -106,11 +103,6 @@ impl Routine for HypercubeAtomicReduceRoutine {
                 why: "the device has no atomic add for the output's element",
             });
         }
-        if problem.rows().len() > MAX_ROW_DIMS {
-            return Err(Refusal::Declined {
-                why: "the atomic hypercube runs its cubes along at most two row dims",
-            });
-        }
         let microkernel =
             CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
@@ -125,13 +117,10 @@ impl Routine for HypercubeAtomicReduceRoutine {
                 ReduceLayout::Along => widths[0],
                 ReduceLayout::Across => 1,
             };
-        let reduced = problem.reduced();
-        let owner = [problem.owner_box(widths[0]).as_slice(), &[(reduced, part)]].concat();
-        // The parts ride the grid's `X`, the boxes of rows its `Y` and `Z`.
-        let cube_axes = [&[reduced], problem.rows().as_slice()].concat();
+        let owner = [problem.owner_box(widths[0]).as_slice(), &[(REDUCED, part)]].concat();
         let partitioning = Partitioning::new(
             problem.space(),
-            Levels::leaf(&owner).cubes(&cube_axes).build(),
+            Levels::leaf(&owner).cubes(&[REDUCED, BATCH]).build(),
         );
         let cube = CubeResources {
             plane_width: units as u32,

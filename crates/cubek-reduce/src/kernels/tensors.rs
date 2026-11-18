@@ -1,6 +1,6 @@
 //! How a reduce launch reads its operands and binds them.
 
-use crate::kernels::{ReduceBlueprint, ReduceElements, ReduceRoutineProblem};
+use crate::kernels::{REDUCED, ReduceBlueprint, ReduceElements, ReduceRoutineProblem, TOP};
 use cubecl::client::Client;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Bound, Refusal, Unbound};
@@ -121,28 +121,31 @@ impl ReduceTensors<TensorBinding> {
                 blueprint.partitioning.space().clone(),
             )
         });
+        let (input, input_labels) = self.problem.fold(self.input.clone(), REDUCED);
         let input = launcher
-            .arg(self.input.clone(), self.problem.elements.input)
-            .dimensions(&self.problem.input_dimensions())
+            .arg(input, self.problem.elements.input)
+            .dimensions(&input_labels)
             .boundary(self.problem.input_boundary())
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
+        let (out, out_labels) = self.problem.fold(self.out.clone(), TOP);
         let out = launcher
-            .arg(self.out.clone(), self.problem.elements.out)
-            .dimensions(&self.problem.out_dimensions())
+            .arg(out, self.problem.elements.out)
+            .dimensions(&out_labels)
             .vectorize(blueprint.out_width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
         let indices = self.indices.as_ref().map(|indices| {
+            let (indices, labels) = self.problem.fold(indices.clone(), TOP);
             launcher
                 .arg(
-                    indices.clone(),
+                    indices,
                     self.problem
                         .indices
                         .expect("indices beside the values have an element"),
                 )
-                .dimensions(&self.problem.out_dimensions())
+                .dimensions(&labels)
                 .vectorize(blueprint.out_width)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)
@@ -198,16 +201,18 @@ impl ReduceTensors<Geometry> {
                 blueprint.partitioning.space().clone(),
             )
         });
+        let (input, input_labels) = self.problem.fold_geometry(&self.input, REDUCED);
         let input = launcher
-            .unbound(&self.input)
-            .dimensions(&self.problem.input_dimensions())
+            .unbound(&input)
+            .dimensions(&input_labels)
             .boundary(self.problem.input_boundary())
             .vectorize(blueprint.width)
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);
+        let (out, out_labels) = self.problem.fold(self.out.clone(), TOP);
         let out = launcher
-            .arg(self.out.clone(), self.problem.elements.out)
-            .dimensions(&self.problem.out_dimensions())
+            .arg(out, self.problem.elements.out)
+            .dimensions(&out_labels)
             .vectorize(blueprint.out_width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
