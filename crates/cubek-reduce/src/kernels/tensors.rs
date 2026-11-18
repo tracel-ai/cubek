@@ -18,7 +18,7 @@ pub const UNBOUND_LINES_NARROWER: Refusal = Refusal::Declined {
 
 /// The input and the output of one reduction, and the problem they state: the input a buffer
 /// ([`TensorBinding`]) or the geometry of an input the caller binds once the launch is prepared
-/// ([`Geometry`], [`ReduceLauncher::launch_unbound`](crate::kernels::ReduceLauncher::launch_unbound)),
+/// ([`Geometry`], [`ReduceCandidate::launch_unbound`](crate::kernels::ReduceCandidate::launch_unbound)),
 /// the output a buffer.
 ///
 /// Both are read where they lie, at their own strides: every axis of each is a dimension of the

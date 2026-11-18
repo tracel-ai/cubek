@@ -21,9 +21,9 @@ pub struct ReduceElements {
 impl ReduceElements {
     /// The elements a reduction of `input` by `operation` runs in. It writes `out` where it writes
     /// no value of the input (an index, or the flag of `Any` and `All`), and the input's element
-    /// otherwise. A sum, a product or a mean accumulates in [`widened`] elements, every other
-    /// operation in the input's own: an extremum gains nothing from a wider carrier, and an index
-    /// or a flag is carried apart from the values.
+    /// otherwise. A sum, a product or a mean accumulates in widened elements (`f32`, `i32` or `u32`
+    /// for a narrower float or integer), every other operation in the input's own: an extremum
+    /// gains nothing from a wider carrier, and an index or a flag is carried apart from the values.
     ///
     /// # Panics
     ///

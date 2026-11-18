@@ -17,7 +17,10 @@ pub const ROUTINE_LISTS_NO_SETTING: Refusal = Refusal::Declined {
     why: "the routine lists no setting on this device",
 };
 
-/// A whole kernel written around one microkernel.
+/// How a family prepares a kernel written around one microkernel: the settings worth measuring
+/// on a device, the widths its operands bind at, and for a problem at one setting the Blueprint
+/// and Grid of one launch, or a Decline, and what that launch is estimated to cost. Its
+/// implementors are field-less markers, so its functions take no `self`.
 pub trait Routine {
     /// The problem, as the host describes it.
     type Problem: Debug + Clone + EstimatedProblem;

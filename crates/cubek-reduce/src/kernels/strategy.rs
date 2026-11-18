@@ -19,11 +19,11 @@ use serde::{Deserialize, Serialize};
 /// kernel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum ReduceOpStrategy {
-    /// Pick by measurement: every routine at every setting the device lists joins an autotune
-    /// ([`tune`](super::tune)), and the fastest runs, per problem and per device. The default.
+    /// Pick by measurement: every routine at every setting the device lists joins an autotune, and
+    /// the fastest runs, per problem and per device. The default.
     #[default]
     Autotune,
-    /// Pick by rule, reaching no further than the named family ([`select`](super::select)).
+    /// Pick by rule, reaching no further than the named family.
     Heuristic(ReduceKernelHeuristic),
     /// Run exactly this kernel, for measuring it or holding it to a reference. A kernel that
     /// cannot run the problem returns its refusal, never another kernel's result.
@@ -42,18 +42,18 @@ pub enum ReduceKernelHeuristic {
 /// routine's settings that serves the problem.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReduceKernel {
-    /// [`UnitDirectReduceRoutine`]: a unit reads a whole row. Asks nothing of the device, so it serves
+    /// `UnitDirectReduceRoutine`: a unit reads a whole row. Asks nothing of the device, so it serves
     /// every problem everywhere.
     Unit,
-    /// [`PlaneShuffleReduceRoutine`]: a plane reads a row, its lanes' partials meeting through plane
+    /// `PlaneShuffleReduceRoutine`: a plane reads a row, its lanes' partials meeting through plane
     /// instructions.
     PlaneShuffle,
-    /// [`CubeStagedReduceRoutine`]: a cube reads a row, its planes' partials meeting in shared memory.
+    /// `CubeStagedReduceRoutine`: a cube reads a row, its planes' partials meeting in shared memory.
     CubeStaged,
-    /// [`HypercubeLastArrivalReduceRoutine`]: a row split across cubes, the last cube to arrive merging
+    /// `HypercubeLastArrivalReduceRoutine`: a row split across cubes, the last cube to arrive merging
     /// every part.
     HypercubeLastArrival,
-    /// [`HypercubeAtomicReduceRoutine`] after [`UnitDirectZeroReduceRoutine`]: a row split across cubes, each
+    /// `HypercubeAtomicReduceRoutine` after `UnitDirectZeroReduceRoutine`: a row split across cubes, each
     /// adding its part into the zeroed output. Sums only.
     HypercubeAtomic,
 }

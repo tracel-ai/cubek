@@ -19,7 +19,7 @@ use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_std::Hardware;
 use cubek_std::devices;
-use cubek_std::routine::Routine;
+use cubek_std::routine::{ROUTINE_LISTS_NO_SETTING, Routine};
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -175,9 +175,7 @@ impl TestedRoutine {
             .iter()
             .map(|settings| R::prepare(hw, problem, settings))
             .reduce(|first, next| first.or(next))
-            .unwrap_or(Err(Refusal::Declined {
-                why: "the routine lists no setting on this device",
-            }))?;
+            .unwrap_or(Err(ROUTINE_LISTS_NO_SETTING))?;
         R::launch(tensors, blueprint, grid);
         Ok(())
     }
