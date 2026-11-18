@@ -1,5 +1,6 @@
-//! The plane window microkernel alone: the units of one plane each accumulating their block of the
-//! output as a memory window, on a depth of `K` no step of a block divides.
+//! The plane window microkernel alone: the units of one plane each writing their block of the
+//! output as a memory window over an output that held other values, on a depth of `K` no step of a
+//! block divides.
 
 use crate::launch::matmul::{MatmulElements, MatmulLaunch, PlaneWindowLaunch};
 use crate::matmul::{F16, F32, HostMatmul};
@@ -65,7 +66,7 @@ impl ScopeUnderTest for PlaneWindow {
     type Case = WindowCase;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
-        HostMatmul::written_by(&self.launch_of(case)?, client, 0.0)
+        HostMatmul::written_by(&self.launch_of(case)?, client, -1e4)
     }
 
     fn reference(&self, case: &Self::Case) -> Vec<HostData> {

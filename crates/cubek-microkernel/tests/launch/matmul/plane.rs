@@ -408,7 +408,7 @@ impl MatmulLaunch for PlaneWindowLaunch {
     }
 }
 
-/// The plane's units accumulating their blocks of `out`, which the launch opened at zero.
+/// The plane's units writing their blocks of `out`.
 #[allow(
     clippy::extra_unused_type_parameters,
     reason = "each element is defined from its operand at launch, which the kernel is compiled for"
