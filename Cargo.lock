@@ -345,7 +345,6 @@ dependencies = [
  "cubek-convolution",
  "cubek-fft",
  "cubek-interpolate",
- "cubek-linear-recurrence",
  "cubek-matmul",
  "cubek-pool",
  "cubek-random",
@@ -1388,7 +1387,6 @@ dependencies = [
  "cubek-convolution",
  "cubek-fft",
  "cubek-interpolate",
- "cubek-linear-recurrence",
  "cubek-matmul",
  "cubek-microkernel",
  "cubek-pool",
@@ -1470,19 +1468,6 @@ dependencies = [
  "half",
  "serde",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "cubek-linear-recurrence"
-version = "0.4.0-pre.2"
-dependencies = [
- "cubecl",
- "cubek-matmul",
- "cubek-microkernel",
- "cubek-std",
- "cubek-test-utils",
- "half",
- "serde",
 ]
 
 [[package]]
