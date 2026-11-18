@@ -7,8 +7,7 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubek_reduce::kernels::{
-    ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceOpStrategy, reduce,
-    reduce_with_indices,
+    Reduce, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceOpStrategy,
 };
 use cubek_reduce::{ReduceError, ReduceOperation};
 use cubek_test_utils::{
@@ -383,14 +382,13 @@ impl ScopeUnderTest for Reduces {
             .collect();
         let device = cubecl::test_device();
         let launched = match op.with_indices() {
-            true => reduce_with_indices(
+            true => Reduce::new(case.strategy).execute_with_indices(
                 client,
                 &device,
                 input.binding(),
                 outputs[0].1.clone().binding(),
                 outputs[1].1.clone().binding(),
                 axis,
-                case.strategy,
                 operation,
                 ReduceElements {
                     input: case.input_dtype,
@@ -399,13 +397,12 @@ impl ScopeUnderTest for Reduces {
                 },
                 outputs[1].0,
             ),
-            false => reduce(
+            false => Reduce::new(case.strategy).execute(
                 client,
                 &device,
                 input.binding(),
                 outputs[0].1.clone().binding(),
                 axis,
-                case.strategy,
                 operation,
                 ReduceElements {
                     input: case.input_dtype,

@@ -4,7 +4,7 @@
 //! folder per scope, and how a caller picks one: a strategy, the rule, and the autotune.
 
 mod blueprint;
-mod entry;
+mod operation;
 mod problem;
 mod routines;
 mod select;
@@ -15,7 +15,7 @@ mod tests;
 mod tune;
 
 pub use blueprint::*;
-pub use entry::*;
+pub use operation::*;
 pub use problem::*;
 pub use routines::*;
 pub(crate) use select::*;

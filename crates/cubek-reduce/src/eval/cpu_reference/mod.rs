@@ -150,17 +150,17 @@ pub fn strategy_result(
     };
 
     let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-        kernels::reduce(
-            c,
-            &cubecl::test_device(),
-            input_handle.clone().binding(),
-            output_handle.clone().binding(),
-            axis,
-            strategy,
-            operation,
-            elements,
-        )
-        .into()
+        kernels::Reduce::new(strategy)
+            .execute(
+                c,
+                &cubecl::test_device(),
+                input_handle.clone().binding(),
+                output_handle.clone().binding(),
+                axis,
+                operation,
+                elements,
+            )
+            .into()
     });
 
     match outcome {
@@ -173,11 +173,11 @@ pub fn strategy_result(
     }
 }
 
-/// Like [`strategy_result`], but runs the fused `reduce_with_indices` path and
+/// Like [`strategy_result`], but runs the fused `Reduce::execute_with_indices` path and
 /// returns its **values** output.
 ///
 /// The benchmark catalogue times the fused path, so it has to be able to
-/// validate the fused path too: running the plain `reduce` here instead would
+/// validate the fused path too: running the plain `Reduce::execute` here instead would
 /// silently check a kernel that is not the one being measured.
 pub fn strategy_result_with_indices(
     client: Client,
@@ -215,19 +215,19 @@ pub fn strategy_result_with_indices(
         &client,
         &[&values_handle.handle, &indices_handle.handle],
         |c| {
-            kernels::reduce_with_indices(
-                c,
-                &cubecl::test_device(),
-                input_handle.clone().binding(),
-                values_handle.clone().binding(),
-                indices_handle.clone().binding(),
-                axis,
-                strategy,
-                operation,
-                elements,
-                index_dtype,
-            )
-            .into()
+            kernels::Reduce::new(strategy)
+                .execute_with_indices(
+                    c,
+                    &cubecl::test_device(),
+                    input_handle.clone().binding(),
+                    values_handle.clone().binding(),
+                    indices_handle.clone().binding(),
+                    axis,
+                    operation,
+                    elements,
+                    index_dtype,
+                )
+                .into()
         },
     );
 
@@ -305,7 +305,7 @@ fn output_shape_for(shape: &[usize], axis: usize, operation: ReduceOperation) ->
     out
 }
 
-/// What a `reduce` of `operation` writes: a coordinate for the `Arg*` family, the
+/// What a `Reduce::execute` of `operation` writes: a coordinate for the `Arg*` family, the
 /// input's own element type for everything else.
 pub fn output_dtype_for(operation: ReduceOperation, input_dtype: ElemType) -> ElemType {
     match operation {
@@ -316,7 +316,7 @@ pub fn output_dtype_for(operation: ReduceOperation, input_dtype: ElemType) -> El
     }
 }
 
-/// What every `reduce`/`reduce_with_indices` launch folds into, regardless of
+/// What every `Reduce::execute`/`Reduce::execute_with_indices` launch folds into, regardless of
 /// the input or output element type.
 pub fn accumulation_dtype() -> ElemType {
     f32::elem_type_native()

@@ -6,7 +6,7 @@
 //! the rule, which is what burn's unspecified reduce strategy asks for.
 
 use cubecl::{prelude::*, zspace::Shape};
-use cubek_reduce::kernels::{ReduceElements, reduce, reduce_with_indices};
+use cubek_reduce::kernels::{Reduce, ReduceElements};
 use cubek_reduce::{ReduceError, ReduceOperation};
 use cubek_test_utils::{StridedLayout, TestInput};
 
@@ -38,13 +38,12 @@ fn try_reduce() -> Result<(), ReduceError> {
         .zeros()
         .generate_without_host_data();
 
-    reduce(
+    Reduce::new(RULE).execute(
         &client,
         &cubecl::test_device(),
         input.binding(),
         output.binding(),
         1,
-        RULE,
         ReduceOperation::Sum,
         elements(),
     )
@@ -72,14 +71,13 @@ fn try_reduce_with_indices() -> Result<(), ReduceError> {
         .zeros()
         .generate_without_host_data();
 
-    reduce_with_indices(
+    Reduce::new(RULE).execute_with_indices(
         &client,
         &cubecl::test_device(),
         input.binding(),
         values.binding(),
         indices.binding(),
         1,
-        RULE,
         ReduceOperation::Max,
         elements(),
         index_dtype,
@@ -115,13 +113,12 @@ fn an_empty_reduce_axis_is_refused() {
         .zeros()
         .generate_without_host_data();
 
-    let result = reduce(
+    let result = Reduce::new(RULE).execute(
         &client,
         &cubecl::test_device(),
         input.binding(),
         output.binding(),
         1,
-        RULE,
         ReduceOperation::Sum,
         elements(),
     );

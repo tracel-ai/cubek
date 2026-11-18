@@ -40,7 +40,7 @@ impl ReduceCorrectness {
     }
 
     /// Validate the path that is actually benchmarked. The two-launch kind runs
-    /// the same `reduce` as `Single` for its values half, so only the fused kind
+    /// the same `Reduce::execute` as `Single` for its values half, so only the fused kind
     /// needs the dedicated entrypoint.
     fn kernel_output(
         client: Client,

@@ -229,7 +229,7 @@ where
 
 /// A candidate of the autotune, whichever routine it launches: what the autotune identifies a
 /// candidate by, and what the tuner hands back for the one it found fastest
-/// ([`fastest_reduce_candidate`]), so a launch outside a round, a fused one, runs the winner.
+/// ([`ReduceCandidate::fastest`]), so a launch outside a round, a fused one, runs the winner.
 #[derive(Debug, Clone)]
 pub struct ReduceCandidate {
     launcher: ReduceCandidateLauncher,
@@ -248,6 +248,16 @@ impl ReduceCandidate {
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {
         self.launcher.launch_unbound::<I>(tensors, input)
+    }
+
+    /// The candidate, a routine at its setting, that the autotune found fastest for the
+    /// reductions `key` describes on `client`'s `device`, or `None` where no round in this process
+    /// has settled the key, or the floor named apart won it: what a fused reduce runs, so it
+    /// inherits the kernel the unfused round chose.
+    pub fn fastest(client: &Client, device: &Device, key: &ReduceKey) -> Option<Self> {
+        let id = CubeTuneId::new(client, device);
+        let tunables = tunables(&id, client);
+        TUNER.fastest_identity(&id, &tunables, key)?.routine()
     }
 
     /// The candidate a routine at one setting is, launched through `dispatch`.
@@ -371,20 +381,6 @@ pub(crate) fn launch_tuned(tensors: ReduceTensors, device: &Device) {
     let id = CubeTuneId::new(&client, device);
     let tunables = tunables(&id, &client);
     TUNER.execute(&id, &client, tunables, tensors);
-}
-
-/// The candidate, a routine at its setting, that the autotune found fastest for the reductions
-/// `key` describes on `client`'s `device`, or `None` where no round in this process has settled
-/// the key, or the floor named apart won it: what a fused reduce runs, so it inherits the kernel
-/// the unfused round chose.
-pub fn fastest_reduce_candidate(
-    client: &Client,
-    device: &Device,
-    key: &ReduceKey,
-) -> Option<ReduceCandidate> {
-    let id = CubeTuneId::new(client, device);
-    let tunables = tunables(&id, client);
-    TUNER.fastest_identity(&id, &tunables, key)?.routine()
 }
 
 /// The autotune for the device `id` names, built on first touch. The one place it is built: a

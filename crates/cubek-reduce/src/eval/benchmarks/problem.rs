@@ -12,11 +12,11 @@ use crate::ReduceOperation;
 /// on the same problem is what says whether fusing the two is actually worth it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReduceBenchKind {
-    /// One `reduce` launch writing a single output.
+    /// One `Reduce::execute` launch writing a single output.
     Single,
-    /// Two `reduce` launches, the values operation then its `Arg*`, to get both halves.
+    /// Two `Reduce::execute` launches, the values operation then its `Arg*`, to get both halves.
     TwoLaunch,
-    /// One `reduce_with_indices` launch writing both halves.
+    /// One `Reduce::execute_with_indices` launch writing both halves.
     Fused,
 }
 
@@ -180,7 +180,7 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
         ));
     }
 
-    // The same comparison for min and max, which reach `reduce_with_indices`
+    // The same comparison for min and max, which reach `Reduce::execute_with_indices`
     // through their own collapsed instructions rather than the top-k one.
     for (name, text, operation) in [
         ("max", "Max", ReduceOperation::Max),

@@ -1,9 +1,10 @@
 //! Reductions on CubeCL's tile stack: a tensor of any rank reduced along one dim, by a sum, a
 //! product, a mean, an extremum, a flag or a top-k, its values and their indices.
 //!
-//! [`kernels::reduce`] and [`kernels::reduce_with_indices`] are the entry points. Each takes a
-//! [`kernels::ReduceOpStrategy`] that says how the kernel is picked: the autotune, the rule, or a
-//! given [`kernels::ReduceKernel`].
+//! [`kernels::Reduce`] is the entry point. It is built from a [`kernels::ReduceOpStrategy`] that
+//! says how the kernel is picked (the autotune, the rule, or a given [`kernels::ReduceKernel`]),
+//! and reduces with [`execute`](kernels::Reduce::execute) or, writing the indices beside the
+//! values, [`execute_with_indices`](kernels::Reduce::execute_with_indices).
 
 pub mod kernels;
 

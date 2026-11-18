@@ -13,7 +13,7 @@ use cubecl::{
     zspace::Shape,
 };
 use cubek_reduce::ReduceOperation;
-use cubek_reduce::kernels::{ReduceElements, reduce};
+use cubek_reduce::kernels::{Reduce, ReduceElements};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, StridedLayout, TestInput,
     launch_and_capture_outcome,
@@ -59,17 +59,17 @@ fn reduce_mask(operation: ReduceOperation) -> Vec<f32> {
     let input_binding = input_handle.binding();
     let output_binding = output_handle.clone().binding();
     let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-        reduce(
-            c,
-            &cubecl::test_device(),
-            input_binding,
-            output_binding,
-            1,
-            UNIT,
-            operation,
-            elements,
-        )
-        .into()
+        Reduce::new(UNIT)
+            .execute(
+                c,
+                &cubecl::test_device(),
+                input_binding,
+                output_binding,
+                1,
+                operation,
+                elements,
+            )
+            .into()
     });
 
     match outcome {

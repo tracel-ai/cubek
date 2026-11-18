@@ -138,17 +138,17 @@ impl ReduceBench {
         operation: ReduceOperation,
         elements: ReduceElements,
     ) -> Result<(), String> {
-        kernels::reduce(
-            &self.client,
-            &self.device,
-            input.binding(),
-            out.binding(),
-            self.axis,
-            self.strategy,
-            operation,
-            elements,
-        )
-        .map_err(|err| format!("{err}"))
+        kernels::Reduce::new(self.strategy)
+            .execute(
+                &self.client,
+                &self.device,
+                input.binding(),
+                out.binding(),
+                self.axis,
+                operation,
+                elements,
+            )
+            .map_err(|err| format!("{err}"))
     }
 }
 
@@ -202,19 +202,19 @@ impl Benchmark for ReduceBench {
                 self.reduce(input.clone(), out, values_operation, elements(value_dtype))?;
                 self.reduce(input, indices, indices_operation, elements(index_dtype))?;
             }
-            ReduceBenchKind::Fused => kernels::reduce_with_indices(
-                &self.client,
-                &self.device,
-                input.binding(),
-                out.binding(),
-                indices.binding(),
-                self.axis,
-                self.strategy,
-                self.operation,
-                elements(value_dtype),
-                index_dtype,
-            )
-            .map_err(|err| format!("{err}"))?,
+            ReduceBenchKind::Fused => kernels::Reduce::new(self.strategy)
+                .execute_with_indices(
+                    &self.client,
+                    &self.device,
+                    input.binding(),
+                    out.binding(),
+                    indices.binding(),
+                    self.axis,
+                    self.operation,
+                    elements(value_dtype),
+                    index_dtype,
+                )
+                .map_err(|err| format!("{err}"))?,
         }
 
         Ok(())

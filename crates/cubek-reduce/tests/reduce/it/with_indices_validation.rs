@@ -1,4 +1,4 @@
-//! Argument validation for `reduce_with_indices`.
+//! Argument validation for `Reduce::execute_with_indices`.
 //!
 //! The launch derives vectorization and write positions from the values tensor
 //! alone, so an indices tensor with a different layout would be written *as if*
@@ -6,7 +6,7 @@
 //! that such calls are rejected before launch instead.
 
 use cubecl::{prelude::*, zspace::Shape};
-use cubek_reduce::kernels::{ReduceElements, reduce_with_indices};
+use cubek_reduce::kernels::{Reduce, ReduceElements};
 use cubek_reduce::{ReduceError, ReduceOperation};
 use cubek_test_utils::{StridedLayout, TestInput};
 
@@ -54,14 +54,13 @@ fn try_launch_config(
         .zeros()
         .generate_without_host_data();
 
-    reduce_with_indices(
+    Reduce::new(UNIT).execute_with_indices(
         &client,
         &cubecl::test_device(),
         input.binding(),
         values.binding(),
         indices.binding(),
         1,
-        UNIT,
         operation,
         ReduceElements {
             input: input_dtype,
