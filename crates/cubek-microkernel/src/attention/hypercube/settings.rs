@@ -5,6 +5,7 @@ use crate::attention::plane::{
 };
 use crate::matmul::cube::CubeStagedDelivery;
 use core::num::NonZeroUsize;
+use cubek_std::Hardware;
 use cubek_std::microkernel::{StageLayout, StageRing};
 
 /// The settings of the cube every cube of the hypercube runs: its own walk of its run of the keys
@@ -53,13 +54,19 @@ impl HypercubeAttentionMicrokernelSettings {
         },
     };
 
-    /// The hypercube's settings worth trying over planes of the kind this lead runs: its knobs are
-    /// worth different values over each plane microkernel, so its list is one for each.
-    pub fn listed(self) -> Vec<Self> {
-        match self.cube.plane {
+    /// The hypercube's settings worth trying on `hw` over planes of the kind this lead runs: its
+    /// knobs are worth different values over each plane microkernel, so its list is one for each.
+    /// Only the stage layouts its cubes' planes lay as named
+    /// ([`CubeAttentionMicrokernelSettings::laid_as_named`]).
+    pub fn listed(self, hw: &Hardware) -> Vec<Self> {
+        let listed = match self.cube.plane {
             CubeAttentionPlaneSettings::Fragment(_) => Self::fragments_listed(self),
             CubeAttentionPlaneSettings::Shuffle(_) => Self::shuffles_listed(self),
-        }
+        };
+        listed
+            .into_iter()
+            .filter(|settings| settings.cube.laid_as_named(hw))
+            .collect()
     }
 
     /// Every one of two, four and eight rows a plane, eight and sixteen units on a key and two and
@@ -108,8 +115,7 @@ impl HypercubeAttentionMicrokernelSettings {
     /// the fragments: a cube of the cube routine's at its widest, on a run of the keys; then the
     /// one-by-eight box on two planes along a head's queries, and the one-by-four box over two and
     /// four heads on two slots the copy engine fills. Every one holds one plane along its run, as
-    /// a staging cube does; the swizzled ones decline where the device reads the score through
-    /// windows alone.
+    /// a staging cube does; the swizzled ones are listed only where the device reads them so.
     fn fragments_listed(lead: Self) -> Vec<Self> {
         let count = |count: usize| NonZeroUsize::new(count).unwrap();
         let cube = CubeAttentionMicrokernelSettings::FRAGMENT;

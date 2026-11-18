@@ -117,7 +117,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
             .into_iter()
             .flat_map(|cubes| {
                 HypercubeAttentionMicrokernelSettings::SHUFFLE
-                    .listed()
+                    .listed(hw)
                     .into_iter()
                     .map(move |microkernel| Self::Settings {
                         microkernel,

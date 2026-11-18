@@ -5,13 +5,10 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::ops::matmul::MmaIo;
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{
-    BlockScaledOperands, Dimension, Instruction, MmaOperands, StageStorage, StepCost,
-};
+use cubecl::tile::{BlockScaledOperands, Dimension, Instruction, MmaOperands, StepCost};
 use cubecl::wgmma::PLANE_GROUP_UNITS;
 use cubek_std::layout::BindingOrder;
-use cubek_std::microkernel::{ArithmeticInstruction, SWIZZLED_STAGE_UNREAD, StageLayout};
+use cubek_std::microkernel::ArithmeticInstruction;
 use cubek_std::{BlockScaledMma, Hardware};
 
 /// What a plane's fragments contract through: one of the device's matrix instructions, reached
@@ -162,35 +159,6 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// The layout a stage the instruction reads lies in: `setting`'s, or the instruction's own
-    /// where it states none.
-    ///
-    /// Both matrix instructions' own keep the rows a fragment load reads at once on distinct
-    /// banks, each the way its transport can read. `cmma` reads a tile off a pointer and a stride,
-    /// so its rows are padded by a chunk: a padded row is still a run a stride from the next. The
-    /// manual `mma` hands every row its own address, so its rows' chunks are swizzled instead,
-    /// which spends no shared memory.
-    ///
-    /// Measured against padding: an L4's shared loads go from conflicted to conflict-free at a
-    /// level time; gfx1151's bank conflicts fall to zero, 8 to 20% faster on four of six boxes,
-    /// the others within noise (a stage 64 deep along a col rhs's `K` up to about 10% slower).
-    ///
-    /// A block-scaled instruction's stage holds the stored words in the same swizzled tiles: a
-    /// row of its tile is the instruction's `k` of words, read eight rows at a time as a 16-bit
-    /// instruction's are.
-    ///
-    /// # Errors
-    ///
-    /// Swizzled tiles under `cmma`, which has no stride to read them by.
-    pub fn stage_layout(self, setting: Option<StageLayout>) -> Result<StageLayout, Refusal> {
-        match (self, setting) {
-            (Self::Cmma { .. }, Some(StageLayout::SwizzledBlocks)) => Err(SWIZZLED_STAGE_UNREAD),
-            (_, Some(layout)) => Ok(layout),
-            (Self::Cmma { .. }, None) => Ok(StageLayout::PaddedBlocks),
-            (Self::Mma { .. } | Self::Wgmma { .. }, None) => Ok(StageLayout::SwizzledBlocks),
-        }
-    }
-
     /// The tile a fragment loads from a stage the instruction reads: the instruction's shape, its
     /// rows along `rows`, and one of every batch dimension in `batches`, so a fragment loads one
     /// contiguous tile where the stage is blocked.
@@ -207,35 +175,23 @@ impl PlaneFragmentInstruction {
             .collect()
     }
 
-    /// How a stage the instruction reads holds its cells where one TMA box lands each operand's
-    /// stage whole, `depth` of `K` deep: in tiles of a matrix instruction along `m` and `n`, each
-    /// the whole stage deep along `K`, so the tiles stack whole rows one after another as a box
-    /// lands them, its rows along `rows`, and one of every batch dimension in `batches`. The manual
-    /// `mma`'s rows swizzled as the descriptor swizzles them, which keeps the rows a fragment load
-    /// reads at once on distinct banks as its own [`stage_layout`](Self::stage_layout) does;
-    /// `cmma`'s in order, since a box lands no padding. The plane group MMA's swizzled as the
-    /// manual `mma`'s are: a row one swizzle span long lies as the instruction's descriptor reads
-    /// it.
-    pub fn landed_stage_storage(
+    /// The tile of a stage the instruction reads where one TMA box lands each operand's stage
+    /// whole, `depth` of `K` deep: a tile of the instruction along `m` and `n`, the whole stage
+    /// deep along `K`, so the tiles stack whole rows one after another as a box lands them, its
+    /// rows along `rows`, and one of every batch dimension in `batches`.
+    pub fn landed_stage_tile(
         self,
         batches: &[Dimension],
         dimensions: MatmulDimensions,
         depth: usize,
         rows: PlaneFragmentRowsAlong,
-    ) -> StageStorage {
-        let chunks = match self {
-            Self::Cmma { .. } => RowChunks::InOrder,
-            Self::Mma { .. } | Self::Wgmma { .. } => RowChunks::Swizzled,
-        };
+    ) -> Vec<(Dimension, usize)> {
         let [m, n, _] = self.shape_along(rows);
-        StageStorage::Tiled {
-            block: batches
-                .iter()
-                .map(|&dimension| (dimension, 1))
-                .chain(dimensions.name([m, n, (MatmulDim::K, depth)]))
-                .collect(),
-            chunks,
-        }
+        batches
+            .iter()
+            .map(|&dimension| (dimension, 1))
+            .chain(dimensions.name([m, n, (MatmulDim::K, depth)]))
+            .collect()
     }
 
     /// Whether this is a block-scaled instruction

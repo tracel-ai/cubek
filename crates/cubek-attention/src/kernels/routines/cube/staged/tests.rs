@@ -21,7 +21,7 @@ mod fragment {
     use cubek_microkernel::attention::plane::{ROW_STATE_HELD_BY_UNIT, ScoreHolder};
     use cubek_microkernel::attention::{AttentionMicrokernel, D, G, Q, S};
     use cubek_microkernel::matmul::MatmulDim;
-    use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
+    use cubek_std::microkernel::{StageLayout, StageRing};
 
     const ROUTINE: CubeStagedAttentionRoutine = CubeStagedAttentionRoutine;
     type Settings = CubeStagedAttentionRoutineSettings;
@@ -54,8 +54,8 @@ mod fragment {
     }
 
     /// Every setting prepares where the device offers a square instruction and a cube holds a plane
-    /// for every head; one other than the default may ask for more than a cube holds, or for a
-    /// layout its planes do not read, and says so.
+    /// for every head; one other than the default may ask for more than a cube holds, and says
+    /// so.
     #[test]
     fn every_setting_prepares_where_planes_run() {
         for hw in [
@@ -68,7 +68,7 @@ mod fragment {
                     let declined = matches!(
                         prepared,
                         Err(Refusal::SharedMemoryPastDevice { .. } | Refusal::CubePastDevice { .. })
-                    ) || prepared.as_ref().err() == Some(&SWIZZLED_STAGE_UNREAD);
+                    );
                     assert!(
                         prepared.is_ok() || (position > 0 && declined),
                         "{settings} on {hw:?}: {prepared:?}"
@@ -240,6 +240,59 @@ mod fragment {
             bytes(StageLayout::PaddedBlocks),
             strided + padded_block_rows * chunk
         );
+    }
+
+    /// A swizzled stage is one a cmma fragment cannot read, which takes its tiles off a pointer
+    /// and a stride: the tile pads its rows instead, so the setting prepares the padded stage
+    /// rather than declining.
+    #[test]
+    fn a_swizzled_stage_is_padded_under_cmma() {
+        let hw = offering(devices::m2_pro(), 8);
+        let [_, _, problem, _] = problems();
+        let storage = |layout| {
+            let settings = Settings {
+                microkernel: CubeAttentionMicrokernelSettings {
+                    layout,
+                    ..Settings::DEFAULT.microkernel
+                },
+                ..Settings::DEFAULT
+            };
+            let (blueprint, _) = ROUTINE
+                .prepare(&hw, &problem, &settings)
+                .expect("the lead's box prepares on the M2");
+            blueprint.shared_memory
+        };
+        assert_eq!(
+            storage(StageLayout::SwizzledBlocks),
+            storage(StageLayout::PaddedBlocks)
+        );
+    }
+
+    /// A swizzled stage is listed only where the device offers the manual `mma`, the only
+    /// transport that reads it swizzled: elsewhere it would lay the padded stage another setting
+    /// already names, and a race would time that kernel twice.
+    #[test]
+    fn a_swizzled_stage_is_listed_only_beside_the_manual_mma() {
+        let swizzled = |hw: &Hardware| {
+            ROUTINE
+                .settings(hw)
+                .iter()
+                .any(|settings| settings.microkernel.layout == StageLayout::SwizzledBlocks)
+        };
+        let manual = MmaConfig {
+            a_type: F16,
+            b_type: F16,
+            cd_type: F32,
+            m: 16,
+            n: 8,
+            k: 16,
+        };
+        assert!(!swizzled(&offering(devices::m2_pro(), 8)));
+        assert!(!swizzled(&offering(devices::h100(), 16)));
+        assert!(swizzled(&devices::offering_mma(
+            offering(devices::h100(), 16),
+            [manual]
+        )));
     }
 
     /// The copy engine fills a stage where the device has one and the ring lands the lines in

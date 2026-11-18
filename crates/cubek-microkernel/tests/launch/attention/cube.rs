@@ -70,7 +70,6 @@ impl CubeAttentionLaunch {
             (DV, val_dim),
         ]);
         let storage = microkernel.stage_storage(&stage);
-        microkernel.plane.reads_stage(settings.layout)?;
         if settings.planes_along_keys.get() > 1 {
             microkernel.plane.merges_rows()?;
         }

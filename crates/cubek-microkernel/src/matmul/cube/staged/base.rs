@@ -49,9 +49,9 @@ pub struct CubeStagedMicrokernel {
     pub ring: StageRing,
     /// Who fills them: the routine's.
     pub fill: CubeStagedFill,
-    /// How a stage lays out the rows its fragments load: the layout its units copy it in, or
-    /// none where a box lands it.
-    pub stage_layout: Option<StageLayout>,
+    /// How a stage its units copy lays out the rows its fragments load
+    /// ([`CubeStagedMicrokernelSettings::stage_layout`]); the default's where a box lands it.
+    pub stage_layout: StageLayout,
     /// Who stores its box of the output: the routine's.
     pub store: CubeStagedStore,
     /// What one stage spans along the contraction.
@@ -386,7 +386,6 @@ impl CubeStagedMicrokernel {
         let operands = stage.operands(item.elements, self.plane.orders, self.walk().reads);
         let ring = self.ring.resolve(hw, &operands, units);
         let instruction = self.plane.instruction;
-        let landed = self.plane.landed_stage_storage(stage);
         let merges = self.drain() == CubeStagedDrain::Merged;
         // A box the TMA engine stores is drained whole into shared memory first, and the
         // descriptor clips it at the output's edge: no fragment's window is cut short there.
@@ -412,16 +411,20 @@ impl CubeStagedMicrokernel {
         {
             return Err(refusal.into());
         }
-        // A box lands a stage as one run of whole rows; the units copy it in the layout the
-        // setting names, or the instruction's own. Resolved to the layout it lays, a setting that
-        // names the instruction's own launches as its twin does, and a table sees one launch
-        // rather than timing it twice.
+        // A box lands a stage as one run of whole rows, as the instruction reads it; the units
+        // copy it in the layout the setting names, its rows arranged as the instruction reads
+        // them. Under a box the setting names nothing, so it resolves to the default's, and a
+        // table sees one launch rather than timing its twins.
         let (storage, stage_layout) = match fill.delivery {
-            CubeStagedDelivery::Tma => (landed, None),
-            CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => {
-                let layout = instruction.stage_layout(self.stage_layout)?;
-                (self.plane.stage_storage(layout, stage), Some(layout))
-            }
+            CubeStagedDelivery::Tma => (
+                self.plane.landed_stage_storage(stage),
+                CubeStagedMicrokernelSettings::SWIZZLED,
+            ),
+            CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => (
+                self.plane
+                    .stage_storage(self.stage_layout, fill.delivery.fills(), stage),
+                self.stage_layout,
+            ),
         };
         let microkernel = Self {
             scratch,
@@ -580,7 +583,7 @@ impl Microkernel for CubeStagedMicrokernel {
         ]
         .map(|(grid, planes)| boxed(grid, planes));
         let in_order = |settings: Self::Settings| Self::Settings {
-            stage_layout: Some(StageLayout::Blocks),
+            stage_layout: StageLayout::Blocks,
             ..settings
         };
         let rows_in_order = [layouts[0], small_cubes[2]].map(in_order);

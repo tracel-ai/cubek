@@ -10,8 +10,9 @@ use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::QuantValue;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
+use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{
     Dimension, FragmentSource, Instruction, LaneMap, Levels, MmaOperands, ProductStep, Scratch,
     ShapedInstruction, Space, StageStorage, StepCost,
@@ -812,22 +813,29 @@ impl PlaneFragmentMicrokernel {
         }
     }
 
-    /// How a stage it reads holds its cells, filled by its units, laid out as `layout`: where it
-    /// blocks the stage, in its instruction's tiles ([`PlaneFragmentInstruction::stage_tile`]),
-    /// each one step deep along every dimension `K` is stated over.
-    pub(crate) fn stage_storage(&self, layout: StageLayout, stage: &MatmulStage) -> StageStorage {
+    /// How a stage it reads holds its cells, laid out as `layout` and filled by `delivery`'s
+    /// units: where it blocks the stage, in its instruction's tiles
+    /// ([`PlaneFragmentInstruction::stage_tile`]), each one step deep along every dimension `K` is
+    /// stated over, their rows arranged as its instruction reads them (`read_by`).
+    pub fn stage_storage(
+        &self,
+        layout: StageLayout,
+        delivery: Delivery,
+        stage: &MatmulStage,
+    ) -> StageStorage {
         let beside: Vec<Dimension> = stage.beside().collect();
         let tile = Self::over_k(
             self.instruction
                 .stage_tile(&beside, stage.dimensions(), self.settings.rows_along),
             &self.k_dimensions(1),
         );
-        layout.storage(stage.space(), tile)
+        self.read_by(layout.storage(stage.space(), tile), delivery)
     }
 
     /// How a stage it reads holds its cells where one TMA box lands it whole
-    /// ([`PlaneFragmentInstruction::landed_stage_storage`]): each tile the whole stage deep along
-    /// every dimension `K` is stated over.
+    /// ([`PlaneFragmentInstruction::landed_stage_tile`]): each tile the whole stage deep along
+    /// every dimension `K` is stated over, its rows swizzled where its instruction reads them so and in
+    /// order where it cannot, since a box lands no padding (`read_by`).
     pub(crate) fn landed_stage_storage(&self, stage: &MatmulStage) -> StageStorage {
         let (beside, dimensions): (Vec<Dimension>, _) =
             (stage.beside().collect(), stage.dimensions());
@@ -836,18 +844,25 @@ impl PlaneFragmentMicrokernel {
             .into_iter()
             .map(|(dimension, _)| (dimension, stage.extent(dimension)))
             .collect();
-        match self.instruction.landed_stage_storage(
+        let tile = self.instruction.landed_stage_tile(
             &beside,
             dimensions,
             stage.extent(dimensions.k),
             self.settings.rows_along,
-        ) {
-            StageStorage::Tiled { block, chunks } => StageStorage::Tiled {
-                block: Self::over_k(block, &whole_k),
-                chunks,
-            },
-            storage => storage,
-        }
+        );
+        let swizzled = StageStorage::Tiled {
+            block: Self::over_k(tile, &whole_k),
+            chunks: RowChunks::Swizzled,
+        };
+        self.read_by(swizzled, Delivery::Tma)
+    }
+
+    /// `stated` as a stage this plane reads and `delivery` fills lays it, its rows arranged by the
+    /// tile for the instruction its fragments load through ([`StageStorage::read_by`]): the
+    /// tile's pick for how its kernel opens the sum, a kept sum's included, which its Step alone
+    /// would not say.
+    pub fn read_by(&self, stated: StageStorage, delivery: Delivery) -> StageStorage {
+        stated.read_by(self.tile_instruction(), delivery)
     }
 
     /// `tile` with its extents along `K` restated as `k_dimensions`: an instruction tiles `K` as
