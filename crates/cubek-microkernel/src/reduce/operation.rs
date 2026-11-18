@@ -18,7 +18,7 @@ pub const TOP_K_LANE_SLOTS: usize = 32;
 /// | `ArgMax`, `ArgMin` | – | `Max`, `Min` | [`Indexed`](cubecl::tile::Indexed) | its index |
 /// | `TopK` | – | `Max` | [`TopValues`](cubecl::tile::TopValues) | its values |
 /// | `ArgTopK` | – | `Max` | [`TopK`](cubecl::tile::TopK) | its indices |
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ReduceOperation {
     Sum,
     Prod,
@@ -114,9 +114,13 @@ impl ReduceOperation {
     }
 
     /// What the values accumulate into.
+    ///
+    /// A top-1 is the max: a list of one keeps [`Indexed`](cubecl::tile::Indexed)'s order, so it
+    /// accumulates as the max does, without the list's walk on every value read.
     pub const fn carrier(self) -> ReduceCarrier {
         match self {
-            Self::ArgMax | Self::ArgMin => ReduceCarrier::Indexed,
+            Self::ArgMax | Self::ArgMin | Self::ArgTopK { k: 1 } => ReduceCarrier::Indexed,
+            Self::TopK { k: 1 } => ReduceCarrier::Values,
             Self::TopK { k } => ReduceCarrier::TopValues { k },
             Self::ArgTopK { k } => ReduceCarrier::TopK { k },
             _ => ReduceCarrier::Values,
@@ -220,6 +224,18 @@ mod tests {
                 Monoid::Max,
                 ReadMap::AsRead,
                 ReduceCarrier::TopK { k: 5 },
+            ),
+            (
+                Op::TopK { k: 1 },
+                Monoid::Max,
+                ReadMap::AsRead,
+                ReduceCarrier::Values,
+            ),
+            (
+                Op::ArgTopK { k: 1 },
+                Monoid::Max,
+                ReadMap::AsRead,
+                ReduceCarrier::Indexed,
             ),
         ];
         for (operation, monoid, map, carrier) in rows {

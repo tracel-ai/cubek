@@ -1,0 +1,105 @@
+//! The reduce family's rule: which routine runs a problem when nothing is measured.
+
+use crate::kernels::{
+    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceKernel, ReduceRoutine,
+    ReduceRoutineProblem, ReduceSplitExtents, ReduceTensors, UnitReduceRoutine,
+};
+use cubecl::tile::launch::Refusal;
+use cubek_microkernel::reduce::ReduceLayout;
+use cubek_std::Hardware;
+use cubek_std::autotune::short_of_the_device;
+use cubek_std::routine::Routine;
+
+/// `tensors` reduced by the routine the rule picks on `hw`, read top to bottom:
+///
+/// 1. Rows enough that a unit each fills the device, each row short enough that a unit walks it
+///    alone as fast as a plane would: the unit routine.
+/// 2. Rows enough that a plane each fills the device: the plane routine, whose lanes share a row
+///    without meeting in shared memory.
+/// 3. Rows a cube each would leave the device idle, and a split that fills it: the hypercube, at
+///    its first setting whose cubes fill the device, or at the one with the most cubes.
+/// 4. Otherwise the cube routine.
+/// 5. Where the cube declines the problem, the unit routine, which serves every problem.
+///
+/// # Errors
+///
+/// Why the unit routine cannot run the problem here, which no device refuses.
+pub fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
+    let problem = tensors.problem();
+    if let Ok((blueprint, grid)) = UnitReduceRoutine::prepare_first_served(hw, problem)
+        && short_of_the_device(hw, &grid.launch) == 0
+        && unit_keeps_up(hw, problem, blueprint.width)
+    {
+        UnitReduceRoutine.launch(tensors, blueprint, grid);
+        return Ok(());
+    }
+    if let Ok((blueprint, grid)) = PlaneReduceRoutine::prepare_first_served(hw, problem)
+        && short_of_the_device(hw, &grid.launch) == 0
+    {
+        PlaneReduceRoutine.launch(tensors, blueprint, grid);
+        return Ok(());
+    }
+    if let Some((blueprint, grid)) = hypercube_filling_the_device(hw, tensors) {
+        HypercubeReduceRoutine.launch(tensors, blueprint, grid);
+        return Ok(());
+    }
+    if let Ok((blueprint, grid)) = CubeReduceRoutine::prepare_first_served(hw, problem) {
+        CubeReduceRoutine.launch(tensors, blueprint, grid);
+        return Ok(());
+    }
+    ReduceKernel::Unit.launch(hw, tensors)
+}
+
+/// Whether a unit reading a row alone, `width` values a line, keeps up with a plane reading it
+/// together. Across the reduced dim it does: neighbouring units read neighbouring rows, so their
+/// reads meet. Along it, a unit walks its row line after line where a plane takes a line a lane,
+/// so it keeps up only while the row holds no more lines than a plane has lanes, or where the
+/// device runs no plane routine.
+fn unit_keeps_up(hw: &Hardware, problem: &ReduceRoutineProblem, width: usize) -> bool {
+    match problem.layout() {
+        ReduceLayout::Across => true,
+        ReduceLayout::Along => hw
+            .plane_dim()
+            .ok()
+            .is_none_or(|lanes| problem.reduced_extent().div_ceil(width) <= lanes as usize),
+    }
+}
+
+/// The hypercube's launch where a box of rows a cube leaves the device idle and splitting the rows
+/// along the reduced dim gives more cubes: at the first of its settings, the longest parts first,
+/// whose cubes fill the device, or at the one with the most cubes where none does. `None` where
+/// the device does not say how wide it is, the boxes already fill it, or every row is one part.
+fn hypercube_filling_the_device(
+    hw: &Hardware,
+    tensors: &ReduceTensors,
+) -> Option<(
+    <HypercubeReduceRoutine as Routine>::Blueprint,
+    cubek_std::routine::Grid,
+)> {
+    let problem = tensors.problem();
+    let mut most_cubes = None;
+    for settings in HypercubeReduceRoutine::settings(hw) {
+        let Ok((blueprint, grid)) = HypercubeReduceRoutine::prepare(hw, problem, &settings) else {
+            continue;
+        };
+        let units = (blueprint.microkernel.lanes * blueprint.microkernel.planes) as u32;
+        let fill = hw.cubes_to_fill(units)? as usize;
+        let boxes = ReduceSplitExtents::row_boxes(problem, blueprint.width);
+        let parts = ReduceSplitExtents::new(problem, &blueprint.partitioning, blueprint.width).parts
+            as usize;
+        if boxes >= fill {
+            return None;
+        }
+        if parts < 2 {
+            continue;
+        }
+        let cubes = boxes * parts;
+        if cubes >= fill {
+            return Some((blueprint, grid));
+        }
+        if most_cubes.as_ref().is_none_or(|(most, _, _)| cubes > *most) {
+            most_cubes = Some((cubes, blueprint, grid));
+        }
+    }
+    most_cubes.map(|(_, blueprint, grid)| (blueprint, grid))
+}

@@ -9,14 +9,13 @@ use cubecl::{
 };
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::ReduceStrategy;
 use crate::components::instructions::ReduceOperationConfig;
 use crate::eval::benchmarks::correctness::ReduceCorrectness;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 use crate::eval::cpu_reference::ReduceEntry;
 
 pub fn bench(
-    strategy: &ReduceStrategy,
+    strategy: &ReduceEntry,
     problem: &ReduceProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
@@ -32,7 +31,6 @@ pub fn bench(
         kind: problem.kind,
         value_dtype: problem.precision.dtype(),
         strategy: strategy.clone(),
-        entry: ReduceEntry::from_env(),
         device,
         client,
         samples: num_samples,
@@ -127,8 +125,7 @@ struct ReduceBench {
     config: ReduceOperationConfig,
     kind: ReduceBenchKind,
     value_dtype: ElemType,
-    strategy: ReduceStrategy,
-    entry: ReduceEntry,
+    strategy: ReduceEntry,
     device: cubecl::Device,
     client: Client,
     samples: usize,
@@ -175,71 +172,71 @@ impl Benchmark for ReduceBench {
             ReduceBenchKind::Single => {
                 let output_dtype =
                     crate::eval::cpu_reference::output_dtype_for(&self.config, value_dtype);
-                self.entry.reduce()(
-                    &self.client,
-                    input.binding(),
-                    out.binding(),
-                    self.axis,
-                    self.strategy.clone(),
-                    self.config,
-                    crate::ReduceDtypes {
-                        input: value_dtype,
-                        output: output_dtype,
-                        accumulation: acc_dtype,
-                    },
-                )
-                .map_err(|err| format!("{err}"))?;
+                self.strategy
+                    .reduce(
+                        &self.client,
+                        input.binding(),
+                        out.binding(),
+                        self.axis,
+                        self.config,
+                        crate::ReduceDtypes {
+                            input: value_dtype,
+                            output: output_dtype,
+                            accumulation: acc_dtype,
+                        },
+                    )
+                    .map_err(|err| format!("{err}"))?;
             }
             // What a caller needing both halves does today: run the whole
             // reduction twice, discarding half of each result.
             ReduceBenchKind::TwoLaunch => {
                 let (values_config, indices_config) = two_launch_configs(self.config);
-                self.entry.reduce()(
-                    &self.client,
-                    input.clone().binding(),
-                    out.binding(),
-                    self.axis,
-                    self.strategy.clone(),
-                    values_config,
-                    crate::ReduceDtypes {
-                        input: value_dtype,
-                        output: value_dtype,
-                        accumulation: acc_dtype,
-                    },
-                )
-                .map_err(|err| format!("{err}"))?;
-                self.entry.reduce()(
-                    &self.client,
-                    input.binding(),
-                    indices.binding(),
-                    self.axis,
-                    self.strategy.clone(),
-                    indices_config,
-                    crate::ReduceDtypes {
-                        input: value_dtype,
-                        output: index_dtype,
-                        accumulation: acc_dtype,
-                    },
-                )
-                .map_err(|err| format!("{err}"))?;
+                self.strategy
+                    .reduce(
+                        &self.client,
+                        input.clone().binding(),
+                        out.binding(),
+                        self.axis,
+                        values_config,
+                        crate::ReduceDtypes {
+                            input: value_dtype,
+                            output: value_dtype,
+                            accumulation: acc_dtype,
+                        },
+                    )
+                    .map_err(|err| format!("{err}"))?;
+                self.strategy
+                    .reduce(
+                        &self.client,
+                        input.binding(),
+                        indices.binding(),
+                        self.axis,
+                        indices_config,
+                        crate::ReduceDtypes {
+                            input: value_dtype,
+                            output: index_dtype,
+                            accumulation: acc_dtype,
+                        },
+                    )
+                    .map_err(|err| format!("{err}"))?;
             }
             ReduceBenchKind::Fused => {
-                self.entry.reduce_with_indices()(
-                    &self.client,
-                    input.binding(),
-                    out.binding(),
-                    indices.binding(),
-                    self.axis,
-                    self.strategy.clone(),
-                    self.config,
-                    crate::ReduceWithIndicesDtypes {
-                        input: value_dtype,
-                        values: value_dtype,
-                        indices: index_dtype,
-                        accumulation: acc_dtype,
-                    },
-                )
-                .map_err(|err| format!("{err}"))?;
+                self.strategy
+                    .reduce_with_indices(
+                        &self.client,
+                        input.binding(),
+                        out.binding(),
+                        indices.binding(),
+                        self.axis,
+                        self.config,
+                        crate::ReduceWithIndicesDtypes {
+                            input: value_dtype,
+                            values: value_dtype,
+                            indices: index_dtype,
+                            accumulation: acc_dtype,
+                        },
+                    )
+                    .map_err(|err| format!("{err}"))?;
             }
         }
 
@@ -258,13 +255,17 @@ impl Benchmark for ReduceBench {
 
     fn name(&self) -> String {
         // Only the tile runs are named apart, so today's keep the names saved runs know them by.
-        let entry = match self.entry {
-            ReduceEntry::Kernels => "",
-            ReduceEntry::Tiles => "-tiles",
+        let strategy = match &self.strategy {
+            ReduceEntry::Kernels(strategy) => format!("{strategy:?}"),
+            ReduceEntry::Tiles(strategy) => strategy.name().to_string(),
+        };
+        let entry = match self.strategy {
+            ReduceEntry::Kernels(_) => "",
+            ReduceEntry::Tiles(_) => "-tiles",
         };
         format!(
-            "reduce-axis({})-{}-{:?}-{:?}-{:?}-{:?}{entry}",
-            self.axis, self.value_dtype, self.shape, self.strategy, self.config, self.kind,
+            "reduce-axis({})-{}-{:?}-{strategy}-{:?}-{:?}{entry}",
+            self.axis, self.value_dtype, self.shape, self.config, self.kind,
         )
         .to_lowercase()
     }

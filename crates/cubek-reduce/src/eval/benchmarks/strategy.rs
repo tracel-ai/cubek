@@ -1,12 +1,16 @@
 use cubecl::config::autotune::AutotuneLevel;
 use cubek_test_utils::CatalogEntry;
 
+use crate::eval::cpu_reference::ReduceEntry;
+use crate::kernels::{ReduceKernel, ReduceKernelHeuristic, ReduceOpStrategy};
 use crate::launch::{ReduceStrategy, RoutineStrategy, VectorizationStrategy};
 use crate::routines::{
     BlueprintStrategy, cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy,
 };
 
-pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
+/// Today's kernels at each routine and vectorization, then the tile routines at every strategy:
+/// the autotune, the rule, and each kernel pinned.
+pub fn strategies() -> Vec<CatalogEntry<ReduceEntry>> {
     let unit = || RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy));
     let plane = || {
         RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
@@ -24,7 +28,7 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
     let parallel = VectorizationStrategy {
         parallel_output_vectorization: true,
     };
-    vec![
+    let kernels = vec![
         CatalogEntry::new(
             "unit_serial",
             "Unit (serial)",
@@ -79,5 +83,22 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
                 vectorization: parallel,
             },
         ),
-    ]
+    ];
+    let tiles = core::iter::once(ReduceOpStrategy::Autotune)
+        .chain([ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile)])
+        .chain(
+            ReduceKernel::all()
+                .into_iter()
+                .map(ReduceOpStrategy::Specific),
+        )
+        .map(|strategy| {
+            let id = format!("tiles_{}", strategy.name().replace('-', "_"));
+            let label = format!("Tiles {}", strategy.name());
+            CatalogEntry::new(id, label, ReduceEntry::Tiles(strategy))
+        });
+    kernels
+        .into_iter()
+        .map(|entry| CatalogEntry::new(entry.id, entry.label, ReduceEntry::Kernels(entry.value)))
+        .chain(tiles)
+        .collect()
 }

@@ -1,35 +1,31 @@
-//! The tile routines behind the same entry as [`reduce`](crate::reduce): what a caller switches to
-//! once the routines have been measured against today's kernels, and what the suite runs on both.
+//! The reduce operation: the kernel a [`ReduceOpStrategy`] picks, launched on the tile routines.
 
 use crate::kernels::{
-    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceRoutine,
-    ReduceSplitExtents, ReduceTensors, UnitReduceRoutine,
+    ReduceElements, ReduceKernelHeuristic, ReduceOpStrategy, ReduceTensors, launch_tuned, select,
 };
-use crate::launch::RoutineStrategy;
-use crate::{
-    ReduceDtypes, ReduceError, ReduceOperationConfig, ReduceStrategy, ReduceWithIndicesDtypes,
-};
+use crate::{ReduceDtypes, ReduceError, ReduceOperationConfig, ReduceWithIndicesDtypes};
+use cubecl::Device;
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::Hardware;
-use cubek_std::routine::Routine;
 
-/// [`reduce`](crate::reduce) on the tile routines: the routine of the scope `strategy` names
-/// (unit, plane or cube) at the first of its settings this device prepares the problem at; for
-/// the cube, the hypercube where too few rows leave the device idle. The strategy's blueprint
-/// and vectorization are today's kernels' and are not read.
+/// Reduce dim `axis` of `input` into `output` by `operation`, the kernel picked as `strategy`
+/// says on `device`. `output` has `input`'s shape with `axis` one wide, `k` wide for a top-k.
 ///
 /// # Errors
 ///
-/// As [`reduce`](crate::reduce)'s validation, and [`ReduceError::Validation`] with the routine's
-/// reason where it declines the problem.
-pub fn reduce_on_tiles(
+/// Where `axis` or `output`'s shape does not fit `input`, and [`ReduceError::Validation`] with
+/// the kernel's reason where a [`Specific`](ReduceOpStrategy::Specific) kernel declines the
+/// problem.
+#[allow(clippy::too_many_arguments)]
+pub fn reduce(
     client: &Client,
+    device: &Device,
     input: TensorBinding,
     output: TensorBinding,
     axis: usize,
-    strategy: ReduceStrategy,
+    strategy: ReduceOpStrategy,
     operation: ReduceOperationConfig,
     dtypes: ReduceDtypes,
 ) -> Result<(), ReduceError> {
@@ -55,25 +51,25 @@ pub fn reduce_on_tiles(
             out: dtypes.output,
         },
     );
-    launched_by_scope(strategy, &tensors)
+    launched(strategy, device, tensors)
 }
 
-/// [`reduce_with_indices`](crate::reduce_with_indices) on the tile routines: the values to
-/// `values` and their indices to `indices` from one launch, by the routine of the scope `strategy`
-/// names, as [`reduce_on_tiles`] picks it.
+/// [`reduce`], the values written to `values` and their indices to `indices` from one launch.
+/// `indices` has `values`' shape and strides.
 ///
 /// # Errors
 ///
-/// As [`reduce_with_indices`](crate::reduce_with_indices)'s validation, and
-/// [`ReduceError::Validation`] with the routine's reason where it declines the problem.
+/// As [`reduce`], and [`ReduceError::IndicesUnsupported`] for an operation whose values carry no
+/// index.
 #[allow(clippy::too_many_arguments)]
-pub fn reduce_with_indices_on_tiles(
+pub fn reduce_with_indices(
     client: &Client,
+    device: &Device,
     input: TensorBinding,
     values: TensorBinding,
     indices: TensorBinding,
     axis: usize,
-    strategy: ReduceStrategy,
+    strategy: ReduceOpStrategy,
     operation: ReduceOperationConfig,
     dtypes: ReduceWithIndicesDtypes,
 ) -> Result<(), ReduceError> {
@@ -124,77 +120,30 @@ pub fn reduce_with_indices_on_tiles(
         },
         dtypes.indices,
     );
-    launched_by_scope(strategy, &tensors)
+    launched(strategy, device, tensors)
 }
 
-/// `tensors` reduced by the routine of the scope `strategy` names.
-fn launched_by_scope(strategy: ReduceStrategy, tensors: &ReduceTensors) -> Result<(), ReduceError> {
-    let launched = match strategy.routine {
-        RoutineStrategy::Unit(_) => launch_first_served(&UnitReduceRoutine, tensors),
-        RoutineStrategy::Plane(_) => launch_first_served(&PlaneReduceRoutine, tensors),
-        RoutineStrategy::Cube(_) => launch_cube_or_split(tensors),
+/// `tensors` reduced as `strategy` picks the kernel, on `device`.
+fn launched(
+    strategy: ReduceOpStrategy,
+    device: &Device,
+    tensors: ReduceTensors,
+) -> Result<(), ReduceError> {
+    let hw = Hardware::from_client(tensors.client());
+    let launched = match strategy {
+        ReduceOpStrategy::Autotune => {
+            launch_tuned(tensors, device);
+            Ok(())
+        }
+        ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile) => select(&hw, &tensors),
+        ReduceOpStrategy::Specific(kernel) => kernel.launch(&hw, &tensors),
     };
     launched.map_err(|why| ReduceError::Validation {
         details: match why {
             Refusal::Declined { why } => why,
-            _ => "the tile reduce routine cannot launch this problem on this device",
+            _ => "the reduce kernel cannot launch this problem on this device",
         },
     })
-}
-
-/// `tensors` reduced by `routine` at the first of its settings this device prepares them at.
-fn launch_first_served<R: ReduceRoutine<M>, M>(
-    routine: &R,
-    tensors: &ReduceTensors,
-) -> Result<(), Refusal> {
-    let hw = Hardware::from_client(tensors.client());
-    let (blueprint, grid) = R::prepare_first_served(&hw, tensors.problem())?;
-    routine.launch(tensors, blueprint, grid);
-    Ok(())
-}
-
-/// `tensors` reduced a box of rows a cube where the boxes fill the device, otherwise split along
-/// the reduced dim by the hypercube: at the first of its settings, the longest parts first, whose
-/// cubes fill the device, or at the one with the most cubes where none does. Where the device does
-/// not say how wide it is, or every row is a single part, the cube routine.
-fn launch_cube_or_split(tensors: &ReduceTensors) -> Result<(), Refusal> {
-    let hw = Hardware::from_client(tensors.client());
-    let problem = tensors.problem();
-    let routine = HypercubeReduceRoutine;
-    let mut most_cubes = None;
-    for settings in HypercubeReduceRoutine::settings(&hw) {
-        let Ok((blueprint, grid)) = HypercubeReduceRoutine::prepare(&hw, problem, &settings) else {
-            continue;
-        };
-        let units = (blueprint.microkernel.lanes * blueprint.microkernel.planes) as u32;
-        let Some(fill) = hw.cubes_to_fill(units).map(|fill| fill as usize) else {
-            break;
-        };
-        let boxes = ReduceSplitExtents::row_boxes(problem, blueprint.width);
-        let parts = ReduceSplitExtents::new(problem, &blueprint.partitioning, blueprint.width).parts
-            as usize;
-        if boxes >= fill {
-            break;
-        }
-        if parts < 2 {
-            continue;
-        }
-        let cubes = boxes * parts;
-        if cubes >= fill {
-            most_cubes = Some((cubes, blueprint, grid));
-            break;
-        }
-        if most_cubes.as_ref().is_none_or(|(most, _, _)| cubes > *most) {
-            most_cubes = Some((cubes, blueprint, grid));
-        }
-    }
-    match most_cubes {
-        Some((_, blueprint, grid)) => {
-            routine.launch(tensors, blueprint, grid);
-            Ok(())
-        }
-        None => launch_first_served(&CubeReduceRoutine, tensors),
-    }
 }
 
 /// Today's operation, as the microkernels name it.
