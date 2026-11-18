@@ -237,6 +237,18 @@ impl PlaneFragmentMicrokernel {
         rhs: ElemType,
         sum: ElemType,
     ) -> Option<[usize; 3]> {
+        Self::matrix_unit_within(hw, lhs, rhs, sum, None)
+    }
+
+    /// [`matrix_unit`](Self::matrix_unit), among the shapes whose `k` divides `block` where one
+    /// is given: a plane walking decoded stages a scale block at a time cannot take a deeper call.
+    fn matrix_unit_within(
+        hw: &Hardware,
+        lhs: ElemType,
+        rhs: ElemType,
+        sum: ElemType,
+        block: Option<usize>,
+    ) -> Option<[usize; 3]> {
         ProductStep::sizes(
             &hw.properties,
             ComputeScope::Plane,
@@ -244,8 +256,24 @@ impl PlaneFragmentMicrokernel {
             FragmentSource::Values(rhs),
             sum,
         )
-        .first()
-        .copied()
+        .into_iter()
+        .find(|&[_, _, k]| block.is_none_or(|block| block.is_multiple_of(k)))
+    }
+
+    /// The plane against decoded stages of `item`, cut by the tile as a float plane is, its unit
+    /// the device's largest whose `k` divides the scale `block`.
+    pub(crate) fn decoding_plane(
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        settings: &PlaneFragmentMicrokernelSettings,
+        block: usize,
+    ) -> Option<Self> {
+        let values = item
+            .elements
+            .map(|_, element| FragmentSource::Values(element));
+        Self::cut_by_the_tile(hw, item, settings, values.lhs, values.rhs, Some(block))
+            .filter(|_| hw.plane_dim().is_ok())
+            .filter(Self::lays_its_rows)
     }
 
     /// The planes against a float rhs. A plane's settings count the device's
@@ -265,7 +293,7 @@ impl PlaneFragmentMicrokernel {
                 let values = item
                     .elements
                     .map(|_, element| FragmentSource::Values(element));
-                Self::cut_by_the_tile(hw, item, settings, values.lhs, values.rhs)
+                Self::cut_by_the_tile(hw, item, settings, values.lhs, values.rhs, None)
                     .filter(|_| hw.plane_dim().is_ok())
                     .into_iter()
                     .collect()
@@ -295,7 +323,7 @@ impl PlaneFragmentMicrokernel {
                 .into_iter()
                 .collect();
         }
-        let Some((unit, calls)) = Self::unit_of(hw, item, settings) else {
+        let Some((unit, calls)) = Self::unit_of(hw, item, settings, None) else {
             return Vec::new();
         };
         let (MatmulOperands { lhs, rhs, .. }, sum) = (item.elements, item.sum);
@@ -377,8 +405,10 @@ impl PlaneFragmentMicrokernel {
         hw: &Hardware,
         item: &MatmulWorkItem,
         settings: &PlaneFragmentMicrokernelSettings,
+        block: Option<usize>,
     ) -> Option<([usize; 3], [usize; 3])> {
-        let [m, n, k] = Self::matrix_unit(hw, item.elements.lhs, item.elements.rhs, item.sum)?;
+        let [m, n, k] =
+            Self::matrix_unit_within(hw, item.elements.lhs, item.elements.rhs, item.sum, block)?;
         let (m, n) = match settings.rows_along {
             PlaneFragmentRowsAlong::M => (m, n),
             PlaneFragmentRowsAlong::N => (n, m),
@@ -399,7 +429,7 @@ impl PlaneFragmentMicrokernel {
         settings: &PlaneFragmentMicrokernelSettings,
     ) -> Option<[usize; 2]> {
         hw.plane_dim().ok()?;
-        let ([m, n, _], [calls_m, calls_n, _]) = Self::unit_of(hw, item, settings)?;
+        let ([m, n, _], [calls_m, calls_n, _]) = Self::unit_of(hw, item, settings, None)?;
         Some([
             settings.along_m.get() * m * calls_m,
             settings.along_n.get() * n * calls_n,
@@ -416,8 +446,9 @@ impl PlaneFragmentMicrokernel {
         settings: &PlaneFragmentMicrokernelSettings,
         lhs: FragmentSource,
         rhs: FragmentSource,
+        block: Option<usize>,
     ) -> Option<Self> {
-        let (unit, calls) = Self::unit_of(hw, item, settings)?;
+        let (unit, calls) = Self::unit_of(hw, item, settings, block)?;
         let ([m, n, k], [calls_m, calls_n, _]) = (unit, calls);
         let tile = [
             settings.along_m.get() * m * calls_m,
