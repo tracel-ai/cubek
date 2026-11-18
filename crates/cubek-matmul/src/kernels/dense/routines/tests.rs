@@ -126,12 +126,8 @@ mod plane_shuffle {
         let hw = devices::m2_pro();
         for m in [1, 8] {
             for (name, problem) in problems(m) {
-                for settings in PlaneShuffleMatmulRoutine
-                    .packed_settings()
-                    .into_iter()
-                    .chain(PlaneShuffleMatmulRoutine.packed_by_block_settings())
-                {
-                    let prepared = PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
+                for settings in PlaneShuffleMatmulRoutine::indexed_packed_settings() {
+                    let prepared = PlaneShuffleMatmulRoutine::prepare(&hw, &problem, &settings);
                     if !PlaneShuffleMatmulRoutine::sizes_packed(&settings, &problem) {
                         assert!(prepared.is_err(), "{name} at {settings} sized a plane");
                         continue;
@@ -170,9 +166,10 @@ mod cube_shuffle {
         let mut prepared = 0;
         for m in [1, 8] {
             for (name, problem) in problems(m) {
-                let routine = CubeShuffleMatmulRoutine;
-                for settings in routine.packed_settings(&hw) {
-                    let Ok((blueprint, _)) = routine.prepare(&hw, &problem, &settings) else {
+                for settings in CubeShuffleMatmulRoutine::packed_settings(&hw) {
+                    let Ok((blueprint, _)) =
+                        CubeShuffleMatmulRoutine::prepare(&hw, &problem, &settings)
+                    else {
                         continue;
                     };
                     prepared += 1;
@@ -202,7 +199,7 @@ mod cube_shuffle {
         let hw = devices::m2_pro();
         let settings = crate::kernels::LoadingSchedule::SPLIT_K.settings();
         for (name, problem) in problems(1) {
-            let prepared = CubeShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
+            let prepared = CubeShuffleMatmulRoutine::prepare(&hw, &problem, &settings);
             assert_eq!(
                 prepared.is_ok(),
                 name.starts_with("nvfp4"),
@@ -245,7 +242,7 @@ mod cube_staged {
         let mut tile_order_prepared = 0;
         for (name, problem) in problems(512) {
             for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
-                let prepared = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings);
+                let prepared = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings);
                 let blueprint = match prepared {
                     Ok((blueprint, _)) => blueprint,
                     Err(Refusal::SharedMemoryPastDevice { .. }) => continue,
@@ -299,7 +296,7 @@ mod cube_staged {
         let mut laid = Vec::new();
         for hw in [both, mma_alone] {
             for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
-                let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings)
+                let Ok((blueprint, _)) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
                 else {
                     continue;
                 };
@@ -378,23 +375,18 @@ mod packed_lhs {
         );
         for m in [1, 8] {
             let problem = packed_lhs(m);
-            for settings in PlaneShuffleMatmulRoutine
-                .settings(&hw)
+            for settings in PlaneShuffleMatmulRoutine::settings(&hw)
                 .into_iter()
-                .chain(PlaneShuffleMatmulRoutine.packed_settings())
+                .chain(PlaneShuffleMatmulRoutine::packed_settings())
             {
                 assert!(
-                    PlaneShuffleMatmulRoutine
-                        .prepare(&hw, &problem, &settings)
-                        .is_err(),
+                    PlaneShuffleMatmulRoutine::prepare(&hw, &problem, &settings).is_err(),
                     "plane shuffle at {settings}, {m} rows"
                 );
             }
-            for settings in CubeShuffleMatmulRoutine.packed_settings(&hw) {
+            for settings in CubeShuffleMatmulRoutine::packed_settings(&hw) {
                 assert!(
-                    CubeShuffleMatmulRoutine
-                        .prepare(&hw, &problem, &settings)
-                        .is_err(),
+                    CubeShuffleMatmulRoutine::prepare(&hw, &problem, &settings).is_err(),
                     "cube shuffle at {settings}, {m} rows"
                 );
             }
@@ -413,19 +405,19 @@ mod packed_lhs {
             },
         );
         assert!(
-            PlaneDequantizeMatmulRoutine
-                .prepare(&hw, &decode, &PlaneDequantizeMatmulRoutine::SETTINGS)
-                .is_ok(),
+            PlaneDequantizeMatmulRoutine::prepare(
+                &hw,
+                &decode,
+                &PlaneDequantizeMatmulRoutine::SETTINGS
+            )
+            .is_ok(),
             "the decode declines the packed lhs"
         );
         let dense = MatmulRoutineProblem::dense(m, 2048, 4096, F16);
         assert!(
-            CubeStagedMatmulRoutine
-                .settings(&hw)
+            CubeStagedMatmulRoutine::settings(&hw)
                 .iter()
-                .any(|settings| CubeStagedMatmulRoutine
-                    .prepare(&hw, &dense, settings)
-                    .is_ok()),
+                .any(|settings| CubeStagedMatmulRoutine::prepare(&hw, &dense, settings).is_ok()),
             "no setting of the float product runs on the decoded lhs"
         );
     }
@@ -475,16 +467,14 @@ mod hypercube_last_arrival {
                 out: None,
             },
         );
-        let last_arrival = HypercubeLastArrivalMatmulRoutine.settings(&hw);
+        let last_arrival = HypercubeLastArrivalMatmulRoutine::settings(&hw);
         assert!(
             !last_arrival.is_empty(),
             "a device whose cubes meet lists hypercube settings"
         );
         for settings in last_arrival {
             assert_eq!(
-                HypercubeLastArrivalMatmulRoutine
-                    .prepare(&hw, &problem, &settings)
-                    .err(),
+                HypercubeLastArrivalMatmulRoutine::prepare(&hw, &problem, &settings).err(),
                 Some(MATMUL_HYPERCUBE_PACKED_LHS),
                 "last arrival at {settings}"
             );
@@ -523,7 +513,7 @@ mod hypercube_last_arrival {
                 let mut prepared = 0;
                 for settings in HypercubeLastArrivalMatmulRoutine.packed_settings(&hw) {
                     let Ok((blueprint, _)) =
-                        HypercubeLastArrivalMatmulRoutine.prepare(&hw, &problem, &settings)
+                        HypercubeLastArrivalMatmulRoutine::prepare(&hw, &problem, &settings)
                     else {
                         continue;
                     };

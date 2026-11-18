@@ -101,7 +101,7 @@ impl CubeStagedAsyncCopyMatmulRoutine {
             shape((1, 1, 1), (1, 1), 4, double),
             shape((1, 2, 4), (1, 2), 2, double),
         ];
-        block_scaled::block_scaled_settings(hw, *self, &shapes, |microkernel| {
+        block_scaled::block_scaled_settings::<Self>(hw, &shapes, |microkernel| {
             CubeStagedAsyncCopyMatmulRoutineSettings {
                 microkernel,
                 cube_order: CubeOrder::RowMajor,
@@ -132,7 +132,7 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
     /// stages handed to the engine: whether it beats the units' loads moves with the box, by a few
     /// percent either way on an L4. A ring that prefetches through registers is not listed, which
     /// the engine refuses. None without a copy engine.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.unit_async_copy() {
             return Vec::new();
         }
@@ -162,7 +162,6 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
     }
 
     fn vectorize(
-        &self,
         microkernel: &CubeStagedMicrokernel,
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -171,7 +170,6 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeStagedMatmulRoutineBlueprint,
         grid: &Grid,
@@ -183,7 +181,6 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
     /// As [`CubeStagedMatmulRoutine`]'s, the copy engine checked against the ring, then against
     /// the widths the blueprint binds.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,

@@ -74,8 +74,8 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> RoutinePlan<R, M, SM> {
             R::ROWS_KIND,
         )?;
         let (blueprint, grid) = match &self.settings {
-            None => self.routine.prepare_first_served(hw, &tensors.problem())?,
-            Some(settings) => self.routine.prepare(hw, &tensors.problem(), settings)?,
+            None => R::prepare_first_served(hw, &tensors.problem())?,
+            Some(settings) => R::prepare(hw, &tensors.problem(), settings)?,
         };
         self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(destination.clone())

@@ -13,8 +13,10 @@ pub fn select(strategy: RandomStrategy, hw: &Hardware) -> RandomKernel {
     match (strategy, hw.properties.hardware.num_cpu_cores) {
         (RandomStrategy::Specific(kernel), _) => kernel,
         (RandomStrategy::Selected, Some(_)) => {
-            RandomKernel::Unit(UnitRandomRoutine.settings(hw)[0])
+            RandomKernel::Unit(UnitRandomRoutine::settings(hw)[0])
         }
-        (RandomStrategy::Selected, None) => RandomKernel::Plane(PlaneRandomRoutine.settings(hw)[0]),
+        (RandomStrategy::Selected, None) => {
+            RandomKernel::Plane(PlaneRandomRoutine::settings(hw)[0])
+        }
     }
 }

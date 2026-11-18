@@ -444,14 +444,7 @@ impl<L: AttentionLaunch> Forward<L> {
     /// The routine's lead, the first setting it lists on the test device, on each of `cases`;
     /// none where the device lists none.
     pub(crate) fn at_its_lead(&self, cases: &[AttentionCase]) -> Vec<ForwardCase<SettingsOf<L>>> {
-        self.at(
-            self.launched
-                .routine()
-                .settings(&self.hw)
-                .into_iter()
-                .take(1),
-            cases,
-        )
+        self.at(L::Routine::settings(&self.hw).into_iter().take(1), cases)
     }
 
     /// Every setting the routine lists on the test device, on each of `cases`.
@@ -459,7 +452,7 @@ impl<L: AttentionLaunch> Forward<L> {
         &self,
         cases: &[AttentionCase],
     ) -> Vec<ForwardCase<SettingsOf<L>>> {
-        self.at(self.launched.routine().settings(&self.hw), cases)
+        self.at(L::Routine::settings(&self.hw), cases)
     }
 
     /// Each of `settings` on each of `cases`.
@@ -481,7 +474,7 @@ impl<L: AttentionLaunch> Forward<L> {
 
     /// The settings the routine lists on the test device.
     pub(crate) fn settings(&self) -> Vec<SettingsOf<L>> {
-        self.launched.routine().settings(&self.hw)
+        L::Routine::settings(&self.hw)
     }
 }
 

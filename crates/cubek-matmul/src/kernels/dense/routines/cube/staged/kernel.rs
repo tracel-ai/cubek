@@ -40,15 +40,15 @@ pub fn cube_staged_matmul_kernel<
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
     let dest = O::serve::<E, VO>(out, &partitioning);
-    let c = dest.tile();
 
     for cube in &partitioning {
         let b = b.at(&cube);
-        cube_staged_microkernel::<EA>(
+        cube_staged_microkernel::<EA, O::Served<E>>(
             cube.walk_within(&b),
             &a.at(&cube),
             &b,
-            &c.at(&cube),
+            &dest,
+            &cube,
             walk,
             storage.clone(),
         );

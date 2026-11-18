@@ -214,17 +214,12 @@ impl RoutedMatmulTensors {
         routine.launch_indexed_into(hw, &self.client, lhs, stack, table, bound, settings)
     }
 
-    /// Whether `routine` at `settings` prepares the product on `hw`, of a row at least.
+    /// Whether `R` at `settings` prepares the product on `hw`, of a row at least.
     ///
     /// # Errors
     ///
     /// As [`launch`](Self::launch).
-    pub fn served_by<Mk, SM, R>(
-        &self,
-        hw: &Hardware,
-        routine: &R,
-        settings: &R::Settings,
-    ) -> Result<(), Refusal>
+    pub fn served_by<Mk, SM, R>(&self, hw: &Hardware, settings: &R::Settings) -> Result<(), Refusal>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -233,9 +228,7 @@ impl RoutedMatmulTensors {
         // Left unwritten: preparing a launch reads only how its output lies.
         let out = self.batched(&self.output());
         let tensors = MatmulTensors::indexed(&self.client, lhs, stack, table, out, R::ROWS_KIND)?;
-        routine
-            .prepare(hw, &tensors.problem(), settings)
-            .map(|_| ())
+        R::prepare(hw, &tensors.problem(), settings).map(|_| ())
     }
 
     /// The same product with `routes` in place of the call's.

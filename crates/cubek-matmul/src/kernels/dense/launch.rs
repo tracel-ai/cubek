@@ -80,7 +80,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         settings: &Self::Settings,
     ) -> Result<TensorHandle, Refusal> {
         let tensors = MatmulTensors::new(client, lhs, rhs, Self::ROWS_KIND)?;
-        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
+        let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
         self.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(tensors.into_out().expect(ALLOCATED))
     }
@@ -104,7 +104,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         Self: Sized,
     {
         let tensors = MatmulTensors::sink(client, lhs, rhs, Self::ROWS_KIND)?;
-        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
+        let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
         Ok(MatmulSinkLaunch::new(self, tensors, blueprint, grid))
     }
 
@@ -125,7 +125,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         settings: &Self::Settings,
     ) -> Result<(), Refusal> {
         let tensors = MatmulTensors::writing_into(client, lhs, rhs, out, Self::ROWS_KIND)?;
-        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
+        let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
         self.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(())
     }
@@ -153,7 +153,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         settings: &Self::Settings,
     ) -> Result<(), Refusal> {
         let tensors = MatmulTensors::indexed(client, lhs, rhs, table, out, Self::ROWS_KIND)?;
-        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
+        let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
         self.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(())
     }
@@ -173,7 +173,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         rhs: StoredTensor,
     ) -> Result<TensorHandle, Refusal> {
         let tensors = MatmulTensors::new(client, lhs, rhs, Self::ROWS_KIND)?;
-        let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
+        let (blueprint, grid) = Self::prepare_first_served(hw, &tensors.problem())?;
         self.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(tensors.into_out().expect(ALLOCATED))
     }
@@ -195,7 +195,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         out: ElemType,
     ) -> Result<TensorHandle, Refusal> {
         let tensors = MatmulTensors::written_in(client, lhs, rhs, out)?;
-        let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
+        let (blueprint, grid) = Self::prepare_first_served(hw, &tensors.problem())?;
         self.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(tensors.into_out().expect(ALLOCATED))
     }

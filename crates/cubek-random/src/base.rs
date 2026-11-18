@@ -162,12 +162,8 @@ mod tests {
             f32::elem_type_native(),
             1,
         );
-        let (plane, _) = PlaneRandomRoutine
-            .prepare_first_served(&hw, tensor.problem())
-            .unwrap();
-        let (unit, _) = UnitRandomRoutine
-            .prepare_first_served(&hw, tensor.problem())
-            .unwrap();
+        let (plane, _) = PlaneRandomRoutine::prepare_first_served(&hw, tensor.problem()).unwrap();
+        let (unit, _) = UnitRandomRoutine::prepare_first_served(&hw, tensor.problem()).unwrap();
         assert!(
             plane.partitioning.overhangs(VALUES) && unit.partitioning.overhangs(VALUES),
             "{shape:?} splits evenly into runs on this machine; pick a shape that overhangs"
@@ -194,8 +190,8 @@ mod tests {
     fn specific_strategies() -> [RandomStrategy; 2] {
         let hw = Hardware::from_client(&cubecl::test_device().client());
         [
-            RandomStrategy::Specific(RandomKernel::Plane(PlaneRandomRoutine.settings(&hw)[0])),
-            RandomStrategy::Specific(RandomKernel::Unit(UnitRandomRoutine.settings(&hw)[0])),
+            RandomStrategy::Specific(RandomKernel::Plane(PlaneRandomRoutine::settings(&hw)[0])),
+            RandomStrategy::Specific(RandomKernel::Unit(UnitRandomRoutine::settings(&hw)[0])),
         ]
     }
 

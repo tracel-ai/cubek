@@ -28,16 +28,15 @@ where
     /// The most problems held: a model's handful of shapes per winner.
     pub const CAPACITY: usize = 16;
 
-    /// The launch `routine` prepares for `problem` at `settings` on `hw`, or why it declines it:
-    /// the one held for `problem`, or prepared now and held. The caller hands the same routine,
-    /// setting and device every time.
+    /// The launch `R` prepares for `problem` at `settings` on `hw`, or why it declines it: the one
+    /// held for `problem`, or prepared now and held. The caller hands the same setting and device
+    /// every time.
     ///
     /// # Errors
     ///
     /// Why the routine cannot run `problem` there, as [`prepare`](Routine::prepare) says.
     pub fn prepare(
         &self,
-        routine: &R,
         hw: &Hardware,
         problem: &R::Problem,
         settings: &R::Settings,
@@ -46,7 +45,7 @@ where
         if let Some((_, prepared)) = held.iter().find(|(held, _)| held == problem) {
             return prepared.clone();
         }
-        let prepared = routine.prepare(hw, problem, settings);
+        let prepared = R::prepare(hw, problem, settings);
         if held.len() == Self::CAPACITY {
             drop(held.remove(0));
         }

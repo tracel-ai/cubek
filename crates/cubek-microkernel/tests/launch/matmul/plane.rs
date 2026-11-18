@@ -1,13 +1,14 @@
 //! The plane matmul microkernels on one work item.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal, Vectorization};
+use cubecl::tile::launch::{Delivery, Grid, Refusal, Vectorization};
 use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubecl::tile::{
     Launcher, Partitioning, Region, Scratch, Semiring, SoftwareMatmul, Space, StageStorage, Stages,
     Tile, TileTensor,
 };
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::matmul::cube::CubeStagedMicrokernelSettings;
 use cubek_microkernel::matmul::plane::{
     PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
     PlaneShuffleMicrokernelSettings, plane_fragment_microkernel, plane_shuffle_microkernel,
@@ -70,13 +71,10 @@ impl PlaneFragmentLaunch {
             ),
             plane_width as usize,
         );
-        let storage = microkernel.instruction.stage_layout(None)?.storage(
-            stage.space(),
-            microkernel.instruction.stage_tile(
-                &[],
-                MatmulDimensions::MNK,
-                microkernel.settings.rows_along,
-            ),
+        let storage = microkernel.stage_storage(
+            CubeStagedMicrokernelSettings::SWIZZLED,
+            Delivery::SyncPerUnit,
+            &stage,
         );
         Ok(Self {
             microkernel,

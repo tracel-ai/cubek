@@ -1,7 +1,8 @@
 use crate::matmul::MatmulWorkItem;
+use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use core::num::NonZeroUsize;
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{FragmentSource, Instruction, Scratch, ShapedInstruction};
+use cubecl::tile::{FragmentSource, ProductStep, Scratch};
 use cubek_std::Hardware;
 
 /// The shape of the tile a plane holds along the queries and along a stage of keys, in units of the
@@ -38,62 +39,56 @@ pub enum ScoreHolder {
 }
 
 impl ScoreHolder {
-    /// The tile's pick for the sum a plane keeps here, `item` over the plane's `tile`: drained
-    /// into a window, the sum of its operands' values; held in registers, a sum contracted again
-    /// ([`Instruction::for_stage_accumulator`]), which the kernel opens against its lhs.
-    pub(crate) fn sum_pick(
+    /// The plane holding the sum kept here, `item` over the plane's `tile`, its settings `grid`:
+    /// drained into a window, the sum of its operands' values; held in registers, a sum kept for
+    /// the next product ([`PlaneFragmentMicrokernel::keeping`]), which the kernel opens against
+    /// its lhs.
+    pub(crate) fn sum_plane(
         self,
         hw: &Hardware,
         item: &MatmulWorkItem,
+        grid: PlaneFragmentMicrokernelSettings,
         tile: [usize; 3],
-    ) -> Option<ShapedInstruction> {
-        let (lhs, rhs) = (
-            FragmentSource::Values(item.elements.lhs),
-            FragmentSource::Values(item.elements.rhs),
-        );
-        let (device, target) = (&hw.properties, &hw.target);
+    ) -> Option<PlaneFragmentMicrokernel> {
+        let lhs = FragmentSource::Values(item.elements.lhs);
+        let step = ProductStep {
+            shape: tile,
+            holder: ComputeScope::Plane,
+            lhs,
+            rhs: FragmentSource::Values(item.elements.rhs),
+            sum: item.sum,
+        };
         match self {
-            ScoreHolder::Window => Instruction::for_accumulator(
-                device,
-                target,
-                ComputeScope::Plane,
-                lhs,
-                rhs,
-                item.sum,
-                tile,
-            ),
+            ScoreHolder::Window => PlaneFragmentMicrokernel::draining(hw, item, grid, step),
             ScoreHolder::Fragments => {
-                Instruction::for_stage_accumulator(device, target, lhs, lhs, item.sum, tile)
+                PlaneFragmentMicrokernel::keeping(hw, item, grid, ProductStep { rhs: lhs, ..step })
             }
         }
     }
 
-    /// The tile's pick for a product that reads the sum kept here as its `A`, `item` over the
-    /// plane's `tile`: out of the window, cast to the operands' element; held in registers, runs
-    /// of `kept`'s cells as they lie ([`FragmentSource::Fragments`]).
-    pub(crate) fn reader_pick(
+    /// The plane of a product that reads the sum `kept` holds here as its `A`, `item` over the
+    /// plane's `tile`, its settings `grid`: out of the window, cast to the operands' element; held
+    /// in registers, runs of `kept`'s cells as they lie ([`PlaneFragmentMicrokernel::kept_sum`]).
+    pub(crate) fn reader_plane(
         self,
         hw: &Hardware,
-        kept: ShapedInstruction,
+        kept: &PlaneFragmentMicrokernel,
         item: &MatmulWorkItem,
+        grid: PlaneFragmentMicrokernelSettings,
         tile: [usize; 3],
-    ) -> Option<ShapedInstruction> {
+    ) -> Option<PlaneFragmentMicrokernel> {
         let lhs = match self {
             ScoreHolder::Window => FragmentSource::Values(item.elements.lhs),
-            ScoreHolder::Fragments => FragmentSource::Fragments {
-                instruction: kept.instruction,
-                cell: kept.cell(),
-            },
+            ScoreHolder::Fragments => kept.kept_sum(),
         };
-        Instruction::for_accumulator(
-            &hw.properties,
-            &hw.target,
-            ComputeScope::Plane,
+        let step = ProductStep {
+            shape: tile,
+            holder: ComputeScope::Plane,
             lhs,
-            FragmentSource::Values(item.elements.rhs),
-            item.sum,
-            tile,
-        )
+            rhs: FragmentSource::Values(item.elements.rhs),
+            sum: item.sum,
+        };
+        PlaneFragmentMicrokernel::draining(hw, item, grid, step)
     }
 }
 

@@ -141,9 +141,7 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
                 .map(|()| destination),
             None => {
                 MatmulTensors::written_in(&call.client, lhs, rhs, call.out).and_then(|tensors| {
-                    let (blueprint, grid) =
-                        self.routine
-                            .prepare(&self.hw, &tensors.problem(), settings)?;
+                    let (blueprint, grid) = R::prepare(&self.hw, &tensors.problem(), settings)?;
                     self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
                     Ok(tensors
                         .into_out()
@@ -269,7 +267,7 @@ mod tests {
                 k: 16,
             }],
         );
-        let settings = CubeShuffleMatmulRoutine.packed_settings(&hw);
+        let settings = CubeShuffleMatmulRoutine::packed_settings(&hw);
         assert!(
             settings
                 .iter()

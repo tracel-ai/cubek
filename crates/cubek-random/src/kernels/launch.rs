@@ -40,7 +40,7 @@ pub fn launch_random_routine<R: RandomRoutine, D: Distribution>(
     distribution: D,
     seeds: SeedsLaunch,
 ) -> Result<(), Refusal> {
-    let (blueprint, grid) = routine.prepare(hw, tensor.problem(), settings)?;
+    let (blueprint, grid) = R::prepare(hw, tensor.problem(), settings)?;
     routine.dispatch::<D>(tensor, distribution.args(), seeds, blueprint, grid);
     Ok(())
 }

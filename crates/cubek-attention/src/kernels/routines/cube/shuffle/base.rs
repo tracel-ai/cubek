@@ -60,9 +60,9 @@ impl Routine for CubeShuffleAttentionRoutine {
     /// Its microkernel's settings over plane shuffles
     /// ([`CubeAttentionMicrokernelSettings::listed`]) in query order, then its microkernel's lead
     /// with the boxes taken last first.
-    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeAttentionMicrokernelSettings::SHUFFLE
-            .listed()
+            .listed(hw)
             .into_iter()
             .map(|microkernel| Self::Settings {
                 microkernel,
@@ -76,7 +76,6 @@ impl Routine for CubeShuffleAttentionRoutine {
     }
     /// Nothing of its own: it walks cubes, and its microkernel makes every access.
     fn vectorize(
-        &self,
         microkernel: &CubeAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
@@ -86,7 +85,6 @@ impl Routine for CubeShuffleAttentionRoutine {
 
     /// Nothing of its own: the cube microkernel places the staging and its planes the work.
     fn estimate(
-        &self,
         problem: &AttentionRoutineProblem,
         blueprint: &CubeShuffleAttentionRoutineBlueprint,
         grid: &Grid,
@@ -105,7 +103,6 @@ impl Routine for CubeShuffleAttentionRoutine {
     /// device's plane, and the shared memory the cube microkernel asks for, the cubes taking the
     /// boxes in the settings' order.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
@@ -129,7 +126,7 @@ impl Routine for CubeShuffleAttentionRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(
             hw,
             problem,
@@ -220,10 +217,12 @@ mod tests {
     #[test]
     fn every_setting_prepares_where_planes_run() {
         for hw in [devices::m2_pro(), devices::h100()] {
-            for (position, settings) in CubeShuffleAttentionRoutine.settings(&hw).iter().enumerate()
+            for (position, settings) in CubeShuffleAttentionRoutine::settings(&hw)
+                .iter()
+                .enumerate()
             {
                 for problem in problems() {
-                    let prepared = CubeShuffleAttentionRoutine.prepare(&hw, &problem, settings);
+                    let prepared = CubeShuffleAttentionRoutine::prepare(&hw, &problem, settings);
                     let outgrown = matches!(
                         prepared,
                         Err(Refusal::SharedMemoryPastDevice { .. } | Refusal::CubePastDevice { .. })
@@ -242,9 +241,9 @@ mod tests {
     #[test]
     fn every_setting_declines_without_a_plane_width() {
         for hw in [devices::wgpu_no_subgroups(), devices::rdna_range()] {
-            for settings in CubeShuffleAttentionRoutine.settings(&devices::m2_pro()) {
+            for settings in CubeShuffleAttentionRoutine::settings(&devices::m2_pro()) {
                 for problem in problems() {
-                    let declined = CubeShuffleAttentionRoutine.prepare(&hw, &problem, &settings);
+                    let declined = CubeShuffleAttentionRoutine::prepare(&hw, &problem, &settings);
                     assert!(declined.is_err(), "{settings} on {hw:?}: {declined:?}");
                 }
             }
@@ -260,10 +259,10 @@ mod tests {
             cache: AttentionCacheLayout::Pages { page_size: 64 },
             ..decode
         };
-        let settings = &CubeShuffleAttentionRoutine.settings(&devices::m2_pro())[0];
-        let (blueprint, _) = CubeShuffleAttentionRoutine
-            .prepare(&devices::m2_pro(), &paged, settings)
-            .expect("the lead prepares on the M2");
+        let settings = &CubeShuffleAttentionRoutine::settings(&devices::m2_pro())[0];
+        let (blueprint, _) =
+            CubeShuffleAttentionRoutine::prepare(&devices::m2_pro(), &paged, settings)
+                .expect("the lead prepares on the M2");
         let keys = blueprint.microkernel.seq_kv();
         assert_eq!(
             blueprint.microkernel.page_steps.map(|steps| steps.get()),

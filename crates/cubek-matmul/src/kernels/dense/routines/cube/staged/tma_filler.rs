@@ -109,7 +109,7 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
     /// projections of Qwen3-8B want: its output projection takes 73.7 µs against the deep box's
     /// 86.0, its down projection 184.3 against 227.3. One plane filling. None without a bulk
     /// tensor copy.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.bulk_tensor_copy() {
             return Vec::new();
         }
@@ -132,7 +132,6 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
     }
 
     fn vectorize(
-        &self,
         microkernel: &CubeStagedMicrokernel,
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -141,7 +140,6 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeStagedMatmulRoutineBlueprint,
         grid: &Grid,
@@ -153,7 +151,6 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
     /// As [`CubeStagedTmaMatmulRoutine`](crate::kernels::CubeStagedTmaMatmulRoutine)'s, its planes
     /// set aside where resolving admits them, launched beside the rest.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,

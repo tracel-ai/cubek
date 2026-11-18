@@ -50,7 +50,7 @@ impl Routine for CubeStagedInterpolateRoutine {
     type Partitioning = Partitioning;
 
     /// Four planes of two rows a cube by default, then one and two planes.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeInterpolateMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
@@ -64,7 +64,6 @@ impl Routine for CubeStagedInterpolateRoutine {
 
     /// Its blocks hand the microkernel a unit's channel run: the operands' lines divide it.
     fn vectorize(
-        &self,
         microkernel: &CubeInterpolateMicrokernel,
         partitioning: &Partitioning,
         vectorization: &mut Vectorization<InterpolateOperand>,
@@ -75,7 +74,6 @@ impl Routine for CubeStagedInterpolateRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &InterpolateRoutineProblem,
         settings: &Self::Settings,
@@ -92,7 +90,7 @@ impl Routine for CubeStagedInterpolateRoutine {
             &settings.microkernel,
         )?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let width = problem.width(hw, &partitioning, vectorization);
         let run = geometry.channel_block;
         let padded =
@@ -123,7 +121,6 @@ impl Routine for CubeStagedInterpolateRoutine {
     }
 
     fn estimate(
-        &self,
         _problem: &InterpolateRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,

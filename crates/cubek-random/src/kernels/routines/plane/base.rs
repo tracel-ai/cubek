@@ -47,7 +47,7 @@ impl Routine for PlaneRandomRoutine {
     /// Eight planes a cube by default, then four and sixteen, of those a cube of the device
     /// holds; the fullest cube it holds where it holds none of them, as a CPU runtime of few
     /// cores, where a plane is one unit.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         let fit = hw.full_cube_planes();
         let held: Vec<usize> = [8, 4, 16]
             .into_iter()
@@ -69,7 +69,6 @@ impl Routine for PlaneRandomRoutine {
 
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &PlaneRandomMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<()>,
@@ -78,7 +77,6 @@ impl Routine for PlaneRandomRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &RandomRoutineProblem,
         settings: &Self::Settings,
@@ -111,7 +109,6 @@ impl Routine for PlaneRandomRoutine {
     }
 
     fn estimate(
-        &self,
         _problem: &RandomRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,

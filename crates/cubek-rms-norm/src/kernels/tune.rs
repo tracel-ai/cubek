@@ -283,8 +283,7 @@ impl RmsNormRoutineCandidate<CubeGroupsRmsNormRoutine> {
 impl<R: Routine + Copy> RmsNormRoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, as candidates of the autotune, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        routine
-            .settings(hw)
+        R::settings(hw)
             .into_iter()
             .map(|settings| Self::new(routine, settings, hw))
             .collect()
@@ -403,17 +402,14 @@ where
         &self,
         problem: &RmsNormRoutineProblem,
     ) -> Result<(RmsNormBlueprint<M>, Grid), Refusal> {
-        self.prepared
-            .prepare(&self.routine, &self.hw, problem, &self.settings)
+        self.prepared.prepare(&self.hw, problem, &self.settings)
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device. Not held: a key's problem places the candidate in a
     /// round, and may never be launched.
     fn prepared(&self, key: &RmsNormKey) -> Option<(RmsNormBlueprint<M>, Grid)> {
-        self.routine
-            .prepare(&self.hw, &RmsNormRoutineProblem::from(key), &self.settings)
-            .ok()
+        R::prepare(&self.hw, &RmsNormRoutineProblem::from(key), &self.settings).ok()
     }
 
     /// The norm of `call` at this candidate's setting.

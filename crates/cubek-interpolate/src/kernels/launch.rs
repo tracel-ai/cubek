@@ -40,7 +40,7 @@ pub fn launch_interpolate_routine<R: InterpolateRoutine>(
     tensors: &InterpolateTensors,
     settings: &R::Settings,
 ) -> Result<(), Refusal> {
-    let (blueprint, grid) = routine.prepare(hw, tensors.problem(), settings)?;
+    let (blueprint, grid) = R::prepare(hw, tensors.problem(), settings)?;
     match tensors.problem().forward.options.mode {
         InterpolateMode::Nearest(_) => routine.dispatch::<NearestFilter>(tensors, blueprint, grid),
         InterpolateMode::Bilinear => routine.dispatch::<BilinearFilter>(tensors, blueprint, grid),

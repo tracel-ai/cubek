@@ -12,8 +12,6 @@ pub mod attention;
 pub mod attention_backward;
 #[cfg(feature = "interpolate")]
 pub mod interpolate;
-#[cfg(feature = "linear-recurrence")]
-pub mod linear_recurrence;
 #[cfg(any(feature = "matmul", feature = "attention"))]
 mod lines;
 #[cfg(feature = "matmul")]

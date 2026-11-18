@@ -64,9 +64,7 @@ pub trait AttentionLaunch {
         hw: &Hardware,
         tensors: AttentionTensors,
     ) -> Result<TensorHandle, Refusal> {
-        let lead = self
-            .routine()
-            .settings(hw)
+        let lead = Self::Routine::settings(hw)
             .into_iter()
             .next()
             .ok_or(ROUTINE_LISTS_NO_SETTING)?;
@@ -95,7 +93,7 @@ where
         tensors: AttentionTensors,
         settings: &R::Settings,
     ) -> Result<TensorHandle, Refusal> {
-        let (blueprint, grid) = self.0.prepare(hw, &tensors.problem(), settings)?;
+        let (blueprint, grid) = R::prepare(hw, &tensors.problem(), settings)?;
         let binding = tensors.bind(&blueprint, &grid);
         self.0.dispatch(&tensors, binding, blueprint, grid);
         Ok(tensors.into_out())
@@ -154,10 +152,10 @@ mod tests {
     /// owner down the walk set its own part, and the cubes perform at least what the problem asks.
     #[test]
     fn every_routine_estimates_every_setting_whole() {
-        assert_every_estimate_is_whole(UnitAttentionRoutine);
-        assert_every_estimate_is_whole(CubeStagedAttentionRoutine);
-        assert_every_estimate_is_whole(HypercubeLastArrivalShuffleAttentionRoutine::new());
-        assert_every_estimate_is_whole(HypercubeShufflePartialAttentionRoutine::new());
+        assert_every_estimate_is_whole::<_, _, UnitAttentionRoutine>();
+        assert_every_estimate_is_whole::<_, _, CubeStagedAttentionRoutine>();
+        assert_every_estimate_is_whole::<_, _, HypercubeLastArrivalShuffleAttentionRoutine>();
+        assert_every_estimate_is_whole::<_, _, HypercubeShufflePartialAttentionRoutine>();
     }
 
     /// An M2 Pro offering the square `8×8×8` instruction for `f16` and `f32` summed in `f32`.
@@ -196,7 +194,7 @@ mod tests {
         })
     }
 
-    fn assert_every_estimate_is_whole<M, SM, R>(routine: R)
+    fn assert_every_estimate_is_whole<M, SM, R>()
     where
         R: Routine<
                 Problem = AttentionRoutineProblem,
@@ -206,14 +204,14 @@ mod tests {
     {
         let hw = &m2_pro();
         let mut prepared = 0;
-        for settings in routine.settings(hw) {
+        for settings in R::settings(hw) {
             for problem in problems() {
-                let Ok((blueprint, grid)) = routine.prepare(hw, &problem, &settings) else {
+                let Ok((blueprint, grid)) = R::prepare(hw, &problem, &settings) else {
                     continue;
                 };
                 prepared += 1;
                 let mut estimate = KernelEstimate::from(&grid);
-                routine.estimate(&problem, &blueprint, &grid, &mut estimate);
+                R::estimate(&problem, &blueprint, &grid, &mut estimate);
                 let (staging, cubes) = (estimate.staging.as_ref(), estimate.cubes);
                 assert!(estimate.work.is_some(), "{settings}: no work");
                 let staging = staging.unwrap_or_else(|| panic!("{settings}: no staging"));

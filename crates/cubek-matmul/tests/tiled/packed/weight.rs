@@ -20,11 +20,14 @@ fn a_transposed_packed_matrix_is_read_as_the_matrix_it_views() {
         .k(512);
     let plane = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
     plane.check_some(plane.at(
-        PlaneShuffleMatmulRoutine.packed_settings(),
+        PlaneShuffleMatmulRoutine::packed_settings(),
         core::slice::from_ref(&head),
     ));
     let cube = ByRoutine::new(CubeShuffleMatmulRoutine, Declines::AsItStates);
-    cube.check(cube.at(CubeShuffleMatmulRoutine.packed_settings(cube.hw()), &[head]));
+    cube.check(cube.at(
+        CubeShuffleMatmulRoutine::packed_settings(cube.hw()),
+        &[head],
+    ));
 }
 
 /// The cube shuffle's split of `K` against an NVFP4 weight, as a decode step runs a projection:
