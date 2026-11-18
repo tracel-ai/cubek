@@ -44,7 +44,7 @@ pub struct RmsNormRoutineProblem {
     pub placements: RmsNormOperands<Placement>,
     /// How the output's rows are stored.
     pub store: RowStore,
-    /// Whether the rows are gated, and where the gate enters.
+    /// The gate operand, where the rows are gated: where it enters and where it lies.
     pub gate: Option<RmsNormGateOperand>,
 }
 
