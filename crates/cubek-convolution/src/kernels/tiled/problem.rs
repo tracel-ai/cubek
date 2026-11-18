@@ -208,7 +208,10 @@ impl ConvProblem {
     /// Whether a position can read before the input's start.
     pub fn underflows(&self) -> bool {
         self.roles().gather == ConvGather::Gradient
-            || self.spatial.iter().any(|dim| dim.window.padding > 0)
+            || self
+                .spatial
+                .iter()
+                .any(|conv_dim| conv_dim.window.padding > 0)
     }
 
     /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: a channels last
@@ -219,7 +222,7 @@ impl ConvProblem {
         let spatial = roles
             .spatial()
             .zip(&self.spatial)
-            .map(|([out, tap], dim)| roles.gather.map(&dim.window, out, tap));
+            .map(|([out, tap], conv_dim)| roles.gather.map(&conv_dim.window, out, tap));
         let maps: Vec<_> = [PhysicalAxisMap::of(B)]
             .into_iter()
             .chain(spatial)
@@ -242,14 +245,18 @@ impl EstimatedProblem for ConvProblem {
         let (spatial_in, spatial_out) = self
             .spatial
             .iter()
-            .map(|dim| gather.window_ends(dim))
+            .map(|conv_dim| gather.window_ends(conv_dim))
             .unzip();
         ConvCost {
             batch: self.batch,
             channels_in: self.channels_in,
             spatial_in,
             channels_out: self.channels_out,
-            kernel: self.spatial.iter().map(|dim| dim.kernel).collect(),
+            kernel: self
+                .spatial
+                .iter()
+                .map(|conv_dim| conv_dim.kernel)
+                .collect(),
             spatial_out,
             bias_elems: 0,
             elems: MatmulGlobalElems {
@@ -286,7 +293,7 @@ mod tests {
                 element: Conv2dElement::F32,
             });
             let spatial: Vec<_> = (problem.spatial.iter())
-                .map(|dim| (dim.gathered, dim.kernel, dim.out))
+                .map(|conv_dim| (conv_dim.gathered, conv_dim.kernel, conv_dim.out))
                 .collect();
             let expected = match operation {
                 BackwardData => [(8, 3, 10), (7, 2, 8)],

@@ -120,7 +120,8 @@ impl ConvTensors {
         }
         let roles = ConvRoles::of(operation, window.len())?;
         let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);
-        let channels = |axis| (axis == roles.inner.lhs).then_some(input.shape[roles.dims + 1]);
+        let channels =
+            |axis| (axis == roles.inner.lhs).then_some(input.shape[roles.spatial_dims + 1]);
         let checks = [
             (CI, ConvDecline::Groups, channels(CI)),
             (CO, ConvDecline::OutChannels, channels(CO)),
@@ -152,17 +153,18 @@ impl ConvTensors {
     /// yields.
     fn check_window(&self) -> Result<(), Refusal> {
         let problem = self.problem();
-        if problem.spatial.iter().any(|dim| dim.kernel == 0) {
+        if problem.spatial.iter().any(|conv_dim| conv_dim.kernel == 0) {
             return Err(ConvDecline::KernelEmpty.into());
         }
-        let steps_zero = |dim: &ConvDim| dim.window.stride == 0 || dim.window.dilation == 0;
+        let steps_zero =
+            |conv_dim: &ConvDim| conv_dim.window.stride == 0 || conv_dim.window.dilation == 0;
         if problem.spatial.iter().any(steps_zero) {
             return Err(ConvDecline::WindowStepZero.into());
         }
         let roles = ConvRoles::of(self.operation, self.window.len())?;
-        let states_output = |dim: &ConvDim| {
-            let (input, output) = roles.gather.window_ends(dim);
-            dim.window.output(input, dim.kernel) == output
+        let states_output = |conv_dim: &ConvDim| {
+            let (input, output) = roles.gather.window_ends(conv_dim);
+            conv_dim.window.output(input, conv_dim.kernel) == output
         };
         match problem.spatial.iter().all(states_output) {
             true => Ok(()),

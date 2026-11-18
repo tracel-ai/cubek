@@ -87,10 +87,10 @@ impl ConvGather {
     }
 
     /// The window's input and output extents along `dim`.
-    pub fn window_ends(self, dim: &ConvDim) -> (usize, usize) {
+    pub fn window_ends(self, conv_dim: &ConvDim) -> (usize, usize) {
         match self {
-            Self::Window => (dim.gathered, dim.out),
-            Self::Gradient => (dim.out, dim.gathered),
+            Self::Window => (conv_dim.gathered, conv_dim.out),
+            Self::Gradient => (conv_dim.out, conv_dim.gathered),
         }
     }
 }
@@ -149,31 +149,35 @@ pub enum ViewOrder {
 }
 
 impl ViewOrder {
-    /// The dim of a buffer over `spatial` spatial dims that each dim of its view reads.
-    pub fn dims(self, spatial: usize) -> Vec<usize> {
+    /// The dim of a buffer over `spatial_dims` spatial dims that each dim of its view reads.
+    pub fn buffer_dims(self, spatial_dims: usize) -> Vec<usize> {
         match self {
-            Self::Stored => (0..spatial + 2).collect(),
-            Self::ChannelsOutLast => (1..spatial + 2).chain([0]).collect(),
-            Self::ChannelsOutAfterTaps => (1..=spatial).chain([0, spatial + 1]).collect(),
+            Self::Stored => (0..spatial_dims + 2).collect(),
+            Self::ChannelsOutLast => (1..spatial_dims + 2).chain([0]).collect(),
+            Self::ChannelsOutAfterTaps => (1..=spatial_dims).chain([0, spatial_dims + 1]).collect(),
         }
     }
 
     /// `values`, one per dim of a buffer, in the order of its view.
-    fn view(self, spatial: usize, values: &[usize]) -> Vec<usize> {
-        let dims = self.dims(spatial);
-        dims.into_iter().map(|dim| values[dim]).collect()
+    fn view(self, spatial_dims: usize, values: &[usize]) -> Vec<usize> {
+        let buffer_dims = self.buffer_dims(spatial_dims);
+        buffer_dims.into_iter().map(|dim| values[dim]).collect()
     }
 
     /// `tensor` with its dims listed in this order.
-    fn permute(self, mut tensor: TensorBinding, spatial: usize) -> Result<TensorBinding, Refusal> {
+    fn permute(
+        self,
+        mut tensor: TensorBinding,
+        spatial_dims: usize,
+    ) -> Result<TensorBinding, Refusal> {
         if self == Self::Stored {
             return Ok(tensor);
         }
         if tensor.tiling.is_tiled() {
             return Err(ConvDecline::PermutedTiled.into());
         }
-        tensor.shape = Shape::from(self.view(spatial, &tensor.shape));
-        tensor.strides = Strides::new(&self.view(spatial, &tensor.strides));
+        tensor.shape = Shape::from(self.view(spatial_dims, &tensor.shape));
+        tensor.strides = Strides::new(&self.view(spatial_dims, &tensor.strides));
         Ok(tensor)
     }
 }
@@ -182,7 +186,7 @@ impl ViewOrder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConvRoles {
     /// The spatial dims of the convolution.
-    pub dims: usize,
+    pub spatial_dims: usize,
     pub free: ConvFreeAxes,
     pub contracted: ConvContractedAxes,
     /// The axes of the space, the rows before the columns: the planes of a cube take them in the
@@ -206,11 +210,11 @@ pub struct ConvRoles {
     pub extent_mismatch: ConvDecline,
 }
 
-/// The out and tap axes of a convolution over `dims` spatial dims, and where their extents sit in
+/// The out and tap axes of a convolution over `spatial_dims` spatial dims, and where their extents sit in
 /// the operands' views.
 #[derive(Debug)]
 struct SpatialAxes {
-    dims: usize,
+    spatial_dims: usize,
     outs: Vec<Axis>,
     taps: Vec<Axis>,
 }
@@ -221,14 +225,20 @@ fn joined(parts: &[&[Axis]]) -> Vec<Axis> {
 }
 
 impl SpatialAxes {
-    fn new(dims: usize) -> Self {
-        let (outs, taps) = ConvAxis::spatial(dims).map(|[out, tap]| (out, tap)).unzip();
-        Self { dims, outs, taps }
+    fn new(spatial_dims: usize) -> Self {
+        let (outs, taps) = ConvAxis::spatial(spatial_dims)
+            .map(|[out, tap]| (out, tap))
+            .unzip();
+        Self {
+            spatial_dims,
+            outs,
+            taps,
+        }
     }
 
     /// The channels dim of `operand`'s view, after the batch or filters and the spatial dims.
     fn channels(&self, operand: MatmulOperand) -> ViewDim {
-        ViewDim::at(operand, self.dims + 1)
+        ViewDim::at(operand, self.spatial_dims + 1)
     }
 
     /// The spatial dims of `operand`'s view, from `first`.
@@ -236,24 +246,24 @@ impl SpatialAxes {
         ViewRun {
             operand,
             first,
-            len: self.dims,
+            len: self.spatial_dims,
         }
     }
 }
 
 impl ConvRoles {
-    /// The roles `operation` gives the axes of the space of a convolution over `dims` spatial
+    /// The roles `operation` gives the axes of the space of a convolution over `spatial_dims` spatial
     /// dims.
     ///
     /// # Errors
     ///
     /// [`ConvDecline::NoSpatialDim`], for no spatial dim, and [`ConvDecline::Transposed`], for a
     /// transposed forward.
-    pub fn of(operation: ConvolutionOperation, dims: usize) -> Result<Self, Refusal> {
-        if dims == 0 {
+    pub fn of(operation: ConvolutionOperation, spatial_dims: usize) -> Result<Self, Refusal> {
+        if spatial_dims == 0 {
             return Err(ConvDecline::NoSpatialDim.into());
         }
-        let spatial = SpatialAxes::new(dims);
+        let spatial = SpatialAxes::new(spatial_dims);
         match operation {
             ConvolutionOperation::Forward => Ok(Self::forward(&spatial)),
             ConvolutionOperation::BackwardWeight => Ok(Self::backward_weight(&spatial)),
@@ -267,7 +277,7 @@ impl ConvRoles {
         let free = joined(&[&[B], &spatial.outs, &[CO]]);
         let contracted = joined(&[&spatial.taps, &[CI]]);
         Self {
-            dims: spatial.dims,
+            spatial_dims: spatial.spatial_dims,
             space: joined(&[&free, &contracted]),
             free: ConvFreeAxes::split(&free),
             contracted: ConvContractedAxes::split(&contracted),
@@ -296,7 +306,7 @@ impl ConvRoles {
         let free = joined(&[&spatial.taps, &[CI, CO]]);
         let contracted = joined(&[&[B], &spatial.outs]);
         Self {
-            dims: spatial.dims,
+            spatial_dims: spatial.spatial_dims,
             space: joined(&[&contracted, &free]),
             free: ConvFreeAxes::split(&free),
             contracted: ConvContractedAxes::split(&contracted),
@@ -325,7 +335,7 @@ impl ConvRoles {
         let free = joined(&[&[B], &spatial.outs, &[CI]]);
         let contracted = joined(&[&spatial.taps, &[CO]]);
         Self {
-            dims: spatial.dims,
+            spatial_dims: spatial.spatial_dims,
             space: joined(&[&free, &contracted]),
             free: ConvFreeAxes::split(&free),
             contracted: ConvContractedAxes::split(&contracted),
@@ -351,7 +361,7 @@ impl ConvRoles {
 
     /// The spatial `[out, tap]` axis pairs, one per spatial dim of the gathered input.
     pub fn spatial(&self) -> impl Iterator<Item = [Axis; 2]> {
-        ConvAxis::spatial(self.dims)
+        ConvAxis::spatial(self.spatial_dims)
     }
 
     /// The axis a kernel leaves to its launch: the batch where it is a free axis. No vectorization
@@ -391,8 +401,8 @@ impl ConvRoles {
     pub fn views(&self, shapes: &MatmulOperands<Vec<usize>>) -> MatmulOperands<Vec<usize>> {
         MatmulOperands {
             lhs: shapes.lhs.clone(),
-            rhs: self.rhs_order.view(self.dims, &shapes.rhs),
-            out: self.out_order.view(self.dims, &shapes.out),
+            rhs: self.rhs_order.view(self.spatial_dims, &shapes.rhs),
+            out: self.out_order.view(self.spatial_dims, &shapes.out),
         }
     }
 
@@ -409,8 +419,8 @@ impl ConvRoles {
                 strides[dim] = strides[dim + 1] * shape[dim + 1];
             }
             ElemAlignment::new(
-                &order.view(self.dims, shape),
-                &order.view(self.dims, &strides),
+                &order.view(self.spatial_dims, shape),
+                &order.view(self.spatial_dims, &strides),
             )
         };
         MatmulOperands {
@@ -453,7 +463,7 @@ impl ConvRoles {
     ///
     /// [`ConvDecline::PermutedTiled`], where the dims move and `rhs` is tiled.
     pub fn rhs_view(&self, rhs: TensorBinding) -> Result<TensorBinding, Refusal> {
-        self.rhs_order.permute(rhs, self.dims)
+        self.rhs_order.permute(rhs, self.spatial_dims)
     }
 
     /// `out`, a tensor of the operation's output in its own layout, with its dims listed in the
@@ -463,7 +473,7 @@ impl ConvRoles {
     ///
     /// [`ConvDecline::PermutedTiled`], where the dims move and `out` is tiled.
     pub fn out_view(&self, out: TensorBinding) -> Result<TensorBinding, Refusal> {
-        self.out_order.permute(out, self.dims)
+        self.out_order.permute(out, self.spatial_dims)
     }
 }
 
@@ -506,8 +516,8 @@ mod tests {
         assert_eq!(forward.space, [B, oh, ow, CO, rh, rw, CI]);
         assert_eq!(forward.lhs, [B, oh, ow, rh, rw, CI]);
         assert_eq!(forward.rhs, [CO, rh, rw, CI]);
-        assert_eq!(forward.rhs_order.dims(2), [0, 1, 2, 3]);
-        assert_eq!(forward.out_order.dims(2), [0, 1, 2, 3]);
+        assert_eq!(forward.rhs_order.buffer_dims(2), [0, 1, 2, 3]);
+        assert_eq!(forward.out_order.buffer_dims(2), [0, 1, 2, 3]);
         assert_eq!(
             forward.inner,
             MatmulOperands {
@@ -525,8 +535,8 @@ mod tests {
         assert_eq!(weight.space, [B, oh, ow, rh, rw, CI, CO]);
         assert_eq!(weight.lhs, [rh, rw, B, oh, ow, CI]);
         assert_eq!(weight.rhs, [B, oh, ow, CO]);
-        assert_eq!(weight.rhs_order.dims(2), [0, 1, 2, 3]);
-        assert_eq!(weight.out_order.dims(2), [1, 2, 3, 0]);
+        assert_eq!(weight.rhs_order.buffer_dims(2), [0, 1, 2, 3]);
+        assert_eq!(weight.out_order.buffer_dims(2), [1, 2, 3, 0]);
         assert_eq!(
             weight.inner,
             MatmulOperands {
@@ -544,8 +554,8 @@ mod tests {
         assert_eq!(data.space, [B, oh, ow, CI, rh, rw, CO]);
         assert_eq!(data.lhs, [B, oh, ow, rh, rw, CO]);
         assert_eq!(data.rhs, [rh, rw, CO, CI]);
-        assert_eq!(data.rhs_order.dims(2), [1, 2, 0, 3]);
-        assert_eq!(data.out_order.dims(2), [0, 1, 2, 3]);
+        assert_eq!(data.rhs_order.buffer_dims(2), [1, 2, 0, 3]);
+        assert_eq!(data.out_order.buffer_dims(2), [0, 1, 2, 3]);
         assert_eq!(
             data.inner,
             MatmulOperands {
@@ -563,21 +573,29 @@ mod tests {
     #[test]
     fn roles_of_any_spatial_count_name_each_axis_once() {
         for operation in OPERATIONS {
-            for dims in [1, 3] {
-                let roles = ConvRoles::of(operation, dims).expect("a served operation");
+            for spatial_dims in [1, 3] {
+                let roles = ConvRoles::of(operation, spatial_dims).expect("a served operation");
                 let space: HashSet<Axis> = roles.space.iter().copied().collect();
-                assert_eq!(space.len(), roles.space.len(), "{operation:?} {dims}");
-                assert_eq!(space.len(), 2 * dims + 3, "{operation:?} {dims}");
+                assert_eq!(
+                    space.len(),
+                    roles.space.len(),
+                    "{operation:?} {spatial_dims}"
+                );
+                assert_eq!(
+                    space.len(),
+                    2 * spatial_dims + 3,
+                    "{operation:?} {spatial_dims}"
+                );
                 let named: HashSet<Axis> = [&roles.lhs, &roles.rhs, &roles.free.in_order()]
                     .into_iter()
                     .flatten()
                     .copied()
                     .collect();
-                assert_eq!(named, space, "{operation:?} {dims}");
+                assert_eq!(named, space, "{operation:?} {spatial_dims}");
                 for order in [roles.rhs_order, roles.out_order] {
-                    let mut listed = order.dims(dims);
+                    let mut listed = order.buffer_dims(spatial_dims);
                     listed.sort_unstable();
-                    assert_eq!(listed, (0..dims + 2).collect::<Vec<_>>());
+                    assert_eq!(listed, (0..spatial_dims + 2).collect::<Vec<_>>());
                 }
             }
         }

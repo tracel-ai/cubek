@@ -182,7 +182,7 @@ fn host_tensor(data: &HostData) -> Result<HostTensor<'_>, String> {
     match &data.data {
         HostDataVec::F32(values) => Ok(HostTensor {
             values,
-            dims: &data.shape,
+            shape: &data.shape,
         }),
         _ => Err("the host reference reads f32 operands".to_string()),
     }
@@ -458,12 +458,12 @@ impl From<&ConvSpec> for ConvGeometry {
 /// The spatial rank the naive gradient references serve, that of [`ConvSpec`].
 const SPATIAL: usize = 2;
 
-/// A host tensor as the naive references read it: its values and its dims, channels last but for
+/// A host tensor as the naive references read it: its values and its shape, channels last but for
 /// a weight and its gradient, which are `[co, taps.., ci]`.
 #[derive(Debug, Clone, Copy)]
 pub struct HostTensor<'a> {
     pub values: &'a [f32],
-    pub dims: &'a [usize],
+    pub shape: &'a [usize],
 }
 
 /// The multi-index `flat` names in a row-major box of `extents`.
@@ -497,9 +497,9 @@ pub fn naive_weight_grad(
     args: &ConvolutionArgs<SPATIAL>,
 ) -> Vec<f32> {
     let windows = args.windows();
-    let (batches, channels) = (input.dims[0], input.dims[SPATIAL + 1]);
-    let (gathered, out) = (&input.dims[1..=SPATIAL], &out_grad.dims[1..=SPATIAL]);
-    let filters = out_grad.dims[SPATIAL + 1];
+    let (batches, channels) = (input.shape[0], input.shape[SPATIAL + 1]);
+    let (gathered, out) = (&input.shape[1..=SPATIAL], &out_grad.shape[1..=SPATIAL]);
+    let filters = out_grad.shape[SPATIAL + 1];
     let (cells, taps, inputs) = (
         out.iter().product::<usize>(),
         kernel.iter().product::<usize>(),
@@ -539,9 +539,9 @@ pub fn naive_data_grad(
     input: [usize; SPATIAL],
     args: &ConvolutionArgs<SPATIAL>,
 ) -> Vec<f32> {
-    let (batches, filters) = (out_grad.dims[0], out_grad.dims[SPATIAL + 1]);
-    let (out, kernel) = (&out_grad.dims[1..=SPATIAL], &weights.dims[1..=SPATIAL]);
-    let channels = weights.dims[SPATIAL + 1];
+    let (batches, filters) = (out_grad.shape[0], out_grad.shape[SPATIAL + 1]);
+    let (out, kernel) = (&out_grad.shape[1..=SPATIAL], &weights.shape[1..=SPATIAL]);
+    let channels = weights.shape[SPATIAL + 1];
     let (cells, taps, inputs) = (
         out.iter().product::<usize>(),
         kernel.iter().product::<usize>(),
