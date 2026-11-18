@@ -1,4 +1,4 @@
-use cubecl::tile::{Partitioning, StageStorage, TileTensor};
+use cubecl::tile::{Partitioning, StageStorage, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeStagedWalk, cube_staged_microkernel};
 
@@ -24,11 +24,12 @@ pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric>(
 
     // No barrier between boxes: each box's first stage refill synchronizes the cube.
     for cube in &partitioning {
-        cube_staged_microkernel::<EA>(
+        cube_staged_microkernel::<EA, Tile>(
             cube.walk(),
             &input.at(&cube),
             &rhs.at(&cube),
-            &out.at(&cube),
+            &out,
+            &cube,
             walk,
             storage.clone(),
         );
