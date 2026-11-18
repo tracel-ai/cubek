@@ -50,7 +50,7 @@ fn staged_matmul_quant_rhs(
                 for unit in step {
                     let mut c_unit = c_step
                         .at(&unit)
-                        .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
+                        .accumulating(SOFTWARE_MATMUL, Semiring::SumProd);
                     c_unit.mma(&a_s.at(&unit), &b_s.at(&unit).mul(&scales_step.at(&unit)));
                 }
             });

@@ -123,7 +123,7 @@ fn unit_registers_kernel<EA: Numeric, E: Numeric>(
             &a,
             &b,
             microkernel.drained_software_matmul(),
-            Semiring::SUM_PROD,
+            Semiring::SumProd,
         );
         sum.zero();
         for step in unit.walk_within(&b) {

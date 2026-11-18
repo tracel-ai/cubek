@@ -126,7 +126,7 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
         value: &Tile,
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
     ) -> Tile {
-        let opened = out.accumulator::<EA>(&score.probabilities(), value, Semiring::SUM_PROD);
+        let opened = out.accumulator::<EA>(&score.probabilities(), value, Semiring::SumProd);
         let mut sum = match microkernel.score_holder() {
             ScoreHolder::Window => opened.with_scratch(microkernel.settings.scratch),
             ScoreHolder::Fragments => opened,
@@ -353,7 +353,7 @@ impl StageScore {
         let score_window = scores.with_levels(1usize, score_levels.clone());
         let query = query.with_levels(1usize, score_levels.clone());
         let key = key.with_levels(1usize, score_levels);
-        let mut logits = score_window.accumulator::<EA>(&query, &key, Semiring::SUM_PROD);
+        let mut logits = score_window.accumulator::<EA>(&query, &key, Semiring::SumProd);
         logits.zero();
         logits.mma(&query, &key);
         // The window on the score's grid is the plane's window of scores: drained at the depth

@@ -59,7 +59,7 @@ fn plain_matmul(a: &TileTensor<'_>, b: &TileTensor<'_>, c: &TileTensor<'_>, spac
     for region in space {
         let mut c_cube = c
             .at(&region)
-            .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
+            .accumulating(SOFTWARE_MATMUL, Semiring::SumProd);
         c_cube.mm(&a.at(&region), &b.at(&region));
     }
 }
@@ -81,7 +81,7 @@ fn atomic_matmul<E: Numeric>(
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
         let mut acc =
-            c_cube.register_accumulator::<E>(&a_cube, &b_cube, SOFTWARE_MATMUL, Semiring::SUM_PROD);
+            c_cube.register_accumulator::<E>(&a_cube, &b_cube, SOFTWARE_MATMUL, Semiring::SumProd);
         acc.mma(&a_cube, &b_cube);
         c_cube.copy_cast_from(&acc);
     }
@@ -105,7 +105,7 @@ fn atomic_matmul_units<E: Numeric>(
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
         let acc =
-            c_cube.register_accumulator::<E>(&a_cube, &b_cube, SOFTWARE_MATMUL, Semiring::SUM_PROD);
+            c_cube.register_accumulator::<E>(&a_cube, &b_cube, SOFTWARE_MATMUL, Semiring::SumProd);
         for unit in cube {
             let mut acc_unit = acc.at(&unit);
             acc_unit.mma(&a_cube.at(&unit), &b_cube.at(&unit));

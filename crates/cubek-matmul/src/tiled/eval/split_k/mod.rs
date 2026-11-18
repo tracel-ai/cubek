@@ -70,7 +70,7 @@ fn split_k_matmul_one_level(
     for region in space {
         let mut c_cube = c
             .at(&region)
-            .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
+            .accumulating(SOFTWARE_MATMUL, Semiring::SumProd);
         c_cube.mma(&a.at(&region), &b.at(&region));
     }
 }
@@ -94,7 +94,7 @@ fn split_k_matmul_two_levels(
         for region in cube {
             let mut c_unit = c_cube
                 .at(&region)
-                .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
+                .accumulating(SOFTWARE_MATMUL, Semiring::SumProd);
             c_unit.mma(&a_cube.at(&region), &b_cube.at(&region));
         }
     }

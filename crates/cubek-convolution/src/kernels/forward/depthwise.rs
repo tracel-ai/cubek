@@ -197,7 +197,7 @@ fn depthwise_kernel(
             for unit in plane.leaves() {
                 let mut out = out
                     .at(&unit)
-                    .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
+                    .accumulating(SOFTWARE_MATMUL, Semiring::SumProd);
                 out.mm(&weight.at(&unit), &input.at(&unit));
             }
         }

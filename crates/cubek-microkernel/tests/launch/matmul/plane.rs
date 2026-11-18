@@ -172,7 +172,7 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
 
         let mut sum = c
-            .accumulator::<EA>(&a, &b, Semiring::SUM_PROD)
+            .accumulator::<EA>(&a, &b, Semiring::SumProd)
             .with_scratch(Scratch::None);
         sum.zero();
 
@@ -320,7 +320,7 @@ fn plane_shuffle_kernel<EA: Numeric, E: Numeric>(
     let c = out.tile(&partitioning);
     for plane in &partitioning {
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
-        let mut sum = c.register_accumulator::<EA>(&a, &b, block, Semiring::SUM_PROD);
+        let mut sum = c.register_accumulator::<EA>(&a, &b, block, Semiring::SumProd);
         sum.zero();
         for k_step in plane.walk_within(&b) {
             plane_shuffle_microkernel(&k_step, &sum, &a, &b, MatmulOperands::AS_BOUND);

@@ -141,7 +141,7 @@ impl ScoreWindows {
         let placed = window.with_levels(1usize, levels.clone());
         let lhs = lhs.with_levels(1usize, levels.clone());
         let rhs = rhs.with_levels(1usize, levels);
-        let mut sum = placed.accumulator::<EA>(&lhs, &rhs, Semiring::SUM_PROD);
+        let mut sum = placed.accumulator::<EA>(&lhs, &rhs, Semiring::SumProd);
         sum.zero();
         sum.mma(&lhs, &rhs);
         sum.drained_into(&placed);
