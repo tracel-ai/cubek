@@ -29,7 +29,7 @@ use crate::{
     components::ConvSetupError,
     kernels::{
         backward_data, backward_weight, forward,
-        tiled::{ConvDeclined, ConvRoutineKind, ConvTensors},
+        tiled::{ConvDecline, ConvRoutineKind, ConvTensors},
     },
     launch::{
         ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy, strategy::AcceleratedTileKind,
@@ -63,7 +63,7 @@ fn launch_tile<const N_SPATIAL: usize>(
 ) -> Result<(), ConvSetupError> {
     let window = args
         .two_dimensional()
-        .ok_or(Refusal::from(ConvDeclined::NotTwoDimensional))?;
+        .ok_or(Refusal::from(ConvDecline::NotTwoDimensional))?;
     let tensors = match inputs {
         ConvolutionInputs::Forward {
             input,

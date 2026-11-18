@@ -1,4 +1,4 @@
-use super::{B, CI, CO, ConvBinding, ConvDeclined, ConvProblem, ConvRoles, TileConvBlueprint};
+use super::{B, CI, CO, ConvBinding, ConvDecline, ConvProblem, ConvRoles, TileConvBlueprint};
 use crate::components::ConvolutionOperation;
 use crate::launch::ConvolutionArgs;
 use cubecl::client::Client;
@@ -37,7 +37,7 @@ impl ConvTensors {
     ///
     /// # Errors
     ///
-    /// A [`ConvDeclined`] reason, whatever the device.
+    /// A [`ConvDecline`] reason, whatever the device.
     pub fn forward(
         client: &Client,
         input: InputBinding,
@@ -48,7 +48,7 @@ impl ConvTensors {
         dtypes: MatmulElems,
     ) -> Result<Self, Refusal> {
         if bias.is_some() {
-            return Err(ConvDeclined::Bias.into());
+            return Err(ConvDecline::Bias.into());
         }
         let operation = ConvolutionOperation::Forward;
         Self::checked(operation, client, [input, weight], out, window, dtypes)
@@ -59,7 +59,7 @@ impl ConvTensors {
     ///
     /// # Errors
     ///
-    /// A [`ConvDeclined`] reason, whatever the device.
+    /// A [`ConvDecline`] reason, whatever the device.
     pub fn backward_weight(
         client: &Client,
         input: InputBinding,
@@ -78,7 +78,7 @@ impl ConvTensors {
     ///
     /// # Errors
     ///
-    /// [`ConvDeclined::DataBackwardStrided`], or another [`ConvDeclined`] reason.
+    /// [`ConvDecline::DataBackwardStrided`], or another [`ConvDecline`] reason.
     pub fn backward_data(
         client: &Client,
         out_grad: InputBinding,
@@ -88,7 +88,7 @@ impl ConvTensors {
         dtypes: MatmulElems,
     ) -> Result<Self, Refusal> {
         if window.stride.iter().any(|&stride| stride > 1) {
-            return Err(ConvDeclined::DataBackwardStrided.into());
+            return Err(ConvDecline::DataBackwardStrided.into());
         }
         let operation = ConvolutionOperation::BackwardData;
         let operands = [out_grad, weights];
@@ -107,21 +107,21 @@ impl ConvTensors {
         dtypes: MatmulElems,
     ) -> Result<Self, Refusal> {
         let (InputBinding::Normal(input, _), InputBinding::Normal(rhs, _)) = (input, rhs) else {
-            return Err(ConvDeclined::Quantized.into());
+            return Err(ConvDecline::Quantized.into());
         };
         if [&input, &rhs, &out]
             .iter()
             .any(|tensor| tensor.shape.len() != 4)
         {
-            return Err(ConvDeclined::NotTwoDimensional.into());
+            return Err(ConvDecline::NotTwoDimensional.into());
         }
         let roles = ConvRoles::of(operation)?;
         let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);
         let channels = |axis| (axis == roles.inner.lhs).then_some(input.shape[3]);
         let checks = [
-            (CI, ConvDeclined::Groups, channels(CI)),
-            (CO, ConvDeclined::OutChannels, channels(CO)),
-            (B, ConvDeclined::Batch, Some(input.shape[0])),
+            (CI, ConvDecline::Groups, channels(CI)),
+            (CO, ConvDecline::OutChannels, channels(CO)),
+            (B, ConvDecline::Batch, Some(input.shape[0])),
         ];
         if let Some(&(_, declined, _)) = checks
             .iter()
@@ -140,7 +140,7 @@ impl ConvTensors {
         };
         tensors.check_window()?;
         if !tensors.is_empty() && tensors.problem().contracts_nothing() {
-            return Err(ConvDeclined::ContractionEmpty.into());
+            return Err(ConvDecline::ContractionEmpty.into());
         }
         Ok(tensors)
     }
@@ -150,11 +150,11 @@ impl ConvTensors {
     fn check_window(&self) -> Result<(), Refusal> {
         let problem = self.problem();
         if problem.kernel.contains(&0) {
-            return Err(ConvDeclined::KernelEmpty.into());
+            return Err(ConvDecline::KernelEmpty.into());
         }
         let window = &self.window;
         if window.stride.contains(&0) || window.dilation.contains(&0) {
-            return Err(ConvDeclined::WindowStepZero.into());
+            return Err(ConvDecline::WindowStepZero.into());
         }
         let roles = ConvRoles::of(self.operation)?;
         let (input, output) = roles.gather.window_ends(problem.gathered, problem.out);

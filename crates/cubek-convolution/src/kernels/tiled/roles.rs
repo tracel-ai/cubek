@@ -1,4 +1,4 @@
-use super::{B, CI, CO, ConvDeclined, OH, OW, RH, RW};
+use super::{B, CI, CO, ConvDecline, OH, OW, RH, RW};
 use crate::components::ConvolutionOperation;
 use crate::launch::ConvolutionArgs;
 use cubecl::prelude::TensorBinding;
@@ -129,7 +129,7 @@ pub struct ConvRoles {
     pub gather: ConvGather,
     pub extents: ConvExtents,
     /// What the window's extents are declined with where they do not yield the output's.
-    pub extent_mismatch: ConvDeclined,
+    pub extent_mismatch: ConvDecline,
 }
 
 impl ConvRoles {
@@ -168,7 +168,7 @@ impl ConvRoles {
                 ViewDim::at(MatmulOperand::Out, 2),
             ],
         },
-        extent_mismatch: ConvDeclined::ForwardExtent,
+        extent_mismatch: ConvDecline::ForwardExtent,
     };
 
     const WEIGHT_BACKWARD: Self = Self {
@@ -206,7 +206,7 @@ impl ConvRoles {
                 ViewDim::at(MatmulOperand::Rhs, 2),
             ],
         },
-        extent_mismatch: ConvDeclined::WeightGradExtent,
+        extent_mismatch: ConvDecline::WeightGradExtent,
     };
 
     const DATA_BACKWARD: Self = Self {
@@ -244,20 +244,20 @@ impl ConvRoles {
                 ViewDim::at(MatmulOperand::Out, 2),
             ],
         },
-        extent_mismatch: ConvDeclined::DataGradExtent,
+        extent_mismatch: ConvDecline::DataGradExtent,
     };
 
     /// The roles `operation` gives the axes of the space.
     ///
     /// # Errors
     ///
-    /// [`ConvDeclined::Transposed`], for a transposed forward.
+    /// [`ConvDecline::Transposed`], for a transposed forward.
     pub fn of(operation: ConvolutionOperation) -> Result<Self, Refusal> {
         match operation {
             ConvolutionOperation::Forward => Ok(Self::FORWARD),
             ConvolutionOperation::BackwardWeight => Ok(Self::WEIGHT_BACKWARD),
             ConvolutionOperation::BackwardData => Ok(Self::DATA_BACKWARD),
-            ConvolutionOperation::ForwardTransposed => Err(ConvDeclined::Transposed.into()),
+            ConvolutionOperation::ForwardTransposed => Err(ConvDecline::Transposed.into()),
         }
     }
 
@@ -358,7 +358,7 @@ impl ConvRoles {
     ///
     /// # Errors
     ///
-    /// [`ConvDeclined::PermutedTiled`], where the dims move and `rhs` is tiled.
+    /// [`ConvDecline::PermutedTiled`], where the dims move and `rhs` is tiled.
     pub fn rhs_view(&self, rhs: TensorBinding) -> Result<TensorBinding, Refusal> {
         permuted(rhs, self.rhs_dims)
     }
@@ -368,7 +368,7 @@ impl ConvRoles {
     ///
     /// # Errors
     ///
-    /// [`ConvDeclined::PermutedTiled`], where the dims move and `out` is tiled.
+    /// [`ConvDecline::PermutedTiled`], where the dims move and `out` is tiled.
     pub fn out_view(&self, out: TensorBinding) -> Result<TensorBinding, Refusal> {
         permuted(out, self.out_dims)
     }
@@ -379,7 +379,7 @@ fn permuted(mut tensor: TensorBinding, dims: [usize; 4]) -> Result<TensorBinding
         return Ok(tensor);
     }
     if tensor.tiling.is_tiled() {
-        return Err(ConvDeclined::PermutedTiled.into());
+        return Err(ConvDecline::PermutedTiled.into());
     }
     tensor.shape = Shape::from(dims.map(|dim| tensor.shape[dim]).to_vec());
     tensor.strides = Strides::new(&dims.map(|dim| tensor.strides[dim]));
@@ -396,7 +396,7 @@ mod tests {
     fn the_transposed_forward_is_refused_by_name() {
         assert_eq!(
             ConvRoles::of(ConvolutionOperation::ForwardTransposed),
-            Err(ConvDeclined::Transposed.into())
+            Err(ConvDecline::Transposed.into())
         );
     }
 }

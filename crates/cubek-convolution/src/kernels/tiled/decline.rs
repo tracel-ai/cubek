@@ -3,7 +3,7 @@ use cubecl::tile::launch::Refusal;
 /// What a launch declines before preparing anything, whatever the device: operands, arguments or
 /// extents that do not state one convolution the tiled kernels compute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConvDeclined {
+pub enum ConvDecline {
     /// A bias, which is not part of the contraction.
     Bias,
     /// A weight or weight gradient whose channels are not the input's.
@@ -51,7 +51,7 @@ pub enum ConvDeclined {
     WgmmaUnserved,
 }
 
-impl ConvDeclined {
+impl ConvDecline {
     const fn why(self) -> &'static str {
         match self {
             Self::Bias => "the tiled forward convolution adds no bias",
@@ -104,10 +104,8 @@ impl ConvDeclined {
     }
 }
 
-impl From<ConvDeclined> for Refusal {
-    fn from(declined: ConvDeclined) -> Self {
-        Refusal::Declined {
-            why: declined.why(),
-        }
+impl From<ConvDecline> for Refusal {
+    fn from(decline: ConvDecline) -> Self {
+        Refusal::Declined { why: decline.why() }
     }
 }

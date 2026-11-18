@@ -11,7 +11,7 @@ use cubecl::zspace::{Shape, Strides};
 use cubek_convolution::components::ConvSetupError;
 use cubek_convolution::eval::benchmarks::settings;
 use cubek_convolution::kernels::tiled::{
-    ConvCandidate, ConvDeclined, ConvRoutineKind, ConvSettings,
+    ConvCandidate, ConvDecline, ConvRoutineKind, ConvSettings,
 };
 use cubek_convolution::{ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref};
 use cubek_std::{Hardware, InputBinding};
@@ -115,7 +115,7 @@ impl Accepts {
         let states = |refusal| message.contains(why(refusal));
         match self {
             Self::Instruction => {
-                states(ConvDeclined::InstructionUnoffered) || states(ConvDeclined::RowsNotPicked)
+                states(ConvDecline::InstructionUnoffered) || states(ConvDecline::RowsNotPicked)
             }
             Self::Listed => Self::Instruction.covers(message) || Self::listed_alone(message),
         }
@@ -124,7 +124,7 @@ impl Accepts {
     /// The refusals only a listed setting meets: a holder other than a plane, and a stage past
     /// the device's shared memory.
     fn listed_alone(message: &str) -> bool {
-        message.contains(why(ConvDeclined::WgmmaUnserved))
+        message.contains(why(ConvDecline::WgmmaUnserved))
             || message.contains("SharedMemoryPastDevice")
     }
 }
@@ -502,34 +502,34 @@ macro_rules! refusals {
 // Forward over [1, 6, 6, 64] and a [32, 3, 3, 64] weight into [1, 6, 6, 32]; the data backward
 // over the mirrored shapes.
 refusals! {
-    forward_quantized_input: Forward, true, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], SAME => ConvDeclined::Quantized;
-    forward_weight_of_other_channels: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 16], [1, 6, 6, 32]], SAME => ConvDeclined::Groups;
-    forward_output_of_other_channels: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 16]], SAME => ConvDeclined::OutChannels;
-    forward_output_of_another_batch: Forward, false, [[2, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], SAME => ConvDeclined::Batch;
-    forward_output_of_another_extent: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 5, 6, 32]], SAME => ConvDeclined::ForwardExtent;
-    forward_weight_of_no_taps: Forward, false, [[1, 6, 6, 64], [32, 0, 3, 64], [1, 6, 6, 32]], SAME => ConvDeclined::KernelEmpty;
-    forward_input_of_no_channels: Forward, false, [[1, 6, 6, 0], [32, 3, 3, 0], [1, 6, 6, 32]], SAME => ConvDeclined::ContractionEmpty;
-    forward_stride_of_zero: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], window([0, 1], [1, 1], [1, 1]) => ConvDeclined::WindowStepZero;
-    forward_dilation_of_zero: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], window([1, 1], [1, 1], [1, 0]) => ConvDeclined::WindowStepZero;
+    forward_quantized_input: Forward, true, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], SAME => ConvDecline::Quantized;
+    forward_weight_of_other_channels: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 16], [1, 6, 6, 32]], SAME => ConvDecline::Groups;
+    forward_output_of_other_channels: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 16]], SAME => ConvDecline::OutChannels;
+    forward_output_of_another_batch: Forward, false, [[2, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], SAME => ConvDecline::Batch;
+    forward_output_of_another_extent: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 5, 6, 32]], SAME => ConvDecline::ForwardExtent;
+    forward_weight_of_no_taps: Forward, false, [[1, 6, 6, 64], [32, 0, 3, 64], [1, 6, 6, 32]], SAME => ConvDecline::KernelEmpty;
+    forward_input_of_no_channels: Forward, false, [[1, 6, 6, 0], [32, 3, 3, 0], [1, 6, 6, 32]], SAME => ConvDecline::ContractionEmpty;
+    forward_stride_of_zero: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], window([0, 1], [1, 1], [1, 1]) => ConvDecline::WindowStepZero;
+    forward_dilation_of_zero: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], window([1, 1], [1, 1], [1, 0]) => ConvDecline::WindowStepZero;
 
-    weight_grad_quantized_input: BackwardWeight, true, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDeclined::Quantized;
-    weight_grad_of_other_channels: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 16]], SAME => ConvDeclined::Groups;
-    weight_grad_of_other_filters: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [16, 3, 3, 64]], SAME => ConvDeclined::OutChannels;
-    weight_grad_out_grad_of_another_batch: BackwardWeight, false, [[2, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDeclined::Batch;
-    weight_grad_out_grad_of_another_extent: BackwardWeight, false, [[1, 6, 6, 64], [1, 5, 6, 32], [32, 3, 3, 64]], SAME => ConvDeclined::WeightGradExtent;
-    weight_grad_of_no_taps: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 0, 3, 64]], SAME => ConvDeclined::KernelEmpty;
-    weight_grad_over_an_empty_batch: BackwardWeight, false, [[0, 6, 6, 64], [0, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDeclined::ContractionEmpty;
-    weight_grad_stride_of_zero: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], window([1, 0], [1, 1], [1, 1]) => ConvDeclined::WindowStepZero;
+    weight_grad_quantized_input: BackwardWeight, true, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::Quantized;
+    weight_grad_of_other_channels: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 16]], SAME => ConvDecline::Groups;
+    weight_grad_of_other_filters: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [16, 3, 3, 64]], SAME => ConvDecline::OutChannels;
+    weight_grad_out_grad_of_another_batch: BackwardWeight, false, [[2, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::Batch;
+    weight_grad_out_grad_of_another_extent: BackwardWeight, false, [[1, 6, 6, 64], [1, 5, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::WeightGradExtent;
+    weight_grad_of_no_taps: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 0, 3, 64]], SAME => ConvDecline::KernelEmpty;
+    weight_grad_over_an_empty_batch: BackwardWeight, false, [[0, 6, 6, 64], [0, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::ContractionEmpty;
+    weight_grad_stride_of_zero: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], window([1, 0], [1, 1], [1, 1]) => ConvDecline::WindowStepZero;
 
-    data_grad_strided: BackwardData, false, [[1, 3, 3, 32], [32, 3, 3, 64], [1, 6, 6, 64]], STRIDE_2 => ConvDeclined::DataBackwardStrided;
-    data_grad_quantized_out_grad: BackwardData, true, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDeclined::Quantized;
-    data_grad_of_other_channels: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 16]], SAME => ConvDeclined::Groups;
-    data_grad_of_other_filters: BackwardData, false, [[1, 6, 6, 32], [16, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDeclined::OutChannels;
-    data_grad_out_grad_of_another_batch: BackwardData, false, [[2, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDeclined::Batch;
-    data_grad_out_grad_of_another_extent: BackwardData, false, [[1, 5, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDeclined::DataGradExtent;
-    data_grad_weights_of_no_taps: BackwardData, false, [[1, 6, 6, 32], [32, 0, 3, 64], [1, 6, 6, 64]], SAME => ConvDeclined::KernelEmpty;
-    data_grad_of_no_filters: BackwardData, false, [[1, 6, 6, 0], [0, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDeclined::ContractionEmpty;
-    data_grad_dilation_of_zero: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], window([1, 1], [1, 1], [0, 1]) => ConvDeclined::WindowStepZero;
+    data_grad_strided: BackwardData, false, [[1, 3, 3, 32], [32, 3, 3, 64], [1, 6, 6, 64]], STRIDE_2 => ConvDecline::DataBackwardStrided;
+    data_grad_quantized_out_grad: BackwardData, true, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::Quantized;
+    data_grad_of_other_channels: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 16]], SAME => ConvDecline::Groups;
+    data_grad_of_other_filters: BackwardData, false, [[1, 6, 6, 32], [16, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::OutChannels;
+    data_grad_out_grad_of_another_batch: BackwardData, false, [[2, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::Batch;
+    data_grad_out_grad_of_another_extent: BackwardData, false, [[1, 5, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::DataGradExtent;
+    data_grad_weights_of_no_taps: BackwardData, false, [[1, 6, 6, 32], [32, 0, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::KernelEmpty;
+    data_grad_of_no_filters: BackwardData, false, [[1, 6, 6, 0], [0, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::ContractionEmpty;
+    data_grad_dilation_of_zero: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], window([1, 1], [1, 1], [0, 1]) => ConvDecline::WindowStepZero;
 }
 
 /// An output with no element has nothing to compute: the launch returns and writes nowhere, as

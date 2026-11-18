@@ -7,7 +7,7 @@
 
 mod binding;
 mod blueprint;
-mod declined;
+mod decline;
 mod launch;
 mod partitioning;
 mod problem;
@@ -17,7 +17,7 @@ mod staging;
 mod tensors;
 mod tune;
 
-pub use declined::ConvDeclined;
+pub use decline::ConvDecline;
 pub use routines::{ConvRoutineKind, ConvSettings};
 pub use tensors::ConvTensors;
 pub use tune::ConvCandidate;

@@ -8,7 +8,7 @@ use crate::eval::benchmarks::settings;
 use crate::kernels::tiled::routines::test_support::{
     cmma_8x32_only, cmma_only, mma_only, nvidia, problems,
 };
-use crate::kernels::tiled::{ConvDeclined, ConvProblem};
+use crate::kernels::tiled::{ConvDecline, ConvProblem};
 use cubecl::tile::launch::Refusal;
 use cubek_std::devices::topology;
 use cubek_std::microkernel::KernelEstimate;
@@ -134,8 +134,8 @@ fn staged_problems() -> Vec<(&'static str, ConvProblem)> {
 /// lacks, and a stage past the device's shared memory.
 fn named(refusal: &Refusal) -> bool {
     [
-        Refusal::from(ConvDeclined::InstructionUnoffered),
-        Refusal::from(ConvDeclined::RowsNotPicked),
+        Refusal::from(ConvDecline::InstructionUnoffered),
+        Refusal::from(ConvDecline::RowsNotPicked),
     ]
     .contains(refusal)
         || matches!(refusal, Refusal::SharedMemoryPastDevice { .. })
