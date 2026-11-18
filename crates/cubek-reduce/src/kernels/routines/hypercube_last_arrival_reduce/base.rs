@@ -1,7 +1,6 @@
 use super::kernel::{
-    HypercubeLastArrivalReduceDecisions, ReduceSplit, ReduceSplitExtents, ReduceSplitExtentsLaunch,
-    hypercube_last_arrival_reduce_indexed_kernel, hypercube_last_arrival_reduce_kernel,
-    hypercube_last_arrival_reduce_with_indices_kernel,
+    ReduceSplitExtents, ReduceSplitExtentsLaunch, hypercube_last_arrival_reduce_indexed_kernel,
+    hypercube_last_arrival_reduce_kernel, hypercube_last_arrival_reduce_with_indices_kernel,
 };
 use crate::kernels::{
     ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
@@ -12,7 +11,6 @@ use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::LaunchArg;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
-use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernelSettings;
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
@@ -50,49 +48,6 @@ impl core::fmt::Display for HypercubeLastArrivalReduceSettings {
 
 pub type HypercubeLastArrivalReduceBlueprint =
     ReduceBlueprint<HypercubeLastArrivalReduceMicrokernel>;
-
-impl ReduceSplit {
-    /// Where the cubes of `problem`'s hypercube sit.
-    pub fn new(problem: &ReduceRoutineProblem) -> Self {
-        Self {
-            reduced: problem.reduced(),
-            rows: problem.rows(),
-        }
-    }
-}
-
-impl ReduceSplitExtents {
-    /// The extents of `problem` split by `partitioning`, its owners `width` rows across the
-    /// reduced dim.
-    pub fn new(problem: &ReduceRoutineProblem, partitioning: &Partitioning, width: usize) -> Self {
-        let part = partitioning
-            .box_of(ComputeScope::Cube)
-            .extent(problem.reduced());
-        let inner_boxes = problem
-            .row_boxes(width)
-            .last()
-            .map_or(1, |&(_, boxes)| boxes);
-        Self {
-            parts: to_u32(problem.reduced_extent().div_ceil(part)),
-            values: to_u32(problem.reduced_extent()),
-            inner_boxes: to_u32(inner_boxes),
-        }
-    }
-
-    /// Boxes of rows of `problem`, its owners `width` rows across the reduced dim: each its cubes'
-    /// counter.
-    pub fn row_boxes(problem: &ReduceRoutineProblem, width: usize) -> usize {
-        problem
-            .row_boxes(width)
-            .iter()
-            .map(|&(_, boxes)| boxes)
-            .product()
-    }
-}
-
-fn to_u32(extent: usize) -> u32 {
-    u32::try_from(extent).expect("a reduced extent fits in 32 bits")
-}
 
 /// Values of a box of rows' partials along the partials dimension, for parts of `part` values: a
 /// carrier of the operation's cells a part, each line `width` values of one row along the reduced
@@ -269,10 +224,7 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                         extents.values,
                         extents.inner_boxes,
                     ),
-                    HypercubeLastArrivalReduceDecisions {
-                        microkernel: blueprint.microkernel,
-                        split: ReduceSplit::new(problem),
-                    },
+                    blueprint.microkernel,
                     [elements.input, elements.accumulator, elements.out, index],
                 )
             },
@@ -293,10 +245,7 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                         extents.values,
                         extents.inner_boxes,
                     ),
-                    HypercubeLastArrivalReduceDecisions {
-                        microkernel: blueprint.microkernel,
-                        split: ReduceSplit::new(problem),
-                    },
+                    blueprint.microkernel,
                     [elements.input, elements.accumulator, elements.out],
                 )
             },
@@ -316,10 +265,7 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                         extents.values,
                         extents.inner_boxes,
                     ),
-                    HypercubeLastArrivalReduceDecisions {
-                        microkernel: blueprint.microkernel,
-                        split: ReduceSplit::new(problem),
-                    },
+                    blueprint.microkernel,
                     [elements.input, elements.accumulator, elements.out],
                 )
             },

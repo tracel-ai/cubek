@@ -1,5 +1,7 @@
+use crate::kernels::ReduceRoutineProblem;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::TileOperand;
+use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Dimension, Partitioning, Region, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::ReduceLayout;
@@ -14,12 +16,23 @@ pub struct ReduceSplit {
     pub rows: Vec<Dimension>,
 }
 
-/// What a hypercube launch compiles beside its partitioning, crossing the launch as one argument:
-/// the microkernel each cube runs, and where the cubes sit.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct HypercubeLastArrivalReduceDecisions {
-    pub microkernel: HypercubeLastArrivalReduceMicrokernel,
-    pub split: ReduceSplit,
+impl ReduceSplit {
+    /// Where the cubes of a hypercube that `partitioning` places sit: its cube level runs along the
+    /// reduced dimension first, then the row dimensions, as the routine states them. The kernel
+    /// reads it from its partitioning when it compiles.
+    pub fn of(partitioning: &Partitioning) -> Self {
+        let cubes = partitioning
+            .level_distributed(ComputeScope::Cube)
+            .expect("a hypercube's partitioning has a cube level")
+            .dimensions();
+        let (reduced, rows) = cubes
+            .split_first()
+            .expect("a hypercube's cubes run along the reduced dimension");
+        Self {
+            reduced: *reduced,
+            rows: rows.to_vec(),
+        }
+    }
 }
 
 /// The extents a hypercube launch is handed at run time, which its kernel does not compile.
@@ -33,13 +46,50 @@ pub struct ReduceSplitExtents {
     pub inner_boxes: u32,
 }
 
+impl ReduceSplitExtents {
+    /// The extents of `problem` split by `partitioning`, its owners `width` rows across the
+    /// reduced dim.
+    ///
+    /// # Panics
+    ///
+    /// Where the reduced extent, its parts or the boxes of rows do not fit in 32 bits.
+    pub fn new(problem: &ReduceRoutineProblem, partitioning: &Partitioning, width: usize) -> Self {
+        let part = partitioning
+            .box_of(ComputeScope::Cube)
+            .extent(problem.reduced());
+        let inner_boxes = problem
+            .row_boxes(width)
+            .last()
+            .map_or(1, |&(_, boxes)| boxes);
+        Self {
+            parts: u32_of_extent(problem.reduced_extent().div_ceil(part)),
+            values: u32_of_extent(problem.reduced_extent()),
+            inner_boxes: u32_of_extent(inner_boxes),
+        }
+    }
+
+    /// Boxes of rows of `problem`, its owners `width` rows across the reduced dim: each its cubes'
+    /// counter.
+    pub fn row_boxes(problem: &ReduceRoutineProblem, width: usize) -> usize {
+        problem
+            .row_boxes(width)
+            .iter()
+            .map(|&(_, boxes)| boxes)
+            .product()
+    }
+}
+
+fn u32_of_extent(extent: usize) -> u32 {
+    u32::try_from(extent).expect("a reduced extent fits in 32 bits")
+}
+
 /// Where `cube` sits along its row: its box of rows' counter, its part, and its part's first line
 /// in the row.
 #[derive(CubeType)]
 struct SplitPlace {
-    counter: usize,
-    part: usize,
-    first_line: usize,
+    pub counter: usize,
+    pub part: usize,
+    pub first_line: usize,
 }
 
 #[cube]
@@ -94,7 +144,7 @@ pub(crate) fn hypercube_last_arrival_reduce_kernel<
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     extents: ReduceSplitExtents,
-    #[comptime] decisions: HypercubeLastArrivalReduceDecisions,
+    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = I::tile::<In>(input, &partitioning);
@@ -104,28 +154,25 @@ pub(crate) fn hypercube_last_arrival_reduce_kernel<
         let place = split_place::<N>(
             &cube,
             &extents,
-            decisions.split.clone(),
-            decisions.microkernel.part().item().layout,
+            comptime!(ReduceSplit::of(&partitioning.clone())),
+            microkernel.part().item().layout,
         );
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
-        decisions
-            .microkernel
-            .runtime()
-            .execute::<In, Acc, Out, Out, N>(
-                &rows,
-                &mut rows_out,
-                &ComptimeOption::new_None(),
-                &mut slots,
-                &ComptimeOption::new_None(),
-                arrivals,
-                place.counter,
-                place.part,
-                extents.parts as usize,
-                place.first_line,
-                extents.values as usize,
-            );
+        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
+            &rows,
+            &mut rows_out,
+            &ComptimeOption::new_None(),
+            &mut slots,
+            &ComptimeOption::new_None(),
+            arrivals,
+            place.counter,
+            place.part,
+            extents.parts as usize,
+            place.first_line,
+            extents.values as usize,
+        );
     }
 }
 
@@ -157,7 +204,7 @@ pub(crate) fn hypercube_last_arrival_reduce_indexed_kernel<
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     extents: ReduceSplitExtents,
-    #[comptime] decisions: HypercubeLastArrivalReduceDecisions,
+    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = I::tile::<In>(input, &partitioning);
@@ -168,28 +215,25 @@ pub(crate) fn hypercube_last_arrival_reduce_indexed_kernel<
         let place = split_place::<N>(
             &cube,
             &extents,
-            decisions.split.clone(),
-            decisions.microkernel.part().item().layout,
+            comptime!(ReduceSplit::of(&partitioning.clone())),
+            microkernel.part().item().layout,
         );
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
-        decisions
-            .microkernel
-            .runtime()
-            .execute::<In, Acc, Out, Out, N>(
-                &rows,
-                &mut rows_out,
-                &ComptimeOption::new_None(),
-                &mut slots,
-                &ComptimeOption::new_Some(pi.at(&cube)),
-                arrivals,
-                place.counter,
-                place.part,
-                extents.parts as usize,
-                place.first_line,
-                extents.values as usize,
-            );
+        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
+            &rows,
+            &mut rows_out,
+            &ComptimeOption::new_None(),
+            &mut slots,
+            &ComptimeOption::new_Some(pi.at(&cube)),
+            arrivals,
+            place.counter,
+            place.part,
+            extents.parts as usize,
+            place.first_line,
+            extents.values as usize,
+        );
     }
 }
 
@@ -223,7 +267,7 @@ pub(crate) fn hypercube_last_arrival_reduce_with_indices_kernel<
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     extents: ReduceSplitExtents,
-    #[comptime] decisions: HypercubeLastArrivalReduceDecisions,
+    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
     let x = I::tile::<In>(input, &partitioning);
@@ -235,27 +279,24 @@ pub(crate) fn hypercube_last_arrival_reduce_with_indices_kernel<
         let place = split_place::<N>(
             &cube,
             &extents,
-            decisions.split.clone(),
-            decisions.microkernel.part().item().layout,
+            comptime!(ReduceSplit::of(&partitioning.clone())),
+            microkernel.part().item().layout,
         );
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
-        decisions
-            .microkernel
-            .runtime()
-            .execute::<In, Acc, Out, Idx, N>(
-                &rows,
-                &mut rows_out,
-                &ComptimeOption::new_Some(i.at(&cube)),
-                &mut slots,
-                &ComptimeOption::new_Some(pi.at(&cube)),
-                arrivals,
-                place.counter,
-                place.part,
-                extents.parts as usize,
-                place.first_line,
-                extents.values as usize,
-            );
+        microkernel.runtime().execute::<In, Acc, Out, Idx, N>(
+            &rows,
+            &mut rows_out,
+            &ComptimeOption::new_Some(i.at(&cube)),
+            &mut slots,
+            &ComptimeOption::new_Some(pi.at(&cube)),
+            arrivals,
+            place.counter,
+            place.part,
+            extents.parts as usize,
+            place.first_line,
+            extents.values as usize,
+        );
     }
 }
