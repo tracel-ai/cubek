@@ -103,6 +103,18 @@ impl ReduceOperation {
         }
     }
 
+    /// The monoid whose identity a read past the problem's edge returns, so the read leaves the
+    /// total unchanged: the combining monoid's, where its map leaves that identity as it is, else
+    /// the one whose identity the map takes there (`MaxAbs` and `Any` read zero, `All` one).
+    pub const fn edge_monoid(self) -> Monoid {
+        match self {
+            Self::Sum | Self::Mean | Self::MaxAbs | Self::Any => Monoid::Sum,
+            Self::Prod | Self::All => Monoid::Prod,
+            Self::Max | Self::ArgMax | Self::TopK { .. } | Self::ArgTopK { .. } => Monoid::Max,
+            Self::Min | Self::ArgMin => Monoid::Min,
+        }
+    }
+
     /// What each value becomes as it is read.
     pub const fn read_map(self) -> ReadMap {
         match self {

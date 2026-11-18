@@ -1,12 +1,12 @@
 use super::base::HypercubeLastArrivalReduceMicrokernel;
 use crate::reduce::cube::cube_staged_reduce_part;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout};
+use crate::reduce::{ReduceAccumulator, ReduceCarrier};
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's part of a row its `parts` cubes split: the cube reduces `input`, its window of the
 /// part, with the cube's microkernel, each line indexed `first_line` lines further, its place in
-/// the whole row; a part the row's end cuts short reads no line past it. Its first unit
+/// the whole row; a part the row's end cuts short reads the edge monoid's identity past it. Its first unit
 /// stores the partial as partial `part` of the row's `partials` and `partial_indices`
 /// ([`ReduceAccumulator::store`]), and the cube counts itself in at the row's `counter` of
 /// `arrivals`. The row's last cube to count merges every partial and writes the
@@ -137,12 +137,9 @@ fn hypercube_last_arrival_reduce<
     let layout = cube_part.item().layout;
     let first_unit = PLANE_POS == 0 && UNIT_POS_PLANE == 0;
 
-    // The tile reads zero past the row's end, which no carrier holds as its identity.
-    let row_lines = match layout {
-        ReduceLayout::Along => values / N::value(),
-        ReduceLayout::Across => values,
-    };
-    let count = input.flat::<In, N>().shape().min(row_lines - first_line);
+    // Past the row's end the input reads the identity of the operation's edge monoid, which
+    // leaves the carrier as it is: every line of the window is read.
+    let count = input.flat::<In, N>().shape();
 
     let total = cube_staged_reduce_part::<In, Acc, N, C>(input, first_line, count, cube_part);
 

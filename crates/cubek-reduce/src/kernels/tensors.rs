@@ -124,6 +124,7 @@ impl ReduceTensors<TensorBinding> {
         let input = launcher
             .arg(self.input.clone(), self.problem.elements.input)
             .dimensions(&self.problem.input_dimensions())
+            .boundary(self.problem.input_boundary())
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -200,6 +201,7 @@ impl ReduceTensors<Geometry> {
         let input = launcher
             .unbound(&self.input)
             .dimensions(&self.problem.input_dimensions())
+            .boundary(self.problem.input_boundary())
             .vectorize(blueprint.width)
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);

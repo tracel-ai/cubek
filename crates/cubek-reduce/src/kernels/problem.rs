@@ -1,6 +1,8 @@
 //! The problem a routine computes.
 
 use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
+use cubecl::tile::kind::Boundary;
+use cubecl::tile::launch::BoundaryPolicy;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Dimension, Geometry, Partitioning, Space};
 use cubecl::tune::Work;
@@ -210,6 +212,13 @@ impl ReduceRoutineProblem {
                 false => axis_dimension(d),
             })
             .collect()
+    }
+
+    /// How the input is checked where a tile reaches past its edge: a read there returns the
+    /// identity of the operation's edge monoid ([`ReduceOperation::edge_monoid`]), which leaves
+    /// the total unchanged (`tracel:cubecl::edge-reads-identity`).
+    pub fn input_boundary(&self) -> BoundaryPolicy {
+        BoundaryPolicy::Overhanging(Boundary::Identity(self.operation.edge_monoid()))
     }
 
     /// Values a row reduces.
