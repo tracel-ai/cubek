@@ -83,7 +83,7 @@ impl ScopeUnderTest for PlaneWindow {
 }
 
 #[test]
-fn plane_window_accumulates_every_unit_block_of_a_plane() {
+fn plane_window_writes_every_unit_block_of_a_plane() {
     let window = PlaneWindow {
         hw: Hardware::from_client(&cubecl::test_device().client()),
     };
