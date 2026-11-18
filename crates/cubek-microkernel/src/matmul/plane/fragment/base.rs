@@ -403,7 +403,7 @@ impl PlaneFragmentMicrokernel {
         settings: &PlaneFragmentMicrokernelSettings,
     ) -> Option<[usize; 2]> {
         hw.plane_dim().ok()?;
-        let ([m, n, _], [calls_m, calls_n, _]) = Self::unit_of(hw, item, settings)?;
+        let ([m, n, _], [calls_m, calls_n, _]) = Self::unit_of(hw, item, settings, None)?;
         Some([
             settings.along_m.get() * m * calls_m,
             settings.along_n.get() * n * calls_n,
