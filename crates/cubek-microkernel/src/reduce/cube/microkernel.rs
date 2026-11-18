@@ -20,7 +20,7 @@ pub(crate) fn cube_staged_reduce_microkernel<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
+    indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: CubeStagedReduceMicrokernel,
 ) {
     match microkernel.item().operation.carrier() {
@@ -68,7 +68,7 @@ fn cube_staged_reduce<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
+    indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: CubeStagedReduceMicrokernel,
 ) {
     let operation = microkernel.item().operation;

@@ -46,7 +46,7 @@ impl PlaneShuffleReduceMicrokernel {
         &self,
         input: &Tile,
         out: &mut Tile,
-        indices: &mut Tile,
+        indices: &ComptimeOption<Tile>,
     ) {
         plane_shuffle_reduce_microkernel::<In, Acc, Out, Idx, N>(
             input,

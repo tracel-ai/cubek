@@ -273,7 +273,6 @@ impl ReduceLaunch {
         };
         let index = ElemType::UInt(UIntKind::U32);
         let partials = TensorHandle::zeros(client, partial_shape, self.item.accumulator);
-        let partial_indices = TensorHandle::zeros(client, partial_shape, index);
         let arrivals = TensorHandle::zeros(client, [self.rows], index);
         let bound = |arg, element, width, dimensions: &[_]| {
             TileTensorLaunch::new(
@@ -286,37 +285,65 @@ impl ReduceLaunch {
         let microkernel = HypercubeLastArrivalReduceMicrokernel::new(
             CubeStagedReduceMicrokernel::new(self.item, self.plane_width as usize, planes),
         );
+        // The partials' indices, only where the carrier keeps any.
         // SAFETY: every operand but the counters is bound through the launcher at the problem's
         // own extents, and the kernel indexes no buffer but through its tiles and the counters,
         // one a row, each owner's at its first row.
-        unsafe {
-            hypercube_reduce_kernel::launch_unchecked(
-                client,
-                launcher.cube_count(),
-                launcher.cube_dim(),
-                self.width,
-                bound(input, self.item.input, self.width, &input_dimensions),
-                bound(out, self.out, owned, &out_dimensions),
-                bound(
-                    partials.binding().into_tensor_arg(),
-                    self.item.accumulator,
+        match self.item.operation.carrier().carries_indices() {
+            true => unsafe {
+                hypercube_indexed_reduce_kernel::launch_unchecked(
+                    client,
+                    launcher.cube_count(),
+                    launcher.cube_dim(),
                     self.width,
-                    &partial_dimensions,
-                ),
-                bound(
-                    partial_indices.binding().into_tensor_arg(),
-                    index,
+                    bound(input, self.item.input, self.width, &input_dimensions),
+                    bound(out, self.out, owned, &out_dimensions),
+                    bound(
+                        partials.binding().into_tensor_arg(),
+                        self.item.accumulator,
+                        self.width,
+                        &partial_dimensions,
+                    ),
+                    bound(
+                        TensorHandle::zeros(client, partial_shape, index)
+                            .binding()
+                            .into_tensor_arg(),
+                        index,
+                        self.width,
+                        &partial_dimensions,
+                    ),
+                    arrivals.binding().into_tensor_arg().into_buffer_arg(),
+                    launcher.partitioning_arg(),
+                    parts,
+                    part_lines,
+                    self.reduced,
+                    microkernel,
+                    [self.item.input, self.item.accumulator, self.out],
+                )
+            },
+            false => unsafe {
+                hypercube_reduce_kernel::launch_unchecked(
+                    client,
+                    launcher.cube_count(),
+                    launcher.cube_dim(),
                     self.width,
-                    &partial_dimensions,
-                ),
-                arrivals.binding().into_tensor_arg().into_buffer_arg(),
-                launcher.partitioning_arg(),
-                parts,
-                part_lines,
-                self.reduced,
-                microkernel,
-                [self.item.input, self.item.accumulator, self.out],
-            )
+                    bound(input, self.item.input, self.width, &input_dimensions),
+                    bound(out, self.out, owned, &out_dimensions),
+                    bound(
+                        partials.binding().into_tensor_arg(),
+                        self.item.accumulator,
+                        self.width,
+                        &partial_dimensions,
+                    ),
+                    arrivals.binding().into_tensor_arg().into_buffer_arg(),
+                    launcher.partitioning_arg(),
+                    parts,
+                    part_lines,
+                    self.reduced,
+                    microkernel,
+                    [self.item.input, self.item.accumulator, self.out],
+                )
+            },
         };
         Ok(())
     }
@@ -337,14 +364,12 @@ fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     for plane in &partitioning {
         if UNIT_POS_PLANE == 0 {
             let mut row_out = o.at(&plane);
-            // One output: the indices are never written, so they get the output's own window.
-            let mut unwritten = o.at(&plane);
             let row = x.at(&plane);
 
             microkernel.runtime().execute::<In, Acc, Out, Out, N>(
                 &row,
                 &mut row_out,
-                &mut unwritten,
+                &ComptimeOption::new_None(),
             );
         }
     }
@@ -364,13 +389,13 @@ fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 
     for plane in &partitioning {
         let mut row_out = o.at(&plane);
-        // One output: the indices are never written, so they get the output's own window.
-        let mut unwritten = o.at(&plane);
         let row = x.at(&plane);
 
-        microkernel
-            .runtime()
-            .execute::<In, Acc, Out, Out, N>(&row, &mut row_out, &mut unwritten);
+        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
+            &row,
+            &mut row_out,
+            &ComptimeOption::new_None(),
+        );
     }
 }
 
@@ -388,19 +413,64 @@ fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 
     for cube in &partitioning {
         let mut row_out = o.at(&cube);
-        // One output: the indices are never written, so they get the output's own window.
-        let mut unwritten = o.at(&cube);
         let row = x.at(&cube);
 
-        microkernel
-            .runtime()
-            .execute::<In, Acc, Out, Out, N>(&row, &mut row_out, &mut unwritten);
+        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
+            &row,
+            &mut row_out,
+            &ComptimeOption::new_None(),
+        );
     }
 }
 
-/// Every row's part, reduced by its cube; the row's last cube merges the parts.
+/// Every row's part, reduced by its cube into a carrier of values alone; the row's last cube
+/// merges the parts.
 #[cube(launch_unchecked)]
 fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
+    input: &TileTensor<'_>,
+    out: &TileTensor<'_>,
+    partials: &TileTensor<'_>,
+    arrivals: &[Atomic<u32>],
+    partitioning: Partitioning,
+    #[comptime] parts: usize,
+    #[comptime] part_lines: usize,
+    #[comptime] values: usize,
+    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
+    #[define(In, Acc, Out)] _elements: [ElemType; 3],
+) {
+    let x = input.tile(&partitioning);
+    let o = out.tile(&partitioning);
+    let p = partials.tile(&partitioning);
+
+    for cube in &partitioning {
+        let mut row_out = o.at(&cube);
+        let row = x.at(&cube);
+        let mut slots = p.at(&cube);
+
+        let counter = cube.origin(O);
+        let part = cube.origin(P);
+        let first_line = part * part_lines;
+
+        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
+            &row,
+            &mut row_out,
+            &ComptimeOption::new_None(),
+            &mut slots,
+            &ComptimeOption::new_None(),
+            arrivals,
+            counter,
+            part,
+            parts,
+            first_line,
+            values,
+        );
+    }
+}
+
+/// Every row's part, reduced by its cube into a carrier of values and their indices, whose
+/// partials keep both; the row's last cube merges the parts.
+#[cube(launch_unchecked)]
+fn hypercube_indexed_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
     out: &TileTensor<'_>,
     partials: &TileTensor<'_>,
@@ -420,11 +490,8 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 
     for cube in &partitioning {
         let mut row_out = o.at(&cube);
-        // One output: the indices are never written, so they get the output's own window.
-        let mut unwritten = o.at(&cube);
         let row = x.at(&cube);
         let mut slots = p.at(&cube);
-        let mut slot_indices = pi.at(&cube);
 
         let counter = cube.origin(O);
         let part = cube.origin(P);
@@ -433,9 +500,9 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         microkernel.runtime().execute::<In, Acc, Out, Out, N>(
             &row,
             &mut row_out,
-            &mut unwritten,
+            &ComptimeOption::new_None(),
             &mut slots,
-            &mut slot_indices,
+            &ComptimeOption::new_Some(pi.at(&cube)),
             arrivals,
             counter,
             part,

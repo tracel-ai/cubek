@@ -29,21 +29,22 @@ pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
     /// `acc` stored as partial `part` of a row its cubes split, for the cube that merges them
     /// ([`load`](ReduceAccumulator::load)): its lines, one for the values and for an [`Indexed`], `k` for a
     /// top-k, written that many lines times `part` into `values`, in `Acc`, and its indices at
-    /// the same lines of `indices`, in `u32`, where it carries any.
-    fn store(acc: Self, values: &mut Tile, indices: &mut Tile, part: usize);
+    /// the same lines of `indices`, in `u32`: a carrier that carries indices is given them, and no
+    /// other is.
+    fn store(acc: Self, values: &mut Tile, indices: &ComptimeOption<Tile>, part: usize);
 
     /// Partial `part`, as [`store`](ReduceAccumulator::store) left it.
-    fn load(values: &Tile, indices: &Tile, part: usize) -> Self;
+    fn load(values: &Tile, indices: &ComptimeOption<Tile>, part: usize) -> Self;
 
     /// What `acc` holds written as `writes` says, its lanes reduced to one first where they
     /// hold one row ([`ReduceLayout::Along`]): to `out`'s first cell along the row, or its first
     /// line across rows (its first `k` of either, for a top-k). With [`ReduceWrites::Both`] the
-    /// indices go to `indices` at the same places, in `Idx`; `indices` is written only then.
+    /// indices go to `indices` at the same places, in `Idx`; `indices` is given only then.
     /// `count` is the number of values reduced, which a mean divides by.
     fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
-        indices: &mut Tile,
+        indices: &ComptimeOption<Tile>,
         count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
@@ -120,19 +121,19 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
         total
     }
 
-    fn store(acc: Self, values: &mut Tile, _indices: &mut Tile, part: usize) {
+    fn store(acc: Self, values: &mut Tile, _indices: &ComptimeOption<Tile>, part: usize) {
         let mut lines = values.flat_mut::<Acc, N>();
         lines.write(part, acc);
     }
 
-    fn load(values: &Tile, _indices: &Tile, part: usize) -> Self {
+    fn load(values: &Tile, _indices: &ComptimeOption<Tile>, part: usize) -> Self {
         values.flat::<Acc, N>().read(part)
     }
 
     fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
-        _indices: &mut Tile,
+        _indices: &ComptimeOption<Tile>,
         count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
@@ -210,24 +211,26 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
         total
     }
 
-    fn store(acc: Self, values: &mut Tile, indices: &mut Tile, part: usize) {
+    fn store(acc: Self, values: &mut Tile, indices: &ComptimeOption<Tile>, part: usize) {
         let mut value_lines = values.flat_mut::<Acc, N>();
         value_lines.write(part, acc.value);
-        let mut index_lines = indices.flat_mut::<u32, N>();
+        let mut index_tile = indices.clone().unwrap();
+        let mut index_lines = index_tile.flat_mut::<u32, N>();
         index_lines.write(part, acc.index);
     }
 
-    fn load(values: &Tile, indices: &Tile, part: usize) -> Self {
+    fn load(values: &Tile, indices: &ComptimeOption<Tile>, part: usize) -> Self {
+        let index_tile = indices.clone().unwrap();
         Indexed::<Acc, N> {
             value: values.flat::<Acc, N>().read(part),
-            index: indices.flat::<u32, N>().read(part),
+            index: index_tile.flat::<u32, N>().read(part),
         }
     }
 
     fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
-        indices: &mut Tile,
+        indices: &ComptimeOption<Tile>,
         _count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
@@ -263,7 +266,7 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
 #[cube]
 fn write_line<Out: Numeric, Idx: Numeric, Acc: Numeric, W: Size>(
     out: &mut Tile,
-    indices: &mut Tile,
+    indices: &ComptimeOption<Tile>,
     at: usize,
     value: Vector<Acc, W>,
     index: Vector<u32, W>,
@@ -275,7 +278,8 @@ fn write_line<Out: Numeric, Idx: Numeric, Acc: Numeric, W: Size>(
         ReduceWrites::Indices => lines.write(at, Vector::cast_from(index)),
         ReduceWrites::Both => {
             lines.write(at, Vector::cast_from(value));
-            let mut index_lines = indices.flat_mut::<Idx, W>();
+            let mut index_tile = indices.clone().unwrap();
+            let mut index_lines = index_tile.flat_mut::<Idx, W>();
             index_lines.write(at, Vector::cast_from(index));
         }
     }
@@ -327,12 +331,13 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         total
     }
 
-    fn store(acc: Self, values: &mut Tile, indices: &mut Tile, part: usize) {
+    fn store(acc: Self, values: &mut Tile, indices: &ComptimeOption<Tile>, part: usize) {
         let k = K::value();
         let unrolled = comptime!(k <= TOP_K_UNROLL_BUDGET);
 
         let mut value_lines = values.flat_mut::<Acc, N>();
-        let mut index_lines = indices.flat_mut::<u32, N>();
+        let mut index_tile = indices.clone().unwrap();
+        let mut index_lines = index_tile.flat_mut::<u32, N>();
         #[unroll(unrolled)]
         for slot in 0..k {
             value_lines.write(part * k + slot, acc.values[slot]);
@@ -340,12 +345,13 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         }
     }
 
-    fn load(values: &Tile, indices: &Tile, part: usize) -> Self {
+    fn load(values: &Tile, indices: &ComptimeOption<Tile>, part: usize) -> Self {
         let k = K::value();
         let unrolled = comptime!(k <= TOP_K_UNROLL_BUDGET);
 
         let value_lines = values.flat::<Acc, N>();
-        let index_lines = indices.flat::<u32, N>();
+        let index_tile = indices.clone().unwrap();
+        let index_lines = index_tile.flat::<u32, N>();
         let mut kept_values = Array::new(k);
         let mut kept_indices = Array::new(k);
         #[unroll(unrolled)]
@@ -360,7 +366,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
     fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
-        indices: &mut Tile,
+        indices: &ComptimeOption<Tile>,
         _count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
@@ -459,7 +465,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
         total
     }
 
-    fn store(acc: Self, values: &mut Tile, _indices: &mut Tile, part: usize) {
+    fn store(acc: Self, values: &mut Tile, _indices: &ComptimeOption<Tile>, part: usize) {
         let k = K::value();
         let unrolled = comptime!(k <= TOP_K_UNROLL_BUDGET);
 
@@ -470,7 +476,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
         }
     }
 
-    fn load(values: &Tile, _indices: &Tile, part: usize) -> Self {
+    fn load(values: &Tile, _indices: &ComptimeOption<Tile>, part: usize) -> Self {
         let k = K::value();
         let unrolled = comptime!(k <= TOP_K_UNROLL_BUDGET);
 
@@ -487,7 +493,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
     fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
-        _indices: &mut Tile,
+        _indices: &ComptimeOption<Tile>,
         _count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,

@@ -20,7 +20,7 @@ pub(crate) fn plane_shuffle_reduce_microkernel<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
+    indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
     match microkernel.item().operation.carrier() {
@@ -68,7 +68,7 @@ fn plane_shuffle_reduce<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
+    indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
     let operation = microkernel.item().operation;

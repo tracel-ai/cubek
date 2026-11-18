@@ -28,9 +28,9 @@ pub(crate) fn hypercube_last_arrival_reduce_microkernel<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
+    indices: &ComptimeOption<Tile>,
     partials: &mut Tile,
-    partial_indices: &mut Tile,
+    partial_indices: &ComptimeOption<Tile>,
     arrivals: &[Atomic<u32>],
     counter: usize,
     part: usize,
@@ -120,9 +120,9 @@ fn hypercube_last_arrival_reduce<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
+    indices: &ComptimeOption<Tile>,
     partials: &mut Tile,
-    partial_indices: &mut Tile,
+    partial_indices: &ComptimeOption<Tile>,
     arrivals: &[Atomic<u32>],
     counter: usize,
     part: usize,

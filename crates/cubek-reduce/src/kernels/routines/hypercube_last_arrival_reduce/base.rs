@@ -1,6 +1,7 @@
 use super::kernel::{
     HypercubeLastArrivalReduceDecisions, ReduceSplit, ReduceSplitExtents, ReduceSplitExtentsLaunch,
-    hypercube_last_arrival_reduce_kernel, hypercube_last_arrival_reduce_with_indices_kernel,
+    hypercube_last_arrival_reduce_indexed_kernel, hypercube_last_arrival_reduce_kernel,
+    hypercube_last_arrival_reduce_with_indices_kernel,
 };
 use crate::kernels::{
     LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
@@ -236,7 +237,6 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
             .collect();
         let counter = ElemType::UInt(UIntKind::U32);
         let partials = TensorHandle::empty(client, partial_shape.clone(), elements.accumulator);
-        let partial_indices = TensorHandle::empty(client, partial_shape, counter);
         let row_boxes = ReduceSplitExtents::row_boxes(problem, blueprint.width);
         let arrivals = TensorHandle::new_contiguous(
             [row_boxes],
@@ -253,7 +253,11 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                 .expect(ADMITTED_PLAN_RUNS)
         };
         let partials = bind_partials(partials, elements.accumulator);
-        let partial_indices = bind_partials(partial_indices, counter);
+        // The partials' indices, only where the carrier keeps any.
+        let partial_indices =
+            problem.operation.carrier().carries_indices().then(|| {
+                bind_partials(TensorHandle::empty(client, partial_shape, counter), counter)
+            });
         let arrivals = arrivals.binding().into_tensor_arg().into_buffer_arg();
         // SAFETY: every operand but the counters is bound through the launcher, which masks the
         // reads and writes of a tile the problem's edge cuts short, and the kernel indexes no
@@ -261,8 +265,8 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
         // themselves in at by their box's coordinates. A cube writes no partial but its own part's,
         // and the last cube of a box reads them after every cube of the box stored its own. Its
         // shared memory is the slots its microkernel declares, which the grid counted.
-        match (binding.indices, problem.indices) {
-            (Some(indices), Some(index)) => unsafe {
+        match (binding.indices, problem.indices, partial_indices) {
+            (Some(indices), Some(index), Some(partial_indices)) => unsafe {
                 hypercube_last_arrival_reduce_with_indices_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
@@ -287,6 +291,30 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                     [elements.input, elements.accumulator, elements.out, index],
                 )
             },
+            (_, _, Some(partial_indices)) => unsafe {
+                hypercube_last_arrival_reduce_indexed_kernel::launch_unchecked::<I>(
+                    client,
+                    grid.launch.cube_count,
+                    grid.launch.cube_dim,
+                    blueprint.width,
+                    binding.input,
+                    binding.out,
+                    partials.arg(),
+                    partial_indices.arg(),
+                    arrivals,
+                    binding.launcher.partitioning_arg(),
+                    ReduceSplitExtentsLaunch::new(
+                        extents.parts,
+                        extents.values,
+                        extents.inner_boxes,
+                    ),
+                    HypercubeLastArrivalReduceDecisions {
+                        microkernel: blueprint.microkernel,
+                        split: ReduceSplit::new(problem),
+                    },
+                    [elements.input, elements.accumulator, elements.out],
+                )
+            },
             _ => unsafe {
                 hypercube_last_arrival_reduce_kernel::launch_unchecked::<I>(
                     client,
@@ -296,7 +324,6 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                     binding.input,
                     binding.out,
                     partials.arg(),
-                    partial_indices.arg(),
                     arrivals,
                     binding.launcher.partitioning_arg(),
                     ReduceSplitExtentsLaunch::new(

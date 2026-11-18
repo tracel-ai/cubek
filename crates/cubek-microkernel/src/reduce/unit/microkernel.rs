@@ -18,7 +18,7 @@ pub(crate) fn unit_direct_reduce_microkernel<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
+    indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: UnitDirectReduceMicrokernel,
 ) {
     match microkernel.item().operation.carrier() {
@@ -66,7 +66,7 @@ fn unit_direct_reduce<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
+    indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: UnitDirectReduceMicrokernel,
 ) {
     let operation = microkernel.item().operation;

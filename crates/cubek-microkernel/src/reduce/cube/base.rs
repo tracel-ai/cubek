@@ -58,7 +58,7 @@ impl CubeStagedReduceMicrokernel {
         &self,
         input: &Tile,
         out: &mut Tile,
-        indices: &mut Tile,
+        indices: &ComptimeOption<Tile>,
     ) {
         cube_staged_reduce_microkernel::<In, Acc, Out, Idx, N>(
             input,

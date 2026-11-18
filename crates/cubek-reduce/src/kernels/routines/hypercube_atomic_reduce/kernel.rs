@@ -29,11 +29,11 @@ pub(crate) fn hypercube_atomic_reduce_kernel<
     let o = out.tile(&partitioning);
     for cube in &partitioning {
         let mut rows_out = o.at(&cube);
-        // One output: the indices are never written, so they get the output's own window.
-        let mut unwritten = o.at(&cube);
         let part = x.at(&cube);
-        microkernel
-            .runtime()
-            .execute::<In, Acc, Out, Out, N>(&part, &mut rows_out, &mut unwritten);
+        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
+            &part,
+            &mut rows_out,
+            &ComptimeOption::new_None(),
+        );
     }
 }
