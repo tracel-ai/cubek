@@ -21,7 +21,7 @@ use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Test
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 const I32: ElemType = ElemType::Int(IntKind::I32);
 
-const OPERATIONS: [ReduceOperation; 12] = [
+const OPERATIONS: [ReduceOperation; 14] = [
     ReduceOperation::Sum,
     ReduceOperation::Prod,
     ReduceOperation::Mean,
@@ -34,6 +34,8 @@ const OPERATIONS: [ReduceOperation; 12] = [
     ReduceOperation::ArgMin,
     ReduceOperation::TopK { k: 3 },
     ReduceOperation::ArgTopK { k: 3 },
+    ReduceOperation::TopK { k: 1 },
+    ReduceOperation::ArgTopK { k: 1 },
 ];
 
 /// The `k` best of `row`, best first: the larger (smaller) value, then the lower index, a NaN
