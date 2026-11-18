@@ -210,8 +210,8 @@ pub struct ConvRoles {
     pub extent_mismatch: ConvDecline,
 }
 
-/// The out and tap axes of a convolution over `spatial_dims` spatial dims, and where their extents sit in
-/// the operands' views.
+/// The out and tap axes of a convolution over `spatial_dims` spatial dims, and where their extents
+/// sit in the operands' views.
 #[derive(Debug)]
 struct SpatialAxes {
     spatial_dims: usize,
@@ -252,8 +252,8 @@ impl SpatialAxes {
 }
 
 impl ConvRoles {
-    /// The roles `operation` gives the axes of the space of a convolution over `spatial_dims` spatial
-    /// dims.
+    /// The roles `operation` gives the axes of the space of a convolution over `spatial_dims`
+    /// spatial dims.
     ///
     /// # Errors
     ///
@@ -278,7 +278,7 @@ impl ConvRoles {
         let contracted = joined(&[&spatial.taps, &[CI]]);
         Self {
             spatial_dims: spatial.spatial_dims,
-            space: [&free[..], &contracted[..]].concat(),
+            space: joined(&[&free, &contracted]),
             free: ConvFreeAxes::split(&free),
             contracted: ConvContractedAxes::split(&contracted),
             lhs: joined(&[&[B], &spatial.outs, &spatial.taps, &[CI]]),
@@ -307,7 +307,7 @@ impl ConvRoles {
         let contracted = joined(&[&[B], &spatial.outs]);
         Self {
             spatial_dims: spatial.spatial_dims,
-            space: [&contracted[..], &free[..]].concat(),
+            space: joined(&[&contracted, &free]),
             free: ConvFreeAxes::split(&free),
             contracted: ConvContractedAxes::split(&contracted),
             lhs: joined(&[&spatial.taps, &[B], &spatial.outs, &[CI]]),
@@ -336,7 +336,7 @@ impl ConvRoles {
         let contracted = joined(&[&spatial.taps, &[CO]]);
         Self {
             spatial_dims: spatial.spatial_dims,
-            space: [&free[..], &contracted[..]].concat(),
+            space: joined(&[&free, &contracted]),
             free: ConvFreeAxes::split(&free),
             contracted: ConvContractedAxes::split(&contracted),
             lhs: joined(&[&[B], &spatial.outs, &spatial.taps, &[CO]]),
@@ -364,10 +364,8 @@ impl ConvRoles {
         ConvAxis::spatial(self.spatial_dims)
     }
 
-    /// The axis a kernel leaves to its launch: the batch where it is a free axis. No vectorization
-    /// decision reads it, and over one spatial dim, where it is the across axis, its overhang is
-    /// read off the problem's own space. The weight backward contracts it, and the tile DSL's
-    /// gather reads the extents of the axes it gathers over at expansion, so it stays compiled in.
+    /// The axis a kernel leaves to its launch: the batch where it is a free axis. The weight
+    /// backward contracts it, so it stays compiled in there.
     pub fn dynamic(&self) -> Option<Axis> {
         self.free.in_order().contains(&B).then_some(B)
     }
@@ -506,8 +504,10 @@ mod tests {
     /// Over two spatial dims the roles are the 2D tables.
     #[test]
     fn two_spatial_dims_state_the_two_dimensional_tables() {
-        let [[oh, rh], [ow, rw]] =
-            [0, 1].map(|dim| [ConvAxis::Out(dim).axis(), ConvAxis::Tap(dim).axis()]);
+        let [[oh, rh], [ow, rw]] = ConvAxis::spatial(2)
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("two spatial dims");
         let roles = |operation| ConvRoles::of(operation, 2).expect("a served operation");
 
         let forward = roles(Forward);
