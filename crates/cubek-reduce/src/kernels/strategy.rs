@@ -127,27 +127,26 @@ impl ReduceKernel {
     /// Why its routine cannot run the problem here.
     pub fn launch(&self, hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
         match self {
-            Self::Unit => launch_first_served(&UnitDirectReduceRoutine, hw, tensors),
-            Self::PlaneShuffle => launch_first_served(&PlaneShuffleReduceRoutine, hw, tensors),
-            Self::CubeStaged => launch_first_served(&CubeStagedReduceRoutine, hw, tensors),
+            Self::Unit => launch_first_served::<UnitDirectReduceRoutine, _>(hw, tensors),
+            Self::PlaneShuffle => launch_first_served::<PlaneShuffleReduceRoutine, _>(hw, tensors),
+            Self::CubeStaged => launch_first_served::<CubeStagedReduceRoutine, _>(hw, tensors),
             Self::HypercubeLastArrival => {
-                launch_first_served(&HypercubeLastArrivalReduceRoutine, hw, tensors)
+                launch_first_served::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors)
             }
             Self::HypercubeAtomic => {
-                launch_first_served(&UnitDirectZeroRoutine, hw, tensors)?;
-                launch_first_served(&HypercubeAtomicReduceRoutine, hw, tensors)
+                launch_first_served::<UnitDirectZeroRoutine, _>(hw, tensors)?;
+                launch_first_served::<HypercubeAtomicReduceRoutine, _>(hw, tensors)
             }
         }
     }
 }
 
-/// `tensors` reduced by `routine` at the first of its settings `hw` prepares them at.
+/// `tensors` reduced by `R` at the first of its settings `hw` prepares them at.
 fn launch_first_served<R: ReduceLauncher<M>, M>(
-    routine: &R,
     hw: &Hardware,
     tensors: &ReduceTensors,
 ) -> Result<(), Refusal> {
-    let (blueprint, grid) = routine.prepare_first_served(hw, tensors.problem())?;
-    routine.launch(tensors, blueprint, grid);
+    let (blueprint, grid) = R::prepare_first_served(hw, tensors.problem())?;
+    R::launch(tensors, blueprint, grid);
     Ok(())
 }

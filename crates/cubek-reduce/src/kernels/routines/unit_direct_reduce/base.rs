@@ -43,7 +43,7 @@ impl Routine for UnitDirectReduceRoutine {
     type Partitioning = Partitioning;
 
     /// Four planes of units a cube by default, then one and eight.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         UnitDirectReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
@@ -57,7 +57,6 @@ impl Routine for UnitDirectReduceRoutine {
 
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &UnitDirectReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
@@ -66,7 +65,6 @@ impl Routine for UnitDirectReduceRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -102,7 +100,6 @@ impl Routine for UnitDirectReduceRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,
@@ -118,7 +115,6 @@ impl ReduceLauncher<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
     const NAME: &'static str = "unit-direct-reduce";
 
     fn dispatch<I: TileOperand>(
-        &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,

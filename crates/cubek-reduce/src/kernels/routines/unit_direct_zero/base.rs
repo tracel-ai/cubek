@@ -42,7 +42,7 @@ impl Routine for UnitDirectZeroRoutine {
     type Partitioning = Partitioning;
 
     /// Cubes of four planes: a zeroing is one write a unit, which no setting speeds up.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         UnitDirectZeroMicrokernel::settings(hw)
             .into_iter()
             .map(|microkernel| UnitDirectZeroSettings {
@@ -53,7 +53,6 @@ impl Routine for UnitDirectZeroRoutine {
     }
 
     fn vectorize(
-        &self,
         microkernel: &UnitDirectZeroMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ZeroOperand>,
@@ -64,7 +63,6 @@ impl Routine for UnitDirectZeroRoutine {
     /// Placed as the unit reduce places its owners, and its lines laid as a reduction lays them,
     /// so each unit zeroes the cells it would write.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -99,7 +97,6 @@ impl Routine for UnitDirectZeroRoutine {
     }
 
     fn estimate(
-        &self,
         _problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,
@@ -116,7 +113,6 @@ impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroRoutine {
 
     /// The output zeroed; the input is never read.
     fn dispatch<I: TileOperand>(
-        &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -135,13 +131,12 @@ impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroRoutine {
 
     /// The output zeroed. The caller's input is never read, so `input` is never called.
     fn launch_unbound<I: TileOperand>(
-        &self,
         tensors: &ReduceTensors<Geometry>,
         blueprint: UnitDirectZeroBlueprint,
         grid: Grid,
         _input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {
-        self.zero_unbound(tensors, blueprint, grid);
+        Self::zero_unbound(tensors, blueprint, grid);
         Ok(())
     }
 }
@@ -149,7 +144,6 @@ impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroRoutine {
 impl UnitDirectZeroRoutine {
     /// The output of `tensors`, whose input the caller binds, zeroed on `grid`.
     pub fn zero_unbound(
-        &self,
         tensors: &ReduceTensors<Geometry>,
         blueprint: UnitDirectZeroBlueprint,
         grid: Grid,

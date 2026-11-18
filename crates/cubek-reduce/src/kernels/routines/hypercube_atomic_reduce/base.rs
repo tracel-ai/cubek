@@ -62,7 +62,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes, each with the longest parts first.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeStagedReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
@@ -78,7 +78,6 @@ impl Routine for HypercubeAtomicReduceRoutine {
 
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &CubeStagedReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
@@ -87,7 +86,6 @@ impl Routine for HypercubeAtomicReduceRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -145,7 +143,6 @@ impl Routine for HypercubeAtomicReduceRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,
@@ -163,7 +160,6 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
     /// Never reached: [`launch`](Self::launch) and [`launch_unbound`](Self::launch_unbound) bind
     /// the output as the atomic argument the kernel adds into, which a plain output tensor is not.
     fn dispatch<I: TileOperand>(
-        &self,
         _problem: &ReduceRoutineProblem,
         _client: &Client,
         _binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -174,12 +170,7 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
     }
 
     /// `tensors` reduced on `grid`, each cube's total added into the output.
-    fn launch(
-        &self,
-        tensors: &ReduceTensors,
-        blueprint: HypercubeAtomicReduceBlueprint,
-        grid: Grid,
-    ) {
+    fn launch(tensors: &ReduceTensors, blueprint: HypercubeAtomicReduceBlueprint, grid: Grid) {
         let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, identity);
         launch_atomic::<StoredTileOperand>(
             tensors.problem(),
@@ -198,7 +189,6 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
     /// [`UNBOUND_LINES_NARROWER`] where `blueprint` reads narrower lines than the caller's input is
     /// stated at.
     fn launch_unbound<I: TileOperand>(
-        &self,
         tensors: &ReduceTensors<Geometry>,
         blueprint: HypercubeAtomicReduceBlueprint,
         grid: Grid,

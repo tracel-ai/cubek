@@ -116,7 +116,7 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes, each with the longest parts first.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         HypercubeLastArrivalReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
@@ -132,7 +132,6 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
 
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &HypercubeLastArrivalReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
@@ -141,7 +140,6 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -188,7 +186,6 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,
@@ -204,7 +201,6 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
     const NAME: &'static str = "hypercube-last-arrival-reduce";
 
     fn dispatch<I: TileOperand>(
-        &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,

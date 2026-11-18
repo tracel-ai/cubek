@@ -42,7 +42,7 @@ impl Routine for CubeStagedReduceRoutine {
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes: it has no knob of its own.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeStagedReduceMicrokernel::settings(hw)
             .into_iter()
             .map(|microkernel| CubeStagedReduceSettings { microkernel })
@@ -51,7 +51,6 @@ impl Routine for CubeStagedReduceRoutine {
 
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &CubeStagedReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
@@ -60,7 +59,6 @@ impl Routine for CubeStagedReduceRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -94,7 +92,6 @@ impl Routine for CubeStagedReduceRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,
@@ -113,7 +110,6 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
     const NAME: &'static str = "cube-staged-reduce";
 
     fn dispatch<I: TileOperand>(
-        &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,

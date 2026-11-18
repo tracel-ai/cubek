@@ -6,6 +6,7 @@ use crate::kernels::{
     PlaneShuffleReduceRoutine, ReduceBlueprint, ReduceElements, ReduceKernel, ReduceLauncher,
     ReduceRoutineProblem, ReduceTensors, UnitDirectReduceRoutine, UnitDirectZeroRoutine,
 };
+use core::marker::PhantomData;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::LaunchArg;
@@ -102,7 +103,7 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
 /// built for.
 #[derive(Debug, Clone)]
 pub(crate) struct ReduceRoutineCandidate<R: Routine> {
-    routine: R,
+    routine: PhantomData<R>,
     settings: R::Settings,
     /// The routine's prefix and its setting: what the tuning cache names the candidate by.
     name: String,
@@ -111,17 +112,16 @@ pub(crate) struct ReduceRoutineCandidate<R: Routine> {
 
 impl<R, M> ReduceRoutineCandidate<R>
 where
-    R: ReduceLauncher<M> + Routine<Microkernel = M> + Copy,
+    R: ReduceLauncher<M> + Routine<Microkernel = M>,
     R::Settings: core::fmt::Display,
 {
-    /// Every setting `routine` lists on `hw`, as candidates, each named by the routine's prefix
+    /// Every setting `R` lists on `hw`, as candidates, each named by the routine's prefix
     /// and its setting.
-    pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        routine
-            .settings(hw)
+    pub fn list(hw: &Hardware) -> Vec<Self> {
+        R::settings(hw)
             .into_iter()
             .map(|settings| Self {
-                routine,
+                routine: PhantomData,
                 name: format!("{} {settings}", R::NAME),
                 settings,
                 hw: hw.clone(),
@@ -136,11 +136,9 @@ where
 {
     /// `tensors` reduced at this candidate's setting.
     fn run(&self, tensors: ReduceTensors) -> Result<(), String> {
-        let (blueprint, grid) = self
-            .routine
-            .prepare(&self.hw, tensors.problem(), &self.settings)
+        let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)
             .map_err(|refusal| refusal.to_string())?;
-        self.routine.launch(&tensors, blueprint, grid);
+        R::launch(&tensors, blueprint, grid);
         Ok(())
     }
 
@@ -156,19 +154,14 @@ where
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {
-        let (blueprint, grid) =
-            self.routine
-                .prepare(&self.hw, tensors.problem(), &self.settings)?;
-        self.routine
-            .launch_unbound::<I>(tensors, blueprint, grid, input)
+        let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)?;
+        R::launch_unbound::<I>(tensors, blueprint, grid, input)
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device.
     fn prepared(&self, key: &ReduceKey) -> Option<(ReduceBlueprint<M>, Grid)> {
-        self.routine
-            .prepare(&self.hw, &ReduceRoutineProblem::from(key), &self.settings)
-            .ok()
+        R::prepare(&self.hw, &ReduceRoutineProblem::from(key), &self.settings).ok()
     }
 }
 
@@ -186,13 +179,11 @@ impl ReduceRoutineCandidate<HypercubeAtomicReduceRoutine> {
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Refusal> {
         let (blueprint, grid) =
-            self.routine
-                .prepare(&self.hw, tensors.problem(), &self.settings)?;
+            HypercubeAtomicReduceRoutine::prepare(&self.hw, tensors.problem(), &self.settings)?;
         let (zero_blueprint, zero_grid) =
-            UnitDirectZeroRoutine.prepare_first_served(&self.hw, tensors.problem())?;
-        UnitDirectZeroRoutine.zero_unbound(tensors, zero_blueprint, zero_grid);
-        self.routine
-            .launch_unbound::<I>(tensors, blueprint, grid, input)
+            UnitDirectZeroRoutine::prepare_first_served(&self.hw, tensors.problem())?;
+        UnitDirectZeroRoutine::zero_unbound(tensors, zero_blueprint, zero_grid);
+        HypercubeAtomicReduceRoutine::launch_unbound::<I>(tensors, blueprint, grid, input)
     }
 }
 
@@ -409,7 +400,7 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
     autotune
         .identified(
             &tile,
-            ReduceRoutineCandidate::list(UnitDirectReduceRoutine, &hw),
+            ReduceRoutineCandidate::<UnitDirectReduceRoutine>::list(&hw),
             |candidate| {
                 ReduceIdentity::Routine(ReduceCandidate::launching(candidate.clone().into()))
             },
@@ -417,7 +408,7 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::list(PlaneShuffleReduceRoutine, &hw),
+            ReduceRoutineCandidate::<PlaneShuffleReduceRoutine>::list(&hw),
             |candidate| {
                 ReduceIdentity::Routine(ReduceCandidate::launching(candidate.clone().into()))
             },
@@ -425,7 +416,7 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::list(CubeStagedReduceRoutine, &hw),
+            ReduceRoutineCandidate::<CubeStagedReduceRoutine>::list(&hw),
             |candidate| {
                 ReduceIdentity::Routine(ReduceCandidate::launching(candidate.clone().into()))
             },
@@ -433,7 +424,7 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::list(HypercubeLastArrivalReduceRoutine, &hw),
+            ReduceRoutineCandidate::<HypercubeLastArrivalReduceRoutine>::list(&hw),
             |candidate| {
                 ReduceIdentity::Routine(ReduceCandidate::launching(candidate.clone().into()))
             },
@@ -441,16 +432,16 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::list(HypercubeAtomicReduceRoutine, &hw),
+            ReduceRoutineCandidate::<HypercubeAtomicReduceRoutine>::list(&hw),
             |candidate| {
                 ReduceIdentity::Routine(ReduceCandidate::launching(candidate.clone().into()))
             },
             move |candidate, tensors| {
                 // It only adds into the output, which the zeroing, timed with it, sets first.
-                let (blueprint, grid) = UnitDirectZeroRoutine
-                    .prepare_first_served(&zero_hw, tensors.problem())
-                    .map_err(|refusal| refusal.to_string())?;
-                UnitDirectZeroRoutine.launch(&tensors, blueprint, grid);
+                let (blueprint, grid) =
+                    UnitDirectZeroRoutine::prepare_first_served(&zero_hw, tensors.problem())
+                        .map_err(|refusal| refusal.to_string())?;
+                UnitDirectZeroRoutine::launch(&tensors, blueprint, grid);
                 candidate.run(tensors)
             },
         )
