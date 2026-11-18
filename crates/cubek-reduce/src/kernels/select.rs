@@ -2,17 +2,18 @@
 
 use crate::kernels::{
     CubeReduceRoutine, HypercubeReduceRoutine, HypercubeReduceSettings, ReduceKernel,
-    ReduceRoutine, ReduceSplitExtents, ReduceTensors, UnitReduceRoutine,
+    ReduceRoutine, ReduceRoutineProblem, ReduceSplitExtents, ReduceTensors, UnitReduceRoutine,
 };
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::reduce::ReduceCarrier;
+use cubek_microkernel::reduce::{ReduceCarrier, ReduceLayout};
 use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
 use cubek_std::routine::Routine;
 
 /// `tensors` reduced by the routine the rule picks on `hw`, read top to bottom:
 ///
-/// 1. Rows enough that a unit each fills the device: the unit routine.
+/// 1. Rows enough that a unit each fills the device, each row short enough that a unit walks it
+///    alone as fast as a plane would: the unit routine.
 /// 2. Rows a cube each would leave the device idle, and a split that fills it: the hypercube, at
 ///    its first setting whose cubes fill the device, or at the one with the most cubes.
 /// 3. Otherwise the cube routine.
@@ -25,6 +26,7 @@ pub fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
     let problem = tensors.problem();
     if let Ok((blueprint, grid)) = UnitReduceRoutine.prepare_first_served(hw, problem)
         && short_of_the_device(hw, &grid.launch) == 0
+        && unit_keeps_up(hw, problem, blueprint.width)
     {
         UnitReduceRoutine.launch(tensors, blueprint, grid);
         return Ok(());
@@ -38,6 +40,21 @@ pub fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
         return Ok(());
     }
     ReduceKernel::Unit.launch(hw, tensors)
+}
+
+/// Whether a unit reading a row alone, `width` values a line, keeps up with a plane reading it
+/// together. Across the reduced dim it does: neighbouring units read neighbouring rows, so their
+/// reads meet. Along it, a unit walks its row line after line where a plane takes a line a lane,
+/// so it keeps up only while the row holds no more lines than a plane has lanes, or where the
+/// device runs no plane routine.
+fn unit_keeps_up(hw: &Hardware, problem: &ReduceRoutineProblem, width: usize) -> bool {
+    match problem.layout() {
+        ReduceLayout::Across => true,
+        ReduceLayout::Along => hw
+            .plane_dim()
+            .ok()
+            .is_none_or(|lanes| problem.reduced_extent().div_ceil(width) <= lanes as usize),
+    }
 }
 
 /// The hypercube's launch where a box of rows a cube leaves the device idle and splitting the rows

@@ -15,7 +15,7 @@ impl ReduceCorrectness {
     pub fn verify(strategy: &ReduceEntry, problem: &ReduceProblem) -> Result<(), String> {
         let client = cubecl::test_device().client();
         let proof = ReduceProblem {
-            shape: proof_shape(problem.shape.len(), problem.axis),
+            shape: proof_shape(&problem.shape, problem.axis),
             axis: problem.axis,
             config: problem.config,
             kind: problem.kind,
@@ -85,21 +85,23 @@ impl ReduceCorrectness {
 }
 
 /// At most [`RAMP_MAX_ELEMS`] elements, all on the reduced axis so a plane or
-/// cube routine has enough to fold. Padding other axes with 2 keeps the total
+/// cube routine has enough to reduce. Padding other axes with 2 keeps the total
 /// a power of two at any rank, instead of the reduced axis underflowing to
-/// zero once rank exceeds `RAMP_MAX_ELEMS`'s bit width.
-fn proof_shape(rank: usize, axis: usize) -> Vec<usize> {
-    let mut shape = vec![1; rank];
+/// zero once rank exceeds `RAMP_MAX_ELEMS`'s bit width. An axis of one in
+/// `shape` stays one, so a whole tensor's one row is proved as one row, which
+/// a strategy that sums only a whole tensor accepts.
+fn proof_shape(shape: &[usize], axis: usize) -> Vec<usize> {
+    let mut proof = vec![1; shape.len()];
     let mut budget = RAMP_MAX_ELEMS;
-    for (i, dim) in shape.iter_mut().enumerate() {
-        if i == axis || budget == 1 {
+    for (i, dim) in proof.iter_mut().enumerate() {
+        if i == axis || budget == 1 || shape[i] == 1 {
             continue;
         }
         *dim = 2;
         budget /= 2;
     }
-    shape[axis] = budget;
-    shape
+    proof[axis] = budget;
+    proof
 }
 
 impl cubek_test_utils::Correctness for ReduceCorrectness {
@@ -146,11 +148,11 @@ mod proof_shape_tests {
     fn stays_within_ramp_bounds_at_every_rank() {
         for rank in 1..=16 {
             for axis in 0..rank {
-                let shape = proof_shape(rank, axis);
-                let elems: usize = shape.iter().product();
+                let proof = proof_shape(&vec![3; rank], axis);
+                let elems: usize = proof.iter().product();
                 assert!(
                     elems.is_power_of_two() && elems <= RAMP_MAX_ELEMS,
-                    "rank {rank} axis {axis}: {shape:?} has {elems} elements"
+                    "rank {rank} axis {axis}: {proof:?} has {elems} elements"
                 );
             }
         }
@@ -158,6 +160,11 @@ mod proof_shape_tests {
 
     #[test]
     fn matches_ramp_max_elems_below_its_bit_width() {
-        assert_eq!(proof_shape(3, 2), vec![2, 2, 512]);
+        assert_eq!(proof_shape(&[3, 3, 3], 2), vec![2, 2, 512]);
+    }
+
+    #[test]
+    fn keeps_a_whole_tensor_one_row() {
+        assert_eq!(proof_shape(&[1, 16_777_216], 1), vec![1, 2048]);
     }
 }

@@ -61,7 +61,8 @@ impl Routine for UnitZeroRoutine {
         microkernel.vectorize(&(), vectorization);
     }
 
-    /// Placed as the unit reduce places its owners, so each unit zeroes the cells it would write.
+    /// Placed as the unit reduce places its owners, and its lines laid as a reduction lays them,
+    /// so each unit zeroes the cells it would write.
     fn prepare(
         &self,
         hw: &Hardware,
@@ -69,7 +70,9 @@ impl Routine for UnitZeroRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         let microkernel = UnitZeroMicrokernel::best(hw, &(), &settings.microkernel)?;
-        let widths = reduce_widths(hw, problem, Vectorization::new());
+        let mut vectorization = Vectorization::new();
+        problem.work_item().require(&mut vectorization);
+        let widths = reduce_widths(hw, problem, vectorization);
         let plane_width = hw.dispatch_plane_size() as usize;
         let mut owners = problem.owner_axes();
         owners.reverse();
