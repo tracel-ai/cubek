@@ -1,6 +1,6 @@
 use super::kernel::{cube_staged_reduce_kernel, cube_staged_reduce_with_indices_kernel};
 use crate::kernels::{
-    LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -24,13 +24,11 @@ pub(crate) struct CubeStagedReduceRoutine;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeStagedReduceSettings {
     pub microkernel: CubeStagedReduceMicrokernelSettings,
-    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
-    pub lane_slots: usize,
 }
 
 impl core::fmt::Display for CubeStagedReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} lane_slots={}", self.microkernel, self.lane_slots)
+        write!(f, "{}", self.microkernel)
     }
 }
 
@@ -47,12 +45,7 @@ impl Routine for CubeStagedReduceRoutine {
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         CubeStagedReduceMicrokernel::settings(hw)
             .into_iter()
-            .flat_map(|microkernel| {
-                LANE_SLOTS.map(|lane_slots| CubeStagedReduceSettings {
-                    microkernel,
-                    lane_slots,
-                })
-            })
+            .map(|microkernel| CubeStagedReduceSettings { microkernel })
             .collect()
     }
 
@@ -81,9 +74,7 @@ impl Routine for CubeStagedReduceRoutine {
             CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
-        let widest = problem
-            .operation
-            .widest_line_at_lane_slots(settings.lane_slots);
+        let widest = microkernel.widest_line();
         let widths = reduce_widths(hw, problem, vectorization, widest);
         let partitioning = Partitioning::new(
             problem.space(),

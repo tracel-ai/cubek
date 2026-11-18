@@ -29,6 +29,11 @@ impl HypercubeLastArrivalReduceMicrokernel {
         Self { part }
     }
 
+    /// The widest line its part's carrier keeps apart.
+    pub fn widest_line(&self) -> Option<usize> {
+        self.part.widest_line()
+    }
+
     /// Its `part`.
     pub fn part(&self) -> CubeStagedReduceMicrokernel {
         self.part

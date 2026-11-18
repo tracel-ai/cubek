@@ -1,5 +1,5 @@
 use super::microkernel::plane_shuffle_reduce_microkernel;
-use crate::reduce::{ReduceOperand, ReduceWorkItem};
+use crate::reduce::{ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS};
 use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
@@ -20,12 +20,20 @@ pub struct PlaneShuffleReduceMicrokernel {
     /// Units of the plane, as wide as the device commits to.
     #[cube(comptime)]
     lanes: usize,
+    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width
+    /// ([`ReduceOperation::widest_line_at_lane_slots`](crate::reduce::ReduceOperation::widest_line_at_lane_slots)).
+    #[cube(comptime)]
+    lane_slots: usize,
 }
 
 impl PlaneShuffleReduceMicrokernel {
-    /// A plane of `lanes` units reducing `item`.
-    pub fn new(item: ReduceWorkItem, lanes: usize) -> Self {
-        Self { item, lanes }
+    /// A plane of `lanes` units reducing `item`, keeping `lane_slots` top-k slots across a line.
+    pub fn new(item: ReduceWorkItem, lanes: usize, lane_slots: usize) -> Self {
+        Self {
+            item,
+            lanes,
+            lane_slots,
+        }
     }
 
     /// Its `item`.
@@ -36,6 +44,13 @@ impl PlaneShuffleReduceMicrokernel {
     /// Its `lanes`.
     pub fn lanes(&self) -> usize {
         self.lanes
+    }
+
+    /// The widest line its carrier keeps apart at its lane slots, where the carrier bounds it.
+    pub fn widest_line(&self) -> Option<usize> {
+        self.item
+            .operation
+            .widest_line_at_lane_slots(self.lane_slots)
     }
 }
 
@@ -54,7 +69,8 @@ impl PlaneShuffleReduceMicrokernel {
             indices,
             comptime!(PlaneShuffleReduceMicrokernel {
                 item: self.item,
-                lanes: self.lanes
+                lanes: self.lanes,
+                lane_slots: self.lane_slots
             }),
         )
     }
@@ -62,11 +78,15 @@ impl PlaneShuffleReduceMicrokernel {
 
 /// A plane's microkernel has nothing a measurement settles: its lanes are the device's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PlaneShuffleReduceMicrokernelSettings;
+pub struct PlaneShuffleReduceMicrokernelSettings {
+    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width
+    /// ([`ReduceOperation::widest_line_at_lane_slots`](crate::reduce::ReduceOperation::widest_line_at_lane_slots)).
+    pub lane_slots: usize,
+}
 
 impl core::fmt::Display for PlaneShuffleReduceMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("whole-plane")
+        write!(f, "whole-plane lane_slots={}", self.lane_slots)
     }
 }
 
@@ -89,17 +109,20 @@ impl Microkernel for PlaneShuffleReduceMicrokernel {
     const DECLINE: &'static str = "the plane reduce needs a plane width the device commits to";
 
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
-        vec![PlaneShuffleReduceMicrokernelSettings]
+        TOP_K_LANE_SLOTS
+            .map(|lane_slots| PlaneShuffleReduceMicrokernelSettings { lane_slots })
+            .to_vec()
     }
 
     fn candidates(
         hw: &Hardware,
         item: &ReduceWorkItem,
-        _settings: &Self::Settings,
+        settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
         hw.plane_dim().ok().into_iter().map(|lanes| Self {
             item: *item,
             lanes: lanes as usize,
+            lane_slots: settings.lane_slots,
         })
     }
 

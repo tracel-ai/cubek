@@ -1,6 +1,6 @@
 use super::kernel::{unit_direct_reduce_kernel, unit_direct_reduce_with_indices_kernel};
 use crate::kernels::{
-    LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -25,17 +25,11 @@ pub(crate) struct UnitDirectReduceRoutine;
 pub struct UnitDirectReduceSettings {
     pub microkernel: UnitDirectReduceMicrokernelSettings,
     pub planes: usize,
-    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
-    pub lane_slots: usize,
 }
 
 impl core::fmt::Display for UnitDirectReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{} planes={} lane_slots={}",
-            self.microkernel, self.planes, self.lane_slots
-        )
+        write!(f, "{} planes={}", self.microkernel, self.planes)
     }
 }
 
@@ -52,12 +46,10 @@ impl Routine for UnitDirectReduceRoutine {
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         UnitDirectReduceMicrokernel::settings(hw)
             .into_iter()
-            .flat_map(|microkernel| [4, 1, 8].map(|planes| (microkernel, planes)))
-            .flat_map(|(microkernel, planes)| {
-                LANE_SLOTS.map(|lane_slots| UnitDirectReduceSettings {
+            .flat_map(|microkernel| {
+                [4, 1, 8].map(|planes| UnitDirectReduceSettings {
                     microkernel,
                     planes,
-                    lane_slots,
                 })
             })
             .collect()
@@ -83,9 +75,7 @@ impl Routine for UnitDirectReduceRoutine {
             UnitDirectReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
-        let widest = problem
-            .operation
-            .widest_line_at_lane_slots(settings.lane_slots);
+        let widest = microkernel.widest_line();
         let widths = reduce_widths(hw, problem, vectorization, widest);
         let plane_width = hw.dispatch_plane_size() as usize;
         let partitioning = Partitioning::new(

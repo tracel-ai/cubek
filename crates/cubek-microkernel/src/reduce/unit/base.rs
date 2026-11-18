@@ -1,5 +1,5 @@
 use super::microkernel::unit_direct_reduce_microkernel;
-use crate::reduce::{ReduceOperand, ReduceWorkItem};
+use crate::reduce::{ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS};
 use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
@@ -16,17 +16,28 @@ use cubek_std::microkernel::{
 pub struct UnitDirectReduceMicrokernel {
     #[cube(comptime)]
     item: ReduceWorkItem,
+    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width
+    /// ([`ReduceOperation::widest_line_at_lane_slots`](crate::reduce::ReduceOperation::widest_line_at_lane_slots)).
+    #[cube(comptime)]
+    lane_slots: usize,
 }
 
 impl UnitDirectReduceMicrokernel {
-    /// A unit reducing `item`.
-    pub fn new(item: ReduceWorkItem) -> Self {
-        Self { item }
+    /// A unit reducing `item`, keeping `lane_slots` top-k slots across a line.
+    pub fn new(item: ReduceWorkItem, lane_slots: usize) -> Self {
+        Self { item, lane_slots }
     }
 
     /// Its `item`.
     pub fn item(&self) -> ReduceWorkItem {
         self.item
+    }
+
+    /// The widest line its carrier keeps apart at its lane slots, where the carrier bounds it.
+    pub fn widest_line(&self) -> Option<usize> {
+        self.item
+            .operation
+            .widest_line_at_lane_slots(self.lane_slots)
     }
 }
 
@@ -43,18 +54,25 @@ impl UnitDirectReduceMicrokernel {
             input,
             out,
             indices,
-            comptime!(UnitDirectReduceMicrokernel { item: self.item }),
+            comptime!(UnitDirectReduceMicrokernel {
+                item: self.item,
+                lane_slots: self.lane_slots
+            }),
         )
     }
 }
 
-/// A unit's microkernel has nothing a measurement settles.
+/// What a measurement settles for a unit's microkernel: its top-k lane slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UnitDirectReduceMicrokernelSettings;
+pub struct UnitDirectReduceMicrokernelSettings {
+    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width
+    /// ([`ReduceOperation::widest_line_at_lane_slots`](crate::reduce::ReduceOperation::widest_line_at_lane_slots)).
+    pub lane_slots: usize,
+}
 
 impl core::fmt::Display for UnitDirectReduceMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("one-unit")
+        write!(f, "one-unit lane_slots={}", self.lane_slots)
     }
 }
 
@@ -73,15 +91,20 @@ impl Microkernel for UnitDirectReduceMicrokernel {
     const DECLINE: &'static str = "the unit reduce runs on every device";
 
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
-        vec![UnitDirectReduceMicrokernelSettings]
+        TOP_K_LANE_SLOTS
+            .map(|lane_slots| UnitDirectReduceMicrokernelSettings { lane_slots })
+            .to_vec()
     }
 
     fn candidates(
         _hw: &Hardware,
         item: &ReduceWorkItem,
-        _settings: &Self::Settings,
+        settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        core::iter::once(Self { item: *item })
+        core::iter::once(Self {
+            item: *item,
+            lane_slots: settings.lane_slots,
+        })
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {

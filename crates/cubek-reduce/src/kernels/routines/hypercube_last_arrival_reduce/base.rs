@@ -4,7 +4,7 @@ use super::kernel::{
     hypercube_last_arrival_reduce_with_indices_kernel,
 };
 use crate::kernels::{
-    LANE_SLOTS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
 };
 use cubecl::bytes::Bytes;
 use cubecl::client::Client;
@@ -34,8 +34,6 @@ pub(crate) struct HypercubeLastArrivalReduceRoutine;
 pub struct HypercubeLastArrivalReduceSettings {
     pub microkernel: CubeStagedReduceMicrokernelSettings,
     pub unit_lines: usize,
-    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width.
-    pub lane_slots: usize,
 }
 
 impl HypercubeLastArrivalReduceSettings {
@@ -46,11 +44,7 @@ impl HypercubeLastArrivalReduceSettings {
 
 impl core::fmt::Display for HypercubeLastArrivalReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{} unit_lines={} lane_slots={}",
-            self.microkernel, self.unit_lines, self.lane_slots
-        )
+        write!(f, "{} unit_lines={}", self.microkernel, self.unit_lines)
     }
 }
 
@@ -126,14 +120,11 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
         HypercubeLastArrivalReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
-                HypercubeLastArrivalReduceSettings::UNIT_LINES
-                    .map(|unit_lines| (microkernel, unit_lines))
-            })
-            .flat_map(|(microkernel, unit_lines)| {
-                LANE_SLOTS.map(|lane_slots| HypercubeLastArrivalReduceSettings {
-                    microkernel,
-                    unit_lines,
-                    lane_slots,
+                HypercubeLastArrivalReduceSettings::UNIT_LINES.map(|unit_lines| {
+                    HypercubeLastArrivalReduceSettings {
+                        microkernel,
+                        unit_lines,
+                    }
                 })
             })
             .collect()
@@ -167,9 +158,7 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
         )?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
-        let widest = problem
-            .operation
-            .widest_line_at_lane_slots(settings.lane_slots);
+        let widest = microkernel.widest_line();
         let widths = reduce_widths(hw, problem, vectorization, widest);
         let units = microkernel.part().lanes() * microkernel.part().planes();
         // Along, a line holds `width` values of the row; across, one.

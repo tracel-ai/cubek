@@ -6,10 +6,6 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand};
 use cubek_std::Hardware;
 
-/// The top-k slots a thread keeps across a line's lanes that autotune tries, a setting of every
-/// reducing routine.
-pub(crate) const LANE_SLOTS: [usize; 1] = [32];
-
 /// What a launch of this kind compiles: the microkernel, the partitioning that places its owners,
 /// and the width each operand binds at.
 ///

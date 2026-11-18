@@ -1,5 +1,9 @@
 use cubecl::tile::{Monoid, TOP_K_UNROLL_BUDGET};
 
+/// The top-k slots a thread keeps across a line's lanes that autotune tries: a setting of every
+/// reduce microkernel.
+pub const TOP_K_LANE_SLOTS: [usize; 1] = [32];
+
 /// A reduction along one dimension: a map on each value as it is read, a monoid that combines the
 /// values, and a last step on the total.
 ///

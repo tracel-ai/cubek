@@ -21,7 +21,10 @@ use cubek_microkernel::reduce::plane::{
     PlaneShuffleReduceMicrokernel, PlaneShuffleReduceMicrokernelSettings,
 };
 use cubek_microkernel::reduce::unit::UnitDirectReduceMicrokernel;
-use cubek_microkernel::reduce::{O, R, ReduceLayout, ReduceWorkItem};
+use cubek_microkernel::reduce::{O, R, ReduceLayout, ReduceWorkItem, TOP_K_LANE_SLOTS};
+
+/// The lane slots the microkernels' settings list.
+const LANE_SLOTS: usize = TOP_K_LANE_SLOTS[0];
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
@@ -79,17 +82,25 @@ impl ReduceLaunch {
             ReduceScope::Plane => PlaneShuffleReduceMicrokernel::best(
                 hw,
                 &item,
-                &PlaneShuffleReduceMicrokernelSettings,
+                &PlaneShuffleReduceMicrokernelSettings {
+                    lane_slots: TOP_K_LANE_SLOTS[0],
+                },
             )?
             .lanes() as u32,
             ReduceScope::Cube { planes } => CubeStagedReduceMicrokernel::best(
                 hw,
                 &item,
-                &CubeStagedReduceMicrokernelSettings { planes },
+                &CubeStagedReduceMicrokernelSettings {
+                    planes,
+                    lane_slots: LANE_SLOTS,
+                },
             )?
             .lanes() as u32,
             ReduceScope::Hypercube { planes, .. } => {
-                let settings = CubeStagedReduceMicrokernelSettings { planes };
+                let settings = CubeStagedReduceMicrokernelSettings {
+                    planes,
+                    lane_slots: LANE_SLOTS,
+                };
                 HypercubeLastArrivalReduceMicrokernel::best(hw, &item, &settings)?
                     .part()
                     .lanes() as u32
@@ -183,7 +194,7 @@ impl ReduceLaunch {
                     input,
                     out,
                     launcher.partitioning_arg(),
-                    UnitDirectReduceMicrokernel::new(self.item),
+                    UnitDirectReduceMicrokernel::new(self.item, LANE_SLOTS),
                     elements,
                 ),
                 ReduceScope::Plane => plane_reduce_kernel::launch_unchecked(
@@ -194,7 +205,7 @@ impl ReduceLaunch {
                     input,
                     out,
                     launcher.partitioning_arg(),
-                    PlaneShuffleReduceMicrokernel::new(self.item, lanes),
+                    PlaneShuffleReduceMicrokernel::new(self.item, lanes, LANE_SLOTS),
                     elements,
                 ),
                 ReduceScope::Cube { planes } => cube_reduce_kernel::launch_unchecked(
@@ -205,7 +216,7 @@ impl ReduceLaunch {
                     input,
                     out,
                     launcher.partitioning_arg(),
-                    CubeStagedReduceMicrokernel::new(self.item, lanes, planes),
+                    CubeStagedReduceMicrokernel::new(self.item, lanes, planes, LANE_SLOTS),
                     elements,
                 ),
                 ReduceScope::Hypercube { .. } => unreachable!("a hypercube splits its rows apart"),
@@ -282,9 +293,13 @@ impl ReduceLaunch {
                 TileSpec::direct(dimensions).boundary(BoundaryPolicy::Every(Boundary::Zero)),
             )
         };
-        let microkernel = HypercubeLastArrivalReduceMicrokernel::new(
-            CubeStagedReduceMicrokernel::new(self.item, self.plane_width as usize, planes),
-        );
+        let microkernel =
+            HypercubeLastArrivalReduceMicrokernel::new(CubeStagedReduceMicrokernel::new(
+                self.item,
+                self.plane_width as usize,
+                planes,
+                LANE_SLOTS,
+            ));
         // The partials' indices, only where the carrier keeps any.
         // SAFETY: every operand but the counters is bound through the launcher at the problem's
         // own extents, and the kernel indexes no buffer but through its tiles and the counters,
