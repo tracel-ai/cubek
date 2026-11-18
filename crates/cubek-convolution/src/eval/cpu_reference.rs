@@ -456,7 +456,7 @@ impl From<&ConvSpec> for ConvGeometry {
 }
 
 /// The spatial rank the naive gradient references serve, that of [`ConvSpec`].
-const SPATIAL: usize = 2;
+const SPATIAL_DIMS: usize = 2;
 
 /// A host tensor as the naive references read it: its values and its shape, channels last but for
 /// a weight and its gradient, which are `[co, taps.., ci]`.
@@ -493,13 +493,16 @@ fn within(extents: &[usize], positions: impl Iterator<Item = isize>) -> Option<u
 pub fn naive_weight_grad(
     input: HostTensor,
     out_grad: HostTensor,
-    kernel: [usize; SPATIAL],
-    args: &ConvolutionArgs<SPATIAL>,
+    kernel: [usize; SPATIAL_DIMS],
+    args: &ConvolutionArgs<SPATIAL_DIMS>,
 ) -> Vec<f32> {
     let windows = args.windows();
-    let (batches, channels) = (input.shape[0], input.shape[SPATIAL + 1]);
-    let (gathered, out) = (&input.shape[1..=SPATIAL], &out_grad.shape[1..=SPATIAL]);
-    let filters = out_grad.shape[SPATIAL + 1];
+    let (batches, channels) = (input.shape[0], input.shape[SPATIAL_DIMS + 1]);
+    let (gathered, out) = (
+        &input.shape[1..=SPATIAL_DIMS],
+        &out_grad.shape[1..=SPATIAL_DIMS],
+    );
+    let filters = out_grad.shape[SPATIAL_DIMS + 1];
     let (cells, taps, inputs) = (
         out.iter().product::<usize>(),
         kernel.iter().product::<usize>(),
@@ -514,8 +517,8 @@ pub fn naive_weight_grad(
                 for b in 0..batches {
                     for cell in 0..cells {
                         let at = unravel(cell, out);
-                        let positions =
-                            (0..SPATIAL).map(|dim| windows[dim].position(at[dim], at_tap[dim]));
+                        let positions = (0..SPATIAL_DIMS)
+                            .map(|dim| windows[dim].position(at[dim], at_tap[dim]));
                         let Some(read) = within(gathered, positions) else {
                             continue;
                         };
@@ -536,12 +539,15 @@ pub fn naive_weight_grad(
 pub fn naive_data_grad(
     out_grad: HostTensor,
     weights: HostTensor,
-    input: [usize; SPATIAL],
-    args: &ConvolutionArgs<SPATIAL>,
+    input: [usize; SPATIAL_DIMS],
+    args: &ConvolutionArgs<SPATIAL_DIMS>,
 ) -> Vec<f32> {
-    let (batches, filters) = (out_grad.shape[0], out_grad.shape[SPATIAL + 1]);
-    let (out, kernel) = (&out_grad.shape[1..=SPATIAL], &weights.shape[1..=SPATIAL]);
-    let channels = weights.shape[SPATIAL + 1];
+    let (batches, filters) = (out_grad.shape[0], out_grad.shape[SPATIAL_DIMS + 1]);
+    let (out, kernel) = (
+        &out_grad.shape[1..=SPATIAL_DIMS],
+        &weights.shape[1..=SPATIAL_DIMS],
+    );
+    let channels = weights.shape[SPATIAL_DIMS + 1];
     let (cells, taps, inputs) = (
         out.iter().product::<usize>(),
         kernel.iter().product::<usize>(),
@@ -577,7 +583,7 @@ pub fn naive_data_grad(
 /// The output position along spatial `dim` whose window, at tap `tap`, reads input position `pos`
 /// of an output `extent` long, if there is one.
 fn output_reading(
-    args: &ConvolutionArgs<SPATIAL>,
+    args: &ConvolutionArgs<SPATIAL_DIMS>,
     dim: usize,
     pos: usize,
     tap: usize,
