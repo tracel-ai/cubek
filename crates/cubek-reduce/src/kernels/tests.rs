@@ -145,17 +145,17 @@ fn values(len: usize, product: bool) -> Vec<f32> {
 /// prepares the problem at, or for the hypercube the last, its shortest parts, so that short rows
 /// still split.
 #[derive(Debug, Clone, Copy)]
-enum Scope {
-    Unit,
-    Plane,
-    Cube,
-    Hypercube,
+enum TestedRoutine {
+    UnitDirect,
+    PlaneShuffle,
+    CubeStaged,
+    HypercubeLastArrival,
     /// The kernel a strategy picks: the rule's, the autotune's, or the one it names.
     Picked(ReduceOpStrategy),
 }
 
-impl Scope {
-    /// `R` at the setting this scope picks, launched on `tensors`.
+impl TestedRoutine {
+    /// `R` at the setting this choice picks, launched on `tensors`.
     ///
     /// # Errors
     ///
@@ -168,7 +168,7 @@ impl Scope {
     ) -> Result<(), Refusal> {
         let problem = tensors.problem();
         let mut settings = R::settings(hw);
-        if let Scope::Hypercube = self {
+        if let TestedRoutine::HypercubeLastArrival = self {
             settings.reverse();
         }
         let (blueprint, grid) = settings
@@ -183,10 +183,10 @@ impl Scope {
     }
 }
 
-/// `shape` reduced along `axis` by `operation`, through the routine `scope` names.
+/// `shape` reduced along `axis` by `operation`, through the routine `routine` names.
 #[derive(Debug, Clone)]
 struct Reduction {
-    scope: Scope,
+    routine: TestedRoutine,
     shape: Vec<usize>,
     axis: usize,
     operation: ReduceOperation,
@@ -243,19 +243,27 @@ impl ScopeUnderTest for Routines {
                 out: out_elem,
             },
         );
-        let scope = reduction.scope;
-        match scope {
-            Scope::Unit => scope.launch_with::<UnitDirectReduceRoutine, _>(&hw, &tensors)?,
-            Scope::Plane => scope.launch_with::<PlaneShuffleReduceRoutine, _>(&hw, &tensors)?,
-            Scope::Cube => scope.launch_with::<CubeStagedReduceRoutine, _>(&hw, &tensors)?,
-            Scope::Hypercube => {
-                scope.launch_with::<HypercubeLastArrivalReduceRoutine, _>(&hw, &tensors)?
+        let routine = reduction.routine;
+        match routine {
+            TestedRoutine::UnitDirect => {
+                routine.launch_with::<UnitDirectReduceRoutine, _>(&hw, &tensors)?
             }
-            Scope::Picked(ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile)) => {
+            TestedRoutine::PlaneShuffle => {
+                routine.launch_with::<PlaneShuffleReduceRoutine, _>(&hw, &tensors)?
+            }
+            TestedRoutine::CubeStaged => {
+                routine.launch_with::<CubeStagedReduceRoutine, _>(&hw, &tensors)?
+            }
+            TestedRoutine::HypercubeLastArrival => {
+                routine.launch_with::<HypercubeLastArrivalReduceRoutine, _>(&hw, &tensors)?
+            }
+            TestedRoutine::Picked(ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile)) => {
                 select(&hw, &tensors)?
             }
-            Scope::Picked(ReduceOpStrategy::Specific(kernel)) => kernel.launch(&hw, &tensors)?,
-            Scope::Picked(ReduceOpStrategy::Autotune) => {
+            TestedRoutine::Picked(ReduceOpStrategy::Specific(kernel)) => {
+                kernel.launch(&hw, &tensors)?
+            }
+            TestedRoutine::Picked(ReduceOpStrategy::Autotune) => {
                 launch_tuned(tensors, &cubecl::test_device())
                     .expect("the floor serves every problem")
             }
@@ -309,9 +317,13 @@ impl ScopeUnderTest for Routines {
 /// cube skip where the device commits to no plane width.
 #[test]
 fn every_routine_reduces_every_dim_like_the_cpu() {
-    let scopes = [Scope::Unit, Scope::Plane, Scope::Cube];
+    let routines = [
+        TestedRoutine::UnitDirect,
+        TestedRoutine::PlaneShuffle,
+        TestedRoutine::CubeStaged,
+    ];
     let mut reductions = Vec::new();
-    for scope in scopes {
+    for routine in routines {
         for axis in [2, 1, 0] {
             for operation in OPERATIONS {
                 // A row shorter than `k` leaves cells no reference states: what the kernel pads
@@ -320,7 +332,7 @@ fn every_routine_reduces_every_dim_like_the_cpu() {
                     continue;
                 }
                 reductions.push(Reduction {
-                    scope,
+                    routine,
                     shape: vec![2, 5, 300],
                     axis,
                     operation,
@@ -428,23 +440,24 @@ impl ScopeUnderTest for UnboundRoutines {
             .custom(vec![-7.0; out_shape.iter().product()])
             .generate_without_host_data();
         let (input, written) = (input.binding(), out.clone().binding());
-        match reduction.scope {
-            Scope::Unit => {
+        match reduction.routine {
+            TestedRoutine::UnitDirect => {
                 launch_unbound::<UnitDirectReduceRoutine, _>(client, input, written, reduction)
             }
-            Scope::Plane => {
+            TestedRoutine::PlaneShuffle => {
                 launch_unbound::<PlaneShuffleReduceRoutine, _>(client, input, written, reduction)
             }
-            Scope::Cube => {
+            TestedRoutine::CubeStaged => {
                 launch_unbound::<CubeStagedReduceRoutine, _>(client, input, written, reduction)
             }
-            Scope::Hypercube => launch_unbound::<HypercubeLastArrivalReduceRoutine, _>(
-                client, input, written, reduction,
-            ),
-            Scope::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)) => {
+            TestedRoutine::HypercubeLastArrival => launch_unbound::<
+                HypercubeLastArrivalReduceRoutine,
+                _,
+            >(client, input, written, reduction),
+            TestedRoutine::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)) => {
                 launch_atomic_unbound(client, input, written, reduction)
             }
-            Scope::Picked(strategy) => {
+            TestedRoutine::Picked(strategy) => {
                 unreachable!("an unbound launch names its routine, not a strategy ({strategy:?})")
             }
         }?;
@@ -473,9 +486,13 @@ impl ScopeUnderTest for UnboundRoutines {
 /// and the cube skip where the device commits to no plane width.
 #[test]
 fn unbound_routines_reduce_like_the_cpu() {
-    let scopes = [Scope::Unit, Scope::Plane, Scope::Cube];
+    let routines = [
+        TestedRoutine::UnitDirect,
+        TestedRoutine::PlaneShuffle,
+        TestedRoutine::CubeStaged,
+    ];
     let mut reductions = Vec::new();
-    for scope in scopes {
+    for routine in routines {
         for axis in [2, 1] {
             for operation in [
                 ReduceOperation::Sum,
@@ -484,7 +501,7 @@ fn unbound_routines_reduce_like_the_cpu() {
                 ReduceOperation::ArgMax,
             ] {
                 reductions.push(Reduction {
-                    scope,
+                    routine,
                     shape: vec![2, 5, 300],
                     axis,
                     operation,
@@ -507,7 +524,9 @@ fn atomic_sums() -> Vec<Reduction> {
     shapes
         .into_iter()
         .map(|(shape, axis)| Reduction {
-            scope: Scope::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)),
+            routine: TestedRoutine::Picked(ReduceOpStrategy::Specific(
+                ReduceKernel::HypercubeAtomic,
+            )),
             shape: shape.to_vec(),
             axis,
             operation: ReduceOperation::Sum,
@@ -558,7 +577,7 @@ fn the_hypercube_reduces_split_rows_like_the_cpu() {
     for (shape, axis) in [([2, 3, 5000], 2), ([3, 2100, 4], 1), ([2, 3, 5000], 1)] {
         for operation in OPERATIONS {
             reductions.push(Reduction {
-                scope: Scope::Hypercube,
+                routine: TestedRoutine::HypercubeLastArrival,
                 shape: shape.to_vec(),
                 axis,
                 operation,
@@ -586,7 +605,7 @@ fn every_strategy_reduces_like_the_cpu() {
                 ReduceOperation::TopK { k: 3 },
             ] {
                 reductions.push(Reduction {
-                    scope: Scope::Picked(strategy),
+                    routine: TestedRoutine::Picked(strategy),
                     shape: shape.to_vec(),
                     axis,
                     operation,
