@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_test_utils::CatalogEntry;
 
-use crate::components::instructions::ReduceOperationConfig;
+use crate::ReduceOperation;
 
 /// Which launch pattern a problem measures.
 ///
@@ -14,7 +14,7 @@ use crate::components::instructions::ReduceOperationConfig;
 pub enum ReduceBenchKind {
     /// One `reduce` launch writing a single output.
     Single,
-    /// Two `reduce` launches, the values config then its `Arg*`, to get both halves.
+    /// Two `reduce` launches, the values operation then its `Arg*`, to get both halves.
     TwoLaunch,
     /// One `reduce_with_indices` launch writing both halves.
     Fused,
@@ -74,7 +74,7 @@ pub fn precisions() -> Vec<ReduceBenchPrecision> {
 pub struct ReduceProblem {
     pub shape: Vec<usize>,
     pub axis: usize,
-    pub config: ReduceOperationConfig,
+    pub operation: ReduceOperation,
     pub kind: ReduceBenchKind,
     pub precision: ReduceBenchPrecision,
 }
@@ -99,10 +99,10 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
     let shape = || vec![32, 512, 4095];
     let id = |name: String| format!("{name}{}", precision.suffix());
     let label = |text: String| format!("{text}{}", precision.label());
-    let problem = |config, kind| ReduceProblem {
+    let problem = |operation, kind| ReduceProblem {
         shape: shape(),
         axis: 2,
-        config,
+        operation,
         kind,
         precision,
     };
@@ -111,22 +111,22 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
         CatalogEntry::new(
             id("sum_axis2_32x512x4095".to_string()),
             label("Sum axis=2 (32x512x4095)".to_string()),
-            problem(ReduceOperationConfig::Sum, ReduceBenchKind::Single),
+            problem(ReduceOperation::Sum, ReduceBenchKind::Single),
         ),
         CatalogEntry::new(
             id("arg_topk1_axis2_32x512x4095".to_string()),
             label("ArgTopK(1) axis=2 (32x512x4095)".to_string()),
-            problem(ReduceOperationConfig::ArgTopK(1), ReduceBenchKind::Single),
+            problem(ReduceOperation::ArgTopK { k: 1 }, ReduceBenchKind::Single),
         ),
         CatalogEntry::new(
             id("arg_topk2_axis2_32x512x4095".to_string()),
             label("ArgTopK(2) axis=2 (32x512x4095)".to_string()),
-            problem(ReduceOperationConfig::ArgTopK(2), ReduceBenchKind::Single),
+            problem(ReduceOperation::ArgTopK { k: 2 }, ReduceBenchKind::Single),
         ),
         CatalogEntry::new(
             id("arg_topk3_axis2_32x512x4095".to_string()),
             label("ArgTopK(3) axis=2 (32x512x4095)".to_string()),
-            problem(ReduceOperationConfig::ArgTopK(3), ReduceBenchKind::Single),
+            problem(ReduceOperation::ArgTopK { k: 3 }, ReduceBenchKind::Single),
         ),
     ];
 
@@ -141,21 +141,21 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
             label(format!(
                 "TopK({k}) values only, 1 launch, axis=2 (32x512x4095)"
             )),
-            problem(ReduceOperationConfig::TopK(k), ReduceBenchKind::Single),
+            problem(ReduceOperation::TopK { k }, ReduceBenchKind::Single),
         ));
         entries.push(CatalogEntry::new(
             id(format!("topk{k}_two_launch_axis2_32x512x4095")),
             label(format!(
                 "TopK({k}) values+indices, 2 launches, axis=2 (32x512x4095)"
             )),
-            problem(ReduceOperationConfig::TopK(k), ReduceBenchKind::TwoLaunch),
+            problem(ReduceOperation::TopK { k }, ReduceBenchKind::TwoLaunch),
         ));
         entries.push(CatalogEntry::new(
             id(format!("topk{k}_fused_axis2_32x512x4095")),
             label(format!(
                 "TopK({k}) values+indices, 1 fused launch, axis=2 (32x512x4095)"
             )),
-            problem(ReduceOperationConfig::TopK(k), ReduceBenchKind::Fused),
+            problem(ReduceOperation::TopK { k }, ReduceBenchKind::Fused),
         ));
     }
 
@@ -176,42 +176,42 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
             label(format!(
                 "TopK({k}) values+indices, 1 fused launch, axis=2 (32x512x4095)"
             )),
-            problem(ReduceOperationConfig::TopK(k), ReduceBenchKind::Fused),
+            problem(ReduceOperation::TopK { k }, ReduceBenchKind::Fused),
         ));
     }
 
     // The same comparison for min and max, which reach `reduce_with_indices`
     // through their own collapsed instructions rather than the top-k one.
-    for (name, text, config) in [
-        ("max", "Max", ReduceOperationConfig::Max),
-        ("min", "Min", ReduceOperationConfig::Min),
+    for (name, text, operation) in [
+        ("max", "Max", ReduceOperation::Max),
+        ("min", "Min", ReduceOperation::Min),
     ] {
         entries.push(CatalogEntry::new(
             id(format!("{name}_single_axis2_32x512x4095")),
             label(format!(
                 "{text} values only, 1 launch, axis=2 (32x512x4095)"
             )),
-            problem(config, ReduceBenchKind::Single),
+            problem(operation, ReduceBenchKind::Single),
         ));
         entries.push(CatalogEntry::new(
             id(format!("{name}_two_launch_axis2_32x512x4095")),
             label(format!(
                 "{text} values+indices, 2 launches, axis=2 (32x512x4095)"
             )),
-            problem(config, ReduceBenchKind::TwoLaunch),
+            problem(operation, ReduceBenchKind::TwoLaunch),
         ));
         entries.push(CatalogEntry::new(
             id(format!("{name}_fused_axis2_32x512x4095")),
             label(format!(
                 "{text} values+indices, 1 fused launch, axis=2 (32x512x4095)"
             )),
-            problem(config, ReduceBenchKind::Fused),
+            problem(operation, ReduceBenchKind::Fused),
         ));
     }
 
     // The shapes the default sweep spreads over, beside the one above: many short rows, few long
     // rows, rows across the contiguous dim (strided), and a whole tensor summed into one value.
-    let spread = |name: &str, text: &str, shape: Vec<usize>, axis, config| {
+    let spread = |name: &str, text: &str, shape: Vec<usize>, axis, operation| {
         let dims = shape
             .iter()
             .map(|extent| extent.to_string())
@@ -223,7 +223,7 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
             ReduceProblem {
                 shape,
                 axis,
-                config,
+                operation,
                 kind: ReduceBenchKind::Single,
                 precision,
             },
@@ -235,59 +235,59 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
             "Sum, many short rows,",
             vec![262_144, 64],
             1,
-            ReduceOperationConfig::Sum,
+            ReduceOperation::Sum,
         ),
         spread(
             "sum_few_long_rows",
             "Sum, few long rows,",
             vec![4, 4_194_304],
             1,
-            ReduceOperationConfig::Sum,
+            ReduceOperation::Sum,
         ),
         spread(
             "sum_strided",
             "Sum, strided rows,",
             vec![32, 4095, 512],
             1,
-            ReduceOperationConfig::Sum,
+            ReduceOperation::Sum,
         ),
         spread(
             "arg_topk1_strided",
             "ArgTopK(1), strided rows,",
             vec![32, 4095, 512],
             1,
-            ReduceOperationConfig::ArgTopK(1),
+            ReduceOperation::ArgTopK { k: 1 },
         ),
         spread(
             "sum_whole_tensor",
             "Sum, a whole tensor,",
             vec![1, 16_777_216],
             1,
-            ReduceOperationConfig::Sum,
+            ReduceOperation::Sum,
         ),
     ]);
 
     // A decode sampler's row: one row of logits over a vocabulary, which one cube walks alone
     // unless the row is split across cubes. Its argmax, and a top-20 to sample among.
     let vocabulary = 151_936;
-    let sampled = |config, kind| ReduceProblem {
+    let sampled = |operation, kind| ReduceProblem {
         shape: vec![1, vocabulary],
         axis: 1,
-        config,
+        operation,
         kind,
         precision,
     };
     entries.push(CatalogEntry::new(
         id(format!("arg_topk1_sampler_1x{vocabulary}")),
         label(format!("ArgTopK(1) sampler row, axis=1 (1x{vocabulary})")),
-        sampled(ReduceOperationConfig::ArgTopK(1), ReduceBenchKind::Single),
+        sampled(ReduceOperation::ArgTopK { k: 1 }, ReduceBenchKind::Single),
     ));
     entries.push(CatalogEntry::new(
         id(format!("topk20_sampler_1x{vocabulary}")),
         label(format!(
             "TopK(20) values+indices, 1 fused launch, sampler row, axis=1 (1x{vocabulary})"
         )),
-        sampled(ReduceOperationConfig::TopK(20), ReduceBenchKind::Fused),
+        sampled(ReduceOperation::TopK { k: 20 }, ReduceBenchKind::Fused),
     ));
 
     entries

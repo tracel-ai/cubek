@@ -5,22 +5,19 @@
 //! it had the values layout, producing silently wrong data. These tests pin
 //! that such calls are rejected before launch instead.
 
-use cubecl::{config::autotune::AutotuneLevel, prelude::*, zspace::Shape};
-use cubek_reduce::{
-    ReduceError, ReduceStrategy, ReduceWithIndicesDtypes,
-    components::instructions::ReduceOperationConfig,
-    launch::{RoutineStrategy, VectorizationStrategy},
-    reduce_with_indices,
-    routines::{BlueprintStrategy, unit::UnitStrategy},
-};
+use cubecl::{prelude::*, zspace::Shape};
+use cubek_reduce::kernels::{ReduceElements, reduce_with_indices};
+use cubek_reduce::{ReduceError, ReduceOperation};
 use cubek_test_utils::{StridedLayout, TestInput};
+
+use crate::reduce::it::test_case::UNIT;
 
 /// Run the fused top-k on a `[4, 8]` input with the given indices output
 /// shape/strides and return the validation result. Values output is always the
 /// valid contiguous `[4, 2]`.
 fn try_launch(indices_shape: [usize; 2], indices_strides: Vec<usize>) -> Result<(), ReduceError> {
     try_launch_config(
-        ReduceOperationConfig::TopK(2),
+        ReduceOperation::TopK { k: 2 },
         2,
         indices_shape,
         indices_strides,
@@ -31,7 +28,7 @@ fn try_launch(indices_shape: [usize; 2], indices_strides: Vec<usize>) -> Result<
 /// shape/strides and return the validation result. Values output is always the
 /// valid contiguous `[4, out_len]`.
 fn try_launch_config(
-    operation: ReduceOperationConfig,
+    operation: ReduceOperation,
     out_len: usize,
     indices_shape: [usize; 2],
     indices_strides: Vec<usize>,
@@ -57,29 +54,21 @@ fn try_launch_config(
         .zeros()
         .generate_without_host_data();
 
-    let strategy = ReduceStrategy {
-        routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
-        vectorization: VectorizationStrategy {
-            parallel_output_vectorization: false,
-        },
-        autotune_level: AutotuneLevel::Full,
-    };
-    let dtypes = ReduceWithIndicesDtypes {
-        input: input_dtype,
-        values: input_dtype,
-        indices: u32_dtype,
-        accumulation: input_dtype,
-    };
-
     reduce_with_indices(
         &client,
+        &cubecl::test_device(),
         input.binding(),
         values.binding(),
         indices.binding(),
         1,
-        strategy,
+        UNIT,
         operation,
-        dtypes,
+        ReduceElements {
+            input: input_dtype,
+            accumulator: input_dtype,
+            out: input_dtype,
+        },
+        u32_dtype,
     )
 }
 
@@ -110,7 +99,7 @@ fn accepts_matching_outputs() {
 
 #[test]
 fn accepts_min_and_max() {
-    for operation in [ReduceOperationConfig::Min, ReduceOperationConfig::Max] {
+    for operation in [ReduceOperation::Min, ReduceOperation::Max] {
         let result = try_launch_config(operation, 1, [4, 1], vec![1, 1]);
         assert!(
             result.is_ok(),
@@ -121,7 +110,7 @@ fn accepts_min_and_max() {
 
 #[test]
 fn rejects_operation_without_indices() {
-    let result = try_launch_config(ReduceOperationConfig::Sum, 1, [4, 1], vec![1, 1]);
+    let result = try_launch_config(ReduceOperation::Sum, 1, [4, 1], vec![1, 1]);
     assert!(
         matches!(result, Err(ReduceError::IndicesUnsupported { .. })),
         "expected IndicesUnsupported, got {result:?}"

@@ -11,7 +11,7 @@ use crate::kernels::indexed::m_grouped::{
     GroupedRows, MGroupedFloors, MGroupedMatmulTensors, MGroupedRowSource, MGroupedRowSourceKind,
     MGroupedSettings, PaddedRows, RouteSort, upload,
 };
-use crate::kernels::indexed::stack::SlabAxis;
+use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
@@ -50,10 +50,10 @@ pub struct MGroupedMatmulKey {
     /// Whether the stack is float or packed, and how: a packed stack is read packed, by other
     /// kernels than a float one.
     stack: OperandKind,
-    /// Which axis the stack lines along.
+    /// Which dimension the stack lines along.
     lines: OperandLayout,
-    /// Which axis the slabs lie along.
-    slabs: SlabAxis,
+    /// Which dimension the slabs lie along.
+    slabs: SlabDimension,
     /// Where the rows come from: a candidate is timed with the pass that pads them.
     source: MGroupedRowSourceKind,
 }
@@ -244,7 +244,7 @@ mod tests {
     use crate::kernels::indexed::m_grouped::{
         GroupedRows, MGroupedMatmulTensors, MGroupedRowSource, PaddedRows, RouteSort, upload,
     };
-    use crate::kernels::indexed::stack::SlabAxis;
+    use crate::kernels::indexed::stack::SlabDimension;
     use crate::kernels::tensor::{PlainTensor, StoredTensor};
 
     /// `tensor`, `u32`, read back.
@@ -299,7 +299,7 @@ mod tests {
                 source,
                 StoredTensor::Plain(floats([k, experts * n])),
                 garbage(experts),
-                SlabAxis::Output,
+                SlabDimension::Output,
             )
             .expect("float operands the routines read");
             let spread = evenly_spread(&tensors.key(), &tensors);

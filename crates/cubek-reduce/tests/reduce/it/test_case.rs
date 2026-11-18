@@ -6,27 +6,46 @@ use cubecl::{
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
 };
-use cubek_reduce::{
-    ReduceDtypes, ReduceError, ReducePrecision, ReduceStrategy, ReduceWithIndicesDtypes,
-    components::instructions::ReduceOperationConfig,
+use cubek_reduce::kernels::{
+    ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceOpStrategy, reduce,
+    reduce_with_indices,
 };
+use cubek_reduce::{ReduceError, ReduceOperation};
 use cubek_test_utils::{
     Distribution, ExecutionOutcome, HostData, HostDataType, HostDataVec, ScopeUnderTest,
     StridedLayout, TestInput, Written,
 };
 
 use cubek_reduce::eval::cpu_reference::{
-    ReduceEntry, contiguous_strides, reference_all, reference_any, reference_argmax,
-    reference_argmin, reference_argtopk, reference_max, reference_max_abs, reference_mean,
-    reference_min, reference_prod, reference_sum, reference_topk,
+    contiguous_strides, reference_all, reference_any, reference_argmax, reference_argmin,
+    reference_argtopk, reference_max, reference_max_abs, reference_mean, reference_min,
+    reference_prod, reference_sum, reference_topk,
 };
+
+/// The unit kernel: a unit reduces each row.
+pub const UNIT: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::Unit);
+/// The plane kernel: a plane reduces each row, its lanes meeting by shuffles.
+pub const PLANE: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::PlaneShuffle);
+/// The cube kernel: a cube reduces each row, its planes meeting through shared memory.
+pub const CUBE: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::CubeStaged);
+/// The rule, which picks among the kernels by the problem and the device.
+pub const RULE: ReduceOpStrategy = ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile);
+
+/// What a reduction of `input` accumulates in: `f32` for a narrower float, the input's own element
+/// otherwise.
+pub fn accumulation_of(input: ElemType) -> ElemType {
+    match input {
+        ElemType::Float(FloatKind::F16 | FloatKind::BF16) => f32::elem_type_native(),
+        other => other,
+    }
+}
 
 #[derive(Clone)]
 pub struct TestCase {
     pub shape: Shape,
     pub stride: Strides,
     pub axis: Option<usize>,
-    pub strategy: ReduceStrategy,
+    pub strategy: ReduceOpStrategy,
     pub input_dtype: ElemType,
     pub accumulation_dtype: ElemType,
     custom_input: Option<Vec<f32>>,
@@ -46,23 +65,20 @@ impl core::fmt::Debug for TestCase {
 }
 
 impl TestCase {
-    pub fn new<P: ReducePrecision>(
+    pub fn new<E: Scalar>(
         shape: Shape,
         stride: Strides,
         axis: Option<usize>,
-        strategy: ReduceStrategy,
-    ) -> Self
-    where
-        P::EI: Scalar,
-        P::EA: Scalar,
-    {
+        strategy: ReduceOpStrategy,
+    ) -> Self {
+        let input_dtype = E::elem_type_native();
         Self {
             shape,
             stride,
             axis,
             strategy,
-            input_dtype: <P::EI as Scalar>::elem_type_native(),
-            accumulation_dtype: <P::EA as Scalar>::elem_type_native(),
+            input_dtype,
+            accumulation_dtype: accumulation_of(input_dtype),
             custom_input: None,
         }
     }
@@ -172,13 +188,13 @@ impl TestCase {
         client: &cubecl::client::Client,
         output_dtype: ElemType,
         output_shape: &Shape,
-        config: &ReduceOperationConfig,
+        operation: ReduceOperation,
     ) -> TensorHandle {
         let axis = self.axis.unwrap();
         let is_parallel = self.stride[axis] == 1;
-        let strides = match config {
-            ReduceOperationConfig::ArgTopK(k) | ReduceOperationConfig::TopK(k) if is_parallel => {
-                parallel_multiple_output_strides(self.shape.as_slice(), &self.stride, axis, *k)
+        let strides = match operation {
+            ReduceOperation::ArgTopK { k } | ReduceOperation::TopK { k } if is_parallel => {
+                parallel_multiple_output_strides(self.shape.as_slice(), &self.stride, axis, k)
             }
             _ => contiguous_strides(output_shape.as_slice()),
         };
@@ -218,20 +234,20 @@ pub enum Op {
 
 impl Op {
     /// What the kernel is told to compute.
-    fn config(self) -> ReduceOperationConfig {
+    fn operation(self) -> ReduceOperation {
         match self {
-            Op::Sum => ReduceOperationConfig::Sum,
-            Op::Mean => ReduceOperationConfig::Mean,
-            Op::Prod => ReduceOperationConfig::Prod,
-            Op::Min | Op::MinWithIndices => ReduceOperationConfig::Min,
-            Op::Max | Op::MaxWithIndices => ReduceOperationConfig::Max,
-            Op::MaxAbs => ReduceOperationConfig::MaxAbs,
-            Op::Any => ReduceOperationConfig::Any,
-            Op::All => ReduceOperationConfig::All,
-            Op::ArgMax => ReduceOperationConfig::ArgMax,
-            Op::ArgMin => ReduceOperationConfig::ArgMin,
-            Op::ArgTopK(k) => ReduceOperationConfig::ArgTopK(k),
-            Op::TopK(k) | Op::TopKWithIndices(k) => ReduceOperationConfig::TopK(k),
+            Op::Sum => ReduceOperation::Sum,
+            Op::Mean => ReduceOperation::Mean,
+            Op::Prod => ReduceOperation::Prod,
+            Op::Min | Op::MinWithIndices => ReduceOperation::Min,
+            Op::Max | Op::MaxWithIndices => ReduceOperation::Max,
+            Op::MaxAbs => ReduceOperation::MaxAbs,
+            Op::Any => ReduceOperation::Any,
+            Op::All => ReduceOperation::All,
+            Op::ArgMax => ReduceOperation::ArgMax,
+            Op::ArgMin => ReduceOperation::ArgMin,
+            Op::ArgTopK(k) => ReduceOperation::ArgTopK { k },
+            Op::TopK(k) | Op::TopKWithIndices(k) => ReduceOperation::TopK { k },
         }
     }
 
@@ -354,64 +370,59 @@ impl ScopeUnderTest for Reduces {
     /// Where a case of explicit regression data is refused: it must execute.
     fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Refusal> {
         let case = &reduction.case;
-        let (op, axis, config) = (reduction.op, case.axis.unwrap(), reduction.op.config());
+        let (op, axis, operation) = (reduction.op, case.axis.unwrap(), reduction.op.operation());
         let (input, host) = reduction.input();
         let outputs: Vec<(ElemType, TensorHandle)> = op
             .output_dtypes(case.input_dtype)
             .into_iter()
             .zip(op.references(&host, axis))
             .map(|(dtype, reference)| {
-                let output = case.build_output_tensor(client, dtype, &reference.shape, &config);
+                let output = case.build_output_tensor(client, dtype, &reference.shape, operation);
                 (dtype, output)
             })
             .collect();
+        let device = cubecl::test_device();
         let launched = match op.with_indices() {
-            true => ReduceEntry::from(case.strategy.clone()).reduce_with_indices(
+            true => reduce_with_indices(
                 client,
+                &device,
                 input.binding(),
                 outputs[0].1.clone().binding(),
                 outputs[1].1.clone().binding(),
                 axis,
-                config,
-                ReduceWithIndicesDtypes {
+                case.strategy,
+                operation,
+                ReduceElements {
                     input: case.input_dtype,
-                    values: outputs[0].0,
-                    indices: outputs[1].0,
-                    accumulation: case.accumulation_dtype,
+                    accumulator: case.accumulation_dtype,
+                    out: outputs[0].0,
                 },
+                outputs[1].0,
             ),
-            false => ReduceEntry::from(case.strategy.clone()).reduce(
+            false => reduce(
                 client,
+                &device,
                 input.binding(),
                 outputs[0].1.clone().binding(),
                 axis,
-                config,
-                ReduceDtypes {
+                case.strategy,
+                operation,
+                ReduceElements {
                     input: case.input_dtype,
-                    output: outputs[0].0,
-                    accumulation: case.accumulation_dtype,
+                    accumulator: case.accumulation_dtype,
+                    out: outputs[0].0,
                 },
             ),
         };
-        // A device declines only by what it lacks; any other error is the test's or the kernel's,
-        // and a case of explicit data must execute whatever the device.
+        // A kernel declines only by what the device lacks or the problem asks beyond it; any
+        // other error is the test's, and a case of explicit data must execute whatever the device.
         match launched {
             Ok(()) => {}
             Err(why) if case.custom_input.is_some() => {
                 panic!("{reduction:?}: a case of explicit data must execute, refused: {why:?}")
             }
-            Err(
-                ReduceError::PlanesUnavailable
-                | ReduceError::ImprecisePlaneDim
-                | ReduceError::CubeCountTooLarge
-                // A cube forced to a plane width the device does not have.
-                | ReduceError::Validation {
-                    details: "`cube_dim.x` must match `plane_size_max`",
-                },
-            ) => {
-                return Err(Refusal::Declined {
-                    why: "the reduce entry runs no such configuration on this device",
-                });
+            Err(ReduceError::Validation { details }) => {
+                return Err(Refusal::Declined { why: details });
             }
             Err(why) => panic!("{reduction:?}: {why}"),
         }

@@ -2,8 +2,8 @@
 
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeLastArrivalReduceRoutine, HypercubeLastArrivalReduceSettings,
-    ReduceKernel, ReduceLauncher, ReduceRoutineProblem, ReduceSplitExtents, ReduceTensors,
-    UnitDirectReduceRoutine,
+    PlaneShuffleReduceRoutine, ReduceKernel, ReduceLauncher, ReduceRoutineProblem,
+    ReduceSplitExtents, ReduceTensors, UnitDirectReduceRoutine,
 };
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::reduce::{ReduceCarrier, ReduceLayout};
@@ -15,10 +15,12 @@ use cubek_std::routine::Routine;
 ///
 /// 1. Rows enough that a unit each fills the device, each row short enough that a unit walks it
 ///    alone as fast as a plane would: the unit routine.
-/// 2. Rows a cube each would leave the device idle, and a split that fills it: the hypercube, at
+/// 2. Rows enough that a plane each fills the device: the plane routine, whose lanes share a row
+///    without meeting in shared memory.
+/// 3. Rows a cube each would leave the device idle, and a split that fills it: the hypercube, at
 ///    its first setting whose cubes fill the device, or at the one with the most cubes.
-/// 3. Otherwise the cube routine.
-/// 4. Where the cube declines the problem, the unit routine, which serves every problem.
+/// 4. Otherwise the cube routine.
+/// 5. Where the cube declines the problem, the unit routine, which serves every problem.
 ///
 /// # Errors
 ///
@@ -30,6 +32,12 @@ pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refus
         && unit_keeps_up(hw, problem, blueprint.width)
     {
         UnitDirectReduceRoutine.launch(tensors, blueprint, grid);
+        return Ok(());
+    }
+    if let Ok((blueprint, grid)) = PlaneShuffleReduceRoutine.prepare_first_served(hw, problem)
+        && short_of_the_device(hw, &grid.launch) == 0
+    {
+        PlaneShuffleReduceRoutine.launch(tensors, blueprint, grid);
         return Ok(());
     }
     if let Some((blueprint, grid)) = hypercube_filling_the_device(hw, tensors) {

@@ -12,7 +12,7 @@ pub fn cube_max_pool_microkernel(block: &Region, output: &Tile, input: &Tile) {
         let input = input.at(&plane);
         for cell in plane {
             let mut max = output.at(&cell);
-            max.reduce_axis(&input.at(&cell), Monoid::Max);
+            max.reduce_dimension(&input.at(&cell), Monoid::Max);
         }
     }
 }

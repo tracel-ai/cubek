@@ -2,28 +2,23 @@
 //!
 //! A dimension of length zero outside the reduce axis leaves nothing to write, so the
 //! launch is sized from zero working units. Where the plane count is read from the cpu
-//! core count, a cube still holds at least one unit, since the unit routine divides the
-//! work by the cube's units. These pin that such a call returns.
+//! core count, a cube still holds at least one unit. These pin that such a call returns, through
+//! the rule, which is what burn's unspecified reduce strategy asks for.
 
-use cubecl::{config::autotune::AutotuneLevel, prelude::*, zspace::Shape};
-use cubek_reduce::{
-    ReduceDtypes, ReduceError, ReduceStrategy, ReduceWithIndicesDtypes,
-    components::instructions::ReduceOperationConfig,
-    launch::{RoutineStrategy, VectorizationStrategy},
-    reduce, reduce_with_indices,
-    routines::{BlueprintStrategy, unit::UnitStrategy},
-};
+use cubecl::{prelude::*, zspace::Shape};
+use cubek_reduce::kernels::{ReduceElements, reduce, reduce_with_indices};
+use cubek_reduce::{ReduceError, ReduceOperation};
 use cubek_test_utils::{StridedLayout, TestInput};
 
-/// The unit routine is where the division lands, and it is also what burn's unspecified
-/// reduce strategy asks for.
-fn strategy() -> ReduceStrategy {
-    ReduceStrategy {
-        routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
-        vectorization: VectorizationStrategy {
-            parallel_output_vectorization: false,
-        },
-        autotune_level: AutotuneLevel::Full,
+use crate::reduce::it::test_case::RULE;
+
+/// Every element of the reduction `f32`, its output's included.
+fn elements() -> ReduceElements {
+    let dtype = f32::elem_type_native();
+    ReduceElements {
+        input: dtype,
+        accumulator: dtype,
+        out: dtype,
     }
 }
 
@@ -45,16 +40,13 @@ fn try_reduce() -> Result<(), ReduceError> {
 
     reduce(
         &client,
+        &cubecl::test_device(),
         input.binding(),
         output.binding(),
         1,
-        strategy(),
-        ReduceOperationConfig::Sum,
-        ReduceDtypes {
-            input: dtype,
-            output: dtype,
-            accumulation: dtype,
-        },
+        RULE,
+        ReduceOperation::Sum,
+        elements(),
     )
 }
 
@@ -82,18 +74,15 @@ fn try_reduce_with_indices() -> Result<(), ReduceError> {
 
     reduce_with_indices(
         &client,
+        &cubecl::test_device(),
         input.binding(),
         values.binding(),
         indices.binding(),
         1,
-        strategy(),
-        ReduceOperationConfig::Max,
-        ReduceWithIndicesDtypes {
-            input: dtype,
-            values: dtype,
-            indices: index_dtype,
-            accumulation: dtype,
-        },
+        RULE,
+        ReduceOperation::Max,
+        elements(),
+        index_dtype,
     )
 }
 
@@ -109,8 +98,7 @@ fn an_empty_output_is_not_launched_with_indices() {
     assert!(result.is_ok(), "expected Ok, got {result:?}");
 }
 
-/// A reduce axis of length zero is refused before any launch, which is what leaves the
-/// `reduce_count` product with no division to make.
+/// A reduce axis of length zero is refused before any launch.
 #[test]
 fn an_empty_reduce_axis_is_refused() {
     let client = cubecl::test_device().client();
@@ -129,16 +117,13 @@ fn an_empty_reduce_axis_is_refused() {
 
     let result = reduce(
         &client,
+        &cubecl::test_device(),
         input.binding(),
         output.binding(),
         1,
-        strategy(),
-        ReduceOperationConfig::Sum,
-        ReduceDtypes {
-            input: dtype,
-            output: dtype,
-            accumulation: dtype,
-        },
+        RULE,
+        ReduceOperation::Sum,
+        elements(),
     );
 
     assert!(

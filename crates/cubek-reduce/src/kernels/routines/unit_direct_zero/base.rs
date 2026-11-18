@@ -74,13 +74,11 @@ impl Routine for UnitDirectZeroRoutine {
         problem.work_item().require(&mut vectorization);
         let widths = reduce_widths(hw, problem, vectorization);
         let plane_width = hw.dispatch_plane_size() as usize;
-        let mut owners = problem.owner_axes();
-        owners.reverse();
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
                 .launch_units(
-                    &owners,
+                    &problem.owner_dimensions_innermost_first(),
                     UnitCube {
                         plane_width,
                         planes: settings.planes,

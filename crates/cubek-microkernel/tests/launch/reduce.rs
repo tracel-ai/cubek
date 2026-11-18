@@ -1,7 +1,7 @@
 //! The reduce microkernels on one launch: `out[o, s]` the `s`-th cell row `o` writes (one, or `k`
-//! for a top-k). Along the reduced axis, `input[o, r]`, each row its owner's; across it,
+//! for a top-k). Along the reduced dimension, `input[o, r]`, each row its owner's; across it,
 //! `input[r, o]` and `out[s, o]`, each owner `width` rows side by side, a row a lane. A hypercube
-//! splits the reduced axis into parts, `input[o, p, r]` or `input[p, r, o]`, a cube a part.
+//! splits the reduced dimension into parts, `input[o, p, r]` or `input[p, r, o]`, a cube a part.
 
 use cubecl::ir::UIntKind;
 use cubecl::prelude::*;
@@ -10,7 +10,7 @@ use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{
-    Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
+    Dimension, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::reduce::cube::{CubeReduceMicrokernel, CubeReduceMicrokernelSettings};
@@ -22,11 +22,11 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
 /// The cells a row writes: one, or `k` for a top-k.
-const S: Axis = Axis(2);
-/// The parts a hypercube splits the reduced axis into, a cube a part.
-const P: Axis = Axis(3);
+const S: Dimension = Dimension(2);
+/// The parts a hypercube splits the reduced dimension into, a cube a part.
+const P: Dimension = Dimension(3);
 /// The lines of a row's partials, every part's, which only they run along.
-const Q: Axis = Axis(4);
+const Q: Dimension = Dimension(4);
 
 /// Which microkernel each row's plane runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -98,7 +98,7 @@ impl ReduceLaunch {
         })
     }
 
-    /// `out[o, s]` from `input[o, r]` along the reduced axis, `out[s, o]` from `input[r, o]`
+    /// `out[o, s]` from `input[o, r]` along the reduced dimension, `out[s, o]` from `input[r, o]`
     /// across it, all row-major.
     ///
     /// # Errors
@@ -125,7 +125,7 @@ impl ReduceLaunch {
         let cells = self.item.operation.written_per_row();
         let space = Space::new(&[(O, self.rows), (R, self.reduced), (S, cells)]);
         // Across, an owner holds a line's worth of rows side by side.
-        let (owned, input_axes, out_axes, out_width) = match self.item.layout {
+        let (owned, input_dimensions, out_dimensions, out_width) = match self.item.layout {
             ReduceLayout::Along => (1, [O, R], [O, S], 1),
             ReduceLayout::Across => (self.width, [R, O], [S, O], self.width),
         };
@@ -151,17 +151,17 @@ impl ReduceLaunch {
             cube_dim,
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
-        let bound = |arg, element, width, axes: &[_]| {
+        let bound = |arg, element, width, dimensions: &[_]| {
             TileTensorLaunch::new(
                 arg,
                 element,
                 width,
-                TileSpec::direct(axes).boundary(BoundaryPolicy::Every(Boundary::Zero)),
+                TileSpec::direct(dimensions).boundary(BoundaryPolicy::Every(Boundary::Zero)),
             )
         };
         let elements = [self.item.input, self.item.accumulator, self.out];
-        let input = bound(input, self.item.input, self.width, &input_axes);
-        let out = bound(out, self.out, out_width, &out_axes);
+        let input = bound(input, self.item.input, self.width, &input_dimensions);
+        let out = bound(out, self.out, out_width, &out_dimensions);
         let lanes = self.plane_width as usize;
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles.
@@ -207,8 +207,8 @@ impl ReduceLaunch {
     }
 
     /// Every row split into `parts` equal parts, a cube of `planes` planes a part: the input laid
-    /// `input[o, p, r]` along the reduced axis, `input[p, r, o]` across it. The partials and the
-    /// cubes' counters are the launch's own.
+    /// `input[o, p, r]` along the reduced dimension, `input[p, r, o]` across it. The partials and
+    /// the cubes' counters are the launch's own.
     fn launch_split(
         &self,
         client: &Client,
@@ -221,10 +221,14 @@ impl ReduceLaunch {
         let part = self.reduced / parts;
         assert_eq!(part * parts, self.reduced, "the parts split the row evenly");
         // A partial is `cells` lines; along, each line holds `width` lanes of one row.
-        let (owned, input_axes, out_axes, partial_axes, partial_lines, part_lines) = match self
-            .item
-            .layout
-        {
+        let (
+            owned,
+            input_dimensions,
+            out_dimensions,
+            partial_dimensions,
+            partial_lines,
+            part_lines,
+        ) = match self.item.layout {
             ReduceLayout::Along => (
                 1,
                 [O, P, R],
@@ -263,12 +267,12 @@ impl ReduceLaunch {
         let partials = TensorHandle::zeros(client, partial_shape, self.item.accumulator);
         let partial_indices = TensorHandle::zeros(client, partial_shape, index);
         let arrivals = TensorHandle::zeros(client, [self.rows], index);
-        let bound = |arg, element, width, axes: &[_]| {
+        let bound = |arg, element, width, dimensions: &[_]| {
             TileTensorLaunch::new(
                 arg,
                 element,
                 width,
-                TileSpec::direct(axes).boundary(BoundaryPolicy::Every(Boundary::Zero)),
+                TileSpec::direct(dimensions).boundary(BoundaryPolicy::Every(Boundary::Zero)),
             )
         };
         let microkernel = HypercubeReduceMicrokernel::new(CubeReduceMicrokernel::new(
@@ -285,19 +289,19 @@ impl ReduceLaunch {
                 launcher.cube_count(),
                 launcher.cube_dim(),
                 self.width,
-                bound(input, self.item.input, self.width, &input_axes),
-                bound(out, self.out, owned, &out_axes),
+                bound(input, self.item.input, self.width, &input_dimensions),
+                bound(out, self.out, owned, &out_dimensions),
                 bound(
                     partials.binding().into_tensor_arg(),
                     self.item.accumulator,
                     self.width,
-                    &partial_axes,
+                    &partial_dimensions,
                 ),
                 bound(
                     partial_indices.binding().into_tensor_arg(),
                     index,
                     self.width,
-                    &partial_axes,
+                    &partial_dimensions,
                 ),
                 arrivals.binding().into_tensor_arg().into_buffer_arg(),
                 launcher.partitioning_arg(),

@@ -1,4 +1,4 @@
-//! The problem a routine computes, and the axis its queries are read along.
+//! The problem a routine computes, and the dimension its queries are read along.
 
 use crate::kernels::{AttentionVisibility, PackedLayout, QueryPlacement};
 use cubecl::ir::{ElemType, FloatKind};
@@ -13,9 +13,9 @@ use cubek_microkernel::attention::{
 };
 use cubek_std::routine::EstimatedProblem;
 
-/// `out[b, q, h] = softmax(query[b, h, q] · key[b, h / group]ᵀ · scale) · value[b, h / group]`,
-/// as the host describes it, its queries along the axis [`QueryAxis`] says: a single position's
-/// `group` heads are `group` queries of one head.
+/// `out[b, q, h] = softmax(query[b, h, q] · key[b, h / group]ᵀ · scale) · value[b, h / group]`, as
+/// the host describes it, its queries along the dimension [`QueryDimension`] says: a single
+/// position's `group` heads are `group` queries of one head.
 ///
 /// The queries are the last `queries` positions of the attended keys, whose count `len` only the
 /// device holds: `keys` is the capacity the key and value buffers are allocated to, of which the
@@ -35,7 +35,7 @@ pub struct AttentionRoutineProblem {
     pub visibility: AttentionVisibility,
     /// The element each operand is stored in.
     pub elements: AttentionOperands<ElemType>,
-    /// The alignment of each operand's buffer in elements, over the axes this kind names.
+    /// The alignment of each operand's buffer in elements, over the dimensions this kind names.
     pub elem_alignments: AttentionOperands<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start.
     pub start_bytes: AttentionOperands<u64>,
@@ -76,10 +76,11 @@ impl AttentionRoutineProblem {
     /// power of two from 2 to [`WIDEST_CAPACITY_CLASS`](Self::WIDEST_CAPACITY_CLASS), the last
     /// one inside `limit` standing for it.
     ///
-    /// A routine's launch compiles apart where the capacity is not a multiple of its step of
-    /// keys, the walk's last step then bounded. Two is a multiple of no step wider than it, and
-    /// the widest class of every step, so a walk over the classes compiles both launches of every
-    /// setting; the powers between land the tuning key's buckets ([`AttentionKey`](crate::kernels::tune::key::AttentionKey)).
+    /// A routine's launch compiles apart where the capacity is not a multiple of its step of keys,
+    /// the walk's last step then bounded. Two is a multiple of no step wider than it, and the
+    /// widest class of every step, so a walk over the classes compiles both launches of every
+    /// setting; the powers between land the tuning key's buckets
+    /// ([`AttentionKey`](crate::kernels::tune::key::AttentionKey)).
     pub fn capacity_classes(limit: usize) -> Vec<usize> {
         let mut classes = Vec::new();
         for class in std::iter::successors(Some(2usize), |class| Some(class * 2)) {
@@ -117,7 +118,7 @@ impl AttentionRoutineProblem {
         self.num_kv_heads * self.group
     }
 
-    /// Every axis of the problem at its extent: what a routine partitions.
+    /// Every dimension of the problem at its extent: what a routine partitions.
     pub fn space(&self) -> Space {
         Space::new(&[
             (B, self.batch),
@@ -210,8 +211,8 @@ pub const ATTENTION_PACKED_UNREAD: Refusal = Refusal::Declined {
     why: "this attention routine reads float keys and values, not a packed cache",
 };
 
-/// What a problem's query axis `Q` walks: the query positions of one head, or the heads of one key
-/// head's group at a single position.
+/// What a problem's query dimension `Q` walks: the query positions of one head, or the heads of one
+/// key head's group at a single position.
 ///
 /// A single position of a group of heads is the same attention as each head at that position: it
 /// sees every attended key, or the last of them a window spans, and the heads of a group read the
@@ -219,17 +220,17 @@ pub const ATTENTION_PACKED_UNREAD: Refusal = Refusal::Declined {
 /// empty, and its keys are walked once for all of it; the heads are read at their own stride, so
 /// nothing is copied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum QueryAxis {
+pub enum QueryDimension {
     /// The query positions of one head, the heads of a group beside them.
     Positions,
     /// A single position's group of heads.
     GroupHeads,
 }
 
-impl QueryAxis {
-    /// The query axis of an attention of `queries` positions seeing the keys `visibility` says.
-    /// Only a position that is the last attended one reads the group's heads along the query
-    /// axis: a causal query placed first sees the first key alone, which no visibility of a
+impl QueryDimension {
+    /// The query dimension of an attention of `queries` positions seeing the keys `visibility`
+    /// says. Only a position that is the last attended one reads the group's heads along the query
+    /// dimension: a causal query placed first sees the first key alone, which no visibility of a
     /// group's heads states.
     pub fn new(queries: usize, visibility: AttentionVisibility) -> Self {
         match (queries, visibility.queries()) {
@@ -239,7 +240,7 @@ impl QueryAxis {
     }
 
     /// An attention of `group` heads a key head and `queries` positions seeing the keys
-    /// `visibility` says, as a problem along this axis states it: the heads beside each query,
+    /// `visibility` says, as a problem along this dimension states it: the heads beside each query,
     /// the queries, and which keys a query sees.
     pub fn read(
         self,
@@ -254,9 +255,9 @@ impl QueryAxis {
     }
 
     /// `tensor`'s heads split into a group per key head over the same buffer, the queries along
-    /// this axis: `[b, kv, g, q, x]`, or where it walks the group's heads `[b, kv, q, g, x]`, the
-    /// single position and the heads trading places. `dims` names which of the tensor's four dims
-    /// are the batch, the heads, the queries and the last.
+    /// this dimension: `[b, kv, g, q, x]`, or where it walks the group's heads `[b, kv, q, g, x]`,
+    /// the single position and the heads trading places. `dims` names which of the tensor's four
+    /// dims are the batch, the heads, the queries and the last.
     pub(crate) fn view(self, tensor: &PlainTensor, group: usize, dims: [usize; 4]) -> PlainTensor {
         let (shape, strides) = (&tensor.binding.shape, &tensor.binding.strides);
         let [batch, heads, queries, last] = dims;
@@ -521,11 +522,14 @@ mod tests {
         let last = causal(QueryPlacement::Last);
         let first = causal(QueryPlacement::First);
         assert_eq!(
-            QueryAxis::new(1, last).read(4, 1, last),
+            QueryDimension::new(1, last).read(4, 1, last),
             (1, 4, AttentionVisibility::Attended)
         );
-        assert_eq!(QueryAxis::new(7, last).read(4, 7, last), (4, 7, last));
-        assert_eq!(QueryAxis::new(1, first).read(4, 1, first), (4, 1, first));
+        assert_eq!(QueryDimension::new(7, last).read(4, 7, last), (4, 7, last));
+        assert_eq!(
+            QueryDimension::new(1, first).read(4, 1, first),
+            (4, 1, first)
+        );
     }
 
     /// A windowed single position keeps its window as rows: every head of the group sees the
@@ -543,11 +547,11 @@ mod tests {
             }
         );
         assert_eq!(
-            QueryAxis::new(1, windowed).read(4, 1, windowed),
+            QueryDimension::new(1, windowed).read(4, 1, windowed),
             (1, 4, AttentionVisibility::Recent { window })
         );
         assert_eq!(
-            QueryAxis::new(7, windowed).read(4, 7, windowed),
+            QueryDimension::new(7, windowed).read(4, 7, windowed),
             (4, 7, windowed)
         );
         assert!(windowed.is_causal());

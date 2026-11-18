@@ -4,7 +4,7 @@ use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
 use core::marker::PhantomData;
 use cubecl::tile::ops::softmax::OnlineSoftmax;
-use cubecl::tile::{Axis, Factor, Level, Region, Semiring, StageStorage, Stages, Tile, Walk};
+use cubecl::tile::{Dimension, Factor, Level, Region, Semiring, StageStorage, Stages, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
 
@@ -12,8 +12,8 @@ use cubek_std::microkernel::StageRing;
 /// output's sum take out of them, and those scales: the stages hold what is taken out as stored,
 /// filled by plain copies, and each scale is applied once instead.
 ///
-/// The softmax reads every score under one factor ([`OnlineSoftmax::step`]), wherever the score
-/// is held, so the keys give up the scales that vary along no axis ([`Tile::factor_whole`]). The
+/// The softmax reads every score under one factor ([`OnlineSoftmax::step`]), wherever the score is
+/// held, so the keys give up the scales that vary along no dimension ([`Tile::factor_whole`]). The
 /// values give up what the output's sum takes out ([`Tile::factor`]), the instruction it contracts
 /// through deciding; what a side keeps, its stage's fill decodes.
 #[derive(CubeType, Clone)]
@@ -59,10 +59,10 @@ pub struct PlaneFragmentAttention<EA: Float, EV: Float> {
     probabilities: PhantomData<EV>,
     #[cube(comptime)]
     microkernel: PlaneFragmentAttentionMicrokernel,
-    /// The planes its walker lays it over, along each axis: what the score's own grid is placed
-    /// under ([`PlaneFragmentAttentionMicrokernel::score_levels`]).
+    /// The planes its walker lays it over, along each dimension: what the score's own grid is
+    /// placed under ([`PlaneFragmentAttentionMicrokernel::score_levels`]).
     #[cube(comptime)]
-    planes: Vec<(Axis, usize)>,
+    planes: Vec<(Dimension, usize)>,
 }
 
 #[cube]
@@ -70,8 +70,8 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
     /// Every plane's rows over `walk` before any key: its score placed by the walk, and its sum
     /// opened at zero on `out`, the output it is shaped by, against `value` and the score's
     /// probabilities, and `key` and `value` without the scales the softmax and the sum take out of
-    /// them, which its stages are filled from ([`StagedCache`]). `query` is staged, and `planes` the planes
-    /// its walker lays it over along each axis.
+    /// them, which its stages are filled from ([`StagedCache`]). `query` is staged, and `planes`
+    /// the planes its walker lays it over along each dimension.
     pub fn open(
         walk: &Walk,
         query: &Tile,
@@ -79,7 +79,7 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
         key: &Tile,
         value: &Tile,
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
-        #[comptime] planes: Vec<(Axis, usize)>,
+        #[comptime] planes: Vec<(Dimension, usize)>,
     ) -> Self {
         let score = StageScore::open::<EA, EV>(walk, query, microkernel);
         let softmax = score.softmax::<EA>(microkernel.seq_q());

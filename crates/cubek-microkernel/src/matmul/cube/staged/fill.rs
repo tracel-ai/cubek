@@ -5,10 +5,10 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Scratch, Space, StageStorage};
+use cubecl::tile::{Dimension, Scratch, Space, StageStorage};
 use cubek_std::TMA_ALIGNMENT_BYTES;
 use cubek_std::launch::tma::swizzle_span_bytes;
-use cubek_std::matmul_axes::{K, KB, KI, M, N};
+use cubek_std::matmul_dimensions::{K, KB, KI, M, N};
 use cubek_std::microkernel::StageRing;
 
 /// Who fills the cube microkernel's stages: the cube's units, the copy engine their lines are
@@ -54,14 +54,14 @@ impl CubeStagedDelivery {
 pub enum CubeStagedTmaRefusal {
     /// A descriptor addresses one matrix, and the problem holds several.
     Batched,
-    /// The rhs is contiguous along neither of its axes, and a descriptor's innermost stride is
-    /// one element.
+    /// The rhs is contiguous along neither of its dimensions, and a descriptor's innermost stride
+    /// is one element.
     StridedWeight,
     /// An operand is stored in tiles a descriptor cannot land a stage of row by row: a stage not
     /// whole tiles along its rows, or whose depth does not divide a tile's, stage rows that are not
     /// whole 16-byte lines, or tiles the buffers do not state ([`MatmulBuffers::stored_tiles`]).
     StoredInTiles(MatmulOperand),
-    /// An operand's rows are not whole 16-byte lines contiguous along their own axis, which a
+    /// An operand's rows are not whole 16-byte lines contiguous along their own dimension, which a
     /// descriptor's strides must be: a transposed lhs, among others.
     Misaligned(MatmulOperand),
     /// An operand's view starts partway into its buffer at an address a descriptor cannot
@@ -126,7 +126,7 @@ impl CubeStagedTmaRefusal {
         let lands_tiles = |operand: MatmulOperand| {
             let space = stage.operand_space(operand, microkernel.orders);
             buffers.stored_tiles.get(operand).is_some_and(|tile| {
-                space.axis_at(1) == K
+                space.dimension_at(1) == K
                     && space.extent_at(0).is_multiple_of(tile.rows)
                     && tile.columns.is_multiple_of(space.extent_at(1))
                     && (space.extent_at(1) * bits(operand) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES)
@@ -207,11 +207,11 @@ impl CubeStagedTmaRefusal {
         storage: &StageStorage,
         microkernel: &PlaneFragmentMicrokernel,
     ) -> Option<Self> {
-        let axes = stage.axes();
-        let rows_of = |operand: MatmulOperand| -> Axis {
+        let dimensions = stage.dimensions();
+        let rows_of = |operand: MatmulOperand| -> Dimension {
             match operand {
-                MatmulOperand::Lhs => axes.m,
-                _ => axes.n,
+                MatmulOperand::Lhs => dimensions.m,
+                _ => dimensions.n,
             }
         };
         let landed = |operand: MatmulOperand| {
@@ -363,13 +363,13 @@ impl From<CubeStagedTmaRefusal> for Refusal {
                 "a descriptor addresses one matrix, and the problem holds several"
             }
             CubeStagedTmaRefusal::StridedWeight => {
-                "the rhs is contiguous along neither axis, and a descriptor's innermost stride is one element"
+                "the rhs is contiguous along neither dimension, and a descriptor's innermost stride is one element"
             }
             CubeStagedTmaRefusal::StoredInTiles(_) => {
                 "an operand is stored in tiles a descriptor cannot land a stage of row by row"
             }
             CubeStagedTmaRefusal::Misaligned(_) => {
-                "an operand's rows are not whole 16-byte lines contiguous along their own axis"
+                "an operand's rows are not whole 16-byte lines contiguous along their own dimension"
             }
             CubeStagedTmaRefusal::UnalignedStart(_) => {
                 "an operand's view starts at an address a descriptor cannot encode"

@@ -6,28 +6,23 @@
 //! cases pin the exact 0/1 outputs for a known mask, so both ops are guaranteed
 //! to produce *both* a `0` and a `1` output.
 
-use cubecl::config::autotune::AutotuneLevel;
+use crate::reduce::it::test_case::UNIT;
 use cubecl::{
     ir::{ElemType, FloatKind, UIntKind},
     prelude::*,
     zspace::Shape,
 };
-use cubek_reduce::{
-    ReduceStrategy,
-    components::instructions::ReduceOperationConfig,
-    launch::{RoutineStrategy, VectorizationStrategy},
-    reduce,
-    routines::{BlueprintStrategy, unit::UnitStrategy},
-};
+use cubek_reduce::ReduceOperation;
+use cubek_reduce::kernels::{ReduceElements, reduce};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, StridedLayout, TestInput,
     launch_and_capture_outcome,
 };
 
-/// Reduce a `[3, 4]` mask along `axis = 1` with `config` and return the 3 output
+/// Reduce a `[3, 4]` mask along `axis = 1` with `operation` and return the 3 output
 /// values. The rows are designed to hit every interesting slice:
 /// `[0,0,0,0]` (empty), `[1,1,1,1]` (full), `[0,1,0,0]` (mixed).
-fn reduce_mask(config: ReduceOperationConfig) -> Vec<f32> {
+fn reduce_mask(operation: ReduceOperation) -> Vec<f32> {
     let client = cubecl::test_device().client();
 
     let shape = Shape::new([3, 4]);
@@ -45,41 +40,34 @@ fn reduce_mask(config: ReduceOperationConfig) -> Vec<f32> {
         .custom(data)
         .generate_with_f32_host_data();
 
-    // Drives the real `precision()` path: Any/All require the flag storage as
-    // output (u32 here: the bool backing callers request on runtimes without
-    // 8-bit storage, and the dtype every test runtime supports) while
-    // accumulation stays = input. The kernel writes the flags directly into
-    // the u32 output, so the f32-input -> flag-output conversion is exercised
-    // end to end.
-    let dtypes = config.precision(
-        ElemType::Float(FloatKind::F32),
-        Some(ElemType::UInt(UIntKind::U32)),
-    );
+    // Any/All write the flag storage (u32 here: the bool backing callers request on runtimes
+    // without 8-bit storage, and the dtype every test runtime supports) while accumulating in the
+    // input's element. The kernel writes the flags directly into the u32 output, so the
+    // f32-input -> flag-output conversion is exercised end to end.
+    let elements = ReduceElements {
+        input: ElemType::Float(FloatKind::F32),
+        accumulator: ElemType::Float(FloatKind::F32),
+        out: ElemType::UInt(UIntKind::U32),
+    };
 
     let output_handle = TestInput::builder(client.clone(), Shape::new([3, 1]))
-        .dtype(dtypes.output)
+        .dtype(elements.out)
         .layout(StridedLayout::Explicit(vec![1, 1]))
         .zeros()
         .generate_without_host_data();
-    let strategy = ReduceStrategy {
-        autotune_level: AutotuneLevel::Full,
-        routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
-        vectorization: VectorizationStrategy {
-            parallel_output_vectorization: false,
-        },
-    };
 
     let input_binding = input_handle.binding();
     let output_binding = output_handle.clone().binding();
     let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
         reduce(
             c,
+            &cubecl::test_device(),
             input_binding,
             output_binding,
             1,
-            strategy,
-            config,
-            dtypes,
+            UNIT,
+            operation,
+            elements,
         )
         .into()
     });
@@ -98,12 +86,12 @@ fn reduce_mask(config: ReduceOperationConfig) -> Vec<f32> {
 
 #[test]
 fn test_any_deterministic() {
-    let out = reduce_mask(ReduceOperationConfig::Any);
+    let out = reduce_mask(ReduceOperation::Any);
     assert_eq!(out, vec![0.0, 1.0, 1.0]);
 }
 
 #[test]
 fn test_all_deterministic() {
-    let out = reduce_mask(ReduceOperationConfig::All);
+    let out = reduce_mask(ReduceOperation::All);
     assert_eq!(out, vec![0.0, 1.0, 0.0]);
 }

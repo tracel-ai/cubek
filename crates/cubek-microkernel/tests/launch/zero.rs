@@ -4,15 +4,15 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{
-    Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
+    Dimension, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::zero::unit::UnitZeroMicrokernel;
 
 /// The rows of the output, a plane each.
-const O: Axis = Axis(0);
+const O: Dimension = Dimension(0);
 /// The cells of a row.
-const C: Axis = Axis(1);
+const C: Dimension = Dimension(1);
 
 /// `out`, `rows` rows of `cells` cells in `element`, row-major, zeroed by the first unit of each
 /// row's plane.

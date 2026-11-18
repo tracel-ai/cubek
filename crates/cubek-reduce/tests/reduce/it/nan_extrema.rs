@@ -1,15 +1,9 @@
 use cubecl::{
-    config::autotune::AutotuneLevel,
     features::Plane,
     zspace::{Shape, Strides},
 };
-use cubek_reduce::{
-    ReduceStrategy,
-    launch::{RoutineStrategy, VectorizationStrategy},
-    routines::{BlueprintStrategy, plane::PlaneStrategy, unit::UnitStrategy},
-};
 
-use super::test_case::TestCase;
+use super::test_case::{PLANE, TestCase, UNIT};
 
 fn supports_plane() -> bool {
     let client = cubecl::test_device().client();
@@ -46,44 +40,12 @@ fn run_signed_zero_extrema(case: TestCase) {
     run_extrema(case, data);
 }
 
-fn strategy(routine: RoutineStrategy, parallel_output_vectorization: bool) -> ReduceStrategy {
-    ReduceStrategy {
-        autotune_level: AutotuneLevel::Full,
-        vectorization: VectorizationStrategy {
-            parallel_output_vectorization,
-        },
-        routine,
-    }
-}
-
 fn unit_case(shape: Shape, strides: Strides, axis: usize) -> TestCase {
-    TestCase::new::<f32>(
-        shape,
-        strides,
-        Some(axis),
-        strategy(
-            RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
-            false,
-        ),
-    )
+    TestCase::new::<f32>(shape, strides, Some(axis), UNIT)
 }
 
-fn plane_case(
-    shape: Shape,
-    strides: Strides,
-    axis: usize,
-    independent: bool,
-    vectorize_output: bool,
-) -> TestCase {
-    TestCase::new::<f32>(
-        shape,
-        strides,
-        Some(axis),
-        strategy(
-            RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy { independent })),
-            vectorize_output,
-        ),
-    )
+fn plane_case(shape: Shape, strides: Strides, axis: usize) -> TestCase {
+    TestCase::new::<f32>(shape, strides, Some(axis), PLANE)
 }
 
 #[test]
@@ -96,13 +58,7 @@ fn plane_parallel_f32() {
     if !supports_plane() {
         return;
     }
-    run_nan_extrema(plane_case(
-        Shape::new([9, 64]),
-        Strides::new(&[64, 1]),
-        1,
-        false,
-        true,
-    ));
+    run_nan_extrema(plane_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
 }
 
 #[test]
@@ -115,13 +71,7 @@ fn plane_parallel_mixed_nan_f32() {
     if !supports_plane() {
         return;
     }
-    run_mixed_nan_extrema(plane_case(
-        Shape::new([9, 64]),
-        Strides::new(&[64, 1]),
-        1,
-        false,
-        true,
-    ));
+    run_mixed_nan_extrema(plane_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
 }
 
 #[test]
@@ -147,13 +97,7 @@ fn plane_parallel_signed_zero_f32() {
     if !supports_plane() {
         return;
     }
-    run_signed_zero_extrema(plane_case(
-        Shape::new([9, 64]),
-        Strides::new(&[64, 1]),
-        1,
-        false,
-        true,
-    ));
+    run_signed_zero_extrema(plane_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
 }
 
 #[test]
@@ -161,13 +105,7 @@ fn plane_perpendicular_f32() {
     if !supports_plane() {
         return;
     }
-    run_nan_extrema(plane_case(
-        Shape::new([64, 9]),
-        Strides::new(&[9, 1]),
-        0,
-        false,
-        true,
-    ));
+    run_nan_extrema(plane_case(Shape::new([64, 9]), Strides::new(&[9, 1]), 0));
 }
 
 #[test]
@@ -175,13 +113,7 @@ fn plane_strided_f32() {
     if !supports_plane() {
         return;
     }
-    run_nan_extrema(plane_case(
-        Shape::new([9, 64]),
-        Strides::new(&[128, 2]),
-        1,
-        true,
-        false,
-    ));
+    run_nan_extrema(plane_case(Shape::new([9, 64]), Strides::new(&[128, 2]), 1));
 }
 
 #[test]
@@ -193,12 +125,7 @@ fn plane_parallel_f16() {
         Shape::new([9, 64]),
         Strides::new(&[64, 1]),
         Some(1),
-        strategy(
-            RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
-                independent: true,
-            })),
-            true,
-        ),
+        PLANE,
     ));
 }
 
@@ -209,17 +136,7 @@ fn integer_extrema_control_i32() {
     }
     let shape = Shape::new([9, 64]);
     let data = integer_extrema_data(&shape);
-    let case = TestCase::new::<i32>(
-        shape,
-        Strides::new(&[64, 1]),
-        Some(1),
-        strategy(
-            RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
-                independent: true,
-            })),
-            true,
-        ),
-    );
+    let case = TestCase::new::<i32>(shape, Strides::new(&[64, 1]), Some(1), PLANE);
     run_extrema(case, data);
 }
 
@@ -247,33 +164,20 @@ fn unit_infinite_identities_f32() {
 
 #[cfg(feature = "heavy")]
 mod heavy {
-    use cubek_reduce::routines::cube::CubeStrategy;
-
+    use super::super::test_case::CUBE;
     use super::*;
-
-    fn case(use_planes: bool) -> TestCase {
-        TestCase::new::<f32>(
-            Shape::new([9, 256]),
-            Strides::new(&[256, 1]),
-            Some(1),
-            strategy(
-                RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy { use_planes })),
-                true,
-            ),
-        )
-    }
 
     #[test]
     fn cube_f32() {
-        run_nan_extrema(case(false));
-    }
-
-    #[test]
-    fn cube_with_planes_f32() {
         if !supports_plane() {
             return;
         }
-        run_nan_extrema(case(true));
+        run_nan_extrema(TestCase::new::<f32>(
+            Shape::new([9, 256]),
+            Strides::new(&[256, 1]),
+            Some(1),
+            CUBE,
+        ));
     }
 }
 
@@ -365,15 +269,7 @@ fn max_abs_short_axis_nan() {
     let strides = Strides::new(&[3, 1]);
     let mut cases = vec![unit_case(shape.clone(), strides.clone(), 1)];
     if supports_plane() {
-        for independent in [false, true] {
-            cases.push(plane_case(
-                shape.clone(),
-                strides.clone(),
-                1,
-                independent,
-                false,
-            ));
-        }
+        cases.push(plane_case(shape.clone(), strides.clone(), 1));
     }
     for case in cases {
         case.with_data(vec![1.0, f32::NAN, -3.0, 1.0, -4.0, 3.0])

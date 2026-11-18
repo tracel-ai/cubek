@@ -1,42 +1,26 @@
-use cubecl::{ir::ElemType, server::LaunchError};
 use thiserror::Error;
 
+/// Why a reduction did not launch.
 #[derive(Error, Debug, Clone)]
-/// This error should be caught and properly handled.
 pub enum ReduceError {
-    /// Indicate that the hardware / API doesn't support SIMT plane instructions.
-    #[error(
-        "Trying to launch a kernel using plane instructions, but there are not supported by the hardware."
-    )]
-    PlanesUnavailable,
-    /// When the cube count is bigger than the max supported.
-    #[error("The cube count is larger than the max supported.")]
-    CubeCountTooLarge,
-
-    /// A generic validation error
+    /// The kernel the strategy names declines the problem on this device, for this reason.
     #[error("A generic validation error: {details}")]
     Validation { details: &'static str },
-
-    /// Indicate that min_plane_dim != max_plane_dim, thus the exact plane_dim is not fixed.
-    #[error(
-        "Trying to launch a kernel using plane instructions, but the min and max plane dimensions are different."
-    )]
-    ImprecisePlaneDim,
-    /// Indicate the axis is too large.
+    /// The axis is not a dim of the input.
     #[error("The provided axis ({axis}) must be smaller than the input tensor rank ({rank}).")]
     InvalidAxis { axis: usize, rank: usize },
-    /// Indicate that the shape of the input tensor is too small for the given input and axis.
+    /// The reduced dim is shorter than the `k` a top-k keeps.
     #[error(
         "The input reduce axis length (currently {axis_length:?}) should be at least k ({k:?})."
     )]
     ReduceAxisTooSmall { axis_length: usize, k: usize },
-    /// Indicate that the shape of the output tensor is invalid for the given input and axis.
+    /// The output's shape is not the input's with the reduced dim one wide (`k` wide for a top-k).
     #[error("The output shape (currently {output_shape:?}) should be {expected_shape:?}.")]
     MismatchOutputShape {
         expected_shape: Vec<usize>,
         output_shape: Vec<usize>,
     },
-    /// Indicate that the indices output shape does not match the values output shape.
+    /// The indices output's shape differs from the values output's.
     #[error(
         "The indices shape (currently {indices_shape:?}) should match the values shape ({values_shape:?})."
     )]
@@ -44,7 +28,7 @@ pub enum ReduceError {
         values_shape: Vec<usize>,
         indices_shape: Vec<usize>,
     },
-    /// Indicate that the indices output strides do not match the values output strides.
+    /// The indices output's strides differ from the values output's.
     #[error(
         "The indices strides (currently {indices_strides:?}) should match the values strides ({values_strides:?})."
     )]
@@ -52,24 +36,9 @@ pub enum ReduceError {
         values_strides: Vec<usize>,
         indices_strides: Vec<usize>,
     },
-    /// Indicate the operation cannot report indices alongside its values.
+    /// The operation has no index to write beside its values.
     #[error(
         "The operation {operation} has no index to report; reduce_with_indices only supports TopK, ArgTopK, Max, ArgMax, Min and ArgMin."
     )]
     IndicesUnsupported { operation: &'static str },
-
-    /// Indicate that we can't launch a shared sum because the atomic addition is not supported.
-    #[error("Atomic add not supported by the client for {0}")]
-    MissingAtomicAdd(ElemType),
-
-    /// The selected blueprint stages more accumulators in shared memory than the
-    /// device allows.
-    #[error(
-        "Reduce blueprint requires {requested} bytes of shared memory, but only {available} bytes are available on the device."
-    )]
-    SharedMemoryOverflow { requested: usize, available: usize },
-
-    /// An error happened during launch.
-    #[error("An error happened during launch\nCaused by:\n  {0}")]
-    Launch(LaunchError),
 }

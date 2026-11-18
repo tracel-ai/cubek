@@ -18,7 +18,7 @@ pub struct RmsNormRoutineProblem {
     pub dim: usize,
     /// The element every operand is stored in.
     pub element: ElemType,
-    /// The alignment of each operand's buffer in elements, over the axes this kind names.
+    /// The alignment of each operand's buffer in elements, over the dimensions this kind names.
     pub elem_alignments: RmsNormOperands<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start.
     pub start_bytes: RmsNormOperands<u64>,
@@ -36,16 +36,16 @@ impl RmsNormRoutineProblem {
         }
     }
 
-    /// Every axis of the problem at its extent, its rows and its dim as the store states them:
+    /// Every dimension of the problem at its extent, its rows and its dim as the store states them:
     /// what a routine partitions.
     pub fn space(&self) -> Space {
-        let axes = [
+        let dimensions = [
             vec![(B, self.batch)],
-            self.store.rows_axes(self.rows),
-            self.store.width_axes(self.dim),
+            self.store.rows_dimensions(self.rows),
+            self.store.width_dimensions(self.dim),
         ]
         .concat();
-        Space::new(&axes)
+        Space::new(&dimensions)
     }
 
     /// How one cube walks `rows` ([`RmsNormCubeRows`]): every row read once and written once, the

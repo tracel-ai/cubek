@@ -1,16 +1,17 @@
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::TileOperand;
-use cubecl::tile::{Axis, Partitioning, Region, TileTensor};
+use cubecl::tile::{Dimension, Partitioning, Region, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::ReduceLayout;
 use cubek_microkernel::reduce::hypercube::HypercubeReduceMicrokernel;
 
-/// Where a hypercube's cubes sit, compiled into its kernel: the reduced axis cut into parts, a cube
-/// a part, and the row axes, at most two, outermost first, that its boxes of rows lie along.
+/// Where a hypercube's cubes sit, compiled into its kernel: the reduced dimension cut into parts, a
+/// cube a part, and the row dimensions, at most two, outermost first, that its boxes of rows lie
+/// along.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ReduceSplit {
-    pub reduced: Axis,
-    pub rows: Vec<Axis>,
+    pub reduced: Dimension,
+    pub rows: Vec<Dimension>,
 }
 
 /// What a hypercube launch compiles beside its partitioning, crossing the launch as one argument:
@@ -28,7 +29,7 @@ pub struct ReduceSplitExtents {
     pub parts: u32,
     /// Values a row holds, which a mean divides by.
     pub values: u32,
-    /// Boxes of rows along the inner row axis, where there are two.
+    /// Boxes of rows along the inner row dimension, where there are two.
     pub inner_boxes: u32,
 }
 
