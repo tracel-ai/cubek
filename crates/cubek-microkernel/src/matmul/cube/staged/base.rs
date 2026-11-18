@@ -220,38 +220,43 @@ impl CubeStagedMicrokernel {
         let step = item
             .blocks
             .map(|space| MatmulStep::new(hw, space.operands(), MatmulOperands::all(read)));
-        PlaneFragmentMicrokernel::candidates(
-            hw,
-            &item.decoded(),
-            &PlaneFragmentMicrokernelSettings::DEFAULT,
-        )
-        .filter_map(|plane| {
-            let [(_, m), (_, n), (_, k)] = plane.instruction.shape();
-            let step = step.clone()?.under(Space::new(&[(M, m), (N, n), (K, k)]));
-            let block = block?;
-            if !step.along(K).is_multiple_of(block) || !block.is_multiple_of(k) {
-                return None;
-            }
-            let blocks = step.along(K) / block;
-            let plane = PlaneFragmentMicrokernel {
-                settings: PlaneFragmentMicrokernelSettings {
-                    along_m: settings
-                        .plane
-                        .along_m
-                        .checked_mul(NonZeroUsize::new(step.calls(M))?)?,
-                    along_n: settings
-                        .plane
-                        .along_n
-                        .checked_mul(NonZeroUsize::new(step.calls(N))?)?,
-                    depth: NonZeroUsize::new(step.calls(K) / blocks)?,
-                    ..plane.settings
-                },
-                ..plane
-            };
-            let depth = CubeStagedDepth::ScaleBlocks(NonZeroUsize::new(blocks)?);
-            Some(Self::new(settings, plane, depth, item.decoding_reads()))
-        })
-        .collect()
+        block
+            .and_then(|block| {
+                PlaneFragmentMicrokernel::decoding_plane(
+                    hw,
+                    &item.decoded(),
+                    &PlaneFragmentMicrokernelSettings::DEFAULT,
+                    block,
+                )
+            })
+            .into_iter()
+            .filter_map(|plane| {
+                let [(_, m), (_, n), (_, k)] = plane.instruction.shape();
+                let step = step.clone()?.under(Space::new(&[(M, m), (N, n), (K, k)]));
+                let block = block?;
+                if !step.along(K).is_multiple_of(block) || !block.is_multiple_of(k) {
+                    return None;
+                }
+                let blocks = step.along(K) / block;
+                let plane = PlaneFragmentMicrokernel {
+                    settings: PlaneFragmentMicrokernelSettings {
+                        along_m: settings
+                            .plane
+                            .along_m
+                            .checked_mul(NonZeroUsize::new(step.calls(M))?)?,
+                        along_n: settings
+                            .plane
+                            .along_n
+                            .checked_mul(NonZeroUsize::new(step.calls(N))?)?,
+                        depth: NonZeroUsize::new(step.calls(K) / blocks)?,
+                        ..plane.settings
+                    },
+                    ..plane
+                };
+                let depth = CubeStagedDepth::ScaleBlocks(NonZeroUsize::new(blocks)?);
+                Some(Self::new(settings, plane, depth, item.decoding_reads()))
+            })
+            .collect()
     }
 
     /// How its planes reach its output: each its own tile, or merged along `K`.
@@ -917,44 +922,78 @@ mod tests {
                 k: 16,
             }],
         );
-        let nvfp4 = Some(Packing {
-            operand: Operand::packed(K, 8, K, cubek_std::NVFP4_BLOCK, 4),
-            scheme: tile_order::nvfp4_scheme(),
-        });
-        let item = |lhs: Option<Packing>| {
-            let packings = MatmulOperands {
-                lhs,
-                rhs: nvfp4,
-                out: None,
-            };
-            let element = |packing: Option<Packing>| match packing {
-                Some(_) => ElemType::Float(FloatKind::E2M1),
-                None => f16,
-            };
-            MatmulWorkItem {
-                elements: MatmulOperands {
-                    lhs: element(lhs),
-                    rhs: element(nvfp4),
-                    out: f16,
-                },
-                sum: f32,
-                layouts: MatmulOperands::all(MatmulLayout::Row),
-                blocks: Some(MatmulBlocks {
-                    packings,
-                    m: 512,
-                    n: 4096,
-                    k: 4096,
-                }),
-                rows: MatmulRows::Tiled,
-                destination: MatmulDestination::Buffer,
-                dimensions: MatmulDimensions::INSIDE_BLOCKS,
-                reading: MatmulReading::AsStored,
-            }
-        };
+        let nvfp4 = nvfp4();
+        let item = |lhs| decoding_nvfp4(lhs, f16, f32);
         let settings = CubeStagedMicrokernelSettings::DEFAULT;
         let one = CubeStagedMicrokernel::best(&hw, &item(None), &settings).unwrap();
         assert_eq!(one.decoded_stage(), Some(f16));
         let both = CubeStagedMicrokernel::best(&hw, &item(nvfp4), &settings);
         assert!(both.is_err(), "{both:?}");
+    }
+
+    /// A device whose deepest 16-bit instruction is deeper than an NVFP4 scale block, as RDNA's
+    /// two WMMA calls deep are, still stages a decoded rhs: on the deepest instruction a block
+    /// holds whole, since the stage is walked a block at a time.
+    #[test]
+    fn a_decoded_stage_takes_an_instruction_a_scale_block_holds_whole() {
+        let (f16, f32) = (
+            ElemType::Float(FloatKind::F16),
+            ElemType::Float(FloatKind::F32),
+        );
+        let shape = |k| MmaConfig {
+            a_type: f16,
+            b_type: f16,
+            cd_type: f32,
+            m: 16,
+            n: 16,
+            k,
+        };
+        let hw = devices::offering_cmma(devices::h100(), [shape(16), shape(32)]);
+        let item = decoding_nvfp4(None, f16, f32);
+        let staged =
+            CubeStagedMicrokernel::best(&hw, &item, &CubeStagedMicrokernelSettings::DEFAULT)
+                .unwrap();
+        let [_, _, (_, k)] = staged.plane.instruction.shape();
+        assert_eq!(k, 16);
+    }
+
+    fn nvfp4() -> Option<Packing> {
+        Some(Packing {
+            operand: Operand::packed(K, 8, K, cubek_std::NVFP4_BLOCK, 4),
+            scheme: tile_order::nvfp4_scheme(),
+        })
+    }
+
+    /// A 512 by 4096 by 4096 product of an NVFP4 rhs, against `lhs` packed the same or float in
+    /// `element`, summed in `sum`.
+    fn decoding_nvfp4(lhs: Option<Packing>, element: ElemType, sum: ElemType) -> MatmulWorkItem {
+        let rhs = nvfp4();
+        let element_of = |packing: Option<Packing>| match packing {
+            Some(_) => ElemType::Float(FloatKind::E2M1),
+            None => element,
+        };
+        MatmulWorkItem {
+            elements: MatmulOperands {
+                lhs: element_of(lhs),
+                rhs: element_of(rhs),
+                out: element,
+            },
+            sum,
+            layouts: MatmulOperands::all(MatmulLayout::Row),
+            blocks: Some(MatmulBlocks {
+                packings: MatmulOperands {
+                    lhs,
+                    rhs,
+                    out: None,
+                },
+                m: 512,
+                n: 4096,
+                k: 4096,
+            }),
+            rows: MatmulRows::Tiled,
+            destination: MatmulDestination::Buffer,
+            dimensions: MatmulDimensions::INSIDE_BLOCKS,
+            reading: MatmulReading::AsStored,
+        }
     }
 }
