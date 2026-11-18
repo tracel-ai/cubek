@@ -14,8 +14,8 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 /// ([`Geometry`], [`ReduceRoutine::launch_unbound`](crate::kernels::ReduceRoutine::launch_unbound)),
 /// the output a buffer.
 ///
-/// Both are read where they lie, at their own strides: every dim of each is an axis of the
-/// problem, so a reduction along any dim of a tensor of any rank binds without a copy.
+/// Both are read where they lie, at their own strides: every axis of each is a dimension of the
+/// problem, so a reduction along any axis of a tensor of any rank binds without a copy.
 #[derive(Clone)]
 pub struct ReduceTensors<In = TensorBinding> {
     client: Client,
@@ -45,7 +45,7 @@ impl<In> ReduceTensors<In> {
 }
 
 impl ReduceTensors<TensorBinding> {
-    /// `out = operation(input)` along dim `axis`: `out` has `input`'s shape, `axis` one wide, or
+    /// `out = operation(input)` along axis `axis`: `out` has `input`'s shape, `axis` one wide, or
     /// `k` wide for a top-k.
     ///
     /// # Panics
@@ -75,7 +75,7 @@ impl ReduceTensors<TensorBinding> {
         }
     }
 
-    /// `values = operation(input)` along dim `axis`, and the indices of those values to
+    /// `values = operation(input)` along axis `axis`, and the indices of those values to
     /// `indices`, in `index_element`, from one launch: `indices` has `values`' shape and strides.
     ///
     /// # Panics
@@ -117,13 +117,13 @@ impl ReduceTensors<TensorBinding> {
         });
         let input = launcher
             .arg(self.input.clone(), self.problem.elements.input)
-            .axes(&self.problem.input_axes())
+            .dimensions(&self.problem.input_dimensions())
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
         let out = launcher
             .arg(self.out.clone(), self.problem.elements.out)
-            .axes(&self.problem.out_axes())
+            .dimensions(&self.problem.out_dimensions())
             .vectorize(blueprint.out_width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -135,7 +135,7 @@ impl ReduceTensors<TensorBinding> {
                         .indices
                         .expect("indices beside the values have an element"),
                 )
-                .axes(&self.problem.out_axes())
+                .dimensions(&self.problem.out_dimensions())
                 .vectorize(blueprint.out_width)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)
@@ -193,13 +193,13 @@ impl ReduceTensors<Geometry> {
         });
         let input = launcher
             .unbound(&self.input)
-            .axes(&self.problem.input_axes())
+            .dimensions(&self.problem.input_dimensions())
             .vectorize(blueprint.width)
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);
         let out = launcher
             .arg(self.out.clone(), self.problem.elements.out)
-            .axes(&self.problem.out_axes())
+            .dimensions(&self.problem.out_dimensions())
             .vectorize(blueprint.out_width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);

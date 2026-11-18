@@ -1,10 +1,10 @@
 use crate::attention::{D, DV, Q, S};
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
+    MatmulDestination, MatmulDimensions, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
     MatmulWorkItem,
 };
 use cubecl::ir::ElemType;
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 
 /// A work item of attention's backward pass as its microkernels see it: the element the inputs
 /// and the gradients are stored in, the one everything is summed in, which the logsumexp and the
@@ -24,13 +24,13 @@ impl AttentionBackwardWorkItem {
     /// The score, `query · keyᵀ`, as a shared multiplication microkernel is handed it, its rows
     /// along `rows`: the queries, `Q` by `S`, for a walk owned by queries, or the keys, `S` by `Q`,
     /// for one owned by keys. Both factors lie contiguous along `D`, the contraction.
-    pub fn score(&self, rows: Axis) -> MatmulWorkItem {
+    pub fn score(&self, rows: Dimension) -> MatmulWorkItem {
         self.stored_product(rows, Self::columns_beside(rows), D)
     }
 
     /// The gradient against the probabilities, `out_gradient · valueᵀ`, its rows along `rows` as
     /// the [`score`](Self::score)'s are. Both factors lie contiguous along `DV`, the contraction.
-    pub fn score_gradient(&self, rows: Axis) -> MatmulWorkItem {
+    pub fn score_gradient(&self, rows: Dimension) -> MatmulWorkItem {
         self.stored_product(rows, Self::columns_beside(rows), DV)
     }
 
@@ -73,8 +73,8 @@ impl AttentionBackwardWorkItem {
         self.kept_product(S, DV, Q, kept)
     }
 
-    /// The axis a score held with its rows along `rows` has for columns.
-    fn columns_beside(rows: Axis) -> Axis {
+    /// The dimension a score held with its rows along `rows` has for columns.
+    fn columns_beside(rows: Dimension) -> Dimension {
         match rows == Q {
             true => S,
             false => Q,
@@ -83,7 +83,7 @@ impl AttentionBackwardWorkItem {
 
     /// A product of two stored factors, both contiguous along the contraction, into a sum its
     /// owner keeps: rows `m` by columns `n`, contracting `k`.
-    fn stored_product(&self, m: Axis, n: Axis, k: Axis) -> MatmulWorkItem {
+    fn stored_product(&self, m: Dimension, n: Dimension, k: Dimension) -> MatmulWorkItem {
         MatmulWorkItem {
             elements: MatmulOperands {
                 lhs: self.element,
@@ -98,7 +98,7 @@ impl AttentionBackwardWorkItem {
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes { m, n, k },
+            dimensions: MatmulDimensions { m, n, k },
             reading: MatmulReading::AsStored,
         }
     }
@@ -106,7 +106,13 @@ impl AttentionBackwardWorkItem {
     /// A product out of a score its owner keeps at `kept`, against a stored rhs contiguous along
     /// the columns, into a gradient stored at the element: a unit keeps its score in registers at
     /// the sum's element, a plane casts it to the operands' for its fragments to load.
-    fn kept_product(&self, m: Axis, n: Axis, k: Axis, kept: ElemType) -> MatmulWorkItem {
+    fn kept_product(
+        &self,
+        m: Dimension,
+        n: Dimension,
+        k: Dimension,
+        kept: ElemType,
+    ) -> MatmulWorkItem {
         MatmulWorkItem {
             elements: MatmulOperands {
                 lhs: kept,
@@ -118,7 +124,7 @@ impl AttentionBackwardWorkItem {
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes { m, n, k },
+            dimensions: MatmulDimensions { m, n, k },
             reading: MatmulReading::AsStored,
         }
     }

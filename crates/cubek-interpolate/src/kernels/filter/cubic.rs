@@ -2,26 +2,26 @@ use cubecl::prelude::*;
 use cubecl_common::Ratio;
 
 use cubecl::tile::{
-    Axis,
+    Dimension,
     procedural::{AffineCoordinate, Reads, Recipe, RecipeCoords, RecipeExpand},
 };
 
 /// Keys' cubic-convolution filter over an [`AffineCoordinate`].
-pub type CubicAxis<T> = Cubic<AffineCoordinate<T>>;
+pub type CubicDimension<T> = Cubic<AffineCoordinate<T>>;
 
-/// Construct a [`CubicAxis`] recipe filtering along a single coordinate axis.
+/// Construct a [`CubicDimension`] recipe filtering along a single coordinate dimension.
 #[cube]
 pub fn cubic_along<T: Float>(
-    #[comptime] axis: Axis,
+    #[comptime] dimension: Dimension,
     offset: T,
     coefficient: T,
     #[comptime] a: Ratio,
-) -> CubicAxis<T> {
-    CubicAxis::<T> {
+) -> CubicDimension<T> {
+    CubicDimension::<T> {
         coordinate: AffineCoordinate::<T> {
             offset,
             coefficient,
-            axis,
+            dimension,
         },
         a,
     }
@@ -63,7 +63,7 @@ impl<C: CubeType> Reads for CubicExpand<C>
 where
     C::ExpandType: Reads,
 {
-    fn reads(&self, scope: &Scope, axis: Axis) -> bool {
-        self.coordinate.reads(scope, axis)
+    fn reads(&self, scope: &Scope, dimension: Dimension) -> bool {
+        self.coordinate.reads(scope, dimension)
     }
 }

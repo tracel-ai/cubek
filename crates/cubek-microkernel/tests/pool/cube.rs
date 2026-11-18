@@ -1,7 +1,7 @@
 //! The cube max pool microkernel alone: each block of a cube's walk, its units each a run of
 //! channels of one output position.
 
-use crate::launch::pool::WindowAxis;
+use crate::launch::pool::WindowDimension;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 
@@ -15,13 +15,13 @@ fn a_cube_max_pools_every_window_like_the_host() {
     let hw = Hardware::from_client(&cubecl::test_device().client());
     let windows = [
         [
-            WindowAxis {
+            WindowDimension {
                 taps: 2,
                 stride: 2,
                 dilation: 1,
                 padding: 0,
             },
-            WindowAxis {
+            WindowDimension {
                 taps: 2,
                 stride: 2,
                 dilation: 1,
@@ -29,13 +29,13 @@ fn a_cube_max_pools_every_window_like_the_host() {
             },
         ],
         [
-            WindowAxis {
+            WindowDimension {
                 taps: 3,
                 stride: 2,
                 dilation: 1,
                 padding: 1,
             },
-            WindowAxis {
+            WindowDimension {
                 taps: 3,
                 stride: 1,
                 dilation: 1,
@@ -43,13 +43,13 @@ fn a_cube_max_pools_every_window_like_the_host() {
             },
         ],
         [
-            WindowAxis {
+            WindowDimension {
                 taps: 2,
                 stride: 1,
                 dilation: 2,
                 padding: 0,
             },
-            WindowAxis {
+            WindowDimension {
                 taps: 3,
                 stride: 2,
                 dilation: 2,

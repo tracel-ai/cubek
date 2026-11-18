@@ -3,13 +3,13 @@
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Space};
+use cubecl::tile::{Dimension, Space};
 use cubecl::tune::Work;
 use cubek_std::routine::EstimatedProblem;
 
 /// The values of the output, whatever its layout: a draw's answer does not depend on where a value
-/// lies, so the space is one axis and every dim of the output projects onto it.
-pub const VALUES: Axis = Axis(0);
+/// lies, so the space is one dimension and every dim of the output projects onto it.
+pub const VALUES: Dimension = Dimension(0);
 
 /// An output filled with draws, as the host describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,7 +25,7 @@ pub struct RandomRoutineProblem {
 }
 
 impl RandomRoutineProblem {
-    /// One axis, as long as the output holds values.
+    /// One dimension, as long as the output holds values.
     pub fn space(&self) -> Space {
         Space::new(&[(VALUES, self.values)])
     }

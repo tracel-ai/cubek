@@ -226,7 +226,7 @@ impl AttentionBackwardTensors {
         let operands = self.views.map(|operand, view| {
             launcher
                 .arg(view.binding.clone(), view.elem)
-                .axes(operand.axes())
+                .dimensions(operand.dimensions())
                 .vectorize(walk.widths.get(operand))
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)
@@ -244,14 +244,14 @@ impl AttentionBackwardTensors {
         tensor: &PlainTensor,
         operand: AttentionBackwardOperand,
     ) -> Bound {
-        let view = match operand.axes().contains(&G) {
+        let view = match operand.dimensions().contains(&G) {
             true => Self::grouped(tensor, self.problem().group),
             false => tensor.clone(),
         };
         binding
             .launcher
             .arg(view.binding.clone(), view.elem)
-            .axes(operand.axes())
+            .dimensions(operand.dimensions())
             .vectorize(walk.widths.get(operand))
             .build()
             .expect(ADMITTED_PLAN_RUNS)

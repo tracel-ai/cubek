@@ -1,21 +1,25 @@
 use cubecl::prelude::*;
 
 use cubecl::tile::{
-    Axis,
+    Dimension,
     procedural::{AffineCoordinate, Reads, Recipe, RecipeCoords, RecipeExpand},
 };
 
 /// A [`Linear`] filter applied directly to an [`AffineCoordinate`].
-pub type LinearAxis<T> = Linear<AffineCoordinate<T>>;
+pub type LinearDimension<T> = Linear<AffineCoordinate<T>>;
 
-/// Construct a [`LinearAxis`] recipe filtering along a single coordinate axis.
+/// Construct a [`LinearDimension`] recipe filtering along a single coordinate dimension.
 #[cube]
-pub fn linear_along<T: Float>(#[comptime] axis: Axis, offset: T, coefficient: T) -> LinearAxis<T> {
-    LinearAxis::<T> {
+pub fn linear_along<T: Float>(
+    #[comptime] dimension: Dimension,
+    offset: T,
+    coefficient: T,
+) -> LinearDimension<T> {
+    LinearDimension::<T> {
         coordinate: AffineCoordinate::<T> {
             offset,
             coefficient,
-            axis,
+            dimension,
         },
     }
 }
@@ -38,7 +42,7 @@ impl<C: CubeType> Reads for LinearExpand<C>
 where
     C::ExpandType: Reads,
 {
-    fn reads(&self, scope: &Scope, axis: Axis) -> bool {
-        self.coordinate.reads(scope, axis)
+    fn reads(&self, scope: &Scope, dimension: Dimension) -> bool {
+        self.coordinate.reads(scope, dimension)
     }
 }

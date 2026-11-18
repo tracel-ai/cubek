@@ -63,7 +63,7 @@ impl Routine for CubeReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        if problem.owner_axes().len() > MAX_ROW_DIMS {
+        if problem.owner_dimensions().len() > MAX_ROW_DIMS {
             return Err(Refusal::Declined {
                 why: "the cube reduce runs a cube per box of rows along at most three row dims",
             });
@@ -76,7 +76,7 @@ impl Routine for CubeReduceRoutine {
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
-                .cubes(&problem.owner_axes())
+                .cubes(&problem.owner_dimensions())
                 .build(),
         );
         let cube = CubeResources {

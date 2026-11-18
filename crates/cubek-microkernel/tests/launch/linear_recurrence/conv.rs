@@ -8,7 +8,7 @@ use cubecl::ir::FloatKind;
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::{
-    Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
+    Dimension, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::linear_recurrence::conv::QkNormedConvOperand;
@@ -128,8 +128,8 @@ impl ConvLaunch {
             cube_dim: partitioning.cube_dim(self.microkernel.units as u32),
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
-        let bound = |arg, element, axes: &[Axis]| {
-            TileTensorLaunch::new(arg, element, 1, TileSpec::direct(axes))
+        let bound = |arg, element, dimensions: &[Dimension]| {
+            TileTensorLaunch::new(arg, element, 1, TileSpec::direct(dimensions))
         };
         let keyed = [BATCH, POSITION, KEY_HEAD, KEY_FEATURE];
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and

@@ -111,10 +111,10 @@ impl AttentionLaunch for UnitAttentionLaunch {
             .lines
             .widths(&self.microkernel, &partitioning.box_of(ComputeScope::Unit));
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
-        let bound = |tensor: TensorBinding, element, width, axes: &'static [_]| {
+        let bound = |tensor: TensorBinding, element, width, dimensions: &'static [_]| {
             launcher
                 .arg(tensor, element)
-                .axes(axes)
+                .dimensions(dimensions)
                 .vectorize(width)
                 .build()
         };

@@ -220,8 +220,8 @@ mod fragment {
             .map(|operand| {
                 let (_, row) = *block
                     .iter()
-                    .find(|(axis, _)| *axis == operand.innermost)
-                    .expect("a stage block spans every axis of the stage");
+                    .find(|(dimension, _)| *dimension == operand.innermost)
+                    .expect("a stage block spans every dimension of the stage");
                 let dim = operand.space.extent(operand.innermost);
                 if operand.innermost != S {
                     assert_eq!(

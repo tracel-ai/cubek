@@ -94,7 +94,7 @@ impl RandomTensor {
         });
         let output = launcher
             .arg(self.output.clone(), self.problem.element)
-            .axes(&vec![VALUES; self.output.shape.len()])
+            .dimensions(&vec![VALUES; self.output.shape.len()])
             .vectorize(width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
