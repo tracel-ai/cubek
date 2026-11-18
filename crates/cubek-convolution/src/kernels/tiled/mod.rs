@@ -18,9 +18,9 @@ mod tensors;
 mod tune;
 
 pub use decline::ConvDecline;
-pub use routines::{ConvRoutineKind, ConvSettings};
+pub use routines::{ConvRoutineKind, CubeStagedConvSettings};
 pub use tensors::ConvTensors;
-pub use tune::ConvCandidate;
+pub use tune::CubeStagedConvCandidate;
 
 pub(crate) use binding::ConvBinding;
 pub(crate) use blueprint::TileConvBlueprint;

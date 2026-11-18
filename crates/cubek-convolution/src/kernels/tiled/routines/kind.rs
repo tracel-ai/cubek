@@ -1,5 +1,5 @@
 use super::{CubeStagedConvRoutine, UnitRegistersConvRoutine};
-use crate::kernels::tiled::{ConvRoutine, ConvSettings, ConvTensors, launch_tuned};
+use crate::kernels::tiled::{ConvRoutine, ConvTensors, CubeStagedConvSettings, launch_tuned};
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
 
@@ -8,7 +8,7 @@ use cubek_std::Hardware;
 pub enum ConvRoutineKind {
     /// [`CubeStagedConvRoutine`] at the setting named, or at the first of its settings that serves
     /// the convolution where none is.
-    CubeStaged(Option<ConvSettings>),
+    CubeStaged(Option<CubeStagedConvSettings>),
     /// The setting the autotune finds fastest among those [`CubeStagedConvRoutine`] lists, and
     /// [`UnitRegistersConvRoutine`] where none of them serves the convolution.
     Tuned,

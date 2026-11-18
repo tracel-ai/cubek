@@ -1,10 +1,10 @@
-use super::{ConvCandidate, ConvTuneKey, candidates};
+use super::{CubeStagedConvCandidate, CubeStagedConvTuneKey, candidates};
 use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::settings;
 use crate::eval::benchmarks::{Conv2dElement, Conv2dProblem};
 use crate::kernels::tiled::routines::test_support::{cmma_8x32_only, dense, nvidia};
 use crate::kernels::tiled::{
-    ConvProblem, ConvSettings, CubeStagedConvRoutine, UnitRegistersConvRoutine,
+    ConvProblem, CubeStagedConvRoutine, CubeStagedConvSettings, UnitRegistersConvRoutine,
 };
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings as Fragments;
@@ -16,8 +16,8 @@ use cubek_std::routine::Routine;
 const ROWS_8: usize = 8;
 const FRAGMENTS_16: usize = 16;
 
-fn key(problem: Conv2dProblem) -> ConvTuneKey {
-    ConvTuneKey::of(&ConvProblem::from(&problem), &nvidia())
+fn key(problem: Conv2dProblem) -> CubeStagedConvTuneKey {
+    CubeStagedConvTuneKey::of(&ConvProblem::from(&problem), &nvidia())
 }
 
 /// `WIDE` batches of a map 56 wide, held by a few rows.
@@ -46,8 +46,8 @@ const WIDE: usize = 4096;
 #[test]
 fn a_map_56_wide_races_the_56_row_candidate_and_the_base_together() {
     let (hw, key) = (cmma_8x32_only(), key(wide_map_56()));
-    let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
-    let base = ConvSettings::new(
+    let priority = |settings| CubeStagedConvCandidate::new(settings, &hw).priority(&key);
+    let base = CubeStagedConvSettings::new(
         ROWS_8,
         Fragments::grid(2, 2, 1),
         MatmulPlaneLayout::new(2, 2),
@@ -62,7 +62,7 @@ fn a_map_56_wide_races_the_56_row_candidate_and_the_base_together() {
 fn a_grid_short_of_half_the_device_is_in_a_lower_band() {
     let hw = cmma_8x32_only();
     let settings = settings::F1X1_P1X1_T8_A7;
-    let priority = |key| ConvCandidate::new(settings, &hw).priority(&key);
+    let priority = |key| CubeStagedConvCandidate::new(settings, &hw).priority(&key);
     assert!(
         priority(key(Conv2dProblem {
             input_shape: [1, 64, 9, 9],
@@ -75,8 +75,8 @@ fn a_grid_short_of_half_the_device_is_in_a_lower_band() {
 #[test]
 fn boxes_covering_twice_the_map_are_in_a_lower_band() {
     let (hw, key) = (cmma_8x32_only(), key(wide_map_56()));
-    let priority = |settings| ConvCandidate::new(settings, &hw).priority(&key);
-    let overhanging = ConvSettings::new(
+    let priority = |settings| CubeStagedConvCandidate::new(settings, &hw).priority(&key);
+    let overhanging = CubeStagedConvSettings::new(
         ROWS_8,
         Fragments::grid(FRAGMENTS_16, 1, 1),
         MatmulPlaneLayout::new(1, 2),
@@ -89,8 +89,8 @@ fn boxes_covering_twice_the_map_are_in_a_lower_band() {
 #[test]
 fn a_double_ring_over_one_stage_is_the_single_ring_launch() {
     let hw = nvidia();
-    let launch = |settings: ConvSettings, key: &ConvTuneKey| {
-        ConvCandidate::new(settings, &hw)
+    let launch = |settings: CubeStagedConvSettings, key: &CubeStagedConvTuneKey| {
+        CubeStagedConvCandidate::new(settings, &hw)
             .blueprint(key)
             .expect("the candidate prepares the key")
     };
@@ -117,12 +117,12 @@ fn a_key_holds_the_width_a_view_start_leaves() {
     let mut shifted = aligned.clone();
     shifted.start_bytes.lhs = 2;
     let (aligned_key, shifted_key) = (
-        ConvTuneKey::of(&aligned, &hw),
-        ConvTuneKey::of(&shifted, &hw),
+        CubeStagedConvTuneKey::of(&aligned, &hw),
+        CubeStagedConvTuneKey::of(&shifted, &hw),
     );
     assert_ne!(aligned_key, shifted_key);
     for (problem, key) in [(&aligned, &aligned_key), (&shifted, &shifted_key)] {
-        for settings in ConvCandidate::list(&hw) {
+        for settings in CubeStagedConvCandidate::list(&hw) {
             let prepared = CubeStagedConvRoutine.prepare(&hw, problem, settings.settings());
             let real = prepared
                 .ok()
@@ -157,7 +157,7 @@ fn a_batch_is_keyed_by_the_device_grid_limit() {
             input_shape: [batch, 64, 58, 58],
             ..dense()
         };
-        ConvTuneKey::of(&ConvProblem::from(&problem), &hw)
+        CubeStagedConvTuneKey::of(&ConvProblem::from(&problem), &hw)
     };
     assert_ne!(batched(5), batched(7));
 }
@@ -180,15 +180,18 @@ fn a_contracted_batch_is_keyed_by_its_bucket() {
 #[test]
 fn the_list_and_its_set_are_built_in_one_order() {
     let hw = nvidia();
-    let names = |list: &[ConvCandidate]| {
+    let names = |list: &[CubeStagedConvCandidate]| {
         list.iter()
             .map(|candidate| candidate.settings().to_string())
             .collect::<Vec<_>>()
     };
-    let (first, second) = (ConvCandidate::list(&hw), ConvCandidate::list(&hw));
+    let (first, second) = (
+        CubeStagedConvCandidate::list(&hw),
+        CubeStagedConvCandidate::list(&hw),
+    );
     assert_eq!(names(&first), names(&second));
     let checksum =
-        |list: Vec<ConvCandidate>| candidates(list.into(), hw.clone()).compute_checksum();
+        |list: Vec<CubeStagedConvCandidate>| candidates(list.into(), hw.clone()).compute_checksum();
     assert_eq!(checksum(first), checksum(second));
 }
 
@@ -206,7 +209,7 @@ fn a_ranged_plane_width_floors_the_tuned_launch_on_the_unit_routine() {
     let mut hw = nvidia();
     let device = topology(&mut hw);
     (device.plane_size_min, device.plane_size_max) = (32, 64);
-    assert!(ConvCandidate::list(&hw).is_empty());
+    assert!(CubeStagedConvCandidate::list(&hw).is_empty());
     assert!(floor_serves(&hw, &dense()));
 }
 
@@ -220,7 +223,7 @@ fn an_f32_problem_without_f32_instructions_floors_on_the_unit_routine() {
         ..dense()
     };
     let key = key(problem.clone());
-    let list = ConvCandidate::list(&hw);
+    let list = CubeStagedConvCandidate::list(&hw);
     assert!(!list.is_empty());
     assert!(
         list.iter()

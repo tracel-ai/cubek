@@ -11,7 +11,7 @@ use cubecl::zspace::{Shape, Strides};
 use cubek_convolution::components::ConvSetupError;
 use cubek_convolution::eval::benchmarks::settings;
 use cubek_convolution::kernels::tiled::{
-    ConvCandidate, ConvDecline, ConvRoutineKind, ConvSettings,
+    ConvDecline, ConvRoutineKind, CubeStagedConvCandidate, CubeStagedConvSettings,
 };
 use cubek_convolution::{ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref};
 use cubek_std::{Hardware, InputBinding};
@@ -87,7 +87,7 @@ fn conv32(
     conv_of(F32, batch, channels, input, kernel, args)
 }
 
-fn pinned(settings: ConvSettings) -> Strategy {
+fn pinned(settings: CubeStagedConvSettings) -> Strategy {
     Strategy::Tile(ConvRoutineKind::CubeStaged(Some(settings)))
 }
 
@@ -292,7 +292,7 @@ mod cube {
     /// host's result or is declined by name, and some setting serves the pass.
     fn every_listed_setting(pass: Pass) {
         let client = client();
-        let list = ConvCandidate::list(&Hardware::from_client(&client));
+        let list = CubeStagedConvCandidate::list(&Hardware::from_client(&client));
         // A device without planes, as a CPU runtime, lists no staged setting at all.
         if list.is_empty() {
             return;

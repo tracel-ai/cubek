@@ -1,6 +1,7 @@
-use super::ConvTuneKey;
+use super::CubeStagedConvTuneKey;
 use crate::kernels::tiled::{
-    ConvProblem, ConvRoutine, ConvSettings, ConvTensors, CubeStagedConvRoutine, TileConvBlueprint,
+    ConvProblem, ConvRoutine, ConvTensors, CubeStagedConvRoutine, CubeStagedConvSettings,
+    TileConvBlueprint,
 };
 use cubecl::CubeDim;
 use cubecl::tile::launch::Refusal;
@@ -14,13 +15,13 @@ use cubek_std::routine::RoutineCandidate;
 /// Its priority is read off the launch it prepares for the key, and that launch is what two
 /// settings that snap onto one are told apart by.
 #[derive(Debug, Clone)]
-pub struct ConvCandidate {
+pub struct CubeStagedConvCandidate {
     candidate: RoutineCandidate<CubeStagedConvRoutine>,
 }
 
-impl ConvCandidate {
+impl CubeStagedConvCandidate {
     /// `settings` on `hw`, having prepared nothing yet.
-    pub fn new(settings: ConvSettings, hw: &Hardware) -> Self {
+    pub fn new(settings: CubeStagedConvSettings, hw: &Hardware) -> Self {
         Self {
             candidate: RoutineCandidate::new(CubeStagedConvRoutine, settings, hw),
         }
@@ -35,7 +36,7 @@ impl ConvCandidate {
     }
 
     /// The settings this candidate launches.
-    pub fn settings(&self) -> &ConvSettings {
+    pub fn settings(&self) -> &CubeStagedConvSettings {
         self.candidate.settings()
     }
 
@@ -63,20 +64,20 @@ impl ConvCandidate {
     }
 }
 
-impl TuneCandidate for ConvCandidate {
-    type Strategy = ConvSettings;
-    type Key = ConvTuneKey;
+impl TuneCandidate for CubeStagedConvCandidate {
+    type Strategy = CubeStagedConvSettings;
+    type Key = CubeStagedConvTuneKey;
     /// The blueprint and the cube: the cube is kept out of a blueprint, and two settings preparing
     /// one blueprint can still launch different cubes.
     type Blueprint = (TileConvBlueprint<CubeStagedMicrokernel>, CubeDim);
 
-    fn strategy(&self) -> &ConvSettings {
+    fn strategy(&self) -> &CubeStagedConvSettings {
         self.settings()
     }
 
     /// Last where the routine declines the problem, which it then does at launch before compiling
     /// anything.
-    fn priority(&self, key: &ConvTuneKey) -> CandidatePriority {
+    fn priority(&self, key: &CubeStagedConvTuneKey) -> CandidatePriority {
         let problem = ConvProblem::from(key);
         match self.candidate.launch_of(&problem) {
             Some((blueprint, cube)) => blueprint.partitioning.priority(
@@ -88,7 +89,7 @@ impl TuneCandidate for ConvCandidate {
         }
     }
 
-    fn blueprint(&self, key: &ConvTuneKey) -> Option<Self::Blueprint> {
+    fn blueprint(&self, key: &CubeStagedConvTuneKey) -> Option<Self::Blueprint> {
         self.candidate.launch_of(&ConvProblem::from(key))
     }
 }

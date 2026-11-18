@@ -1,5 +1,7 @@
-use super::{ConvCandidate, ConvTuneKey};
-use crate::kernels::tiled::{ConvRoutine, ConvSettings, ConvTensors, UnitRegistersConvRoutine};
+use super::{CubeStagedConvCandidate, CubeStagedConvTuneKey};
+use crate::kernels::tiled::{
+    ConvRoutine, ConvTensors, CubeStagedConvSettings, UnitRegistersConvRoutine,
+};
 use cubecl::client::Client;
 use cubecl::tile::launch::Refusal;
 use cubecl::tune::{LocalTuner, TunableSet, local_tuner};
@@ -15,19 +17,19 @@ use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 const TILE_GROUP: &str = "tile";
 const FLOOR_NAME: &str = "conv-tile-floor";
 
-static TUNER: LocalTuner<ConvTuneKey, ServiceId> = local_tuner!("tile-conv");
+static TUNER: LocalTuner<CubeStagedConvTuneKey, ServiceId> = local_tuner!("tile-conv");
 
 /// The list each device races, built once so every launch and the autotune share the launches its
 /// candidates prepared.
-static LISTS: LazyLock<Mutex<HashMap<ServiceId, Arc<[ConvCandidate]>>>> =
+static LISTS: LazyLock<Mutex<HashMap<ServiceId, Arc<[CubeStagedConvCandidate]>>>> =
     LazyLock::new(Mutex::default);
 
-fn listed(id: &ServiceId, hw: &Hardware) -> Arc<[ConvCandidate]> {
+fn listed(id: &ServiceId, hw: &Hardware) -> Arc<[CubeStagedConvCandidate]> {
     LISTS
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .entry(*id)
-        .or_insert_with(|| ConvCandidate::list(hw).into())
+        .or_insert_with(|| CubeStagedConvCandidate::list(hw).into())
         .clone()
 }
 
@@ -48,8 +50,8 @@ pub fn launch_tuned(hw: &Hardware, tensors: ConvTensors) -> Result<(), Refusal> 
         let (list, hw) = (list.clone(), hw.clone());
         move || candidates(list.clone(), hw.clone())
     });
-    let key = ConvTuneKey::of(&tensors.problem(), hw);
-    let serves = |candidates: &mut dyn Iterator<Item = &ConvCandidate>| {
+    let key = CubeStagedConvTuneKey::of(&tensors.problem(), hw);
+    let serves = |candidates: &mut dyn Iterator<Item = &CubeStagedConvCandidate>| {
         let attempts = candidates.map(|candidate| candidate.serves(&tensors));
         first_served(attempts, ROUTINE_LISTS_NO_SETTING).is_ok()
     };
@@ -70,7 +72,14 @@ pub fn launch_tuned(hw: &Hardware, tensors: ConvTensors) -> Result<(), Refusal> 
 fn run_tuned(
     id: &ServiceId,
     client: &Client,
-    tunables: Arc<TunableSet<ConvTuneKey, ConvTensors, (), CandidateIdentity<ConvSettings>>>,
+    tunables: Arc<
+        TunableSet<
+            CubeStagedConvTuneKey,
+            ConvTensors,
+            (),
+            CandidateIdentity<CubeStagedConvSettings>,
+        >,
+    >,
     tensors: ConvTensors,
 ) -> Result<(), Refusal> {
     TUNER.execute(id, client, tunables, tensors);
@@ -80,7 +89,7 @@ fn run_tuned(
 /// `tensors` at the first of `list` that serves them, or on the unit registers routine where none
 /// does.
 fn launch_floor(
-    list: &[ConvCandidate],
+    list: &[CubeStagedConvCandidate],
     hw: &Hardware,
     tensors: ConvTensors,
 ) -> Result<(), Refusal> {
@@ -95,22 +104,28 @@ fn launch_floor(
 /// The autotune over `list` on `hw`: every listed setting, a round stopping at the first within
 /// reach of the bound the convolution has, and [`launch_floor`] where none serves.
 pub(super) fn candidates(
-    list: Arc<[ConvCandidate]>,
+    list: Arc<[CubeStagedConvCandidate]>,
     hw: Hardware,
-) -> TunableSet<ConvTuneKey, ConvTensors, (), CandidateIdentity<ConvSettings>> {
+) -> TunableSet<CubeStagedConvTuneKey, ConvTensors, (), CandidateIdentity<CubeStagedConvSettings>> {
     let keyed = hw.clone();
-    let mut autotune =
-        Autotune::<ConvTuneKey, ConvTensors, (), CandidateIdentity<ConvSettings>>::new(
-            move |tensors: &ConvTensors| ConvTuneKey::of(&tensors.problem(), &keyed),
-        );
+    let mut autotune = Autotune::<
+        CubeStagedConvTuneKey,
+        ConvTensors,
+        (),
+        CandidateIdentity<CubeStagedConvSettings>,
+    >::new(move |tensors: &ConvTensors| {
+        CubeStagedConvTuneKey::of(&tensors.problem(), &keyed)
+    });
     let tile = autotune.group(TILE_GROUP, GroupPriority::DEFAULT);
     let floor = (list.clone(), hw.clone());
     autotune
-        .bounded(move |key: &ConvTuneKey, tensors: &ConvTensors| Roofline {
-            client: tensors.client().clone(),
-            ceiling: key.ceiling(&hw),
-            work: tensors.problem().demand(),
-        })
+        .bounded(
+            move |key: &CubeStagedConvTuneKey, tensors: &ConvTensors| Roofline {
+                client: tensors.client().clone(),
+                ceiling: key.ceiling(&hw),
+                work: tensors.problem().demand(),
+            },
+        )
         .identified(
             &tile,
             list.to_vec(),
@@ -124,12 +139,14 @@ pub(super) fn candidates(
                 })
             },
         )
-        .floor(<CandidateIdentity<ConvSettings> as Identity>::named(
-            FLOOR_NAME,
-            move |tensors: ConvTensors| {
-                let (list, hw) = &floor;
-                launch_floor(list, hw, tensors).map_err(|refusal| format!("{refusal:?}"))
-            },
-        ))
+        .floor(
+            <CandidateIdentity<CubeStagedConvSettings> as Identity>::named(
+                FLOOR_NAME,
+                move |tensors: ConvTensors| {
+                    let (list, hw) = &floor;
+                    launch_floor(list, hw, tensors).map_err(|refusal| format!("{refusal:?}"))
+                },
+            ),
+        )
         .finish()
 }

@@ -12,13 +12,13 @@ use cubek_std::microkernel::{Microkernel, StageRing};
 
 /// The width the input and the rhs are read at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ConvVectors {
+pub enum CubeStagedConvVectors {
     One,
     /// The widest the layout, the instruction's steps and the padding admit.
     Widest,
 }
 
-impl ConvVectors {
+impl CubeStagedConvVectors {
     /// The elements one read may bring where a stage tile holds `run` along the innermost axis.
     pub fn cells(self, run: usize) -> usize {
         match self {
@@ -34,7 +34,7 @@ impl ConvVectors {
 /// The microkernel's settings hold the grid of fragments a plane holds, the planes along the rows
 /// and the columns, and the ring; the rest are the convolution's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ConvSettings {
+pub struct CubeStagedConvSettings {
     pub microkernel: CubeStagedMicrokernelSettings,
     /// Rows of the instruction: the largest the device offers of exactly this many.
     pub rows: NonZeroUsize,
@@ -44,10 +44,10 @@ pub struct ConvSettings {
     /// Instruction steps of the contraction one stage holds at most: fewer where the problem has
     /// fewer, no divisor of its walk reaches this far, or the shared memory a cube holds is short.
     pub stage_steps: NonZeroUsize,
-    pub vectors: ConvVectors,
+    pub vectors: CubeStagedConvVectors,
 }
 
-impl ConvSettings {
+impl CubeStagedConvSettings {
     const STAGE_STEPS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
     /// An instruction of `rows` rows over the grid of `fragments` a plane and `planes`
@@ -66,7 +66,7 @@ impl ConvSettings {
             rows: NonZeroUsize::new(rows).expect("an instruction has a row"),
             across: NonZeroUsize::MIN,
             stage_steps: Self::STAGE_STEPS,
-            vectors: ConvVectors::Widest,
+            vectors: CubeStagedConvVectors::Widest,
         }
     }
 
@@ -89,7 +89,7 @@ impl ConvSettings {
 
     /// These settings reading one element at a time.
     pub const fn width_one(mut self) -> Self {
-        self.vectors = ConvVectors::One;
+        self.vectors = CubeStagedConvVectors::One;
         self
     }
 
@@ -128,7 +128,7 @@ impl ConvSettings {
     }
 }
 
-impl core::fmt::Display for ConvSettings {
+impl core::fmt::Display for CubeStagedConvSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let (fragments, planes) = (&self.microkernel.plane, &self.microkernel.planes);
         write!(
@@ -154,8 +154,8 @@ impl core::fmt::Display for ConvSettings {
             Prefetch::InRegisters => write!(f, "_regs")?,
         }
         match self.vectors {
-            ConvVectors::One => write!(f, "_W1"),
-            ConvVectors::Widest => Ok(()),
+            CubeStagedConvVectors::One => write!(f, "_W1"),
+            CubeStagedConvVectors::Widest => Ok(()),
         }
     }
 }

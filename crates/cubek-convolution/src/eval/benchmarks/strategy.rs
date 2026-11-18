@@ -3,7 +3,7 @@ use cubek_test_utils::CatalogEntry;
 use super::settings;
 use crate::{
     AcceleratedTileKind, ConvAlgorithm, Strategy, UnitStrategy, UnitTiling,
-    kernels::tiled::{ConvRoutineKind, ConvSettings},
+    kernels::tiled::{ConvRoutineKind, CubeStagedConvSettings},
 };
 
 const UNIT_REGISTERS_LABEL: &str = "Unit registers, at the device's settings";
@@ -12,7 +12,7 @@ const UNIT_BALANCED_LABEL: &str = "Unit / balanced tiling";
 /// The settings pinned, beside the tuned row: the base setting at both widths, two tiles of rows
 /// over two planes, one tile of rows, the narrow instruction, and a grid held whole over a map of
 /// its width. The `T8` rows refuse where the tile picks no instruction of eight rows.
-const PINNED: [ConvSettings; 8] = [
+const PINNED: [CubeStagedConvSettings; 8] = [
     settings::F2X2_P2X2_T16,
     settings::F2X2_P2X2_T16.width_one(),
     settings::F2X2_P1X2_T16,
@@ -25,7 +25,7 @@ const PINNED: [ConvSettings; 8] = [
 
 /// A row of the cube staged routine, named by its strategy: the routine and, where pinned, its
 /// settings. Without settings it is the tuned launch, which floors on the unit routine.
-fn cube_staged(settings: Option<ConvSettings>) -> CatalogEntry<Strategy> {
+fn cube_staged(settings: Option<CubeStagedConvSettings>) -> CatalogEntry<Strategy> {
     let (routine, label) = match settings {
         Some(settings) => (
             ConvRoutineKind::CubeStaged(Some(settings)),

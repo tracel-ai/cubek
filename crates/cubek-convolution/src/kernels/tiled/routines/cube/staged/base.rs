@@ -1,8 +1,8 @@
-use super::ConvCandidates;
+use super::CubeStagedConvCandidates;
 use super::kernel::cube_staged_conv_kernel;
 use crate::kernels::tiled::{
-    ConvBinding, ConvPartitioning, ConvProblem, ConvRoutine, ConvSettings, ConvStaging, ConvTiles,
-    TileConvBlueprint,
+    ConvBinding, ConvPartitioning, ConvProblem, ConvRoutine, ConvStaging, ConvTiles,
+    CubeStagedConvSettings, TileConvBlueprint,
 };
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::matmul::cube::{CubeStagedBox, CubeStagedDepth, CubeStagedMicrokernel};
@@ -19,13 +19,13 @@ pub struct CubeStagedConvRoutine;
 impl Routine for CubeStagedConvRoutine {
     type Problem = ConvProblem;
     type Microkernel = CubeStagedMicrokernel;
-    type Settings = ConvSettings;
+    type Settings = CubeStagedConvSettings;
     type Blueprint = TileConvBlueprint<CubeStagedMicrokernel>;
     type Partitioning = ConvPartitioning;
 
-    /// The device's own: [`ConvCandidates`].
-    fn settings(&self, hw: &Hardware) -> Vec<ConvSettings> {
-        ConvCandidates::on(hw)
+    /// The device's own: [`CubeStagedConvCandidates`].
+    fn settings(&self, hw: &Hardware) -> Vec<CubeStagedConvSettings> {
+        CubeStagedConvCandidates::on(hw)
             .map(|candidates| candidates.list())
             .unwrap_or_default()
     }
@@ -65,7 +65,7 @@ impl Routine for CubeStagedConvRoutine {
         &self,
         hw: &Hardware,
         problem: &ConvProblem,
-        settings: &ConvSettings,
+        settings: &CubeStagedConvSettings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         let plane = settings.plane(hw, problem)?;
         let tiles = ConvTiles::new(problem, &plane, settings);

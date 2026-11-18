@@ -1,4 +1,4 @@
-use crate::kernels::tiled::{ConvSettings, InstructionShape};
+use crate::kernels::tiled::{CubeStagedConvSettings, InstructionShape};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
@@ -24,12 +24,12 @@ const OTHER_ROW_FRAGMENTS: [usize; 2] = [1, 4];
 /// output rows over the instruction of fewest rows). Interactions between those moves are not
 /// listed. The device prunes the list; the problem only orders it.
 #[derive(Debug)]
-pub struct ConvCandidates<'a> {
+pub struct CubeStagedConvCandidates<'a> {
     hw: &'a Hardware,
     plane_width: usize,
 }
 
-impl<'a> ConvCandidates<'a> {
+impl<'a> CubeStagedConvCandidates<'a> {
     /// The list for `hw`, or `None` where it commits to no plane width, which no matrix
     /// instruction runs without.
     pub fn on(hw: &'a Hardware) -> Option<Self> {
@@ -39,7 +39,7 @@ impl<'a> ConvCandidates<'a> {
 
     /// Every candidate, the base first: the settings around the base of each instruction the
     /// device offers, then the base of the largest at one element a read.
-    pub fn list(&self) -> Vec<ConvSettings> {
+    pub fn list(&self) -> Vec<CubeStagedConvSettings> {
         let instructions = self.instruction_shapes();
         let narrowest = instructions
             .iter()
@@ -101,8 +101,8 @@ impl<'a> ConvCandidates<'a> {
     }
 
     /// The base setting of an instruction of `shape`.
-    fn base(shape: &InstructionShape) -> ConvSettings {
-        ConvSettings::new(shape.rows, BASE_FRAGMENTS, BASE_PLANES)
+    fn base(shape: &InstructionShape) -> CubeStagedConvSettings {
+        CubeStagedConvSettings::new(shape.rows, BASE_FRAGMENTS, BASE_PLANES)
     }
 
     /// The settings around `base`, an instruction of `shape`, the base first: fragments along the
@@ -111,20 +111,21 @@ impl<'a> ConvCandidates<'a> {
     /// instruction a plane with the planes spent across the output rows.
     fn around(
         &self,
-        base: ConvSettings,
+        base: CubeStagedConvSettings,
         shape: &InstructionShape,
         across: bool,
-    ) -> Vec<ConvSettings> {
+    ) -> Vec<CubeStagedConvSettings> {
         let count = |count: usize| NonZeroUsize::new(count).expect("a count is not zero");
-        let with =
-            |plane: PlaneFragmentMicrokernelSettings, planes: MatmulPlaneLayout| ConvSettings {
+        let with = |plane: PlaneFragmentMicrokernelSettings, planes: MatmulPlaneLayout| {
+            CubeStagedConvSettings {
                 microkernel: CubeStagedMicrokernelSettings {
                     plane,
                     planes,
                     ..base.microkernel
                 },
                 ..base
-            };
+            }
+        };
         let fragments = base.microkernel.plane;
         let planes = base.microkernel.planes;
         let with_rows = |rows: usize| {
@@ -162,11 +163,11 @@ impl<'a> ConvCandidates<'a> {
 
     /// One instruction a plane, the planes spent across the output rows; nothing unless `across`.
     fn across_rows(
-        with: &impl Fn(PlaneFragmentMicrokernelSettings, MatmulPlaneLayout) -> ConvSettings,
+        with: &impl Fn(PlaneFragmentMicrokernelSettings, MatmulPlaneLayout) -> CubeStagedConvSettings,
         fragments: PlaneFragmentMicrokernelSettings,
         planes_across: usize,
         across: bool,
-    ) -> Vec<ConvSettings> {
+    ) -> Vec<CubeStagedConvSettings> {
         if !across {
             return Vec::new();
         }
@@ -223,7 +224,7 @@ impl<'a> ConvCandidates<'a> {
 
     /// Whether the device holds `settings` of `shape`: its plane count in a cube, its accumulators
     /// in a unit's registers, and one step of its stages, at the widest element, in shared memory.
-    fn fits(&self, shape: &InstructionShape, settings: &ConvSettings) -> bool {
+    fn fits(&self, shape: &InstructionShape, settings: &CubeStagedConvSettings) -> bool {
         let (fragments, planes) = (&settings.microkernel.plane, &settings.microkernel.planes);
         let (along_m, along_n) = (fragments.along_m.get(), fragments.along_n.get());
         let registers = along_m * along_n * self.fragment_registers(shape);
@@ -247,8 +248,8 @@ mod tests {
     use cubek_std::devices::topology;
     use cubek_std::microkernel::StageRing;
 
-    fn list(hw: &Hardware) -> Vec<ConvSettings> {
-        ConvCandidates::on(hw)
+    fn list(hw: &Hardware) -> Vec<CubeStagedConvSettings> {
+        CubeStagedConvCandidates::on(hw)
             .expect("the device commits to a plane width")
             .list()
     }

@@ -1,5 +1,5 @@
 use super::{ConvBlock, ConvStep};
-use crate::kernels::tiled::{ConvProblem, ConvRoles, ConvSettings};
+use crate::kernels::tiled::{ConvProblem, ConvRoles, CubeStagedConvSettings};
 use cubecl::ir::ElemType;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{Axis, Level, Levels, Partitioning, StageStorage};
@@ -32,7 +32,7 @@ impl From<&PlaneFragmentInstruction> for InstructionShape {
 pub struct ConvTiles {
     roles: ConvRoles,
     instruction: InstructionShape,
-    settings: ConvSettings,
+    settings: CubeStagedConvSettings,
     orders: MatmulOperands<BindingOrder>,
     step: ConvStep,
     /// Elements one read of a stage fill brings along each input's innermost axis.
@@ -44,7 +44,7 @@ impl ConvTiles {
     pub fn new(
         problem: &ConvProblem,
         plane: &PlaneFragmentMicrokernel,
-        settings: &ConvSettings,
+        settings: &CubeStagedConvSettings,
     ) -> Self {
         let instruction = InstructionShape::from(&plane.instruction);
         let step = ConvStep::new(problem, instruction.depth);

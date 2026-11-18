@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// power of two above it. The widths are how wide each operand's alignment, and its view's start,
 /// lets it be read, the output's excepted: the cube staged routine writes it one element at a time.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
-pub struct ConvTuneKey {
+pub struct CubeStagedConvTuneKey {
     operation: ConvolutionOperation,
     lhs: ElemType,
     rhs: ElemType,
@@ -34,7 +34,7 @@ pub struct ConvTuneKey {
     rhs_width: usize,
 }
 
-impl ConvTuneKey {
+impl CubeStagedConvTuneKey {
     /// The widest width a key tells apart is two to this power: a wider alignment shares the key.
     const MOST_WIDTH_POWER: u32 = 5;
 
@@ -93,7 +93,7 @@ impl ConvTuneKey {
     }
 }
 
-impl ConvTuneKey {
+impl CubeStagedConvTuneKey {
     /// The key of `problem` on `hw`.
     pub(super) fn of(problem: &ConvProblem, hw: &Hardware) -> Self {
         let width = |operand| {
@@ -123,8 +123,8 @@ impl ConvTuneKey {
 
 /// The problem a key describes: dense operands of the key's elements at its widths, starting at
 /// their buffers' starts.
-impl From<&ConvTuneKey> for ConvProblem {
-    fn from(key: &ConvTuneKey) -> Self {
+impl From<&CubeStagedConvTuneKey> for ConvProblem {
+    fn from(key: &CubeStagedConvTuneKey) -> Self {
         let alignments = MatmulOperands {
             lhs: ElemAlignment::dense_rows(key.lhs_width),
             rhs: ElemAlignment::dense_rows(key.rhs_width),
