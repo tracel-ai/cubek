@@ -46,10 +46,10 @@ cubek-test-utils = { path = "crates/cubek-test-utils", version = "0.4.0-pre.2", 
 # cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
 # cubecl-ir = { path = "../cubecl/crates/cubecl-ir", default-features = false }
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "6937f903eb7dc95471818d2c5be93dc2ea3614b9", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "6937f903eb7dc95471818d2c5be93dc2ea3614b9", default-features = false }
-cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "6937f903eb7dc95471818d2c5be93dc2ea3614b9", default-features = false }
-cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "6937f903eb7dc95471818d2c5be93dc2ea3614b9", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "5d14772702bbe63523986fdbb16a1a00f34cbaf6", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "5d14772702bbe63523986fdbb16a1a00f34cbaf6", default-features = false }
+cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "5d14772702bbe63523986fdbb16a1a00f34cbaf6", default-features = false }
+cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "5d14772702bbe63523986fdbb16a1a00f34cbaf6", default-features = false }
 ### For releases ###
 # cubecl = { version = "=0.12.0-pre.2", default-features = false }
 # cubecl-common = { version = "=0.12.0-pre.2", default-features = false }
