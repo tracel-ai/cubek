@@ -22,6 +22,7 @@ pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric>(
     let rhs = rhs.tile(&partitioning);
     let out = out.tile(&partitioning);
 
+    // No barrier between boxes: each box's first stage refill synchronizes the cube.
     for cube in &partitioning {
         cube_staged_microkernel::<EA>(
             cube.walk(),
