@@ -95,12 +95,8 @@ impl SpatialWindow {
     }
 
     /// The gradient position the data backward reads at input position `pos` and tap `tap`,
-    /// `pos + padding - tap * dilation`, at stride 1: negative before the gradient's start.
-    pub fn gradient_position(&self, pos: usize, tap: usize) -> isize {
-        (pos + self.padding) as isize - (tap * self.dilation) as isize
-    }
-
-    /// [`Self::gradient_position`] as a map over the axes `pos` and `tap`.
+    /// `pos + padding - tap * dilation`, at stride 1: negative before the gradient's start, as a
+    /// map over the axes `pos` and `tap`.
     pub fn gradient_position_map(&self, pos: Axis, tap: Axis) -> PhysicalAxisMap {
         PhysicalAxisMap::scaled(&[
             (pos, Scale::Static(1)),

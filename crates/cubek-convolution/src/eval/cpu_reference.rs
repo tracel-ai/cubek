@@ -455,6 +455,9 @@ impl From<&ConvSpec> for ConvGeometry {
     }
 }
 
+/// The spatial rank the naive gradient references serve, that of [`ConvSpec`].
+const SPATIAL: usize = 2;
+
 /// A host tensor as the naive references read it: its values and its dims, channels last but for
 /// a weight and its gradient, which are `[co, taps.., ci]`.
 #[derive(Debug, Clone, Copy)]
@@ -485,61 +488,18 @@ fn within(extents: &[usize], positions: impl Iterator<Item = isize>) -> Option<u
         })
 }
 
-/// `out[b, o.., co] = sum over taps, ci of input[b, o * stride + tap * dilation - padding.., ci] *
-/// weight[co, tap.., ci]`, the taps that land outside the input skipped.
-pub fn naive_forward<const N: usize>(
-    input: HostTensor,
-    weight: HostTensor,
-    args: &ConvolutionArgs<N>,
-) -> Vec<f32> {
-    let windows = args.windows();
-    let (batches, channels) = (input.dims[0], input.dims[N + 1]);
-    let (gathered, kernel) = (&input.dims[1..=N], &weight.dims[1..=N]);
-    let filters = weight.dims[0];
-    let out: Vec<usize> = (0..N)
-        .map(|dim| windows[dim].output(gathered[dim], kernel[dim]))
-        .collect();
-    let (cells, taps, inputs) = (
-        out.iter().product::<usize>(),
-        kernel.iter().product::<usize>(),
-        gathered.iter().product::<usize>(),
-    );
-    let mut result = vec![0.0; batches * cells * filters];
-    for b in 0..batches {
-        for cell in 0..cells {
-            let at = unravel(cell, &out);
-            for o in 0..filters {
-                let mut sum = 0.0;
-                for tap in 0..taps {
-                    let at_tap = unravel(tap, kernel);
-                    let positions = (0..N).map(|dim| windows[dim].position(at[dim], at_tap[dim]));
-                    let Some(read) = within(gathered, positions) else {
-                        continue;
-                    };
-                    for i in 0..channels {
-                        sum += input.values[(b * inputs + read) * channels + i]
-                            * weight.values[(o * taps + tap) * channels + i];
-                    }
-                }
-                result[(b * cells + cell) * filters + o] = sum;
-            }
-        }
-    }
-    result
-}
-
 /// `weight_grad[co, tap.., ci] = sum over b, o.. of input[b, o * stride + tap * dilation -
 /// padding.., ci] * out_grad[b, o.., co]`, the taps that land outside the input skipped.
-pub fn naive_weight_grad<const N: usize>(
+pub fn naive_weight_grad(
     input: HostTensor,
     out_grad: HostTensor,
-    kernel: [usize; N],
-    args: &ConvolutionArgs<N>,
+    kernel: [usize; SPATIAL],
+    args: &ConvolutionArgs<SPATIAL>,
 ) -> Vec<f32> {
     let windows = args.windows();
-    let (batches, channels) = (input.dims[0], input.dims[N + 1]);
-    let (gathered, out) = (&input.dims[1..=N], &out_grad.dims[1..=N]);
-    let filters = out_grad.dims[N + 1];
+    let (batches, channels) = (input.dims[0], input.dims[SPATIAL + 1]);
+    let (gathered, out) = (&input.dims[1..=SPATIAL], &out_grad.dims[1..=SPATIAL]);
+    let filters = out_grad.dims[SPATIAL + 1];
     let (cells, taps, inputs) = (
         out.iter().product::<usize>(),
         kernel.iter().product::<usize>(),
@@ -555,7 +515,7 @@ pub fn naive_weight_grad<const N: usize>(
                     for cell in 0..cells {
                         let at = unravel(cell, out);
                         let positions =
-                            (0..N).map(|dim| windows[dim].position(at[dim], at_tap[dim]));
+                            (0..SPATIAL).map(|dim| windows[dim].position(at[dim], at_tap[dim]));
                         let Some(read) = within(gathered, positions) else {
                             continue;
                         };
@@ -573,15 +533,15 @@ pub fn naive_weight_grad<const N: usize>(
 /// `in_grad[b, p.., ci] = sum over co, taps of out_grad[b, g.., co] * weights[co, tap.., ci]`
 /// over the output positions `g` whose window reads input `p` at `tap`, that is
 /// `g * stride = p + padding - tap * dilation`; the others are skipped.
-pub fn naive_data_grad<const N: usize>(
+pub fn naive_data_grad(
     out_grad: HostTensor,
     weights: HostTensor,
-    input: [usize; N],
-    args: &ConvolutionArgs<N>,
+    input: [usize; SPATIAL],
+    args: &ConvolutionArgs<SPATIAL>,
 ) -> Vec<f32> {
-    let (batches, filters) = (out_grad.dims[0], out_grad.dims[N + 1]);
-    let (out, kernel) = (&out_grad.dims[1..=N], &weights.dims[1..=N]);
-    let channels = weights.dims[N + 1];
+    let (batches, filters) = (out_grad.dims[0], out_grad.dims[SPATIAL + 1]);
+    let (out, kernel) = (&out_grad.dims[1..=SPATIAL], &weights.dims[1..=SPATIAL]);
+    let channels = weights.dims[SPATIAL + 1];
     let (cells, taps, inputs) = (
         out.iter().product::<usize>(),
         kernel.iter().product::<usize>(),
@@ -616,8 +576,8 @@ pub fn naive_data_grad<const N: usize>(
 
 /// The output position along spatial `dim` whose window, at tap `tap`, reads input position `pos`
 /// of an output `extent` long, if there is one.
-fn output_reading<const N: usize>(
-    args: &ConvolutionArgs<N>,
+fn output_reading(
+    args: &ConvolutionArgs<SPATIAL>,
     dim: usize,
     pos: usize,
     tap: usize,
