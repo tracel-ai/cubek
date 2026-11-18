@@ -7,9 +7,9 @@ use crate::kernels::ReduceOpStrategy;
 
 /// The reduce family's entry in the benchmark catalogue: its problems, its strategies, and what
 /// one run reads, writes and computes.
-pub struct ReduceCategory;
+pub struct Category;
 
-impl cubek_test_utils::Category for ReduceCategory {
+impl cubek_test_utils::Category for Category {
     type Problem = ReduceProblem;
     type Strategy = ReduceOpStrategy;
 
