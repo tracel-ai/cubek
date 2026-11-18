@@ -352,7 +352,7 @@ impl ConvRoutine<UnitRegistersMicrokernel> for UnitRegistersConvRoutine {
         &self,
         problem: &ConvProblem,
         binding: ConvBinding,
-        _: TileConvBlueprint<UnitRegistersMicrokernel>,
+        blueprint: TileConvBlueprint<UnitRegistersMicrokernel>,
     ) {
         let ConvBinding {
             launcher,
@@ -373,7 +373,7 @@ impl ConvRoutine<UnitRegistersMicrokernel> for UnitRegistersConvRoutine {
                 rhs,
                 out,
                 launcher.partitioning_arg(),
-                UnitRegistersMicrokernel::register_budget().split_edge(),
+                blueprint.microkernel.software_matmul().split_edge(),
                 bounded,
                 extents,
                 problem.kernel_elements(),
