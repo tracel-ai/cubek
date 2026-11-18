@@ -12,6 +12,9 @@ use cubek_std::routine::{Grid, Routine};
 
 /// A reduce routine around microkernel `M`, as a launcher: it launches the
 /// [`ReduceBlueprint`] it prepared on tensors.
+///
+/// A reduce routine's own code reads nothing: every access is its microkernel's, so its
+/// `vectorize` hands the whole pass to the microkernel.
 pub(crate) trait ReduceLauncher<M>:
     Routine<Problem = ReduceRoutineProblem, Blueprint = ReduceBlueprint<M>>
 {

@@ -55,7 +55,6 @@ impl Routine for PlaneShuffleReduceRoutine {
             .collect()
     }
 
-    /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         microkernel: &PlaneShuffleReduceMicrokernel,
         _partitioning: &Partitioning,

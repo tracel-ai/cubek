@@ -8,8 +8,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// rows it reduces, into its own carrier, consecutive lanes reading consecutive lines; the lanes'
 /// partials meet across the plane ([`Carrier::across`](cubecl::tile::Carrier::across)), and the
 /// first lane writes the total to `out`, the plane's window of the output.
-///
-/// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
 pub(crate) fn plane_shuffle_reduce_microkernel<
     In: Numeric,

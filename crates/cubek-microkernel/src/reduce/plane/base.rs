@@ -20,8 +20,7 @@ pub struct PlaneShuffleReduceMicrokernel {
     /// Units of the plane, as wide as the device commits to.
     #[cube(comptime)]
     lanes: usize,
-    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width
-    /// ([`ReduceOperation::widest_line_at_lane_slots`](crate::reduce::ReduceOperation::widest_line_at_lane_slots)).
+    /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
     #[cube(comptime)]
     lane_slots: usize,
 }
@@ -36,12 +35,10 @@ impl PlaneShuffleReduceMicrokernel {
         }
     }
 
-    /// Its `item`.
     pub fn item(&self) -> ReduceWorkItem {
         self.item
     }
 
-    /// Its `lanes`.
     pub fn lanes(&self) -> usize {
         self.lanes
     }
@@ -56,7 +53,7 @@ impl PlaneShuffleReduceMicrokernel {
 
 #[cube]
 impl PlaneShuffleReduceMicrokernel {
-    /// One plane's row of `input` reduced into `out` and `indices` ([`plane_shuffle_reduce_microkernel`]).
+    /// One plane's row of `input` reduced into `out` and `indices` (`plane_shuffle_reduce_microkernel`).
     pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         input: &Tile,
@@ -79,8 +76,7 @@ impl PlaneShuffleReduceMicrokernel {
 /// A plane's microkernel has nothing a measurement settles: its lanes are the device's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleReduceMicrokernelSettings {
-    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width
-    /// ([`ReduceOperation::widest_line_at_lane_slots`](crate::reduce::ReduceOperation::widest_line_at_lane_slots)).
+    /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
     pub lane_slots: usize,
 }
 

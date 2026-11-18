@@ -7,6 +7,9 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::ReduceLayout;
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
 
+/// Most row dims a hypercube's cubes run along, beside the reduced dim: a launch grid has three.
+pub(crate) const MAX_SPLIT_ROW_DIMS: usize = 2;
+
 /// Where a hypercube's cubes sit, compiled into its kernel: the reduced dimension cut into parts, a
 /// cube a part, and the row dimensions, at most two, outermost first, that its boxes of rows lie
 /// along.

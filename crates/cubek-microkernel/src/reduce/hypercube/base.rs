@@ -34,7 +34,6 @@ impl HypercubeLastArrivalReduceMicrokernel {
         self.part.widest_line()
     }
 
-    /// Its `part`.
     pub fn part(&self) -> CubeStagedReduceMicrokernel {
         self.part
     }
@@ -42,7 +41,7 @@ impl HypercubeLastArrivalReduceMicrokernel {
 
 #[cube]
 impl HypercubeLastArrivalReduceMicrokernel {
-    /// One cube's part of a row of `input`, the row's last cube writing it to `out` and `indices` ([`hypercube_last_arrival_reduce_microkernel`]).
+    /// One cube's part of a row of `input`, the row's last cube writing it to `out` and `indices` (`hypercube_last_arrival_reduce_microkernel`).
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"

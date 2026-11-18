@@ -142,7 +142,6 @@ impl ReduceRoutineProblem {
         }
     }
 
-    /// The reduced dimension.
     pub fn reduced(&self) -> Dimension {
         axis_dimension(self.axis)
     }
@@ -227,7 +226,6 @@ impl ReduceRoutineProblem {
         self.shape[self.axis]
     }
 
-    /// Rows reduced.
     pub fn row_count(&self) -> usize {
         self.shape.iter().product::<usize>() / self.reduced_extent().max(1)
     }

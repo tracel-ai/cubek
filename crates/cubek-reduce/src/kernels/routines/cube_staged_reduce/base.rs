@@ -49,7 +49,6 @@ impl Routine for CubeStagedReduceRoutine {
             .collect()
     }
 
-    /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         microkernel: &CubeStagedReduceMicrokernel,
         _partitioning: &Partitioning,

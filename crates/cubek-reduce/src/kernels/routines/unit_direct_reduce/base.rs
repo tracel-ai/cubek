@@ -55,7 +55,6 @@ impl Routine for UnitDirectReduceRoutine {
             .collect()
     }
 
-    /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         microkernel: &UnitDirectReduceMicrokernel,
         _partitioning: &Partitioning,

@@ -16,8 +16,7 @@ use cubek_std::microkernel::{
 pub struct UnitDirectReduceMicrokernel {
     #[cube(comptime)]
     item: ReduceWorkItem,
-    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width
-    /// ([`ReduceOperation::widest_line_at_lane_slots`](crate::reduce::ReduceOperation::widest_line_at_lane_slots)).
+    /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
     #[cube(comptime)]
     lane_slots: usize,
 }
@@ -28,7 +27,6 @@ impl UnitDirectReduceMicrokernel {
         Self { item, lane_slots }
     }
 
-    /// Its `item`.
     pub fn item(&self) -> ReduceWorkItem {
         self.item
     }
@@ -43,7 +41,7 @@ impl UnitDirectReduceMicrokernel {
 
 #[cube]
 impl UnitDirectReduceMicrokernel {
-    /// One unit's row of `input` reduced into `out` and `indices` ([`unit_direct_reduce_microkernel`]).
+    /// One unit's row of `input` reduced into `out` and `indices` (`unit_direct_reduce_microkernel`).
     pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         input: &Tile,

@@ -3,8 +3,8 @@ use cubek_test_utils::{HostData, HostDataVec, Progress};
 
 use super::{bump, contiguous_strides};
 
-/// ArgTopK returns the `k` axis indices of the top values per output slice.
-/// The output shape has `axis` set to `k` (rather than `1` as for scalar reductions).
+/// ArgTopK returns the `k` axis indices of the top values per output slice, laid out as
+/// [`reference_topk`](super::reference_topk) lays out their values.
 pub fn reference_argtopk(
     input: &HostData,
     axis: usize,

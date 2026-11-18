@@ -15,8 +15,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// `arrivals` holds a counter for every row, at zero, which serves this launch alone.
 /// The cube meets on `sync_storage` before it counts, so its partial lands first, and again before
 /// the last cube reads the others'.
-///
-/// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
 pub(crate) fn hypercube_last_arrival_reduce_microkernel<
     In: Numeric,

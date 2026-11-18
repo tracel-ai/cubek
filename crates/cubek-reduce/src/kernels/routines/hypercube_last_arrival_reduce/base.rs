@@ -1,6 +1,7 @@
 use super::kernel::{
-    ReduceSplitExtents, ReduceSplitExtentsLaunch, hypercube_last_arrival_reduce_indexed_kernel,
-    hypercube_last_arrival_reduce_kernel, hypercube_last_arrival_reduce_with_indices_kernel,
+    MAX_SPLIT_ROW_DIMS, ReduceSplitExtents, ReduceSplitExtentsLaunch,
+    hypercube_last_arrival_reduce_indexed_kernel, hypercube_last_arrival_reduce_kernel,
+    hypercube_last_arrival_reduce_with_indices_kernel,
 };
 use crate::kernels::{
     ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
@@ -60,9 +61,6 @@ fn partial_extent(problem: &ReduceRoutineProblem, part: usize, width: usize) -> 
     }
 }
 
-/// Most row dims a hypercube's cubes run along, beside the reduced dim: a launch grid has three.
-const MAX_ROW_DIMS: usize = 2;
-
 impl Routine for HypercubeLastArrivalReduceRoutine {
     type Problem = ReduceRoutineProblem;
     type Microkernel = HypercubeLastArrivalReduceMicrokernel;
@@ -85,7 +83,6 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
             .collect()
     }
 
-    /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         microkernel: &HypercubeLastArrivalReduceMicrokernel,
         _partitioning: &Partitioning,
@@ -99,7 +96,7 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        if problem.rows().len() > MAX_ROW_DIMS {
+        if problem.rows().len() > MAX_SPLIT_ROW_DIMS {
             return Err(Refusal::Declined {
                 why: "the hypercube reduce runs its cubes along at most two row dims",
             });

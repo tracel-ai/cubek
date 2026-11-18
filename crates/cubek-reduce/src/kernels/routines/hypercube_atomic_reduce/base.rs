@@ -1,7 +1,7 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
-    UNBOUND_LINES_NARROWER, reduce_widths,
+    MAX_SPLIT_ROW_DIMS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
+    ReduceTensors, UNBOUND_LINES_NARROWER, reduce_widths,
 };
 use core::convert::identity;
 use cubecl::client::Client;
@@ -51,9 +51,6 @@ impl core::fmt::Display for HypercubeAtomicReduceSettings {
 
 pub type HypercubeAtomicReduceBlueprint = ReduceBlueprint<CubeStagedReduceMicrokernel>;
 
-/// Most row dims its cubes run along, beside the reduced dim: a launch grid has three.
-const MAX_ROW_DIMS: usize = 2;
-
 impl Routine for HypercubeAtomicReduceRoutine {
     type Problem = ReduceRoutineProblem;
     type Microkernel = CubeStagedReduceMicrokernel;
@@ -76,7 +73,6 @@ impl Routine for HypercubeAtomicReduceRoutine {
             .collect()
     }
 
-    /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
         microkernel: &CubeStagedReduceMicrokernel,
         _partitioning: &Partitioning,
@@ -104,7 +100,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
                 why: "the device has no atomic add for the output's element",
             });
         }
-        if problem.rows().len() > MAX_ROW_DIMS {
+        if problem.rows().len() > MAX_SPLIT_ROW_DIMS {
             return Err(Refusal::Declined {
                 why: "the atomic hypercube runs its cubes along at most two row dims",
             });

@@ -8,8 +8,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// the rows it reduces, consecutive units reading consecutive lines; each plane's lanes meet in the
 /// plane's instructions, the planes meet in shared memory ([`ReduceAccumulator::across_planes`]), and the
 /// cube's first unit writes the total to `out`, the cube's window of the output.
-///
-/// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
 pub(crate) fn cube_staged_reduce_microkernel<
     In: Numeric,

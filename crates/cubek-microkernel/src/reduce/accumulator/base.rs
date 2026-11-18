@@ -27,7 +27,7 @@ pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self;
 
     /// `acc` stored as partial `part` of a row its cubes split, for the cube that merges them
-    /// ([`load`](ReduceAccumulator::load)): its lines, one for the values and for an [`Indexed`], `k` for a
+    /// ([`load`](ReduceAccumulator::load)): its lines, one for the values and for an [`Indexed`](cubecl::tile::Indexed), `k` for a
     /// top-k, written that many lines times `part` into `values`, in `Acc`, and its indices at
     /// the same lines of `indices`, in `u32`: a carrier that carries indices is given them, and no
     /// other is.
