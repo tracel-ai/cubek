@@ -1566,7 +1566,6 @@ dependencies = [
  "cubek-std",
  "cubek-test-utils",
  "half",
- "num-traits",
  "serde",
  "thiserror 2.0.21",
 ]
