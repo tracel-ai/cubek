@@ -6,13 +6,13 @@ use cubek_std::Hardware;
 /// The routines a caller names, each at a setting or at the one it finds on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConvRoutineKind {
-    /// [`CubeStagedConvRoutine`] at the setting named, or at the first of its settings that serves
+    /// `CubeStagedConvRoutine` at the setting named, or at the first of its settings that serves
     /// the convolution where none is.
     CubeStaged(Option<CubeStagedConvSettings>),
-    /// The setting the autotune finds fastest among those [`CubeStagedConvRoutine`] lists, and
-    /// [`PlaneWindowConvRoutine`] where none of them serves the convolution.
+    /// The setting the autotune finds fastest among those `CubeStagedConvRoutine` lists, and
+    /// `PlaneWindowConvRoutine` where none of them serves the convolution.
     Tuned,
-    /// [`PlaneWindowConvRoutine`] at the first of its settings that serves the convolution.
+    /// `PlaneWindowConvRoutine` at the first of its settings that serves the convolution.
     PlaneWindow,
 }
 
