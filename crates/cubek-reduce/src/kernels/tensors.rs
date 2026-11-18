@@ -89,7 +89,10 @@ impl ReduceTensors<TensorBinding> {
     ///
     /// As [`new`](Self::new), and where the operation's values carry no index (a sum's do not),
     /// or `indices` is not laid out as `values`.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the operands and what the reduction computes, as a caller states them"
+    )]
     pub fn with_indices(
         client: &Client,
         input: TensorBinding,
@@ -119,7 +122,7 @@ impl ReduceTensors<TensorBinding> {
     /// # Panics
     ///
     /// Where `blueprint` and `grid` were not prepared for these tensors' problem.
-    pub fn bind<M>(&self, blueprint: &ReduceBlueprint<M>, grid: &Grid) -> ReduceBinding {
+    pub(crate) fn bind<M>(&self, blueprint: &ReduceBlueprint<M>, grid: &Grid) -> ReduceBinding {
         ReduceBinding::bound(
             &self.client,
             &self.problem,
@@ -166,7 +169,7 @@ impl ReduceTensors<Geometry> {
     /// # Panics
     ///
     /// Where `blueprint` and `grid` were not prepared for these tensors' problem.
-    pub fn bind<M>(
+    pub(crate) fn bind<M>(
         &self,
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
@@ -184,7 +187,7 @@ impl ReduceTensors<Geometry> {
 
 /// The operands of one launch and the launcher they were bound through: each a [`Bound`] buffer,
 /// an [`Unbound`] spec the caller binds, or the launch argument either became.
-pub struct ReduceBinding<In = Bound, Out = In> {
+pub(crate) struct ReduceBinding<In = Bound, Out = In> {
     pub launcher: Launcher,
     pub input: In,
     pub out: Out,

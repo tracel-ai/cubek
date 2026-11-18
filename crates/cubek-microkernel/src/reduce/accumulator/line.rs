@@ -32,14 +32,14 @@ pub(crate) fn lane_indices<N: Size>(
     #[comptime] layout: ReduceLayout,
 ) -> Vector<u32, N> {
     match layout {
-        ReduceLayout::Along => consecutive_indices::<N>(line_index),
+        ReduceLayout::Along => consecutive_indices_of_line::<N>(line_index),
         ReduceLayout::Across => Vector::new(line_index as u32),
     }
 }
 
 /// The indices of the `N` consecutive values of the line read `line_index` lines into a row.
 #[cube]
-fn consecutive_indices<N: Size>(line_index: usize) -> Vector<u32, N> {
+fn consecutive_indices_of_line<N: Size>(line_index: usize) -> Vector<u32, N> {
     let width = N::value();
     let mut indices = Vector::<u32, N>::new((line_index * width) as u32);
     #[unroll]

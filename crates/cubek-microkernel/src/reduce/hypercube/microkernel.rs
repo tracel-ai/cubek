@@ -12,7 +12,8 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// row to `out`, and to `indices` where both halves are written, as the cube's microkernel writes
 /// a row, a mean dividing by `values`, the values the whole row holds.
 ///
-/// `arrivals` holds a counter for every row, at zero, which serves this launch alone.
+/// `arrivals` holds a counter for every row, or box of rows, its caller counts apart, at zero,
+/// which serves this launch alone.
 /// The cube meets on `sync_storage` before it counts, so its partial lands first, and again before
 /// the last cube reads the others'.
 #[cube]

@@ -5,7 +5,7 @@ use crate::launch::reduce::TestedMicrokernel;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::reduce::{Reduce, ReduceCase};
+use crate::reduce::{ReduceCase, ReduceMicrokernelScopeUnderTest};
 
 /// A row split across cubes, four planes each, reduces every operation to the CPU's answer: along
 /// the reduced axis, over two parts and over eight, a part shorter than the cube's units and one
@@ -17,5 +17,5 @@ fn a_hypercube_reduces_every_operation_like_the_cpu() {
     let mut cases = ReduceCase::every_operation(hypercube(2), &[(64, 1)], &[]);
     cases.extend(ReduceCase::every_operation(hypercube(8), &[(8192, 4)], &[]));
     cases.extend(ReduceCase::every_operation(hypercube(3), &[], &[(300, 4)]));
-    Reduce { hw }.check(cases);
+    ReduceMicrokernelScopeUnderTest { hw }.check(cases);
 }

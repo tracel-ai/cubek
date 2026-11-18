@@ -1,10 +1,10 @@
-//! The unit reduce microkernel alone: a plane's first unit reduces its row.
+//! The unit reduce microkernel alone: every unit reduces its own row.
 
 use crate::launch::reduce::TestedMicrokernel;
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::reduce::{Reduce, ReduceCase};
+use crate::reduce::{ReduceCase, ReduceMicrokernelScopeUnderTest};
 
 /// A unit alone reduces every operation to the CPU's answer, along the reduced axis and across
 /// it, each lane its own row.
@@ -16,5 +16,5 @@ fn a_unit_reduces_every_operation_like_the_cpu() {
         &[(37, 1), (64, 4)],
         &[(37, 1), (300, 4)],
     );
-    Reduce { hw }.check(cases);
+    ReduceMicrokernelScopeUnderTest { hw }.check(cases);
 }

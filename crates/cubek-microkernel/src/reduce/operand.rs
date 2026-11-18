@@ -3,9 +3,9 @@ use cubecl::tile::Dimension;
 /// One of a reduction's operands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReduceOperand {
-    /// `[o, r]`: the rows reduced, along `r`.
+    /// `[ROWS, REDUCED]`: the rows reduced, along [`REDUCED`].
     Input,
-    /// `[o]`, or `[o, k]` for a top-k: one cell per row, the values or their indices.
+    /// `[ROWS]`, or `[ROWS, k]` for a top-k: one cell per row, the values or their indices.
     Out,
 }
 

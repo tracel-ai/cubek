@@ -26,6 +26,10 @@ impl ReduceCandidate {
     ///
     /// Why the routine cannot run the problem at its setting, or why it cannot read the caller's
     /// input.
+    ///
+    /// # Panics
+    ///
+    /// As [`Reduce::execute`](crate::kernels::Reduce::execute).
     pub fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,

@@ -94,7 +94,7 @@ impl TestCase {
 
     /// This case reduced by `op`, against the host.
     fn check(&self, op: Op) {
-        Reduces.check([Reduction {
+        ReduceScopeUnderTest.check([Reduction {
             case: self.clone(),
             op,
         }]);
@@ -362,9 +362,9 @@ impl Reduction {
 }
 
 /// The reduce entry the environment names, against the host.
-pub struct Reduces;
+pub struct ReduceScopeUnderTest;
 
-impl ScopeUnderTest for Reduces {
+impl ScopeUnderTest for ReduceScopeUnderTest {
     type Case = Reduction;
 
     /// # Panics

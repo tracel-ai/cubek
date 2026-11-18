@@ -27,7 +27,7 @@ pub struct UnitDirectZeroMicrokernelSettings;
 
 impl core::fmt::Display for UnitDirectZeroMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("one-unit")
+        f.write_str("default")
     }
 }
 

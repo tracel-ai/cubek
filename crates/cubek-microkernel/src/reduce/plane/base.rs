@@ -77,7 +77,8 @@ impl PlaneShuffleReduceMicrokernel {
     }
 }
 
-/// A plane's microkernel has nothing a measurement settles: its lanes are the device's.
+/// What a measurement settles for a plane's microkernel: its top-k lane slots. Its lanes are the
+/// device's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleReduceMicrokernelSettings {
     /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
@@ -86,7 +87,7 @@ pub struct PlaneShuffleReduceMicrokernelSettings {
 
 impl core::fmt::Display for PlaneShuffleReduceMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "whole-plane lane_slots={}", self.lane_slots)
+        write!(f, "lane_slots={}", self.lane_slots)
     }
 }
 

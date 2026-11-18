@@ -1,7 +1,8 @@
 //! What every reduce microkernel computes alone: each row's cells, one or `k` for a top-k, values
-//! or indices. Along the reduced dimension, `input[o, r]` and `out[o, s]`; across it, `input[r, o]`
-//! and `out[s, o]`. A hypercube's input splits the reduced dimension into its parts, `input[o, p,
-//! r]` or `input[p, r, o]`, a cube a part.
+//! or indices. Along the reduced dimension, `input[ROWS, REDUCED]` and `out[ROWS, SLOTS]`; across
+//! it, `input[REDUCED, ROWS]` and `out[SLOTS, ROWS]`. A hypercube's input splits the reduced
+//! dimension into its parts, `input[ROWS, PARTS, REDUCED]` or `input[PARTS, REDUCED, ROWS]`, a
+//! cube a part.
 
 use crate::launch::reduce::{ReduceLaunch, TestedMicrokernel};
 use cubecl::ir::{ElemType, FloatKind, IntKind};
@@ -32,7 +33,7 @@ pub(crate) const OPERATIONS: [ReduceOperation; 12] = [
 ];
 
 /// The reduce microkernel `hw` runs each case names.
-pub(crate) struct Reduce {
+pub(crate) struct ReduceMicrokernelScopeUnderTest {
     pub hw: Hardware,
 }
 
@@ -225,7 +226,7 @@ impl HostReduce {
     }
 }
 
-impl ScopeUnderTest for Reduce {
+impl ScopeUnderTest for ReduceMicrokernelScopeUnderTest {
     type Case = ReduceCase;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {

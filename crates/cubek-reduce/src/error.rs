@@ -40,7 +40,7 @@ pub enum ReduceError {
     },
     /// The operation has no index to write beside its values.
     #[error(
-        "The operation {operation} has no index to report; reduce_with_indices only supports TopK, ArgTopK, Max, ArgMax, Min and ArgMin."
+        "The operation {operation} has no index to report; Reduce::execute_with_indices only supports TopK, ArgTopK, Max, ArgMax, Min and ArgMin."
     )]
     IndicesUnsupported { operation: &'static str },
 }

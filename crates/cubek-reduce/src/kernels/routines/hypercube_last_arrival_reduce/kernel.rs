@@ -14,7 +14,7 @@ pub(crate) const MAX_SPLIT_ROW_DIMS: usize = 2;
 /// cube a part, and the row dimensions, at most two, outermost first, that its boxes of rows lie
 /// along.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ReduceSplit {
+pub(crate) struct ReduceSplit {
     pub reduced: Dimension,
     pub rows: Vec<Dimension>,
 }
@@ -40,7 +40,7 @@ impl ReduceSplit {
 
 /// The extents a hypercube launch is handed at run time, which its kernel does not compile.
 #[derive(CubeType, CubeLaunch, Debug, Clone, Copy)]
-pub struct ReduceSplitExtents {
+pub(crate) struct ReduceSplitExtents {
     /// Parts a row is split into, a cube each.
     pub parts: u32,
     /// Values a row holds, which a mean divides by.

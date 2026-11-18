@@ -73,8 +73,12 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
         _count: usize,
         #[comptime] layout: ReduceLayout,
         #[comptime] operation: ReduceOperation,
-        #[comptime] _writes: ReduceWrites,
+        #[comptime] writes: ReduceWrites,
     ) {
+        comptime!(assert!(
+            writes == ReduceWrites::Values,
+            "ReduceAccumulator: a top-k of values alone holds no index to write"
+        ));
         let lanes = N::value();
         let lanes_share_a_row = comptime!(matches!(layout, ReduceLayout::Along) && lanes > 1);
         match lanes_share_a_row {

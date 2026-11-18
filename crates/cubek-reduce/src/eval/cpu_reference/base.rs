@@ -35,16 +35,16 @@ pub enum ReduceValues {
     Ramp,
 }
 
-/// Ramp steps f16 still resolves apart: the ramp spans 2.0 and f16 separates
-/// neighbours by 2^-11 just below 1.0.
 /// The range a uniform input is drawn from.
 const UNIFORM_LOW: f32 = -1.0;
 const UNIFORM_HIGH: f32 = 1.0;
 
+/// Ramp steps f16 still resolves apart: the ramp spans 2.0 and f16 separates
+/// neighbours by 2^-11 just below 1.0.
 pub const RAMP_MAX_ELEMS: usize = 2048;
 
 /// Odd, so it visits every slot of a power-of-two length.
-const RAMP_STRIDE: usize = 1103;
+const RAMP_STRIDE_ELEMS: usize = 1103;
 
 impl ReduceInput {
     /// Uniform values at `dtype`, the input every seeded comparison over a
@@ -65,14 +65,15 @@ impl ReduceInput {
     }
 }
 
-/// A ramp of `elems` values over `[-1, 1)`, spread by [`RAMP_STRIDE`] so no run of it is sorted.
+/// A ramp of `elems` values over `[-1, 1)`, spread by [`RAMP_STRIDE_ELEMS`] so no run of it is
+/// sorted.
 fn ramp_of_len(elems: usize) -> Vec<f32> {
     assert!(
         elems.is_power_of_two() && elems <= RAMP_MAX_ELEMS,
         "a ramp of {elems} values is not a permutation, or is finer than f16 resolves"
     );
     (0..elems)
-        .map(|i| (i * RAMP_STRIDE % elems) as f32 / elems as f32 * 2.0 - 1.0)
+        .map(|i| (i * RAMP_STRIDE_ELEMS % elems) as f32 / elems as f32 * 2.0 - 1.0)
         .collect()
 }
 
@@ -305,8 +306,8 @@ pub fn output_dtype_for(operation: ReduceOperation, input_dtype: ElemType) -> El
     }
 }
 
-/// What every `Reduce::execute`/`Reduce::execute_with_indices` launch folds into, regardless of
-/// the input or output element type.
+/// The accumulator element the harness states for every launch it compares, whatever the input or
+/// output element.
 pub fn accumulation_dtype() -> ElemType {
     f32::elem_type_native()
 }

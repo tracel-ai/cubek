@@ -74,7 +74,7 @@ pub struct UnitDirectReduceMicrokernelSettings {
 
 impl core::fmt::Display for UnitDirectReduceMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "one-unit lane_slots={}", self.lane_slots)
+        write!(f, "lane_slots={}", self.lane_slots)
     }
 }
 

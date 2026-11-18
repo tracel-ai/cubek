@@ -20,7 +20,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct UnitDirectReduceRoutine;
 
-/// How many planes of units a cube holds.
+/// Its microkernel's settings, and how many planes of units a cube holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitDirectReduceSettings {
     pub microkernel: UnitDirectReduceMicrokernelSettings,

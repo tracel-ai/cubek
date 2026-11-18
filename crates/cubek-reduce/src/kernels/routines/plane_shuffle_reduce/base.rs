@@ -20,7 +20,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct PlaneShuffleReduceRoutine;
 
-/// How many of the launch's planes a cube holds.
+/// Its microkernel's settings, and how many of the launch's planes a cube holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleReduceSettings {
     pub microkernel: PlaneShuffleReduceMicrokernelSettings,

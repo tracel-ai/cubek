@@ -25,9 +25,17 @@ impl Reduce {
     ///
     /// # Errors
     ///
-    /// Where `axis` or `output`'s shape does not fit `input`, and [`ReduceError::Refused`] with
-    /// the kernel's refusal where a [`Specific`](ReduceOpStrategy::Specific) kernel cannot run
-    /// the problem.
+    /// [`ReduceError::InvalidAxis`] where `axis` is not a dim of `input`,
+    /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is shorter than the `k` a top-k
+    /// keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one above,
+    /// and [`ReduceError::Refused`] with the kernel's refusal where the kernel the strategy picks
+    /// cannot run the problem on this device: a [`Specific`](ReduceOpStrategy::Specific) one, or
+    /// the unit kernel the rule falls back to.
+    ///
+    /// # Panics
+    ///
+    /// Where `input` has 256 axes or more, a top-k keeps `k = 0` values, or a row split across
+    /// cubes is longer than `u32` counts.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -63,6 +71,10 @@ impl Reduce {
     /// values carry no index; and [`ReduceError::MismatchIndicesShape`] or
     /// [`ReduceError::MismatchIndicesStrides`] where `indices` differs from `values` in shape or
     /// strides.
+    ///
+    /// # Panics
+    ///
+    /// As [`execute`](Self::execute).
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"

@@ -156,6 +156,10 @@ impl ReduceOperation {
     /// indices for every lane of a line: past `lane_slots` they spill out of registers, so the line
     /// narrows, and once its `k`-by-`k` walks stay loops ([`TOP_K_UNROLL_BUDGET`]) its lists are
     /// indexed at run time, out of local memory, so the line is one value.
+    ///
+    /// # Panics
+    ///
+    /// Where a top-k keeps `k = 0` values.
     pub const fn widest_line_at_lane_slots(self, lane_slots: usize) -> Option<usize> {
         match self {
             Self::TopK { k } | Self::ArgTopK { k } => match k * k > TOP_K_UNROLL_BUDGET {

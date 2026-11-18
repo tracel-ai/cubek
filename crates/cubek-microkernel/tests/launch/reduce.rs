@@ -1,7 +1,8 @@
-//! The reduce microkernels on one launch: `out[o, s]` the `s`-th cell row `o` writes (one, or `k`
-//! for a top-k). Along the reduced dimension, `input[o, r]`, each row its owner's; across it,
-//! `input[r, o]` and `out[s, o]`, each owner `width` rows side by side, a row a lane. A hypercube
-//! splits the reduced dimension into parts, `input[o, p, r]` or `input[p, r, o]`, a cube a part.
+//! The reduce microkernels on one launch: `out[ROWS, SLOTS]`, the cells each row writes (one, or
+//! `k` for a top-k). Along the reduced dimension, `input[ROWS, REDUCED]`, each row its owner's;
+//! across it, `input[REDUCED, ROWS]` and `out[SLOTS, ROWS]`, each owner `width` rows side by side,
+//! a row a lane. A hypercube splits the reduced dimension into parts,
+//! `input[ROWS, PARTS, REDUCED]` or `input[PARTS, REDUCED, ROWS]`, a cube a part.
 
 use cubecl::ir::UIntKind;
 use cubecl::prelude::*;
@@ -38,7 +39,7 @@ const PARTIAL_LINES: Dimension = Dimension(4);
 /// Which reduce microkernel a case runs, named for the microkernel, and what its scope holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TestedMicrokernel {
-    /// The unit microkernel: the plane's first unit alone.
+    /// The unit microkernel: every unit reduces its own row.
     UnitDirect,
     /// The plane microkernel: the whole plane.
     PlaneShuffle,

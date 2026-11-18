@@ -42,6 +42,16 @@ const OPERATIONS: [ReduceOperation; 14] = [
     ReduceOperation::ArgTopK { k: 1 },
 ];
 
+/// The `k` largest values of `row` and their positions, best first.
+fn largest(row: &[f32], k: usize) -> Vec<(f32, usize)> {
+    ranked(row, true, k)
+}
+
+/// The `k` smallest values of `row` and their positions, best first.
+fn smallest(row: &[f32], k: usize) -> Vec<(f32, usize)> {
+    ranked(row, false, k)
+}
+
 /// The `k` best of `row`, best first: the larger (smaller) value, then the lower index, a NaN
 /// ahead of every number.
 fn ranked(row: &[f32], largest: bool, k: usize) -> Vec<(f32, usize)> {
@@ -89,10 +99,10 @@ fn reference(row: &[f32], operation: ReduceOperation) -> Vec<f32> {
         } else {
             0.0
         }],
-        ReduceOperation::ArgMax => vec![ranked(row, true, 1)[0].1 as f32],
-        ReduceOperation::ArgMin => vec![ranked(row, false, 1)[0].1 as f32],
-        ReduceOperation::TopK { k } => ranked(row, true, k).iter().map(|e| e.0).collect(),
-        ReduceOperation::ArgTopK { k } => ranked(row, true, k).iter().map(|e| e.1 as f32).collect(),
+        ReduceOperation::ArgMax => vec![largest(row, 1)[0].1 as f32],
+        ReduceOperation::ArgMin => vec![smallest(row, 1)[0].1 as f32],
+        ReduceOperation::TopK { k } => largest(row, k).iter().map(|e| e.0).collect(),
+        ReduceOperation::ArgTopK { k } => largest(row, k).iter().map(|e| e.1 as f32).collect(),
     }
 }
 
@@ -719,4 +729,20 @@ fn routines_decline_on_a_device_without_their_features() {
     assert!(UnitDirectReduceRoutine::prepare(&hw, &problem, &unit).is_ok());
     let zero = UnitDirectZeroReduceRoutine::settings(&hw)[0];
     assert!(UnitDirectZeroReduceRoutine::prepare(&hw, &problem, &zero).is_ok());
+}
+
+/// On a device whose planes stay but whose cubes' stores do not reach one another within a launch,
+/// the last-arrival hypercube declines for that Feature alone, and the cube routine still prepares.
+#[test]
+fn the_hypercube_declines_without_device_memory_scope() {
+    let mut hw = devices::m2_pro();
+    devices::features(&mut hw).device_memory_scope = false;
+    let problem = problem(&[4, 4096], 1);
+    let hypercube = HypercubeLastArrivalReduceRoutine::settings(&hw)[0];
+    assert!(matches!(
+        HypercubeLastArrivalReduceRoutine::prepare(&hw, &problem, &hypercube),
+        Err(Refusal::Declined { .. })
+    ));
+    let cube = CubeStagedReduceRoutine::settings(&hw)[0];
+    assert!(CubeStagedReduceRoutine::prepare(&hw, &problem, &cube).is_ok());
 }

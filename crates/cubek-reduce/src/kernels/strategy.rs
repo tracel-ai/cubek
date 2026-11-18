@@ -142,6 +142,10 @@ impl ReduceKernel {
     /// # Errors
     ///
     /// Why its routine cannot run the problem here.
+    ///
+    /// # Panics
+    ///
+    /// As [`Reduce::execute`](crate::kernels::Reduce::execute).
     pub fn launch(&self, hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
         match self {
             Self::Unit => launch_first_served::<UnitDirectReduceRoutine, _>(hw, tensors),
