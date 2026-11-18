@@ -1,11 +1,10 @@
 use cubecl::client::Client;
 use cubek_test_utils::{HostData, Progress, ValidationResult, assert_equals_approx};
 
-use crate::ReduceStrategy;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 use crate::eval::cpu_reference::{
-    RAMP_MAX_ELEMS, ReduceInput, ReduceValues, comparison_epsilon, cpu_reference_result,
-    strategy_result, strategy_result_with_indices,
+    RAMP_MAX_ELEMS, ReduceEntry, ReduceInput, ReduceValues, comparison_epsilon,
+    cpu_reference_result, strategy_result, strategy_result_with_indices,
 };
 
 pub struct ReduceCorrectness;
@@ -13,7 +12,7 @@ pub struct ReduceCorrectness;
 impl ReduceCorrectness {
     /// Proves `strategy` correct on a small shape before it's timed, so a wrong
     /// kernel can't win a benchmark by being fast.
-    pub fn verify(strategy: &ReduceStrategy, problem: &ReduceProblem) -> Result<(), String> {
+    pub fn verify(strategy: &ReduceEntry, problem: &ReduceProblem) -> Result<(), String> {
         let client = cubecl::test_device().client();
         let proof = ReduceProblem {
             shape: proof_shape(problem.shape.len(), problem.axis),
@@ -44,7 +43,7 @@ impl ReduceCorrectness {
     /// needs the dedicated entrypoint.
     fn kernel_output(
         client: Client,
-        strategy: &ReduceStrategy,
+        strategy: &ReduceEntry,
         problem: &ReduceProblem,
         input: ReduceInput,
     ) -> Result<HostData, String> {
@@ -105,11 +104,11 @@ fn proof_shape(rank: usize, axis: usize) -> Vec<usize> {
 
 impl cubek_test_utils::Correctness for ReduceCorrectness {
     type Problem = ReduceProblem;
-    type Strategy = ReduceStrategy;
+    type Strategy = ReduceEntry;
 
     fn kernel_result(
         &self,
-        strategy: &ReduceStrategy,
+        strategy: &ReduceEntry,
         problem: &ReduceProblem,
         seeds: &[u64],
     ) -> Result<HostData, String> {

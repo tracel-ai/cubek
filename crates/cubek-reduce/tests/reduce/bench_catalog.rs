@@ -2,10 +2,10 @@
 
 #![cfg(feature = "benchmarks")]
 
-use cubek_reduce::ReduceStrategy;
 use cubek_reduce::eval::benchmarks::{
     ReduceBenchPrecision, ReduceCorrectness, ReduceProblem, precisions, problems, strategies,
 };
+use cubek_reduce::eval::cpu_reference::ReduceEntry;
 use cubek_reduce::eval::cpu_reference::comparison_epsilon;
 use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
 
@@ -20,7 +20,7 @@ fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
 }
 
 fn run(strategy_id: &str, problem_id: &str) {
-    let strategy: ReduceStrategy = lookup(strategies(), strategy_id);
+    let strategy: ReduceEntry = lookup(strategies(), strategy_id);
     let problem: ReduceProblem = lookup(problems(), problem_id);
 
     let actual = match ReduceCorrectness.kernel_result(&strategy, &problem, &SEEDS) {

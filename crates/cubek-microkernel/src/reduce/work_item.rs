@@ -3,7 +3,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 
 /// How a reduction's lines lie against the dimension it reduces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ReduceLayout {
     /// The reduced dimension is the contiguous one: a line is `width` consecutive values of one
     /// row, whose lanes reduce to one value at the end.
