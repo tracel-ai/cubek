@@ -3,13 +3,16 @@
 //! Every variant but `Specific` is a policy; `Specific` is a pin, as in the matmul and attention
 //! families.
 
+use crate::ReduceError;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceLauncher, ReduceTensors, UnitDirectReduceRoutine,
-    UnitDirectZeroRoutine,
+    UnitDirectZeroRoutine, launch_tuned, select,
 };
+use cubecl::Device;
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
+use cubek_std::routine::Routine;
 use serde::{Deserialize, Serialize};
 
 /// How a reduction picks its kernel: measure the routines, pick one by rule, or run one named
@@ -56,6 +59,20 @@ pub enum ReduceKernel {
 }
 
 impl ReduceOpStrategy {
+    /// `tensors` reduced on `device` by the kernel this strategy picks.
+    ///
+    /// # Errors
+    ///
+    /// [`ReduceError::Refused`] where the picked kernel cannot run the problem on this device.
+    pub(crate) fn launch(self, device: &Device, tensors: ReduceTensors) -> Result<(), ReduceError> {
+        let hw = Hardware::from_client(tensors.client());
+        match self {
+            Self::Autotune => Ok(launch_tuned(tensors, device)),
+            Self::Heuristic(ReduceKernelHeuristic::Tile) => Ok(select(&hw, &tensors)?),
+            Self::Specific(kernel) => Ok(kernel.launch(&hw, &tensors)?),
+        }
+    }
+
     /// Every strategy: the policies, then a pin of every kernel.
     pub fn all() -> Vec<Self> {
         let heuristics = ReduceKernelHeuristic::all()
@@ -133,12 +150,21 @@ impl ReduceKernel {
             Self::HypercubeLastArrival => {
                 launch_first_served::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors)
             }
-            Self::HypercubeAtomic => {
-                launch_first_served::<UnitDirectZeroRoutine, _>(hw, tensors)?;
-                launch_first_served::<HypercubeAtomicReduceRoutine, _>(hw, tensors)
-            }
+            Self::HypercubeAtomic => launch_zeroed_atomic(hw, tensors),
         }
     }
+}
+
+/// `tensors` summed by the atomic hypercube into their output, zeroed first. Both routines prepare
+/// before either launches, so a refusal leaves the output as the caller gave it.
+fn launch_zeroed_atomic(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
+    let (zero_blueprint, zero_grid) =
+        UnitDirectZeroRoutine::prepare_first_served(hw, tensors.problem())?;
+    let (blueprint, grid) =
+        HypercubeAtomicReduceRoutine::prepare_first_served(hw, tensors.problem())?;
+    UnitDirectZeroRoutine::launch(tensors, zero_blueprint, zero_grid);
+    HypercubeAtomicReduceRoutine::launch(tensors, blueprint, grid);
+    Ok(())
 }
 
 /// `tensors` reduced by `R` at the first of its settings `hw` prepares them at.

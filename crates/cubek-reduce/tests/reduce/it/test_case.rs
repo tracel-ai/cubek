@@ -411,16 +411,11 @@ impl ScopeUnderTest for Reduces {
                 },
             ),
         };
-        // A kernel declines only by what the device lacks or the problem asks beyond it; any
-        // other error is the test's, and a case of explicit data must execute whatever the device.
+        // A kernel refuses only by what the device lacks or the problem asks beyond it, which the
+        // case reports as a skip; any other error is the test's.
         match launched {
             Ok(()) => {}
-            Err(why) if case.custom_input.is_some() => {
-                panic!("{reduction:?}: a case of explicit data must execute, refused: {why:?}")
-            }
-            Err(ReduceError::Validation { details }) => {
-                return Err(Refusal::Declined { why: details });
-            }
+            Err(ReduceError::Refused(refusal)) => return Err(refusal),
             Err(why) => panic!("{reduction:?}: {why}"),
         }
         if case.custom_input.is_some() {

@@ -2,15 +2,11 @@
 //! strategy picks on the tile routines.
 
 use crate::ReduceError;
-use crate::kernels::{
-    ReduceElements, ReduceKernelHeuristic, ReduceOpStrategy, ReduceTensors, launch_tuned, select,
-};
+use crate::kernels::{ReduceElements, ReduceOpStrategy, ReduceTensors};
 use cubecl::Device;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
 use cubek_microkernel::reduce::ReduceOperation;
-use cubek_std::Hardware;
 
 /// A reduction of one tensor along one axis, run by the kernel its strategy picks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,8 +25,8 @@ impl Reduce {
     ///
     /// # Errors
     ///
-    /// Where `axis` or `output`'s shape does not fit `input`, and [`ReduceError::Validation`]
-    /// with the kernel's reason where a [`Specific`](ReduceOpStrategy::Specific) kernel declines
+    /// Where `axis` or `output`'s shape does not fit `input`, and [`ReduceError::Refused`] with
+    /// the kernel's refusal where a [`Specific`](ReduceOpStrategy::Specific) kernel cannot run
     /// the problem.
     #[allow(
         clippy::too_many_arguments,
@@ -54,7 +50,7 @@ impl Reduce {
             operation.written_per_row(),
         )?;
         let tensors = ReduceTensors::new(client, input, output, axis, operation, elements);
-        launched(self.strategy, device, tensors)
+        self.strategy.launch(device, tensors)
     }
 
     /// [`execute`](Self::execute), the values written to `values` in `elements.out` and their
@@ -63,8 +59,10 @@ impl Reduce {
     ///
     /// # Errors
     ///
-    /// As [`execute`](Self::execute), and [`ReduceError::IndicesUnsupported`] for an operation
-    /// whose values carry no index.
+    /// As [`execute`](Self::execute); [`ReduceError::IndicesUnsupported`] for an operation whose
+    /// values carry no index; and [`ReduceError::MismatchIndicesShape`] or
+    /// [`ReduceError::MismatchIndicesStrides`] where `indices` differs from `values` in shape or
+    /// strides.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -100,31 +98,8 @@ impl Reduce {
             elements,
             index_element,
         );
-        launched(self.strategy, device, tensors)
+        self.strategy.launch(device, tensors)
     }
-}
-
-/// `tensors` reduced as `strategy` picks the kernel, on `device`.
-fn launched(
-    strategy: ReduceOpStrategy,
-    device: &Device,
-    tensors: ReduceTensors,
-) -> Result<(), ReduceError> {
-    let hw = Hardware::from_client(tensors.client());
-    let launched = match strategy {
-        ReduceOpStrategy::Autotune => {
-            launch_tuned(tensors, device);
-            Ok(())
-        }
-        ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile) => select(&hw, &tensors),
-        ReduceOpStrategy::Specific(kernel) => kernel.launch(&hw, &tensors),
-    };
-    launched.map_err(|why| ReduceError::Validation {
-        details: match why {
-            Refusal::Declined { why } => why,
-            _ => "the reduce kernel cannot launch this problem on this device",
-        },
-    })
 }
 
 /// The operation that writes `operation`'s values with their indices: the value and its index

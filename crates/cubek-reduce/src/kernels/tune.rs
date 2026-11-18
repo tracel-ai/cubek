@@ -166,6 +166,20 @@ where
 }
 
 impl ReduceRoutineCandidate<HypercubeAtomicReduceRoutine> {
+    /// `tensors` summed at this candidate's setting into their output, which the zeroing, timed
+    /// with it, sets first. Both routines prepare before either launches.
+    fn run_zeroed(&self, tensors: ReduceTensors) -> Result<(), String> {
+        let (blueprint, grid) =
+            HypercubeAtomicReduceRoutine::prepare(&self.hw, tensors.problem(), &self.settings)
+                .map_err(|refusal| refusal.to_string())?;
+        let (zero_blueprint, zero_grid) =
+            UnitDirectZeroRoutine::prepare_first_served(&self.hw, tensors.problem())
+                .map_err(|refusal| refusal.to_string())?;
+        UnitDirectZeroRoutine::launch(&tensors, zero_blueprint, zero_grid);
+        HypercubeAtomicReduceRoutine::launch(&tensors, blueprint, grid);
+        Ok(())
+    }
+
     /// [`launch_unbound`](Self::launch_unbound) after the output is zeroed, since the routine only
     /// adds into it.
     ///
@@ -396,7 +410,6 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
         });
     let tile = autotune.group("tile", GroupPriority::DEFAULT);
     let floor_hw = hw.clone();
-    let zero_hw = hw.clone();
     autotune
         .identified(
             &tile,
@@ -436,14 +449,7 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
             |candidate| {
                 ReduceIdentity::Routine(ReduceCandidate::launching(candidate.clone().into()))
             },
-            move |candidate, tensors| {
-                // It only adds into the output, which the zeroing, timed with it, sets first.
-                let (blueprint, grid) =
-                    UnitDirectZeroRoutine::prepare_first_served(&zero_hw, tensors.problem())
-                        .map_err(|refusal| refusal.to_string())?;
-                UnitDirectZeroRoutine::launch(&tensors, blueprint, grid);
-                candidate.run(tensors)
-            },
+            |candidate, tensors| candidate.run_zeroed(tensors),
         )
         .bounded(|_, tensors: &ReduceTensors| Roofline {
             client: tensors.client().clone(),
