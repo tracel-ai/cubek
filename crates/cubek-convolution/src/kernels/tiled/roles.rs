@@ -1,4 +1,4 @@
-use super::{B, CI, CO, ConvDecline, ConvDim, out, tap};
+use super::{B, CI, CO, ConvAxis, ConvDecline, ConvDim};
 use crate::components::ConvolutionOperation;
 use crate::launch::SpatialWindow;
 use cubecl::prelude::TensorBinding;
@@ -222,7 +222,7 @@ fn joined(parts: &[&[Axis]]) -> Vec<Axis> {
 
 impl SpatialAxes {
     fn new(dims: usize) -> Self {
-        let (outs, taps) = (0..dims).map(|dim| (out(dim), tap(dim))).unzip();
+        let (outs, taps) = ConvAxis::spatial(dims).map(|[out, tap]| (out, tap)).unzip();
         Self { dims, outs, taps }
     }
 
@@ -351,7 +351,7 @@ impl ConvRoles {
 
     /// The spatial `[out, tap]` axis pairs, one per spatial dim of the gathered input.
     pub fn spatial(&self) -> impl Iterator<Item = [Axis; 2]> {
-        (0..self.dims).map(|dim| [out(dim), tap(dim)])
+        ConvAxis::spatial(self.dims)
     }
 
     /// The axis a kernel leaves to its launch: the batch where it is a free axis, which no
@@ -496,7 +496,7 @@ mod tests {
     /// Over two spatial dims the roles are the tables the tiled convolution stated for 2D alone.
     #[test]
     fn two_spatial_dims_state_the_two_dimensional_tables() {
-        let (oh, ow, rh, rw) = (out(0), out(1), tap(0), tap(1));
+        let [[oh, rh], [ow, rw]] = [0, 1].map(|dim| [ConvAxis::Out(dim).axis(), ConvAxis::Tap(dim).axis()]);
         let roles = |operation| ConvRoles::of(operation, 2).expect("a served operation");
 
         let forward = roles(Forward);

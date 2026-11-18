@@ -17,28 +17,32 @@ pub const B: Axis = Axis(0);
 pub const CO: Axis = Axis(1);
 pub const CI: Axis = Axis(2);
 
-/// The output axis of spatial dim `dim`.
-pub const fn out(dim: usize) -> Axis {
-    Axis(3 + 2 * dim as u8)
-}
-
-/// The tap axis of spatial dim `dim`, which the window slides along with [`out`].
-pub const fn tap(dim: usize) -> Axis {
-    Axis(4 + 2 * dim as u8)
-}
-
-/// What an axis of the space measures.
-enum ConvAxis {
+/// What an axis of the space measures: the one place that numbers the labels of the axes.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ConvAxis {
     Batch,
     ChannelsOut,
     ChannelsIn,
+    /// The output axis of a spatial dim.
     Out(usize),
+    /// The tap axis of a spatial dim, which the window slides along with its output axis.
     Tap(usize),
 }
 
 impl ConvAxis {
-    /// The measure of `axis`, a label [`B`], [`CO`], [`CI`], [`out`] or [`tap`] made.
-    fn of(axis: Axis) -> Self {
+    /// The axis of this measure, the label [`Self::of`] reads back.
+    pub const fn axis(self) -> Axis {
+        match self {
+            Self::Batch => B,
+            Self::ChannelsOut => CO,
+            Self::ChannelsIn => CI,
+            Self::Out(dim) => Axis(3 + 2 * dim as u8),
+            Self::Tap(dim) => Axis(4 + 2 * dim as u8),
+        }
+    }
+
+    /// The measure of `axis`, a label [`Self::axis`] made.
+    pub fn of(axis: Axis) -> Self {
         match axis {
             B => Self::Batch,
             CO => Self::ChannelsOut,
@@ -47,6 +51,11 @@ impl ConvAxis {
             Axis(label) if label >= 3 => Self::Tap(usize::from(label - 4) / 2),
             _ => panic!("{axis:?} is not an axis of a convolution"),
         }
+    }
+
+    /// The `[out, tap]` axis pair of each of `spatial_dims` spatial dims.
+    pub fn spatial(spatial_dims: usize) -> impl Iterator<Item = [Axis; 2]> {
+        (0..spatial_dims).map(|dim| [Self::Out(dim).axis(), Self::Tap(dim).axis()])
     }
 }
 
