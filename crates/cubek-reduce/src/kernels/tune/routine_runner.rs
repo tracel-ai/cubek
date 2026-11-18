@@ -1,4 +1,4 @@
-//! One routine at one of its settings, as the autotune races it ([`ReduceRoutineCandidate`]).
+//! One routine at one of its settings, as the autotune races it ([`ReduceRoutineRunner`]).
 
 use crate::kernels::{
     HypercubeAtomicReduceRoutine, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
@@ -13,10 +13,10 @@ use cubek_std::Hardware;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate, short_of_the_device};
 use cubek_std::routine::{Grid, Routine};
 
-/// One candidate of the autotune: a routine at one of its settings, on the device the autotune is
-/// built for.
+/// Runs one routine at one of its settings, on the device the autotune is built for: one
+/// candidate of the autotune.
 #[derive(Debug, Clone)]
-pub(crate) struct ReduceRoutineCandidate<R: Routine> {
+pub(crate) struct ReduceRoutineRunner<R: Routine> {
     routine: PhantomData<R>,
     settings: R::Settings,
     /// The routine's prefix and its setting: what the tuning cache names the candidate by.
@@ -24,7 +24,7 @@ pub(crate) struct ReduceRoutineCandidate<R: Routine> {
     hw: Hardware,
 }
 
-impl<R, M> ReduceRoutineCandidate<R>
+impl<R, M> ReduceRoutineRunner<R>
 where
     R: ReduceLauncher<M> + Routine<Microkernel = M>,
     R::Settings: core::fmt::Display,
@@ -44,7 +44,7 @@ where
     }
 }
 
-impl<R, M> ReduceRoutineCandidate<R>
+impl<R, M> ReduceRoutineRunner<R>
 where
     R: ReduceLauncher<M> + Routine<Microkernel = M>,
 {
@@ -79,7 +79,7 @@ where
     }
 }
 
-impl ReduceRoutineCandidate<HypercubeAtomicReduceRoutine> {
+impl ReduceRoutineRunner<HypercubeAtomicReduceRoutine> {
     /// `tensors` summed at this candidate's setting into their output, which the zeroing, timed
     /// with it, sets first. Both routines prepare before either launches.
     pub(super) fn run_zeroed(&self, tensors: ReduceTensors) -> Result<(), String> {
@@ -115,7 +115,7 @@ impl ReduceRoutineCandidate<HypercubeAtomicReduceRoutine> {
     }
 }
 
-impl<R, M: PartialEq> TuneCandidate for ReduceRoutineCandidate<R>
+impl<R, M: PartialEq> TuneCandidate for ReduceRoutineRunner<R>
 where
     R: ReduceLauncher<M> + Routine<Microkernel = M>,
 {

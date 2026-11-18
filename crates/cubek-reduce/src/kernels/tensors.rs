@@ -115,6 +115,10 @@ impl ReduceTensors<TensorBinding> {
     }
 
     /// Both operands bound as `blueprint` states them, on `grid`.
+    ///
+    /// # Panics
+    ///
+    /// Where `blueprint` and `grid` were not prepared for these tensors' problem.
     pub fn bind<M>(&self, blueprint: &ReduceBlueprint<M>, grid: &Grid) -> ReduceBinding {
         ReduceBinding::bound(
             &self.client,
@@ -158,6 +162,10 @@ impl ReduceTensors<Geometry> {
 
     /// The input's spec and geometry as `blueprint` states them, on `grid`, for the caller to
     /// bind, and the output bound.
+    ///
+    /// # Panics
+    ///
+    /// Where `blueprint` and `grid` were not prepared for these tensors' problem.
     pub fn bind<M>(
         &self,
         blueprint: &ReduceBlueprint<M>,

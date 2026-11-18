@@ -25,7 +25,7 @@ pub fn bench(
     let device = cubecl::test_device();
     let client = device.client();
 
-    let bench = ReduceBench {
+    let bench = ReduceBenchmark {
         shape: problem.shape.clone(),
         axis: problem.axis,
         operation: problem.operation,
@@ -121,7 +121,7 @@ impl InputOrder {
 const UNIFORM_LOW: f32 = 0.0;
 const UNIFORM_HIGH: f32 = 1.0;
 
-struct ReduceBench {
+struct ReduceBenchmark {
     shape: Vec<usize>,
     axis: usize,
     operation: ReduceOperation,
@@ -133,7 +133,7 @@ struct ReduceBench {
     samples: usize,
 }
 
-impl ReduceBench {
+impl ReduceBenchmark {
     /// `input` reduced into `out` by `operation`, in `elements`, at this bench's strategy.
     fn reduce(
         &self,
@@ -170,7 +170,7 @@ impl ReduceBench {
     }
 }
 
-impl Benchmark for ReduceBench {
+impl Benchmark for ReduceBenchmark {
     /// `(input, values, indices)`. The index tensor is allocated for every kind so
     /// that allocation never lands inside the timed section, but only the
     /// two-launch and fused kinds write to it.

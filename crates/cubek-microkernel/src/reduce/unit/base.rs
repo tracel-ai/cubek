@@ -42,6 +42,10 @@ impl UnitDirectReduceMicrokernel {
 #[cube]
 impl UnitDirectReduceMicrokernel {
     /// One unit's row of `input` reduced into `out` and `indices` (`unit_direct_reduce_microkernel`).
+    ///
+    /// # Panics
+    ///
+    /// Where its item writes the indices beside the values and `indices` is none.
     pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         input: &Tile,

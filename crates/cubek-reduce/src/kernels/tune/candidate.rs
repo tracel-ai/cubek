@@ -66,17 +66,17 @@ struct ReduceCandidateLauncher {
 /// The routine a [`ReduceCandidateLauncher`] launches through, one variant a routine.
 #[derive(Debug, Clone)]
 enum ReduceCandidateLauncherDispatch {
-    UnitDirect(ReduceRoutineCandidate<UnitDirectReduceRoutine>),
-    PlaneShuffle(ReduceRoutineCandidate<PlaneShuffleReduceRoutine>),
-    CubeStaged(ReduceRoutineCandidate<CubeStagedReduceRoutine>),
-    HypercubeLastArrival(ReduceRoutineCandidate<HypercubeLastArrivalReduceRoutine>),
+    UnitDirect(ReduceRoutineRunner<UnitDirectReduceRoutine>),
+    PlaneShuffle(ReduceRoutineRunner<PlaneShuffleReduceRoutine>),
+    CubeStaged(ReduceRoutineRunner<CubeStagedReduceRoutine>),
+    HypercubeLastArrival(ReduceRoutineRunner<HypercubeLastArrivalReduceRoutine>),
     /// Run after the output is zeroed.
-    HypercubeAtomic(ReduceRoutineCandidate<HypercubeAtomicReduceRoutine>),
+    HypercubeAtomic(ReduceRoutineRunner<HypercubeAtomicReduceRoutine>),
 }
 
 impl ReduceCandidateLauncher {
     /// `tensors`, whose input the caller binds, reduced at the candidate's setting
-    /// ([`ReduceRoutineCandidate::launch_unbound`]).
+    /// ([`ReduceRoutineRunner::launch_unbound`]).
     fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,
@@ -115,34 +115,34 @@ impl ReduceCandidateLauncher {
     }
 }
 
-impl From<ReduceRoutineCandidate<UnitDirectReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineCandidate<UnitDirectReduceRoutine>) -> Self {
+impl From<ReduceRoutineRunner<UnitDirectReduceRoutine>> for ReduceCandidate {
+    fn from(candidate: ReduceRoutineRunner<UnitDirectReduceRoutine>) -> Self {
         Self::launching(ReduceCandidateLauncherDispatch::UnitDirect(candidate))
     }
 }
 
-impl From<ReduceRoutineCandidate<PlaneShuffleReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineCandidate<PlaneShuffleReduceRoutine>) -> Self {
+impl From<ReduceRoutineRunner<PlaneShuffleReduceRoutine>> for ReduceCandidate {
+    fn from(candidate: ReduceRoutineRunner<PlaneShuffleReduceRoutine>) -> Self {
         Self::launching(ReduceCandidateLauncherDispatch::PlaneShuffle(candidate))
     }
 }
 
-impl From<ReduceRoutineCandidate<CubeStagedReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineCandidate<CubeStagedReduceRoutine>) -> Self {
+impl From<ReduceRoutineRunner<CubeStagedReduceRoutine>> for ReduceCandidate {
+    fn from(candidate: ReduceRoutineRunner<CubeStagedReduceRoutine>) -> Self {
         Self::launching(ReduceCandidateLauncherDispatch::CubeStaged(candidate))
     }
 }
 
-impl From<ReduceRoutineCandidate<HypercubeLastArrivalReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineCandidate<HypercubeLastArrivalReduceRoutine>) -> Self {
+impl From<ReduceRoutineRunner<HypercubeLastArrivalReduceRoutine>> for ReduceCandidate {
+    fn from(candidate: ReduceRoutineRunner<HypercubeLastArrivalReduceRoutine>) -> Self {
         Self::launching(ReduceCandidateLauncherDispatch::HypercubeLastArrival(
             candidate,
         ))
     }
 }
 
-impl From<ReduceRoutineCandidate<HypercubeAtomicReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineCandidate<HypercubeAtomicReduceRoutine>) -> Self {
+impl From<ReduceRoutineRunner<HypercubeAtomicReduceRoutine>> for ReduceCandidate {
+    fn from(candidate: ReduceRoutineRunner<HypercubeAtomicReduceRoutine>) -> Self {
         Self::launching(ReduceCandidateLauncherDispatch::HypercubeAtomic(candidate))
     }
 }

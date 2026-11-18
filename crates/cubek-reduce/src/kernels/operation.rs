@@ -115,17 +115,17 @@ fn indexed(operation: ReduceOperation) -> Result<ReduceOperation, ReduceError> {
         ReduceOperation::TopK { k } | ReduceOperation::ArgTopK { k } => {
             Ok(ReduceOperation::ArgTopK { k })
         }
-        ReduceOperation::Sum => Err(unindexed("Sum")),
-        ReduceOperation::Prod => Err(unindexed("Prod")),
-        ReduceOperation::Mean => Err(unindexed("Mean")),
-        ReduceOperation::MaxAbs => Err(unindexed("MaxAbs")),
-        ReduceOperation::Any => Err(unindexed("Any")),
-        ReduceOperation::All => Err(unindexed("All")),
+        ReduceOperation::Sum => Err(unindexed_operation_named("Sum")),
+        ReduceOperation::Prod => Err(unindexed_operation_named("Prod")),
+        ReduceOperation::Mean => Err(unindexed_operation_named("Mean")),
+        ReduceOperation::MaxAbs => Err(unindexed_operation_named("MaxAbs")),
+        ReduceOperation::Any => Err(unindexed_operation_named("Any")),
+        ReduceOperation::All => Err(unindexed_operation_named("All")),
     }
 }
 
 /// Why [`Reduce::execute_with_indices`] refuses the operation `operation_name`.
-fn unindexed(operation_name: &'static str) -> ReduceError {
+fn unindexed_operation_named(operation_name: &'static str) -> ReduceError {
     ReduceError::IndicesUnsupported {
         operation: operation_name,
     }

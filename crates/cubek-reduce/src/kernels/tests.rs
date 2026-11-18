@@ -213,9 +213,9 @@ impl Reduction {
 }
 
 /// A reduce routine of the tile stack against the host, row by row.
-struct Routines;
+struct RoutineScopeUnderTest;
 
-impl ScopeUnderTest for Routines {
+impl ScopeUnderTest for RoutineScopeUnderTest {
     type Case = Reduction;
 
     fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Refusal> {
@@ -338,13 +338,13 @@ fn every_routine_reduces_every_dim_like_the_cpu() {
             }
         }
     }
-    Routines.check(reductions);
+    RoutineScopeUnderTest.check(reductions);
 }
 
 /// A reduce routine of the tile stack launched unbound, its input bound by the caller as a plain
 /// buffer once the launch is prepared, at the width the routine picks for it: what a fused read
 /// stands in for, against the host.
-struct UnboundRoutines;
+struct UnboundRoutineScopeUnderTest;
 
 /// The tensors `R` reduces unbound: `input`'s geometry, stated at the width the routine picks
 /// for it bound, and `out`.
@@ -424,7 +424,7 @@ fn launch_atomic_unbound(
     )
 }
 
-impl ScopeUnderTest for UnboundRoutines {
+impl ScopeUnderTest for UnboundRoutineScopeUnderTest {
     type Case = Reduction;
 
     fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Refusal> {
@@ -471,11 +471,11 @@ impl ScopeUnderTest for UnboundRoutines {
     }
 
     fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
-        Routines.reference(reduction)
+        RoutineScopeUnderTest.reference(reduction)
     }
 
     fn tolerance(&self, reduction: &Reduction) -> f32 {
-        Routines.tolerance(reduction)
+        RoutineScopeUnderTest.tolerance(reduction)
     }
 }
 
@@ -507,7 +507,7 @@ fn unbound_routines_reduce_like_the_cpu() {
             }
         }
     }
-    UnboundRoutines.check(reductions);
+    UnboundRoutineScopeUnderTest.check(reductions);
 }
 
 /// The sums the atomic hypercube is checked on: one long row; rows along the contiguous dim; rows
@@ -538,8 +538,8 @@ fn atomic_sums() -> Vec<Reduction> {
 #[test]
 fn the_atomic_hypercube_sums_split_rows_like_the_cpu() {
     match adds_floats_atomically() {
-        true => Routines.check_some(atomic_sums()),
-        false => Routines.check(atomic_sums()),
+        true => RoutineScopeUnderTest.check_some(atomic_sums()),
+        false => RoutineScopeUnderTest.check(atomic_sums()),
     }
 }
 
@@ -548,8 +548,8 @@ fn the_atomic_hypercube_sums_split_rows_like_the_cpu() {
 #[test]
 fn the_atomic_hypercube_sums_an_unbound_input_like_the_cpu() {
     match adds_floats_atomically() {
-        true => UnboundRoutines.check_some(atomic_sums()),
-        false => UnboundRoutines.check(atomic_sums()),
+        true => UnboundRoutineScopeUnderTest.check_some(atomic_sums()),
+        false => UnboundRoutineScopeUnderTest.check(atomic_sums()),
     }
 }
 
@@ -582,7 +582,7 @@ fn the_hypercube_reduces_split_rows_like_the_cpu() {
             });
         }
     }
-    Routines.check(reductions);
+    RoutineScopeUnderTest.check(reductions);
 }
 
 /// Every strategy reduces like the CPU wherever it sends a problem: many short rows, one long row,
@@ -611,7 +611,7 @@ fn every_strategy_reduces_like_the_cpu() {
             }
         }
     }
-    Routines.check(reductions);
+    RoutineScopeUnderTest.check(reductions);
 }
 
 /// The problem a host states for `shape` reduced along `axis`, its rows contiguous.

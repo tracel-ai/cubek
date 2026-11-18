@@ -63,31 +63,31 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
     autotune
         .identified(
             &tile,
-            ReduceRoutineCandidate::<UnitDirectReduceRoutine>::list(&hw),
+            ReduceRoutineRunner::<UnitDirectReduceRoutine>::list(&hw),
             |candidate| ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone())),
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::<PlaneShuffleReduceRoutine>::list(&hw),
+            ReduceRoutineRunner::<PlaneShuffleReduceRoutine>::list(&hw),
             |candidate| ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone())),
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::<CubeStagedReduceRoutine>::list(&hw),
+            ReduceRoutineRunner::<CubeStagedReduceRoutine>::list(&hw),
             |candidate| ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone())),
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::<HypercubeLastArrivalReduceRoutine>::list(&hw),
+            ReduceRoutineRunner::<HypercubeLastArrivalReduceRoutine>::list(&hw),
             |candidate| ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone())),
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
-            ReduceRoutineCandidate::<HypercubeAtomicReduceRoutine>::list(&hw),
+            ReduceRoutineRunner::<HypercubeAtomicReduceRoutine>::list(&hw),
             |candidate| ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone())),
             |candidate, tensors| candidate.run_zeroed(tensors),
         )

@@ -54,6 +54,10 @@ impl PlaneShuffleReduceMicrokernel {
 #[cube]
 impl PlaneShuffleReduceMicrokernel {
     /// One plane's row of `input` reduced into `out` and `indices` (`plane_shuffle_reduce_microkernel`).
+    ///
+    /// # Panics
+    ///
+    /// Where its item writes the indices beside the values and `indices` is none.
     pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         input: &Tile,
