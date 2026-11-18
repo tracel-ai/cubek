@@ -41,6 +41,14 @@ pub enum ConvDeclined {
     PermutedTiled,
     /// A transposed forward, which the tiled convolution states as no operation of its own.
     Transposed,
+    /// A device that offers no instruction of the setting's kind for the problem's elements.
+    InstructionUnoffered,
+    /// A device whose instruction of the setting's kind the tile does not pick for the problem
+    /// at the rows the setting names.
+    RowsNotPicked,
+    /// A setting that asks for a warpgroup MMA, whose stages only the TMA engine lands and which
+    /// this convolution's fill never does.
+    WgmmaUnserved,
 }
 
 impl ConvDeclined {
@@ -85,6 +93,13 @@ impl ConvDeclined {
             Self::Transposed => {
                 "the tiled convolution has no transposed forward, which is its data backward at a stride"
             }
+            Self::InstructionUnoffered => {
+                "the device offers no instruction of this kind for the problem's elements"
+            }
+            Self::RowsNotPicked => {
+                "the tile picks an instruction of other rows than the setting's for this problem"
+            }
+            Self::WgmmaUnserved => "a warpgroup MMA reads its stages as the TMA engine lands them",
         }
     }
 }

@@ -11,8 +11,7 @@ use cubecl::zspace::{Shape, Strides};
 use cubek_convolution::components::ConvSetupError;
 use cubek_convolution::eval::benchmarks::settings;
 use cubek_convolution::kernels::tiled::{
-    CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED, ConvCandidate, ConvDeclined, ConvRoutineKind,
-    ConvSettings,
+    ConvCandidate, ConvDeclined, ConvRoutineKind, ConvSettings,
 };
 use cubek_convolution::{ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref};
 use cubek_std::{Hardware, InputBinding};
@@ -115,7 +114,9 @@ impl Accepts {
     fn covers(self, message: &str) -> bool {
         let states = |refusal| message.contains(why(refusal));
         match self {
-            Self::Instruction => states(CONV_INSTRUCTION_UNOFFERED),
+            Self::Instruction => {
+                states(ConvDeclined::InstructionUnoffered) || states(ConvDeclined::RowsNotPicked)
+            }
             Self::Listed => Self::Instruction.covers(message) || Self::listed_alone(message),
         }
     }
@@ -123,7 +124,8 @@ impl Accepts {
     /// The refusals only a listed setting meets: a holder other than a plane, and a stage past
     /// the device's shared memory.
     fn listed_alone(message: &str) -> bool {
-        message.contains(why(CONV_WGMMA_UNSERVED)) || message.contains("SharedMemoryPastDevice")
+        message.contains(why(ConvDeclined::WgmmaUnserved))
+            || message.contains("SharedMemoryPastDevice")
     }
 }
 

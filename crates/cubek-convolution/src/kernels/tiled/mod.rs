@@ -18,9 +18,7 @@ mod tensors;
 mod tune;
 
 pub use declined::ConvDeclined;
-pub use routines::{
-    CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED, ConvRoutineKind, ConvSettings,
-};
+pub use routines::{ConvRoutineKind, ConvSettings};
 pub use tensors::ConvTensors;
 pub use tune::ConvCandidate;
 

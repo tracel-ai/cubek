@@ -1,5 +1,4 @@
-use super::{CONV_INSTRUCTION_UNOFFERED, CONV_WGMMA_UNSERVED};
-use crate::kernels::tiled::ConvProblem;
+use crate::kernels::tiled::{ConvDeclined, ConvProblem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::ComputeScope;
@@ -104,7 +103,8 @@ impl ConvSettings {
     ///
     /// # Errors
     ///
-    /// [`CONV_INSTRUCTION_UNOFFERED`], [`CONV_WGMMA_UNSERVED`].
+    /// [`ConvDeclined::WgmmaUnserved`], [`ConvDeclined::InstructionUnoffered`] and
+    /// [`ConvDeclined::RowsNotPicked`].
     pub fn plane(
         &self,
         hw: &Hardware,
@@ -112,14 +112,19 @@ impl ConvSettings {
     ) -> Result<PlaneFragmentMicrokernel, Refusal> {
         let grid = self.microkernel.plane;
         if grid.holder != ComputeScope::Plane {
-            return Err(CONV_WGMMA_UNSERVED);
+            return Err(ConvDeclined::WgmmaUnserved.into());
         }
-        PlaneFragmentMicrokernel::candidates(hw, &problem.work_item(), &grid)
+        let work_item = problem.work_item();
+        let mut candidates = PlaneFragmentMicrokernel::candidates(hw, &work_item, &grid).peekable();
+        if candidates.peek().is_none() {
+            return Err(ConvDeclined::InstructionUnoffered.into());
+        }
+        candidates
             .find(|plane| {
                 let [(_, rows), ..] = plane.instruction.shape();
                 rows == self.rows.get()
             })
-            .ok_or(CONV_INSTRUCTION_UNOFFERED)
+            .ok_or(ConvDeclined::RowsNotPicked.into())
     }
 }
 
