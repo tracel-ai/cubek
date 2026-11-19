@@ -6,7 +6,7 @@ use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceLauncher,
     ReduceOpStrategy, ReduceTensors, UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine,
-    launch_tuned, select,
+    launch_kernel, launch_tuned, select,
 };
 use cubecl::client::Client;
 use cubecl::ir::features::AtomicUsage;
@@ -268,7 +268,7 @@ impl ScopeUnderTest for RoutineScopeUnderTest {
                 select(&hw, &tensors)?
             }
             TestedRoutine::Picked(ReduceOpStrategy::Specific(kernel)) => {
-                kernel.launch(&hw, &tensors)?
+                launch_kernel(kernel, &hw, &tensors)?
             }
             TestedRoutine::Picked(ReduceOpStrategy::Autotune) => {
                 launch_tuned(tensors, &cubecl::test_device())

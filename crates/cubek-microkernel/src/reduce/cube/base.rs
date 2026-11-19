@@ -190,7 +190,7 @@ impl Microkernel for CubeStagedReduceMicrokernel {
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {
-        self.item.require(vectorization);
+        vectorization.require(self.item.requirement());
     }
 
     /// Each unit holds its carrier and one line; the cube a slot of the carrier a plane.

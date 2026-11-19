@@ -3,7 +3,7 @@
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeLastArrivalReduceRoutine, HypercubeLastArrivalReduceSettings,
     PlaneShuffleReduceRoutine, ReduceKernel, ReduceLauncher, ReduceRoutineProblem,
-    ReduceSplitExtents, ReduceTensors, UnitDirectReduceRoutine,
+    ReduceSplitExtents, ReduceTensors, UnitDirectReduceRoutine, launch_kernel,
 };
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::reduce::{ReduceCarrier, ReduceLayout};
@@ -48,7 +48,7 @@ pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decli
         CubeStagedReduceRoutine::launch(tensors, blueprint, grid);
         return Ok(());
     }
-    ReduceKernel::Unit.launch(hw, tensors)
+    launch_kernel(ReduceKernel::Unit, hw, tensors)
 }
 
 /// Whether a unit reading a row alone, `width` values a line, keeps up with a plane reading it

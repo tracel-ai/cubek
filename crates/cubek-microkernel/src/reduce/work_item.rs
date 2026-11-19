@@ -1,6 +1,6 @@
 use crate::reduce::{ReduceOperand, ReduceOperation, ReduceWrites};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::VectorRequirement;
 
 /// How a reduction's lines lie against the dimension it reduces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -43,19 +43,15 @@ impl ReduceWorkItem {
     /// output takes one cell per row (`k` for a top-k); across it, a line of the input is a line
     /// of the output, one row a lane. That a line never runs past a row is the launch's to
     /// require, which knows the rows' length.
-    pub fn require(&self, vectorization: &mut Vectorization<ReduceOperand>) {
+    pub fn requirement(&self) -> VectorRequirement<ReduceOperand> {
         match self.layout {
-            ReduceLayout::Along => {
-                vectorization.require(VectorRequirement::Elementwise {
-                    operand: ReduceOperand::Out,
-                });
-            }
-            ReduceLayout::Across => {
-                vectorization.require(VectorRequirement::Together {
-                    operand: ReduceOperand::Input,
-                    with: ReduceOperand::Out,
-                });
-            }
+            ReduceLayout::Along => VectorRequirement::Elementwise {
+                operand: ReduceOperand::Out,
+            },
+            ReduceLayout::Across => VectorRequirement::Together {
+                operand: ReduceOperand::Input,
+                with: ReduceOperand::Out,
+            },
         }
     }
 }

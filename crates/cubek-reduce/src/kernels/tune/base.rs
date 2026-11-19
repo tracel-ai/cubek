@@ -1,7 +1,8 @@
 use crate::ReduceError;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
-    PlaneShuffleReduceRoutine, ReduceKernel, ReduceTensors, UnitDirectReduceRoutine, tune::*,
+    PlaneShuffleReduceRoutine, ReduceKernel, ReduceTensors, UnitDirectReduceRoutine, launch_kernel,
+    tune::*,
 };
 use cubecl::client::Client;
 use cubecl::throughput::MemoryAccess;
@@ -99,8 +100,7 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
         .floor(ReduceIdentity::named(
             "unit-direct-reduce floor",
             move |tensors: ReduceTensors| {
-                ReduceKernel::Unit
-                    .launch(&floor_hw, &tensors)
+                launch_kernel(ReduceKernel::Unit, &floor_hw, &tensors)
                     .map_err(|decline| decline.to_string())
             },
         ))

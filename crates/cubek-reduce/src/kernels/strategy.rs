@@ -59,20 +59,6 @@ pub enum ReduceKernel {
 }
 
 impl ReduceOpStrategy {
-    /// `tensors` reduced on `device` by the kernel this strategy picks.
-    ///
-    /// # Errors
-    ///
-    /// [`ReduceError::Declined`] where the picked kernel cannot run the problem on this device.
-    pub(crate) fn launch(self, device: &Device, tensors: ReduceTensors) -> Result<(), ReduceError> {
-        let hw = Hardware::from_client(tensors.client());
-        match self {
-            Self::Autotune => launch_tuned(tensors, device),
-            Self::Heuristic(ReduceKernelHeuristic::Tile) => Ok(select(&hw, &tensors)?),
-            Self::Specific(kernel) => Ok(kernel.launch(&hw, &tensors)?),
-        }
-    }
-
     /// Every strategy: the policies, then a pin of every kernel.
     pub fn all() -> Vec<Self> {
         let heuristics = ReduceKernelHeuristic::all()
@@ -136,26 +122,46 @@ impl ReduceKernel {
             Self::HypercubeAtomic => "hypercube-atomic",
         }
     }
+}
 
-    /// `tensors` reduced by this kernel on `hw`.
-    ///
-    /// # Errors
-    ///
-    /// Why its routine cannot run the problem here.
-    ///
-    /// # Panics
-    ///
-    /// As [`Reduce::execute`](crate::kernels::Reduce::execute).
-    pub fn launch(&self, hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
-        match self {
-            Self::Unit => launch_first_served::<UnitDirectReduceRoutine, _>(hw, tensors),
-            Self::PlaneShuffle => launch_first_served::<PlaneShuffleReduceRoutine, _>(hw, tensors),
-            Self::CubeStaged => launch_first_served::<CubeStagedReduceRoutine, _>(hw, tensors),
-            Self::HypercubeLastArrival => {
-                launch_first_served::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors)
-            }
-            Self::HypercubeAtomic => launch_zeroed_atomic(hw, tensors),
+/// `tensors` reduced on `device` by the kernel `strategy` picks.
+///
+/// # Errors
+///
+/// [`ReduceError::Declined`] where the picked kernel cannot run the problem on this device.
+pub(crate) fn launch_by_strategy(
+    strategy: ReduceOpStrategy,
+    device: &Device,
+    tensors: ReduceTensors,
+) -> Result<(), ReduceError> {
+    let hw = Hardware::from_client(tensors.client());
+    match strategy {
+        ReduceOpStrategy::Autotune => launch_tuned(tensors, device),
+        ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile) => Ok(select(&hw, &tensors)?),
+        ReduceOpStrategy::Specific(kernel) => Ok(launch_kernel(kernel, &hw, &tensors)?),
+    }
+}
+
+/// `tensors` reduced by `kernel` on `hw`.
+///
+/// # Errors
+///
+/// Why its routine cannot run the problem here.
+pub(crate) fn launch_kernel(
+    kernel: ReduceKernel,
+    hw: &Hardware,
+    tensors: &ReduceTensors,
+) -> Result<(), Decline> {
+    match kernel {
+        ReduceKernel::Unit => launch_first_served::<UnitDirectReduceRoutine, _>(hw, tensors),
+        ReduceKernel::PlaneShuffle => {
+            launch_first_served::<PlaneShuffleReduceRoutine, _>(hw, tensors)
         }
+        ReduceKernel::CubeStaged => launch_first_served::<CubeStagedReduceRoutine, _>(hw, tensors),
+        ReduceKernel::HypercubeLastArrival => {
+            launch_first_served::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors)
+        }
+        ReduceKernel::HypercubeAtomic => launch_zeroed_atomic(hw, tensors),
     }
 }
 

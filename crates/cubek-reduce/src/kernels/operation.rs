@@ -2,7 +2,7 @@
 //! strategy picks on the tile routines.
 
 use crate::ReduceError;
-use crate::kernels::{ReduceElements, ReduceOpStrategy, ReduceTensors};
+use crate::kernels::{ReduceElements, ReduceOpStrategy, ReduceTensors, launch_by_strategy};
 use cubecl::Device;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
@@ -59,7 +59,7 @@ impl Reduce {
             operation.written_per_row(),
         )?;
         let tensors = ReduceTensors::new(client, input, output, axis, operation, elements);
-        self.strategy.launch(device, tensors)
+        launch_by_strategy(self.strategy, device, tensors)
     }
 
     /// [`execute`](Self::execute), the values written to `values` in `elements.out` and their
@@ -111,7 +111,7 @@ impl Reduce {
             elements,
             index_element,
         );
-        self.strategy.launch(device, tensors)
+        launch_by_strategy(self.strategy, device, tensors)
     }
 }
 

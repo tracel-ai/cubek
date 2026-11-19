@@ -69,7 +69,7 @@ impl Routine for UnitDirectZeroReduceRoutine {
     ) -> Result<(Self::Blueprint, Grid), Decline> {
         let microkernel = UnitDirectZeroMicrokernel::best(hw, &(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
-        problem.work_item().require(&mut vectorization);
+        vectorization.require(problem.work_item().requirement());
         // It zeroes a sum's output ahead of the atomic routine, which no top-k bounds.
         let widths = reduce_widths(hw, problem, vectorization, None);
         let plane_width = hw.dispatch_plane_size() as usize;

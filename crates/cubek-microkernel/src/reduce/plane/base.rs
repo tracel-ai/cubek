@@ -128,7 +128,7 @@ impl Microkernel for PlaneShuffleReduceMicrokernel {
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {
-        self.item.require(vectorization);
+        vectorization.require(self.item.requirement());
     }
 
     /// Each lane holds its carrier and one line: a lower bound, the registers it keeps live.

@@ -110,7 +110,7 @@ impl Microkernel for UnitDirectReduceMicrokernel {
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {
-        self.item.require(vectorization);
+        vectorization.require(self.item.requirement());
     }
 
     /// It holds its carrier and one line: a lower bound, the registers it keeps live.
