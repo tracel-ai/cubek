@@ -29,13 +29,13 @@ fn staged_matmul_quant_rhs(
     a: &TileTensor<'_>,
     b: &TileTensor<'_>,
     scales: &TileTensor<'_>,
-    c: &TileTensor<'_>,
+    c: &mut TileTensor<'_>,
     space: Partitioning,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
     let scales = scales.tile(&space);
-    let c = c.tile(&space);
+    let c = c.tile_mut(&space);
     for cube in space {
         let a = a.at(&cube);
         let b = b.at(&cube);

@@ -11,7 +11,7 @@ use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destination>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &O::Arg<E>,
+    out: &mut O::Arg<E>,
     partitioning: Partitioning,
     #[comptime] block: Option<SoftwareMatmul>,
     #[comptime] meet: CubeMeet,

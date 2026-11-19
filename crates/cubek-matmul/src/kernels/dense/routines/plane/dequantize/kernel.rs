@@ -8,7 +8,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 #[cube(launch_unchecked)]
 pub fn plane_dequantize_kernel<ER: Numeric, VO: Size, O: Destination>(
     packed: &TileTensor<'_>,
-    out: &O::Arg<ER>,
+    out: &mut O::Arg<ER>,
     partitioning: Partitioning,
     #[define(ER)] _element: ElemType,
 ) {

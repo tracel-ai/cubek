@@ -160,8 +160,8 @@ fn unit_attention_kernel<EA: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &TileTensor<'_>,
-    logsumexp: ComptimeOption<&TileTensor<'static>>,
+    out: &mut TileTensor<'_>,
+    logsumexp: ComptimeOption<&mut TileTensor<'static>>,
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
@@ -175,8 +175,8 @@ fn unit_attention_kernel<EA: Float>(
     let q = query.tile(&partitioning);
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
-    let o = out.tile(&partitioning);
-    let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+    let o = out.tile_mut(&partitioning);
+    let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile_mut(&partitioning));
     for unit in &partitioning {
         let visible = VisibleKeys::new(
             len,

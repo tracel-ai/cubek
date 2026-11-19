@@ -204,7 +204,7 @@ impl RmsNormLaunch {
 fn plane_rms_norm_kernel<E: Float, N: Size>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     epsilon: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneRmsNormMicrokernel,
@@ -213,7 +213,7 @@ fn plane_rms_norm_kernel<E: Float, N: Size>(
     let (x, w, o) = (
         input.tile(&partitioning),
         weight.tile(&partitioning),
-        out.tile(&partitioning),
+        out.tile_mut(&partitioning),
     );
     let scale = RmsNormScale::new(epsilon, microkernel.dim);
     for plane in &partitioning {
@@ -233,7 +233,7 @@ fn plane_rms_norm_kernel<E: Float, N: Size>(
 fn cube_rms_norm_kernel<E: Float, N: Size>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     epsilon: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeRmsNormMicrokernel,
@@ -242,7 +242,7 @@ fn cube_rms_norm_kernel<E: Float, N: Size>(
     let (x, w, o) = (
         input.tile(&partitioning),
         weight.tile(&partitioning),
-        out.tile(&partitioning),
+        out.tile_mut(&partitioning),
     );
     let scale = RmsNormScale::new(epsilon, microkernel.plane.dim);
     for cube in &partitioning {
@@ -263,7 +263,7 @@ fn cube_rms_norm_kernel<E: Float, N: Size>(
 fn cube_groups_rms_norm_kernel<E: Float, N: Size>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     epsilon: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeGroupsRmsNormMicrokernel,
@@ -272,7 +272,7 @@ fn cube_groups_rms_norm_kernel<E: Float, N: Size>(
     let (x, w, o) = (
         input.tile(&partitioning),
         weight.tile(&partitioning),
-        out.tile(&partitioning),
+        out.tile_mut(&partitioning),
     );
     let scale = RmsNormScale::new(epsilon, microkernel.dim);
     for cube in &partitioning {
