@@ -82,11 +82,20 @@ enum InputOrder {
 
 impl InputOrder {
     fn from_env() -> Self {
-        match std::env::var("CUBEK_BENCH_INPUT").as_deref() {
-            Ok("ascending") => InputOrder::Ascending,
-            Ok("descending") => InputOrder::Descending,
-            Ok("uniform") | Err(_) => InputOrder::Uniform,
-            Ok(other) => {
+        Self::named(std::env::var("CUBEK_BENCH_INPUT").ok().as_deref())
+    }
+
+    /// The order `name` names, uniform where there is none.
+    ///
+    /// # Panics
+    ///
+    /// Where `name` names no order.
+    fn named(name: Option<&str>) -> Self {
+        match name {
+            Some("ascending") => InputOrder::Ascending,
+            Some("descending") => InputOrder::Descending,
+            Some("uniform") | None => InputOrder::Uniform,
+            Some(other) => {
                 panic!("CUBEK_BENCH_INPUT takes uniform, ascending or descending, got {other:?}")
             }
         }
@@ -267,7 +276,47 @@ impl Benchmark for ReduceBenchmark {
 
 #[cfg(test)]
 mod tests {
-    use super::InputOrder;
+    use super::{InputOrder, two_launch_operations};
+    use crate::ReduceOperation;
+
+    #[test]
+    fn an_order_is_read_by_its_name_uniform_by_default() {
+        assert_eq!(InputOrder::named(Some("ascending")), InputOrder::Ascending);
+        assert_eq!(
+            InputOrder::named(Some("descending")),
+            InputOrder::Descending
+        );
+        assert_eq!(InputOrder::named(None), InputOrder::Uniform);
+    }
+
+    #[test]
+    #[should_panic]
+    fn an_unknown_order_panics() {
+        InputOrder::named(Some("shuffled"));
+    }
+
+    /// The values and the indices a caller launches apart for each indexed operation.
+    #[test]
+    fn an_indexed_operation_runs_as_its_values_then_its_indices() {
+        const K: usize = 3;
+        assert_eq!(
+            two_launch_operations(ReduceOperation::ArgMax),
+            (ReduceOperation::Max, ReduceOperation::ArgMax)
+        );
+        assert_eq!(
+            two_launch_operations(ReduceOperation::TopK { k: K }),
+            (
+                ReduceOperation::TopK { k: K },
+                ReduceOperation::ArgTopK { k: K }
+            )
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn a_sum_has_no_values_indices_pair() {
+        two_launch_operations(ReduceOperation::Sum);
+    }
 
     /// Rows along the reduce axis, for a shape whose reduce axis is not the
     /// innermost, so a generator that walked the linear index would fail here.

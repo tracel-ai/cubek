@@ -459,3 +459,33 @@ pub(crate) fn reference_ranked(
         strides: out_strides,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A ramp holds each of its steps once, every value in `[-1, 1)`.
+    #[test]
+    fn a_ramp_is_a_permutation_of_its_steps() {
+        const ELEMS: usize = 64;
+        let mut ramp = ramp_of_len(ELEMS);
+        assert!(ramp.iter().all(|value| (-1.0..1.0).contains(value)));
+        ramp.sort_by(f32::total_cmp);
+        ramp.dedup();
+        assert_eq!(ramp.len(), ELEMS);
+    }
+
+    /// A count that is not a power of two is no permutation under the stride.
+    #[test]
+    #[should_panic]
+    fn a_ramp_of_a_count_not_a_power_of_two_panics() {
+        ramp_of_len(100);
+    }
+
+    /// Past what f16 resolves, a ramp's steps would collide.
+    #[test]
+    #[should_panic]
+    fn a_ramp_finer_than_f16_panics() {
+        ramp_of_len(RAMP_MAX_ELEMS * 2);
+    }
+}
