@@ -1,6 +1,6 @@
 //! What every carrier does with one line: read it, index its lanes, write it out.
 
-use crate::reduce::{ReadMap, ReduceLayout, ReduceWrites};
+use crate::reduce::{ReadMap, ReduceAccumulator, ReduceLayout, ReduceWorkItem, ReduceWrites};
 use cubecl::tile::{Indexed, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -22,6 +22,48 @@ pub(crate) fn read_mapped<Acc: Numeric, N: Size>(
             Vector::new(Acc::from_int(0)),
         ),
     }
+}
+
+/// `read`, a line of a row in `In`, mapped as `item`'s operation reads it and accumulated in `Acc`
+/// into `acc` as line `index` of its row.
+#[cube]
+pub(crate) fn accumulate_read<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+    acc: &mut C,
+    read: Vector<In, N>,
+    index: usize,
+    #[comptime] item: ReduceWorkItem,
+) {
+    let operation = item.operation;
+    let mapped = read_mapped::<Acc, N>(Vector::<Acc, N>::cast_from(read), operation.read_map());
+    C::accumulate(acc, mapped, index, item.layout, operation.monoid());
+}
+
+/// The lines of `input` from `first` on, every `stride`-th up to `count`, accumulated from the
+/// identity, line `l` as line `offset + l` of its row: one unit's share of a row its plane or its
+/// cube reads together.
+#[cube]
+pub(crate) fn accumulate_strided<
+    In: Numeric,
+    Acc: Numeric,
+    N: Size,
+    C: ReduceAccumulator<Acc, N>,
+>(
+    input: &Tile,
+    first: usize,
+    #[comptime] stride: usize,
+    count: usize,
+    offset: usize,
+    #[comptime] item: ReduceWorkItem,
+) -> C {
+    let lines = input.flat::<In, N>();
+    let mut acc = C::identity(item.operation.monoid());
+    for step in 0..count.div_ceil(stride) {
+        let line = first + step * stride;
+        if line < count {
+            accumulate_read::<In, Acc, N, C>(&mut acc, lines.read(line), offset + line, item);
+        }
+    }
+    acc
 }
 
 /// The index of each lane of the line read `line_index` lines into the row: along the row,

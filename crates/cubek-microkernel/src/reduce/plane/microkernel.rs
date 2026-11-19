@@ -1,5 +1,5 @@
 use super::base::PlaneShuffleReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, read_mapped, row_values};
+use crate::reduce::{ReduceAccumulator, ReduceCarrier, accumulate_strided, row_values};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -89,29 +89,15 @@ fn plane_shuffle_reduce_part<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumu
     count: usize,
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) -> C {
-    let operation = microkernel.item().operation;
-    let monoid = operation.monoid();
-    let layout = microkernel.item().layout;
-    let lanes = microkernel.lanes();
-    let lane = UNIT_POS_PLANE as usize;
-    let lines = input.flat::<In, N>();
-
-    let mut acc = C::identity(monoid);
-    for step in 0..count.div_ceil(lanes) {
-        let line = lane + step * lanes;
-        if line < count {
-            C::accumulate(
-                &mut acc,
-                read_mapped::<Acc, N>(
-                    Vector::<Acc, N>::cast_from(lines.read(line)),
-                    operation.read_map(),
-                ),
-                line,
-                layout,
-                monoid,
-            );
-        }
-    }
+    let monoid = microkernel.item().operation.monoid();
+    let acc = accumulate_strided::<In, Acc, N, C>(
+        input,
+        UNIT_POS_PLANE as usize,
+        microkernel.lanes(),
+        count,
+        0,
+        microkernel.item(),
+    );
 
     C::across(acc, UnitShare::Plane, monoid)
 }

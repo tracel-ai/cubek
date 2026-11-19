@@ -1,5 +1,5 @@
 use super::base::CubeStagedReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, read_mapped, row_values};
+use crate::reduce::{ReduceAccumulator, ReduceCarrier, accumulate_strided, row_values};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -99,31 +99,16 @@ pub(crate) fn cube_staged_reduce_part<
     count: usize,
     #[comptime] microkernel: CubeStagedReduceMicrokernel,
 ) -> C {
-    let operation = microkernel.item().operation;
-    let monoid = operation.monoid();
-    let layout = microkernel.item().layout;
-    let units = microkernel.lanes() * microkernel.planes();
-
+    let monoid = microkernel.item().operation.monoid();
     let unit = PLANE_POS as usize * microkernel.lanes() + UNIT_POS_PLANE as usize;
-
-    let lines = input.flat::<In, N>();
-
-    let mut acc = C::identity(monoid);
-    for step in 0..count.div_ceil(units) {
-        let line = unit + step * units;
-        if line < count {
-            C::accumulate(
-                &mut acc,
-                read_mapped::<Acc, N>(
-                    Vector::<Acc, N>::cast_from(lines.read(line)),
-                    operation.read_map(),
-                ),
-                first_line + line,
-                layout,
-                monoid,
-            );
-        }
-    }
+    let acc = accumulate_strided::<In, Acc, N, C>(
+        input,
+        unit,
+        microkernel.units(),
+        count,
+        first_line,
+        microkernel.item(),
+    );
 
     let plane = C::across(acc, UnitShare::Plane, monoid);
     C::across_planes(plane, microkernel.planes(), monoid)
