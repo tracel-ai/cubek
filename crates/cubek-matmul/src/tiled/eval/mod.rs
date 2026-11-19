@@ -1,5 +1,6 @@
 //! Benchmark catalogues for the tile-DSL routines.
 
+pub mod expert_stacks;
 pub mod gemm;
 pub mod split_cubes;
 pub mod split_k;

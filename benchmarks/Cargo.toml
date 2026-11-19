@@ -66,6 +66,14 @@ name = "attention_backward"
 
 [[bench]]
 harness = false
+name = "expert_stacks"
+
+[[bench]]
+harness = false
+name = "expert_stacks_interleaved"
+
+[[bench]]
+harness = false
 name = "gemm"
 
 [[bench]]
