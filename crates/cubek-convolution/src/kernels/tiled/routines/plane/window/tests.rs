@@ -43,7 +43,7 @@ fn layer(operation: ConvolutionOperation, channels_in: usize) -> ConvProblem {
 
 /// A CPU runtime offers no plane instruction, so the default tile strategy is the plane window routine's.
 #[test]
-fn only_a_device_with_no_plane_instruction_leaves_the_default_to_the_unit_routine() {
+fn only_a_device_with_no_plane_instruction_leaves_the_default_to_the_plane_window_routine() {
     assert!(
         CubeStagedConvRoutine
             .settings(&cpu(THREADS, CORES))

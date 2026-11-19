@@ -209,7 +209,7 @@ fn the_list_and_its_set_are_built_in_one_order() {
     assert_eq!(checksum(first), checksum(second));
 }
 
-/// Whether the unit routine, the floor under every tuned launch, serves `problem` on `hw`.
+/// Whether the plane window routine, the floor under every tuned launch, serves `problem` on `hw`.
 fn floor_serves(hw: &Hardware, problem: &Conv2dProblem) -> bool {
     PlaneWindowConvRoutine
         .prepare_first_served(hw, &ConvProblem::from(problem))
@@ -217,9 +217,9 @@ fn floor_serves(hw: &Hardware, problem: &Conv2dProblem) -> bool {
 }
 
 /// A device whose plane width is a range lists nothing to race, so the tuned launch floors on the
-/// unit routine.
+/// plane window routine.
 #[test]
-fn a_ranged_plane_width_floors_the_tuned_launch_on_the_unit_routine() {
+fn a_ranged_plane_width_floors_the_tuned_launch_on_the_plane_window_routine() {
     let mut hw = nvidia();
     let device = topology(&mut hw);
     (device.plane_size_min, device.plane_size_max) = (32, 64);
@@ -228,9 +228,9 @@ fn a_ranged_plane_width_floors_the_tuned_launch_on_the_unit_routine() {
 }
 
 /// An element the device has no matrix instruction for leaves every listed setting declining the
-/// key, so the tuned launch floors on the unit routine.
+/// key, so the tuned launch floors on the plane window routine.
 #[test]
-fn an_f32_problem_without_f32_instructions_floors_on_the_unit_routine() {
+fn an_f32_problem_without_f32_instructions_floors_on_the_plane_window_routine() {
     let hw = nvidia();
     let problem = Conv2dProblem {
         element: Conv2dElement::F32,

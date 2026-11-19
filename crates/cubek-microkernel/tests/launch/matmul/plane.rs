@@ -343,6 +343,8 @@ pub struct PlaneWindowLaunch {
 }
 
 impl PlaneWindowLaunch {
+    /// The launch of the best plane window microkernel `hw` offers for `settings`.
+    ///
     /// # Errors
     ///
     /// Why the device runs none.

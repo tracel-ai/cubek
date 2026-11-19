@@ -76,7 +76,7 @@ impl ScopeUnderTest for PlaneWindow {
         vec![HostMatmul::new(launch.shape()).out()]
     }
 
-    /// Whole numbers whose products and sums every element here holds exactly.
+    /// Whole numbers, whose products and sums stay far below the rounding of every element here.
     fn tolerance(&self, _case: &Self::Case) -> f32 {
         1e-2
     }

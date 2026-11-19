@@ -100,7 +100,7 @@ fn pinned(settings: CubeStagedConvSettings) -> Strategy {
     Strategy::Tile(ConvRoutineKind::CubeStaged(Some(settings)))
 }
 
-/// The unit registers routine, which reads every operand from global memory.
+/// The plane window routine, which reads every operand from global memory.
 fn plane_window() -> Strategy {
     Strategy::Tile(ConvRoutineKind::PlaneWindow)
 }
@@ -352,11 +352,11 @@ mod cube {
     }
 }
 
-/// The unit registers routine in `f32`, which runs on the CPU runtime.
+/// The plane window routine in `f32`, which runs on the CPU runtime.
 mod plane_window {
     use super::*;
 
-    /// A row of a table: the unit registers routine, which refuses nothing here.
+    /// A row of a table: the plane window routine, which refuses nothing here.
     macro_rules! unit {
         ($table:ident, $pass:ident; $($name:ident: $conv:expr;)*) => {
             mod $table {

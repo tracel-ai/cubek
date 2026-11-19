@@ -131,10 +131,10 @@ impl PlaneWindowConvRoutine {
         let roles = problem.roles();
         let axes = roles.axes();
         let tiles = AcrossCounts {
+            // The resolved rows, which a work item holding its rows whole sets apart from the settings'.
             rows: problem.extent(axes.m).div_ceil(microkernel.rows),
             across: problem.extent(roles.free.across),
         };
-        // The resolved rows, which a work item holding its rows whole sets apart from the settings'.
         let columns = microkernel.settings.columns.get() * blocks;
         let launch_tiles =
             tiles.count() * problem.extent(axes.n).div_ceil(columns) * problem.outer_extent();
