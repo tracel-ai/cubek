@@ -140,12 +140,13 @@ fn accepts_matching_outputs() {
 }
 
 #[test]
-fn accepts_min_and_max() {
-    for operation in [ReduceOperation::Min, ReduceOperation::Max] {
-        let result = try_launch_config(operation, 1, [4, 1], vec![1, 1]);
-        assert!(
-            result.is_ok(),
-            "expected Ok for {operation:?}, got {result:?}"
-        );
-    }
+fn accepts_min() {
+    let result = try_launch_config(ReduceOperation::Min, 1, [4, 1], vec![1, 1]);
+    assert!(result.is_ok(), "expected Ok, got {result:?}");
+}
+
+#[test]
+fn accepts_max() {
+    let result = try_launch_config(ReduceOperation::Max, 1, [4, 1], vec![1, 1]);
+    assert!(result.is_ok(), "expected Ok, got {result:?}");
 }

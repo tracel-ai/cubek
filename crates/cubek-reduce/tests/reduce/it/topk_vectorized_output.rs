@@ -9,41 +9,56 @@ use cubek_reduce::kernels::ReduceOpStrategy;
 
 use super::test_case::{CUBE, PLANE, RULE, TestCase, UNIT};
 
-fn run_topk(strategy: ReduceOpStrategy, rows: usize, k: usize) {
-    let case = TestCase::new::<f32>(
+/// `rows` rows 64 values long, reduced along their contiguous dim by `strategy`.
+fn case(strategy: ReduceOpStrategy, rows: usize) -> TestCase {
+    TestCase::new::<f32>(
         Shape::new([rows, 64]),
         Strides::new(&[64, 1]),
         Some(1),
         strategy,
-    );
-    case.test_topk(k);
-    case.test_argtopk(k);
-    case.test_topk_with_indices(k);
+    )
 }
 
-/// The unit kernel and the rule, and the plane and cube kernels, which skip where the device has no
-/// planes.
-fn strategies() -> Vec<ReduceOpStrategy> {
-    vec![UNIT, RULE, PLANE, CUBE]
+/// A test for each top-`k` of `rows` rows through each of the unit kernel, the rule, and the
+/// plane and cube kernels, which skip where the device has no planes; each one launch: its values,
+/// its indices, and both at once.
+macro_rules! top_k_tests {
+    ($rows:expr, $k:expr) => {
+        top_k_tests!(@strategy unit, UNIT, $rows, $k);
+        top_k_tests!(@strategy rule, RULE, $rows, $k);
+        top_k_tests!(@strategy plane, PLANE, $rows, $k);
+        top_k_tests!(@strategy cube, CUBE, $rows, $k);
+    };
+    (@strategy $name:ident, $strategy:ident, $rows:expr, $k:expr) => {
+        mod $name {
+            use super::super::*;
+
+            #[test]
+            fn top_k() {
+                case($strategy, $rows).test_topk($k);
+            }
+
+            #[test]
+            fn arg_top_k() {
+                case($strategy, $rows).test_argtopk($k);
+            }
+
+            #[test]
+            fn top_k_with_indices() {
+                case($strategy, $rows).test_topk_with_indices($k);
+            }
+        }
+    };
 }
 
-#[test]
-fn rows_not_multiple_of_vector_k4() {
-    for strategy in strategies() {
-        run_topk(strategy, 9, 4);
-    }
+mod rows_not_multiple_of_vector_k4 {
+    top_k_tests!(9, 4);
 }
 
-#[test]
-fn rows_not_multiple_of_vector_k2() {
-    for strategy in strategies() {
-        run_topk(strategy, 6, 2);
-    }
+mod rows_not_multiple_of_vector_k2 {
+    top_k_tests!(6, 2);
 }
 
-#[test]
-fn rows_multiple_of_vector_k4() {
-    for strategy in strategies() {
-        run_topk(strategy, 8, 4);
-    }
+mod rows_multiple_of_vector_k4 {
+    top_k_tests!(8, 4);
 }

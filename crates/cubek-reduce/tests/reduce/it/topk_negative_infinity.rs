@@ -17,12 +17,36 @@ fn case(shape: Shape, strides: Strides, axis: usize, strategy: ReduceOpStrategy)
     TestCase::new::<f32>(shape, strides, Some(axis), strategy)
 }
 
-fn run_topk(case: TestCase, k: usize) {
-    let data = sparse_finite_data(&case.shape, case.axis.unwrap(), k);
-    let case = case.with_data(data);
-    case.test_topk(k);
-    case.test_argtopk(k);
-    case.test_topk_with_indices(k);
+/// `case` holding [`sparse_finite_data`] for a top-[`K`].
+fn sparse(case: TestCase) -> TestCase {
+    let data = sparse_finite_data(&case.shape, case.axis.unwrap(), K);
+    case.with_data(data)
+}
+
+/// A test for each top-[`K`] of `case` over `data`, each one launch: its values, its indices, and
+/// both at once; with `unless`, a skip where that check of the device says so.
+macro_rules! top_k_tests {
+    ($case:expr, $data:expr $(, unless $skip:path)?) => {
+        use super::*;
+
+        #[test]
+        fn top_k() {
+            $(if $skip(&cubecl::test_device().client()) { return; })?
+            $data($case).test_topk(K);
+        }
+
+        #[test]
+        fn arg_top_k() {
+            $(if $skip(&cubecl::test_device().client()) { return; })?
+            $data($case).test_argtopk(K);
+        }
+
+        #[test]
+        fn top_k_with_indices() {
+            $(if $skip(&cubecl::test_device().client()) { return; })?
+            $data($case).test_topk_with_indices(K);
+        }
+    };
 }
 
 /// Slice `s` holds `s % (k + 2)` finite values at scattered coordinates and
@@ -50,94 +74,99 @@ fn sparse_finite_data(shape: &Shape, axis: usize, k: usize) -> Vec<f32> {
         .collect()
 }
 
-#[test]
-fn unit_parallel_f32() {
-    run_topk(
+mod unit_parallel_f32 {
+    top_k_tests!(
         case(Shape::new([9, 12]), Strides::new(&[12, 1]), 1, UNIT),
-        K,
+        sparse
     );
 }
 
-#[test]
-fn unit_perpendicular_f32() {
-    run_topk(case(Shape::new([12, 9]), Strides::new(&[9, 1]), 0, UNIT), K);
+mod unit_perpendicular_f32 {
+    top_k_tests!(
+        case(Shape::new([12, 9]), Strides::new(&[9, 1]), 0, UNIT),
+        sparse
+    );
 }
 
-#[test]
-fn unit_k_equals_row_f32() {
-    run_topk(case(Shape::new([9, K]), Strides::new(&[K, 1]), 1, UNIT), K);
+mod unit_k_equals_row_f32 {
+    top_k_tests!(
+        case(Shape::new([9, K]), Strides::new(&[K, 1]), 1, UNIT),
+        sparse
+    );
 }
 
-#[test]
-fn plane_parallel_f32() {
-    run_topk(
+mod plane_parallel_f32 {
+    top_k_tests!(
         case(Shape::new([9, 50]), Strides::new(&[50, 1]), 1, PLANE),
-        K,
+        sparse
     );
 }
 
-#[test]
-fn plane_perpendicular_f32() {
-    run_topk(
+mod plane_perpendicular_f32 {
+    top_k_tests!(
         case(Shape::new([50, 9]), Strides::new(&[9, 1]), 0, PLANE),
-        K,
+        sparse
     );
 }
 
-#[test]
-fn plane_strided_f32() {
-    run_topk(
+mod plane_strided_f32 {
+    top_k_tests!(
         case(Shape::new([9, 50]), Strides::new(&[128, 2]), 1, PLANE),
-        K,
+        sparse
     );
 }
 
-#[test]
-fn plane_k_equals_row_f32() {
-    run_topk(case(Shape::new([9, K]), Strides::new(&[K, 1]), 1, PLANE), K);
+mod plane_k_equals_row_f32 {
+    top_k_tests!(
+        case(Shape::new([9, K]), Strides::new(&[K, 1]), 1, PLANE),
+        sparse
+    );
 }
 
-#[test]
-fn cube_f32() {
-    run_topk(
+mod cube_f32 {
+    top_k_tests!(
         case(Shape::new([9, 50]), Strides::new(&[50, 1]), 1, CUBE),
-        K,
+        sparse
     );
 }
 
-#[test]
-fn unit_parallel_f16() {
-    if skip_unless_f16_arithmetic(&cubecl::test_device().client()) {
-        return;
-    }
-    run_topk(
+mod unit_parallel_f16 {
+    top_k_tests!(
         TestCase::new::<half::f16>(Shape::new([9, 12]), Strides::new(&[12, 1]), Some(1), UNIT),
-        K,
+        sparse,
+        unless skip_unless_f16_arithmetic
     );
 }
 
-#[test]
-fn plane_parallel_f16() {
-    if skip_unless_f16_arithmetic(&cubecl::test_device().client()) {
-        return;
-    }
-    run_topk(
+mod plane_parallel_f16 {
+    top_k_tests!(
         TestCase::new::<half::f16>(Shape::new([9, 50]), Strides::new(&[50, 1]), Some(1), PLANE),
-        K,
+        sparse,
+        unless skip_unless_f16_arithmetic
     );
 }
 
-/// Integers have no `-inf`: their lowest value is both a real value and the
-/// empty slot, and the lower coordinate still has to win.
-#[test]
-fn lowest_integer_rows_i32() {
-    let shape = Shape::new([9, 50]);
-    let strides = Strides::new(&[50, 1]);
-    for strategy in [UNIT, PLANE] {
-        let case = TestCase::new::<i32>(shape.clone(), strides.clone(), Some(1), strategy)
-            .with_data(vec![i32::MIN as f32; 9 * 50]);
-        case.test_topk(K);
-        case.test_argtopk(K);
-        case.test_topk_with_indices(K);
+/// `case` with every value the lowest `i32`.
+fn lowest_integers(case: TestCase) -> TestCase {
+    case.with_data(vec![i32::MIN as f32; 9 * 50])
+}
+
+/// Integers have no `-inf`: their lowest value is both a real value and the empty slot, and the
+/// lower coordinate still has to win.
+mod lowest_integer_rows_i32 {
+    use super::*;
+
+    mod unit {
+        top_k_tests!(
+            TestCase::new::<i32>(Shape::new([9, 50]), Strides::new(&[50, 1]), Some(1), UNIT),
+            lowest_integers
+        );
+    }
+
+    mod plane {
+        top_k_tests!(
+            TestCase::new::<i32>(Shape::new([9, 50]), Strides::new(&[50, 1]), Some(1), PLANE),
+            lowest_integers
+        );
     }
 }
