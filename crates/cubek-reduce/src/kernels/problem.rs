@@ -517,4 +517,133 @@ mod tests {
         let elements = ReduceElements::for_operation(ReduceOperation::Mean, i8, None);
         assert_eq!(elements.accumulator, ElemType::Int(IntKind::I32));
     }
+
+    /// A boolean is not reduced: `for_operation`'s documented panic.
+    #[test]
+    #[should_panic]
+    fn a_boolean_input_is_not_reduced() {
+        ReduceElements::for_operation(ReduceOperation::Sum, ElemType::Bool, None);
+    }
+
+    /// An output not the input's shape with the reduced axis as wide as a row writes is refused.
+    #[test]
+    #[should_panic]
+    fn a_stated_output_of_another_shape_panics() {
+        let input = Geometry::row_major(&[4, 8]);
+        let out = Geometry::row_major(&[4, 2]);
+        ReduceRoutineProblem::stated(
+            &input,
+            &out,
+            1,
+            ReduceOperation::Sum,
+            ReduceElements::for_operation(ReduceOperation::Sum, F32, None),
+        );
+    }
+
+    /// Rows lie along the reduced axis where it is the contiguous one, across it where another is.
+    #[test]
+    fn the_lines_lie_along_the_contiguous_axis() {
+        let along = ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum);
+        let across = ReduceRoutineProblem::dense(&[4, 8], 0, ReduceOperation::Sum);
+        assert_eq!(along.layout(), ReduceLayout::Along);
+        assert_eq!(across.layout(), ReduceLayout::Across);
+    }
+
+    /// Across the reduced axis an owner holds a line of rows, `width` side by side; along it, one
+    /// row. Each holds the cells a row writes.
+    #[test]
+    fn an_owner_holds_a_line_of_rows_across_and_one_along() {
+        const WIDTH: usize = 4;
+        const K: usize = 3;
+        let across = ReduceRoutineProblem::dense(&[5, 8], 0, ReduceOperation::TopK { k: K });
+        assert_eq!(
+            across.owner_box_at_width(WIDTH),
+            vec![(axis_dimension(1), WIDTH), (across.slots(), K)]
+        );
+        let along = ReduceRoutineProblem::dense(&[5, 8], 1, ReduceOperation::TopK { k: K });
+        assert_eq!(
+            along.owner_box_at_width(WIDTH),
+            vec![(axis_dimension(0), 1), (along.slots(), K)]
+        );
+    }
+
+    /// The boxes of rows along each row dim are its extent over the owner's, rounded up.
+    #[test]
+    fn row_boxes_round_up_the_rows_over_an_owner() {
+        const WIDTH: usize = 4;
+        let across = ReduceRoutineProblem::dense(&[3, 10], 0, ReduceOperation::Sum);
+        assert_eq!(
+            across.row_boxes_at_width(WIDTH),
+            vec![(axis_dimension(1), 10_usize.div_ceil(WIDTH))]
+        );
+    }
+
+    /// A tensor of one axis has one row, its owner along the slots.
+    #[test]
+    fn a_tensor_of_one_axis_owns_its_slots() {
+        let problem = ReduceRoutineProblem::dense(&[9], 0, ReduceOperation::Sum);
+        assert!(problem.rows().is_empty());
+        assert_eq!(problem.owner_dimensions(), vec![problem.slots()]);
+        assert_eq!(problem.row_count(), 1);
+    }
+
+    /// The output and the partials keep the input's dimensions, the reduced axis's swapped.
+    #[test]
+    fn the_output_and_partials_swap_the_reduced_dimension() {
+        let problem = ReduceRoutineProblem::dense(&[2, 3, 4], 1, ReduceOperation::Sum);
+        assert_eq!(
+            problem.out_dimensions(),
+            vec![axis_dimension(0), problem.slots(), axis_dimension(2)]
+        );
+        assert_eq!(
+            problem.partial_dimensions(),
+            vec![axis_dimension(0), problem.partials(), axis_dimension(2)]
+        );
+        assert_eq!(problem.shape_with_reduced_extent(7), vec![2, 7, 4]);
+    }
+
+    /// A split row's part is its cube's units, each `unit_lines` lines, of `width` values along
+    /// the row and of one across it.
+    #[test]
+    fn a_split_part_counts_values_a_line_by_layout() {
+        const UNITS: usize = 64;
+        const UNIT_LINES: usize = 8;
+        const WIDTH: usize = 4;
+        let along = ReduceRoutineProblem::dense(&[2, 4096], 1, ReduceOperation::Sum);
+        let across = ReduceRoutineProblem::dense(&[4096, 2], 0, ReduceOperation::Sum);
+        assert_eq!(
+            along.split_part(UNITS, UNIT_LINES, WIDTH),
+            UNITS * UNIT_LINES * WIDTH
+        );
+        assert_eq!(
+            across.split_part(UNITS, UNIT_LINES, WIDTH),
+            UNITS * UNIT_LINES
+        );
+        assert_eq!(
+            along.split_cube_dimensions(),
+            vec![along.reduced(), axis_dimension(0)]
+        );
+    }
+
+    /// A kernel leaves every dimension to the launch but the cells a row writes.
+    #[test]
+    fn a_kernel_compiles_only_the_cells_a_row_writes() {
+        let problem = ReduceRoutineProblem::dense(&[2, 300], 1, ReduceOperation::Sum);
+        let partitioning = Partitioning::new(
+            problem.space(),
+            cubecl::tile::Levels::leaf(&problem.owner_box_at_width(1))
+                .cubes(&problem.owner_dimensions())
+                .build(),
+        );
+        let space = problem.kernel(&partitioning).space().clone();
+        assert!(space.is_dynamic(axis_dimension(1)));
+        assert!(!space.is_dynamic(problem.slots()));
+    }
+
+    /// 256 axes do not fit a dimension's label.
+    #[test]
+    #[should_panic]
+    fn an_axis_past_255_panics() {
+        axis_dimension(256);
+    }
 }
