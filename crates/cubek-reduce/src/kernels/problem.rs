@@ -368,6 +368,26 @@ fn steps_one(geometry: &Geometry, axis: usize) -> bool {
 }
 
 #[cfg(test)]
+impl ReduceRoutineProblem {
+    /// A dense row-major `shape` reduced along `axis` by `operation`, in f32, an index or a flag
+    /// in i32: what a routine's Small Tests prepare.
+    pub(crate) fn dense(shape: &[usize], axis: usize, operation: ReduceOperation) -> Self {
+        let f32 = ElemType::Float(FloatKind::F32);
+        let i32 = ElemType::Int(IntKind::I32);
+        let innermost = shape.len() - 1;
+        Self {
+            shape: shape.to_vec(),
+            axis,
+            operation,
+            elements: ReduceElements::for_operation(operation, f32, Some(i32)),
+            contiguous: Some(innermost),
+            elem_alignments: [ElemAlignment::dense_rows(shape[innermost]); 2],
+            indices: None,
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

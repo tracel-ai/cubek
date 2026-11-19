@@ -160,3 +160,57 @@ impl ReduceLauncher<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_std::devices;
+
+    /// The microkernel, width and kernel `shape` reduced along `axis` compiles to on an M2 Pro.
+    fn compiled(shape: &[usize], axis: usize) -> impl PartialEq + core::fmt::Debug {
+        let hw = devices::m2_pro();
+        let problem = ReduceRoutineProblem::dense(shape, axis, ReduceOperation::ArgMax);
+        let settings = UnitDirectReduceRoutine::settings(&hw)[0];
+        let (blueprint, _) = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings)
+            .expect("the unit routine runs everywhere");
+        (
+            blueprint.microkernel,
+            blueprint.width,
+            problem.kernel(&blueprint.partitioning),
+        )
+    }
+
+    /// One kernel serves every shape of a rank, layout and width along the contiguous dim: the rows
+    /// and the row length are the launch's, so a sequence that grows by a token recompiles nothing.
+    #[test]
+    fn rows_along_the_contiguous_dim_compile_one_kernel_for_every_shape() {
+        assert_eq!(compiled(&[2, 5, 300], 2), compiled(&[3, 7, 308], 2));
+    }
+
+    /// The same across the contiguous dim.
+    #[test]
+    fn rows_across_the_contiguous_dim_compile_one_kernel_for_every_shape() {
+        assert_eq!(compiled(&[2, 5, 300], 1), compiled(&[4, 9, 308], 1));
+    }
+
+    /// Four row dims, more than a launch grid has: a unit takes its row from the partitioning.
+    #[test]
+    fn prepares_more_row_dims_than_the_grid_holds() {
+        let hw = devices::m2_pro();
+        let problem = ReduceRoutineProblem::dense(&[2, 2, 2, 2, 64], 4, ReduceOperation::ArgMax);
+        let settings = UnitDirectReduceRoutine::settings(&hw)[0];
+        let prepared = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
+        assert!(prepared.is_ok(), "{prepared:?}");
+    }
+
+    /// tracel:kernel::routine-tested-without-features: the unit routine reads none.
+    #[test]
+    fn prepares_lacking_every_feature() {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
+        let settings = UnitDirectReduceRoutine::settings(&hw)[0];
+        let prepared = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
+        assert!(prepared.is_ok(), "{prepared:?}");
+    }
+}

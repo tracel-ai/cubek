@@ -240,3 +240,24 @@ fn launch_atomic<I: TileOperand>(
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::tile::launch::Decline;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_std::devices;
+
+    /// tracel:kernel::routine-tested-without-features: no atomics, so a Decline.
+    #[test]
+    fn declines_lacking_every_feature() {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
+        let settings = HypercubeAtomicReduceRoutine::settings(&hw)[0];
+        let prepared = HypercubeAtomicReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
+        assert!(
+            matches!(prepared, Err(Decline::Unserved { .. })),
+            "{prepared:?}"
+        );
+    }
+}

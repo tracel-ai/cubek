@@ -5,20 +5,18 @@
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceLauncher,
-    ReduceOpStrategy, ReduceRoutineProblem, ReduceTensors, UnitDirectReduceRoutine,
-    UnitDirectZeroReduceRoutine, launch_tuned, select,
+    ReduceOpStrategy, ReduceTensors, UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine,
+    launch_tuned, select,
 };
 use cubecl::client::Client;
 use cubecl::ir::features::AtomicUsage;
 use cubecl::ir::{ElemType, FloatKind, IntKind, Type};
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Decline, StoredTileOperand, Unbound};
-use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_std::Hardware;
-use cubek_std::devices;
 use cubek_std::routine::{ROUTINE_LISTS_NO_SETTING, Routine};
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
@@ -622,127 +620,4 @@ fn every_strategy_reduces_like_the_cpu() {
         }
     }
     RoutineScopeUnderTest.check(reductions);
-}
-
-/// The problem a host states for `shape` reduced along `axis`, its rows contiguous.
-fn problem(shape: &[usize], axis: usize) -> ReduceRoutineProblem {
-    let inner = shape.len() - 1;
-    ReduceRoutineProblem {
-        shape: shape.to_vec(),
-        axis,
-        operation: ReduceOperation::ArgMax,
-        elements: ReduceElements {
-            input: F32,
-            accumulator: F32,
-            out: I32,
-        },
-        contiguous: Some(inner),
-        elem_alignments: [ElemAlignment::new(shape, &strides(shape)); 2],
-        indices: None,
-    }
-}
-
-/// One kernel serves every shape of a rank, layout and width: the rows and the row length are the
-/// launch's, so a sequence that grows by a token recompiles nothing, along it or across it.
-#[test]
-fn every_shape_of_a_layout_compiles_one_kernel() {
-    let hw = devices::m2_pro();
-    let compiled = |shape: &[usize], axis: usize| {
-        let problem = problem(shape, axis);
-        let settings = UnitDirectReduceRoutine::settings(&hw)[0];
-        let (blueprint, _) = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings)
-            .expect("the unit routine runs everywhere");
-        (
-            blueprint.microkernel,
-            blueprint.width,
-            problem.kernel(&blueprint.partitioning),
-        )
-    };
-    assert_eq!(compiled(&[2, 5, 300], 2), compiled(&[3, 7, 308], 2));
-    assert_eq!(compiled(&[2, 5, 300], 1), compiled(&[4, 9, 308], 1));
-}
-
-/// Where a launch grid has too few dims for the rows, the cube and the hypercube decline rather
-/// than panic, and the unit and the plane still run: a rank-5 tensor, four row dims.
-#[test]
-fn routines_decline_more_row_dims_than_the_grid_holds() {
-    let hw = devices::m2_pro();
-    let problem = problem(&[2, 2, 2, 2, 64], 4);
-    let declines = |prepared: Result<(), cubecl::tile::launch::Decline>| {
-        matches!(
-            prepared,
-            Err(cubecl::tile::launch::Decline::Unserved { .. })
-        )
-    };
-    let cube = CubeStagedReduceRoutine::settings(&hw)[0];
-    assert!(declines(
-        CubeStagedReduceRoutine::prepare(&hw, &problem, &cube).map(|_| ())
-    ));
-    let hypercube = HypercubeLastArrivalReduceRoutine::settings(&hw)[0];
-    assert!(declines(
-        HypercubeLastArrivalReduceRoutine::prepare(&hw, &problem, &hypercube).map(|_| ())
-    ));
-    let unit = UnitDirectReduceRoutine::settings(&hw)[0];
-    assert!(UnitDirectReduceRoutine::prepare(&hw, &problem, &unit).is_ok());
-    let plane = PlaneShuffleReduceRoutine::settings(&hw)[0];
-    assert!(PlaneShuffleReduceRoutine::prepare(&hw, &problem, &plane).is_ok());
-}
-
-/// On a device lacking every Feature the routines read (planes, one cube's stores reaching
-/// another within a launch, atomic adds), every routine but the unit ones declines, and the unit
-/// reduction and the unit zeroing still prepare: a sum, which every routine computes.
-#[test]
-fn routines_decline_on_a_device_without_their_features() {
-    let mut hw = devices::m2_pro();
-    let features = devices::features(&mut hw);
-    features.plane.clear();
-    features.device_memory_scope = false;
-    features.types.atomic.clear();
-    let problem = ReduceRoutineProblem {
-        operation: ReduceOperation::Sum,
-        elements: ReduceElements {
-            input: F32,
-            accumulator: F32,
-            out: F32,
-        },
-        ..problem(&[4, 4096], 1)
-    };
-    let declines =
-        |prepared: Result<(), Decline>| matches!(prepared, Err(Decline::Unserved { .. }));
-    let plane = PlaneShuffleReduceRoutine::settings(&hw)[0];
-    assert!(declines(
-        PlaneShuffleReduceRoutine::prepare(&hw, &problem, &plane).map(|_| ())
-    ));
-    let cube = CubeStagedReduceRoutine::settings(&hw)[0];
-    assert!(declines(
-        CubeStagedReduceRoutine::prepare(&hw, &problem, &cube).map(|_| ())
-    ));
-    let hypercube = HypercubeLastArrivalReduceRoutine::settings(&hw)[0];
-    assert!(declines(
-        HypercubeLastArrivalReduceRoutine::prepare(&hw, &problem, &hypercube).map(|_| ())
-    ));
-    let atomic = HypercubeAtomicReduceRoutine::settings(&hw)[0];
-    assert!(declines(
-        HypercubeAtomicReduceRoutine::prepare(&hw, &problem, &atomic).map(|_| ())
-    ));
-    let unit = UnitDirectReduceRoutine::settings(&hw)[0];
-    assert!(UnitDirectReduceRoutine::prepare(&hw, &problem, &unit).is_ok());
-    let zero = UnitDirectZeroReduceRoutine::settings(&hw)[0];
-    assert!(UnitDirectZeroReduceRoutine::prepare(&hw, &problem, &zero).is_ok());
-}
-
-/// On a device whose planes stay but whose cubes' stores do not reach one another within a launch,
-/// the last-arrival hypercube declines for that Feature alone, and the cube routine still prepares.
-#[test]
-fn the_hypercube_declines_without_device_memory_scope() {
-    let mut hw = devices::m2_pro();
-    devices::features(&mut hw).device_memory_scope = false;
-    let problem = problem(&[4, 4096], 1);
-    let hypercube = HypercubeLastArrivalReduceRoutine::settings(&hw)[0];
-    assert!(matches!(
-        HypercubeLastArrivalReduceRoutine::prepare(&hw, &problem, &hypercube),
-        Err(Decline::Unserved { .. })
-    ));
-    let cube = CubeStagedReduceRoutine::settings(&hw)[0];
-    assert!(CubeStagedReduceRoutine::prepare(&hw, &problem, &cube).is_ok());
 }

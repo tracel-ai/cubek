@@ -156,3 +156,51 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::tile::launch::Decline;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_std::devices;
+
+    /// Four row dims, more than a launch grid has: a Decline, not a panic.
+    #[test]
+    fn declines_more_row_dims_than_the_grid_holds() {
+        let hw = devices::m2_pro();
+        let problem = ReduceRoutineProblem::dense(&[2, 2, 2, 2, 64], 4, ReduceOperation::ArgMax);
+        let settings = CubeStagedReduceRoutine::settings(&hw)[0];
+        let prepared = CubeStagedReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
+        assert!(
+            matches!(prepared, Err(Decline::Unserved { .. })),
+            "{prepared:?}"
+        );
+    }
+
+    /// tracel:kernel::routine-tested-without-features: no planes, so a Decline.
+    #[test]
+    fn declines_lacking_every_feature() {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
+        let settings = CubeStagedReduceRoutine::settings(&hw)[0];
+        let prepared = CubeStagedReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
+        assert!(
+            matches!(prepared, Err(Decline::Unserved { .. })),
+            "{prepared:?}"
+        );
+    }
+
+    /// A cube meets only its own planes, so it needs no store reaching another cube.
+    #[test]
+    fn prepares_without_device_memory_scope() {
+        let hw = {
+            let mut hw = devices::m2_pro();
+            devices::features(&mut hw).device_memory_scope = false;
+            hw
+        };
+        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::ArgMax);
+        let settings = CubeStagedReduceRoutine::settings(&hw)[0];
+        let prepared = CubeStagedReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
+        assert!(prepared.is_ok(), "{prepared:?}");
+    }
+}

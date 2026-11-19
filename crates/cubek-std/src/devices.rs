@@ -155,6 +155,16 @@ pub fn cpu_12() -> Hardware {
     hardware(device)
 }
 
+/// `hw` with no planes, no stores reaching other cubes within a launch, and no atomics: what a
+/// Routine's test prepares on to check it declines for want of each.
+pub fn lacking_every_feature(mut hw: Hardware) -> Hardware {
+    let features = features(&mut hw);
+    features.plane.clear();
+    features.device_memory_scope = false;
+    features.types.atomic.clear();
+    hw
+}
+
 /// `hw` offering exactly `shapes` through the vendor's fragment API (`cmma`).
 pub fn offering_cmma(mut hw: Hardware, shapes: impl IntoIterator<Item = MmaConfig>) -> Hardware {
     features(&mut hw).matmul.cmma = shapes.into_iter().collect();

@@ -184,3 +184,20 @@ fn launch_zero(
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_std::devices;
+
+    /// tracel:kernel::routine-tested-without-features: zeroing reads none.
+    #[test]
+    fn prepares_lacking_every_feature() {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
+        let settings = UnitDirectZeroReduceRoutine::settings(&hw)[0];
+        let prepared = UnitDirectZeroReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
+        assert!(prepared.is_ok(), "{prepared:?}");
+    }
+}
