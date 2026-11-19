@@ -109,14 +109,14 @@ impl MatmulLaunch for UnitRegistersLaunch {
 fn unit_registers_kernel<EA: Numeric, E: Numeric>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitRegistersMicrokernel,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = out.tile(&partitioning);
+    let c = out.tile_mut(&partitioning);
     for unit in &partitioning {
         let (c, a, b) = (c.at(&unit), a.at(&unit), b.at(&unit));
         let mut sum = c.register_accumulator::<EA>(

@@ -231,7 +231,7 @@ fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     logsumexp: ComptimeOption<&TileTensor<'static>>,
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
@@ -247,7 +247,7 @@ fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     let q = query.tile(&partitioning);
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
     for sequence in &partitioning {
         for cube in sequence {
@@ -286,7 +286,7 @@ fn cube_unstaged_attention_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     logsumexp: ComptimeOption<&TileTensor<'static>>,
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
@@ -302,7 +302,7 @@ fn cube_unstaged_attention_kernel<EA: Float, E: Float, N: Size>(
     let q = query.tile(&partitioning);
     let k = TileStepReads::<E>::new(&key.tile(&partitioning));
     let v = TileStepReads::<E>::new(&value.tile(&partitioning));
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
     for sequence in &partitioning {
         for cube in sequence {

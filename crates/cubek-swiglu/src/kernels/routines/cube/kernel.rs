@@ -9,7 +9,7 @@ use cubek_microkernel::swiglu::cube::{CubeSwigluMicrokernel, cube_swiglu_microke
 #[cube(launch_unchecked)]
 pub fn cube_swiglu_kernel<E: Float, N: Size, O: Destination>(
     input: &TileTensor<'_>,
-    out: &O::Arg<E>,
+    out: &mut O::Arg<E>,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeSwigluMicrokernel,
     #[comptime] stage: CubeStage,

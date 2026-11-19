@@ -108,13 +108,13 @@ impl SwigluLaunch {
 #[cube(launch_unchecked)]
 fn cube_swiglu_kernel<E: Float, N: Size>(
     input: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeSwigluMicrokernel,
     #[define(E)] _element: ElemType,
 ) {
     let x = input.tile(&partitioning);
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
     for cube in &partitioning {
         cube_swiglu_microkernel::<E, N>(
             &cube,

@@ -18,7 +18,7 @@ pub fn plane_fragment_query_gradient_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     out_gradient: &TileTensor<'_>,
     logsumexp: &TileTensor<'_>,
     delta: &TileTensor<'_>,
@@ -38,7 +38,7 @@ pub fn plane_fragment_query_gradient_kernel<EA: Float, ES: Float>(
         key.tile(&partitioning),
         value.tile(&partitioning),
     );
-    let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
+    let (o, d_o) = (out.tile_mut(&partitioning), out_gradient.tile(&partitioning));
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let d_q = query_gradient.tile(&partitioning);
 
@@ -130,13 +130,13 @@ pub fn plane_fragment_key_gradient_kernel<EA: Float, ES: Float>(
 /// Every plane of the launch writing its queries' dot product of the output with its gradient.
 #[cube(launch_unchecked)]
 pub fn plane_delta_kernel<EA: Float>(
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     out_gradient: &TileTensor<'_>,
     delta: &TileTensor<'_>,
     partitioning: Partitioning,
     #[define(EA)] _sum: ElemType,
 ) {
-    let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
+    let (o, d_o) = (out.tile_mut(&partitioning), out_gradient.tile(&partitioning));
     let delta = delta.tile(&partitioning);
 
     for plane in &partitioning {

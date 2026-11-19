@@ -9,14 +9,14 @@ type Args<D> = <D as DistributionArgs>::Args;
 /// Every plane of the launch, filling its run of the output with draws of `D`.
 #[cube(launch_unchecked)]
 pub fn plane_random_kernel<D: Distribution, E: Numeric, N: Size>(
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     args: Args<D>,
     seeds: Seeds,
     #[comptime] microkernel: PlaneRandomMicrokernel,
     #[define(E)] _element: ElemType,
 ) {
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
     for plane in &partitioning {
         let mut run = o.at(&plane);
         plane_random_microkernel::<D, E, N>(&mut run, &args, &seeds, microkernel);

@@ -67,8 +67,8 @@ fn split_place<N: Size>(
 #[cube(launch_unchecked)]
 pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
-    out: &TileTensor<'_>,
-    partials: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    partials: &mut TileTensor<'_>,
     partial_indices: &TileTensor<'_>,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
@@ -78,8 +78,8 @@ pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = input.tile(&partitioning);
-    let o = out.tile(&partitioning);
-    let p = partials.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+    let p = partials.tile_mut(&partitioning);
     let pi = partial_indices.tile(&partitioning);
     for cube in &partitioning {
         let place = split_place::<N>(&cube, &extents, split.clone(), microkernel.item.layout);
@@ -117,9 +117,9 @@ pub fn hypercube_reduce_with_indices_kernel<
     N: Size,
 >(
     input: &TileTensor<'_>,
-    out: &TileTensor<'_>,
-    indices: &TileTensor<'_>,
-    partials: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    indices: &mut TileTensor<'_>,
+    partials: &mut TileTensor<'_>,
     partial_indices: &TileTensor<'_>,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
@@ -129,9 +129,9 @@ pub fn hypercube_reduce_with_indices_kernel<
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
     let x = input.tile(&partitioning);
-    let o = out.tile(&partitioning);
-    let i = indices.tile(&partitioning);
-    let p = partials.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+    let i = indices.tile_mut(&partitioning);
+    let p = partials.tile_mut(&partitioning);
     let pi = partial_indices.tile(&partitioning);
     for cube in &partitioning {
         let place = split_place::<N>(&cube, &extents, split.clone(), microkernel.item.layout);

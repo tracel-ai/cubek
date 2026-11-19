@@ -38,13 +38,13 @@ use crate::definition::MatmulSetupError;
 #[cube(launch)]
 fn relayout<E: Numeric, V: Size>(
     src: &TileTensor<'_>,
-    dst: &TileTensor<'_>,
+    dst: &mut TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let src = src.tile(&space);
-    let dst = dst.tile(&space);
+    let dst = dst.tile_mut(&space);
     let rank = comptime!(space.space().rank());
     for cube in space.over(&level) {
         let s = src.at(&cube);
