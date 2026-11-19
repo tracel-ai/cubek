@@ -154,12 +154,7 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
         // unset; the counters, one a box of rows, start at zero, copied from the host rather than
         // set by a launch of their own.
         let partial_extent = blueprint.partitioning.space().extent(problem.partials());
-        let partial_shape: Vec<usize> = (0..problem.shape.len())
-            .map(|d| match d == problem.axis {
-                true => partial_extent,
-                false => problem.shape[d],
-            })
-            .collect();
+        let partial_shape = problem.shape_with_reduced_extent(partial_extent);
         let counter = ElemType::UInt(UIntKind::U32);
         let partials = TensorHandle::empty(client, partial_shape.clone(), elements.accumulator);
         let row_boxes = ReduceSplitExtents::row_boxes(problem, blueprint.width);

@@ -13,6 +13,7 @@ use cubek_std::autotune::{
     Autotune, CandidateIdentity, Ceiling, GroupPriority, Identity, Roofline,
 };
 use cubek_std::routine::EstimatedProblem;
+use cubek_std::routine::Routine;
 use std::sync::Arc;
 
 /// What a candidate of the autotune is identified by: the candidate itself, or the floor by name.
@@ -52,6 +53,15 @@ fn tunables(id: &CubeTuneId, client: &Client) -> ReduceTunables {
     TUNER.init(id, move || candidates(hw.clone()))
 }
 
+/// `candidate`'s identity: its routine and its setting.
+fn identity_of<R: Routine>(candidate: &ReduceRoutineRunner<R>) -> ReduceIdentity
+where
+    ReduceRoutineRunner<R>: Clone,
+    ReduceCandidate: From<ReduceRoutineRunner<R>>,
+{
+    ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone()))
+}
+
 /// Every routine's candidates on `hw`, identified by their routine and setting, over the unit
 /// routine as the floor, which serves every problem on every device.
 fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceIdentity> {
@@ -65,31 +75,31 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
         .identified(
             &tile,
             ReduceRoutineRunner::<UnitDirectReduceRoutine>::list(&hw),
-            |candidate| ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone())),
+            identity_of,
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
             ReduceRoutineRunner::<PlaneShuffleReduceRoutine>::list(&hw),
-            |candidate| ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone())),
+            identity_of,
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
             ReduceRoutineRunner::<CubeStagedReduceRoutine>::list(&hw),
-            |candidate| ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone())),
+            identity_of,
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
             ReduceRoutineRunner::<HypercubeLastArrivalReduceRoutine>::list(&hw),
-            |candidate| ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone())),
+            identity_of,
             |candidate, tensors| candidate.run(tensors),
         )
         .identified(
             &tile,
             ReduceRoutineRunner::<HypercubeAtomicReduceRoutine>::list(&hw),
-            |candidate| ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone())),
+            identity_of,
             |candidate, tensors| candidate.run_zeroed(tensors),
         )
         .bounded(|_, tensors: &ReduceTensors| Roofline {

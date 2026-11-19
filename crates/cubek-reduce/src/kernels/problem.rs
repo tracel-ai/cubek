@@ -121,14 +121,7 @@ impl ReduceRoutineProblem {
         elements: ReduceElements,
     ) -> Self {
         let shape = input.shape().to_vec();
-        let expected: Vec<usize> = shape
-            .iter()
-            .enumerate()
-            .map(|(d, extent)| match d == axis {
-                true => operation.written_per_row(),
-                false => *extent,
-            })
-            .collect();
+        let expected = with_axis_extent(&shape, axis, operation.written_per_row());
         assert_eq!(
             out.shape(),
             expected.as_slice(),
@@ -259,23 +252,25 @@ impl ReduceRoutineProblem {
 
     /// The output's dimensions, one an axis: the input's, the reduced axis's being the slots.
     pub(crate) fn out_dimensions(&self) -> Vec<Dimension> {
-        (0..self.shape.len())
-            .map(|d| match d == self.axis {
-                true => self.slots(),
-                false => axis_dimension(d),
-            })
-            .collect()
+        self.dimensions_with_reduced(self.slots())
     }
 
     /// A hypercube's partials' dimensions, one an axis: the input's, the reduced axis's being the
     /// partials.
     pub(crate) fn partial_dimensions(&self) -> Vec<Dimension> {
-        (0..self.shape.len())
-            .map(|d| match d == self.axis {
-                true => self.partials(),
-                false => axis_dimension(d),
-            })
-            .collect()
+        self.dimensions_with_reduced(self.partials())
+    }
+
+    /// The input's dimensions, one an axis, the reduced axis's being `reduced`.
+    fn dimensions_with_reduced(&self, reduced: Dimension) -> Vec<Dimension> {
+        let mut dimensions = self.input_dimensions();
+        dimensions[self.axis] = reduced;
+        dimensions
+    }
+
+    /// The input's shape with the reduced axis `extent` long.
+    pub(crate) fn shape_with_reduced_extent(&self, extent: usize) -> Vec<usize> {
+        with_axis_extent(&self.shape, self.axis, extent)
     }
 
     /// How the input is checked where a tile reaches past its edge: a read there returns the
@@ -434,6 +429,13 @@ impl EstimatedProblem for ReduceRoutineProblem {
             bytes: values * self.elements.input.size() + cells * self.elements.out.size(),
         }
     }
+}
+
+/// `shape` with `axis` `extent` long.
+fn with_axis_extent(shape: &[usize], axis: usize, extent: usize) -> Vec<usize> {
+    let mut shape = shape.to_vec();
+    shape[axis] = extent;
+    shape
 }
 
 /// Whether `geometry` steps one element along `axis`, or holds one element there.
