@@ -258,9 +258,10 @@ impl Benchmark for ReduceBench {
         let strategy = match &self.strategy {
             ReduceEntry::Kernels(strategy) => format!("{strategy:?}"),
             ReduceEntry::Tiles(strategy) => strategy.name().to_string(),
+            ReduceEntry::SharedSum(cubes) => format!("shared-sum-{cubes}"),
         };
         let entry = match self.strategy {
-            ReduceEntry::Kernels(_) => "",
+            ReduceEntry::Kernels(_) | ReduceEntry::SharedSum(_) => "",
             ReduceEntry::Tiles(_) => "-tiles",
         };
         format!(

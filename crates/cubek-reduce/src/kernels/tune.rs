@@ -2,8 +2,9 @@
 //! problem, over the unit routine as the floor.
 
 use crate::kernels::{
-    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceKernel,
-    ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors, UnitReduceRoutine,
+    CubeReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine,
+    ReduceElements, ReduceKernel, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem,
+    ReduceTensors, UnitReduceRoutine, UnitZeroRoutine,
 };
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
@@ -169,6 +170,30 @@ where
     }
 }
 
+impl ReduceRoutineCandidate<HypercubeAtomicReduceRoutine> {
+    /// [`launch_unbound`](Self::launch_unbound) after the output is zeroed, since the routine only
+    /// adds into it.
+    ///
+    /// # Errors
+    ///
+    /// Why the routine cannot run the problem at its setting, why the zeroing cannot run it, or
+    /// why it cannot read the caller's input.
+    fn launch_zeroed_unbound<I: TileOperand>(
+        &self,
+        tensors: &ReduceTensors<Geometry>,
+        input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
+    ) -> Result<(), Refusal> {
+        let (blueprint, grid) =
+            self.routine
+                .prepare(&self.hw, tensors.problem(), &self.settings)?;
+        let (zero_blueprint, zero_grid) =
+            UnitZeroRoutine.prepare_first_served(&self.hw, tensors.problem())?;
+        UnitZeroRoutine.zero_unbound(tensors, zero_blueprint, zero_grid);
+        self.routine
+            .launch_unbound::<I>(tensors, blueprint, grid, input)
+    }
+}
+
 impl<R, M: PartialEq> TuneCandidate for ReduceRoutineCandidate<R>
 where
     R: ReduceRoutine<M> + Routine<Microkernel = M>,
@@ -213,6 +238,8 @@ pub enum ReduceCandidate {
     CubeStaged(ReduceRoutineCandidate<CubeReduceRoutine>),
     /// [`ReduceKernel::HypercubeLastArrival`].
     HypercubeLastArrival(ReduceRoutineCandidate<HypercubeReduceRoutine>),
+    /// [`ReduceKernel::HypercubeAtomic`], run after the output is zeroed.
+    HypercubeAtomic(ReduceRoutineCandidate<HypercubeAtomicReduceRoutine>),
 }
 
 impl ReduceCandidate {
@@ -233,6 +260,9 @@ impl ReduceCandidate {
             Self::PlaneShuffle(candidate) => candidate.launch_unbound::<I>(tensors, input),
             Self::CubeStaged(candidate) => candidate.launch_unbound::<I>(tensors, input),
             Self::HypercubeLastArrival(candidate) => candidate.launch_unbound::<I>(tensors, input),
+            Self::HypercubeAtomic(candidate) => {
+                candidate.launch_zeroed_unbound::<I>(tensors, input)
+            }
         }
     }
 }
@@ -245,6 +275,7 @@ impl core::fmt::Display for ReduceCandidate {
             Self::PlaneShuffle(candidate) => candidate.strategy(),
             Self::CubeStaged(candidate) => candidate.strategy(),
             Self::HypercubeLastArrival(candidate) => candidate.strategy(),
+            Self::HypercubeAtomic(candidate) => candidate.strategy(),
         };
         f.write_str(name)
     }
@@ -271,6 +302,12 @@ impl From<ReduceRoutineCandidate<CubeReduceRoutine>> for ReduceCandidate {
 impl From<ReduceRoutineCandidate<HypercubeReduceRoutine>> for ReduceCandidate {
     fn from(candidate: ReduceRoutineCandidate<HypercubeReduceRoutine>) -> Self {
         Self::HypercubeLastArrival(candidate)
+    }
+}
+
+impl From<ReduceRoutineCandidate<HypercubeAtomicReduceRoutine>> for ReduceCandidate {
+    fn from(candidate: ReduceRoutineCandidate<HypercubeAtomicReduceRoutine>) -> Self {
+        Self::HypercubeAtomic(candidate)
     }
 }
 
@@ -320,6 +357,7 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
         });
     let tile = autotune.group("tile", GroupPriority::DEFAULT);
     let floor_hw = hw.clone();
+    let zero_hw = hw.clone();
     autotune
         .identified(
             &tile,
@@ -348,6 +386,23 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
             ),
             |candidate| ReduceIdentity::Routine(candidate.clone().into()),
             |candidate, tensors| candidate.run(tensors),
+        )
+        .identified(
+            &tile,
+            ReduceRoutineCandidate::list(
+                HypercubeAtomicReduceRoutine,
+                ReduceKernel::HypercubeAtomic,
+                &hw,
+            ),
+            |candidate| ReduceIdentity::Routine(candidate.clone().into()),
+            move |candidate, tensors| {
+                // It only adds into the output, which the zeroing, timed with it, sets first.
+                let (blueprint, grid) = UnitZeroRoutine
+                    .prepare_first_served(&zero_hw, tensors.problem())
+                    .map_err(|refusal| refusal.to_string())?;
+                UnitZeroRoutine.launch(&tensors, blueprint, grid);
+                candidate.run(tensors)
+            },
         )
         .bounded(|_, tensors: &ReduceTensors| Roofline {
             client: tensors.client().clone(),

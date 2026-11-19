@@ -5,15 +5,16 @@
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::prelude::TensorBinding;
-use cubecl::tile::launch::{Refusal, StoredTileOperand};
+use cubecl::tile::launch::{Refusal, StoredTileOperand, Unbound};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_reduce::kernels::{
-    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements,
-    ReduceKernelHeuristic, ReduceOpStrategy, ReduceRoutine, ReduceRoutineProblem, ReduceTensors,
-    UnitReduceRoutine, launch_reduce_routine, launch_tuned, select,
+    CubeReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine,
+    ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceOpStrategy, ReduceRoutine,
+    ReduceRoutineProblem, ReduceTensors, UnitReduceRoutine, UnitZeroRoutine, launch_reduce_routine,
+    launch_tuned, select,
 };
 use cubek_std::Hardware;
 use cubek_std::devices;
@@ -332,15 +333,15 @@ fn every_routine_reduces_every_dim_like_the_cpu() {
 /// stands in for, against the host.
 struct UnboundRoutines;
 
-/// `reduction`'s routine launched unbound over `input`, bound back as the buffer it is, into
-/// `out`.
-fn launch_unbound<R: ReduceRoutine<M> + Copy, M>(
+/// The tensors `routine` reduces unbound: `input`'s geometry, stated at the width the routine picks
+/// for it bound, and `out`.
+fn unbound_tensors<R: ReduceRoutine<M> + Copy, M>(
     routine: R,
     client: &Client,
-    input: TensorBinding,
+    input: &TensorBinding,
     out: TensorBinding,
     reduction: &Reduction,
-) -> Result<(), Refusal> {
+) -> Result<ReduceTensors<Geometry>, Refusal> {
     let elements = ReduceElements {
         input: F32,
         accumulator: F32,
@@ -357,19 +358,53 @@ fn launch_unbound<R: ReduceRoutine<M> + Copy, M>(
     );
     let hw = Hardware::from_client(client);
     let (blueprint, _) = routine.prepare_first_served(&hw, buffers.problem())?;
-    let tensors = ReduceTensors::unbound(
+    Ok(ReduceTensors::unbound(
         client,
-        Geometry::from(&input),
+        Geometry::from(input),
         blueprint.width,
         out,
         axis,
         operation,
         elements,
-    );
+    ))
+}
+
+/// `input` bound back as the plain buffer it is, at the spec and width the launch derived.
+fn bound_back(input: TensorBinding) -> impl FnOnce(Unbound) -> TileTensorLaunch {
+    move |bound| TileTensorLaunch::new(input.into_tensor_arg(), F32, bound.vector_size, bound.spec)
+}
+
+/// `reduction`'s routine launched unbound over `input`, bound back as the buffer it is, into
+/// `out`.
+fn launch_unbound<R: ReduceRoutine<M> + Copy, M>(
+    routine: R,
+    client: &Client,
+    input: TensorBinding,
+    out: TensorBinding,
+    reduction: &Reduction,
+) -> Result<(), Refusal> {
+    let tensors = unbound_tensors(routine, client, &input, out, reduction)?;
+    let hw = Hardware::from_client(client);
     let (blueprint, grid) = routine.prepare_first_served(&hw, tensors.problem())?;
-    routine.launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, |bound| {
-        TileTensorLaunch::new(input.into_tensor_arg(), F32, bound.vector_size, bound.spec)
-    })
+    routine.launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, bound_back(input))
+}
+
+/// The atomic hypercube launched unbound as [`launch_unbound`] launches a routine, into `out`
+/// zeroed first by the zero routine, as its tuned candidate does.
+fn launch_atomic_unbound(
+    client: &Client,
+    input: TensorBinding,
+    out: TensorBinding,
+    reduction: &Reduction,
+) -> Result<(), Refusal> {
+    let routine = HypercubeAtomicReduceRoutine;
+    let tensors = unbound_tensors(routine, client, &input, out, reduction)?;
+    let hw = Hardware::from_client(client);
+    let (blueprint, grid) = routine.prepare_first_served(&hw, tensors.problem())?;
+    let (zero_blueprint, zero_grid) =
+        UnitZeroRoutine.prepare_first_served(&hw, tensors.problem())?;
+    UnitZeroRoutine.zero_unbound(&tensors, zero_blueprint, zero_grid);
+    routine.launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, bound_back(input))
 }
 
 impl ScopeUnderTest for UnboundRoutines {
@@ -392,6 +427,9 @@ impl ScopeUnderTest for UnboundRoutines {
             Scope::Cube => launch_unbound(CubeReduceRoutine, client, input, written, reduction),
             Scope::Hypercube => {
                 launch_unbound(HypercubeReduceRoutine, client, input, written, reduction)
+            }
+            Scope::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)) => {
+                launch_atomic_unbound(client, input, written, reduction)
             }
             Scope::Picked(strategy) => {
                 unreachable!("an unbound launch names its routine, not a strategy ({strategy:?})")
@@ -446,6 +484,41 @@ fn unbound_routines_reduce_like_the_cpu() {
         }
     }
     UnboundRoutines.check(reductions);
+}
+
+/// The sums the atomic hypercube is checked on: one long row; rows along the contiguous dim; rows
+/// across it; and four rows of a matrix, whose output's rows lie side by side in memory.
+fn atomic_sums() -> Vec<Reduction> {
+    let shapes: [(&[usize], usize); 4] = [
+        (&[1, 1, 9000], 2),
+        (&[2, 3, 5000], 2),
+        (&[3, 2100, 4], 1),
+        (&[4, 9000], 1),
+    ];
+    shapes
+        .into_iter()
+        .map(|(shape, axis)| Reduction {
+            scope: Scope::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)),
+            shape: shape.to_vec(),
+            axis,
+            operation: ReduceOperation::Sum,
+        })
+        .collect()
+}
+
+/// The atomic hypercube sums rows split into parts, each part added into the zeroed output, on
+/// [`atomic_sums`]. It must launch wherever the device adds floats atomically; a sum is the only
+/// operation it serves.
+#[test]
+fn the_atomic_hypercube_sums_split_rows_like_the_cpu() {
+    Routines.check_some(atomic_sums());
+}
+
+/// The atomic hypercube launched unbound sums as it does bound, into an output that starts away
+/// from zero, so the zeroing before it is checked too, on [`atomic_sums`].
+#[test]
+fn the_atomic_hypercube_sums_an_unbound_input_like_the_cpu() {
+    UnboundRoutines.check_some(atomic_sums());
 }
 
 /// The hypercube splits rows into parts, the last one short, and merges them: a `[2, 3, 5000]`
