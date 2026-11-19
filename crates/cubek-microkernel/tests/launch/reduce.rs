@@ -190,14 +190,6 @@ impl ReduceLaunch {
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         // Past its edge the input reads the identity of the operation's edge monoid; the outputs and
         // the partials are read and written only within theirs.
-        let bound = |arg, element, width, dimensions: &[_], boundary| {
-            TileTensorLaunch::new(
-                arg,
-                element,
-                width,
-                TileSpec::direct(dimensions).boundary(BoundaryPolicy::Every(boundary)),
-            )
-        };
         let edge = Boundary::Identity(self.item.operation.edge_monoid());
         let elements = [self.item.input, self.item.accumulator, self.out];
         let input = bound(input, self.item.input, self.width, &input_dimensions, edge);
@@ -317,14 +309,6 @@ impl ReduceLaunch {
         let arrivals = TensorHandle::zeros(client, [self.rows], index);
         // Past its edge the input reads the identity of the operation's edge monoid; the outputs and
         // the partials are written, never read past theirs.
-        let bound = |arg, element, width, dimensions: &[_], boundary| {
-            TileTensorLaunch::new(
-                arg,
-                element,
-                width,
-                TileSpec::direct(dimensions).boundary(BoundaryPolicy::Every(boundary)),
-            )
-        };
         let edge = Boundary::Identity(self.item.operation.edge_monoid());
         let microkernel =
             HypercubeLastArrivalReduceMicrokernel::new(CubeStagedReduceMicrokernel::new(
@@ -585,4 +569,20 @@ fn hypercube_indexed_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: S
             values,
         );
     }
+}
+
+/// `arg` launched in `element`, `width` wide over `dimensions`, reading `boundary` past its edge.
+fn bound(
+    arg: TensorArg,
+    element: ElemType,
+    width: usize,
+    dimensions: &[Dimension],
+    boundary: Boundary,
+) -> TileTensorLaunch {
+    TileTensorLaunch::new(
+        arg,
+        element,
+        width,
+        TileSpec::direct(dimensions).boundary(BoundaryPolicy::Every(boundary)),
+    )
 }
