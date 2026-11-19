@@ -5,12 +5,12 @@ block-scaled: 3 candidates, checksum 319b30ed87ce2d7e5f61e160639de436
 
 # h100
 few-rows: 83 candidates, checksum f40dcee016a3a4e43e8f89666b0b297c
-many-rows: 292 candidates, checksum 4961e3bcae767718ea96bc662a7fddea
+many-rows: 294 candidates, checksum 108646b703fc475575f24fbfedafdc7
 block-scaled: 3 candidates, checksum 319b30ed87ce2d7e5f61e160639de436
 
 # h100 with nvfp4
 few-rows: 83 candidates, checksum f40dcee016a3a4e43e8f89666b0b297c
-many-rows: 292 candidates, checksum 4961e3bcae767718ea96bc662a7fddea
+many-rows: 294 candidates, checksum 108646b703fc475575f24fbfedafdc7
 block-scaled: 22 candidates, checksum a8f1600625184aa67e37ba3b9b4975da
 
 # wgpu without subgroups

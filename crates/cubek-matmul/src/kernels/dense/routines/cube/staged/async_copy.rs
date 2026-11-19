@@ -57,14 +57,20 @@ impl CubeStagedAsyncCopyMatmulRoutine {
         CubeStagedMicrokernelSettings::in_steps((4, 2), (2, 4), StageRing::DOUBLE);
 
     /// The settings a product against a packed input races on `hw`: the box handing its float
-    /// input to the engine (`PACKED_FLOAT_ON_ENGINE`), then the boxes staged as stored
-    /// (`CubeStagedMatmulRoutine::STORED`), which by the units never were the fastest. None
-    /// without a copy engine. Its cubes in the grid's order.
+    /// input to the engine (`PACKED_FLOAT_ON_ENGINE`), read a word of scales at a time and a
+    /// scale block at a time two steps a stage ([`CubeStagedMatmulRoutine::packed_settings`] says
+    /// why), then the boxes staged as stored (`CubeStagedMatmulRoutine::STORED`), which by the
+    /// units never were the fastest. None without a copy engine. Its cubes in the grid's order.
+    ///
+    /// On an RTX PRO 6000 at Qwen3.8 27B's down projection at 512 rows, the box read by block took
+    /// MXFP4 to 381 µs, as NVFP4's read by the word, where read by the word MXFP4's outgrew
+    /// shared memory.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedAsyncCopyMatmulRoutineSettings> {
         if !hw.unit_async_copy() {
             return Vec::new();
         }
-        [Self::PACKED_FLOAT_ON_ENGINE]
+        let decoding = Self::PACKED_FLOAT_ON_ENGINE;
+        [decoding, decoding.by_block().stage_steps(2)]
             .into_iter()
             .chain(CubeStagedMatmulRoutine::STORED)
             .map(|microkernel| CubeStagedAsyncCopyMatmulRoutineSettings {
