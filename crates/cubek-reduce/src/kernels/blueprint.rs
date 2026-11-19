@@ -142,3 +142,65 @@ impl<M> ReduceBlueprint<M> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::ReduceIndices;
+    use cubecl::tile::layout::ElemAlignment;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_std::devices;
+
+    /// Each microkernel setting crossed with each knob, the microkernel's outermost.
+    #[test]
+    fn settings_cross_the_microkernels_with_the_knobs() {
+        let crossed = each_microkernel_with(vec!['a', 'b'], [1, 2], |microkernel, knob| {
+            (microkernel, knob)
+        });
+        assert_eq!(crossed, vec![('a', 1), ('a', 2), ('b', 1), ('b', 2)]);
+    }
+
+    /// A carrier's widest line bounds the input's width.
+    #[test]
+    fn the_widest_line_bounds_the_width() {
+        let hw = devices::m2_pro();
+        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
+        let [width, _] = reduce_widths(&hw, &problem, Vectorization::new(), Some(1));
+        assert_eq!(width, 1);
+    }
+
+    /// Indices beside the values align the output's width too: a strided indices buffer narrows it
+    /// to one.
+    #[test]
+    fn strided_indices_narrow_the_outputs_width() {
+        let hw = devices::m2_pro();
+        let dense = ReduceRoutineProblem::dense(&[4096, 4], 0, ReduceOperation::ArgMax);
+        let [_, dense_width] = reduce_widths(&hw, &dense, Vectorization::new(), None);
+        assert!(
+            dense_width > 1,
+            "rows across the axis go out a line at a time"
+        );
+        let problem = ReduceRoutineProblem {
+            indices: Some(ReduceIndices {
+                element: cubecl::ir::ElemType::UInt(cubecl::ir::UIntKind::U32),
+                elem_alignment: ElemAlignment::ONE,
+            }),
+            ..dense
+        };
+        let [_, out_width] = reduce_widths(&hw, &problem, Vectorization::new(), None);
+        assert_eq!(out_width, 1);
+    }
+
+    /// A unit-an-owner launch groups its units in cubes of `planes` planes the device's width.
+    #[test]
+    fn a_unit_launch_holds_its_planes_in_a_cube() {
+        const PLANES: usize = 4;
+        let hw = devices::m2_pro();
+        let problem = ReduceRoutineProblem::dense(&[64, 300], 1, ReduceOperation::Sum);
+        let (_, grid) = unit_launch(&hw, &problem, 1, PLANES).expect("the unit launch fits");
+        assert_eq!(
+            grid.launch.units_per_cube(),
+            hw.dispatch_plane_size() * PLANES as u32
+        );
+    }
+}
