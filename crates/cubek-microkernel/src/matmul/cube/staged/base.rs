@@ -58,6 +58,9 @@ pub struct CubeStagedMicrokernel {
     pub depth: CubeStagedDepth,
     /// How its planes read each operand out of the stages.
     pub reads: MatmulOperands<MatmulRead>,
+    /// Whether it reads its packed rhs a scale block at a time
+    /// ([`CubeStagedMicrokernelSettings::by_block`]).
+    pub by_block: bool,
 }
 
 /// What one stage of a cube spans along the contraction.
@@ -106,6 +109,7 @@ impl CubeStagedMicrokernel {
             store: CubeStagedStore::Fragments,
             depth,
             reads,
+            by_block: settings.by_block,
         }
     }
 
@@ -677,7 +681,13 @@ impl Microkernel for CubeStagedMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let merges = settings.planes_along_k.get() > 1;
         let atomic = hw.shared_f32_atomic_add();
+        // Reading by block is planned on an rhs its routine re-read so: planned on one read as
+        // stored, it would bind otherwise than it plans.
+        let rhs_read_by_block = item
+            .blocks
+            .is_some_and(|space| space.packings.rhs.is_some_and(|p| p.reads_scale_bytes()));
         let candidates: Vec<Self> = match item.blocks {
+            _ if settings.by_block && !rhs_read_by_block => Vec::new(),
             None => Self::as_stored_candidates(hw, item, settings),
             Some(_) => Self::candidates_in_blocks(hw, item, settings),
         };
@@ -832,6 +842,10 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
     /// Its walk's ([`CubeStagedWalk::decoded`]).
     fn decoded_stage(&self) -> Option<ElemType> {
         self.walk().decoded()
+    }
+
+    fn reads_rhs_by_block(&self) -> bool {
+        self.by_block
     }
 }
 

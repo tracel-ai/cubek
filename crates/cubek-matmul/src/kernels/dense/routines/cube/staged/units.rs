@@ -122,8 +122,9 @@ impl CubeStagedMatmulRoutine {
     }
 
     /// The settings a product against a packed input races on `hw`: the lead, the boxes several
-    /// steps tall the float routine races, one stage at a time and with a second in flight, then
-    /// the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
+    /// steps tall the float routine races, one stage at a time and with a second in flight, each
+    /// reading the rhs a word of scales at a time and a scale block at a time
+    /// ([`by_block`](CubeStagedMicrokernelSettings::by_block)), then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
     /// a device without a copy engine, the boxes staged as stored (`STORED`). Planes splitting
     /// `K` only on a device whose shared memory takes the atomic `f32` add they merge through:
     /// elsewhere they would only be tried and declined. Its cubes in the grid's order.
@@ -132,6 +133,11 @@ impl CubeStagedMatmulRoutine {
     /// transport's boxes lead `cmma`'s on Qwen3-4B's down projection by a few percent, and lose a
     /// third once the projection's residual add is fused into its store, which its fragments
     /// drain into cell by cell.
+    ///
+    /// Read by block, a step of `K` is one scale block deep rather than a word of scales' blocks,
+    /// which a stage of the same box holds in as many times less shared memory: on an RTX PRO
+    /// 6000, MXFP4's word of four 32-wide blocks staged 128 of `K` a step, and the boxes with a
+    /// second stage in flight that lead NVFP4 outgrew the device's shared memory.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
         let boxed = [StageRing::SINGLE, StageRing::DOUBLE]
             .into_iter()
@@ -139,7 +145,8 @@ impl CubeStagedMatmulRoutine {
                 Self::PACKED_BOXES.map(|(steps, planes)| {
                     CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
                 })
-            });
+            })
+            .flat_map(|settings| [settings, settings.by_block()]);
         let one_step = self
             .packed_one_step_settings()
             .into_iter()
@@ -242,9 +249,11 @@ impl Routine for CubeStagedMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
+        let read = problem.rhs_read(settings.microkernel.by_block)?;
         CubeStagedPlacement::new(
             hw,
-            problem,
+            &read,
             &settings.microkernel,
             settings.cube_order,
             CubeStagedFill::BY_UNITS,

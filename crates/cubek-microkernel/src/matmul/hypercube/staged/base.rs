@@ -241,6 +241,11 @@ impl MatmulMicrokernel for HypercubeStagedMicrokernel {
     fn decoded_stage(&self) -> Option<ElemType> {
         self.cube.decoded_stage()
     }
+
+    /// Its cubes': whether they read the packed rhs a scale block at a time.
+    fn reads_rhs_by_block(&self) -> bool {
+        self.cube.reads_rhs_by_block()
+    }
 }
 
 #[cfg(test)]

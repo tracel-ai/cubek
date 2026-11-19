@@ -201,6 +201,9 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_unindexed()?;
+        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
+        let read = problem.rhs_read(settings.microkernel.cube.by_block)?;
+        let problem: &MatmulRoutineProblem = &read;
         let view = MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         if item

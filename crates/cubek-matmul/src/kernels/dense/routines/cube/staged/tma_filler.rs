@@ -162,9 +162,11 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
             delivery: CubeStagedDelivery::Tma,
             filling_planes: settings.filling_planes.get(),
         };
+        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
+        let read = problem.rhs_read(settings.microkernel.by_block)?;
         let placement = CubeStagedPlacement::new(
             hw,
-            problem,
+            &read,
             &settings.microkernel,
             settings.cube_order,
             fill,

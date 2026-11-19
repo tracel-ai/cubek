@@ -9,7 +9,7 @@ use cubek_test_utils::ScopeUnderTest;
 
 use crate::matmul::Declines;
 use crate::tiled::ByRoutine;
-use crate::tiled::packed::{PackedProduct, Stored};
+use crate::tiled::packed::{PackedFormat, PackedProduct, Stored};
 
 /// NVFP4 activations against a `bf16` weight: a gated-delta projection 48 columns wide at a
 /// prompt's rows, and the same 44 wide. A box 32 columns wide reaches past the weight's columns,
@@ -17,9 +17,15 @@ use crate::tiled::packed::{PackedProduct, Stored};
 /// which no mask stated, refused to bind and the model did not load.
 #[test]
 fn a_packed_activation_against_a_float_weight_answers_at_every_setting() {
-    let projection = PackedProduct::of(Stored::Nvfp4 { seed: 1 }, Stored::Bf16)
-        .m(512)
-        .k(5120);
+    let projection = PackedProduct::of(
+        Stored::Packed {
+            format: PackedFormat::Nvfp4,
+            seed: 1,
+        },
+        Stored::Bf16,
+    )
+    .m(512)
+    .k(5120);
     let products = [projection.clone().n(48), projection.n(44)];
     let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
     let settings = [
@@ -37,7 +43,17 @@ fn a_packed_activation_against_a_float_weight_answers_at_every_setting() {
 /// copies and contracted unwritten, and the model's prompt was lost.
 #[test]
 fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
-    let both = PackedProduct::of(Stored::Nvfp4 { seed: 1 }, Stored::Nvfp4 { seed: 2 }).k(5120);
+    let both = PackedProduct::of(
+        Stored::Packed {
+            format: PackedFormat::Nvfp4,
+            seed: 1,
+        },
+        Stored::Packed {
+            format: PackedFormat::Nvfp4,
+            seed: 2,
+        },
+    )
+    .k(5120);
     let products = [
         both.clone().m(512).n(128),
         both.clone().m(33).n(96),

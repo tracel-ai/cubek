@@ -245,6 +245,12 @@ mod cube_staged {
                 let blueprint = match prepared {
                     Ok((blueprint, _)) => blueprint,
                     Err(Refusal::SharedMemoryPastDevice { .. }) => continue,
+                    Err(error)
+                        if settings.microkernel.by_block && problem.rhs_by_block().is_err() =>
+                    {
+                        assert_eq!(Some(error), problem.rhs_by_block().err(), "{name}");
+                        continue;
+                    }
                     Err(error) if name.ends_with("along n") => {
                         assert_eq!(error, CubeStagedMicrokernel::UNGROUPED_K, "{name}");
                         continue;
@@ -255,7 +261,10 @@ mod cube_staged {
                     tile_order_prepared += 1;
                 }
                 let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.instruction.shape();
-                let step = step(&hw, &problem).under(Space::new(&[(M, m), (N, n), (K, k)]));
+                let read = problem
+                    .rhs_read(settings.microkernel.by_block)
+                    .expect("a prepared setting reads its rhs so");
+                let step = step(&hw, &read).under(Space::new(&[(M, m), (N, n), (K, k)]));
                 let cube_space = blueprint.partitioning.cube_space();
                 assert!(
                     whole_steps(&step, &cube_space.space),

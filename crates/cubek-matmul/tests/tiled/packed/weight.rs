@@ -1,11 +1,14 @@
 //! A packed weight against a float activation.
 
-use cubek_matmul::kernels::{CubeShuffleMatmulRoutine, LoadingSchedule, PlaneShuffleMatmulRoutine};
+use cubek_matmul::kernels::{
+    CubeShuffleMatmulRoutine, CubeStagedMatmulRoutine, HypercubeLastArrivalMatmulRoutine,
+    LoadingSchedule, PlaneShuffleMatmulRoutine,
+};
 use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
 
 use crate::matmul::Declines;
 use crate::tiled::ByRoutine;
-use crate::tiled::packed::{PackedProduct, Stored};
+use crate::tiled::packed::{PackedFormat, PackedProduct, Stored};
 
 /// A packed matrix seen through a transposed view, as a framework hands a tied embedding to the
 /// vocabulary head: [`PackedTensor::of_quantized`](cubek_matmul::kernels::tensor::PackedTensor::of_quantized)
@@ -14,10 +17,16 @@ use crate::tiled::packed::{PackedProduct, Stored};
 /// dequantized the whole head on every step.
 #[test]
 fn a_transposed_packed_matrix_is_read_as_the_matrix_it_views() {
-    let head = PackedProduct::of(Stored::Bf16, Stored::Nvfp4ViewedTransposed { seed: 3 })
-        .m(4)
-        .n(96)
-        .k(512);
+    let head = PackedProduct::of(
+        Stored::Bf16,
+        Stored::PackedViewedTransposed {
+            format: PackedFormat::Nvfp4,
+            seed: 3,
+        },
+    )
+    .m(4)
+    .n(96)
+    .k(512);
     let plane = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
     plane.check_some(plane.at(
         PlaneShuffleMatmulRoutine.packed_settings(),
@@ -40,7 +49,13 @@ fn a_transposed_packed_matrix_is_read_as_the_matrix_it_views() {
 /// commits to no plane width, every one is a skip; elsewhere none may be declined.
 #[test]
 fn the_split_k_answers_a_decode_step() {
-    let decode = PackedProduct::of(Stored::Bf16, Stored::Nvfp4 { seed: 3 });
+    let decode = PackedProduct::of(
+        Stored::Bf16,
+        Stored::Packed {
+            format: PackedFormat::Nvfp4,
+            seed: 3,
+        },
+    );
     let products = [
         decode.clone().m(1).n(64).k(2048),
         decode.clone().m(1).n(44).k(4096),
@@ -60,4 +75,33 @@ fn the_split_k_answers_a_decode_step() {
     };
     let split = ByRoutine::new(CubeShuffleMatmulRoutine, declines);
     split.check(split.at(settings, &products));
+}
+
+/// A packed weight against a `bf16` activation at a prompt's rows, as a 4-bit model's prefill runs
+/// a projection, at every packed setting of the routines staging it: NVFP4 and MXFP4, at a whole
+/// box and at rows and columns no box divides. Each box reads the weight a word of scales at a
+/// time and a scale block at a time; MXFP4's word of four 32-wide blocks once staged 128 of `K` a
+/// step, and on an RTX PRO 6000 the boxes leading NVFP4 outgrew shared memory on MXFP4 alone.
+#[test]
+fn a_packed_weight_answers_a_prompt_at_every_staged_setting() {
+    let products: Vec<PackedProduct> = [PackedFormat::Nvfp4, PackedFormat::Mxfp4]
+        .into_iter()
+        .flat_map(|format| {
+            let projection = PackedProduct::of(Stored::Bf16, Stored::Packed { format, seed: 5 });
+            [
+                projection.clone().m(128).n(128).k(2048),
+                projection.m(33).n(96).k(1024),
+            ]
+        })
+        .collect();
+    let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
+    staged.check_some(staged.at(
+        CubeStagedMatmulRoutine.packed_settings(staged.hw()),
+        &products,
+    ));
+    let hypercube = ByRoutine::new(HypercubeLastArrivalMatmulRoutine, Declines::AsItStates);
+    hypercube.check_some(hypercube.at(
+        HypercubeLastArrivalMatmulRoutine.packed_settings(hypercube.hw()),
+        &products,
+    ));
 }

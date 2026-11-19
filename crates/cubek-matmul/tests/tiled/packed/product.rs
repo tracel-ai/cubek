@@ -29,12 +29,12 @@ const BF16_TOLERANCE: f32 = 1e-2;
 pub(crate) enum Stored {
     /// Dense `bf16` values in `[-1, 1)`, row-major.
     Bf16,
-    /// NVFP4, packed along `k`, seeded by `seed`.
-    Nvfp4 { seed: usize },
-    /// An NVFP4 rhs `[n, k]` packed along `k`, seen through the transposed view `[k, n]` a
+    /// Packed along `k` in `format`, seeded by `seed`.
+    Packed { format: PackedFormat, seed: usize },
+    /// A rhs `[n, k]` packed along `k` in `format`, seen through the transposed view `[k, n]` a
     /// framework hands a tied embedding to the vocabulary head: its words run along the view's
     /// first dimension.
-    Nvfp4ViewedTransposed { seed: usize },
+    PackedViewedTransposed { format: PackedFormat, seed: usize },
 }
 
 /// `m × n`, `k` deep, of two operands stored as stated, written in `bf16`.
@@ -131,10 +131,10 @@ impl PackedProduct {
             .collect()
     }
 
-    /// The packed slabs of `operand`, `rows` rows of `k`, seeded by `seed`.
-    fn spec(&self, operand: MatmulOperand, seed: usize) -> PackedSlabsSpec {
+    /// The packed slabs of `operand` in `format`, `rows` rows of `k`, seeded by `seed`.
+    fn spec(&self, operand: MatmulOperand, format: PackedFormat, seed: usize) -> PackedSlabsSpec {
         PackedSlabsSpec {
-            format: PackedFormat::Nvfp4,
+            format,
             operand,
             slabs: 1,
             rows: match operand {
@@ -156,11 +156,11 @@ impl PackedProduct {
             Stored::Bf16 => {
                 StoredTensor::Plain(upload(client, &dims, &Self::halves(dims[0] * dims[1])))
             }
-            Stored::Nvfp4 { seed } => {
-                StoredTensor::Packed(PackedSlabs::new(client, self.spec(operand, seed)).matrix())
-            }
-            Stored::Nvfp4ViewedTransposed { seed } => {
-                let matrix = PackedSlabs::new(client, self.spec(operand, seed)).matrix();
+            Stored::Packed { format, seed } => StoredTensor::Packed(
+                PackedSlabs::new(client, self.spec(operand, format, seed)).matrix(),
+            ),
+            Stored::PackedViewedTransposed { format, seed } => {
+                let matrix = PackedSlabs::new(client, self.spec(operand, format, seed)).matrix();
                 StoredTensor::Packed(Self::viewed_transposed(client, matrix, self.k))
             }
         }
@@ -193,9 +193,10 @@ impl PackedProduct {
                 row_stride: 1,
                 k_stride: self.n,
             },
-            (Stored::Nvfp4 { seed } | Stored::Nvfp4ViewedTransposed { seed }, _) => {
-                HostOperand::Packed(self.spec(operand, seed).dequantized())
-            }
+            (
+                Stored::Packed { format, seed } | Stored::PackedViewedTransposed { format, seed },
+                _,
+            ) => HostOperand::Packed(self.spec(operand, format, seed).dequantized()),
         }
     }
 

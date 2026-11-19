@@ -1668,6 +1668,58 @@ mod base {
         }
         assert!(estimated > 0, "no packed setting prepared");
     }
+    /// An MXFP4 weight read a scale block at a time stages one 32-wide block of `K` a step, where
+    /// read a word of scales at a time it stages the word's four: on an RTX PRO 6000 the box with
+    /// a second stage in flight that leads NVFP4 at a prompt's rows outgrows shared memory read
+    /// by the word, and fits read by block.
+    #[test]
+    fn an_mxfp4_weight_read_by_block_stages_one_block_a_step() {
+        use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+        use cubek_microkernel::matmul::cube::CubeStagedDepth;
+
+        let hw = offering(devices::rtx_pro_6000());
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::E2M1)
+            .per_block([32, 1], ScaleDtype::UE8M0)
+            .with_store(QuantStore::PackedU32(1));
+        let weight = Packing {
+            operand: Operand::of_scheme(&scheme, K, [K, N]).expect("MXFP4 is one block along k"),
+            scheme,
+        };
+        let problem = MatmulRoutineProblem::packed(
+            512,
+            1024,
+            5120,
+            ElemType::Float(FloatKind::F16),
+            MatmulOperands {
+                lhs: None,
+                rhs: Some(weight),
+                out: None,
+            },
+        );
+        let depth = |settings: CubeStagedMicrokernelSettings| {
+            CubeStagedMatmulRoutine
+                .prepare(
+                    &hw,
+                    &problem,
+                    &CubeStagedMatmulRoutineSettings::on_grid(settings),
+                )
+                .map(|(blueprint, _)| blueprint.microkernel.depth)
+        };
+        let blocks = |count| {
+            Ok(CubeStagedDepth::ScaleBlocks(
+                NonZeroUsize::new(count).unwrap(),
+            ))
+        };
+        let single = CubeStagedMicrokernelSettings::in_steps((4, 2), (2, 4), StageRing::SINGLE);
+        let double = single.ringed(StageRing::DOUBLE);
+
+        assert_eq!(depth(single), blocks(4));
+        assert_eq!(depth(single.by_block()), blocks(1));
+        assert!(depth(double).is_err(), "two stages of four blocks fit");
+        assert_eq!(depth(double.by_block()), blocks(1));
+    }
+
     /// Against an NVFP4 weight the units decode into its stages, the setting that hands the float
     /// input to the copy engine keeps it there on a device that has one, while the weight's words
     /// still pass through the units' registers; a device without the engine never lists it.
