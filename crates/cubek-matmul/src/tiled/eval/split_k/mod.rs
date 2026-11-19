@@ -60,12 +60,12 @@ const SOFTWARE_MATMUL: SoftwareMatmul = SoftwareMatmul::new(64);
 fn split_k_matmul_one_level(
     a: &TileTensor<'_>,
     b: &TileTensor<'_>,
-    c: &TileTensor<'_>,
+    c: &mut TileTensor<'_>,
     space: Partitioning,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
-    let c = c.tile(&space);
+    let c = c.tile_mut(&space);
     for region in space {
         let mut c_cube = c
             .at(&region)
@@ -80,12 +80,12 @@ fn split_k_matmul_one_level(
 fn split_k_matmul_two_levels(
     a: &TileTensor<'_>,
     b: &TileTensor<'_>,
-    c: &TileTensor<'_>,
+    c: &mut TileTensor<'_>,
     space: Partitioning,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
-    let c = c.tile(&space);
+    let c = c.tile_mut(&space);
     for cube in space {
         let c_cube = c.at(&cube);
         let a_cube = a.at(&cube);

@@ -22,7 +22,7 @@ pub fn plane_fragment_query_gradient_kernel<EA: Float, ES: Float>(
     out_gradient: &TileTensor<'_>,
     logsumexp: &TileTensor<'_>,
     delta: &TileTensor<'_>,
-    query_gradient: &TileTensor<'_>,
+    query_gradient: &mut TileTensor<'_>,
     queries: u32,
     keys: u32,
     scale: f32,
@@ -40,7 +40,7 @@ pub fn plane_fragment_query_gradient_kernel<EA: Float, ES: Float>(
     );
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
-    let d_q = query_gradient.tile(&partitioning);
+    let d_q = query_gradient.tile_mut(&partitioning);
 
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.bias::<EA>(&partitioning);
@@ -78,8 +78,8 @@ pub fn plane_fragment_key_gradient_kernel<EA: Float, ES: Float>(
     out_gradient: &TileTensor<'_>,
     logsumexp: &TileTensor<'_>,
     delta: &TileTensor<'_>,
-    key_gradient: &TileTensor<'_>,
-    value_gradient: &TileTensor<'_>,
+    key_gradient: &mut TileTensor<'_>,
+    value_gradient: &mut TileTensor<'_>,
     queries: u32,
     keys: u32,
     scale: f32,
@@ -98,8 +98,8 @@ pub fn plane_fragment_key_gradient_kernel<EA: Float, ES: Float>(
     let d_o = out_gradient.tile(&partitioning);
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let (d_k, d_v) = (
-        key_gradient.tile(&partitioning),
-        value_gradient.tile(&partitioning),
+        key_gradient.tile_mut(&partitioning),
+        value_gradient.tile_mut(&partitioning),
     );
 
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
@@ -132,12 +132,12 @@ pub fn plane_fragment_key_gradient_kernel<EA: Float, ES: Float>(
 pub fn plane_delta_kernel<EA: Float>(
     out: &TileTensor<'_>,
     out_gradient: &TileTensor<'_>,
-    delta: &TileTensor<'_>,
+    delta: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[define(EA)] _sum: ElemType,
 ) {
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
-    let delta = delta.tile(&partitioning);
+    let delta = delta.tile_mut(&partitioning);
 
     for plane in &partitioning {
         plane_delta_microkernel::<EA>(&plane, &delta.at(&plane), &d_o.at(&plane), &o.at(&plane));

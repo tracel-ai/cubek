@@ -35,11 +35,11 @@ impl Destination for Counted {
     type Served<E: Numeric> = CountedServed;
 
     fn serve<E: Numeric, V: Size>(
-        arg: &Self::Arg<E>,
+        arg: &mut Self::Arg<E>,
         partitioning: &Partitioning,
     ) -> CountedServed {
         CountedServed {
-            tile: arg.out.tile(partitioning),
+            tile: arg.out.tile_mut(partitioning),
             units: arg.units,
         }
     }

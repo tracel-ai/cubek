@@ -40,11 +40,11 @@ impl<T: Float> Recipe<T> for AxisValue {
 #[cube]
 fn materialize(
     source: &Tile,
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     space: &Partitioning,
     #[comptime] level: Level,
 ) {
-    let output = output.tile(space);
+    let output = output.tile_mut(space);
     for region in source.over(&level) {
         let mut output_region = output.at(&region);
         output_region.copy_from(&source.at(&region));
@@ -129,7 +129,7 @@ type LinearScaled = Linear<AxisValue>;
 
 #[cube(launch)]
 fn linear_kernel<E: Float>(
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
@@ -149,7 +149,7 @@ fn linear_kernel<E: Float>(
 
 #[cube(launch)]
 fn cubic_kernel<E: Float>(
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
@@ -171,7 +171,7 @@ fn cubic_kernel<E: Float>(
 
 #[cube(launch)]
 fn lanczos_kernel<E: Float>(
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
@@ -195,7 +195,7 @@ fn lanczos_kernel<E: Float>(
 /// generic over their inner recipe buys.
 #[cube(launch)]
 fn linear_over_axis_value_kernel<E: Float>(
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
