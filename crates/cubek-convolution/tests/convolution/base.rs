@@ -61,6 +61,8 @@ pub(crate) enum Storage {
     ChannelsFirstPadded,
     /// Channels innermost, every element two apart.
     Gapped,
+    /// Contiguous, channels innermost, starting one element past its buffer's start.
+    Offset,
 }
 
 /// The values a case's tensors hold.
@@ -422,7 +424,8 @@ impl<const N: usize> Conv<N> {
         if padded {
             size += strides[0];
         }
-        let mut data = vec![POISON; size];
+        let lead = usize::from(storage == Storage::Offset);
+        let mut data = vec![POISON; lead + size];
         for (index, value) in values.iter().enumerate() {
             let mut rest = index;
             let mut offset = 0;
@@ -430,7 +433,7 @@ impl<const N: usize> Conv<N> {
                 offset += rest % shape[axis] * strides[axis];
                 rest /= shape[axis];
             }
-            data[offset] = *value;
+            data[lead + offset] = *value;
         }
         let bytes = match self.element {
             F16 => {
@@ -440,8 +443,13 @@ impl<const N: usize> Conv<N> {
                 .to_vec(),
             _ => f32::as_bytes(&data).to_vec(),
         };
+        let handle = client.create_from_slice(&bytes);
+        let handle = match storage {
+            Storage::Offset => handle.offset_start(self.element.size() as u64),
+            _ => handle,
+        };
         TensorHandle::new(
-            client.create_from_slice(&bytes),
+            handle,
             Shape::from(shape.to_vec()),
             Strides::new(&strides),
             self.element,
