@@ -1,7 +1,7 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::{
     MAX_SPLIT_ROW_DIMS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
-    ReduceTensors, UNBOUND_LINES_NARROWER, reduce_widths,
+    ReduceTensors, UNBOUND_LINES_NARROWER, estimate_reduce, microkernel_widths,
 };
 use core::convert::identity;
 use cubecl::client::Client;
@@ -107,10 +107,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
         }
         let microkernel =
             CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-        let mut vectorization = Vectorization::new();
-        microkernel.vectorize(&(), &mut vectorization);
-        let widest = microkernel.widest_line();
-        let widths = reduce_widths(hw, problem, vectorization, widest);
+        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
         let units = microkernel.lanes() * microkernel.planes();
         // Along, a line holds `width` values of the row; across, one.
         let part = units
@@ -148,9 +145,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        blueprint
-            .microkernel
-            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
+        estimate_reduce(problem, &blueprint.microkernel, grid, estimate);
     }
 }
 

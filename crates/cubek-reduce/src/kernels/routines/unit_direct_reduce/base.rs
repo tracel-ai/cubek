@@ -1,6 +1,7 @@
 use super::kernel::{unit_direct_reduce_kernel, unit_direct_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, estimate_reduce,
+    microkernel_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -70,10 +71,7 @@ impl Routine for UnitDirectReduceRoutine {
     ) -> Result<(Self::Blueprint, Grid), Decline> {
         let microkernel =
             UnitDirectReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-        let mut vectorization = Vectorization::new();
-        microkernel.vectorize(&(), &mut vectorization);
-        let widest = microkernel.widest_line();
-        let widths = reduce_widths(hw, problem, vectorization, widest);
+        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
         let plane_width = hw.dispatch_plane_size() as usize;
         let partitioning = Partitioning::new(
             problem.space(),
@@ -104,9 +102,7 @@ impl Routine for UnitDirectReduceRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        blueprint
-            .microkernel
-            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
+        estimate_reduce(problem, &blueprint.microkernel, grid, estimate);
     }
 }
 

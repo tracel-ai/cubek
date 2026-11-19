@@ -1,6 +1,7 @@
 use super::kernel::{cube_staged_reduce_kernel, cube_staged_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, estimate_reduce,
+    microkernel_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -69,10 +70,7 @@ impl Routine for CubeStagedReduceRoutine {
         }
         let microkernel =
             CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-        let mut vectorization = Vectorization::new();
-        microkernel.vectorize(&(), &mut vectorization);
-        let widest = microkernel.widest_line();
-        let widths = reduce_widths(hw, problem, vectorization, widest);
+        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box_at_width(widths[0]))
@@ -96,9 +94,7 @@ impl Routine for CubeStagedReduceRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        blueprint
-            .microkernel
-            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
+        estimate_reduce(problem, &blueprint.microkernel, grid, estimate);
     }
 }
 

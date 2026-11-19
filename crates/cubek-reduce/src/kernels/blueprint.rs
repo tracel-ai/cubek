@@ -3,8 +3,10 @@
 use crate::kernels::ReduceRoutineProblem;
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand};
+use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand, ReduceWorkItem};
 use cubek_std::Hardware;
+use cubek_std::microkernel::{KernelEstimate, Microkernel};
+use cubek_std::routine::Grid;
 
 /// What a launch of this kind compiles: the microkernel, the partitioning that places its owners,
 /// and the width each operand binds at.
@@ -56,6 +58,29 @@ pub(crate) fn reduce_widths(
     let widest = widest_line.map_or(ceiling, |widest| widest.min(ceiling));
     [ReduceOperand::Input, ReduceOperand::Out]
         .map(|operand| vectorization.width(operand, |_| widest))
+}
+
+/// The widths `microkernel`, whose lines are at most `widest_line` wide, binds `problem`'s
+/// operands at on `hw`: what it asks of them, then [`reduce_widths`].
+pub(crate) fn microkernel_widths<M: Microkernel<CubeSpace = (), Operand = ReduceOperand>>(
+    hw: &Hardware,
+    problem: &ReduceRoutineProblem,
+    microkernel: &M,
+    widest_line: Option<usize>,
+) -> [usize; 2] {
+    let mut vectorization = Vectorization::new();
+    microkernel.vectorize(&(), &mut vectorization);
+    reduce_widths(hw, problem, vectorization, widest_line)
+}
+
+/// What `microkernel` costs reducing `problem` on `grid`, added to `estimate`.
+pub(crate) fn estimate_reduce<M: Microkernel<WorkItem = ReduceWorkItem, CubeSpace = ()>>(
+    problem: &ReduceRoutineProblem,
+    microkernel: &M,
+    grid: &Grid,
+    estimate: &mut KernelEstimate,
+) {
+    microkernel.estimate(&problem.work_item(), &(), grid.planes(), estimate);
 }
 
 impl<M> ReduceBlueprint<M> {

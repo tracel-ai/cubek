@@ -4,7 +4,8 @@ use super::kernel::{
     hypercube_last_arrival_reduce_with_indices_kernel,
 };
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, reduce_widths,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, estimate_reduce,
+    microkernel_widths,
 };
 use cubecl::bytes::Bytes;
 use cubecl::client::Client;
@@ -106,10 +107,7 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
             &problem.work_item(),
             &settings.microkernel,
         )?;
-        let mut vectorization = Vectorization::new();
-        microkernel.vectorize(&(), &mut vectorization);
-        let widest = microkernel.widest_line();
-        let widths = reduce_widths(hw, problem, vectorization, widest);
+        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
         let units = microkernel.part().lanes() * microkernel.part().planes();
         // Along, a line holds `width` values of the row; across, one.
         let part = units
@@ -147,9 +145,7 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        blueprint
-            .microkernel
-            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
+        estimate_reduce(problem, &blueprint.microkernel, grid, estimate);
     }
 }
 
