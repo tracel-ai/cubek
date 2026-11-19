@@ -73,7 +73,7 @@ fn two_launch_operations(operation: ReduceOperation) -> (ReduceOperation, Reduce
 /// depends on the order it meets values in, and the two sorted orders are the
 /// bounds either side of the random one. Neither is a workload: code that knows
 /// its input is sorted takes the last `k` and never calls a reduction.
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 enum InputOrder {
     Uniform,
     Ascending,
