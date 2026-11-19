@@ -99,6 +99,13 @@ impl PlaneShuffleMicrokernel {
     /// registers, so past this many the registers, not the rhs, bound the kernel.
     pub const MAX_ROWS: usize = 8;
 
+    /// What a packed lhs whose read along `K` is longer than the packed rhs's is declined with: the
+    /// plane lines the lhs at the values the rhs serves a step, which would split a word of the
+    /// lhs. A `q4` activation's word of eight against a `q8` weight's of four, say.
+    pub const PACKED_LHS_READ_PAST_RHS: Refusal = Refusal::Declined {
+        why: "the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's",
+    };
+
     /// What a product of no rows, or of more than [`MAX_ROWS`](Self::MAX_ROWS), is declined with.
     pub const ROWS_OUT_OF_RANGE: Refusal = Refusal::Declined {
         why: "the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs",
@@ -430,12 +437,20 @@ impl Microkernel for PlaneShuffleMicrokernel {
         ]
     }
 
-    /// From one row to [`MAX_ROWS`](Self::MAX_ROWS), every one held whole, and an rhs lined
-    /// along one of its dimensions.
+    /// From one row to [`MAX_ROWS`](Self::MAX_ROWS), every one held whole, an rhs lined along one
+    /// of its dimensions, and a packed lhs read along `K` no longer than a packed rhs.
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         match item.rows {
             MatmulRows::Whole(rows) if (1..=Self::MAX_ROWS).contains(&rows) => {}
             MatmulRows::Whole(_) | MatmulRows::Tiled => return Err(Self::ROWS_OUT_OF_RANGE),
+        }
+        let lhs_read_past_rhs = item.blocks.is_some_and(|space| {
+            let [lhs, rhs] = MatmulOperand::INPUTS.map(|input| space.packings.get(input));
+            lhs.zip(rhs)
+                .is_some_and(|(lhs, rhs)| lhs.operand.read(K) > rhs.operand.read(K))
+        });
+        if lhs_read_past_rhs {
+            return Err(Self::PACKED_LHS_READ_PAST_RHS);
         }
         match item.layouts.rhs {
             MatmulLayout::Col | MatmulLayout::Row => Ok(()),

@@ -4,6 +4,7 @@
 use cubek_matmul::kernels::{
     CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings,
     CubeStagedTmaFillerMatmulRoutine, CubeStagedTmaMatmulRoutine, CubeStagedTmaStoredMatmulRoutine,
+    PlaneShuffleMatmulRoutine,
 };
 use cubek_test_utils::ScopeUnderTest;
 
@@ -93,5 +94,31 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
     stored.check(stored.at(
         CubeStagedTmaStoredMatmulRoutine.block_scaled_settings(stored.hw()),
         &products,
+    ));
+}
+
+/// Packed activations against a packed weight of another width, as a decode step mixing formats
+/// runs: every packed setting of the plane shuffle. A `q8` activation against a `q4` weight is lined
+/// at the eight values a step of the weight serves, two words of the activation; a `q4`
+/// activation's word of eight against a `q8` weight's step of four is declined
+/// ([`PlaneShuffleMicrokernel::PACKED_LHS_READ_PAST_RHS`](cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel::PACKED_LHS_READ_PAST_RHS)):
+/// on an RTX PRO 6000 it once panicked compiling every setting.
+#[test]
+fn packed_inputs_of_two_widths_answer_or_are_declined_by_the_plane_shuffle() {
+    let packed = |format, seed| Stored::Packed { format, seed };
+    let product = |lhs, rhs| {
+        PackedProduct::of(packed(lhs, 1), packed(rhs, 2))
+            .m(8)
+            .n(64)
+            .k(1024)
+    };
+    let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
+    shuffle.check_some(shuffle.at(
+        PlaneShuffleMatmulRoutine.packed_settings(),
+        &[product(PackedFormat::Q8, PackedFormat::Q4)],
+    ));
+    shuffle.check(shuffle.at(
+        PlaneShuffleMatmulRoutine.packed_settings(),
+        &[product(PackedFormat::Q4, PackedFormat::Q8)],
     ));
 }
