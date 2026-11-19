@@ -4,7 +4,7 @@ use crate::attention::plane::{
 };
 use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Delivery, Refusal, Vectorization};
 use cubecl::tile::{Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -194,24 +194,34 @@ impl CubeAttentionPlane {
     }
 
     /// The storage a stage over `stage` of the keys and values its steps read is held in, laid
-    /// out as `layout`: in the tiles a fragment's step reads
-    /// ([`stage_tile`](PlaneFragmentAttentionMicrokernel::stage_tile)) where the layout blocks it,
-    /// and row-major for a shuffle, which reads no stage.
-    pub fn stage_storage(&self, layout: StageLayout, stage: &Space) -> StageStorage {
+    /// out as `layout` and filled by `delivery`: as a fragment's step reads it
+    /// ([`stage_storage`](PlaneFragmentAttentionMicrokernel::stage_storage)), and row-major for a
+    /// shuffle, which reads no stage.
+    pub fn stage_storage(
+        &self,
+        layout: StageLayout,
+        delivery: Delivery,
+        stage: &Space,
+    ) -> StageStorage {
         match self {
-            Self::Fragment(plane) => layout.storage(stage, plane.stage_tile()),
+            Self::Fragment(plane) => plane.stage_storage(layout, delivery, stage),
             Self::Shuffle(_) => StageStorage::Strided,
         }
     }
 
     /// The storage its query, staged once over `stage`, is held in, laid out as `layout` lays the
-    /// keys and values: in the tiles a fragment of the score reads
-    /// ([`query_tile`](PlaneFragmentAttentionMicrokernel::query_tile)) where the layout blocks it,
-    /// so a fragment's rows of the query meet the banks as a step's rows of the keys do, and
-    /// row-major for a shuffle, which reads no stage.
-    pub fn query_storage(&self, layout: StageLayout, stage: &Space) -> StageStorage {
+    /// keys and values and filled by `delivery`: as a fragment of the score reads it
+    /// ([`query_storage`](PlaneFragmentAttentionMicrokernel::query_storage)), so a fragment's rows
+    /// of the query meet the banks as a step's rows of the keys do, and row-major for a shuffle,
+    /// which reads no stage.
+    pub fn query_storage(
+        &self,
+        layout: StageLayout,
+        delivery: Delivery,
+        stage: &Space,
+    ) -> StageStorage {
         match self {
-            Self::Fragment(plane) => layout.storage(stage, plane.query_tile()),
+            Self::Fragment(plane) => plane.query_storage(layout, delivery, stage),
             Self::Shuffle(_) => StageStorage::Strided,
         }
     }
@@ -245,18 +255,6 @@ impl CubeAttentionPlane {
         match self {
             Self::Fragment(plane) => plane.decoded_stage(),
             Self::Shuffle(_) => None,
-        }
-    }
-
-    /// Whether it reads a stage laid out as `layout`.
-    ///
-    /// # Errors
-    ///
-    /// Why it cannot.
-    pub fn reads_stage(&self, layout: StageLayout) -> Result<(), Refusal> {
-        match self {
-            Self::Fragment(plane) => plane.reads_stage(layout),
-            Self::Shuffle(_) => Ok(()),
         }
     }
 

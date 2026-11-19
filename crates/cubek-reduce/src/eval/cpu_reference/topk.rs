@@ -1,7 +1,7 @@
 use cubecl::zspace::Shape;
 use cubek_test_utils::{HostData, HostDataVec, Progress};
 
-use super::contiguous_strides;
+use super::{bump, contiguous_strides};
 
 /// TopK returns the `k` largest values per output slice.
 /// The output shape has `axis` set to `k` (rather than `1` as for scalar reductions).
@@ -49,14 +49,8 @@ pub fn reference_topk(
                 .zip(out_strides.iter())
                 .map(|(c, s)| c * s)
                 .sum::<usize>();
-            data[idx] = if i < values.len() {
-                values[i]
-            } else {
-                f32::MIN
-            };
-            if let Some(p) = progress {
-                p.bump();
-            }
+            data[idx] = values.get(i).copied().unwrap_or(f32::MIN);
+            bump(progress);
         }
     }
 

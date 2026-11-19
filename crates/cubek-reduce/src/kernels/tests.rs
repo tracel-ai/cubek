@@ -6,10 +6,11 @@ use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceLauncher,
     ReduceOpStrategy, ReduceRoutineProblem, ReduceTensors, UnitDirectReduceRoutine,
-    UnitDirectZeroRoutine, launch_tuned, select,
+    UnitDirectZeroReduceRoutine, launch_tuned, select,
 };
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, FloatKind, IntKind};
+use cubecl::ir::features::AtomicUsage;
+use cubecl::ir::{ElemType, FloatKind, IntKind, Type};
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Refusal, StoredTileOperand, Unbound};
 use cubecl::tile::layout::ElemAlignment;
@@ -18,7 +19,7 @@ use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_std::Hardware;
 use cubek_std::devices;
-use cubek_std::routine::Routine;
+use cubek_std::routine::{ROUTINE_LISTS_NO_SETTING, Routine};
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -40,6 +41,16 @@ const OPERATIONS: [ReduceOperation; 14] = [
     ReduceOperation::TopK { k: 1 },
     ReduceOperation::ArgTopK { k: 1 },
 ];
+
+/// The `k` largest values of `row` and their positions, best first.
+fn largest(row: &[f32], k: usize) -> Vec<(f32, usize)> {
+    ranked(row, true, k)
+}
+
+/// The `k` smallest values of `row` and their positions, best first.
+fn smallest(row: &[f32], k: usize) -> Vec<(f32, usize)> {
+    ranked(row, false, k)
+}
 
 /// The `k` best of `row`, best first: the larger (smaller) value, then the lower index, a NaN
 /// ahead of every number.
@@ -88,10 +99,10 @@ fn reference(row: &[f32], operation: ReduceOperation) -> Vec<f32> {
         } else {
             0.0
         }],
-        ReduceOperation::ArgMax => vec![ranked(row, true, 1)[0].1 as f32],
-        ReduceOperation::ArgMin => vec![ranked(row, false, 1)[0].1 as f32],
-        ReduceOperation::TopK { k } => ranked(row, true, k).iter().map(|e| e.0).collect(),
-        ReduceOperation::ArgTopK { k } => ranked(row, true, k).iter().map(|e| e.1 as f32).collect(),
+        ReduceOperation::ArgMax => vec![largest(row, 1)[0].1 as f32],
+        ReduceOperation::ArgMin => vec![smallest(row, 1)[0].1 as f32],
+        ReduceOperation::TopK { k } => largest(row, k).iter().map(|e| e.0).collect(),
+        ReduceOperation::ArgTopK { k } => largest(row, k).iter().map(|e| e.1 as f32).collect(),
     }
 }
 
@@ -144,45 +155,46 @@ fn values(len: usize, product: bool) -> Vec<f32> {
 /// prepares the problem at, or for the hypercube the last, its shortest parts, so that short rows
 /// still split.
 #[derive(Debug, Clone, Copy)]
-enum Scope {
-    Unit,
-    Plane,
-    Cube,
-    Hypercube,
+enum TestedRoutine {
+    UnitDirect,
+    PlaneShuffle,
+    CubeStaged,
+    HypercubeLastArrival,
     /// The kernel a strategy picks: the rule's, the autotune's, or the one it names.
     Picked(ReduceOpStrategy),
 }
 
-impl Scope {
-    /// `routine` at the setting this scope picks, launched on `tensors`.
+impl TestedRoutine {
+    /// `R` at the setting this choice picks, launched on `tensors`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Where the routine prepares no setting for the problem, or the launch fails.
-    fn launch_with<R: ReduceLauncher<M> + core::fmt::Debug, M>(
+    /// Why `R` prepares no setting for the problem on this device, which the check reports as a
+    /// skip.
+    fn launch_with<R: ReduceLauncher<M>, M>(
         self,
-        routine: &R,
         hw: &Hardware,
         tensors: &ReduceTensors,
-    ) {
+    ) -> Result<(), Refusal> {
         let problem = tensors.problem();
-        let mut settings = routine.settings(hw);
-        if let Scope::Hypercube = self {
+        let mut settings = R::settings(hw);
+        if let TestedRoutine::HypercubeLastArrival = self {
             settings.reverse();
         }
-        let settings = settings
-            .into_iter()
-            .find(|settings| routine.prepare(hw, problem, settings).is_ok())
-            .unwrap_or_else(|| panic!("{routine:?} prepares no setting for {problem:?}"));
-        launch_reduce_routine(routine, tensors, &settings)
-            .unwrap_or_else(|why| panic!("{routine:?} {problem:?}: {why:?}"));
+        let (blueprint, grid) = settings
+            .iter()
+            .map(|settings| R::prepare(hw, problem, settings))
+            .reduce(|first, next| first.or(next))
+            .unwrap_or(Err(ROUTINE_LISTS_NO_SETTING))?;
+        R::launch(tensors, blueprint, grid);
+        Ok(())
     }
 }
 
-/// `shape` reduced along `axis` by `operation`, through the routine `scope` names.
+/// `shape` reduced along `axis` by `operation`, through the routine `routine` names.
 #[derive(Debug, Clone)]
 struct Reduction {
-    scope: Scope,
+    routine: TestedRoutine,
     shape: Vec<usize>,
     axis: usize,
     operation: ReduceOperation,
@@ -211,9 +223,9 @@ impl Reduction {
 }
 
 /// A reduce routine of the tile stack against the host, row by row.
-struct Routines;
+struct RoutineScopeUnderTest;
 
-impl ScopeUnderTest for Routines {
+impl ScopeUnderTest for RoutineScopeUnderTest {
     type Case = Reduction;
 
     fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Refusal> {
@@ -239,20 +251,29 @@ impl ScopeUnderTest for Routines {
                 out: out_elem,
             },
         );
-        let scope = reduction.scope;
-        match scope {
-            Scope::Unit => scope.launch_with(&UnitDirectReduceRoutine, &hw, &tensors),
-            Scope::Plane => scope.launch_with(&PlaneShuffleReduceRoutine, &hw, &tensors),
-            Scope::Cube => scope.launch_with(&CubeStagedReduceRoutine, &hw, &tensors),
-            Scope::Hypercube => {
-                scope.launch_with(&HypercubeLastArrivalReduceRoutine, &hw, &tensors)
+        let routine = reduction.routine;
+        match routine {
+            TestedRoutine::UnitDirect => {
+                routine.launch_with::<UnitDirectReduceRoutine, _>(&hw, &tensors)?
             }
-            Scope::Picked(ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile)) => {
+            TestedRoutine::PlaneShuffle => {
+                routine.launch_with::<PlaneShuffleReduceRoutine, _>(&hw, &tensors)?
+            }
+            TestedRoutine::CubeStaged => {
+                routine.launch_with::<CubeStagedReduceRoutine, _>(&hw, &tensors)?
+            }
+            TestedRoutine::HypercubeLastArrival => {
+                routine.launch_with::<HypercubeLastArrivalReduceRoutine, _>(&hw, &tensors)?
+            }
+            TestedRoutine::Picked(ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile)) => {
                 select(&hw, &tensors)?
             }
-            Scope::Picked(ReduceOpStrategy::Specific(kernel)) => kernel.launch(&hw, &tensors)?,
-            Scope::Picked(ReduceOpStrategy::Autotune) => {
+            TestedRoutine::Picked(ReduceOpStrategy::Specific(kernel)) => {
+                kernel.launch(&hw, &tensors)?
+            }
+            TestedRoutine::Picked(ReduceOpStrategy::Autotune) => {
                 launch_tuned(tensors, &cubecl::test_device())
+                    .expect("the floor serves every problem")
             }
         }
         let host = match out_elem {
@@ -300,17 +321,17 @@ impl ScopeUnderTest for Routines {
 }
 
 /// Every routine reduces a `[2, 5, 300]` tensor along each dim, every operation whose rows hold
-/// what it writes: along the contiguous dim, and across it, each lane its own row. The plane and the cube where the device
-/// commits to a plane width.
+/// what it writes: along the contiguous dim, and across it, each lane its own row. The plane and the
+/// cube skip where the device commits to no plane width.
 #[test]
 fn every_routine_reduces_every_dim_like_the_cpu() {
-    let hw = Hardware::from_client(&cubecl::test_device().client());
-    let mut scopes = vec![Scope::Unit];
-    if hw.plane_dim().is_ok() {
-        scopes.extend([Scope::Plane, Scope::Cube]);
-    }
+    let routines = [
+        TestedRoutine::UnitDirect,
+        TestedRoutine::PlaneShuffle,
+        TestedRoutine::CubeStaged,
+    ];
     let mut reductions = Vec::new();
-    for scope in scopes {
+    for routine in routines {
         for axis in [2, 1, 0] {
             for operation in OPERATIONS {
                 // A row shorter than `k` leaves cells no reference states: what the kernel pads
@@ -319,7 +340,7 @@ fn every_routine_reduces_every_dim_like_the_cpu() {
                     continue;
                 }
                 reductions.push(Reduction {
-                    scope,
+                    routine,
                     shape: vec![2, 5, 300],
                     axis,
                     operation,
@@ -327,18 +348,17 @@ fn every_routine_reduces_every_dim_like_the_cpu() {
             }
         }
     }
-    Routines.check(reductions);
+    RoutineScopeUnderTest.check(reductions);
 }
 
 /// A reduce routine of the tile stack launched unbound, its input bound by the caller as a plain
 /// buffer once the launch is prepared, at the width the routine picks for it: what a fused read
 /// stands in for, against the host.
-struct UnboundRoutines;
+struct UnboundRoutineScopeUnderTest;
 
-/// The tensors `routine` reduces unbound: `input`'s geometry, stated at the width the routine picks
+/// The tensors `R` reduces unbound: `input`'s geometry, stated at the width the routine picks
 /// for it bound, and `out`.
-fn unbound_tensors<R: ReduceLauncher<M> + Copy, M>(
-    routine: R,
+fn unbound_tensors<R: ReduceLauncher<M>, M>(
     client: &Client,
     input: &TensorBinding,
     out: TensorBinding,
@@ -359,7 +379,7 @@ fn unbound_tensors<R: ReduceLauncher<M> + Copy, M>(
         elements,
     );
     let hw = Hardware::from_client(client);
-    let (blueprint, _) = routine.prepare_first_served(&hw, buffers.problem())?;
+    let (blueprint, _) = R::prepare_first_served(&hw, buffers.problem())?;
     Ok(ReduceTensors::unbound(
         client,
         Geometry::from(input),
@@ -383,17 +403,16 @@ fn bound_back(mut input: TensorBinding) -> impl FnOnce(Unbound) -> TileTensorLau
 
 /// `reduction`'s routine launched unbound over `input`, bound back as the buffer it is, into
 /// `out`.
-fn launch_unbound<R: ReduceLauncher<M> + Copy, M>(
-    routine: R,
+fn launch_unbound<R: ReduceLauncher<M>, M>(
     client: &Client,
     input: TensorBinding,
     out: TensorBinding,
     reduction: &Reduction,
 ) -> Result<(), Refusal> {
-    let tensors = unbound_tensors(routine, client, &input, out, reduction)?;
+    let tensors = unbound_tensors::<R, M>(client, &input, out, reduction)?;
     let hw = Hardware::from_client(client);
-    let (blueprint, grid) = routine.prepare_first_served(&hw, tensors.problem())?;
-    routine.launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, bound_back(input))
+    let (blueprint, grid) = R::prepare_first_served(&hw, tensors.problem())?;
+    R::launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, bound_back(input))
 }
 
 /// The atomic hypercube launched unbound as [`launch_unbound`] launches a routine, into `out`
@@ -404,17 +423,23 @@ fn launch_atomic_unbound(
     out: TensorBinding,
     reduction: &Reduction,
 ) -> Result<(), Refusal> {
-    let routine = HypercubeAtomicReduceRoutine;
-    let tensors = unbound_tensors(routine, client, &input, out, reduction)?;
+    let tensors =
+        unbound_tensors::<HypercubeAtomicReduceRoutine, _>(client, &input, out, reduction)?;
     let hw = Hardware::from_client(client);
-    let (blueprint, grid) = routine.prepare_first_served(&hw, tensors.problem())?;
+    let (blueprint, grid) =
+        HypercubeAtomicReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
     let (zero_blueprint, zero_grid) =
-        UnitDirectZeroRoutine.prepare_first_served(&hw, tensors.problem())?;
-    UnitDirectZeroRoutine.zero_unbound(&tensors, zero_blueprint, zero_grid);
-    routine.launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, bound_back(input))
+        UnitDirectZeroReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
+    UnitDirectZeroReduceRoutine::zero_unbound(&tensors, zero_blueprint, zero_grid);
+    HypercubeAtomicReduceRoutine::launch_unbound::<StoredTileOperand>(
+        &tensors,
+        blueprint,
+        grid,
+        bound_back(input),
+    )
 }
 
-impl ScopeUnderTest for UnboundRoutines {
+impl ScopeUnderTest for UnboundRoutineScopeUnderTest {
     type Case = Reduction;
 
     fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Refusal> {
@@ -428,27 +453,24 @@ impl ScopeUnderTest for UnboundRoutines {
             .custom(vec![-7.0; out_shape.iter().product()])
             .generate_without_host_data();
         let (input, written) = (input.binding(), out.clone().binding());
-        match reduction.scope {
-            Scope::Unit => {
-                launch_unbound(UnitDirectReduceRoutine, client, input, written, reduction)
+        match reduction.routine {
+            TestedRoutine::UnitDirect => {
+                launch_unbound::<UnitDirectReduceRoutine, _>(client, input, written, reduction)
             }
-            Scope::Plane => {
-                launch_unbound(PlaneShuffleReduceRoutine, client, input, written, reduction)
+            TestedRoutine::PlaneShuffle => {
+                launch_unbound::<PlaneShuffleReduceRoutine, _>(client, input, written, reduction)
             }
-            Scope::Cube => {
-                launch_unbound(CubeStagedReduceRoutine, client, input, written, reduction)
+            TestedRoutine::CubeStaged => {
+                launch_unbound::<CubeStagedReduceRoutine, _>(client, input, written, reduction)
             }
-            Scope::Hypercube => launch_unbound(
+            TestedRoutine::HypercubeLastArrival => launch_unbound::<
                 HypercubeLastArrivalReduceRoutine,
-                client,
-                input,
-                written,
-                reduction,
-            ),
-            Scope::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)) => {
+                _,
+            >(client, input, written, reduction),
+            TestedRoutine::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)) => {
                 launch_atomic_unbound(client, input, written, reduction)
             }
-            Scope::Picked(strategy) => {
+            TestedRoutine::Picked(strategy) => {
                 unreachable!("an unbound launch names its routine, not a strategy ({strategy:?})")
             }
         }?;
@@ -464,26 +486,26 @@ impl ScopeUnderTest for UnboundRoutines {
     }
 
     fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
-        Routines.reference(reduction)
+        RoutineScopeUnderTest.reference(reduction)
     }
 
     fn tolerance(&self, reduction: &Reduction) -> f32 {
-        Routines.tolerance(reduction)
+        RoutineScopeUnderTest.tolerance(reduction)
     }
 }
 
 /// The unit, plane and cube routines launched unbound reduce a `[2, 5, 300]` tensor along its
 /// contiguous dim and across it as they do bound: a sum, a max, a mean and an argmax. The plane
-/// and the cube where the device commits to a plane width.
+/// and the cube skip where the device commits to no plane width.
 #[test]
 fn unbound_routines_reduce_like_the_cpu() {
-    let hw = Hardware::from_client(&cubecl::test_device().client());
-    let mut scopes = vec![Scope::Unit];
-    if hw.plane_dim().is_ok() {
-        scopes.extend([Scope::Plane, Scope::Cube]);
-    }
+    let routines = [
+        TestedRoutine::UnitDirect,
+        TestedRoutine::PlaneShuffle,
+        TestedRoutine::CubeStaged,
+    ];
     let mut reductions = Vec::new();
-    for scope in scopes {
+    for routine in routines {
         for axis in [2, 1] {
             for operation in [
                 ReduceOperation::Sum,
@@ -492,7 +514,7 @@ fn unbound_routines_reduce_like_the_cpu() {
                 ReduceOperation::ArgMax,
             ] {
                 reductions.push(Reduction {
-                    scope,
+                    routine,
                     shape: vec![2, 5, 300],
                     axis,
                     operation,
@@ -500,7 +522,7 @@ fn unbound_routines_reduce_like_the_cpu() {
             }
         }
     }
-    UnboundRoutines.check(reductions);
+    UnboundRoutineScopeUnderTest.check(reductions);
 }
 
 /// The sums the atomic hypercube is checked on: one long row; rows along the contiguous dim; rows
@@ -515,7 +537,9 @@ fn atomic_sums() -> Vec<Reduction> {
     shapes
         .into_iter()
         .map(|(shape, axis)| Reduction {
-            scope: Scope::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)),
+            routine: TestedRoutine::Picked(ReduceOpStrategy::Specific(
+                ReduceKernel::HypercubeAtomic,
+            )),
             shape: shape.to_vec(),
             axis,
             operation: ReduceOperation::Sum,
@@ -528,38 +552,52 @@ fn atomic_sums() -> Vec<Reduction> {
 /// operation it serves.
 #[test]
 fn the_atomic_hypercube_sums_split_rows_like_the_cpu() {
-    Routines.check_some(atomic_sums());
+    match adds_floats_atomically() {
+        true => RoutineScopeUnderTest.check_some(atomic_sums()),
+        false => RoutineScopeUnderTest.check(atomic_sums()),
+    }
 }
 
 /// The atomic hypercube launched unbound sums as it does bound, into an output that starts away
 /// from zero, so the zeroing before it is checked too, on [`atomic_sums`].
 #[test]
 fn the_atomic_hypercube_sums_an_unbound_input_like_the_cpu() {
-    UnboundRoutines.check_some(atomic_sums());
+    match adds_floats_atomically() {
+        true => UnboundRoutineScopeUnderTest.check_some(atomic_sums()),
+        false => UnboundRoutineScopeUnderTest.check(atomic_sums()),
+    }
+}
+
+/// Whether the test device runs the atomic hypercube's sums: a plane width it commits to, for the
+/// cube microkernel each cube runs, and an atomic add of floats. Where it does, a sum must launch;
+/// where it does not, the routine's decline is a skip.
+fn adds_floats_atomically() -> bool {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    hw.plane_dim().is_ok()
+        && hw
+            .properties
+            .atomic_type_usage(Type::atomic(F32))
+            .contains(AtomicUsage::Add)
 }
 
 /// The hypercube splits rows into parts, the last one short, and merges them: a `[2, 3, 5000]`
 /// tensor along its contiguous dim, in three parts; across it, a `[3, 2100, 4]` tensor along its
-/// middle dim, in five; and a row of one part. Where the device commits to a plane width and one
-/// cube's stores reach another within a launch.
+/// middle dim, in five; and a row of one part. It skips where the device commits to no plane width
+/// or one cube's stores do not reach another within a launch.
 #[test]
 fn the_hypercube_reduces_split_rows_like_the_cpu() {
-    let hw = Hardware::from_client(&cubecl::test_device().client());
-    if hw.plane_dim().is_err() || !hw.properties.features.device_memory_scope {
-        return;
-    }
     let mut reductions = Vec::new();
     for (shape, axis) in [([2, 3, 5000], 2), ([3, 2100, 4], 1), ([2, 3, 5000], 1)] {
         for operation in OPERATIONS {
             reductions.push(Reduction {
-                scope: Scope::Hypercube,
+                routine: TestedRoutine::HypercubeLastArrival,
                 shape: shape.to_vec(),
                 axis,
                 operation,
             });
         }
     }
-    Routines.check(reductions);
+    RoutineScopeUnderTest.check(reductions);
 }
 
 /// Every strategy reduces like the CPU wherever it sends a problem: many short rows, one long row,
@@ -580,7 +618,7 @@ fn every_strategy_reduces_like_the_cpu() {
                 ReduceOperation::TopK { k: 3 },
             ] {
                 reductions.push(Reduction {
-                    scope: Scope::Picked(strategy),
+                    routine: TestedRoutine::Picked(strategy),
                     shape: shape.to_vec(),
                     axis,
                     operation,
@@ -588,7 +626,7 @@ fn every_strategy_reduces_like_the_cpu() {
             }
         }
     }
-    Routines.check(reductions);
+    RoutineScopeUnderTest.check(reductions);
 }
 
 /// The problem a host states for `shape` reduced along `axis`, its rows contiguous.
@@ -616,9 +654,8 @@ fn every_shape_of_a_layout_compiles_one_kernel() {
     let hw = devices::m2_pro();
     let compiled = |shape: &[usize], axis: usize| {
         let problem = problem(shape, axis);
-        let settings = UnitDirectReduceRoutine.settings(&hw)[0];
-        let (blueprint, _) = UnitDirectReduceRoutine
-            .prepare(&hw, &problem, &settings)
+        let settings = UnitDirectReduceRoutine::settings(&hw)[0];
+        let (blueprint, _) = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings)
             .expect("the unit routine runs everywhere");
         (
             blueprint.microkernel,
@@ -635,17 +672,18 @@ fn every_shape_of_a_layout_compiles_one_kernel() {
 /// among the folded axes.
 #[test]
 fn every_routine_reduces_more_row_axes_than_the_grid_has() {
-    let hw = Hardware::from_client(&cubecl::test_device().client());
-    let mut scopes = vec![Scope::Unit];
-    if hw.plane_dim().is_ok() {
-        scopes.extend([Scope::Plane, Scope::Cube, Scope::Hypercube]);
-    }
+    let routines = [
+        TestedRoutine::UnitDirect,
+        TestedRoutine::PlaneShuffle,
+        TestedRoutine::CubeStaged,
+        TestedRoutine::HypercubeLastArrival,
+    ];
     let mut reductions = Vec::new();
-    for scope in scopes {
+    for routine in routines {
         for axis in [4, 1] {
             for operation in [ReduceOperation::Sum, ReduceOperation::ArgMax] {
                 reductions.push(Reduction {
-                    scope,
+                    routine,
                     shape: vec![2, 3, 2, 2, 64],
                     axis,
                     operation,
@@ -653,12 +691,12 @@ fn every_routine_reduces_more_row_axes_than_the_grid_has() {
             }
         }
     }
-    Routines.check(reductions);
+    RoutineScopeUnderTest.check(reductions);
 }
 
 /// On a device lacking every Feature the routines read (planes, one cube's stores reaching
-/// another within a launch, atomic adds), every routine but the unit one declines, and the unit
-/// one still prepares: a sum, which every routine computes.
+/// another within a launch, atomic adds), every routine but the unit ones declines, and the unit
+/// reduction and the unit zeroing still prepare: a sum, which every routine computes.
 #[test]
 fn routines_decline_on_a_device_without_their_features() {
     let mut hw = devices::m2_pro();
@@ -677,50 +715,40 @@ fn routines_decline_on_a_device_without_their_features() {
     };
     let declines =
         |prepared: Result<(), Refusal>| matches!(prepared, Err(Refusal::Declined { .. }));
-    let plane = PlaneShuffleReduceRoutine.settings(&hw)[0];
+    let plane = PlaneShuffleReduceRoutine::settings(&hw)[0];
     assert!(declines(
-        PlaneShuffleReduceRoutine
-            .prepare(&hw, &problem, &plane)
-            .map(|_| ())
+        PlaneShuffleReduceRoutine::prepare(&hw, &problem, &plane).map(|_| ())
     ));
-    let cube = CubeStagedReduceRoutine.settings(&hw)[0];
+    let cube = CubeStagedReduceRoutine::settings(&hw)[0];
     assert!(declines(
-        CubeStagedReduceRoutine
-            .prepare(&hw, &problem, &cube)
-            .map(|_| ())
+        CubeStagedReduceRoutine::prepare(&hw, &problem, &cube).map(|_| ())
     ));
-    let hypercube = HypercubeLastArrivalReduceRoutine.settings(&hw)[0];
+    let hypercube = HypercubeLastArrivalReduceRoutine::settings(&hw)[0];
     assert!(declines(
-        HypercubeLastArrivalReduceRoutine
-            .prepare(&hw, &problem, &hypercube)
-            .map(|_| ())
+        HypercubeLastArrivalReduceRoutine::prepare(&hw, &problem, &hypercube).map(|_| ())
     ));
-    let atomic = HypercubeAtomicReduceRoutine.settings(&hw)[0];
+    let atomic = HypercubeAtomicReduceRoutine::settings(&hw)[0];
     assert!(declines(
-        HypercubeAtomicReduceRoutine
-            .prepare(&hw, &problem, &atomic)
-            .map(|_| ())
+        HypercubeAtomicReduceRoutine::prepare(&hw, &problem, &atomic).map(|_| ())
     ));
-    let unit = UnitDirectReduceRoutine.settings(&hw)[0];
-    assert!(
-        UnitDirectReduceRoutine
-            .prepare(&hw, &problem, &unit)
-            .is_ok()
-    );
+    let unit = UnitDirectReduceRoutine::settings(&hw)[0];
+    assert!(UnitDirectReduceRoutine::prepare(&hw, &problem, &unit).is_ok());
+    let zero = UnitDirectZeroReduceRoutine::settings(&hw)[0];
+    assert!(UnitDirectZeroReduceRoutine::prepare(&hw, &problem, &zero).is_ok());
 }
 
-/// `tensors` reduced by `routine` at `settings` on this device.
-///
-/// # Errors
-///
-/// Why the routine cannot run the problem here.
-fn launch_reduce_routine<R: ReduceLauncher<M>, M>(
-    routine: &R,
-    tensors: &ReduceTensors,
-    settings: &R::Settings,
-) -> Result<(), Refusal> {
-    let hw = Hardware::from_client(tensors.client());
-    let (blueprint, grid) = routine.prepare(&hw, tensors.problem(), settings)?;
-    routine.launch(tensors, blueprint, grid);
-    Ok(())
+/// On a device whose planes stay but whose cubes' stores do not reach one another within a launch,
+/// the last-arrival hypercube declines for that Feature alone, and the cube routine still prepares.
+#[test]
+fn the_hypercube_declines_without_device_memory_scope() {
+    let mut hw = devices::m2_pro();
+    devices::features(&mut hw).device_memory_scope = false;
+    let problem = problem(&[4, 4096], 1);
+    let hypercube = HypercubeLastArrivalReduceRoutine::settings(&hw)[0];
+    assert!(matches!(
+        HypercubeLastArrivalReduceRoutine::prepare(&hw, &problem, &hypercube),
+        Err(Refusal::Declined { .. })
+    ));
+    let cube = CubeStagedReduceRoutine::settings(&hw)[0];
+    assert!(CubeStagedReduceRoutine::prepare(&hw, &problem, &cube).is_ok());
 }

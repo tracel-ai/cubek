@@ -1,10 +1,4 @@
-use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Dimension, Space, StageStorage, stage::RowChunks};
-
-/// What a fragment that reads a tile off a pointer and a stride declines: swizzled tiles.
-pub const SWIZZLED_STAGE_UNREAD: Refusal = Refusal::Declined {
-    why: "a cmma fragment reads a stage tile by a stride, which swizzled tiles do not keep",
-};
 
 /// How a stage's rows lie over the shared memory banks.
 ///
@@ -26,7 +20,8 @@ pub enum StageLayout {
     PaddedBlocks,
     /// In tiles of the instruction, each row's chunks swizzled: what a fragment reads that hands
     /// every row its own address, as the tile DSL's own transport does; a cmma fragment reads a
-    /// tile off a pointer and a stride, and cannot.
+    /// tile off a pointer and a stride, so the tile pads its rows instead
+    /// ([`StageStorage::read_by`]).
     SwizzledBlocks,
 }
 

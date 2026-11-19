@@ -27,25 +27,25 @@ use cubek_std::routine::Routine;
 /// Why the unit routine cannot run the problem here, which no device refuses.
 pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
     let problem = tensors.problem();
-    if let Ok((blueprint, grid)) = UnitDirectReduceRoutine.prepare_first_served(hw, problem)
+    if let Ok((blueprint, grid)) = UnitDirectReduceRoutine::prepare_first_served(hw, problem)
         && short_of_the_device(hw, &grid.launch) == 0
         && unit_keeps_up(hw, problem, blueprint.width)
     {
-        UnitDirectReduceRoutine.launch(tensors, blueprint, grid);
+        UnitDirectReduceRoutine::launch(tensors, blueprint, grid);
         return Ok(());
     }
-    if let Ok((blueprint, grid)) = PlaneShuffleReduceRoutine.prepare_first_served(hw, problem)
+    if let Ok((blueprint, grid)) = PlaneShuffleReduceRoutine::prepare_first_served(hw, problem)
         && short_of_the_device(hw, &grid.launch) == 0
     {
-        PlaneShuffleReduceRoutine.launch(tensors, blueprint, grid);
+        PlaneShuffleReduceRoutine::launch(tensors, blueprint, grid);
         return Ok(());
     }
     if let Some((blueprint, grid)) = hypercube_filling_the_device(hw, tensors) {
-        HypercubeLastArrivalReduceRoutine.launch(tensors, blueprint, grid);
+        HypercubeLastArrivalReduceRoutine::launch(tensors, blueprint, grid);
         return Ok(());
     }
-    if let Ok((blueprint, grid)) = CubeStagedReduceRoutine.prepare_first_served(hw, problem) {
-        CubeStagedReduceRoutine.launch(tensors, blueprint, grid);
+    if let Ok((blueprint, grid)) = CubeStagedReduceRoutine::prepare_first_served(hw, problem) {
+        CubeStagedReduceRoutine::launch(tensors, blueprint, grid);
         return Ok(());
     }
     ReduceKernel::Unit.launch(hw, tensors)
@@ -80,31 +80,35 @@ fn hypercube_filling_the_device(
     cubek_std::routine::Grid,
 )> {
     let problem = tensors.problem();
-    let routine = HypercubeLastArrivalReduceRoutine;
     let mut most_cubes = None;
     let longest_only = matches!(
         problem.operation.carrier(),
         ReduceCarrier::TopK { .. } | ReduceCarrier::TopValues { .. }
     );
-    let settings = routine.settings(hw).into_iter().filter(|settings| {
-        !longest_only || settings.unit_lines == HypercubeLastArrivalReduceSettings::UNIT_LINES[0]
-    });
+    let settings = HypercubeLastArrivalReduceRoutine::settings(hw)
+        .into_iter()
+        .filter(|settings| {
+            !longest_only
+                || settings.unit_lines == HypercubeLastArrivalReduceSettings::UNIT_LINES[0]
+        });
     for settings in settings {
-        let Ok((blueprint, grid)) = routine.prepare(hw, problem, &settings) else {
+        let Ok((blueprint, grid)) =
+            HypercubeLastArrivalReduceRoutine::prepare(hw, problem, &settings)
+        else {
             continue;
         };
         let units =
             (blueprint.microkernel.part().lanes() * blueprint.microkernel.part().planes()) as u32;
         let fill = hw.cubes_to_fill(units)? as usize;
-        let boxes = problem.row_boxes(blueprint.width);
+        let boxes = problem.row_boxes_at_width(blueprint.width);
         let parts = ReduceSplitExtents::new(problem, &blueprint.partitioning).parts as usize;
         if boxes >= fill {
             return None;
         }
-        if parts < 2 {
+        // A row in one part is the cube routine's, not a split.
+        let Some(cubes) = (parts >= 2).then_some(boxes * parts) else {
             continue;
-        }
-        let cubes = boxes * parts;
+        };
         if cubes >= fill {
             return Some((blueprint, grid));
         }

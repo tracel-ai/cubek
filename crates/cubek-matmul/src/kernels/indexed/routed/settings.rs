@@ -41,11 +41,12 @@ impl RoutedFloors {
         tensors: &RoutedMatmulTensors,
     ) -> Result<(), Refusal> {
         let plane_shuffle = Listing::admitted(&self.plane_shuffle, stack)
-            .map(|floor| tensors.served_by(hw, &PlaneShuffleMatmulRoutine, &floor.settings));
+            .map(|floor| tensors.served_by::<_, _, PlaneShuffleMatmulRoutine>(hw, &floor.settings));
         let cube_staged = Listing::admitted(&self.cube_staged, stack)
-            .map(|floor| tensors.served_by(hw, &CubeStagedMatmulRoutine, &floor.settings));
-        let unit_registers = Listing::admitted(&self.unit_registers, stack)
-            .map(|floor| tensors.served_by(hw, &UnitRegistersMatmulRoutine, &floor.settings));
+            .map(|floor| tensors.served_by::<_, _, CubeStagedMatmulRoutine>(hw, &floor.settings));
+        let unit_registers = Listing::admitted(&self.unit_registers, stack).map(|floor| {
+            tensors.served_by::<_, _, UnitRegistersMatmulRoutine>(hw, &floor.settings)
+        });
         first_served(plane_shuffle.chain(cube_staged).chain(unit_registers))
     }
 
@@ -99,12 +100,8 @@ impl RoutedCandidates {
     /// The settings worth racing on `hw`.
     pub(crate) fn new(hw: &Hardware) -> Self {
         let plane_shuffle = Listing::float_then_packed(
-            PlaneShuffleMatmulRoutine.settings(hw),
-            [
-                PlaneShuffleMatmulRoutine.packed_settings(),
-                PlaneShuffleMatmulRoutine.packed_by_block_settings(),
-            ]
-            .concat(),
+            PlaneShuffleMatmulRoutine::settings(hw),
+            PlaneShuffleMatmulRoutine::indexed_packed_settings(),
         );
         let mut packed = CubeStagedMatmulRoutine.packed_one_step_settings();
         let rest: Vec<_> = CubeStagedMatmulRoutine
@@ -113,9 +110,8 @@ impl RoutedCandidates {
             .filter(|settings| !packed.contains(settings))
             .collect();
         packed.extend(rest);
-        let cube_staged = Listing::merged(CubeStagedMatmulRoutine.settings(hw), packed);
-        let unit_registers = UnitRegistersMatmulRoutine
-            .settings(hw)
+        let cube_staged = Listing::merged(CubeStagedMatmulRoutine::settings(hw), packed);
+        let unit_registers = UnitRegistersMatmulRoutine::settings(hw)
             .into_iter()
             .map(|settings| Listing {
                 settings,

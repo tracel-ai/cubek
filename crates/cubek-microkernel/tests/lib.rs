@@ -10,8 +10,6 @@ mod attention;
 mod attention_backward;
 #[cfg(feature = "interpolate")]
 mod interpolate;
-#[cfg(feature = "linear-recurrence")]
-mod linear_recurrence;
 #[cfg(feature = "matmul")]
 mod matmul;
 #[cfg(feature = "pool")]

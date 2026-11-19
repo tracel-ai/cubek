@@ -12,12 +12,12 @@ pub fn strategies() -> Vec<CatalogEntry<RandomStrategy>> {
         CatalogEntry::new(
             "plane",
             "Plane",
-            RandomStrategy::Specific(RandomKernel::Plane(PlaneRandomRoutine.settings(hw)[0])),
+            RandomStrategy::Specific(RandomKernel::Plane(PlaneRandomRoutine::settings(hw)[0])),
         ),
         CatalogEntry::new(
             "unit",
             "Unit",
-            RandomStrategy::Specific(RandomKernel::Unit(UnitRandomRoutine.settings(hw)[0])),
+            RandomStrategy::Specific(RandomKernel::Unit(UnitRandomRoutine::settings(hw)[0])),
         ),
     ]
 }

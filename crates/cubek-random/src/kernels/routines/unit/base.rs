@@ -46,7 +46,7 @@ impl Routine for UnitRandomRoutine {
     type Blueprint = UnitRandomRoutineBlueprint;
     type Partitioning = Partitioning;
 
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         UnitRandomMicrokernel::settings(hw)
             .into_iter()
             .map(|microkernel| UnitRandomRoutineSettings { microkernel })
@@ -55,7 +55,6 @@ impl Routine for UnitRandomRoutine {
 
     /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &UnitRandomMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<()>,
@@ -68,7 +67,6 @@ impl Routine for UnitRandomRoutine {
     /// runtime reports as its shared memory, lands there. Its line is the one a register holds the
     /// generator at: four `u32` registers advance per draw against a single store.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &RandomRoutineProblem,
         settings: &Self::Settings,
@@ -111,7 +109,6 @@ impl Routine for UnitRandomRoutine {
     }
 
     fn estimate(
-        &self,
         _problem: &RandomRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,

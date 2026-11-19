@@ -3,9 +3,7 @@ use crate::attention::{D, DV, G, Q, S};
 use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
 };
-use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-};
+use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
@@ -151,9 +149,9 @@ impl PlaneKeyGradientMicrokernel {
     /// a sum that drains by bouncing through shared memory, a cmma one; none for one whose units
     /// hold their own cells and scale them in place.
     pub fn sum_scratch(&self) -> Scratch {
-        match self.key_gradient.instruction.drain() {
-            PlaneFragmentDrain::Bounce => self.settings.scratch,
-            PlaneFragmentDrain::CellByCell => Scratch::None,
+        match self.key_gradient.cost.bounced_cell {
+            Some(_) => self.settings.scratch,
+            None => Scratch::None,
         }
     }
 
@@ -204,26 +202,14 @@ impl PlaneKeyGradientMicrokernel {
         let (score_tile, gradient_tile) = ([keys, queries, head], [keys, queries, value]);
         let (value_tile, key_tile) = ([keys, value, queries], [keys, head, queries]);
         let holder = settings.score;
-        let score_call = holder.sum_pick(hw, &score_item, score_tile)?;
-        let gradient_call = holder.sum_pick(hw, &gradient_item, gradient_tile)?;
-        let value_call = holder.reader_pick(hw, score_call, &value_item, value_tile)?;
-        let key_call = holder.reader_pick(hw, gradient_call, &key_item, key_tile)?;
+        let score = holder.sum_plane(hw, &score_item, grid, score_tile)?;
+        let score_gradient = holder.sum_plane(hw, &gradient_item, grid, gradient_tile)?;
         Some(Self {
             settings,
-            score: PlaneFragmentMicrokernel::holding(&score_item, grid, score_tile, score_call)?,
-            score_gradient: PlaneFragmentMicrokernel::holding(
-                &gradient_item,
-                grid,
-                gradient_tile,
-                gradient_call,
-            )?,
-            value_gradient: PlaneFragmentMicrokernel::holding(
-                &value_item,
-                grid,
-                value_tile,
-                value_call,
-            )?,
-            key_gradient: PlaneFragmentMicrokernel::holding(&key_item, grid, key_tile, key_call)?,
+            value_gradient: holder.reader_plane(hw, &score, &value_item, grid, value_tile)?,
+            key_gradient: holder.reader_plane(hw, &score_gradient, &key_item, grid, key_tile)?,
+            score,
+            score_gradient,
         })
     }
 
@@ -238,6 +224,8 @@ impl PlaneKeyGradientMicrokernel {
     ) -> PlaneFragmentMicrokernel {
         PlaneFragmentMicrokernel {
             instruction: score.instruction,
+            step: None,
+            cost: score.instruction.cost(),
             orders: score.instruction.orders(product.layouts),
             settings: PlaneFragmentMicrokernelSettings {
                 along_m,
@@ -363,8 +351,8 @@ impl Microkernel for PlaneKeyGradientMicrokernel {
                 operand,
                 elements: product.leaf_extent(MatmulDim::N),
             });
-            // A manual fragment drains one cell at a time, wherever its unit holds it.
-            if product.instruction.drain() == PlaneFragmentDrain::CellByCell {
+            // A sum nothing bounces drains one cell at a time, wherever its unit holds it.
+            if product.cost.bounced_cell.is_none() {
                 vectorization.require(VectorRequirement::Elementwise { operand });
             }
         }

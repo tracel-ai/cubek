@@ -1,5 +1,5 @@
 use super::base::CubeStagedReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
+use crate::reduce::{ReduceAccumulator, ReduceCarrier, read_mapped, row_values};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -8,8 +8,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// the rows it reduces, consecutive units reading consecutive lines; each plane's lanes meet in the
 /// plane's instructions, the planes meet in shared memory ([`ReduceAccumulator::across_planes`]), and the
 /// cube's first unit writes the total to `out`, the cube's window of the output.
-///
-/// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
 pub(crate) fn cube_staged_reduce_microkernel<
     In: Numeric,
@@ -37,23 +35,15 @@ pub(crate) fn cube_staged_reduce_microkernel<
             microkernel,
         ),
         ReduceCarrier::TopK { k } => {
-            let size!(K) = k;
-            cube_staged_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
-                input,
-                out,
-                indices,
-                microkernel,
-            )
+            cube_staged_reduce_top_k::<In, Acc, Out, Idx, N>(input, out, indices, microkernel, k)
         }
-        ReduceCarrier::TopValues { k } => {
-            let size!(K) = k;
-            cube_staged_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
-                input,
-                out,
-                indices,
-                microkernel,
-            )
-        }
+        ReduceCarrier::TopValues { k } => cube_staged_reduce_top_values::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            microkernel,
+            k,
+        ),
     }
 }
 
@@ -77,11 +67,9 @@ fn cube_staged_reduce<
 
     let total = cube_staged_reduce_part::<In, Acc, N, C>(input, 0, count, microkernel);
 
+    let values = row_values::<N>(count, layout);
+
     if PLANE_POS == 0 && UNIT_POS_PLANE == 0 {
-        let values = match layout {
-            ReduceLayout::Along => count * N::value(),
-            ReduceLayout::Across => count,
-        };
         C::write::<Out, Idx>(
             total,
             out,
@@ -124,14 +112,51 @@ pub(crate) fn cube_staged_reduce_part<
     for step in 0..count.div_ceil(units) {
         let line = unit + step * units;
         if line < count {
-            let read = read_mapped::<Acc, N>(
-                Vector::<Acc, N>::cast_from(lines.read(line)),
-                operation.read_map(),
+            C::accumulate(
+                &mut acc,
+                read_mapped::<Acc, N>(
+                    Vector::<Acc, N>::cast_from(lines.read(line)),
+                    operation.read_map(),
+                ),
+                first_line + line,
+                layout,
+                monoid,
             );
-            C::accumulate(&mut acc, read, first_line + line, layout, monoid);
         }
     }
 
     let plane = C::across(acc, UnitShare::Plane, monoid);
     C::across_planes(plane, microkernel.planes(), monoid)
+}
+
+/// [`cube_staged_reduce`] into a top-k of `k` slots, `K` bound in the function that uses it.
+#[cube]
+fn cube_staged_reduce_top_k<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    cube_staged_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+}
+
+/// [`cube_staged_reduce`] into a top-k of `k` values without their indices, `K` bound in the
+/// function that uses it.
+#[cube]
+fn cube_staged_reduce_top_values<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    cube_staged_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+        input,
+        out,
+        indices,
+        microkernel,
+    )
 }

@@ -42,16 +42,14 @@ impl Routine for CubeStagedReduceRoutine {
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes: it has no knob of its own.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeStagedReduceMicrokernel::settings(hw)
             .into_iter()
             .map(|microkernel| CubeStagedReduceSettings { microkernel })
             .collect()
     }
 
-    /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &CubeStagedReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
@@ -60,7 +58,6 @@ impl Routine for CubeStagedReduceRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -73,7 +70,7 @@ impl Routine for CubeStagedReduceRoutine {
         let widths = reduce_widths(hw, problem, vectorization, widest);
         let partitioning = Partitioning::new(
             problem.space(),
-            Levels::leaf(&problem.owner_box(widths[0]))
+            Levels::leaf(&problem.owner_box_at_width(widths[0]))
                 .cubes(&[BATCH])
                 .build(),
         );
@@ -89,7 +86,6 @@ impl Routine for CubeStagedReduceRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,
@@ -105,7 +101,6 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
     const NAME: &'static str = "cube-staged-reduce";
 
     fn dispatch<I: TileOperand>(
-        &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -117,23 +112,23 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles; its shared memory is the slots its microkernel declares, which the grid
         // counted.
-        match (binding.indices, problem.indices) {
-            (Some(indices), Some(index)) => unsafe {
-                cube_staged_reduce_with_indices_kernel::launch_unchecked::<I>(
-                    client,
-                    grid.launch.cube_count,
-                    grid.launch.cube_dim,
-                    blueprint.width,
-                    binding.input,
-                    binding.out,
-                    indices.arg(),
-                    binding.launcher.partitioning_arg(),
-                    blueprint.microkernel,
-                    [elements.input, elements.accumulator, elements.out, index],
-                )
-            },
-            _ => unsafe {
-                cube_staged_reduce_kernel::launch_unchecked::<I>(
+        unsafe {
+            match binding.indices.zip(problem.indices) {
+                Some((indices, index)) => {
+                    cube_staged_reduce_with_indices_kernel::launch_unchecked::<I>(
+                        client,
+                        grid.launch.cube_count,
+                        grid.launch.cube_dim,
+                        blueprint.width,
+                        binding.input,
+                        binding.out,
+                        indices.arg(),
+                        binding.launcher.partitioning_arg(),
+                        blueprint.microkernel,
+                        [elements.input, elements.accumulator, elements.out, index],
+                    )
+                }
+                None => cube_staged_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
@@ -143,8 +138,8 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
                     binding.launcher.partitioning_arg(),
                     blueprint.microkernel,
                     [elements.input, elements.accumulator, elements.out],
-                )
-            },
+                ),
+            }
         }
     }
 }

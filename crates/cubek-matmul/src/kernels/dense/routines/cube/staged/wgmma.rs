@@ -64,7 +64,7 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
     /// Two plane groups along `m`, each one `64 × 128` instruction four steps of `K` a stage (a
     /// 128-byte swizzle span of `f16`), two stages in flight. None without a bulk tensor copy and
     /// a plane group MMA.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.bulk_tensor_copy() || hw.properties.features.matmul.wgmma.iter().next().is_none() {
             return Vec::new();
         }
@@ -80,7 +80,6 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
     }
 
     fn vectorize(
-        &self,
         microkernel: &CubeStagedMicrokernel,
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -89,7 +88,6 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeStagedMatmulRoutineBlueprint,
         grid: &Grid,
@@ -102,7 +100,6 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
     /// over one filling plane; the microkernel refuses a plane group MMA its fill and drain do not
     /// serve.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,

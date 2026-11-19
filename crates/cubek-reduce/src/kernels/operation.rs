@@ -2,15 +2,11 @@
 //! strategy picks on the tile routines.
 
 use crate::ReduceError;
-use crate::kernels::{
-    ReduceElements, ReduceKernelHeuristic, ReduceOpStrategy, ReduceTensors, launch_tuned, select,
-};
+use crate::kernels::{ReduceElements, ReduceOpStrategy, ReduceTensors};
 use cubecl::Device;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
 use cubek_microkernel::reduce::ReduceOperation;
-use cubek_std::Hardware;
 
 /// A reduction of one tensor along one axis, run by the kernel its strategy picks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,9 +25,17 @@ impl Reduce {
     ///
     /// # Errors
     ///
-    /// Where `axis` or `output`'s shape does not fit `input`, and [`ReduceError::Validation`]
-    /// with the kernel's reason where a [`Specific`](ReduceOpStrategy::Specific) kernel declines
-    /// the problem.
+    /// [`ReduceError::InvalidAxis`] where `axis` is not a dim of `input`,
+    /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is shorter than the `k` a top-k
+    /// keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one above,
+    /// and [`ReduceError::Refused`] with the kernel's refusal where the kernel the strategy picks
+    /// cannot run the problem on this device: a [`Specific`](ReduceOpStrategy::Specific) one, or
+    /// the unit kernel the rule falls back to.
+    ///
+    /// # Panics
+    ///
+    /// Where `input` has 256 axes or more, a top-k keeps `k = 0` values, or a row split across
+    /// cubes is longer than `u32` counts.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -54,7 +58,7 @@ impl Reduce {
             operation.written_per_row(),
         )?;
         let tensors = ReduceTensors::new(client, input, output, axis, operation, elements);
-        launched(self.strategy, device, tensors)
+        self.strategy.launch(device, tensors)
     }
 
     /// [`execute`](Self::execute), the values written to `values` in `elements.out` and their
@@ -63,8 +67,14 @@ impl Reduce {
     ///
     /// # Errors
     ///
-    /// As [`execute`](Self::execute), and [`ReduceError::IndicesUnsupported`] for an operation
-    /// whose values carry no index.
+    /// As [`execute`](Self::execute); [`ReduceError::IndicesUnsupported`] for an operation whose
+    /// values carry no index; and [`ReduceError::MismatchIndicesShape`] or
+    /// [`ReduceError::MismatchIndicesStrides`] where `indices` differs from `values` in shape or
+    /// strides.
+    ///
+    /// # Panics
+    ///
+    /// As [`execute`](Self::execute).
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -100,31 +110,8 @@ impl Reduce {
             elements,
             index_element,
         );
-        launched(self.strategy, device, tensors)
+        self.strategy.launch(device, tensors)
     }
-}
-
-/// `tensors` reduced as `strategy` picks the kernel, on `device`.
-fn launched(
-    strategy: ReduceOpStrategy,
-    device: &Device,
-    tensors: ReduceTensors,
-) -> Result<(), ReduceError> {
-    let hw = Hardware::from_client(tensors.client());
-    let launched = match strategy {
-        ReduceOpStrategy::Autotune => {
-            launch_tuned(tensors, device);
-            Ok(())
-        }
-        ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile) => select(&hw, &tensors),
-        ReduceOpStrategy::Specific(kernel) => kernel.launch(&hw, &tensors),
-    };
-    launched.map_err(|why| ReduceError::Validation {
-        details: match why {
-            Refusal::Declined { why } => why,
-            _ => "the reduce kernel cannot launch this problem on this device",
-        },
-    })
 }
 
 /// The operation that writes `operation`'s values with their indices: the value and its index
@@ -140,17 +127,17 @@ fn indexed(operation: ReduceOperation) -> Result<ReduceOperation, ReduceError> {
         ReduceOperation::TopK { k } | ReduceOperation::ArgTopK { k } => {
             Ok(ReduceOperation::ArgTopK { k })
         }
-        ReduceOperation::Sum => Err(unindexed("Sum")),
-        ReduceOperation::Prod => Err(unindexed("Prod")),
-        ReduceOperation::Mean => Err(unindexed("Mean")),
-        ReduceOperation::MaxAbs => Err(unindexed("MaxAbs")),
-        ReduceOperation::Any => Err(unindexed("Any")),
-        ReduceOperation::All => Err(unindexed("All")),
+        ReduceOperation::Sum => Err(unindexed_operation_named("Sum")),
+        ReduceOperation::Prod => Err(unindexed_operation_named("Prod")),
+        ReduceOperation::Mean => Err(unindexed_operation_named("Mean")),
+        ReduceOperation::MaxAbs => Err(unindexed_operation_named("MaxAbs")),
+        ReduceOperation::Any => Err(unindexed_operation_named("Any")),
+        ReduceOperation::All => Err(unindexed_operation_named("All")),
     }
 }
 
 /// Why [`Reduce::execute_with_indices`] refuses the operation `operation_name`.
-fn unindexed(operation_name: &'static str) -> ReduceError {
+fn unindexed_operation_named(operation_name: &'static str) -> ReduceError {
     ReduceError::IndicesUnsupported {
         operation: operation_name,
     }

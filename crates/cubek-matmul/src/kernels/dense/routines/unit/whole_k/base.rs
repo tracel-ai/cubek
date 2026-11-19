@@ -135,7 +135,7 @@ impl Routine for UnitWholeKMatmulRoutine {
     /// more loads together and holds more registers):
     /// [`launch_first_served_on`](MatmulRoutine::launch_first_served_on) runs the first setting
     /// that serves.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if hw.plane_size().is_ok() {
             return Vec::new();
         }
@@ -162,7 +162,6 @@ impl Routine for UnitWholeKMatmulRoutine {
     /// Nothing of its own: it walks the launch's planes and their units, and its microkernel makes
     /// every access.
     fn vectorize(
-        &self,
         microkernel: &UnitRegistersMicrokernel,
         _: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -173,7 +172,6 @@ impl Routine for UnitWholeKMatmulRoutine {
     /// Each unit reads every row of the lhs along all of `K`, and its own columns of the rhs
     /// once, from global memory. Then its microkernel, for the work.
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &UnitWholeKMatmulRoutineBlueprint,
         grid: &Grid,
@@ -215,7 +213,6 @@ impl Routine for UnitWholeKMatmulRoutine {
     /// As wide as the device dispatches a plane and the cube's unit budget allows, since any width
     /// is correct.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
@@ -238,7 +235,7 @@ impl Routine for UnitWholeKMatmulRoutine {
             PlaneOrder::new(&[(N, planes)], CubeOrder::RowMajor),
         );
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
             MatmulBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ());
         let cube = CubeResources {
@@ -312,7 +309,7 @@ mod tests {
             devices::h100(),
             devices::cpu_12(),
         ] {
-            assert!(UnitWholeKMatmulRoutine.settings(&hw).is_empty(), "{hw:?}");
+            assert!(UnitWholeKMatmulRoutine::settings(&hw).is_empty(), "{hw:?}");
         }
     }
 
@@ -320,7 +317,7 @@ mod tests {
     #[test]
     fn the_default_leads_and_no_setting_repeats() {
         for hw in uncommitted() {
-            let settings = UnitWholeKMatmulRoutine.settings(&hw);
+            let settings = UnitWholeKMatmulRoutine::settings(&hw);
             assert_eq!(settings[0], UnitWholeKMatmulRoutineSettings::DEFAULT);
             for (index, setting) in settings.iter().enumerate() {
                 assert!(!settings[index + 1..].contains(setting), "{setting}");
@@ -338,7 +335,7 @@ mod tests {
                 for (n, k) in [(4096, 2048), (2048, 2048), (6144, 2048), (2048, 6144)] {
                     for rhs in [MatmulLayout::Col, MatmulLayout::Row] {
                         let prepared =
-                            UnitWholeKMatmulRoutine.prepare(&hw, &decode(m, n, k, rhs), &settings);
+                            UnitWholeKMatmulRoutine::prepare(&hw, &decode(m, n, k, rhs), &settings);
                         assert!(
                             prepared.is_ok(),
                             "{m}x{k}x{n}, rhs {rhs}, on {hw:?}: {prepared:?}"
@@ -353,9 +350,9 @@ mod tests {
     #[test]
     fn every_setting_serves_both_layouts() {
         for hw in uncommitted() {
-            for settings in UnitWholeKMatmulRoutine.settings(&hw) {
+            for settings in UnitWholeKMatmulRoutine::settings(&hw) {
                 for rhs in [MatmulLayout::Row, MatmulLayout::Col] {
-                    let prepared = UnitWholeKMatmulRoutine.prepare(
+                    let prepared = UnitWholeKMatmulRoutine::prepare(
                         &hw,
                         &decode(4, 4096, 2048, rhs),
                         &settings,
@@ -376,7 +373,7 @@ mod tests {
         let hw = devices::rdna_range();
         let settings = UnitWholeKMatmulRoutineSettings::DEFAULT;
         let rows = |m| {
-            UnitWholeKMatmulRoutine.prepare(
+            UnitWholeKMatmulRoutine::prepare(
                 &hw,
                 &decode(m, 2048, 2048, MatmulLayout::Row),
                 &settings,
@@ -394,13 +391,12 @@ mod tests {
     #[test]
     fn a_col_rhs_is_read_in_vectors_along_k() {
         for hw in uncommitted() {
-            let (blueprint, _) = UnitWholeKMatmulRoutine
-                .prepare(
-                    &hw,
-                    &decode(1, 2048, 2048, MatmulLayout::Col),
-                    &UnitWholeKMatmulRoutineSettings::DEFAULT,
-                )
-                .expect("the default serves a col rhs");
+            let (blueprint, _) = UnitWholeKMatmulRoutine::prepare(
+                &hw,
+                &decode(1, 2048, 2048, MatmulLayout::Col),
+                &UnitWholeKMatmulRoutineSettings::DEFAULT,
+            )
+            .expect("the default serves a col rhs");
             assert!(blueprint.widths.rhs > 1, "{hw:?}");
             assert_eq!(blueprint.widths.rhs, blueprint.widths.lhs, "{hw:?}");
         }
@@ -413,8 +409,7 @@ mod tests {
         let problem = decode(4, 4096, 2048, MatmulLayout::Row);
         let settings = UnitWholeKMatmulRoutineSettings::DEFAULT;
         let prepare = |hw: Hardware| {
-            UnitWholeKMatmulRoutine
-                .prepare(&hw, &problem, &settings)
+            UnitWholeKMatmulRoutine::prepare(&hw, &problem, &settings)
                 .expect("the default serves a row rhs")
         };
         let (wave32, wave32_grid) = prepare(devices::strix_halo());

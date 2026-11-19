@@ -32,9 +32,12 @@ pub enum MGroupedChunk {
 /// Each declines where another runs: the plane shuffle where the device commits to no plane
 /// width, its default against a packed stack, which its lead against a packed rhs reads, and the
 /// cube staged routine on a CPU runtime, which holds fewer units a cube than its planes.
+///
+/// The plane shuffle's by-block lead serves a packed stack whose `K` is no whole number of words
+/// of scales, which every other floor declines.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MGroupedFloors {
-    pub plane_shuffle: [Listing<MGroupedSettings<PlaneShuffleMatmulRoutineSettings>>; 2],
+    pub plane_shuffle: [Listing<MGroupedSettings<PlaneShuffleMatmulRoutineSettings>>; 3],
     pub cube_staged: [Listing<MGroupedSettings<CubeStagedMatmulRoutineSettings>>; 2],
 }
 
@@ -48,6 +51,10 @@ impl MGroupedFloors {
             Listing {
                 settings: MGroupedSettings::PLANE_SHUFFLE_PACKED,
                 kind: ListedFor::Either,
+            },
+            Listing {
+                settings: MGroupedSettings::PLANE_SHUFFLE_PACKED_BY_BLOCK,
+                kind: ListedFor::Packed,
             },
         ],
         cube_staged: [
@@ -78,6 +85,13 @@ impl MGroupedSettings<PlaneShuffleMatmulRoutineSettings> {
         ..Self::PLANE_SHUFFLE
     };
 
+    /// The packed lead reading the stack a scale block at a time: what reads a packed stack whose
+    /// `K` is no whole number of words of scales.
+    pub const PLANE_SHUFFLE_PACKED_BY_BLOCK: Self = Self {
+        routine: PlaneShuffleMatmulRoutineSettings::PACKED_BY_BLOCK,
+        ..Self::PLANE_SHUFFLE
+    };
+
     /// Every plane shuffle setting worth racing on `hw`, for the stacks each is listed for. Each
     /// declines a stack it cannot read, so the float ones race on a packed stack too: some read
     /// one faster than the packed lead does.
@@ -92,8 +106,7 @@ impl MGroupedSettings<PlaneShuffleMatmulRoutineSettings> {
     /// which pad a small group less and read a large one's slab more often.
     pub fn plane_shuffle(hw: &Hardware) -> Vec<Self> {
         let most = PlaneShuffleMicrokernel::MAX_ROWS;
-        let full = PlaneShuffleMatmulRoutine
-            .settings(hw)
+        let full = PlaneShuffleMatmulRoutine::settings(hw)
             .into_iter()
             .map(|routine| Self {
                 routine,
@@ -107,12 +120,13 @@ impl MGroupedSettings<PlaneShuffleMatmulRoutineSettings> {
     }
 
     /// The plane shuffle's settings worth racing against a packed stack: the dense routine's
-    /// own for a packed rhs, over chunks of the most rows it holds. Not its capped launch
+    /// own for an indexed packed rhs
+    /// ([`indexed_packed_settings`](PlaneShuffleMatmulRoutine::indexed_packed_settings)), over
+    /// chunks of the most rows it holds. Not its capped launch
     /// ([`PACKED_PERSISTENT`](PlaneShuffleMatmulRoutineSettings::PACKED_PERSISTENT)): an indexed
     /// launch hands its cubes the chunks beside the columns, which a capped launch declines.
     pub fn plane_shuffle_packed() -> Vec<Self> {
-        PlaneShuffleMatmulRoutine
-            .packed_settings()
+        PlaneShuffleMatmulRoutine::indexed_packed_settings()
             .into_iter()
             .filter(|routine| routine.planes_per_worker.is_none())
             .map(|routine| Self {
@@ -146,7 +160,7 @@ impl MGroupedSettings<CubeStagedMatmulRoutineSettings> {
     /// The cube staged routine's settings worth racing on `hw` against a float stack, each over
     /// chunks of the tile its cubes hold.
     pub fn cube_staged(hw: &Hardware) -> Vec<Self> {
-        Self::over_cube_tiles(CubeStagedMatmulRoutine.settings(hw))
+        Self::over_cube_tiles(CubeStagedMatmulRoutine::settings(hw))
     }
 
     /// The cube staged routine's settings worth racing on `hw` against a packed stack, each over
@@ -170,8 +184,7 @@ impl MGroupedSettings<CubeStagedAsyncCopyMatmulRoutineSettings> {
     /// The copy engine's cube staged routine's settings worth racing on `hw`, each over chunks of
     /// the tile its cubes hold.
     pub fn cube_staged_async_copy(hw: &Hardware) -> Vec<Self> {
-        CubeStagedAsyncCopyMatmulRoutine
-            .settings(hw)
+        CubeStagedAsyncCopyMatmulRoutine::settings(hw)
             .into_iter()
             .map(|routine| Self {
                 routine,

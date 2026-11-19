@@ -116,9 +116,10 @@ impl CubeAttentionMicrokernel {
     }
 
     /// The storage a stage of keys and values over `stage` is held in: as the settings lay it
-    /// out, blocked as its planes read it.
+    /// out, blocked and arranged as its planes read it and its delivery fills it.
     pub fn stage_storage(&self, stage: &Space) -> StageStorage {
-        self.plane.stage_storage(self.settings.layout, stage)
+        self.plane
+            .stage_storage(self.settings.layout, self.delivery.fills(), stage)
     }
 
     /// The settings' delivery as `hw` moves its stages over `ring`: the copy engine where it was
@@ -142,9 +143,10 @@ impl CubeAttentionMicrokernel {
     }
 
     /// The storage its query, staged once over `stage`, is held in: as the settings lay out the
-    /// stages of keys and values, blocked as its planes read it.
+    /// stages of keys and values, blocked and arranged as its planes read it.
     pub fn query_storage(&self, stage: &Space) -> StageStorage {
-        self.plane.query_storage(self.settings.layout, stage)
+        self.plane
+            .query_storage(self.settings.layout, self.delivery.fills(), stage)
     }
 
     /// The query as it stages it once for its walk: its heads' rows over the whole head dim.
@@ -252,13 +254,13 @@ impl Microkernel for CubeAttentionMicrokernel {
 
     /// The cube's settings over each kind of plane, fragments then shuffles, each list led by its
     /// kind's lead ([`CubeAttentionMicrokernelSettings::listed`]).
-    fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         [
             CubeAttentionMicrokernelSettings::FRAGMENT,
             CubeAttentionMicrokernelSettings::SHUFFLE,
         ]
         .into_iter()
-        .flat_map(CubeAttentionMicrokernelSettings::listed)
+        .flat_map(|lead| lead.listed(hw))
         .collect()
     }
 

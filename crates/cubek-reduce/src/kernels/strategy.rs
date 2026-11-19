@@ -3,24 +3,27 @@
 //! Every variant but `Specific` is a policy; `Specific` is a pin, as in the matmul and attention
 //! families.
 
+use crate::ReduceError;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceLauncher, ReduceTensors, UnitDirectReduceRoutine,
-    UnitDirectZeroRoutine,
+    UnitDirectZeroReduceRoutine, launch_tuned, select,
 };
+use cubecl::Device;
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
+use cubek_std::routine::Routine;
 use serde::{Deserialize, Serialize};
 
 /// How a reduction picks its kernel: measure the routines, pick one by rule, or run one named
 /// kernel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum ReduceOpStrategy {
-    /// Pick by measurement: every routine at every setting the device lists joins an autotune
-    /// ([`tune`](super::tune)), and the fastest runs, per problem and per device. The default.
+    /// Pick by measurement: every routine at every setting the device lists joins an autotune, and
+    /// the fastest runs, per problem and per device. The default.
     #[default]
     Autotune,
-    /// Pick by rule, reaching no further than the named family ([`select`](super::select)).
+    /// Pick by rule, reaching no further than the named family.
     Heuristic(ReduceKernelHeuristic),
     /// Run exactly this kernel, for measuring it or holding it to a reference. A kernel that
     /// cannot run the problem returns its refusal, never another kernel's result.
@@ -39,23 +42,37 @@ pub enum ReduceKernelHeuristic {
 /// routine's settings that serves the problem.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReduceKernel {
-    /// [`UnitDirectReduceRoutine`]: a unit reads a whole row. Asks nothing of the device, so it serves
+    /// `UnitDirectReduceRoutine`: a unit reads a whole row. Asks nothing of the device, so it serves
     /// every problem everywhere.
     Unit,
-    /// [`PlaneShuffleReduceRoutine`]: a plane reads a row, its lanes' partials meeting through plane
+    /// `PlaneShuffleReduceRoutine`: a plane reads a row, its lanes' partials meeting through plane
     /// instructions.
     PlaneShuffle,
-    /// [`CubeStagedReduceRoutine`]: a cube reads a row, its planes' partials meeting in shared memory.
+    /// `CubeStagedReduceRoutine`: a cube reads a row, its planes' partials meeting in shared memory.
     CubeStaged,
-    /// [`HypercubeLastArrivalReduceRoutine`]: a row split across cubes, the last cube to arrive merging
+    /// `HypercubeLastArrivalReduceRoutine`: a row split across cubes, the last cube to arrive merging
     /// every part.
     HypercubeLastArrival,
-    /// [`HypercubeAtomicReduceRoutine`] after [`UnitDirectZeroRoutine`]: a row split across cubes, each
+    /// `HypercubeAtomicReduceRoutine` after `UnitDirectZeroReduceRoutine`: a row split across cubes, each
     /// adding its part into the zeroed output. Sums only.
     HypercubeAtomic,
 }
 
 impl ReduceOpStrategy {
+    /// `tensors` reduced on `device` by the kernel this strategy picks.
+    ///
+    /// # Errors
+    ///
+    /// [`ReduceError::Refused`] where the picked kernel cannot run the problem on this device.
+    pub(crate) fn launch(self, device: &Device, tensors: ReduceTensors) -> Result<(), ReduceError> {
+        let hw = Hardware::from_client(tensors.client());
+        match self {
+            Self::Autotune => launch_tuned(tensors, device),
+            Self::Heuristic(ReduceKernelHeuristic::Tile) => Ok(select(&hw, &tensors)?),
+            Self::Specific(kernel) => Ok(kernel.launch(&hw, &tensors)?),
+        }
+    }
+
     /// Every strategy: the policies, then a pin of every kernel.
     pub fn all() -> Vec<Self> {
         let heuristics = ReduceKernelHeuristic::all()
@@ -125,29 +142,41 @@ impl ReduceKernel {
     /// # Errors
     ///
     /// Why its routine cannot run the problem here.
+    ///
+    /// # Panics
+    ///
+    /// As [`Reduce::execute`](crate::kernels::Reduce::execute).
     pub fn launch(&self, hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
         match self {
-            Self::Unit => launch_first_served(&UnitDirectReduceRoutine, hw, tensors),
-            Self::PlaneShuffle => launch_first_served(&PlaneShuffleReduceRoutine, hw, tensors),
-            Self::CubeStaged => launch_first_served(&CubeStagedReduceRoutine, hw, tensors),
+            Self::Unit => launch_first_served::<UnitDirectReduceRoutine, _>(hw, tensors),
+            Self::PlaneShuffle => launch_first_served::<PlaneShuffleReduceRoutine, _>(hw, tensors),
+            Self::CubeStaged => launch_first_served::<CubeStagedReduceRoutine, _>(hw, tensors),
             Self::HypercubeLastArrival => {
-                launch_first_served(&HypercubeLastArrivalReduceRoutine, hw, tensors)
+                launch_first_served::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors)
             }
-            Self::HypercubeAtomic => {
-                launch_first_served(&UnitDirectZeroRoutine, hw, tensors)?;
-                launch_first_served(&HypercubeAtomicReduceRoutine, hw, tensors)
-            }
+            Self::HypercubeAtomic => launch_zeroed_atomic(hw, tensors),
         }
     }
 }
 
-/// `tensors` reduced by `routine` at the first of its settings `hw` prepares them at.
+/// `tensors` summed by the atomic hypercube into their output, zeroed first. Both routines prepare
+/// before either launches, so a refusal leaves the output as the caller gave it.
+fn launch_zeroed_atomic(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
+    let (zero_blueprint, zero_grid) =
+        UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
+    let (blueprint, grid) =
+        HypercubeAtomicReduceRoutine::prepare_first_served(hw, tensors.problem())?;
+    UnitDirectZeroReduceRoutine::launch(tensors, zero_blueprint, zero_grid);
+    HypercubeAtomicReduceRoutine::launch(tensors, blueprint, grid);
+    Ok(())
+}
+
+/// `tensors` reduced by `R` at the first of its settings `hw` prepares them at.
 fn launch_first_served<R: ReduceLauncher<M>, M>(
-    routine: &R,
     hw: &Hardware,
     tensors: &ReduceTensors,
 ) -> Result<(), Refusal> {
-    let (blueprint, grid) = routine.prepare_first_served(hw, tensors.problem())?;
-    routine.launch(tensors, blueprint, grid);
+    let (blueprint, grid) = R::prepare_first_served(hw, tensors.problem())?;
+    R::launch(tensors, blueprint, grid);
     Ok(())
 }

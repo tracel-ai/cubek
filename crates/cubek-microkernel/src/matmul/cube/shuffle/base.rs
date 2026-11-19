@@ -51,6 +51,11 @@ pub struct CubeShuffleMicrokernel {
 
 /// The plane microkernel a cube shuffle's planes run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a setting a kernel compiles, held by value as the cube's other knobs are; the \
+              fragment plane holds the Step it hands the tile"
+)]
 pub enum CubeShufflePlane {
     /// The software plane: its units take `K` in turns, each summing its share in registers.
     Shuffle(PlaneShuffleMicrokernel),

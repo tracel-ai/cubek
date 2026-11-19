@@ -144,15 +144,12 @@ where
 
     /// Every setting the routine lists on the test device, on each of `products`.
     pub(crate) fn at_every_setting(&self, products: &[P]) -> Vec<AtSetting<R::Settings, P>> {
-        self.at(self.routine.settings(&self.hw), products)
+        self.at(R::settings(&self.hw), products)
     }
 
     /// The routine's lead, the first setting it lists on the test device, on each of `products`.
     pub(crate) fn at_its_lead(&self, products: &[P]) -> Vec<AtSetting<R::Settings, P>> {
-        self.at(
-            self.routine.settings(&self.hw).into_iter().take(1),
-            products,
-        )
+        self.at(R::settings(&self.hw).into_iter().take(1), products)
     }
 
     /// Each of `settings` on each of `products`.

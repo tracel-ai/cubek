@@ -12,8 +12,6 @@ pub mod attention;
 pub mod attention_backward;
 #[cfg(feature = "interpolate")]
 pub mod interpolate;
-#[cfg(feature = "linear-recurrence")]
-pub mod linear_recurrence;
 #[cfg(any(feature = "matmul", feature = "attention"))]
 mod lines;
 #[cfg(feature = "matmul")]
@@ -26,7 +24,7 @@ pub mod random;
 pub mod reduce;
 #[cfg(feature = "rms-norm")]
 pub mod rms_norm;
-#[cfg(feature = "row-store")]
+#[cfg(any(feature = "rms-norm", feature = "swiglu"))]
 mod row_batch;
 #[cfg(feature = "attention")]
 pub mod split_keys_merge;
@@ -39,5 +37,5 @@ pub mod zero;
 
 #[cfg(any(feature = "matmul", feature = "attention"))]
 pub use lines::Lines;
-#[cfg(feature = "row-store")]
+#[cfg(any(feature = "rms-norm", feature = "swiglu"))]
 pub use row_batch::RowBatch;

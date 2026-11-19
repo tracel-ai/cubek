@@ -5,20 +5,12 @@
 //! finite values, the rest `-inf`, and their lengths leave padding in vectors
 //! and planes.
 
-use cubecl::{
-    features::Plane,
-    zspace::{Shape, Strides},
-};
+use cubecl::zspace::{Shape, Strides};
 use cubek_reduce::kernels::ReduceOpStrategy;
 
 use super::test_case::{CUBE, PLANE, TestCase, UNIT};
 
 const K: usize = 4;
-
-fn supports_plane() -> bool {
-    let client = cubecl::test_device().client();
-    client.properties().features.plane.contains(Plane::Ops)
-}
 
 fn supports_f16_arithmetic() -> bool {
     cubek_test_utils::supports_f16_arithmetic(&cubecl::test_device().client())
@@ -81,9 +73,6 @@ fn unit_k_equals_row_f32() {
 
 #[test]
 fn plane_parallel_f32() {
-    if !supports_plane() {
-        return;
-    }
     run_topk(
         case(Shape::new([9, 50]), Strides::new(&[50, 1]), 1, PLANE),
         K,
@@ -92,9 +81,6 @@ fn plane_parallel_f32() {
 
 #[test]
 fn plane_perpendicular_f32() {
-    if !supports_plane() {
-        return;
-    }
     run_topk(
         case(Shape::new([50, 9]), Strides::new(&[9, 1]), 0, PLANE),
         K,
@@ -103,9 +89,6 @@ fn plane_perpendicular_f32() {
 
 #[test]
 fn plane_strided_f32() {
-    if !supports_plane() {
-        return;
-    }
     run_topk(
         case(Shape::new([9, 50]), Strides::new(&[128, 2]), 1, PLANE),
         K,
@@ -114,17 +97,11 @@ fn plane_strided_f32() {
 
 #[test]
 fn plane_k_equals_row_f32() {
-    if !supports_plane() {
-        return;
-    }
     run_topk(case(Shape::new([9, K]), Strides::new(&[K, 1]), 1, PLANE), K);
 }
 
 #[test]
 fn cube_f32() {
-    if !supports_plane() {
-        return;
-    }
     run_topk(
         case(Shape::new([9, 50]), Strides::new(&[50, 1]), 1, CUBE),
         K,
@@ -144,7 +121,7 @@ fn unit_parallel_f16() {
 
 #[test]
 fn plane_parallel_f16() {
-    if !supports_plane() || !supports_f16_arithmetic() {
+    if !supports_f16_arithmetic() {
         return;
     }
     run_topk(
@@ -159,11 +136,7 @@ fn plane_parallel_f16() {
 fn lowest_integer_rows_i32() {
     let shape = Shape::new([9, 50]);
     let strides = Strides::new(&[50, 1]);
-    let mut strategies = vec![UNIT];
-    if supports_plane() {
-        strategies.push(PLANE);
-    }
-    for strategy in strategies {
+    for strategy in [UNIT, PLANE] {
         let case = TestCase::new::<i32>(shape.clone(), strides.clone(), Some(1), strategy)
             .with_data(vec![i32::MIN as f32; 9 * 50]);
         case.test_topk(K);

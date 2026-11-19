@@ -40,7 +40,7 @@ fn every_packed_plane_shuffle_setting_reads_each_route_s_packed_slab() {
         .into_iter()
         .flat_map(|format| [Routed::MOE.packed(format), Routed::NARROW.packed(format)])
         .collect();
-    shuffle.check_some(shuffle.at(PlaneShuffleMatmulRoutine.packed_settings(), &products));
+    shuffle.check_some(shuffle.at(PlaneShuffleMatmulRoutine::packed_settings(), &products));
 }
 
 /// The routed autotune, against a stack laid either way it takes: a col float stack, its buffer

@@ -1,6 +1,7 @@
-use crate::kernels::{BATCH, REDUCED};
+use crate::kernels::{BATCH, REDUCED, ReduceRoutineProblem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::TileOperand;
+use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Partitioning, Region, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::ReduceLayout;
@@ -8,20 +9,39 @@ use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
 
 /// The extents a hypercube launch is handed at run time, which its kernel does not compile.
 #[derive(CubeType, CubeLaunch, Debug, Clone, Copy)]
-pub struct ReduceSplitExtents {
+pub(crate) struct ReduceSplitExtents {
     /// Parts a row is split into, a cube each.
     pub parts: u32,
     /// Values a row holds, which a mean divides by.
     pub values: u32,
 }
 
+impl ReduceSplitExtents {
+    /// The extents of `problem` split by `partitioning`.
+    ///
+    /// # Panics
+    ///
+    /// Where the reduced extent or its parts do not fit in 32 bits.
+    pub fn new(problem: &ReduceRoutineProblem, partitioning: &Partitioning) -> Self {
+        let part = partitioning.box_of(ComputeScope::Cube).extent(REDUCED);
+        Self {
+            parts: u32_of_extent(problem.reduced_extent().div_ceil(part)),
+            values: u32_of_extent(problem.reduced_extent()),
+        }
+    }
+}
+
+fn u32_of_extent(extent: usize) -> u32 {
+    u32::try_from(extent).expect("a reduced extent fits in 32 bits")
+}
+
 /// Where `cube` sits along its row: its box of rows' counter, its part, and its part's first line
 /// in the row.
 #[derive(CubeType)]
 struct SplitPlace {
-    counter: usize,
-    part: usize,
-    first_line: usize,
+    pub counter: usize,
+    pub part: usize,
+    pub first_line: usize,
 }
 
 #[cube]

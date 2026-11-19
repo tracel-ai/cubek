@@ -63,7 +63,7 @@ impl Routine for UnitAttentionRoutine {
 
     /// Its microkernel's settings ([`UnitAttentionMicrokernel::settings`]), each at the routine's
     /// default, then a cube as full as the device holds ([`Hardware::full_cube_planes`]).
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         let lead = UnitAttentionRoutineSettings::DEFAULT;
         let full = Self::Settings {
             planes: NonZeroUsize::new(hw.full_cube_planes()).unwrap(),
@@ -81,7 +81,6 @@ impl Routine for UnitAttentionRoutine {
 
     /// Nothing of its own: it walks the launch's units, and its microkernel makes every access.
     fn vectorize(
-        &self,
         microkernel: &UnitAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
@@ -93,7 +92,6 @@ impl Routine for UnitAttentionRoutine {
     /// value of the walk, straight from global memory — each unit of the cube reading them again —
     /// and writes its rows once. Then its microkernel, for the work.
     fn estimate(
-        &self,
         problem: &AttentionRoutineProblem,
         blueprint: &UnitAttentionRoutineBlueprint,
         grid: &Grid,
@@ -129,7 +127,6 @@ impl Routine for UnitAttentionRoutine {
     /// device dispatches one and no wider than the cube's unit budget leaves for each: any width
     /// is correct. The width sizes the grid and the cubes the units are grouped in.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
@@ -160,7 +157,7 @@ impl Routine for UnitAttentionRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
             AttentionBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ());
         Ok((blueprint, grid))
@@ -249,9 +246,9 @@ mod tests {
             devices::cpu_12(),
             offering(devices::m2_pro(), 8),
         ] {
-            for (position, settings) in UnitAttentionRoutine.settings(&hw).iter().enumerate() {
+            for (position, settings) in UnitAttentionRoutine::settings(&hw).iter().enumerate() {
                 for problem in problems() {
-                    let prepared = UnitAttentionRoutine.prepare(&hw, &problem, settings);
+                    let prepared = UnitAttentionRoutine::prepare(&hw, &problem, settings);
                     let outgrown = matches!(prepared, Err(Refusal::CubePastDevice { .. }));
                     assert!(
                         prepared.is_ok() || (position > 0 && outgrown),
@@ -269,9 +266,12 @@ mod tests {
     fn every_operand_binds_wider_than_one_element() {
         for hw in [devices::rdna_range(), devices::cpu_12()] {
             for problem in problems() {
-                let (blueprint, _) = UnitAttentionRoutine
-                    .prepare(&hw, &problem, &UnitAttentionRoutineSettings::DEFAULT)
-                    .expect("the floor prepares everywhere");
+                let (blueprint, _) = UnitAttentionRoutine::prepare(
+                    &hw,
+                    &problem,
+                    &UnitAttentionRoutineSettings::DEFAULT,
+                )
+                .expect("the floor prepares everywhere");
                 let widths = blueprint.widths;
                 assert!(widths.key > 1, "{hw:?}: {widths:?}");
                 assert_eq!(widths.key, widths.query);
@@ -287,14 +287,12 @@ mod tests {
     #[test]
     fn a_decode_step_fills_a_cube_with_heads() {
         let hw = devices::cpu_12();
-        let full = UnitAttentionRoutine
-            .settings(&hw)
+        let full = UnitAttentionRoutine::settings(&hw)
             .into_iter()
             .find(|settings| settings.planes.get() == 12)
             .expect("a cube on every core is listed");
         let problem = AttentionRoutineProblem::dense((1, 16, 8), (1, 512), (128, 128), F16);
-        let (_, grid) = UnitAttentionRoutine
-            .prepare(&hw, &problem, &full)
+        let (_, grid) = UnitAttentionRoutine::prepare(&hw, &problem, &full)
             .expect("the floor prepares everywhere");
         assert_eq!(grid.planes().count, 12);
         assert_eq!(grid.cubes(), Some(2));

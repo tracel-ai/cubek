@@ -21,9 +21,8 @@ mod fragment {
     use cubek_microkernel::attention::plane::{ROW_STATE_HELD_BY_UNIT, ScoreHolder};
     use cubek_microkernel::attention::{AttentionMicrokernel, D, G, Q, S};
     use cubek_microkernel::matmul::MatmulDim;
-    use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
+    use cubek_std::microkernel::{StageLayout, StageRing};
 
-    const ROUTINE: CubeStagedAttentionRoutine = CubeStagedAttentionRoutine;
     type Settings = CubeStagedAttentionRoutineSettings;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -54,21 +53,22 @@ mod fragment {
     }
 
     /// Every setting prepares where the device offers a square instruction and a cube holds a plane
-    /// for every head; one other than the default may ask for more than a cube holds, or for a
-    /// layout its planes do not read, and says so.
+    /// for every head; one other than the default may ask for more than a cube holds, and says
+    /// so.
     #[test]
     fn every_setting_prepares_where_planes_run() {
         for hw in [
             offering(devices::m2_pro(), 8),
             offering(devices::h100(), 16),
         ] {
-            for (position, settings) in ROUTINE.settings(&hw).iter().enumerate() {
+            for (position, settings) in CubeStagedAttentionRoutine::settings(&hw).iter().enumerate()
+            {
                 for problem in problems() {
-                    let prepared = ROUTINE.prepare(&hw, &problem, settings);
+                    let prepared = CubeStagedAttentionRoutine::prepare(&hw, &problem, settings);
                     let declined = matches!(
                         prepared,
                         Err(Refusal::SharedMemoryPastDevice { .. } | Refusal::CubePastDevice { .. })
-                    ) || prepared.as_ref().err() == Some(&SWIZZLED_STAGE_UNREAD);
+                    );
                     assert!(
                         prepared.is_ok() || (position > 0 && declined),
                         "{settings} on {hw:?}: {prepared:?}"
@@ -105,8 +105,7 @@ mod fragment {
     fn f16_runs_on_a_square_instruction_by_default() {
         let hw = offering_nvidia(devices::h100());
         let [_, _, f16, _] = problems();
-        let (blueprint, _) = ROUTINE
-            .prepare(&hw, &f16, &Settings::DEFAULT)
+        let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &f16, &Settings::DEFAULT)
             .expect("f16 prepares on an NVIDIA GPU's shapes");
         let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
             panic!("the routine runs plane fragments")
@@ -122,8 +121,7 @@ mod fragment {
     fn f32_runs_on_tf32_where_the_device_offers_nothing_exact() {
         let hw = offering_nvidia(devices::h100());
         let [_, _, _, f32] = problems();
-        let (blueprint, _) = ROUTINE
-            .prepare(&hw, &f32, &Settings::DEFAULT)
+        let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &f32, &Settings::DEFAULT)
             .expect("f32 prepares on tf32's 16×16×8");
         let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
             panic!("the routine runs plane fragments")
@@ -163,8 +161,7 @@ mod fragment {
             },
             ..lead
         };
-        let (blueprint, _) = ROUTINE
-            .prepare(&hw, &f32, &through_registers)
+        let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &f32, &through_registers)
             .expect("f32 prepares on tf32");
         assert_eq!(blueprint.microkernel.ring, StageRing::SINGLE);
     }
@@ -188,8 +185,7 @@ mod fragment {
                 },
                 ..Settings::DEFAULT
             };
-            let (blueprint, _) = ROUTINE
-                .prepare(&hw, &problem, &settings)
+            let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &problem, &settings)
                 .expect("the lead's box prepares on the M2 in every layout");
             blueprint
         };
@@ -242,6 +238,57 @@ mod fragment {
         );
     }
 
+    /// A swizzled stage is one a cmma fragment cannot read, which takes its tiles off a pointer
+    /// and a stride: the tile pads its rows instead, so the setting prepares the padded stage
+    /// rather than declining.
+    #[test]
+    fn a_swizzled_stage_is_padded_under_cmma() {
+        let hw = offering(devices::m2_pro(), 8);
+        let [_, _, problem, _] = problems();
+        let storage = |layout| {
+            let settings = Settings {
+                microkernel: CubeAttentionMicrokernelSettings {
+                    layout,
+                    ..Settings::DEFAULT.microkernel
+                },
+                ..Settings::DEFAULT
+            };
+            let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &problem, &settings)
+                .expect("the lead's box prepares on the M2");
+            blueprint.shared_memory
+        };
+        assert_eq!(
+            storage(StageLayout::SwizzledBlocks),
+            storage(StageLayout::PaddedBlocks)
+        );
+    }
+
+    /// A swizzled stage is listed only where the device offers the manual `mma`, the only
+    /// transport that reads it swizzled: elsewhere it would lay the padded stage another setting
+    /// already names, and a race would time that kernel twice.
+    #[test]
+    fn a_swizzled_stage_is_listed_only_beside_the_manual_mma() {
+        let swizzled = |hw: &Hardware| {
+            CubeStagedAttentionRoutine::settings(hw)
+                .iter()
+                .any(|settings| settings.microkernel.layout == StageLayout::SwizzledBlocks)
+        };
+        let manual = MmaConfig {
+            a_type: F16,
+            b_type: F16,
+            cd_type: F32,
+            m: 16,
+            n: 8,
+            k: 16,
+        };
+        assert!(!swizzled(&offering(devices::m2_pro(), 8)));
+        assert!(!swizzled(&offering(devices::h100(), 16)));
+        assert!(swizzled(&devices::offering_mma(
+            offering(devices::h100(), 16),
+            [manual]
+        )));
+    }
+
     /// The copy engine fills a stage where the device has one and the ring lands the lines in
     /// shared memory, and only lines of 4, 8 or 16 bytes, the copies it makes. A ring that
     /// prefetches through the units' registers, or a device with no engine, has the units copy.
@@ -259,8 +306,7 @@ mod fragment {
                 },
                 ..Settings::DEFAULT
             };
-            let (blueprint, _) = ROUTINE
-                .prepare(hw, &problem, &settings)
+            let (blueprint, _) = CubeStagedAttentionRoutine::prepare(hw, &problem, &settings)
                 .expect("the lead prepares on any ring");
             blueprint
         };
@@ -297,9 +343,9 @@ mod fragment {
     fn a_cube_stages_its_keys_once_for_every_head() {
         let hw = offering(devices::m2_pro(), 8);
         let [_, problem, _, _] = problems();
-        let (blueprint, grid) = ROUTINE
-            .prepare(&hw, &problem, &Settings::DEFAULT)
-            .expect("the default prepares on the M2");
+        let (blueprint, grid) =
+            CubeStagedAttentionRoutine::prepare(&hw, &problem, &Settings::DEFAULT)
+                .expect("the default prepares on the M2");
         let (cube, stage) = (
             blueprint.partitioning.cube_space(),
             blueprint.partitioning.stage(),
@@ -328,22 +374,21 @@ mod fragment {
         };
         let hw = devices::offering_mma(offering(devices::h100(), 16), [manual(16), manual(8)]);
         let holder = |settings: CubeAttentionMicrokernelSettings| {
-            let (blueprint, _) = ROUTINE
-                .prepare(
-                    &hw,
-                    &problems()[2],
-                    &Settings {
-                        microkernel: settings,
-                        ..Settings::DEFAULT
-                    },
-                )
-                .expect("prepares where both cmma and the manual mma are offered");
+            let (blueprint, _) = CubeStagedAttentionRoutine::prepare(
+                &hw,
+                &problems()[2],
+                &Settings {
+                    microkernel: settings,
+                    ..Settings::DEFAULT
+                },
+            )
+            .expect("prepares where both cmma and the manual mma are offered");
             let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
                 panic!("the routine runs plane fragments")
             };
             plane.score_holder()
         };
-        let settings = ROUTINE.settings(&hw);
+        let settings = CubeStagedAttentionRoutine::settings(&hw);
         let lead = settings[0].microkernel;
         assert_eq!(holder(lead), ScoreHolder::Fragments);
         for split in settings
@@ -375,7 +420,7 @@ mod fragment {
             planes_along_keys: NonZeroUsize::new(2).unwrap(),
             ..Settings::DEFAULT.microkernel
         };
-        let prepared = ROUTINE.prepare(
+        let prepared = CubeStagedAttentionRoutine::prepare(
             &hw,
             &problems()[2],
             &Settings {
@@ -398,8 +443,7 @@ mod fragment {
         let hw = offering(devices::m2_pro(), 8);
         let [_, _, problem, _] = problems();
         let reverses_queries = |settings: &Settings| {
-            let (blueprint, _) = ROUTINE
-                .prepare(&hw, &problem, settings)
+            let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &problem, settings)
                 .expect("the lead's box prepares on the M2 in either order");
             blueprint
                 .partitioning
@@ -408,7 +452,7 @@ mod fragment {
                 .iter()
                 .any(|level| level.is_reversed(Q))
         };
-        let settings = ROUTINE.settings(&hw);
+        let settings = CubeStagedAttentionRoutine::settings(&hw);
         assert_eq!(settings[0], Settings::DEFAULT);
         assert!(
             settings[1..]

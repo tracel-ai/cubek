@@ -25,7 +25,7 @@ pub fn bench(
     let device = cubecl::test_device();
     let client = device.client();
 
-    let bench = ReduceBench {
+    let bench = ReduceBenchmark {
         shape: problem.shape.clone(),
         axis: problem.axis,
         operation: problem.operation,
@@ -117,7 +117,11 @@ impl InputOrder {
     }
 }
 
-struct ReduceBench {
+/// The range a uniform input is drawn from.
+const UNIFORM_LOW: f32 = 0.0;
+const UNIFORM_HIGH: f32 = 1.0;
+
+struct ReduceBenchmark {
     shape: Vec<usize>,
     axis: usize,
     operation: ReduceOperation,
@@ -129,7 +133,7 @@ struct ReduceBench {
     samples: usize,
 }
 
-impl ReduceBench {
+impl ReduceBenchmark {
     /// `input` reduced into `out` by `operation`, in `elements`, at this bench's strategy.
     fn reduce(
         &self,
@@ -150,9 +154,23 @@ impl ReduceBench {
             )
             .map_err(|err| format!("{err}"))
     }
+
+    /// What a caller needing both halves does without the fused launch: `input` reduced twice,
+    /// once for the values into `values` in `elements[0]`, once for the indices into `indices` in
+    /// `elements[1]`, each discarding the other half.
+    fn reduce_twice(
+        &self,
+        input: TensorHandle,
+        [values, indices]: [TensorHandle; 2],
+        [value_elements, index_elements]: [ReduceElements; 2],
+    ) -> Result<(), String> {
+        let (values_operation, indices_operation) = two_launch_operations(self.operation);
+        self.reduce(input.clone(), values, values_operation, value_elements)?;
+        self.reduce(input, indices, indices_operation, index_elements)
+    }
 }
 
-impl Benchmark for ReduceBench {
+impl Benchmark for ReduceBenchmark {
     /// `(input, values, indices)`. The index tensor is allocated for every kind so
     /// that allocation never lands inside the timed section, but only the
     /// two-launch and fused kinds write to it.
@@ -167,7 +185,7 @@ impl Benchmark for ReduceBench {
         let builder =
             TestInput::builder(client.clone(), Shape::from(self.shape.clone())).dtype(elem);
         let input = match InputOrder::from_env() {
-            InputOrder::Uniform => builder.uniform(0, 0., 1.),
+            InputOrder::Uniform => builder.uniform(0, UNIFORM_LOW, UNIFORM_HIGH),
             order => builder.custom(order.data(&self.shape, self.axis)),
         }
         .generate_without_host_data();
@@ -195,13 +213,11 @@ impl Benchmark for ReduceBench {
                 self.operation,
                 elements(output_dtype_for(self.operation, value_dtype)),
             )?,
-            // What a caller needing both halves does without the fused launch: run the whole
-            // reduction twice, discarding half of each result.
-            ReduceBenchKind::TwoLaunch => {
-                let (values_operation, indices_operation) = two_launch_operations(self.operation);
-                self.reduce(input.clone(), out, values_operation, elements(value_dtype))?;
-                self.reduce(input, indices, indices_operation, elements(index_dtype))?;
-            }
+            ReduceBenchKind::TwoLaunch => self.reduce_twice(
+                input,
+                [out, indices],
+                [elements(value_dtype), elements(index_dtype)],
+            )?,
             ReduceBenchKind::Fused => kernels::Reduce::new(self.strategy)
                 .execute_with_indices(
                     &self.client,

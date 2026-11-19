@@ -12,6 +12,9 @@ use cubek_std::routine::{Grid, Routine};
 
 /// A reduce routine around microkernel `M`, as a launcher: it launches the
 /// [`ReduceBlueprint`] it prepared on tensors.
+///
+/// A reduce routine's own code reads nothing: every access is its microkernel's, so its
+/// `vectorize` hands the whole pass to the microkernel.
 pub(crate) trait ReduceLauncher<M>:
     Routine<Problem = ReduceRoutineProblem, Blueprint = ReduceBlueprint<M>>
 {
@@ -21,7 +24,6 @@ pub(crate) trait ReduceLauncher<M>:
     /// Launch the kernel `blueprint` compiles for `problem`, on `grid`, its input served as `I`
     /// serves it, from the arguments `binding` holds.
     fn dispatch<I: TileOperand>(
-        &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -30,9 +32,9 @@ pub(crate) trait ReduceLauncher<M>:
     );
 
     /// `tensors` bound as `blueprint` states them and reduced on `grid`.
-    fn launch(&self, tensors: &ReduceTensors, blueprint: ReduceBlueprint<M>, grid: Grid) {
+    fn launch(tensors: &ReduceTensors, blueprint: ReduceBlueprint<M>, grid: Grid) {
         let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, Bound::arg);
-        self.dispatch::<StoredTileOperand>(
+        Self::dispatch::<StoredTileOperand>(
             tensors.problem(),
             tensors.client(),
             binding,
@@ -50,7 +52,6 @@ pub(crate) trait ReduceLauncher<M>:
     /// [`UNBOUND_LINES_NARROWER`] where `blueprint` reads narrower lines than the caller's input is
     /// stated at.
     fn launch_unbound<I: TileOperand>(
-        &self,
         tensors: &ReduceTensors<Geometry>,
         blueprint: ReduceBlueprint<M>,
         grid: Grid,
@@ -61,7 +62,7 @@ pub(crate) trait ReduceLauncher<M>:
             return Err(UNBOUND_LINES_NARROWER);
         }
         let binding = tensors.bind(&blueprint, &grid).map(input, Bound::arg);
-        self.dispatch::<I>(
+        Self::dispatch::<I>(
             tensors.problem(),
             tensors.client(),
             binding,

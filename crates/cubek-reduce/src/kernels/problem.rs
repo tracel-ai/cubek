@@ -12,14 +12,14 @@ use cubek_std::routine::EstimatedProblem;
 
 /// The rows: every axis of the input but the reduced one, folded into one dimension, the first
 /// axis coarsest.
-pub const BATCH: Dimension = Dimension(0);
+pub(crate) const BATCH: Dimension = Dimension(0);
 /// The axis a row runs along, which the reduction folds away.
-pub const REDUCED: Dimension = Dimension(1);
+pub(crate) const REDUCED: Dimension = Dimension(1);
 /// The cells a row writes, `k` for a top-k: the output's axis in place of the reduced one.
-pub const TOP: Dimension = Dimension(2);
+pub(crate) const TOP: Dimension = Dimension(2);
 /// A hypercube's partials, every part's carrier for a row side by side: the partials' axis in place
 /// of the reduced one.
-pub const PARTIALS: Dimension = Dimension(3);
+pub(crate) const PARTIALS: Dimension = Dimension(3);
 
 /// The elements of a reduction: what the input is stored in, what it accumulates in, and what the
 /// output is written in (an index's, where it writes indices).
@@ -33,9 +33,9 @@ pub struct ReduceElements {
 impl ReduceElements {
     /// The elements a reduction of `input` by `operation` runs in. It writes `out` where it writes
     /// no value of the input (an index, or the flag of `Any` and `All`), and the input's element
-    /// otherwise. A sum, a product or a mean accumulates in [`widened`] elements, every other
-    /// operation in the input's own: an extremum gains nothing from a wider carrier, and an index
-    /// or a flag is carried apart from the values.
+    /// otherwise. A sum, a product or a mean accumulates in widened elements (`f32`, `i32` or `u32`
+    /// for a narrower float or integer), every other operation in the input's own: an extremum
+    /// gains nothing from a wider carrier, and an index or a flag is carried apart from the values.
     ///
     /// # Panics
     ///
@@ -92,7 +92,7 @@ fn widened(input: ElemType) -> ElemType {
 ///
 /// Its space has fixed dimensions, whatever the rank: [`BATCH`], every axis but `axis` folded into
 /// one, [`REDUCED`], `axis` itself, and [`TOP`], the cells a row writes, which the output holds in
-/// place of `axis`. Each operand's layout maps its axes onto them ([`fold`](Self::fold)).
+/// place of `axis`. Each operand's layout maps its axes onto them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReduceRoutineProblem {
     pub shape: Vec<usize>,
@@ -158,7 +158,7 @@ impl ReduceRoutineProblem {
     /// (`REDUCED` for the input, `TOP` for the output and its indices, `PARTIALS` for a
     /// hypercube's partials), as its layout maps it onto the space, and the dimension each of its
     /// axes spans ([`folded`](Self::folded)).
-    pub fn fold(
+    pub(crate) fn fold(
         &self,
         mut binding: TensorBinding,
         along: Dimension,
@@ -170,7 +170,7 @@ impl ReduceRoutineProblem {
     }
 
     /// [`fold`](Self::fold) of an operand with no tensor, stated by its `geometry`.
-    pub fn fold_geometry(
+    pub(crate) fn fold_geometry(
         &self,
         geometry: &Geometry,
         along: Dimension,
@@ -221,23 +221,22 @@ impl ReduceRoutineProblem {
     /// How the input is checked where a tile reaches past its edge: a read there returns the
     /// identity of the operation's edge monoid ([`ReduceOperation::edge_monoid`]), which leaves
     /// the total unchanged (`tracel:cubecl::edge-reads-identity`).
-    pub fn input_boundary(&self) -> BoundaryPolicy {
+    pub(crate) fn input_boundary(&self) -> BoundaryPolicy {
         BoundaryPolicy::Overhanging(Boundary::Identity(self.operation.edge_monoid()))
     }
 
     /// Values a row reduces.
-    pub fn reduced_extent(&self) -> usize {
+    pub(crate) fn reduced_extent(&self) -> usize {
         self.shape[self.axis]
     }
 
-    /// Rows reduced.
-    pub fn row_count(&self) -> usize {
+    pub(crate) fn row_count(&self) -> usize {
         self.shape.iter().product::<usize>() / self.reduced_extent().max(1)
     }
 
     /// How the lines lie: along the reduced axis where it is the contiguous one, across it where
     /// another is, each lane of a line its own row; along it, a value a line, where none is.
-    pub fn layout(&self) -> ReduceLayout {
+    pub(crate) fn layout(&self) -> ReduceLayout {
         match self.contiguous {
             Some(axis) if axis != self.axis => ReduceLayout::Across,
             _ => ReduceLayout::Along,
@@ -245,7 +244,7 @@ impl ReduceRoutineProblem {
     }
 
     /// What every microkernel of this problem is handed.
-    pub fn work_item(&self) -> ReduceWorkItem {
+    pub(crate) fn work_item(&self) -> ReduceWorkItem {
         ReduceWorkItem {
             operation: self.operation,
             input: self.elements.input,
@@ -256,7 +255,7 @@ impl ReduceRoutineProblem {
     }
 
     /// Every dimension of the problem at its extent: what a routine partitions.
-    pub fn space(&self) -> Space {
+    pub(crate) fn space(&self) -> Space {
         Space::new(&[
             (BATCH, self.row_count()),
             (REDUCED, self.reduced_extent()),
@@ -266,7 +265,7 @@ impl ReduceRoutineProblem {
 
     /// [`space`](Self::space) and a hypercube's partials, `partial_extent` values of each box of
     /// rows'.
-    pub fn split_space(&self, partial_extent: usize) -> Space {
+    pub(crate) fn split_space_with_partial_extent(&self, partial_extent: usize) -> Space {
         Space::new(&[
             (BATCH, self.row_count()),
             (REDUCED, self.reduced_extent()),
@@ -278,7 +277,7 @@ impl ReduceRoutineProblem {
     /// The box an owner holds: one row, or `width` rows side by side across the reduced axis, and
     /// the cells it writes. It leaves the reduced axis to the space, so every owner spans its rows
     /// whole.
-    pub fn owner_box(&self, width: usize) -> Vec<(Dimension, usize)> {
+    pub(crate) fn owner_box_at_width(&self, width: usize) -> Vec<(Dimension, usize)> {
         let rows = match self.layout() {
             ReduceLayout::Across => width,
             ReduceLayout::Along => 1,
@@ -287,7 +286,7 @@ impl ReduceRoutineProblem {
     }
 
     /// How many boxes of rows the owners, `width` rows across the reduced axis, take.
-    pub fn row_boxes(&self, width: usize) -> usize {
+    pub(crate) fn row_boxes_at_width(&self, width: usize) -> usize {
         let rows = match self.layout() {
             ReduceLayout::Across => width,
             ReduceLayout::Along => 1,
@@ -299,7 +298,7 @@ impl ReduceRoutineProblem {
     /// the launch, the row length too, as today's reduce kernels read it, so one kernel serves
     /// every shape of a rank, layout, elements and widths. An owner's window is one row high, which
     /// its flat view reads with no division by the runtime length.
-    pub fn kernel(&self, partitioning: &Partitioning) -> Partitioning {
+    pub(crate) fn kernel(&self, partitioning: &Partitioning) -> Partitioning {
         let space = partitioning.space();
         let dynamic: Vec<Dimension> = space
             .dimensions()

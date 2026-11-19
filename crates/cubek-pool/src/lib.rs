@@ -64,7 +64,7 @@ pub fn pool2d(
     let hw = Hardware::from_client(client);
     let tensors = PoolTensors::new(client, input, output, options, dtype);
     let routine = CubeMaxPoolRoutine;
-    let settings = routine.settings(&hw)[0];
+    let settings = CubeMaxPoolRoutine::settings(&hw)[0];
     Ok(launch_pool_routine(&routine, &hw, &tensors, &settings)?)
 }
 

@@ -115,7 +115,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
     /// ([`HypercubeAttentionMicrokernelSettings::listed`]) on one cube a worker, then two.
     /// Nothing where one cube's stores do not reach another within a launch, or where the device
     /// does not say how many workers it has, where every one of them declines.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if HypercubeMerge::LastArrival.admits(hw).is_err() || hw.workers().is_none() {
             return Vec::new();
         }
@@ -123,7 +123,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
             .into_iter()
             .flat_map(|cubes| {
                 HypercubeAttentionMicrokernelSettings::FRAGMENT
-                    .listed()
+                    .listed(hw)
                     .into_iter()
                     .map(move |microkernel| Self::Settings {
                         microkernel,
@@ -136,7 +136,6 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
     /// Its cubes' microkernel's, and the output an element at a time: the last arrival merges a
     /// row's slots one element a unit, as the slots are written, and writes them as it holds them.
     fn vectorize(
-        &self,
         microkernel: &HypercubeAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
@@ -151,7 +150,6 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
     /// many steps of keys and values as that, whichever boxes they lie in, and leaves a partial
     /// for each box it shares, which is at most two.
     fn estimate(
-        &self,
         problem: &AttentionRoutineProblem,
         blueprint: &HypercubeStreamFragmentAttentionRoutineBlueprint,
         grid: &Grid,
@@ -181,7 +179,6 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
     /// asks for, its stages held as its planes read them, and the word it learns it came last in.
     /// Declines a cache of pages, which a run would walk across, and a packed one.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
@@ -195,10 +192,6 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
         HypercubeMerge::LastArrival.admits(hw)?;
         let item = problem.work_item();
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
-        microkernel
-            .cube
-            .plane
-            .reads_stage(microkernel.cube.settings.layout)?;
         if let CubeAttentionPlane::Fragment(plane) = &microkernel.cube.plane
             && plane.reads_keys_in_runs()
         {
@@ -223,7 +216,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(
             hw,
             problem,

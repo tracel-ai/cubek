@@ -12,7 +12,6 @@ use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::LaunchArg;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
-use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernelSettings;
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
@@ -51,21 +50,6 @@ impl core::fmt::Display for HypercubeLastArrivalReduceSettings {
 pub type HypercubeLastArrivalReduceBlueprint =
     ReduceBlueprint<HypercubeLastArrivalReduceMicrokernel>;
 
-impl ReduceSplitExtents {
-    /// The extents of `problem` split by `partitioning`.
-    pub fn new(problem: &ReduceRoutineProblem, partitioning: &Partitioning) -> Self {
-        let part = partitioning.box_of(ComputeScope::Cube).extent(REDUCED);
-        Self {
-            parts: to_u32(problem.reduced_extent().div_ceil(part)),
-            values: to_u32(problem.reduced_extent()),
-        }
-    }
-}
-
-fn to_u32(extent: usize) -> u32 {
-    u32::try_from(extent).expect("a reduced extent fits in 32 bits")
-}
-
 /// Values of a box of rows' partials along the partials dimension, for parts of `part` values: a
 /// carrier of the operation's cells a part, each line `width` values of one row along the reduced
 /// dim, one value of `width` rows across it.
@@ -85,7 +69,7 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes, each with the longest parts first.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         HypercubeLastArrivalReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
@@ -99,9 +83,7 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
             .collect()
     }
 
-    /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &HypercubeLastArrivalReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
@@ -110,7 +92,6 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -132,9 +113,13 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
                 ReduceLayout::Along => widths[0],
                 ReduceLayout::Across => 1,
             };
-        let owner = [problem.owner_box(widths[0]).as_slice(), &[(REDUCED, part)]].concat();
+        let owner = [
+            problem.owner_box_at_width(widths[0]).as_slice(),
+            &[(REDUCED, part)],
+        ]
+        .concat();
         let partitioning = Partitioning::new(
-            problem.split_space(partial_extent(problem, part, widths[0])),
+            problem.split_space_with_partial_extent(partial_extent(problem, part, widths[0])),
             Levels::leaf(&owner).cubes(&[REDUCED, BATCH]).build(),
         );
         let cube = CubeResources {
@@ -149,7 +134,6 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,
@@ -165,7 +149,6 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
     const NAME: &'static str = "hypercube-last-arrival-reduce";
 
     fn dispatch<I: TileOperand>(
-        &self,
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -187,7 +170,7 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
             .collect();
         let counter = ElemType::UInt(UIntKind::U32);
         let partials = TensorHandle::empty(client, partial_shape.clone(), elements.accumulator);
-        let row_boxes = problem.row_boxes(blueprint.width);
+        let row_boxes = problem.row_boxes_at_width(blueprint.width);
         let arrivals = TensorHandle::new_contiguous(
             [row_boxes],
             client.create(Bytes::from_elems(vec![0u32; row_boxes])),
@@ -216,58 +199,60 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
         // themselves in at by their box's coordinates. A cube writes no partial but its own part's,
         // and the last cube of a box reads them after every cube of the box stored its own. Its
         // shared memory is the slots its microkernel declares, which the grid counted.
-        match (binding.indices, problem.indices, partial_indices) {
-            (Some(indices), Some(index), Some(partial_indices)) => unsafe {
-                hypercube_last_arrival_reduce_with_indices_kernel::launch_unchecked::<I>(
+        let written = partial_indices
+            .map(|partial_indices| (partial_indices, binding.indices.zip(problem.indices)));
+        unsafe {
+            match written {
+                Some((partial_indices, Some((indices, index)))) => {
+                    hypercube_last_arrival_reduce_with_indices_kernel::launch_unchecked::<I>(
+                        client,
+                        grid.launch.cube_count,
+                        grid.launch.cube_dim,
+                        blueprint.width,
+                        binding.input,
+                        binding.out,
+                        indices.arg(),
+                        partials.arg(),
+                        partial_indices.arg(),
+                        arrivals,
+                        binding.launcher.partitioning_arg(),
+                        ReduceSplitExtentsLaunch::new(extents.parts, extents.values),
+                        blueprint.microkernel,
+                        [elements.input, elements.accumulator, elements.out, index],
+                    )
+                }
+                Some((partial_indices, None)) => {
+                    hypercube_last_arrival_reduce_indexed_kernel::launch_unchecked::<I>(
+                        client,
+                        grid.launch.cube_count,
+                        grid.launch.cube_dim,
+                        blueprint.width,
+                        binding.input,
+                        binding.out,
+                        partials.arg(),
+                        partial_indices.arg(),
+                        arrivals,
+                        binding.launcher.partitioning_arg(),
+                        ReduceSplitExtentsLaunch::new(extents.parts, extents.values),
+                        blueprint.microkernel,
+                        [elements.input, elements.accumulator, elements.out],
+                    )
+                }
+                None => hypercube_last_arrival_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
                     blueprint.width,
                     binding.input,
                     binding.out,
-                    indices.arg(),
                     partials.arg(),
-                    partial_indices.arg(),
-                    arrivals,
-                    binding.launcher.partitioning_arg(),
-                    ReduceSplitExtentsLaunch::new(extents.parts, extents.values),
-                    blueprint.microkernel,
-                    [elements.input, elements.accumulator, elements.out, index],
-                )
-            },
-            (_, _, Some(partial_indices)) => unsafe {
-                hypercube_last_arrival_reduce_indexed_kernel::launch_unchecked::<I>(
-                    client,
-                    grid.launch.cube_count,
-                    grid.launch.cube_dim,
-                    blueprint.width,
-                    binding.input,
-                    binding.out,
-                    partials.arg(),
-                    partial_indices.arg(),
                     arrivals,
                     binding.launcher.partitioning_arg(),
                     ReduceSplitExtentsLaunch::new(extents.parts, extents.values),
                     blueprint.microkernel,
                     [elements.input, elements.accumulator, elements.out],
-                )
-            },
-            _ => unsafe {
-                hypercube_last_arrival_reduce_kernel::launch_unchecked::<I>(
-                    client,
-                    grid.launch.cube_count,
-                    grid.launch.cube_dim,
-                    blueprint.width,
-                    binding.input,
-                    binding.out,
-                    partials.arg(),
-                    arrivals,
-                    binding.launcher.partitioning_arg(),
-                    ReduceSplitExtentsLaunch::new(extents.parts, extents.values),
-                    blueprint.microkernel,
-                    [elements.input, elements.accumulator, elements.out],
-                )
-            },
+                ),
+            }
         }
     }
 }

@@ -118,9 +118,8 @@ where
     )
     .expect("dense float operands bind");
     let hw = Hardware::from_client(&client);
-    let (blueprint, grid) = routine
-        .prepare_first_served(&hw, &tensors.problem())
-        .map_err(|why| format!("{name}: {why}"))?;
+    let (blueprint, grid) =
+        R::prepare_first_served(&hw, &tensors.problem()).map_err(|why| format!("{name}: {why}"))?;
     let CubeCount::Static(x, y, z) = grid.launch.cube_count.clone() else {
         panic!("a prepared grid is static");
     };

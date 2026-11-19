@@ -68,7 +68,7 @@ impl Routine for CubeMaxPoolRoutine {
     type Partitioning = Partitioning;
 
     /// Four planes of two rows a cube by default, then eight and sixteen planes.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeMaxPoolMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
@@ -82,7 +82,6 @@ impl Routine for CubeMaxPoolRoutine {
 
     /// Its blocks hand the microkernel a unit's channel run: the operands' lines divide it.
     fn vectorize(
-        &self,
         microkernel: &CubeMaxPoolMicrokernel,
         partitioning: &Partitioning,
         vectorization: &mut Vectorization<PoolOperand>,
@@ -93,7 +92,6 @@ impl Routine for CubeMaxPoolRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &PoolRoutineProblem,
         settings: &Self::Settings,
@@ -107,7 +105,7 @@ impl Routine for CubeMaxPoolRoutine {
             &settings.microkernel,
         )?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let width = problem.width(hw, &partitioning, vectorization);
         let cube = CubeResources {
             plane_width: plane_width as u32,
@@ -124,7 +122,6 @@ impl Routine for CubeMaxPoolRoutine {
     }
 
     fn estimate(
-        &self,
         _problem: &PoolRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,

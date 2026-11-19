@@ -15,7 +15,7 @@ pub struct UnitDirectZeroMicrokernel {}
 
 #[cube]
 impl UnitDirectZeroMicrokernel {
-    /// A unit's window `out`, every cell set to zero ([`unit_direct_zero_microkernel`]).
+    /// A unit's window `out`, every cell set to zero (`unit_direct_zero_microkernel`).
     pub fn execute(&self, out: &mut Tile) {
         unit_direct_zero_microkernel(out)
     }
@@ -27,7 +27,7 @@ pub struct UnitDirectZeroMicrokernelSettings;
 
 impl core::fmt::Display for UnitDirectZeroMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("one-unit")
+        f.write_str("default")
     }
 }
 

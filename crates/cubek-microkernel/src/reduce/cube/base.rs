@@ -1,5 +1,5 @@
-use super::microkernel::cube_staged_reduce_microkernel;
-use crate::reduce::{ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS};
+use super::microkernel::{cube_staged_reduce_microkernel, cube_staged_reduce_part};
+use crate::reduce::{ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS};
 use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
@@ -23,8 +23,7 @@ pub struct CubeStagedReduceMicrokernel {
     /// Planes of the cube.
     #[cube(comptime)]
     planes: usize,
-    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width
-    /// ([`ReduceOperation::widest_line_at_lane_slots`](crate::reduce::ReduceOperation::widest_line_at_lane_slots)).
+    /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
     #[cube(comptime)]
     lane_slots: usize,
 }
@@ -41,17 +40,14 @@ impl CubeStagedReduceMicrokernel {
         }
     }
 
-    /// Its `item`.
     pub fn item(&self) -> ReduceWorkItem {
         self.item
     }
 
-    /// Its `lanes`.
     pub fn lanes(&self) -> usize {
         self.lanes
     }
 
-    /// Its `planes`.
     pub fn planes(&self) -> usize {
         self.planes
     }
@@ -66,7 +62,11 @@ impl CubeStagedReduceMicrokernel {
 
 #[cube]
 impl CubeStagedReduceMicrokernel {
-    /// One cube's row of `input` reduced into `out` and `indices` ([`cube_staged_reduce_microkernel`]).
+    /// One cube's row of `input` reduced into `out` and `indices` (`cube_staged_reduce_microkernel`).
+    ///
+    /// # Panics
+    ///
+    /// Where its item writes the indices beside the values and `indices` is none.
     pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         input: &Tile,
@@ -85,14 +85,35 @@ impl CubeStagedReduceMicrokernel {
             }),
         )
     }
+
+    /// The first `count` lines of `input` accumulated by the cube into `C`, the line at `l` read
+    /// as line `first_line + l` of its row: a part of a row that cubes split, which every unit of
+    /// the cube is left holding (`cube_staged_reduce_part`).
+    pub fn reduce_part<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+        &self,
+        input: &Tile,
+        first_line: usize,
+        count: usize,
+    ) -> C {
+        cube_staged_reduce_part::<In, Acc, N, C>(
+            input,
+            first_line,
+            count,
+            comptime!(CubeStagedReduceMicrokernel {
+                item: self.item,
+                lanes: self.lanes,
+                planes: self.planes,
+                lane_slots: self.lane_slots
+            }),
+        )
+    }
 }
 
 /// How many planes a cube runs, and its top-k lane slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeStagedReduceMicrokernelSettings {
     pub planes: usize,
-    /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width
-    /// ([`ReduceOperation::widest_line_at_lane_slots`](crate::reduce::ReduceOperation::widest_line_at_lane_slots)).
+    /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
     pub lane_slots: usize,
 }
 

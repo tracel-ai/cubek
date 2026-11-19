@@ -17,11 +17,11 @@ struct ZeroCase {
     element: ElemType,
 }
 
-struct UnitZero {
+struct UnitZeroScopeUnderTest {
     hw: Hardware,
 }
 
-impl ScopeUnderTest for UnitZero {
+impl ScopeUnderTest for UnitZeroScopeUnderTest {
     type Case = ZeroCase;
 
     fn launch(&self, client: &Client, case: &ZeroCase) -> Result<Vec<Written>, Refusal> {
@@ -73,5 +73,5 @@ fn a_unit_zeroes_its_row() {
             cells: 37,
             element,
         });
-    UnitZero { hw }.check(cases);
+    UnitZeroScopeUnderTest { hw }.check(cases);
 }

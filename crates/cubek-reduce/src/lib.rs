@@ -5,6 +5,10 @@
 //! says how the kernel is picked (the autotune, the rule, or a given [`kernels::ReduceKernel`]),
 //! and reduces with [`execute`](kernels::Reduce::execute) or, writing the indices beside the
 //! values, [`execute_with_indices`](kernels::Reduce::execute_with_indices).
+//!
+//! A caller that binds the input itself, as a fused reduction reads it, states its tensors as
+//! [`kernels::ReduceTensors`] and launches the [`kernels::ReduceCandidate`] the autotune found
+//! fastest for their [`kernels::ReduceKey`].
 
 pub mod kernels;
 

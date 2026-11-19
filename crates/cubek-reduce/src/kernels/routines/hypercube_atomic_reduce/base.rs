@@ -24,7 +24,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// routine reduces a row and adds its total into the output: a sum of few rows, too long for one
 /// cube each to keep the device busy, as a whole tensor summed into one value.
 ///
-/// The output must hold zero before it runs ([`UnitDirectZeroRoutine`](crate::kernels::UnitDirectZeroRoutine)
+/// The output must hold zero before it runs ([`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine)
 /// zeroes it), since it only ever adds. Its cubes run along the reduced
 /// dim and at most two row dims; it declines more.
 #[derive(Debug, Clone, Copy, Default)]
@@ -59,7 +59,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
     type Partitioning = Partitioning;
 
     /// Its microkernel's planes, each with the longest parts first.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeStagedReduceMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
@@ -73,9 +73,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
             .collect()
     }
 
-    /// The routine's own code reads nothing: every access is its microkernel's.
     fn vectorize(
-        &self,
         microkernel: &CubeStagedReduceMicrokernel,
         _partitioning: &Partitioning,
         vectorization: &mut Vectorization<ReduceOperand>,
@@ -84,7 +82,6 @@ impl Routine for HypercubeAtomicReduceRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
@@ -117,7 +114,11 @@ impl Routine for HypercubeAtomicReduceRoutine {
                 ReduceLayout::Along => widths[0],
                 ReduceLayout::Across => 1,
             };
-        let owner = [problem.owner_box(widths[0]).as_slice(), &[(REDUCED, part)]].concat();
+        let owner = [
+            problem.owner_box_at_width(widths[0]).as_slice(),
+            &[(REDUCED, part)],
+        ]
+        .concat();
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&owner).cubes(&[REDUCED, BATCH]).build(),
@@ -134,7 +135,6 @@ impl Routine for HypercubeAtomicReduceRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &ReduceRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,
@@ -152,7 +152,6 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
     /// Never reached: [`launch`](Self::launch) and [`launch_unbound`](Self::launch_unbound) bind
     /// the output as the atomic argument the kernel adds into, which a plain output tensor is not.
     fn dispatch<I: TileOperand>(
-        &self,
         _problem: &ReduceRoutineProblem,
         _client: &Client,
         _binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -163,12 +162,7 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
     }
 
     /// `tensors` reduced on `grid`, each cube's total added into the output.
-    fn launch(
-        &self,
-        tensors: &ReduceTensors,
-        blueprint: HypercubeAtomicReduceBlueprint,
-        grid: Grid,
-    ) {
+    fn launch(tensors: &ReduceTensors, blueprint: HypercubeAtomicReduceBlueprint, grid: Grid) {
         let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, identity);
         launch_atomic::<StoredTileOperand>(
             tensors.problem(),
@@ -187,7 +181,6 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
     /// [`UNBOUND_LINES_NARROWER`] where `blueprint` reads narrower lines than the caller's input is
     /// stated at.
     fn launch_unbound<I: TileOperand>(
-        &self,
         tensors: &ReduceTensors<Geometry>,
         blueprint: HypercubeAtomicReduceBlueprint,
         grid: Grid,

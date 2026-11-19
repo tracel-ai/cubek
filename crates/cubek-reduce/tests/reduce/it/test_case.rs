@@ -27,6 +27,9 @@ pub const UNIT: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::Unit
 pub const PLANE: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::PlaneShuffle);
 /// The cube kernel: a cube reduces each row, its planes meeting through shared memory.
 pub const CUBE: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::CubeStaged);
+/// The last-arrival hypercube: a row split across cubes, the last cube to arrive merging the parts.
+pub const HYPERCUBE: ReduceOpStrategy =
+    ReduceOpStrategy::Specific(ReduceKernel::HypercubeLastArrival);
 /// The rule, which picks among the kernels by the problem and the device.
 pub const RULE: ReduceOpStrategy = ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile);
 
@@ -91,7 +94,7 @@ impl TestCase {
 
     /// This case reduced by `op`, against the host.
     fn check(&self, op: Op) {
-        Reduces.check([Reduction {
+        ReduceScopeUnderTest.check([Reduction {
             case: self.clone(),
             op,
         }]);
@@ -359,9 +362,9 @@ impl Reduction {
 }
 
 /// The reduce entry the environment names, against the host.
-pub struct Reduces;
+pub struct ReduceScopeUnderTest;
 
-impl ScopeUnderTest for Reduces {
+impl ScopeUnderTest for ReduceScopeUnderTest {
     type Case = Reduction;
 
     /// # Panics
@@ -411,16 +414,11 @@ impl ScopeUnderTest for Reduces {
                 },
             ),
         };
-        // A kernel declines only by what the device lacks or the problem asks beyond it; any
-        // other error is the test's, and a case of explicit data must execute whatever the device.
+        // A kernel refuses only by what the device lacks or the problem asks beyond it, which the
+        // case reports as a skip; any other error is the test's.
         match launched {
             Ok(()) => {}
-            Err(why) if case.custom_input.is_some() => {
-                panic!("{reduction:?}: a case of explicit data must execute, refused: {why:?}")
-            }
-            Err(ReduceError::Validation { details }) => {
-                return Err(Refusal::Declined { why: details });
-            }
+            Err(ReduceError::Refused(refusal)) => return Err(refusal),
             Err(why) => panic!("{reduction:?}: {why}"),
         }
         if case.custom_input.is_some() {

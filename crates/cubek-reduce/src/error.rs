@@ -1,11 +1,13 @@
+use cubecl::tile::launch::Refusal;
 use thiserror::Error;
 
 /// Why a reduction did not launch.
 #[derive(Error, Debug, Clone)]
 pub enum ReduceError {
-    /// The kernel the strategy names declines the problem on this device, for this reason.
-    #[error("A generic validation error: {details}")]
-    Validation { details: &'static str },
+    /// The kernel the strategy names cannot run the problem on this device, for the reason the
+    /// refusal names.
+    #[error("The reduce kernel cannot run this problem on this device: {0}")]
+    Refused(#[from] Refusal),
     /// The axis is not a dim of the input.
     #[error("The provided axis ({axis}) must be smaller than the input tensor rank ({rank}).")]
     InvalidAxis { axis: usize, rank: usize },
@@ -38,7 +40,7 @@ pub enum ReduceError {
     },
     /// The operation has no index to write beside its values.
     #[error(
-        "The operation {operation} has no index to report; reduce_with_indices only supports TopK, ArgTopK, Max, ArgMax, Min and ArgMin."
+        "The operation {operation} has no index to report; Reduce::execute_with_indices only supports TopK, ArgTopK, Max, ArgMax, Min and ArgMin."
     )]
     IndicesUnsupported { operation: &'static str },
 }

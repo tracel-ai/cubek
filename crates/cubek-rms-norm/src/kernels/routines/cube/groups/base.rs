@@ -78,7 +78,7 @@ impl Routine for CubeGroupsRmsNormRoutine {
     /// ([`CubeGroupsRmsNormMicrokernel::settings`]), more of them a cube, and last one unit owning
     /// one row in a cube of its own: the fewest units a launch spawns, for a row too short to
     /// repay waking more, as a CPU's threads are woken a launch.
-    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         use CubeGroupsRmsNormMicrokernelSettings as Group;
         let on = |microkernel, groups| Self::Settings {
             microkernel,
@@ -95,7 +95,6 @@ impl Routine for CubeGroupsRmsNormRoutine {
 
     /// Nothing of its own: it walks cubes and groups, and its microkernel makes every access.
     fn vectorize(
-        &self,
         microkernel: &CubeGroupsRmsNormMicrokernel,
         _: &RmsNormPartitioning,
         vectorization: &mut Vectorization<RmsNormOperand>,
@@ -106,7 +105,6 @@ impl Routine for CubeGroupsRmsNormRoutine {
     /// Each cube reads its groups' rows once, straight from global memory, the weight once, and
     /// writes the rows once. Then its microkernel, for the work.
     fn estimate(
-        &self,
         problem: &RmsNormRoutineProblem,
         blueprint: &CubeGroupsRmsNormRoutineBlueprint,
         grid: &Grid,
@@ -126,7 +124,6 @@ impl Routine for CubeGroupsRmsNormRoutine {
     /// group's units are a power of two, so a group within a plane is a run of its lanes and a
     /// larger one is whole planes, which is what its microkernel's plane sums count on.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &RmsNormRoutineProblem,
         settings: &Self::Settings,
@@ -157,7 +154,7 @@ impl Routine for CubeGroupsRmsNormRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
             RmsNormBlueprint::new(hw, problem, microkernel, partitioning, vectorization)
                 .planned_at(microkernel.width)?;
@@ -233,9 +230,9 @@ mod tests {
             devices::strix_halo(),
             devices::cpu_12(),
         ] {
-            for settings in CubeGroupsRmsNormRoutine.settings(&hw) {
+            for settings in CubeGroupsRmsNormRoutine::settings(&hw) {
                 for problem in problems() {
-                    let prepared = CubeGroupsRmsNormRoutine.prepare(&hw, &problem, &settings);
+                    let prepared = CubeGroupsRmsNormRoutine::prepare(&hw, &problem, &settings);
                     assert!(prepared.is_ok(), "{settings} on {hw:?}: {prepared:?}");
                 }
             }
@@ -250,9 +247,12 @@ mod tests {
         let hw = devices::strix_halo();
         let units = |dim: usize, element| {
             let problem = RmsNormRoutineProblem::dense(1, dim, element);
-            let (blueprint, _) = CubeGroupsRmsNormRoutine
-                .prepare(&hw, &problem, &CubeGroupsRmsNormRoutineSettings::DEFAULT)
-                .expect("the floor prepares");
+            let (blueprint, _) = CubeGroupsRmsNormRoutine::prepare(
+                &hw,
+                &problem,
+                &CubeGroupsRmsNormRoutineSettings::DEFAULT,
+            )
+            .expect("the floor prepares");
             blueprint.microkernel.units
         };
         assert_eq!(units(2560, F16), 256);
@@ -273,8 +273,7 @@ mod tests {
         };
         let units = |dim: usize| {
             let problem = RmsNormRoutineProblem::dense(2, dim, F16);
-            let (blueprint, _) = CubeGroupsRmsNormRoutine
-                .prepare(&hw, &problem, &one_a_row)
+            let (blueprint, _) = CubeGroupsRmsNormRoutine::prepare(&hw, &problem, &one_a_row)
                 .expect("the floor prepares");
             blueprint.microkernel.units
         };
@@ -282,9 +281,8 @@ mod tests {
         assert_eq!(units(8192), 64);
         for dim in [128, 2560, 8192] {
             let problem = RmsNormRoutineProblem::dense(2, dim, F16);
-            for settings in CubeGroupsRmsNormRoutine.settings(&hw) {
-                let (blueprint, _) = CubeGroupsRmsNormRoutine
-                    .prepare(&hw, &problem, &settings)
+            for settings in CubeGroupsRmsNormRoutine::settings(&hw) {
+                let (blueprint, _) = CubeGroupsRmsNormRoutine::prepare(&hw, &problem, &settings)
                     .expect("the floor prepares");
                 let held = blueprint.microkernel.held_row();
                 assert!(
@@ -298,20 +296,19 @@ mod tests {
     /// A row the width does not divide binds one element at a time, every operand alike.
     #[test]
     fn a_prime_row_binds_one_element_wide() {
-        let (blueprint, _) = CubeGroupsRmsNormRoutine
-            .prepare(
-                &devices::strix_halo(),
-                &RmsNormRoutineProblem::dense(2, 111, F32),
-                &CubeGroupsRmsNormRoutineSettings::DEFAULT,
-            )
-            .expect("the floor prepares");
+        let (blueprint, _) = CubeGroupsRmsNormRoutine::prepare(
+            &devices::strix_halo(),
+            &RmsNormRoutineProblem::dense(2, 111, F32),
+            &CubeGroupsRmsNormRoutineSettings::DEFAULT,
+        )
+        .expect("the floor prepares");
         assert_eq!(blueprint.width, 1);
     }
 
     /// The default leads the list and no setting is listed twice.
     #[test]
     fn the_default_leads_and_no_setting_repeats() {
-        let settings = CubeGroupsRmsNormRoutine.settings(&devices::strix_halo());
+        let settings = CubeGroupsRmsNormRoutine::settings(&devices::strix_halo());
         assert_eq!(settings[0], CubeGroupsRmsNormRoutineSettings::DEFAULT);
         let names: std::collections::HashSet<_> =
             settings.iter().map(ToString::to_string).collect();
@@ -334,14 +331,12 @@ mod tests {
             groups: NonZeroUsize::new(64).unwrap(),
         };
         let hw = devices::rdna_range();
-        let (blueprint, grid) = CubeGroupsRmsNormRoutine
-            .prepare(&hw, &problem, &settings)
+        let (blueprint, grid) = CubeGroupsRmsNormRoutine::prepare(&hw, &problem, &settings)
             .expect("the groups fit a cube's stage");
         let per_group = 4096 * 2 + blueprint.microkernel.shared_memory();
         assert_eq!(grid.planes().count, hw.shared_memory_budget() / per_group);
         assert_eq!(
-            CubeGroupsRmsNormRoutine
-                .prepare(&devices::wgpu_no_subgroups(), &problem, &settings)
+            CubeGroupsRmsNormRoutine::prepare(&devices::wgpu_no_subgroups(), &problem, &settings)
                 .err(),
             Some(PACKED_STORE_NEEDS_PLANES)
         );
