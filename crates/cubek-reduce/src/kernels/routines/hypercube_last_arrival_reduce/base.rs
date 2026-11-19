@@ -218,7 +218,12 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                         binding.launcher.partitioning_arg(),
                         ReduceSplitExtentsLaunch::new(extents.parts, extents.values),
                         blueprint.microkernel,
-                        [elements.input, elements.accumulator, elements.out, index],
+                        [
+                            elements.input,
+                            elements.accumulator,
+                            elements.out,
+                            index.element,
+                        ],
                     )
                 }
                 Some((partial_indices, None)) => {

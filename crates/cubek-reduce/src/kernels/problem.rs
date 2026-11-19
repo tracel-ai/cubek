@@ -103,9 +103,16 @@ pub struct ReduceRoutineProblem {
     pub contiguous: Option<usize>,
     /// The alignment of the input's and the output's buffers in elements.
     pub elem_alignments: [ElemAlignment; 2],
-    /// The element of the indices written beside the values, to a second output laid out as
-    /// the first, where they are.
-    pub indices: Option<ElemType>,
+    /// The indices written beside the values, to a second output of their shape, where they are.
+    pub indices: Option<ReduceIndices>,
+}
+
+/// The indices a reduction writes beside its values: their element, and the alignment of the
+/// buffer they go to, which lies at its own strides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReduceIndices {
+    pub element: ElemType,
+    pub elem_alignment: ElemAlignment,
 }
 
 impl ReduceRoutineProblem {
@@ -139,9 +146,7 @@ impl ReduceRoutineProblem {
         );
         // A line runs along the innermost axis where both operands step one element along it.
         let inner = shape.len() - 1;
-        let steps_one =
-            |geometry: &Geometry| geometry.strides()[inner] == 1 || geometry.shape()[inner] == 1;
-        let contiguous = (steps_one(input) && steps_one(out)).then_some(inner);
+        let contiguous = (steps_one(input, inner) && steps_one(out, inner)).then_some(inner);
         Self {
             elem_alignments: [input, out]
                 .map(|geometry| ElemAlignment::new(geometry.shape(), geometry.strides())),
@@ -152,6 +157,18 @@ impl ReduceRoutineProblem {
             contiguous,
             indices: None,
         }
+    }
+
+    /// This problem with the indices of its values written beside them in `element`, to a buffer
+    /// of `indices`' geometry: a line runs along the innermost axis only where that buffer steps
+    /// one element along it too.
+    pub(crate) fn writing_indices(mut self, element: ElemType, indices: &Geometry) -> Self {
+        self.contiguous = self.contiguous.filter(|&inner| steps_one(indices, inner));
+        self.indices = Some(ReduceIndices {
+            element,
+            elem_alignment: ElemAlignment::new(indices.shape(), indices.strides()),
+        });
+        self
     }
 
     /// `binding`, an operand of the input's axes holding `along` in place of the reduced axis
@@ -333,6 +350,11 @@ impl EstimatedProblem for ReduceRoutineProblem {
             bytes: values * self.elements.input.size() + cells * self.elements.out.size(),
         }
     }
+}
+
+/// Whether `geometry` steps one element along `axis`, or holds one element there.
+fn steps_one(geometry: &Geometry, axis: usize) -> bool {
+    geometry.strides()[axis] == 1 || geometry.shape()[axis] == 1
 }
 
 #[cfg(test)]

@@ -37,6 +37,13 @@ pub(crate) fn reduce_widths(
     {
         vectorization.require(VectorRequirement::Aligned { operand, alignment });
     }
+    // The indices go out at the values' width, so their buffer aligns it too.
+    if let Some(indices) = problem.indices {
+        vectorization.require(VectorRequirement::Aligned {
+            operand: ReduceOperand::Out,
+            alignment: indices.elem_alignment,
+        });
+    }
     let line_stays_in = problem
         .contiguous
         .filter(|_| problem.layout() == ReduceLayout::Across)

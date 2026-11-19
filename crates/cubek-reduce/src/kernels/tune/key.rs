@@ -1,6 +1,6 @@
 //! What tells one reduction from another for the autotune ([`ReduceKey`]).
 
-use crate::kernels::{ReduceElements, ReduceRoutineProblem, ReduceTensors};
+use crate::kernels::{ReduceElements, ReduceIndices, ReduceRoutineProblem, ReduceTensors};
 use cubecl::AutotuneKey;
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::ElemAlignment;
@@ -35,7 +35,7 @@ impl From<&ReduceRoutineProblem> for ReduceKey {
     fn from(problem: &ReduceRoutineProblem) -> Self {
         Self::new(
             problem.elements,
-            problem.indices,
+            problem.indices.map(|indices| indices.element),
             problem.operation,
             problem.layout(),
             problem.shape.len().saturating_sub(1),
@@ -64,7 +64,10 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
             axis,
             operation: key.operation,
             elements: key.elements,
-            indices: key.indices,
+            indices: key.indices.map(|element| ReduceIndices {
+                element,
+                elem_alignment: ElemAlignment::dense_rows(out_shape[out_shape.len() - 1]),
+            }),
         }
     }
 }

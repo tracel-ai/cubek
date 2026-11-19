@@ -125,7 +125,12 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
                         indices.arg(),
                         binding.launcher.partitioning_arg(),
                         blueprint.microkernel,
-                        [elements.input, elements.accumulator, elements.out, index],
+                        [
+                            elements.input,
+                            elements.accumulator,
+                            elements.out,
+                            index.element,
+                        ],
                     )
                 }
                 None => cube_staged_reduce_kernel::launch_unchecked::<I>(

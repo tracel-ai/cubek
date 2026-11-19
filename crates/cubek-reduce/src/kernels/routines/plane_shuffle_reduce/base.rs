@@ -133,7 +133,12 @@ impl ReduceLauncher<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine
                         indices.arg(),
                         binding.launcher.partitioning_arg(),
                         blueprint.microkernel,
-                        [elements.input, elements.accumulator, elements.out, index],
+                        [
+                            elements.input,
+                            elements.accumulator,
+                            elements.out,
+                            index.element,
+                        ],
                     )
                 }
                 None => plane_shuffle_reduce_kernel::launch_unchecked::<I>(

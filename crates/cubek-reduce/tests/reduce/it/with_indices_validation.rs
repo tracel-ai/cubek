@@ -1,14 +1,10 @@
-//! Argument validation for `Reduce::execute_with_indices`.
-//!
-//! The launch derives vectorization and write positions from the values tensor
-//! alone, so an indices tensor with a different layout would be written *as if*
-//! it had the values layout, producing silently wrong data. These tests pin
-//! that such calls are rejected before launch instead.
+//! Argument validation for `Reduce::execute_with_indices`, and the indices
+//! written at their own strides where they differ from the values'.
 
 use cubecl::{prelude::*, zspace::Shape};
 use cubek_reduce::kernels::{Reduce, ReduceElements};
 use cubek_reduce::{ReduceError, ReduceOperation};
-use cubek_test_utils::{StridedLayout, TestInput};
+use cubek_test_utils::{HostData, HostDataType, StridedLayout, TestInput};
 
 use crate::reduce::it::test_case::UNIT;
 
@@ -71,14 +67,69 @@ fn try_launch_config(
     )
 }
 
+/// A top-2 of `[4, 8]` rows counting up, its indices column-major beside row-major values: each
+/// output is written at its own strides.
 #[test]
-fn rejects_indices_with_mismatched_strides() {
-    // Same shape and element count as the values output, but column-major.
-    let result = try_launch([4, 2], vec![1, 4]);
-    assert!(
-        matches!(result, Err(ReduceError::MismatchIndicesStrides { .. })),
-        "expected MismatchIndicesStrides, got {result:?}"
-    );
+fn writes_indices_at_their_own_strides() {
+    const ROWS: usize = 4;
+    const ROW_LEN: usize = 8;
+    const K: usize = 2;
+    let client = cubecl::test_device().client();
+    let input_dtype = f32::elem_type_native();
+    let u32_dtype = u32::elem_type_native();
+
+    let input = TestInput::builder(client.clone(), Shape::new([ROWS, ROW_LEN]))
+        .dtype(input_dtype)
+        .layout(StridedLayout::Explicit(vec![ROW_LEN, 1]))
+        .arange()
+        .generate_without_host_data();
+    let values = TestInput::builder(client.clone(), Shape::new([ROWS, K]))
+        .dtype(input_dtype)
+        .layout(StridedLayout::Explicit(vec![K, 1]))
+        .zeros()
+        .generate_without_host_data();
+    let indices = TestInput::builder(client.clone(), Shape::new([ROWS, K]))
+        .dtype(u32_dtype)
+        .layout(StridedLayout::Explicit(vec![1, ROWS]))
+        .zeros()
+        .generate_without_host_data();
+
+    Reduce::new(UNIT)
+        .execute_with_indices(
+            &client,
+            &cubecl::test_device(),
+            input.binding(),
+            values.clone().binding(),
+            indices.clone().binding(),
+            1,
+            ReduceOperation::TopK { k: K },
+            ReduceElements {
+                input: input_dtype,
+                accumulator: input_dtype,
+                out: input_dtype,
+            },
+            u32_dtype,
+        )
+        .expect("a top-k writes its indices at their own strides");
+
+    let values = HostData::from_tensor_handle(&client, values, HostDataType::F32);
+    let indices = HostData::from_tensor_handle(&client, indices, HostDataType::from(u32_dtype));
+    for row in 0..ROWS {
+        for slot in 0..K {
+            // The largest values of a row counting up are its last ones, largest first.
+            let index = ROW_LEN - 1 - slot;
+            assert_eq!(
+                indices.get_f32(&[row, slot]),
+                index as f32,
+                "row {row} slot {slot}"
+            );
+            assert_eq!(
+                values.get_f32(&[row, slot]),
+                (row * ROW_LEN + index) as f32,
+                "row {row} slot {slot}"
+            );
+        }
+    }
 }
 
 #[test]

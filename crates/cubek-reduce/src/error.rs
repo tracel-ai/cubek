@@ -30,14 +30,6 @@ pub enum ReduceError {
         values_shape: Vec<usize>,
         indices_shape: Vec<usize>,
     },
-    /// The indices output's strides differ from the values output's.
-    #[error(
-        "The indices strides (currently {indices_strides:?}) should match the values strides ({values_strides:?})."
-    )]
-    MismatchIndicesStrides {
-        values_strides: Vec<usize>,
-        indices_strides: Vec<usize>,
-    },
     /// The operation has no index to write beside its values.
     #[error(
         "The operation {operation} has no index to report; Reduce::execute_with_indices only supports TopK, ArgTopK, Max, ArgMax, Min and ArgMin."
