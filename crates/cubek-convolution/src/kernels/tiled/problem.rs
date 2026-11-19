@@ -17,6 +17,20 @@ pub const B: Axis = Axis(0);
 pub const CO: Axis = Axis(1);
 pub const CI: Axis = Axis(2);
 
+/// How many spatial dims a convolution has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpatialDims(usize);
+
+impl SpatialDims {
+    pub const fn new(count: usize) -> Self {
+        Self(count)
+    }
+
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
 /// What an axis of the space measures: the one place that numbers the labels of the axes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConvAxis {
@@ -72,8 +86,8 @@ impl ConvAxis {
     }
 
     /// The `[out, tap]` axis pair of each of `spatial_dims` spatial dims.
-    pub fn spatial(spatial_dims: usize) -> impl Iterator<Item = [Axis; 2]> {
-        (0..spatial_dims).map(|dim| [Self::Out(dim).axis(), Self::Tap(dim).axis()])
+    pub fn spatial(spatial_dims: SpatialDims) -> impl Iterator<Item = [Axis; 2]> {
+        (0..spatial_dims.get()).map(|dim| [Self::Out(dim).axis(), Self::Tap(dim).axis()])
     }
 }
 
@@ -131,7 +145,7 @@ impl ConvProblem {
         alignments: MatmulOperands<ElemAlignment>,
         start_bytes: MatmulOperands<u64>,
     ) -> Self {
-        let extents = ConvRoles::of(operation, window.len())
+        let extents = ConvRoles::of(operation, SpatialDims::new(window.len()))
             .expect("a problem is stated by tensors that were checked")
             .extents;
         let (kernel, out) = (extents.kernel.read(&views), extents.out.read(&views));
@@ -163,7 +177,7 @@ impl ConvProblem {
     /// On a transposed forward, which [`ConvTensors`](super::ConvTensors) refuses before any
     /// problem is stated.
     pub fn roles(&self) -> ConvRoles {
-        ConvRoles::of(self.operation, self.spatial.len())
+        ConvRoles::of(self.operation, SpatialDims::new(self.spatial.len()))
             .expect("a problem is stated by tensors that were checked")
     }
 
@@ -297,9 +311,8 @@ mod tests {
 
     #[test]
     fn every_axis_reads_back_as_the_measure_that_made_it() {
-        for spatial_dims in 1..=3 {
-            let spatial =
-                (0..spatial_dims).flat_map(|dim| [ConvAxis::Out(dim), ConvAxis::Tap(dim)]);
+        for count in 1..=3 {
+            let spatial = (0..count).flat_map(|dim| [ConvAxis::Out(dim), ConvAxis::Tap(dim)]);
             let measures = [ConvAxis::Batch, ConvAxis::ChannelsOut, ConvAxis::ChannelsIn]
                 .into_iter()
                 .chain(spatial);
@@ -310,7 +323,7 @@ mod tests {
             }
             labels.sort_unstable();
             labels.dedup();
-            assert_eq!(labels.len(), 3 + 2 * spatial_dims);
+            assert_eq!(labels.len(), 3 + 2 * count);
         }
     }
 

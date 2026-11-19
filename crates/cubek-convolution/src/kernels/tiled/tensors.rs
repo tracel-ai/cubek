@@ -1,5 +1,6 @@
 use super::{
-    B, CI, CO, ConvBinding, ConvDecline, ConvDim, ConvProblem, ConvRoles, TileConvBlueprint,
+    B, CI, CO, ConvBinding, ConvDecline, ConvDim, ConvProblem, ConvRoles, SpatialDims,
+    TileConvBlueprint,
 };
 use crate::components::ConvolutionOperation;
 use crate::launch::SpatialWindow;
@@ -118,7 +119,7 @@ impl ConvTensors {
         {
             return Err(ConvDecline::RankMismatch.into());
         }
-        let roles = ConvRoles::of(operation, window.len())?;
+        let roles = ConvRoles::of(operation, SpatialDims::new(window.len()))?;
         let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);
         let extents = &roles.extents;
         let channels = |axis| {
@@ -167,7 +168,7 @@ impl ConvTensors {
         if problem.spatial.iter().any(steps_zero) {
             return Err(ConvDecline::WindowStepZero.into());
         }
-        let roles = ConvRoles::of(self.operation, self.window.len())?;
+        let roles = ConvRoles::of(self.operation, SpatialDims::new(self.window.len()))?;
         let states_output = |conv_dim: &ConvDim| {
             let (input, output) = roles.gather.window_ends(conv_dim);
             conv_dim.window.output(input, conv_dim.kernel) == output
