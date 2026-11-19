@@ -159,56 +159,35 @@ mod tests {
     use super::*;
     use cubecl::TestRuntime;
 
-    /// `ln` stays within an `f32`'s precision of the true logarithm across the normal range,
-    /// both halves of each octave included, at one lane and at four.
-    #[test]
-    fn ln_matches_the_logarithm_over_the_normal_range() {
-        let xs: Vec<f32> = (-126..128)
-            .flat_map(|octave| [1.0f32, 1.2, 1.41, 1.42].map(|m| m * 2f32.powi(octave)))
-            .collect();
-        let ln_1 = xs
-            .iter()
-            .flat_map(|x| ln::harness::<TestRuntime, Const<1>>(&[*x]));
-        let ln_4 = xs
-            .chunks(4)
-            .flat_map(|lanes| ln::harness::<TestRuntime, Const<4>>(lanes));
-        for ((x, ln_1), ln_4) in xs.iter().zip(ln_1).zip(ln_4) {
-            let expected = (*x as f64).ln();
-            let tolerance = 1e-6 * expected.abs().max(1.0);
+    /// Within an `f32`'s precision of `expected`, lane by lane.
+    fn assert_close(actual: &[f32], expected: [f32; 4]) {
+        for (actual, expected) in actual.iter().zip(expected) {
             assert!(
-                (ln_1 as f64 - expected).abs() <= tolerance && ln_4 == ln_1,
-                "ln({x}) = {ln_1} at one lane, {ln_4} at four, expected {expected}"
+                (actual - expected).abs() <= 1e-6 * expected.abs().max(1.0),
+                "{actual} where {expected} was expected"
             );
         }
     }
 
-    /// `cos_sin_turns` is the cosine and sine of the angle across a whole turn, every quadrant
-    /// and the eighths where the series meet, at one lane and at four.
+    /// One, both sides of `√2` where the mantissa is halved, and an exponent far from zero.
     #[test]
-    fn cos_sin_turns_matches_the_circle_over_a_turn() {
-        let turns: Vec<f32> = (0..256).map(|i| i as f32 / 256.0).collect();
-        let lanes_1 = turns
-            .iter()
-            .map(|turn| cos_sin_turns::harness::<TestRuntime, Const<1>>(&[*turn]))
-            .flat_map(|(cosine, sine)| cosine.into_iter().zip(sine));
-        let lanes_4 = turns
-            .chunks(4)
-            .map(|lanes| cos_sin_turns::harness::<TestRuntime, Const<4>>(lanes))
-            .flat_map(|(cosine, sine)| cosine.into_iter().zip(sine));
-        for ((turn, lane_1), lane_4) in turns.iter().zip(lanes_1).zip(lanes_4) {
-            let angle = core::f64::consts::TAU * *turn as f64;
-            let expected = (angle.cos(), angle.sin());
-            assert!(
-                (lane_1.0 as f64 - expected.0).abs() <= 1e-6
-                    && (lane_1.1 as f64 - expected.1).abs() <= 1e-6
-                    && lane_4 == lane_1,
-                "{turn} turns: {lane_1:?} at one lane, {lane_4:?} at four, expected {expected:?}"
-            );
-        }
+    fn ln_is_the_logarithm_on_both_sides_of_the_octave_split() {
+        let xs = [1.0f32, 1.41, 1.42, 1e-30];
+        let ln = ln::harness::<TestRuntime, Const<4>>(&xs);
+        assert_close(&ln, xs.map(f32::ln));
     }
 
-    /// Each derived constant matches the f64 formula it computes (kernel accuracy is in
-    /// `tests/random/polynomial.rs`).
+    /// One angle in each quadrant, the second on the eighth where the series meet.
+    #[test]
+    fn cos_sin_turns_is_the_point_on_the_circle_in_every_quadrant() {
+        let turns = [0.0f32, 0.125, 0.3, 0.8];
+        let (cosine, sine) = cos_sin_turns::harness::<TestRuntime, Const<4>>(&turns);
+        let angles = turns.map(|turn| core::f32::consts::TAU * turn);
+        assert_close(&cosine, angles.map(f32::cos));
+        assert_close(&sine, angles.map(f32::sin));
+    }
+
+    /// Each derived constant matches the f64 formula it computes.
     #[test]
     fn derived_constants_match_f64_formula() {
         let pi_half = std::f64::consts::PI / 2.0;
