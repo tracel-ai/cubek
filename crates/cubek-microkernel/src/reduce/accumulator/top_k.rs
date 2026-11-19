@@ -1,8 +1,6 @@
 //! The `K` best values with their indices: the top-k.
 
-use crate::reduce::{
-    ReduceAccumulator, ReduceLayout, ReduceOperation, ReduceWrites, lane_indices, write_line,
-};
+use crate::reduce::{ReduceAccumulator, ReduceOperation, ReduceWrites, lane_indices, write_line};
 use cubecl::tile::{Carrier, Monoid, TOP_K_UNROLL_BUDGET, Tile, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -12,10 +10,10 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         acc: &mut Self,
         line: Vector<Acc, N>,
         line_index: usize,
-        #[comptime] layout: ReduceLayout,
+        #[comptime] row_lanes: usize,
         #[comptime] monoid: Monoid,
     ) {
-        acc.insert(line, lane_indices::<N>(line_index, layout), monoid);
+        acc.insert(line, lane_indices::<N>(line_index, row_lanes), monoid);
     }
 
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self {
@@ -86,13 +84,11 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         out: &mut Tile,
         indices: &ComptimeOption<Tile>,
         _count: usize,
-        #[comptime] layout: ReduceLayout,
+        #[comptime] row_lanes: usize,
         #[comptime] operation: ReduceOperation,
         #[comptime] writes: ReduceWrites,
     ) {
-        let lanes = N::value();
-        let lanes_share_a_row = comptime!(layout.lanes_share_a_row(lanes));
-        match lanes_share_a_row {
+        match row_lanes > 1 {
             true => write_row::<Out, Idx, Acc, N, K>(acc, out, indices, operation.monoid(), writes),
             false => write_rows::<Out, Idx, Acc, N, K>(acc, out, indices, writes),
         }

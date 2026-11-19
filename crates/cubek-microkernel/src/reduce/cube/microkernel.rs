@@ -1,6 +1,7 @@
 use super::base::CubeStagedReduceMicrokernel;
 use crate::reduce::{
-    ReduceAccumulator, ReduceCarrier, accumulate_strided, is_first_unit_of_cube, row_values,
+    ReduceAccumulator, ReduceCarrier, accumulate_strided, is_first_unit_of_cube, row_lanes,
+    row_values,
 };
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
@@ -64,12 +65,12 @@ fn cube_staged_reduce<
     #[comptime] microkernel: CubeStagedReduceMicrokernel,
 ) {
     let operation = microkernel.item().operation;
-    let layout = microkernel.item().layout;
+    let row_lanes = row_lanes(input);
     let count = input.flat::<In, N>().shape();
 
     let total = cube_staged_reduce_part::<In, Acc, N, C>(input, 0, count, microkernel);
 
-    let values = row_values::<N>(count, layout);
+    let values = row_values(count, row_lanes);
 
     if is_first_unit_of_cube() {
         C::write::<Out, Idx>(
@@ -77,7 +78,7 @@ fn cube_staged_reduce<
             out,
             indices,
             values,
-            layout,
+            row_lanes,
             operation,
             microkernel.item().writes(),
         );

@@ -149,7 +149,7 @@ impl core::fmt::Display for CubeStagedReduceMicrokernel {
         write!(
             f,
             "{:?} {:?} lanes={} planes={}",
-            self.item.operation, self.item.layout, self.lanes, self.planes
+            self.item.operation, self.item.lines_along, self.lanes, self.planes
         )
     }
 }

@@ -1,4 +1,4 @@
-use crate::reduce::{ReduceLayout, ReduceOperation, ReduceWrites};
+use crate::reduce::{ReduceOperation, ReduceWrites};
 use cubecl::tile::{Carrier, Monoid, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -9,14 +9,15 @@ use cubecl::{self as cubecl, cube, prelude::*};
 pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
     Carrier + CubeType<ExpandType: Assign + Copy>
 {
-    /// `line` accumulated into `acc`, the line read `line_index` lines into the row, under
+    /// `line` accumulated into `acc`, the line read `line_index` lines into the row, `row_lanes`
+    /// of its lanes holding one row's values (all of them along the row, one across rows), under
     /// `monoid`. In place, since it runs once a line read: a carrier returned anew is copied back
     /// slot by slot, which for a top-k's `K` slots costs more than the accumulation.
     fn accumulate(
         acc: &mut Self,
         line: Vector<Acc, N>,
         line_index: usize,
-        #[comptime] layout: ReduceLayout,
+        #[comptime] row_lanes: usize,
         #[comptime] monoid: Monoid,
     );
 
@@ -45,7 +46,7 @@ pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
     fn load(values: &Tile, indices: &ComptimeOption<Tile>, part: usize) -> Self;
 
     /// What `acc` holds written as `writes` says, its lanes reduced to one first where they
-    /// hold one row ([`ReduceLayout::Along`]): to `out`'s first cell along the row, or its first
+    /// hold one row (`row_lanes` past one): to `out`'s first cell along the row, or its first
     /// line across rows (its first `k` of either, for a top-k). With [`ReduceWrites::Both`] the
     /// indices go to `indices` at the same places, in `Idx`; `indices` is given only then.
     /// `count` is the number of values reduced, which a mean divides by.
@@ -59,7 +60,7 @@ pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
         out: &mut Tile,
         indices: &ComptimeOption<Tile>,
         count: usize,
-        #[comptime] layout: ReduceLayout,
+        #[comptime] row_lanes: usize,
         #[comptime] operation: ReduceOperation,
         #[comptime] writes: ReduceWrites,
     );

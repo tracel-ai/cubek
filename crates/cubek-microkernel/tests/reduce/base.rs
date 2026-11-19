@@ -4,12 +4,12 @@
 //! dimension into its parts, `input[BATCH, PARTS, REDUCED]` or `input[PARTS, REDUCED, BATCH]`, a
 //! cube a part.
 
-use crate::launch::reduce::{ReduceLaunch, TestedMicrokernel};
+use crate::launch::reduce::{LineDirection, ReduceLaunch, TestedMicrokernel};
 use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
-use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation, ReduceWorkItem, ReduceWrites};
+use cubek_microkernel::reduce::{ReduceOperation, ReduceWorkItem, ReduceWrites};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
@@ -45,7 +45,7 @@ pub(crate) struct ReduceCase {
     pub microkernel: TestedMicrokernel,
     pub len: usize,
     pub width: usize,
-    pub layout: ReduceLayout,
+    pub lines: LineDirection,
 }
 
 impl ReduceCase {
@@ -56,7 +56,7 @@ impl ReduceCase {
         along: &[(usize, usize)],
         across: &[(usize, usize)],
     ) -> Vec<Self> {
-        let laid = |layout, sizes: &[(usize, usize)]| {
+        let laid = |lines, sizes: &[(usize, usize)]| {
             sizes
                 .iter()
                 .flat_map(move |&(len, width)| {
@@ -65,13 +65,13 @@ impl ReduceCase {
                         microkernel,
                         len,
                         width,
-                        layout,
+                        lines,
                     })
                 })
                 .collect::<Vec<_>>()
         };
-        let mut cases = laid(ReduceLayout::Along, along);
-        cases.extend(laid(ReduceLayout::Across, across));
+        let mut cases = laid(LineDirection::Along, along);
+        cases.extend(laid(LineDirection::Across, across));
         cases
     }
 
@@ -124,9 +124,9 @@ impl HostReduce {
             vec![f32::NEG_INFINITY; len],
             with(&[(0, 0.0), (len / 3, 0.0)]),
         ];
-        let rows = match case.layout {
-            ReduceLayout::Along => rows,
-            ReduceLayout::Across => rows.iter().cycle().take(2 * case.width).cloned().collect(),
+        let rows = match case.lines {
+            LineDirection::Along => rows,
+            LineDirection::Across => rows.iter().cycle().take(2 * case.width).cloned().collect(),
         };
         Self { case, rows }
     }
@@ -134,12 +134,12 @@ impl HostReduce {
     /// The input's shape and its values in that order.
     fn input(&self) -> (Shape, Vec<f32>) {
         let (rows, len) = (self.rows.len(), self.case.len);
-        match (self.case.layout, self.case.microkernel) {
-            (ReduceLayout::Along, TestedMicrokernel::HypercubeLastArrival { parts, .. }) => {
+        match (self.case.lines, self.case.microkernel) {
+            (LineDirection::Along, TestedMicrokernel::HypercubeLastArrival { parts, .. }) => {
                 (shape![rows, parts, len / parts], self.rows.concat())
             }
-            (ReduceLayout::Along, _) => (shape![rows, len], self.rows.concat()),
-            (ReduceLayout::Across, microkernel) => {
+            (LineDirection::Along, _) => (shape![rows, len], self.rows.concat()),
+            (LineDirection::Across, microkernel) => {
                 let shape = match microkernel {
                     TestedMicrokernel::HypercubeLastArrival { parts, .. } => {
                         shape![parts, len / parts, rows]
@@ -157,9 +157,9 @@ impl HostReduce {
     /// The output's shape: a row's cells along its row, or down its column.
     fn out_shape(&self) -> Shape {
         let (rows, cells) = (self.rows.len(), self.case.operation.written_per_row());
-        match self.case.layout {
-            ReduceLayout::Along => shape![rows, cells],
-            ReduceLayout::Across => shape![cells, rows],
+        match self.case.lines {
+            LineDirection::Along => shape![rows, cells],
+            LineDirection::Across => shape![cells, rows],
         }
     }
 
@@ -170,9 +170,9 @@ impl HostReduce {
             .iter()
             .map(|row| Self::cells(row, self.case.operation))
             .collect();
-        let values = match self.case.layout {
-            ReduceLayout::Along => per_row.concat(),
-            ReduceLayout::Across => (0..self.case.operation.written_per_row())
+        let values = match self.case.lines {
+            LineDirection::Along => per_row.concat(),
+            LineDirection::Across => (0..self.case.operation.written_per_row())
                 .flat_map(|s| per_row.iter().map(move |cells| cells[s]))
                 .collect(),
         };
@@ -236,7 +236,7 @@ impl ScopeUnderTest for ReduceMicrokernelScopeUnderTest {
             operation: case.operation,
             input: F32,
             accumulator: F32,
-            layout: case.layout,
+            lines_along: case.lines.dimension(),
             with_indices: false,
         };
         let launch = ReduceLaunch::new(

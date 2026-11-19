@@ -1,6 +1,6 @@
 //! The values themselves, pointwise on the line: a sum, a product, a max, a mean.
 
-use crate::reduce::{ReduceAccumulator, ReduceLayout, ReduceOperation, ReduceWrites};
+use crate::reduce::{ReduceAccumulator, ReduceOperation, ReduceWrites};
 use cubecl::tile::{Carrier, Monoid, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -10,7 +10,7 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
         acc: &mut Self,
         line: Vector<Acc, N>,
         _line_index: usize,
-        #[comptime] _layout: ReduceLayout,
+        #[comptime] _row_lanes: usize,
         #[comptime] monoid: Monoid,
     ) {
         *acc = monoid.combine::<Vector<Acc, N>>(*acc, line);
@@ -48,7 +48,7 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
         out: &mut Tile,
         _indices: &ComptimeOption<Tile>,
         count: usize,
-        #[comptime] layout: ReduceLayout,
+        #[comptime] row_lanes: usize,
         #[comptime] operation: ReduceOperation,
         #[comptime] writes: ReduceWrites,
     ) {
@@ -57,9 +57,9 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
             "ReduceAccumulator: {operation:?} accumulates the values themselves, which carry no index to write"
         ));
 
-        match layout {
-            ReduceLayout::Along => write_row::<Acc, Out, N>(acc, out, count, operation),
-            ReduceLayout::Across => write_rows::<Acc, Out, N>(acc, out, count, operation),
+        match row_lanes > 1 {
+            true => write_row::<Acc, Out, N>(acc, out, count, operation),
+            false => write_rows::<Acc, Out, N>(acc, out, count, operation),
         }
     }
 }

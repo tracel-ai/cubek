@@ -4,8 +4,8 @@ use cubecl::tile::launch::TileOperand;
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Partitioning, Region, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::reduce::ReduceLayout;
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
+use cubek_microkernel::reduce::row_lanes;
 
 /// The extents a hypercube launch is handed at run time, which its kernel does not compile.
 #[derive(CubeType, CubeLaunch, Debug, Clone, Copy)]
@@ -36,7 +36,8 @@ fn u32_of_extent(extent: usize) -> u32 {
 }
 
 /// Where `cube` sits along its row: its box of rows' counter, its part, and its part's first line
-/// in the row. A box of rows' cubes share its [`BATCH`] coordinate, which counts them in.
+/// in the row, its lines `row_lanes` values of the row. A box of rows' cubes share its [`BATCH`]
+/// coordinate, which counts them in.
 #[derive(CubeType)]
 struct SplitPlace {
     pub counter: usize,
@@ -45,16 +46,11 @@ struct SplitPlace {
 }
 
 #[cube]
-fn split_place<N: Size>(cube: &Region, #[comptime] layout: ReduceLayout) -> SplitPlace {
-    let first_line = match layout {
-        // Along, a line holds `N` values of the row.
-        ReduceLayout::Along => cube.origin(REDUCED) / N::value(),
-        ReduceLayout::Across => cube.origin(REDUCED),
-    };
+fn split_place(cube: &Region, #[comptime] row_lanes: usize) -> SplitPlace {
     SplitPlace {
         counter: cube.coord(BATCH),
         part: cube.coord(REDUCED),
-        first_line,
+        first_line: cube.origin(REDUCED) / row_lanes,
     }
 }
 
@@ -89,7 +85,7 @@ pub(crate) fn hypercube_last_arrival_reduce_kernel<
     let o = out.tile_mut(&partitioning);
     let p = partials.tile_mut(&partitioning);
     for cube in &partitioning {
-        let place = split_place::<N>(&cube, microkernel.part().item().layout);
+        let place = split_place(&cube, row_lanes(&x));
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
@@ -144,7 +140,7 @@ pub(crate) fn hypercube_last_arrival_reduce_indexed_kernel<
     let p = partials.tile_mut(&partitioning);
     let pi = partial_indices.tile_mut(&partitioning);
     for cube in &partitioning {
-        let place = split_place::<N>(&cube, microkernel.part().item().layout);
+        let place = split_place(&cube, row_lanes(&x));
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
@@ -202,7 +198,7 @@ pub(crate) fn hypercube_last_arrival_reduce_with_indices_kernel<
     let p = partials.tile_mut(&partitioning);
     let pi = partial_indices.tile_mut(&partitioning);
     for cube in &partitioning {
-        let place = split_place::<N>(&cube, microkernel.part().item().layout);
+        let place = split_place(&cube, row_lanes(&x));
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);

@@ -22,9 +22,7 @@ use cubek_microkernel::reduce::plane::{
     PlaneShuffleReduceMicrokernel, PlaneShuffleReduceMicrokernelSettings,
 };
 use cubek_microkernel::reduce::unit::UnitDirectReduceMicrokernel;
-use cubek_microkernel::reduce::{
-    BATCH, REDUCED, ReduceLayout, ReduceWorkItem, SLOTS, TOP_K_LANE_SLOTS,
-};
+use cubek_microkernel::reduce::{BATCH, REDUCED, ReduceWorkItem, SLOTS, TOP_K_LANE_SLOTS};
 
 /// The lane slots the microkernels' settings list.
 const LANE_SLOTS: usize = TOP_K_LANE_SLOTS[0];
@@ -35,6 +33,34 @@ use cubek_std::microkernel::Microkernel;
 const PARTS: Dimension = Dimension(3);
 /// The lines of a row's partials, every part's, which only they run along.
 const PARTIAL_LINES: Dimension = Dimension(4);
+
+/// Which way a case's lines run against its rows: the buffers a case lays out, and the
+/// dimension its work item's lines run along.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineDirection {
+    /// Along the reduced dimension, a line `width` values of one row.
+    Along,
+    /// Across it, a line one value of `width` rows side by side.
+    Across,
+}
+
+impl LineDirection {
+    /// The direction of lines that run along `lines_along`.
+    pub fn of(lines_along: Dimension) -> Self {
+        match lines_along == REDUCED {
+            true => Self::Along,
+            false => Self::Across,
+        }
+    }
+
+    /// The dimension lines in this direction run along.
+    pub fn dimension(self) -> Dimension {
+        match self {
+            Self::Along => REDUCED,
+            Self::Across => BATCH,
+        }
+    }
+}
 
 /// Which reduce microkernel a case runs, named for the microkernel, and what its scope holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -145,10 +171,11 @@ impl ReduceLaunch {
         let cells = self.item.operation.written_per_row();
         let space = Space::new(&[(BATCH, self.rows), (REDUCED, self.reduced), (SLOTS, cells)]);
         // Across, an owner holds a line's worth of rows side by side.
-        let (owned, input_dimensions, out_dimensions, out_width) = match self.item.layout {
-            ReduceLayout::Along => (1, [BATCH, REDUCED], [BATCH, SLOTS], 1),
-            ReduceLayout::Across => (self.width, [REDUCED, BATCH], [SLOTS, BATCH], self.width),
-        };
+        let (owned, input_dimensions, out_dimensions, out_width) =
+            match LineDirection::of(self.item.lines_along) {
+                LineDirection::Along => (1, [BATCH, REDUCED], [BATCH, SLOTS], 1),
+                LineDirection::Across => (self.width, [REDUCED, BATCH], [SLOTS, BATCH], self.width),
+            };
         let leaf = Levels::leaf(&[(BATCH, owned), (REDUCED, self.reduced), (SLOTS, cells)]);
         let (partitioning, cube_dim) = match self.microkernel {
             TestedMicrokernel::UnitDirect => {
@@ -265,8 +292,8 @@ impl ReduceLaunch {
             partial_dimensions,
             partial_lines,
             part_lines,
-        ) = match self.item.layout {
-            ReduceLayout::Along => (
+        ) = match LineDirection::of(self.item.lines_along) {
+            LineDirection::Along => (
                 1,
                 [BATCH, PARTS, REDUCED],
                 [BATCH, SLOTS],
@@ -274,7 +301,7 @@ impl ReduceLaunch {
                 parts * cells * self.width,
                 part / self.width,
             ),
-            ReduceLayout::Across => (
+            LineDirection::Across => (
                 self.width,
                 [PARTS, REDUCED, BATCH],
                 [SLOTS, BATCH],
@@ -303,9 +330,9 @@ impl ReduceLaunch {
             cube_dim: CubeDim::new_2d(self.plane_width, planes as u32),
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
-        let partial_shape = match self.item.layout {
-            ReduceLayout::Along => [self.rows, partial_lines],
-            ReduceLayout::Across => [partial_lines, self.rows],
+        let partial_shape = match LineDirection::of(self.item.lines_along) {
+            LineDirection::Along => [self.rows, partial_lines],
+            LineDirection::Across => [partial_lines, self.rows],
         };
         let index = ElemType::UInt(UIntKind::U32);
         let partials = TensorHandle::zeros(client, partial_shape, self.item.accumulator);

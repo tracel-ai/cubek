@@ -1,5 +1,5 @@
 use super::base::PlaneShuffleReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, accumulate_strided, row_values};
+use crate::reduce::{ReduceAccumulator, ReduceCarrier, accumulate_strided, row_lanes, row_values};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -62,10 +62,10 @@ fn plane_shuffle_reduce<
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
     let operation = microkernel.item().operation;
-    let layout = microkernel.item().layout;
+    let row_lanes = row_lanes(input);
     let count = input.flat::<In, N>().shape();
     let total = plane_shuffle_reduce_part::<In, Acc, N, C>(input, count, microkernel);
-    let values = row_values::<N>(count, layout);
+    let values = row_values(count, row_lanes);
 
     if UNIT_POS_PLANE == 0 {
         C::write::<Out, Idx>(
@@ -73,7 +73,7 @@ fn plane_shuffle_reduce<
             out,
             indices,
             values,
-            layout,
+            row_lanes,
             operation,
             microkernel.item().writes(),
         );

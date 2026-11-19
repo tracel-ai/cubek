@@ -1,6 +1,6 @@
 //! What every carrier does with one line: read it, index its lanes, write it out.
 
-use crate::reduce::{ReadMap, ReduceAccumulator, ReduceLayout, ReduceWorkItem, ReduceWrites};
+use crate::reduce::{REDUCED, ReadMap, ReduceAccumulator, ReduceWorkItem, ReduceWrites};
 use cubecl::tile::{Indexed, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -24,18 +24,28 @@ pub(crate) fn read_mapped<Acc: Numeric, N: Size>(
     }
 }
 
-/// `read`, a line of a row in `In`, mapped as `item`'s operation reads it and accumulated in `Acc`
-/// into `acc` as line `index` of its row.
+/// The lanes of a line of `input` that hold one row's values: all of them where its lines run along
+/// the row, one where each lane is its own row's. What one load of the tile reaches along
+/// [`REDUCED`], as the binding laid it.
+#[cube]
+pub fn row_lanes(input: &Tile) -> comptime_type!(usize) {
+    let load = input.vector_tile();
+    comptime!(load.extent_along(REDUCED))
+}
+
+/// `read`, a line of a row in `In`, `row_lanes` of its lanes holding one row's values, mapped as
+/// `item`'s operation reads it and accumulated in `Acc` into `acc` as line `index` of its row.
 #[cube]
 pub(crate) fn accumulate_read<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
     acc: &mut C,
     read: Vector<In, N>,
     index: usize,
+    #[comptime] row_lanes: usize,
     #[comptime] item: ReduceWorkItem,
 ) {
     let operation = item.operation;
     let mapped = read_mapped::<Acc, N>(Vector::<Acc, N>::cast_from(read), operation.read_map());
-    C::accumulate(acc, mapped, index, item.layout, operation.monoid());
+    C::accumulate(acc, mapped, index, row_lanes, operation.monoid());
 }
 
 /// The lines of `input` from `first` on, every `stride`-th up to `count`, accumulated from the
@@ -56,26 +66,34 @@ pub(crate) fn accumulate_strided<
     #[comptime] item: ReduceWorkItem,
 ) -> C {
     let lines = input.flat::<In, N>();
+    let row_lanes = row_lanes(input);
     let mut acc = C::identity(item.operation.monoid());
     for step in 0..count.div_ceil(stride) {
         let line = first + step * stride;
         if line < count {
-            accumulate_read::<In, Acc, N, C>(&mut acc, lines.read(line), offset + line, item);
+            accumulate_read::<In, Acc, N, C>(
+                &mut acc,
+                lines.read(line),
+                offset + line,
+                row_lanes,
+                item,
+            );
         }
     }
     acc
 }
 
-/// The index of each lane of the line read `line_index` lines into the row: along the row,
-/// consecutive values; across rows, the line's own position, each lane in its own row.
+/// The index of each lane of the line read `line_index` lines into the row, `row_lanes` of its
+/// lanes holding one row's values: along the row, consecutive values; across rows, the line's own
+/// position, each lane in its own row.
 #[cube]
 pub(crate) fn lane_indices<N: Size>(
     line_index: usize,
-    #[comptime] layout: ReduceLayout,
+    #[comptime] row_lanes: usize,
 ) -> Vector<u32, N> {
-    match layout {
-        ReduceLayout::Along => consecutive_indices_of_line::<N>(line_index),
-        ReduceLayout::Across => Vector::new(line_index as u32),
+    match row_lanes > 1 {
+        true => consecutive_indices_of_line::<N>(line_index),
+        false => Vector::new(line_index as u32),
     }
 }
 
@@ -126,11 +144,8 @@ fn write_both<Out: Numeric, Idx: Numeric, Acc: Numeric, W: Size>(
     index_lines.write(at, Vector::cast_from(index));
 }
 
-/// The values a row of `lines` lines holds: `N` a line along the row, one across rows.
+/// The values a row of `lines` lines holds, `row_lanes` of each line's lanes holding it.
 #[cube]
-pub(crate) fn row_values<N: Size>(lines: usize, #[comptime] layout: ReduceLayout) -> usize {
-    match layout {
-        ReduceLayout::Along => lines * N::value(),
-        ReduceLayout::Across => lines,
-    }
+pub(crate) fn row_values(lines: usize, #[comptime] row_lanes: usize) -> usize {
+    lines * row_lanes
 }

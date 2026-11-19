@@ -13,9 +13,9 @@ use cubecl::prelude::LaunchArg;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
+use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernelSettings;
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
-use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -55,10 +55,7 @@ pub type HypercubeLastArrivalReduceBlueprint =
 /// dim, one value of `width` rows across it.
 fn partial_extent(problem: &ReduceRoutineProblem, part: usize, width: usize) -> usize {
     let cells = problem.reduced_extent().div_ceil(part) * problem.operation.written_per_row();
-    match problem.layout() {
-        ReduceLayout::Along => cells * width,
-        ReduceLayout::Across => cells,
-    }
+    cells * problem.input_load_at_width(width).extent_along(REDUCED)
 }
 
 impl Routine for HypercubeLastArrivalReduceRoutine {

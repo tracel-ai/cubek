@@ -78,7 +78,7 @@ impl core::fmt::Display for UnitDirectReduceMicrokernelSettings {
 
 impl core::fmt::Display for UnitDirectReduceMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:?} {:?}", self.item.operation, self.item.layout)
+        write!(f, "{:?} {:?}", self.item.operation, self.item.lines_along)
     }
 }
 

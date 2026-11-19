@@ -1,8 +1,7 @@
 //! A value with the index it was read at: the argmax and the argmin.
 
 use crate::reduce::{
-    OneIndexed, ReduceAccumulator, ReduceLayout, ReduceOperation, ReduceWrites, lane_indices,
-    write_line,
+    OneIndexed, ReduceAccumulator, ReduceOperation, ReduceWrites, lane_indices, write_line,
 };
 use cubecl::tile::{Carrier, Indexed, Monoid, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -13,12 +12,12 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
         acc: &mut Self,
         line: Vector<Acc, N>,
         line_index: usize,
-        #[comptime] layout: ReduceLayout,
+        #[comptime] row_lanes: usize,
         #[comptime] monoid: Monoid,
     ) {
         let read = Indexed::<Acc, N> {
             value: line,
-            index: lane_indices::<N>(line_index, layout),
+            index: lane_indices::<N>(line_index, row_lanes),
         };
         *acc = Indexed::<Acc, N>::combine(*acc, read, monoid);
     }
@@ -67,17 +66,13 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
         out: &mut Tile,
         indices: &ComptimeOption<Tile>,
         _count: usize,
-        #[comptime] layout: ReduceLayout,
+        #[comptime] row_lanes: usize,
         #[comptime] operation: ReduceOperation,
         #[comptime] writes: ReduceWrites,
     ) {
-        match layout {
-            ReduceLayout::Along => {
-                write_row::<Out, Idx, Acc, N>(acc, out, indices, operation.monoid(), writes)
-            }
-            ReduceLayout::Across => {
-                write_line::<Out, Idx, Acc, N>(out, indices, 0, acc.value, acc.index, writes)
-            }
+        match row_lanes > 1 {
+            true => write_row::<Out, Idx, Acc, N>(acc, out, indices, operation.monoid(), writes),
+            false => write_line::<Out, Idx, Acc, N>(out, indices, 0, acc.value, acc.index, writes),
         }
     }
 }

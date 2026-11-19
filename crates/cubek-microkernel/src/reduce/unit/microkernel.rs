@@ -1,5 +1,5 @@
 use super::base::UnitDirectReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, accumulate_read, row_values};
+use crate::reduce::{ReduceAccumulator, ReduceCarrier, accumulate_read, row_lanes, row_values};
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -63,24 +63,30 @@ fn unit_direct_reduce<
 ) {
     let operation = microkernel.item().operation;
     let monoid = operation.monoid();
-    let layout = microkernel.item().layout;
+    let row_lanes = row_lanes(input);
 
     let lines = input.flat::<In, N>();
     let count = lines.shape();
 
     let mut acc = C::identity(monoid);
     for line in 0..count {
-        accumulate_read::<In, Acc, N, C>(&mut acc, lines.read(line), line, microkernel.item());
+        accumulate_read::<In, Acc, N, C>(
+            &mut acc,
+            lines.read(line),
+            line,
+            row_lanes,
+            microkernel.item(),
+        );
     }
 
-    let values = row_values::<N>(count, layout);
+    let values = row_values(count, row_lanes);
 
     C::write::<Out, Idx>(
         acc,
         out,
         indices,
         values,
-        layout,
+        row_lanes,
         operation,
         microkernel.item().writes(),
     );

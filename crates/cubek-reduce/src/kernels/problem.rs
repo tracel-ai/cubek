@@ -4,12 +4,10 @@ use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::BoundaryPolicy;
-use cubecl::tile::layout::ElemAlignment;
+use cubecl::tile::layout::{ElemAlignment, VectorTile};
 use cubecl::tile::{Dimension, Geometry, Partitioning, Space};
 use cubecl::tune::Work;
-use cubek_microkernel::reduce::{
-    BATCH, PARTIALS, REDUCED, ReduceLayout, ReduceOperation, ReduceWorkItem, SLOTS,
-};
+use cubek_microkernel::reduce::{BATCH, PARTIALS, REDUCED, ReduceOperation, ReduceWorkItem, SLOTS};
 use cubek_std::routine::EstimatedProblem;
 
 /// The elements of a reduction: what the input is stored in, what it accumulates in, and what the
@@ -290,13 +288,21 @@ impl ReduceRoutineProblem {
         self.shape.iter().product::<usize>() / self.reduced_extent().max(1)
     }
 
-    /// How the lines lie: along the reduced axis where it is the contiguous one, across it where
-    /// another is, each lane of a line its own row; along it, a value a line, where none is.
-    pub(crate) fn layout(&self) -> ReduceLayout {
+    /// The dimension the input's lines run along: [`BATCH`] where another axis than the reduced
+    /// one is the contiguous one, each lane of a line its own row's; [`REDUCED`] otherwise, a
+    /// value a line where no axis is.
+    pub(crate) fn lines_along(&self) -> Dimension {
         match self.contiguous {
-            Some(axis) if axis != self.axis => ReduceLayout::Across,
-            _ => ReduceLayout::Along,
+            Some(axis) if axis != self.axis => BATCH,
+            _ => REDUCED,
         }
+    }
+
+    /// What one load of the input covers, its lines `width` wide: a run along
+    /// [`lines_along`](Self::lines_along), the load the input's tile carries on the device
+    /// ([`Tile::vector_tile`](cubecl::tile::Tile::vector_tile)).
+    pub(crate) fn input_load_at_width(&self, width: usize) -> VectorTile {
+        VectorTile::run(self.lines_along(), width)
     }
 
     /// What every microkernel of this problem is handed.
@@ -305,7 +311,7 @@ impl ReduceRoutineProblem {
             operation: self.operation,
             input: self.elements.input,
             accumulator: self.elements.accumulator,
-            layout: self.layout(),
+            lines_along: self.lines_along(),
             with_indices: self.indices.is_some(),
         }
     }
@@ -334,11 +340,7 @@ impl ReduceRoutineProblem {
     /// each unit `unit_lines` lines of `width` values: along, a line holds `width` values of the
     /// row; across, one.
     pub(crate) fn split_part(&self, units: usize, unit_lines: usize, width: usize) -> usize {
-        let values_a_line = match self.layout() {
-            ReduceLayout::Along => width,
-            ReduceLayout::Across => 1,
-        };
-        units * unit_lines * values_a_line
+        units * unit_lines * self.input_load_at_width(width).extent_along(REDUCED)
     }
 
     /// The box a cube owns where a row is split across cubes: the owner's box at `width`, `part`
@@ -366,12 +368,10 @@ impl ReduceRoutineProblem {
         self.row_count().div_ceil(self.box_rows_at_width(width))
     }
 
-    /// Rows an owner holds: `width` side by side across the reduced axis, one along it.
+    /// Rows an owner holds: those one load reaches along [`BATCH`], `width` side by side across
+    /// the reduced axis, one along it.
     fn box_rows_at_width(&self, width: usize) -> usize {
-        match self.layout() {
-            ReduceLayout::Across => width,
-            ReduceLayout::Along => 1,
-        }
+        self.input_load_at_width(width).extent_along(BATCH)
     }
 
     /// `partitioning` as a kernel compiles it: every dimension but the cells a row writes left to
@@ -529,8 +529,8 @@ mod tests {
     fn the_lines_lie_along_the_contiguous_axis() {
         let along = ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum);
         let across = ReduceRoutineProblem::dense(&[4, 8], 0, ReduceOperation::Sum);
-        assert_eq!(along.layout(), ReduceLayout::Along);
-        assert_eq!(across.layout(), ReduceLayout::Across);
+        assert_eq!(along.lines_along(), REDUCED);
+        assert_eq!(across.lines_along(), BATCH);
     }
 
     /// Across the reduced axis an owner holds a line of rows, `width` side by side; along it, one

@@ -4,7 +4,7 @@ use crate::kernels::{BATCH, ReduceRoutineProblem};
 use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::space::UnitCube;
 use cubecl::tile::{Levels, Partitioning};
-use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand, ReduceWorkItem};
+use cubek_microkernel::reduce::{ReduceOperand, ReduceWorkItem};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid};
@@ -49,7 +49,7 @@ pub(crate) fn reduce_widths(
     }
     let line_stays_in = problem
         .contiguous
-        .filter(|_| problem.layout() == ReduceLayout::Across)
+        .filter(|_| problem.lines_along() == BATCH)
         .map_or(problem.reduced_extent(), |inner| problem.shape[inner]);
     vectorization.require(VectorRequirement::Access {
         operand: ReduceOperand::Input,

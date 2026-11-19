@@ -94,7 +94,7 @@ impl core::fmt::Display for PlaneShuffleReduceMicrokernel {
         write!(
             f,
             "{:?} {:?} lanes={}",
-            self.item.operation, self.item.layout, self.lanes
+            self.item.operation, self.item.lines_along, self.lanes
         )
     }
 }

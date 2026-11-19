@@ -3,8 +3,9 @@
 use crate::kernels::{ReduceElements, ReduceIndices, ReduceRoutineProblem, ReduceTensors};
 use cubecl::AutotuneKey;
 use cubecl::ir::ElemType;
+use cubecl::tile::Dimension;
 use cubecl::tile::layout::ElemAlignment;
-use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation};
+use cubek_microkernel::reduce::{REDUCED, ReduceOperation};
 use serde::{Deserialize, Serialize};
 
 /// What tells one reduction from another for the autotune: its elements, its operation, how its
@@ -15,7 +16,7 @@ pub struct ReduceKey {
     elements: ReduceElements,
     indices: Option<ElemType>,
     operation: ReduceOperation,
-    layout: ReduceLayout,
+    lines_along: Dimension,
     #[autotune(anchor(exp(min = 16, max = 1048576, base = 4)))]
     reduced: usize,
     #[autotune(anchor(exp(max = 1048576, base = 8)))]
@@ -34,7 +35,7 @@ impl From<&ReduceRoutineProblem> for ReduceKey {
             problem.elements,
             problem.indices.map(|indices| indices.element),
             problem.operation,
-            problem.layout(),
+            problem.lines_along(),
             problem.reduced_extent(),
             problem.row_count(),
         )
@@ -45,9 +46,9 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
     /// A dense matrix of `rows` rows of `reduced` values: the reduced axis the inner one where the
     /// lines lie along it, the outer where they lie across it.
     fn from(key: &ReduceKey) -> Self {
-        let (shape, axis) = match key.layout {
-            ReduceLayout::Along => (vec![key.rows, key.reduced], 1),
-            ReduceLayout::Across => (vec![key.reduced, key.rows], 0),
+        let (shape, axis) = match key.lines_along == REDUCED {
+            true => (vec![key.rows, key.reduced], 1),
+            false => (vec![key.reduced, key.rows], 0),
         };
         let mut out_shape = shape.clone();
         out_shape[axis] = key.operation.written_per_row();
@@ -97,7 +98,7 @@ mod tests {
             ReduceOperation::Sum,
         ));
         let problem = ReduceRoutineProblem::from(&key);
-        assert_eq!(problem.layout(), ReduceLayout::Across);
+        assert_eq!(problem.lines_along(), crate::kernels::BATCH);
         assert_eq!(problem.contiguous, Some(problem.shape.len() - 1));
     }
 }

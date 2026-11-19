@@ -1,12 +1,13 @@
 //! The reduce family's rule: which routine runs a problem when nothing is measured.
 
 use crate::kernels::{
-    CubeStagedReduceRoutine, HypercubeLastArrivalReduceRoutine, HypercubeLastArrivalReduceSettings,
-    PlaneShuffleReduceRoutine, ReduceBlueprint, ReduceKernel, ReduceLauncher, ReduceRoutineProblem,
-    ReduceSplitExtents, ReduceTensors, UnitDirectReduceRoutine, launch_kernel,
+    BATCH, CubeStagedReduceRoutine, HypercubeLastArrivalReduceRoutine,
+    HypercubeLastArrivalReduceSettings, PlaneShuffleReduceRoutine, ReduceBlueprint, ReduceKernel,
+    ReduceLauncher, ReduceRoutineProblem, ReduceSplitExtents, ReduceTensors,
+    UnitDirectReduceRoutine, launch_kernel,
 };
 use cubecl::tile::launch::Decline;
-use cubek_microkernel::reduce::{ReduceCarrier, ReduceLayout};
+use cubek_microkernel::reduce::ReduceCarrier;
 use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
 use cubek_std::routine::{Grid, Routine};
@@ -55,13 +56,12 @@ pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decli
 /// so it keeps up only while the row holds no more lines than a plane has lanes, or where the
 /// device runs no plane routine.
 fn unit_keeps_up(hw: &Hardware, problem: &ReduceRoutineProblem, width: usize) -> bool {
-    match problem.layout() {
-        ReduceLayout::Across => true,
-        ReduceLayout::Along => hw
-            .plane_dim()
-            .ok()
-            .is_none_or(|lanes| problem.reduced_extent().div_ceil(width) <= lanes as usize),
+    if problem.lines_along() == BATCH {
+        return true;
     }
+    hw.plane_dim()
+        .ok()
+        .is_none_or(|lanes| problem.reduced_extent().div_ceil(width) <= lanes as usize)
 }
 
 /// The hypercube's launch where a box of rows a cube leaves the device idle and splitting the rows

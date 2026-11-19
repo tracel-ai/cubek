@@ -1,5 +1,5 @@
 use super::base::HypercubeLastArrivalReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, is_first_unit_of_cube};
+use crate::reduce::{ReduceAccumulator, ReduceCarrier, is_first_unit_of_cube, row_lanes};
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -132,6 +132,7 @@ fn hypercube_last_arrival_reduce<
     // Past the row's end the input reads the identity of the operation's edge monoid, which
     // leaves the carrier as it is: every line of the window is read.
     let count = input.flat::<In, N>().shape();
+    let row_lanes = row_lanes(input);
 
     let total = cube_part
         .runtime()
@@ -152,6 +153,7 @@ fn hypercube_last_arrival_reduce<
             partial_indices,
             parts,
             values,
+            row_lanes,
             microkernel,
         );
     }
@@ -184,7 +186,8 @@ fn count_in(arrivals: &[Atomic<u32>], counter: usize) -> u32 {
 }
 
 /// The row's `parts` partials, once every cube of the row stored its own, merged by the last
-/// cube's first unit and written as its cube microkernel writes a row.
+/// cube's first unit and written as its cube microkernel writes a row, `row_lanes` of a line's
+/// lanes holding one row's values.
 #[cube]
 fn merge_parts<Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
     out: &mut Tile,
@@ -193,6 +196,7 @@ fn merge_parts<Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size, C: ReduceAccum
     partial_indices: &ComptimeOption<Tile>,
     parts: usize,
     values: usize,
+    #[comptime] row_lanes: usize,
     #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
 ) {
     // What every other cube of the row stored is acquired before it is read.
@@ -206,12 +210,14 @@ fn merge_parts<Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size, C: ReduceAccum
             partial_indices,
             parts,
             values,
+            row_lanes,
             microkernel,
         );
     }
 }
 
-/// The row's `parts` partials combined, and the total written to `out` and `indices`.
+/// The row's `parts` partials combined, and the total written to `out` and `indices`, `row_lanes`
+/// of a line's lanes holding one row's values.
 #[cube]
 fn write_merged<Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
     out: &mut Tile,
@@ -220,6 +226,7 @@ fn write_merged<Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size, C: ReduceAccu
     partial_indices: &ComptimeOption<Tile>,
     parts: usize,
     values: usize,
+    #[comptime] row_lanes: usize,
     #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
 ) {
     let item = microkernel.part().item();
@@ -234,7 +241,7 @@ fn write_merged<Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size, C: ReduceAccu
         out,
         indices,
         values,
-        item.layout,
+        row_lanes,
         item.operation,
         item.writes(),
     );
