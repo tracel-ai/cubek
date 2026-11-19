@@ -157,6 +157,62 @@ pub fn ln<N: Size>(x: Vector<f32, N>) -> Vector<f32, N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cubecl::TestRuntime;
+
+    /// `ln` of each of `xs`, one component a line.
+    #[cube(harness)]
+    fn ln_each(xs: &[f32], out: &mut [f32]) {
+        for i in 0..xs.len() {
+            out[i] = ln::<Const<1>>(Vector::new(xs[i])).extract(0usize);
+        }
+    }
+
+    /// The cosine and sine of each of `turns`, one component a line.
+    #[cube(harness)]
+    fn cos_sin_each(turns: &[f32], cosines: &mut [f32], sines: &mut [f32]) {
+        for i in 0..turns.len() {
+            let (cosine, sine) = cos_sin_turns::<Const<1>>(Vector::new(turns[i]));
+            cosines[i] = cosine.extract(0usize);
+            sines[i] = sine.extract(0usize);
+        }
+    }
+
+    /// `ln` stays within an `f32`'s precision of the true logarithm across the normal range,
+    /// both halves of each octave included.
+    #[test]
+    fn ln_matches_the_logarithm_over_the_normal_range() {
+        let xs: Vec<f32> = (-126..128)
+            .flat_map(|octave| [1.0f32, 1.2, 1.41, 1.42, 1.7, 1.99].map(|m| m * 2f32.powi(octave)))
+            .collect();
+        let mut out = vec![0.0; xs.len()];
+        ln_each::harness::<TestRuntime>(&xs, &mut out);
+        for (x, ln) in xs.iter().zip(out) {
+            let expected = (*x as f64).ln();
+            assert!(
+                (ln as f64 - expected).abs() <= 1e-6 * expected.abs().max(1.0),
+                "ln({x}) = {ln}, expected {expected}"
+            );
+        }
+    }
+
+    /// `cos_sin_turns` is the cosine and sine of the angle across a whole turn, every quadrant
+    /// and the eighths where the series meet.
+    #[test]
+    fn cos_sin_turns_matches_the_circle_over_a_turn() {
+        let turns: Vec<f32> = (0..1024).map(|i| i as f32 / 1024.0).collect();
+        let (mut cosines, mut sines) = (vec![0.0; turns.len()], vec![0.0; turns.len()]);
+        cos_sin_each::harness::<TestRuntime>(&turns, &mut cosines, &mut sines);
+        for ((turn, cosine), sine) in turns.iter().zip(cosines).zip(sines) {
+            let angle = core::f64::consts::TAU * *turn as f64;
+            assert!(
+                (cosine as f64 - angle.cos()).abs() <= 1e-6
+                    && (sine as f64 - angle.sin()).abs() <= 1e-6,
+                "{turn} turns: ({cosine}, {sine}), expected ({}, {})",
+                angle.cos(),
+                angle.sin()
+            );
+        }
+    }
 
     /// Each derived constant matches the f64 formula it computes (kernel accuracy is in
     /// `tests/random/polynomial.rs`).
