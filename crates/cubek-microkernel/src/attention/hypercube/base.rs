@@ -41,13 +41,13 @@ impl Microkernel for HypercubeAttentionMicrokernel {
 
     /// The hypercube's settings over plane fragments, then over plane shuffles
     /// ([`HypercubeAttentionMicrokernelSettings::listed`]).
-    fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         [
             HypercubeAttentionMicrokernelSettings::FRAGMENT,
             HypercubeAttentionMicrokernelSettings::SHUFFLE,
         ]
         .into_iter()
-        .flat_map(HypercubeAttentionMicrokernelSettings::listed)
+        .flat_map(|lead| lead.listed(hw))
         .collect()
     }
 

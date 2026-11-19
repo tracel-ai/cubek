@@ -47,6 +47,16 @@ impl CubeStagedDelivery {
             Self::AsyncCopy => Delivery::AsyncPerUnit,
         }
     }
+
+    /// The delivery that fills the stages, which a stage is arranged for as its instruction
+    /// reads it: the units' own loads, the copy engine, or the TMA engine.
+    pub fn fills(self) -> Delivery {
+        match self {
+            Self::Copy => Delivery::SyncPerUnit,
+            Self::AsyncCopy => Delivery::AsyncPerUnit,
+            Self::Tma => Delivery::Tma,
+        }
+    }
 }
 
 /// Why the TMA engine cannot fill a cube microkernel's stages.
