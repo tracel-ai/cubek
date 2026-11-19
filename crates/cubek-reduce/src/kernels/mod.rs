@@ -15,6 +15,7 @@ mod tests;
 mod tune;
 
 pub use blueprint::*;
+pub(crate) use cubek_microkernel::reduce::{BATCH, PARTIALS, REDUCED, SLOTS};
 pub use operation::*;
 pub use problem::*;
 pub use routines::*;

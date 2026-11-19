@@ -1,7 +1,7 @@
 //! What every reduce microkernel computes alone: each row's cells, one or `k` for a top-k, values
-//! or indices. Along the reduced dimension, `input[ROWS, REDUCED]` and `out[ROWS, SLOTS]`; across
-//! it, `input[REDUCED, ROWS]` and `out[SLOTS, ROWS]`. A hypercube's input splits the reduced
-//! dimension into its parts, `input[ROWS, PARTS, REDUCED]` or `input[PARTS, REDUCED, ROWS]`, a
+//! or indices. Along the reduced dimension, `input[BATCH, REDUCED]` and `out[BATCH, SLOTS]`; across
+//! it, `input[REDUCED, BATCH]` and `out[SLOTS, BATCH]`. A hypercube's input splits the reduced
+//! dimension into its parts, `input[BATCH, PARTS, REDUCED]` or `input[PARTS, REDUCED, BATCH]`, a
 //! cube a part.
 
 use crate::launch::reduce::{ReduceLaunch, TestedMicrokernel};

@@ -1,8 +1,8 @@
-//! The reduce microkernels on one launch: `out[ROWS, SLOTS]`, the cells each row writes (one, or
-//! `k` for a top-k). Along the reduced dimension, `input[ROWS, REDUCED]`, each row its owner's;
-//! across it, `input[REDUCED, ROWS]` and `out[SLOTS, ROWS]`, each owner `width` rows side by side,
+//! The reduce microkernels on one launch: `out[BATCH, SLOTS]`, the cells each row writes (one, or
+//! `k` for a top-k). Along the reduced dimension, `input[BATCH, REDUCED]`, each row its owner's;
+//! across it, `input[REDUCED, BATCH]` and `out[SLOTS, BATCH]`, each owner `width` rows side by side,
 //! a row a lane. A hypercube splits the reduced dimension into parts,
-//! `input[ROWS, PARTS, REDUCED]` or `input[PARTS, REDUCED, ROWS]`, a cube a part.
+//! `input[BATCH, PARTS, REDUCED]` or `input[PARTS, REDUCED, BATCH]`, a cube a part.
 
 use cubecl::ir::UIntKind;
 use cubecl::prelude::*;
@@ -22,15 +22,15 @@ use cubek_microkernel::reduce::plane::{
     PlaneShuffleReduceMicrokernel, PlaneShuffleReduceMicrokernelSettings,
 };
 use cubek_microkernel::reduce::unit::UnitDirectReduceMicrokernel;
-use cubek_microkernel::reduce::{REDUCED, ROWS, ReduceLayout, ReduceWorkItem, TOP_K_LANE_SLOTS};
+use cubek_microkernel::reduce::{
+    BATCH, REDUCED, ReduceLayout, ReduceWorkItem, SLOTS, TOP_K_LANE_SLOTS,
+};
 
 /// The lane slots the microkernels' settings list.
 const LANE_SLOTS: usize = TOP_K_LANE_SLOTS[0];
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
-/// The cells a row writes: one, or `k` for a top-k.
-const SLOTS: Dimension = Dimension(2);
 /// The parts a hypercube splits the reduced dimension into, a cube a part.
 const PARTS: Dimension = Dimension(3);
 /// The lines of a row's partials, every part's, which only they run along.
@@ -143,19 +143,19 @@ impl ReduceLaunch {
         out: TensorArg,
     ) -> Result<(), Decline> {
         let cells = self.item.operation.written_per_row();
-        let space = Space::new(&[(ROWS, self.rows), (REDUCED, self.reduced), (SLOTS, cells)]);
+        let space = Space::new(&[(BATCH, self.rows), (REDUCED, self.reduced), (SLOTS, cells)]);
         // Across, an owner holds a line's worth of rows side by side.
         let (owned, input_dimensions, out_dimensions, out_width) = match self.item.layout {
-            ReduceLayout::Along => (1, [ROWS, REDUCED], [ROWS, SLOTS], 1),
-            ReduceLayout::Across => (self.width, [REDUCED, ROWS], [SLOTS, ROWS], self.width),
+            ReduceLayout::Along => (1, [BATCH, REDUCED], [BATCH, SLOTS], 1),
+            ReduceLayout::Across => (self.width, [REDUCED, BATCH], [SLOTS, BATCH], self.width),
         };
-        let leaf = Levels::leaf(&[(ROWS, owned), (REDUCED, self.reduced), (SLOTS, cells)]);
+        let leaf = Levels::leaf(&[(BATCH, owned), (REDUCED, self.reduced), (SLOTS, cells)]);
         let (partitioning, cube_dim) = match self.microkernel {
             TestedMicrokernel::UnitDirect => {
                 let partitioning = Partitioning::new(
                     space.clone(),
                     leaf.launch_units(
-                        &[ROWS],
+                        &[BATCH],
                         UnitCube {
                             plane_width: self.plane_width as usize,
                             planes: 1,
@@ -169,14 +169,17 @@ impl ReduceLaunch {
             TestedMicrokernel::PlaneShuffle => {
                 let partitioning = Partitioning::new(
                     space.clone(),
-                    leaf.launch_planes(&[ROWS], PlaneOrder::new(&[(ROWS, 1)], CubeOrder::RowMajor))
-                        .build(),
+                    leaf.launch_planes(
+                        &[BATCH],
+                        PlaneOrder::new(&[(BATCH, 1)], CubeOrder::RowMajor),
+                    )
+                    .build(),
                 );
                 let cube_dim = partitioning.cube_dim(self.plane_width);
                 (partitioning, cube_dim)
             }
             TestedMicrokernel::CubeStaged { planes } => (
-                Partitioning::new(space.clone(), leaf.cubes(&[ROWS]).build()),
+                Partitioning::new(space.clone(), leaf.cubes(&[BATCH]).build()),
                 CubeDim::new_2d(self.plane_width, planes as u32),
             ),
             TestedMicrokernel::HypercubeLastArrival { .. } => {
@@ -265,36 +268,36 @@ impl ReduceLaunch {
         ) = match self.item.layout {
             ReduceLayout::Along => (
                 1,
-                [ROWS, PARTS, REDUCED],
-                [ROWS, SLOTS],
-                [ROWS, PARTIAL_LINES],
+                [BATCH, PARTS, REDUCED],
+                [BATCH, SLOTS],
+                [BATCH, PARTIAL_LINES],
                 parts * cells * self.width,
                 part / self.width,
             ),
             ReduceLayout::Across => (
                 self.width,
-                [PARTS, REDUCED, ROWS],
-                [SLOTS, ROWS],
-                [PARTIAL_LINES, ROWS],
+                [PARTS, REDUCED, BATCH],
+                [SLOTS, BATCH],
+                [PARTIAL_LINES, BATCH],
                 parts * cells,
                 part,
             ),
         };
         let space = Space::new(&[
-            (ROWS, self.rows),
+            (BATCH, self.rows),
             (REDUCED, part),
             (SLOTS, cells),
             (PARTS, parts),
             (PARTIAL_LINES, partial_lines),
         ]);
         let leaf = Levels::leaf(&[
-            (ROWS, owned),
+            (BATCH, owned),
             (REDUCED, part),
             (SLOTS, cells),
             (PARTS, 1),
             (PARTIAL_LINES, partial_lines),
         ]);
-        let partitioning = Partitioning::new(space.clone(), leaf.cubes(&[ROWS, PARTS]).build());
+        let partitioning = Partitioning::new(space.clone(), leaf.cubes(&[BATCH, PARTS]).build());
         let grid = Grid::Stated {
             cube_count: partitioning.cube_count(),
             cube_dim: CubeDim::new_2d(self.plane_width, planes as u32),
@@ -498,7 +501,7 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         let row = x.at(&cube);
         let mut slots = p.at(&cube);
 
-        let counter = cube.origin(ROWS);
+        let counter = cube.origin(BATCH);
         let part = cube.origin(PARTS);
         let first_line = part * part_lines;
 
@@ -551,7 +554,7 @@ fn hypercube_indexed_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: S
         let row = x.at(&cube);
         let mut slots = p.at(&cube);
 
-        let counter = cube.origin(ROWS);
+        let counter = cube.origin(BATCH);
         let part = cube.origin(PARTS);
         let first_line = part * part_lines;
 

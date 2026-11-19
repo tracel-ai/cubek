@@ -7,19 +7,10 @@ use cubecl::tile::launch::BoundaryPolicy;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Dimension, Geometry, Partitioning, Space};
 use cubecl::tune::Work;
-use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation, ReduceWorkItem};
+use cubek_microkernel::reduce::{
+    BATCH, PARTIALS, REDUCED, ReduceLayout, ReduceOperation, ReduceWorkItem, SLOTS,
+};
 use cubek_std::routine::EstimatedProblem;
-
-/// The rows: every axis of the input but the reduced one, as one dimension, the first axis
-/// coarsest.
-pub(crate) const BATCH: Dimension = Dimension(0);
-/// The axis a row runs along, which the reduction takes away.
-pub(crate) const REDUCED: Dimension = Dimension(1);
-/// The cells a row writes, `k` for a top-k: the output's dimension in place of the reduced one.
-pub(crate) const SLOTS: Dimension = Dimension(2);
-/// A hypercube's partials, every part's carrier for a row side by side: the partials' dimension in
-/// place of the reduced one.
-pub(crate) const PARTIALS: Dimension = Dimension(3);
 
 /// The elements of a reduction: what the input is stored in, what it accumulates in, and what the
 /// output is written in (an index's, where it writes indices).
