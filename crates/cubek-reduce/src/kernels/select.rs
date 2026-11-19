@@ -2,14 +2,14 @@
 
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeLastArrivalReduceRoutine, HypercubeLastArrivalReduceSettings,
-    PlaneShuffleReduceRoutine, ReduceKernel, ReduceLauncher, ReduceRoutineProblem,
+    PlaneShuffleReduceRoutine, ReduceBlueprint, ReduceKernel, ReduceLauncher, ReduceRoutineProblem,
     ReduceSplitExtents, ReduceTensors, UnitDirectReduceRoutine, launch_kernel,
 };
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::reduce::{ReduceCarrier, ReduceLayout};
 use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
-use cubek_std::routine::Routine;
+use cubek_std::routine::{Grid, Routine};
 
 /// `tensors` reduced by the routine the rule picks on `hw`, read top to bottom:
 ///
@@ -27,15 +27,13 @@ use cubek_std::routine::Routine;
 /// Why the unit routine cannot run the problem here, which no device refuses.
 pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
     let problem = tensors.problem();
-    if let Ok((blueprint, grid)) = UnitDirectReduceRoutine::prepare_first_served(hw, problem)
-        && short_of_the_device(hw, &grid.launch) == 0
+    if let Some((blueprint, grid)) = filling_the_device::<UnitDirectReduceRoutine, _>(hw, problem)
         && unit_keeps_up(hw, problem, blueprint.width)
     {
         UnitDirectReduceRoutine::launch(tensors, blueprint, grid);
         return Ok(());
     }
-    if let Ok((blueprint, grid)) = PlaneShuffleReduceRoutine::prepare_first_served(hw, problem)
-        && short_of_the_device(hw, &grid.launch) == 0
+    if let Some((blueprint, grid)) = filling_the_device::<PlaneShuffleReduceRoutine, _>(hw, problem)
     {
         PlaneShuffleReduceRoutine::launch(tensors, blueprint, grid);
         return Ok(());
@@ -117,4 +115,15 @@ fn hypercube_filling_the_device(
         }
     }
     most_cubes.map(|(_, blueprint, grid)| (blueprint, grid))
+}
+
+/// `R`'s launch at the first of its settings `hw` prepares `problem` at, where that launch fills
+/// the device.
+fn filling_the_device<R: ReduceLauncher<M>, M>(
+    hw: &Hardware,
+    problem: &ReduceRoutineProblem,
+) -> Option<(ReduceBlueprint<M>, Grid)> {
+    R::prepare_first_served(hw, problem)
+        .ok()
+        .filter(|(_, grid)| short_of_the_device(hw, &grid.launch) == 0)
 }
