@@ -174,8 +174,9 @@ impl PlaneFragmentMicrokernel {
     /// rows where the item holds its rows whole, the settings' fragments along `m` where a stage
     /// tiles them; the settings' fragments along `n` and then every narrower count down to one,
     /// each where its columns close `n`, each fragment a window of the settings' steps of `K`
-    /// through the tile DSL's transport. A window is whole windows of `K`, and a unit's run of it,
-    /// one of the four quads of `k` its fragment's units split, whole reads of the rhs. Only
+    /// through the tile DSL's transport. A window is whole windows of `K` and whole reads of the
+    /// rhs's scales, and a unit's run of it, one of the four quads of `k` its fragment's units
+    /// split, whole reads of the rhs. Only
     /// settings stating such a grid size one
     /// ([`windowed`](PlaneFragmentMicrokernelSettings::windowed)), on a device offering the
     /// decoding instruction over the lhs's element.
@@ -189,10 +190,15 @@ impl PlaneFragmentMicrokernel {
         let window = settings.depth.get() * shape.k as usize;
         let rhs = space.operand(MatmulOperand::Rhs);
         let runs_whole = (window / 4).is_multiple_of(rhs.read(K));
-        // A window states `K` as whole scale blocks and the position inside one.
+        // A window states `K` as whole scale blocks and the position inside one, and holds whole
+        // reads of the rhs's scales: MXFP4's window of 64 holds half a word of four scales of
+        // thirty-two, which no stage lays out, where read a block at a time it holds two reads.
         let blocks_whole = rhs
             .grouping(K, space.k)
             .is_some_and(|block| window.is_multiple_of(block));
+        let scales_whole = rhs
+            .scale_read_space()
+            .is_none_or(|read| window.is_multiple_of(read.extent(K)));
         // A plane holding every row whole holds one fragment of them; one whose rows are tiled, a
         // stage's, holds the settings' fragments along `M`, each against the rhs fragment
         // decoded once a step.
@@ -201,6 +207,7 @@ impl PlaneFragmentMicrokernel {
         let offered = windowed
             && runs_whole
             && blocks_whole
+            && scales_whole
             && space.k.is_multiple_of(window)
             && Self::decodes(hw, item.elements.lhs, item.sum);
         let instruction = PlaneFragmentInstruction::mma(shape);
