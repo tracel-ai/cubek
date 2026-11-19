@@ -4,14 +4,15 @@ use super::kernel::{
 };
 use crate::kernels::routines::cube::slot_bytes;
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
-    reduce_widths,
+    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
 };
+use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
+use cubecl::prelude::LaunchArg;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Levels, Partitioning};
+use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::hypercube::{
     HypercubeReduceMicrokernel, HypercubeReduceMicrokernelSettings,
 };
@@ -206,16 +207,15 @@ impl Routine for HypercubeReduceRoutine {
 }
 
 impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
-    fn dispatch(
+    fn dispatch<I: TileOperand>(
         &self,
-        tensors: &ReduceTensors,
-        binding: ReduceBinding,
+        problem: &ReduceRoutineProblem,
+        client: &Client,
+        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: HypercubeReduceRoutineBlueprint,
         grid: Grid,
     ) {
-        let problem = tensors.problem();
         let elements = problem.elements;
-        let client = tensors.client();
         let extents = ReduceSplitExtents::new(problem, &blueprint.partitioning, blueprint.width);
         // A box of rows' partials lie where its output does, the reduced dim's cells holding
         // every part's carrier; the counters, one a box of rows, hold zero.
@@ -251,13 +251,13 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
         // shared memory is the slots its microkernel declares, which the grid counted.
         match (binding.indices, problem.indices) {
             (Some(indices), Some(index)) => unsafe {
-                hypercube_reduce_with_indices_kernel::launch_unchecked(
+                hypercube_reduce_with_indices_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
                     blueprint.width,
-                    binding.input.arg(),
-                    binding.out.arg(),
+                    binding.input,
+                    binding.out,
                     indices.arg(),
                     partials.arg(),
                     partial_indices.arg(),
@@ -274,13 +274,13 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
                 )
             },
             _ => unsafe {
-                hypercube_reduce_kernel::launch_unchecked(
+                hypercube_reduce_kernel::launch_unchecked::<I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
                     blueprint.width,
-                    binding.input.arg(),
-                    binding.out.arg(),
+                    binding.input,
+                    binding.out,
                     partials.arg(),
                     partial_indices.arg(),
                     arrivals,
