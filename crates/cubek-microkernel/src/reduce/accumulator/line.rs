@@ -51,6 +51,10 @@ pub(crate) fn accumulate_read<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccum
 /// The lines of `input` from `first` on, every `stride`-th up to `count`, accumulated from the
 /// identity, line `l` as line `offset + l` of its row: one unit's share of a row its plane or its
 /// cube reads together.
+///
+/// Every step but the last reads without a check: a check before each read puts a branch between
+/// consecutive loads, and a unit then waits on each line before it asks for the next. `first`
+/// must be below `stride`, so that one step past the full ones covers the rest.
 #[cube]
 pub(crate) fn accumulate_strided<
     In: Numeric,
@@ -68,17 +72,27 @@ pub(crate) fn accumulate_strided<
     let lines = input.flat::<In, N>();
     let row_lanes = row_lanes(input);
     let mut acc = C::identity(item.operation.monoid());
-    for step in 0..count.div_ceil(stride) {
+    let full_steps = count / stride;
+    for step in 0..full_steps {
         let line = first + step * stride;
-        if line < count {
-            accumulate_read::<In, Acc, N, C>(
-                &mut acc,
-                lines.read(line),
-                offset + line,
-                row_lanes,
-                item,
-            );
-        }
+        accumulate_read::<In, Acc, N, C>(
+            &mut acc,
+            lines.read(line),
+            offset + line,
+            row_lanes,
+            item,
+        );
+    }
+
+    let last = first + full_steps * stride;
+    if last < count {
+        accumulate_read::<In, Acc, N, C>(
+            &mut acc,
+            lines.read(last),
+            offset + last,
+            row_lanes,
+            item,
+        );
     }
     acc
 }
