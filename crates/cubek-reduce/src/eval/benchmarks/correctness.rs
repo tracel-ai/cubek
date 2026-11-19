@@ -130,6 +130,11 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
     }
 }
 
+/// The input `problem` reduces, drawn uniformly in its precision from the first of `seeds`.
+fn seeded_input(problem: &ReduceProblem, seeds: &[u64]) -> ReduceInput {
+    ReduceInput::uniform(problem.precision.to_dtype(), seeds[0])
+}
+
 #[cfg(test)]
 mod proof_shape_tests {
     use super::proof_shape;
@@ -158,9 +163,4 @@ mod proof_shape_tests {
     fn keeps_a_whole_tensor_one_row() {
         assert_eq!(proof_shape(&[1, 16_777_216], 1), vec![1, 2048]);
     }
-}
-
-/// The input `problem` reduces, drawn uniformly in its precision from the first of `seeds`.
-fn seeded_input(problem: &ReduceProblem, seeds: &[u64]) -> ReduceInput {
-    ReduceInput::uniform(problem.precision.to_dtype(), seeds[0])
 }
