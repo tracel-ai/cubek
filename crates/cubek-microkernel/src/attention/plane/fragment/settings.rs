@@ -67,13 +67,17 @@ impl ScoreHolder {
     }
 
     /// The plane of a product that reads the sum `kept` holds here as its `A`, `item` over the
-    /// plane's `tile`, its settings `grid`: out of the window, cast to the operands' element; held
-    /// in registers, runs of `kept`'s cells as they lie ([`PlaneFragmentMicrokernel::kept_sum`]).
+    /// plane's `tile`, against `rhs`, its `B` as the kernel opens the product's sum on it, its
+    /// settings `grid`: out of the window, cast to the operands' element; held in registers, runs of
+    /// `kept`'s cells as they lie ([`PlaneFragmentMicrokernel::kept_sum`]). Held cells name no
+    /// element, so the tile picks nothing for them against values a stage's fill decodes
+    /// ([`FragmentSource::Decoded`]).
     pub(crate) fn reader_plane(
         self,
         hw: &Hardware,
         kept: &PlaneFragmentMicrokernel,
         item: &MatmulWorkItem,
+        rhs: FragmentSource,
         grid: PlaneFragmentMicrokernelSettings,
         tile: [usize; 3],
     ) -> Option<PlaneFragmentMicrokernel> {
@@ -85,7 +89,7 @@ impl ScoreHolder {
             shape: tile,
             holder: ComputeScope::Plane,
             lhs,
-            rhs: FragmentSource::Values(item.elements.rhs),
+            rhs,
             sum: item.sum,
         };
         PlaneFragmentMicrokernel::draining(hw, item, grid, step)

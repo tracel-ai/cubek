@@ -111,6 +111,14 @@ impl<X: CubePrimitive> Value<X> {
         }
     }
 
+    pub fn item_mut(&mut self) -> &mut X {
+        match self {
+            Value::Multiple(_) => panic!("Tried item on Multiple"),
+            Value::Single(item) => &mut item.val,
+            Value::None => panic!("Tried item on None"),
+        }
+    }
+
     pub fn multiple(&self) -> &Array<X> {
         match self {
             Value::Multiple(array) => array,
