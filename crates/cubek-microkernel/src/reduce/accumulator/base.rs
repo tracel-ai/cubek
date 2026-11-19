@@ -23,8 +23,9 @@ pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
 
     /// The partials of a cube's `planes` planes, each already met across its own lanes, met in
     /// shared memory: every plane's first lane writes its partial to a slot of its plane, the
-    /// cube meets, every unit combines every slot, and the cube meets again so the slots may be
-    /// written anew. Every unit of the cube is left with the total.
+    /// cube meets, the slots are combined, and the cube meets again so the slots may be written
+    /// anew. The cube's first unit is left with the total; an implementation may leave the
+    /// other units without it, where combining costs more than one plane should spend.
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self;
 
     /// `acc` stored as partial `part` of a row its cubes split, for the cube that merges them

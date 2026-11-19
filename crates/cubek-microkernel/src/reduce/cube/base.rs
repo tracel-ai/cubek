@@ -90,8 +90,8 @@ impl CubeStagedReduceMicrokernel {
     }
 
     /// The first `count` lines of `input` accumulated by the cube into `C`, the line at `l` read
-    /// as line `first_line + l` of its row: a part of a row that cubes split, which every unit of
-    /// the cube is left holding (`cube_staged_reduce_part`).
+    /// as line `first_line + l` of its row: a part of a row that cubes split, which the cube's
+    /// first unit is left holding (`cube_staged_reduce_part`).
     pub fn reduce_part<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
         &self,
         input: &Tile,

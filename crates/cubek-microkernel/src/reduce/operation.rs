@@ -1,4 +1,4 @@
-use cubecl::tile::{Monoid, TOP_K_UNROLL_BUDGET};
+use cubecl::tile::Monoid;
 
 /// The top-k slots a thread keeps across a line's lanes that autotune tries: a setting of every
 /// reduce microkernel.
@@ -154,18 +154,14 @@ impl ReduceOperation {
     /// The widest line its accumulator keeps apart, where the carrier bounds it, for a thread
     /// keeping `lane_slots` top-k slots across a line's lanes. A top-k keeps `k` values and their
     /// indices for every lane of a line: past `lane_slots` they spill out of registers, so the line
-    /// narrows, and once its `k`-by-`k` walks stay loops ([`TOP_K_UNROLL_BUDGET`]) its lists are
-    /// indexed at run time, out of local memory, so the line is one value.
+    /// narrows, down to one value for a list longer than `lane_slots`.
     ///
     /// # Panics
     ///
     /// Where a top-k keeps `k = 0` values.
     pub const fn widest_line_at_lane_slots(self, lane_slots: usize) -> Option<usize> {
         match self {
-            Self::TopK { k } | Self::ArgTopK { k } => match k * k > TOP_K_UNROLL_BUDGET {
-                true => Some(1),
-                false => Some(lane_slots / k),
-            },
+            Self::TopK { k } | Self::ArgTopK { k } => Some(lines_at_least_one(lane_slots / k)),
             _ => None,
         }
     }
@@ -249,6 +245,14 @@ fn magnitudes(row: &[f32]) -> Vec<f32> {
 #[cfg(feature = "cpu-reference")]
 fn flag(holds: bool) -> f32 {
     f32::from(u8::from(holds))
+}
+
+/// `lines`, or one where it is none: a line holds at least one value.
+const fn lines_at_least_one(lines: usize) -> usize {
+    match lines {
+        0 => 1,
+        lines => lines,
+    }
 }
 
 #[cfg(test)]
@@ -426,13 +430,13 @@ mod tests {
         );
     }
 
-    /// Past the unroll budget, a top-k's lists live in local memory, so its line is one value.
+    /// A top-k whose list is longer than its lane slots reads one value a line.
     #[test]
-    fn a_top_k_past_the_unroll_budget_reads_one_value_a_line() {
+    fn a_top_k_longer_than_its_lane_slots_reads_one_value_a_line() {
         const LANE_SLOTS: usize = 32;
-        let k = TOP_K_UNROLL_BUDGET;
+        const K: usize = 64;
         assert_eq!(
-            ReduceOperation::ArgTopK { k }.widest_line_at_lane_slots(LANE_SLOTS),
+            ReduceOperation::ArgTopK { k: K }.widest_line_at_lane_slots(LANE_SLOTS),
             Some(1)
         );
     }

@@ -11,10 +11,13 @@
 use cubecl::zspace::{Shape, Strides};
 use cubek_reduce::kernels::ReduceOpStrategy;
 
-use crate::reduce::it::test_case::{PLANE, TestCase, UNIT};
+use crate::reduce::it::test_case::{CUBE, PLANE, TestCase, UNIT};
 
-/// Large enough that a `k`-by-`k` nest unrolled would be costly to compile.
-const K: usize = 40;
+/// Past the `k = 64` whose `k`-by-`k` walks still unroll, so the walks run as loops.
+const K: usize = 80;
+
+/// The largest `k` whose `k`-by-`k` walks unroll: the most code a list in registers emits.
+const LARGEST_UNROLLED_K: usize = 64;
 
 fn case(strategy: ReduceOpStrategy) -> TestCase {
     TestCase::new::<f32>(
@@ -62,4 +65,24 @@ fn unit_topk_large_k() {
 #[test]
 fn unit_argtopk_large_k() {
     case(UNIT).test_argtopk(K);
+}
+
+#[test]
+fn unit_topk_with_indices_largest_unrolled_k() {
+    case(UNIT).test_topk_with_indices(LARGEST_UNROLLED_K);
+}
+
+#[test]
+fn plane_topk_with_indices_largest_unrolled_k() {
+    case(PLANE).test_topk_with_indices(LARGEST_UNROLLED_K);
+}
+
+#[test]
+fn cube_topk_with_indices_largest_unrolled_k() {
+    case(CUBE).test_topk_with_indices(LARGEST_UNROLLED_K);
+}
+
+#[test]
+fn cube_topk_large_k() {
+    case(CUBE).test_topk(K);
 }
