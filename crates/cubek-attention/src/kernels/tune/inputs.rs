@@ -223,11 +223,12 @@ impl AttentionTuneInputs {
         self.key_of(1, self.one_query_keys())
     }
 
-    /// The keys a decode step is keyed and measured over: the prefix every key over a cache
-    /// stands for, or the call's own keys where every position of them is attended.
+    /// The keys a decode step is keyed and measured over: the prefix a decode step of its
+    /// sequences over a cache stands for, or the call's own keys where every position of them is
+    /// attended.
     fn one_query_keys(&self) -> usize {
         match self.attended {
-            AttendedKeys::Lengths => AttentionKey::CACHE_PREFIX,
+            AttendedKeys::Lengths => AttentionKey::cache_prefix(self.sequences()),
             AttendedKeys::Every => self.keys(),
         }
     }
@@ -562,7 +563,7 @@ mod tests {
                 // The shortest cache a call fits: as long as the prompt itself.
                 let shortest = key(queries.max(64), None);
                 let keyed = match queries {
-                    1 => (1, AttentionKey::CACHE_PREFIX),
+                    1 => (1, AttentionKey::cache_prefix(1)),
                     _ => (AttentionKey::CHUNK_QUERIES, AttentionKey::CHUNK_PREFIX),
                 };
                 assert_eq!(
@@ -623,8 +624,8 @@ mod tests {
         /// **A round over a cache measures what its key stands for, whatever bucket holds it.**
         /// An anchor finer than the default rounds the chunk and the decode prefix a key over a
         /// cache stands for up to extents no call has (512 queries over 32768 keys to 657 over
-        /// 37877, 2048 keys to 2217); the rounds still measure that chunk and that prefix, the
-        /// decode's the depth its work is priced at.
+        /// 37877, one query over 32768 keys to one over 37877); the rounds still measure that
+        /// chunk and that prefix, the decode's the depth its work is priced at.
         #[test]
         fn a_round_over_a_cache_measures_what_its_key_stands_for() {
             let chunk = inputs(512, 4096, None);
@@ -635,9 +636,55 @@ mod tests {
             assert_eq!(round.keys(), AttentionKey::CHUNK_PREFIX);
 
             let decode = inputs(1, 4096, None);
-            let key = decode.key_of(1, 2217);
+            let key = decode.key_of(1, 37877);
             let round = AttentionTuneInputs::one_query_representative(&key, &decode);
-            assert_eq!(round.keys(), AttentionKey::CACHE_PREFIX);
+            assert_eq!(round.keys(), AttentionKey::cache_prefix(1));
+        }
+
+        /// **A decode step's round reads as many keys in all, whatever its sequences.** One
+        /// sequence is keyed and measured over all of [`DECODE_KEYS`](AttentionKey::DECODE_KEYS),
+        /// four over a quarter each, three as the four of their bucket are; sixty-four stop at the
+        /// shallowest prefix rather than below it.
+        #[test]
+        fn a_decode_shares_its_keys_across_its_sequences() {
+            let client = client();
+            let (heads, kv_heads, head_dim) = HEADS;
+            let zeros = |shape: [usize; 4]| {
+                PlainTensor::zeros(&client, &shape, row_major_contiguous_strides(shape), F16)
+            };
+            let decode = |sequences: usize| {
+                let cache = [sequences, kv_heads, 64, head_dim];
+                let lengths = PlainTensor::of_u32s(&client, &[sequences], &vec![1; sequences]);
+                let visibility = AttentionVisibility::new(false, None, QueryPlacement::Last);
+                AttentionTuneInputs::new(
+                    &client,
+                    zeros([sequences, heads, 1, head_dim]),
+                    zeros(cache),
+                    zeros(cache),
+                    None,
+                    lengths,
+                    None,
+                    AttentionScoring::standard(visibility, head_dim),
+                )
+                .expect("an even group of a float element")
+            };
+            let quarter = AttentionKey::DECODE_KEYS / 4;
+            for (sequences, prefix) in [
+                (1, AttentionKey::DECODE_KEYS),
+                (3, quarter),
+                (4, quarter),
+                (64, AttentionKey::CACHE_PREFIX),
+            ] {
+                let inputs = decode(sequences);
+                let key = inputs.one_query_key();
+                assert_eq!(key.seq_kv(), prefix, "{sequences} sequences");
+                let round = AttentionTuneInputs::one_query_representative(&key, &inputs);
+                assert_eq!(
+                    (round.sequences(), round.keys()),
+                    (sequences, prefix),
+                    "{sequences} sequences"
+                );
+            }
         }
 
         /// **Each side of a cache is keyed and measured at its own element.** A chunk and a decode
@@ -720,7 +767,7 @@ mod tests {
         #[test]
         fn a_decode_costs_two_contractions() {
             let (heads, _, head_dim) = HEADS;
-            let one_contraction = 2 * heads * AttentionKey::CACHE_PREFIX * head_dim;
+            let one_contraction = 2 * heads * AttentionKey::cache_prefix(1) * head_dim;
             let work = inputs(1, 256, None).one_query_work();
             assert_eq!(work.compute_ops, 2 * one_contraction);
         }
@@ -733,7 +780,7 @@ mod tests {
             let shallow = inputs(1, 256, None).one_query_work();
             let deep = inputs(1, 65536, None).one_query_work();
             assert_eq!(shallow.bytes, deep.bytes);
-            let kv_bytes = 2 * kv_heads * AttentionKey::CACHE_PREFIX * head_dim * F16.size();
+            let kv_bytes = 2 * kv_heads * AttentionKey::cache_prefix(1) * head_dim * F16.size();
             assert!(shallow.bytes > kv_bytes);
         }
     }
