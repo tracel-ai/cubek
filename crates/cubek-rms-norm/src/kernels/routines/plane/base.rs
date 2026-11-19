@@ -5,8 +5,8 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Levels;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_microkernel::rms_norm::plane::{
@@ -105,7 +105,7 @@ impl Routine for PlaneRmsNormRoutine {
         hw: &Hardware,
         problem: &RmsNormRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if problem.store != RowStore::Plain {
             return Err(PACKED_STORE_NEEDS_A_CUBE);
         }
@@ -187,7 +187,7 @@ mod tests {
                     hw.plane_dim().is_ok(),
                 ) {
                     (Ok(_), true) => {}
-                    (Err(Refusal::Declined { why: details }), false) => {
+                    (Err(Decline::Unserved { why: details }), false) => {
                         assert_eq!(details, PlaneRmsNormMicrokernel::DECLINE, "{settings}")
                     }
                     (prepared, _) => panic!("{settings} on {hw:?}: {prepared:?}"),

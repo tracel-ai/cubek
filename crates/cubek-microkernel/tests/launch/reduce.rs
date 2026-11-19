@@ -8,7 +8,7 @@ use cubecl::ir::UIntKind;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Boundary;
-use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
+use cubecl::tile::launch::{BoundaryPolicy, Decline, Grid};
 use cubecl::tile::space::{CubeOrder, PlaneOrder, UnitCube};
 use cubecl::tile::{
     Dimension, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
@@ -77,7 +77,7 @@ impl ReduceLaunch {
         reduced: usize,
         width: usize,
         out: ElemType,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let plane_width = match microkernel {
             TestedMicrokernel::UnitDirect => hw.plane_dim().unwrap_or(1),
             TestedMicrokernel::PlaneShuffle => PlaneShuffleReduceMicrokernel::best(
@@ -124,7 +124,7 @@ impl ReduceLaunch {
     /// # Errors
     ///
     /// Why the tile DSL cannot bind the launch.
-    pub fn launch(&self, client: &Client, input: TensorArg, out: TensorArg) -> Result<(), Refusal> {
+    pub fn launch(&self, client: &Client, input: TensorArg, out: TensorArg) -> Result<(), Decline> {
         match self.microkernel {
             TestedMicrokernel::HypercubeLastArrival { planes, parts } => {
                 self.launch_split(client, input, out, planes, parts)
@@ -141,7 +141,7 @@ impl ReduceLaunch {
         client: &Client,
         input: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let cells = self.item.operation.written_per_row();
         let space = Space::new(&[(ROWS, self.rows), (REDUCED, self.reduced), (SLOTS, cells)]);
         // Across, an owner holds a line's worth of rows side by side.
@@ -258,7 +258,7 @@ impl ReduceLaunch {
         out: TensorArg,
         planes: usize,
         parts: usize,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let cells = self.item.operation.written_per_row();
         let part = self.reduced / parts;
         assert_eq!(part * parts, self.reduced, "the parts split the row evenly");

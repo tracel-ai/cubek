@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 use cubecl::tile::kind::Boundary;
-use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
+use cubecl::tile::launch::{BoundaryPolicy, Decline, Grid};
 use cubecl::tile::layout::PhysicalAxisMap;
 use cubecl::tile::{
     Dimension, Launcher, Levels, Partitioning, Projection, Space, TileSpec, TileTensorLaunch,
@@ -71,14 +71,14 @@ impl WindowedLaunch {
         windows: [WindowDimension; 2],
         input: [usize; 2],
         channels: Channels,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let Channels {
             count: channels,
             per_unit: channel_block,
         } = channels;
         let plane_width = hw.dispatch_plane_size() as usize;
         if !channels.is_multiple_of(plane_width * channel_block) {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the channels walk in whole blocks of the plane",
             });
         }
@@ -101,7 +101,7 @@ impl WindowedLaunch {
     /// # Errors
     ///
     /// Why the tile DSL cannot place it.
-    pub(crate) fn launcher(&self, client: &Client) -> Result<Launcher, Refusal> {
+    pub(crate) fn launcher(&self, client: &Client) -> Result<Launcher, Decline> {
         let [rows, cols] = self.windows;
         let [out_h, out_w] = self.outputs();
         let space = Space::new(&[

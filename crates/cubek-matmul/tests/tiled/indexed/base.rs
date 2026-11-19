@@ -4,7 +4,7 @@
 
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{MatmulIndex, MatmulIndexTable, MatmulRoutine};
@@ -189,7 +189,7 @@ impl RoutineProduct for Routed {
         hw: &Hardware,
         client: &Client,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel,
@@ -273,7 +273,7 @@ impl RoutineProduct for RunsOfK {
         hw: &Hardware,
         client: &Client,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel,
@@ -352,7 +352,7 @@ impl RoutineProduct for Chunked {
         hw: &Hardware,
         client: &Client,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel,

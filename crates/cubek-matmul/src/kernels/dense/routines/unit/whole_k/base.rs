@@ -5,7 +5,7 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::TileTensorLaunch;
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
@@ -216,7 +216,7 @@ impl Routine for UnitWholeKMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_plain()?;
         problem.check_unindexed()?;
         let view = MatmulView::new(problem, Self::ROWS_KIND)?;

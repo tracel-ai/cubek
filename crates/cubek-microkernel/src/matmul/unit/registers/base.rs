@@ -4,7 +4,7 @@ use crate::matmul::{
     MatmulRows, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::{Levels, SoftwareMatmul};
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
@@ -59,7 +59,7 @@ impl UnitRegistersMicrokernel {
     const MAX_WHOLE_ROWS: usize = PlaneShuffleMicrokernel::MAX_ROWS;
 
     /// What a work item holding no rows, or more than a block holds whole, is declined with.
-    pub const WHOLE_ROWS_OUT_OF_RANGE: Refusal = Refusal::Declined {
+    pub const WHOLE_ROWS_OUT_OF_RANGE: Decline = Decline::Unserved {
         why: "the unit microkernel holds from one to `PlaneShuffleMicrokernel::MAX_ROWS` rows whole, every one against one read of the rhs",
     };
 
@@ -142,7 +142,7 @@ impl Microkernel for UnitRegistersMicrokernel {
 
     /// A work item holding every row whole holds from one to
     /// `MAX_WHOLE_ROWS` of them; one that tiles them, any.
-    fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
+    fn admits(item: &MatmulWorkItem) -> Result<(), Decline> {
         match item.rows {
             MatmulRows::Whole(rows) if !(1..=Self::MAX_WHOLE_ROWS).contains(&rows) => {
                 Err(Self::WHOLE_ROWS_OUT_OF_RANGE)

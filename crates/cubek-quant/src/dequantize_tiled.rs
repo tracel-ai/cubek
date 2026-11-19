@@ -86,7 +86,7 @@ pub fn launch_ref(
             cube_dim,
         },
     )
-    .unwrap_or_else(|refusal| panic!("dequantize_tiled: {refusal}"));
+    .unwrap_or_else(|decline| panic!("dequantize_tiled: {decline}"));
     // One scale for the whole tensor: a scale tile over no dimension of the values.
     let per_tensor = Projection::new(&[M, N], &[PhysicalAxisMap::broadcast()]);
     let values = quantized_arg(
@@ -98,7 +98,7 @@ pub fn launch_ref(
             .arg(scales, u32::elem_type_native())
             .gathered(per_tensor)],
     )
-    .unwrap_or_else(|refusal| panic!("dequantize_tiled: {refusal}"));
+    .unwrap_or_else(|decline| panic!("dequantize_tiled: {decline}"));
     dequantize::launch(
         client,
         cube_count,

@@ -12,7 +12,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
-use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal};
+use cubecl::tile::launch::{Buffered, Decline, DestinationLaunch};
 use cubecl::tune::{AutotuneOutput, LocalTuner, TunableSet, local_tuner};
 use cubecl::{self as cubecl, AutotuneKey, CubeDim, CubeTuneId};
 use cubek_matmul::kernels::tensor::{LhsOutput, PackedTensor, PlainTensor};
@@ -175,7 +175,7 @@ where
     /// # Errors
     ///
     /// Why this device cannot run the gate at this setting.
-    pub fn launch(&self, call: &SwigluCall) -> Result<TensorHandle, Refusal> {
+    pub fn launch(&self, call: &SwigluCall) -> Result<TensorHandle, Decline> {
         let tensors = SwigluTensors::new(&call.client, call.both.clone())?;
         self.launch_on::<Buffered, _>(&tensors, |blueprint, grid| {
             tensors
@@ -192,7 +192,7 @@ where
     /// # Errors
     ///
     /// Why this device cannot run the gate at this setting, or why `out` cannot hold it.
-    pub fn launch_tiled(&self, call: &SwigluCall, out: PlainTensor) -> Result<(), Refusal> {
+    pub fn launch_tiled(&self, call: &SwigluCall, out: PlainTensor) -> Result<(), Decline> {
         let tensors = SwigluTensors::tiled(&call.client, call.both.clone(), out)?;
         self.launch_on::<Buffered, _>(&tensors, |blueprint, grid| {
             tensors
@@ -209,7 +209,7 @@ where
     /// # Errors
     ///
     /// Why this device cannot encode the gate at this setting, or why `out` cannot hold it.
-    pub fn launch_packed(&self, call: &SwigluCall, out: PackedTensor) -> Result<(), Refusal> {
+    pub fn launch_packed(&self, call: &SwigluCall, out: PackedTensor) -> Result<(), Decline> {
         let tensors = SwigluTensors::packed(&call.client, call.both.clone(), out)?;
         self.launch_on::<Encoded, _>(&tensors, |blueprint, grid| tensors.bind(blueprint, grid))
     }
@@ -220,7 +220,7 @@ where
     /// # Errors
     ///
     /// Those of the launch `out` names.
-    pub fn launch_into(&self, call: &SwigluCall, out: LhsOutput) -> Result<(), Refusal> {
+    pub fn launch_into(&self, call: &SwigluCall, out: LhsOutput) -> Result<(), Decline> {
         match out {
             LhsOutput::Packed(out) => self.launch_packed(call, out),
             LhsOutput::Tiled(out) => self.launch_tiled(call, out),
@@ -233,7 +233,7 @@ where
         &self,
         tensors: &SwigluTensors<Out>,
         bind: impl FnOnce(&SwigluBlueprint<M>, &Grid) -> SwigluBinding<O::Operand>,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         if tensors.problem().is_empty() {
             return Ok(());
         }
@@ -248,7 +248,7 @@ where
     fn prepare(
         &self,
         problem: &SwigluRoutineProblem,
-    ) -> Result<(SwigluBlueprint<M>, Grid), Refusal> {
+    ) -> Result<(SwigluBlueprint<M>, Grid), Decline> {
         self.prepared.prepare(&self.hw, problem, &self.settings)
     }
 
@@ -330,7 +330,7 @@ pub fn launch_tuned(call: SwigluCall, device: &Device, tile: GroupPriority) -> T
 /// ([`SwigluRoutineCandidate::launch_into`]): at the setting the autotune elected for the rows, so
 /// the output inherits the kernel the unfused round chose, or at the default, the floor, where no
 /// round has settled or the elected setting cannot write it — a stage that outgrows the device. A
-/// refusal is a launch's before it dispatches, so the floor writes into the same `out`.
+/// decline is a launch's before it dispatches, so the floor writes into the same `out`.
 ///
 /// # Errors
 ///
@@ -341,7 +341,7 @@ pub fn launch_into_tuned(
     device: &Device,
     tile: GroupPriority,
     out: LhsOutput,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     if let Some(elected) = fastest_swiglu_routine(call, device, tile)
         && elected.launch_into(call, out.clone()).is_ok()
     {

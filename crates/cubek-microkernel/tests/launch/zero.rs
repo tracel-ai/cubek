@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 use cubecl::tile::kind::Boundary;
-use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal};
+use cubecl::tile::launch::{BoundaryPolicy, Decline, Grid};
 use cubecl::tile::space::UnitCube;
 use cubecl::tile::{
     Dimension, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
@@ -28,7 +28,7 @@ pub fn launch_unit_zero(
     rows: usize,
     cells: usize,
     plane_width: u32,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     let space = Space::new(&[(ROWS, rows), (CELLS, cells)]);
     let partitioning = Partitioning::new(
         space.clone(),

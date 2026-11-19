@@ -7,7 +7,7 @@ use crate::kernels::{
     SplitKeysAttention,
 };
 use cubecl::CubeDim;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
@@ -107,7 +107,7 @@ where
         >,
 {
     /// What a launch reports where the routine declines its problem.
-    fn declines(&self, why: Refusal) -> String {
+    fn declines(&self, why: Decline) -> String {
         let settings = &self.settings;
         format!("{settings} does not serve this problem: {why:?}")
     }

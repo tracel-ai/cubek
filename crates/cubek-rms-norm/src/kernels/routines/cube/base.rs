@@ -4,8 +4,8 @@ use crate::kernels::{
     RmsNormTensors,
 };
 use cubecl::tile::Levels;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::rms_norm::cube::{CubeRmsNormMicrokernel, CubeRmsNormMicrokernelSettings};
 use cubek_microkernel::rms_norm::{R, RmsNormOperand, RmsNormPartitioning};
@@ -89,7 +89,7 @@ impl Routine for CubeRmsNormRoutine {
         hw: &Hardware,
         problem: &RmsNormRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let microkernel =
             CubeRmsNormMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let store = problem.store;
@@ -192,7 +192,7 @@ mod tests {
             let prepared =
                 CubeRmsNormRoutine::prepare(&hw, &problem, &CubeRmsNormRoutineSettings::DEFAULT);
             assert!(
-                matches!(prepared, Err(Refusal::Declined { why: details }) if details == CubeRmsNormMicrokernel::DECLINE),
+                matches!(prepared, Err(Decline::Unserved { why: details }) if details == CubeRmsNormMicrokernel::DECLINE),
                 "{hw:?}"
             );
         }

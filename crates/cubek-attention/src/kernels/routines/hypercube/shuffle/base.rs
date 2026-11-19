@@ -5,7 +5,7 @@ use crate::kernels::{
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::attention::AttentionOperand;
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
@@ -198,7 +198,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if problem.packed_queries {
             return Err(PACKED_QUERIES_UNREAD);
         }

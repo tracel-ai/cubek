@@ -4,7 +4,7 @@ use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,
 };
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -24,8 +24,8 @@ use cubek_std::routine::{Grid, Routine};
 /// contracts ([`CubeStagedDelivery::Tma`]). Its operands are tensor maps, read one element wide;
 /// its planes store their own fragments.
 ///
-/// Refused where one box cannot land a stage as its instruction reads it
-/// ([`CubeStagedTmaRefusal`](cubek_microkernel::matmul::cube::CubeStagedTmaRefusal)), where the
+/// Declined where one box cannot land a stage as its instruction reads it
+/// ([`CubeStagedTmaDecline`](cubek_microkernel::matmul::cube::CubeStagedTmaDecline)), where the
 /// operands are read through an index, and where an input's rows are one element wide.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedTmaMatmulRoutine;
@@ -157,7 +157,7 @@ impl Routine for CubeStagedTmaMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let placement = CubeStagedPlacement::new(
             hw,
             problem,

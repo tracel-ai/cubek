@@ -9,7 +9,7 @@ use cubecl::ir::Type;
 use cubecl::ir::features::AtomicUsage;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{
-    AccumulateArgLaunch, Bound, Refusal, StoredTileOperand, TileOperand, Unbound, Vectorization,
+    AccumulateArgLaunch, Bound, Decline, StoredTileOperand, TileOperand, Unbound, Vectorization,
 };
 use cubecl::tile::{Geometry, Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::cube::{
@@ -85,9 +85,9 @@ impl Routine for HypercubeAtomicReduceRoutine {
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if problem.operation != ReduceOperation::Sum {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the atomic hypercube adds its parts, which only a sum's parts make whole",
             });
         }
@@ -96,12 +96,12 @@ impl Routine for HypercubeAtomicReduceRoutine {
             .atomic_type_usage(Type::atomic(problem.elements.out))
             .contains(AtomicUsage::Add)
         {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the device has no atomic add for the output's element",
             });
         }
         if problem.rows().len() > MAX_SPLIT_ROW_DIMS {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the atomic hypercube runs its cubes along at most two row dims",
             });
         }
@@ -193,7 +193,7 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
         blueprint: HypercubeAtomicReduceBlueprint,
         grid: Grid,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let [input_lines, _] = tensors.problem().elem_alignments;
         if !input_lines.admits(blueprint.width) {
             return Err(UNBOUND_LINES_NARROWER);

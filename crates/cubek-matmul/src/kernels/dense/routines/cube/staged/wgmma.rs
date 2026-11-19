@@ -3,7 +3,7 @@ use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,
 };
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{ComputeScope, CubeOrder};
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -23,7 +23,7 @@ use cubek_std::routine::{Grid, Routine};
 /// stages the TMA engine lands swizzled, issued by planes set aside to fill, which release a stage
 /// only once the MMAs reading it are done; each group's sum drains straight into its output.
 ///
-/// Refused where the device or product takes no plane group MMA, where the TMA engine cannot land
+/// Declined where the device or product takes no plane group MMA, where the TMA engine cannot land
 /// the stages, and where the sum would be merged, along `K` or through a bounce.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedWgmmaMatmulRoutine;
@@ -103,7 +103,7 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let placement = CubeStagedPlacement::new(
             hw,
             problem,

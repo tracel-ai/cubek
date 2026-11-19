@@ -124,7 +124,7 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     {
         ListedFor::Packed
             .admits(call.product())
-            .map_err(|refusal| format!("{refusal:?}"))?;
+            .map_err(|decline| format!("{decline:?}"))?;
         let settings = &self.settings;
         let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
         let launched = match call.destination {

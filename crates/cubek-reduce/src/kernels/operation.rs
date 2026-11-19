@@ -28,7 +28,7 @@ impl Reduce {
     /// [`ReduceError::InvalidAxis`] where `axis` is not a dim of `input`,
     /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is shorter than the `k` a top-k
     /// keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one above,
-    /// and [`ReduceError::Refused`] with the kernel's refusal where the kernel the strategy picks
+    /// and [`ReduceError::Declined`] with the kernel's decline where the kernel the strategy picks
     /// cannot run the problem on this device: a [`Specific`](ReduceOpStrategy::Specific) one, or
     /// the unit kernel the rule falls back to.
     ///

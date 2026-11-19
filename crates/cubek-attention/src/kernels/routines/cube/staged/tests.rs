@@ -4,7 +4,7 @@
 mod fragment {
     use super::super::*;
     use crate::kernels::{AttentionRoutineProblem, QueryOrder};
-    use cubecl::tile::launch::{Delivery, Refusal};
+    use cubecl::tile::launch::{Decline, Delivery};
     use cubek_microkernel::attention::AttentionRead;
     use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
     use cubek_microkernel::matmul::cube::CubeStagedDelivery;
@@ -67,7 +67,7 @@ mod fragment {
                     let prepared = CubeStagedAttentionRoutine::prepare(&hw, &problem, settings);
                     let declined = matches!(
                         prepared,
-                        Err(Refusal::SharedMemoryPastDevice { .. } | Refusal::CubePastDevice { .. })
+                        Err(Decline::SharedMemoryPastDevice { .. } | Decline::CubePastDevice { .. })
                     );
                     assert!(
                         prepared.is_ok() || (position > 0 && declined),

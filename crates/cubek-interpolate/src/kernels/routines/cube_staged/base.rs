@@ -7,7 +7,7 @@ use crate::kernels::{
     InterpolateTensors,
 };
 use cubecl::tile::Partitioning;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::interpolate::InterpolateOperand;
 use cubek_microkernel::interpolate::cube::CubeInterpolateMicrokernel;
 use cubek_std::Hardware;
@@ -16,7 +16,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// What [`CubeStagedInterpolateRoutine`] declines with on a CPU, which has no shared memory to
 /// stage a window in.
-pub const STAGED_INTERPOLATE_ON_CPU: Refusal = Refusal::Declined {
+pub const STAGED_INTERPOLATE_ON_CPU: Decline = Decline::Unserved {
     why: "a CPU has no shared memory to stage the tap window in",
 };
 
@@ -77,7 +77,7 @@ impl Routine for CubeStagedInterpolateRoutine {
         hw: &Hardware,
         problem: &InterpolateRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if hw.properties.hardware.num_cpu_cores.is_some() {
             return Err(STAGED_INTERPOLATE_ON_CPU);
         }

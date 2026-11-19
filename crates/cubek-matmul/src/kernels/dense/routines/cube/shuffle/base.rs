@@ -5,7 +5,7 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::TileTensorLaunch;
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulOperand;
@@ -93,13 +93,13 @@ impl CubeShuffleMatmulRoutine {
 
     /// What a float rhs declines a setting reading by block or capping its launch with: both
     /// read a packed rhs's columns only.
-    pub const PACKED_ONLY: Refusal = Refusal::Declined {
+    pub const PACKED_ONLY: Decline = Decline::Unserved {
         why: "a cube shuffle reads by block, and caps its launch, against a packed rhs only",
     };
 
     /// What a batched product, whose cubes are handed batches beside boxes, declines a capped
     /// launch with.
-    pub const CAPPED_BATCHED: Refusal = Refusal::Declined {
+    pub const CAPPED_BATCHED: Decline = Decline::Unserved {
         why: "a cube shuffle's capped launch walks one dimension of boxes, not batches beside them",
     };
 
@@ -205,7 +205,7 @@ impl CubeShuffleMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &CubeShuffleMatmulRoutineSettings,
-    ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
+    ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Decline> {
         problem.check_plain()?;
         if settings.cubes_per_worker.is_some() || settings.microkernel.by_block {
             return Err(Self::PACKED_ONLY);
@@ -238,7 +238,7 @@ impl CubeShuffleMatmulRoutine {
         problem: &MatmulRoutineProblem,
         packing: &Packing,
         settings: &CubeShuffleMatmulRoutineSettings,
-    ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
+    ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Decline> {
         // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
         let read = problem.rhs_read(settings.microkernel.by_block)?;
         let problem: &MatmulRoutineProblem = &read;
@@ -310,7 +310,7 @@ impl Routine for CubeShuffleMatmulRoutine {
     fn prepare_first_served(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let settings = match problem.packings.rhs {
             Some(_) => Self::packed_settings(hw),
             None => Self::settings(hw),
@@ -354,7 +354,7 @@ impl Routine for CubeShuffleMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_unindexed()?;
         match &problem.packings.rhs {
             Some(packing) => Self::prepare_packed(hw, problem, packing, settings),
@@ -462,7 +462,7 @@ mod tests {
                     adds,
                 ) {
                     (Ok(_), true) => {}
-                    (Err(Refusal::Declined { why: details }), false) => {
+                    (Err(Decline::Unserved { why: details }), false) => {
                         assert_eq!(details, CubeShuffleMicrokernel::DECLINE, "{settings}")
                     }
                     (prepared, _) => panic!("{settings} at k={k} on {hw:?}: {prepared:?}"),
@@ -633,7 +633,7 @@ mod tests {
                     &nvfp4(&other, 8, 2560, 4096),
                     settings,
                 ) {
-                    Err(Refusal::Declined { why }) => {
+                    Err(Decline::Unserved { why }) => {
                         assert_eq!(why, CubeShuffleMicrokernel::FRAGMENT_DECLINE, "{other:?}")
                     }
                     prepared => panic!("{other:?} at {settings}: {prepared:?}"),

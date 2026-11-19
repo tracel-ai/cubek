@@ -10,7 +10,7 @@ use crate::kernels::{
     MatmulRoutineProblem,
 };
 use cubecl::client::Client;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands};
@@ -59,7 +59,7 @@ impl MGroupedMatmulTensors {
         rhs: StoredTensor,
         ends: PlainTensor,
         along: SlabDimension,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let source = source.into();
         let rows = source.buffer();
         let shape = rows.shape();
@@ -173,7 +173,7 @@ impl MGroupedMatmulTensors {
         &self,
         hw: &Hardware,
         settings: &MGroupedSettings<R::Settings>,
-    ) -> Result<(), Refusal>
+    ) -> Result<(), Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -199,7 +199,7 @@ impl MGroupedMatmulTensors {
         hw: &Hardware,
         routine: &R,
         settings: &MGroupedSettings<R::Settings>,
-    ) -> Result<PaddedRows, Refusal>
+    ) -> Result<PaddedRows, Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -257,7 +257,7 @@ impl MGroupedMatmulTensors {
         &self,
         hw: &Hardware,
         settings: &MGroupedSettings<R::Settings>,
-    ) -> Result<usize, Refusal>
+    ) -> Result<usize, Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -279,7 +279,7 @@ impl MGroupedMatmulTensors {
         &self,
         hw: &Hardware,
         settings: &R::Settings,
-    ) -> Result<usize, Refusal>
+    ) -> Result<usize, Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -295,7 +295,7 @@ impl MGroupedMatmulTensors {
     /// # Errors
     ///
     /// What reading a packed stack slab by slab declines.
-    fn slab_problem(&self, rows: usize) -> Result<MatmulRoutineProblem, Refusal> {
+    fn slab_problem(&self, rows: usize) -> Result<MatmulRoutineProblem, Decline> {
         let elem = self.source.buffer().elem;
         match &self.rhs {
             StoredTensor::Packed(packed) => {

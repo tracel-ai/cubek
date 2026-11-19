@@ -5,7 +5,7 @@ use crate::attention::{
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::{Dimension, Level, Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -41,7 +41,7 @@ pub struct PlaneFragmentAttentionMicrokernel {
 
 /// What a routine whose planes' rows merge with another holder's declines where a plane keeps its
 /// score in fragments, each unit holding the state of its own rows.
-pub const ROW_STATE_HELD_BY_UNIT: Refusal = Refusal::Declined {
+pub const ROW_STATE_HELD_BY_UNIT: Decline = Decline::Unserved {
     why: "planes whose rows merge with another holder's read the score through their \
               windows: a score kept in fragments leaves each unit its own rows' state",
 };
@@ -419,7 +419,7 @@ impl PlaneFragmentAttentionMicrokernel {
     ///
     /// Where it keeps the score in its fragments, each unit holding the state of its own rows:
     /// the routine keeps the score in windows instead ([`ScoreHolder::Window`]).
-    pub fn merges_rows(&self) -> Result<(), Refusal> {
+    pub fn merges_rows(&self) -> Result<(), Decline> {
         match self.score_holder() {
             ScoreHolder::Window => Ok(()),
             ScoreHolder::Fragments => Err(ROW_STATE_HELD_BY_UNIT),

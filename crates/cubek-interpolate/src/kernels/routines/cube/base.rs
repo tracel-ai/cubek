@@ -4,7 +4,7 @@ use crate::kernels::geometry::TileGeometry;
 use crate::kernels::space;
 use crate::kernels::{InterpolateRoutine, InterpolateRoutineProblem, InterpolateTensors};
 use cubecl::tile::Partitioning;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::interpolate::InterpolateOperand;
 use cubek_microkernel::interpolate::cube::{
     CubeInterpolateMicrokernel, CubeInterpolateMicrokernelSettings,
@@ -114,7 +114,7 @@ impl Routine for CubeInterpolateRoutine {
         hw: &Hardware,
         problem: &InterpolateRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let plane_width = hw.dispatch_plane_size() as usize;
         let geometry = TileGeometry::new(settings, problem.forward.channels, plane_width);
         let partitioning = problem.space(geometry, plane_width).partitioning();

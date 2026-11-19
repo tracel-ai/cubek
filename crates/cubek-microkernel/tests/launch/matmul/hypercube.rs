@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Grid, LastArrival, Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, Grid, LastArrival, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{
     Launcher, Partitioning, Space, StageStorage, Tile, TileSpec, TileTensor, TileTensorLaunch,
@@ -55,9 +55,9 @@ impl HypercubeStagedLaunch {
         settings: &HypercubeStagedMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         if !hw.properties.features.device_memory_scope {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the last arrival hands one cube's stores to another within a launch",
             });
         }
@@ -67,7 +67,7 @@ impl HypercubeStagedLaunch {
         // do not: the first candidate staging its inputs as they lie, as the cube's launch takes.
         let microkernel = HypercubeStagedMicrokernel::candidates(hw, &item, settings)
             .find(|candidate| candidate.cube.walk().decoded().is_none())
-            .ok_or(Refusal::Declined {
+            .ok_or(Decline::Unserved {
                 why: "every hypercube staged candidate decodes its stages, which bind words",
             })?;
         let one_box = OneCube::new(
@@ -81,7 +81,7 @@ impl HypercubeStagedLaunch {
             &one_box.cube_space(),
         )?;
         if resolved.shared_memory > hw.shared_memory_budget() {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the cube's stages hold more shared memory than the device has",
             });
         }
@@ -141,7 +141,7 @@ impl MatmulLaunch for HypercubeStagedLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let arrivals = TensorHandle::zeros(
             client,
             [self.partitioning.arrival_counters()],
@@ -167,7 +167,7 @@ impl HypercubeStagedLaunch {
         client: &Client,
         operands: [TensorArg; 3],
         arrivals: &TensorHandle,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let partitioning = &self.partitioning;
         let grid = Grid::Stated {
             cube_count: partitioning.cube_count(),

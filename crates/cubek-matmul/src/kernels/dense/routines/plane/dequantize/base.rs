@@ -10,7 +10,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
-use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Buffered, Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulMicrokernel;
@@ -66,7 +66,7 @@ impl PlaneDequantizeMatmulRoutine {
         packed: PackedTensor,
         element: ElemType,
         settings: &PlaneShuffleMatmulRoutineSettings,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         if !MatmulInputs::FLOATS.contains(&element) {
             return Err(MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED);
         }
@@ -193,7 +193,7 @@ impl Routine for PlaneDequantizeMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let alone = Self::alone(problem);
         let PlaneShufflePackedPlacement {
             microkernel,

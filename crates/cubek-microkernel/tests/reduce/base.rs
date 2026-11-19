@@ -7,7 +7,7 @@
 use crate::launch::reduce::{ReduceLaunch, TestedMicrokernel};
 use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation, ReduceWorkItem, ReduceWrites};
 use cubek_std::Hardware;
@@ -229,7 +229,7 @@ impl HostReduce {
 impl ScopeUnderTest for ReduceMicrokernelScopeUnderTest {
     type Case = ReduceCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let host = HostReduce::new(*case);
         let item = ReduceWorkItem {
             operation: case.operation,

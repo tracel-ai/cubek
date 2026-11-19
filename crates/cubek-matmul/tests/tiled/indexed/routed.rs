@@ -5,7 +5,7 @@ use cubecl::bytes::Bytes;
 use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_matmul::kernels::indexed::routed::{RoutedMatmulTensors, launch_tuned};
 use cubek_matmul::kernels::indexed::stack::SlabDimension;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
@@ -85,8 +85,8 @@ impl ScopeUnderTest for TunedRouted {
     ///
     /// # Panics
     ///
-    /// On any other refusal: the autotune always reaches a floor that answers.
-    fn launch(&self, client: &Client, routed: &Routed) -> Result<Vec<Written>, Refusal> {
+    /// On any other decline: the autotune always reaches a floor that answers.
+    fn launch(&self, client: &Client, routed: &Routed) -> Result<Vec<Written>, Decline> {
         let Routed {
             tokens,
             picks,
@@ -128,7 +128,7 @@ impl ScopeUnderTest for TunedRouted {
                 tensor: out,
                 host: HostDataType::F32,
             }]),
-            Err(why @ Refusal::CubePastDevice { .. }) => Err(why),
+            Err(why @ Decline::CubePastDevice { .. }) => Err(why),
             Err(why) if stack != Stack::Float && no_matrix_instruction => Err(why),
             Err(why) => panic!("{routed:?} refused: {why:?}"),
         }

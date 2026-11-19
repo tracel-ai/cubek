@@ -214,7 +214,7 @@ mod cube_staged {
     use crate::kernels::CubeStagedMatmulRoutine;
     use cubecl::features::MmaConfig;
     use cubecl::tile::StageStorage;
-    use cubecl::tile::launch::Refusal;
+    use cubecl::tile::launch::Decline;
     use cubecl::tile::stage::RowChunks;
     use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
     use cubek_microkernel::matmul::{MatmulDim, MatmulMicrokernel};
@@ -245,7 +245,7 @@ mod cube_staged {
                 let prepared = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings);
                 let blueprint = match prepared {
                     Ok((blueprint, _)) => blueprint,
-                    Err(Refusal::SharedMemoryPastDevice { .. }) => continue,
+                    Err(Decline::SharedMemoryPastDevice { .. }) => continue,
                     Err(error) if name.ends_with("along n") => {
                         assert_eq!(error, CubeStagedMicrokernel::UNGROUPED_K, "{name}");
                         continue;

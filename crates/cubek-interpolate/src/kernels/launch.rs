@@ -11,7 +11,7 @@ use crate::kernels::space::{self, BATCH, CHANNEL, OUTPUT_H, OUTPUT_W};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
-use cubecl::tile::launch::{Bound, BoundaryPolicy, Refusal};
+use cubecl::tile::launch::{Bound, BoundaryPolicy, Decline};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Launcher, Partitioning};
 use cubek_std::Hardware;
@@ -39,7 +39,7 @@ pub fn launch_interpolate_routine<R: InterpolateRoutine>(
     hw: &Hardware,
     tensors: &InterpolateTensors,
     settings: &R::Settings,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     let (blueprint, grid) = R::prepare(hw, tensors.problem(), settings)?;
     match tensors.problem().forward.options.mode {
         InterpolateMode::Nearest(_) => routine.dispatch::<NearestFilter>(tensors, blueprint, grid),

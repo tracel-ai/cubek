@@ -4,7 +4,7 @@
 use crate::launch::zero::launch_unit_zero;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, IntKind};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
@@ -24,7 +24,7 @@ struct UnitZeroScopeUnderTest {
 impl ScopeUnderTest for UnitZeroScopeUnderTest {
     type Case = ZeroCase;
 
-    fn launch(&self, client: &Client, case: &ZeroCase) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &ZeroCase) -> Result<Vec<Written>, Decline> {
         let shape = Shape::from(vec![case.rows, case.cells]);
         let out = TestInput::builder(client.clone(), shape)
             .dtype(case.element)

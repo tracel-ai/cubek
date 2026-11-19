@@ -4,7 +4,7 @@ use crate::kernels::{
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
-use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
+use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
@@ -67,7 +67,7 @@ impl Routine for PlaneShuffleReduceRoutine {
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let microkernel =
             PlaneShuffleReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();

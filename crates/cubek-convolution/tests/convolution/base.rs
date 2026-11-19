@@ -13,7 +13,7 @@ use cubecl::client::Client;
 use cubecl::ir::{AddressType, ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, Strides};
 use cubek_convolution::components::{
     ConvSetupError, ConvolutionOperation, ConvolutionProblem, Dimensionality,
@@ -601,7 +601,7 @@ pub(crate) trait ConvRoutine<const N: usize>: Debug {
     ) -> Result<(), ConvSetupError>;
 }
 
-/// Which refusals a scope may answer a case with.
+/// Which declines a scope may answer a case with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Declines {
     /// None: the routine serves every case it is given.
@@ -643,7 +643,7 @@ impl<R: ConvRoutine<N>, const N: usize> ScopeUnderTest for Convolves<R, N> {
     /// # Panics
     ///
     /// Where a routine that declines nothing refuses a case.
-    fn launch(&self, client: &Client, case: &ConvCase<N>) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &ConvCase<N>) -> Result<Vec<Written>, Decline> {
         let tensors = case.conv.tensors(client, case.pass);
         match (
             self.routine.launch(client, &case.conv, case.pass, &tensors),
@@ -654,7 +654,7 @@ impl<R: ConvRoutine<N>, const N: usize> ScopeUnderTest for Convolves<R, N> {
                 tensor: tensors.written,
                 host: HostDataType::F32,
             }]),
-            (Err(_), Declines::AsItStates) => Err(Refusal::Declined {
+            (Err(_), Declines::AsItStates) => Err(Decline::Unserved {
                 why: "the routine runs no such pass on this device",
             }),
             (Err(why), Declines::Never) => {

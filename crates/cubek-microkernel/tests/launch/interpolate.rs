@@ -6,7 +6,7 @@
 //! contraction, whatever weights it is handed.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{Partitioning, TileSpec, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::interpolate::InterpolateWorkItem;
@@ -36,7 +36,7 @@ impl InterpolateLaunch {
         windows: [WindowDimension; 2],
         input: [usize; 2],
         channels: Channels,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let windowed = WindowedLaunch::new(hw, windows, input, channels)?;
         let item = InterpolateWorkItem {
             channels: channels.per_unit,
@@ -63,7 +63,7 @@ impl InterpolateLaunch {
         weights: TensorArg,
         output: TensorArg,
         element: ElemType,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let launcher = self.windowed.launcher(client)?;
         let weights = TileTensorLaunch::new(
             weights,

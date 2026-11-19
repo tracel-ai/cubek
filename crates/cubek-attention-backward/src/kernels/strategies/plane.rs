@@ -8,7 +8,7 @@ use crate::kernels::{
     PlaneFragmentQueryGradientRoutine, PlaneFragmentQueryGradientRoutineSettings,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention_backward::key_gradient::plane::{
     PlaneKeyGradientMicrokernel, PlaneKeyGradientMicrokernelSettings,
 };
@@ -100,7 +100,7 @@ impl AttentionBackwardLaunch for PlaneFragmentAttentionBackward {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &Self::Settings,
-    ) -> Result<Self::Blueprint, Refusal> {
+    ) -> Result<Self::Blueprint, Decline> {
         Ok(PlaneFragmentAttentionBackwardBlueprint {
             queries: PlaneFragmentQueryGradientRoutine.prepare(
                 hw,

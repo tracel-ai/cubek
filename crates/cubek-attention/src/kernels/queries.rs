@@ -1,11 +1,11 @@
 //! The queries of an attention, and where each sequence's sit among its keys.
 
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_matmul::kernels::tensor::PlainTensor;
 
 /// What an attention routine declines where the sequences' queries lie end to end: one that merges
 /// its split keys outside the tiles that place each sequence's run.
-pub const PACKED_QUERIES_UNREAD: Refusal = Refusal::Declined {
+pub const PACKED_QUERIES_UNREAD: Decline = Decline::Unserved {
     why: "this attention routine reads queries as [b, h, q, d], every sequence the same q",
 };
 
@@ -47,7 +47,7 @@ mod tests {
     use cubecl::client::Client;
     use cubecl::prelude::*;
     use cubecl::std::tensor::TensorHandle;
-    use cubecl::tile::launch::Refusal;
+    use cubecl::tile::launch::Decline;
     use cubecl::zspace::Shape;
     use cubek_matmul::kernels::tensor::PlainTensor;
     use cubek_std::Hardware;
@@ -147,8 +147,8 @@ mod tests {
             ("autotune", &|client, queries, kv, scoring| {
                 // Every routine that reads packed queries runs on planes of one committed width:
                 // where the device has none (a CPU runner), the plan has no candidate to run.
-                if let Err(refusal) = Hardware::from_client(client).plane_dim() {
-                    eprintln!("declined on this device: {refusal:?}");
+                if let Err(decline) = Hardware::from_client(client).plane_dim() {
+                    eprintln!("declined on this device: {decline:?}");
                     return None;
                 }
                 let inputs = AttentionTuneInputs::attention(client, queries, kv, None, scoring)
@@ -185,7 +185,7 @@ mod tests {
             .expect("the case's tensors are verified");
         launch
             .launch_lead_on(&Hardware::from_client(client), tensors)
-            .map_err(|refusal: Refusal| eprintln!("declined on this device: {refusal:?}"))
+            .map_err(|decline: Decline| eprintln!("declined on this device: {decline:?}"))
             .ok()
     }
 

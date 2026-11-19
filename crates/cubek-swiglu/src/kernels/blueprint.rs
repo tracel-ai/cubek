@@ -1,7 +1,7 @@
 //! A SwiGLU launch's compile-time decisions.
 
 use crate::kernels::SwigluRoutineProblem;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::row_store::CubeStage;
@@ -10,7 +10,7 @@ use cubek_std::Hardware;
 
 /// What a routine declines with where a blueprint binds its operands at a width other than the
 /// one its microkernel sized its run at: the halves were not bound as rows starting on a read.
-pub const SWIGLU_WIDTH_UNPLANNED: Refusal = Refusal::Declined {
+pub const SWIGLU_WIDTH_UNPLANNED: Decline = Decline::Unserved {
     why: "the SwiGLU binds its operands at the width its microkernel is sized at, a dense row's",
 };
 
@@ -76,7 +76,7 @@ impl<M> SwigluBlueprint<M> {
     /// # Errors
     ///
     /// [`SWIGLU_WIDTH_UNPLANNED`].
-    pub fn planned_at(self, width: usize) -> Result<Self, Refusal> {
+    pub fn planned_at(self, width: usize) -> Result<Self, Decline> {
         match self.width == width {
             true => Ok(self),
             false => Err(SWIGLU_WIDTH_UNPLANNED),

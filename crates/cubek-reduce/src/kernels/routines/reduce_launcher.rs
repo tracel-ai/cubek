@@ -7,7 +7,7 @@ use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::Geometry;
 use cubecl::tile::TileTensorLaunch;
-use cubecl::tile::launch::{Bound, Refusal, StoredTileOperand, TileOperand, Unbound};
+use cubecl::tile::launch::{Bound, Decline, StoredTileOperand, TileOperand, Unbound};
 use cubek_std::routine::{Grid, Routine};
 
 /// A reduce routine around microkernel `M`, as a launcher: it launches the
@@ -56,7 +56,7 @@ pub(crate) trait ReduceLauncher<M>:
         blueprint: ReduceBlueprint<M>,
         grid: Grid,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let [input_lines, _] = tensors.problem().elem_alignments;
         if !input_lines.admits(blueprint.width) {
             return Err(UNBOUND_LINES_NARROWER);

@@ -8,7 +8,7 @@
 use crate::layout::tile_order::{TileOrder, scales_dimensions, values_dimensions};
 use crate::matmul_dimensions::{K, blocked};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::{Run, VectorTile};
 use cubecl::tile::{Dimension, MicroTile, OperandReads, Space, kind::Field};
 
@@ -479,7 +479,7 @@ impl Operand {
         dimension: Dimension,
         extent: usize,
         units: usize,
-    ) -> Result<Spread, Refusal> {
+    ) -> Result<Spread, Decline> {
         let (groups, inside) = blocked(dimension);
         let read = self.read(dimension);
         let Some(scale) = self.grouping(dimension, extent) else {
@@ -503,7 +503,7 @@ impl Operand {
         // contraction has to reach for this many units, and the unit a longer one is distributed
         // in.
         if !blocks.is_multiple_of(word * units) {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the units do not distribute the scales' words evenly: a turn is a word of \
                           scales a unit, and the blocks are not whole turns",
             });

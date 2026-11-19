@@ -146,7 +146,7 @@ impl MatmulPartitioning {
 
     /// The space one cube covers: one batch of the output's `m × n` box, and the whole of `k`, or
     /// its run of it where several cubes share the box; with what of this placement a cube
-    /// microkernel's refusals read.
+    /// microkernel's declines read.
     pub fn cube_space(&self) -> MatmulCubeSpace {
         MatmulCubeSpace {
             space: self.cube.clone(),

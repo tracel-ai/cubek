@@ -5,7 +5,7 @@ use crate::kernels::{
     PartialAttentionRoutine, PlaneSplitKeysMergeBlueprint, PlaneSplitKeysMergeRoutine,
 };
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, Routine};
@@ -37,7 +37,7 @@ where
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         blueprint: &AttentionBlueprint<M, SM>,
-    ) -> Result<PlaneSplitKeysMergeBlueprint, Refusal> {
+    ) -> Result<PlaneSplitKeysMergeBlueprint, Decline> {
         PlaneSplitKeysMergeRoutine.prepare(
             hw,
             problem,
@@ -81,7 +81,7 @@ where
         hw: &Hardware,
         tensors: AttentionTensors,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         let problem = tensors.problem();
         let (blueprint, grid) = R::prepare(hw, &problem, settings)?;
         let merge = self.merge(hw, &problem, &blueprint)?;

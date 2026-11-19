@@ -6,7 +6,7 @@ use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,
 };
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -28,8 +28,8 @@ use cubek_std::routine::{Grid, Routine};
 /// and one bulk copy stores it, clipped at the output's edge, every row of the box leaving whole
 /// ([`CubeStagedStore::Tma`]).
 ///
-/// Refused where its fill is, and where a descriptor cannot store the box
-/// ([`CubeStagedTmaStoreRefusal`](cubek_microkernel::matmul::cube::CubeStagedTmaStoreRefusal)): an
+/// Declined where its fill is, and where a descriptor cannot store the box
+/// ([`CubeStagedTmaStoreDecline`](cubek_microkernel::matmul::cube::CubeStagedTmaStoreDecline)): an
 /// output a sink or one whose rows are one element wide, among others.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedTmaStoredMatmulRoutine;
@@ -167,7 +167,7 @@ impl Routine for CubeStagedTmaStoredMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let fill = CubeStagedFill {
             delivery: CubeStagedDelivery::Tma,
             filling_planes: settings.filling_planes,

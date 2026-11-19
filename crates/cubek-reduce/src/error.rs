@@ -1,13 +1,13 @@
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use thiserror::Error;
 
 /// Why a reduction did not launch.
 #[derive(Error, Debug, Clone)]
 pub enum ReduceError {
     /// The kernel the strategy names cannot run the problem on this device, for the reason the
-    /// refusal names.
+    /// decline names.
     #[error("The reduce kernel cannot run this problem on this device: {0}")]
-    Refused(#[from] Refusal),
+    Declined(#[from] Decline),
     /// The axis is not a dim of the input.
     #[error("The provided axis ({axis}) must be smaller than the input tensor rank ({rank}).")]
     InvalidAxis { axis: usize, rank: usize },

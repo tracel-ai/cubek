@@ -1,7 +1,7 @@
 use super::kernel::plane_random_kernel;
 use crate::kernels::{RandomRoutine, RandomRoutineProblem, RandomTensor, VALUES};
 use cubecl::prelude::LaunchArg;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Levels, Partitioning};
 use cubek_microkernel::random::plane::{PlaneRandomMicrokernel, PlaneRandomMicrokernelSettings};
@@ -80,7 +80,7 @@ impl Routine for PlaneRandomRoutine {
         hw: &Hardware,
         problem: &RandomRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let microkernel = PlaneRandomMicrokernel::best(hw, &(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);

@@ -7,7 +7,7 @@ use core::fmt::Debug;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
 use cubek_attention::kernels::{
     AttentionCache, AttentionLaunch, AttentionQueries, AttentionScoring, AttentionTensors,
@@ -481,7 +481,7 @@ impl<L: AttentionLaunch> Forward<L> {
 impl<L: AttentionLaunch> ScopeUnderTest for Forward<L> {
     type Case = ForwardCase<SettingsOf<L>>;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let tensors = case.case.tensors(client);
         let logsumexp = tensors.logsumexp().expect("asked for");
         let out = self.launched.launch_on(&self.hw, tensors, &case.settings)?;

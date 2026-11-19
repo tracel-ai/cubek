@@ -4,7 +4,7 @@ use crate::kernels::{
     MatmulTensors, cube_order_name,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -26,10 +26,10 @@ use cubek_std::routine::{Grid, Routine};
 /// rest walk them contracting, then each stores its own fragments. The two meet only on each
 /// slot's barriers.
 ///
-/// Refused where the TMA engine cannot land the stages, as the TMA routine is, and where planes
+/// Declined where the TMA engine cannot land the stages, as the TMA routine is, and where planes
 /// cannot be set aside: one stage in flight, a fragment that can bounce through a scratch, or
 /// planes splitting `K`
-/// ([`CubeStagedFillingRefusal`](cubek_microkernel::matmul::cube::CubeStagedFillingRefusal)).
+/// ([`CubeStagedFillingDecline`](cubek_microkernel::matmul::cube::CubeStagedFillingDecline)).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedTmaFillerMatmulRoutine;
 
@@ -154,7 +154,7 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let fill = CubeStagedFill {
             delivery: CubeStagedDelivery::Tma,
             filling_planes: settings.filling_planes.get(),

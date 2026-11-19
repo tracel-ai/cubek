@@ -2,7 +2,7 @@
 //! each query's `delta = Σ_dv out_gradient · out`.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Launcher, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
@@ -32,7 +32,7 @@ impl PlaneDeltaLaunch {
         hw: &Hardware,
         item: AttentionBackwardWorkItem,
         settings: &PlaneDeltaMicrokernelSettings,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let microkernel = PlaneDeltaMicrokernel::best(hw, &item, settings)?;
         Ok(Self {
             microkernel,
@@ -58,7 +58,7 @@ impl PlaneDeltaLaunch {
         out: TensorArg,
         out_gradient: TensorArg,
         delta: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let space = Space::new(&[
             (B, 1),
             (KV, 1),

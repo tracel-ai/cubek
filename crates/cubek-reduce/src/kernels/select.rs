@@ -5,7 +5,7 @@ use crate::kernels::{
     PlaneShuffleReduceRoutine, ReduceKernel, ReduceLauncher, ReduceRoutineProblem,
     ReduceSplitExtents, ReduceTensors, UnitDirectReduceRoutine,
 };
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::reduce::{ReduceCarrier, ReduceLayout};
 use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
@@ -25,7 +25,7 @@ use cubek_std::routine::Routine;
 /// # Errors
 ///
 /// Why the unit routine cannot run the problem here, which no device refuses.
-pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
+pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
     let problem = tensors.problem();
     if let Ok((blueprint, grid)) = UnitDirectReduceRoutine::prepare_first_served(hw, problem)
         && short_of_the_device(hw, &grid.launch) == 0

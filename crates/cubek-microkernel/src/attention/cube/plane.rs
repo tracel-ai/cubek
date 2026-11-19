@@ -4,7 +4,7 @@ use crate::attention::plane::{
 };
 use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Delivery, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Delivery, Vectorization};
 use cubecl::tile::{Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -232,7 +232,7 @@ impl CubeAttentionPlane {
     /// # Errors
     ///
     /// Why it keeps that state where no other holder reaches it.
-    pub fn merges_rows(&self) -> Result<(), Refusal> {
+    pub fn merges_rows(&self) -> Result<(), Decline> {
         match self {
             Self::Fragment(plane) => plane.merges_rows(),
             Self::Shuffle(_) => Ok(()),

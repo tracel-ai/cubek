@@ -6,7 +6,7 @@ use crate::kernels::{
     UnitQueryGradientBlueprint, UnitQueryGradientRoutine, UnitQueryGradientRoutineSettings,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention_backward::key_gradient::unit::{
     UnitKeyGradientMicrokernel, UnitKeyGradientMicrokernelSettings,
 };
@@ -95,7 +95,7 @@ impl AttentionBackwardLaunch for UnitAttentionBackward {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &Self::Settings,
-    ) -> Result<Self::Blueprint, Refusal> {
+    ) -> Result<Self::Blueprint, Decline> {
         Ok(UnitAttentionBackwardBlueprint {
             queries: UnitQueryGradientRoutine.prepare(
                 hw,

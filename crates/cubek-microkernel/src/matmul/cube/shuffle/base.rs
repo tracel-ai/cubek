@@ -7,7 +7,7 @@ use crate::matmul::{
     MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::{Dimension, LaneMap, Levels, SoftwareMatmul, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -185,7 +185,7 @@ impl CubeShuffleMicrokernel {
     /// What a row rhs is declined with: its step lies along `N`, so each of a unit's cells is
     /// a vector of the rhs, and the shared accumulator the planes add their partial sums into
     /// takes one element a cell, which the tile DSL does not drain a wider vector into.
-    pub const ROW_RHS_UNSUPPORTED: Refusal = Refusal::Declined {
+    pub const ROW_RHS_UNSUPPORTED: Decline = Decline::Unserved {
         why: "the cube shuffle sums a float rhs in cols only: a row rhs's vectors along `N` do not drain into the shared accumulator's one-element cells",
     };
 
@@ -437,7 +437,7 @@ impl Microkernel for CubeShuffleMicrokernel {
     /// Its planes' items: of a float rhs on matmul's own dimensions and in cols
     /// ([`ROW_RHS_UNSUPPORTED`](Self::ROW_RHS_UNSUPPORTED)), or of a packed rhs on its
     /// block-split space, either way its words lie, which one of its planes admits.
-    fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
+    fn admits(item: &MatmulWorkItem) -> Result<(), Decline> {
         let None = item.blocks else {
             let shuffle = PlaneShuffleMicrokernel::admits(item);
             return match PlaneFragmentMicrokernel::admits(item) {

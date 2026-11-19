@@ -5,7 +5,7 @@ use crate::launch::RowBatch;
 use crate::launch::rms_norm::{RmsNormLaunch, RmsNormSettings};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
@@ -92,7 +92,7 @@ impl RmsNorm {
     /// # Errors
     ///
     /// Why the device runs no RMS norm microkernel at `case`.
-    fn launch_at(&self, case: &RmsNormCase) -> Result<RmsNormLaunch, Refusal> {
+    fn launch_at(&self, case: &RmsNormCase) -> Result<RmsNormLaunch, Decline> {
         RmsNormLaunch::new(&self.hw, case.element, case.batch, &case.settings)
     }
 }
@@ -100,7 +100,7 @@ impl RmsNorm {
 impl ScopeUnderTest for RmsNorm {
     type Case = RmsNormCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let launch = self.launch_at(case)?;
         let host = HostRmsNorm::new(case.batch);
         let tensor = |values: Vec<f32>, shape| {

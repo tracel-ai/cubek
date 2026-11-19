@@ -6,7 +6,7 @@ use crate::kernels::{
     MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::{Space, StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::{CubeStagedDelivery, MatmulCubeWrite};
 use cubek_microkernel::matmul::hypercube::{
@@ -78,7 +78,7 @@ pub type HypercubeLastArrivalMatmulRoutineBlueprint =
 impl HypercubeLastArrivalMatmulRoutine {
     /// What it declines on a device that does not say how many workers it has, the count its grid
     /// is sized by.
-    pub const UNSIZED: Refusal = Refusal::Declined {
+    pub const UNSIZED: Decline = Decline::Unserved {
         why: "the last-arrival routine sizes its grid by the device's workers, which this device does not report",
     };
 
@@ -87,7 +87,7 @@ impl HypercubeLastArrivalMatmulRoutine {
     fn cubes(
         hw: &Hardware,
         settings: &HypercubeLastArrivalMatmulRoutineSettings,
-    ) -> Result<NonZeroUsize, Refusal> {
+    ) -> Result<NonZeroUsize, Decline> {
         let workers = hw
             .workers()
             .and_then(|workers| NonZeroUsize::new(workers as usize))
@@ -196,7 +196,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_unindexed()?;
         let view = MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
@@ -393,7 +393,7 @@ mod tests {
         };
         let declined = HypercubeLastArrivalMatmulRoutine::prepare(&hw, &problem, &settings);
         assert!(
-            matches!(declined, Err(Refusal::Declined { .. })),
+            matches!(declined, Err(Decline::Unserved { .. })),
             "{settings}: {declined:?}"
         );
     }
@@ -408,7 +408,7 @@ mod tests {
             for settings in HypercubeLastArrivalMatmulRoutine::settings(&hw) {
                 let (blueprint, _) =
                     HypercubeLastArrivalMatmulRoutine::prepare(&hw, &problem, &settings)
-                        .unwrap_or_else(|refusal| panic!("{settings}: {refusal:?}"));
+                        .unwrap_or_else(|decline| panic!("{settings}: {decline:?}"));
                 let partitioning = &blueprint.partitioning;
                 assert_eq!(
                     blueprint.microkernel.cube.stage(&partitioning.cube_space()),
@@ -435,7 +435,7 @@ mod tests {
         assert!(
             matches!(
                 declined,
-                Err(Refusal::Declined {
+                Err(Decline::Unserved {
                     why: HypercubeStagedMicrokernel::DECLINE
                 })
             ),

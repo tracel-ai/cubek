@@ -3,7 +3,7 @@
 use crate::kernels::{AttentionVisibility, PackedLayout, QueryPlacement};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Space;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
@@ -207,7 +207,7 @@ impl EstimatedProblem for AttentionRoutineProblem {
 }
 
 /// What a routine that reads float keys and values declines on a packed cache.
-pub const ATTENTION_PACKED_UNREAD: Refusal = Refusal::Declined {
+pub const ATTENTION_PACKED_UNREAD: Decline = Decline::Unserved {
     why: "this attention routine reads float keys and values, not a packed cache",
 };
 

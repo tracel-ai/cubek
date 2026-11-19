@@ -11,7 +11,7 @@ use crate::kernels::{
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tune::Work;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
@@ -77,7 +77,7 @@ impl RoutedMatmulTensors {
         routes: PlainTensor,
         experts: usize,
         along: SlabDimension,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         if rhs.values().is_tiled() {
             return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
         }
@@ -179,7 +179,7 @@ impl RoutedMatmulTensors {
         hw: &Hardware,
         routine: &R,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -201,7 +201,7 @@ impl RoutedMatmulTensors {
         routine: &R,
         settings: &R::Settings,
         out: &TensorHandle,
-    ) -> Result<(), Refusal>
+    ) -> Result<(), Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -219,7 +219,7 @@ impl RoutedMatmulTensors {
     /// # Errors
     ///
     /// As [`launch`](Self::launch).
-    pub fn served_by<Mk, SM, R>(&self, hw: &Hardware, settings: &R::Settings) -> Result<(), Refusal>
+    pub fn served_by<Mk, SM, R>(&self, hw: &Hardware, settings: &R::Settings) -> Result<(), Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -284,7 +284,7 @@ impl RoutedMatmulTensors {
     /// The product as the dense routines read it: each row's slot a batch of one row, the rows
     /// the first batch dim, read again for each of a row's slots; the stack; and the routes, one
     /// entry a batch.
-    fn operands(&self) -> Result<(PlainTensor, StoredTensor, MatmulIndexTable), Refusal> {
+    fn operands(&self) -> Result<(PlainTensor, StoredTensor, MatmulIndexTable), Decline> {
         let [rows, slots, _] = self.output_shape();
         let [k, _] = self.slab_shape();
         let lhs = self

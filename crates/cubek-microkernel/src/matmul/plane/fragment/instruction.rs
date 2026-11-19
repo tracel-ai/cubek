@@ -2,7 +2,7 @@ use crate::matmul::plane::PlaneFragmentRowsAlong;
 use crate::matmul::{MatmulDim, MatmulDimensions, MatmulLayout, MatmulOperands};
 use cubecl::features::{MmaConfig, WgmmaConfig};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::ops::matmul::MmaIo;
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{BlockScaledOperands, Dimension, Instruction, MmaOperands, StepCost};
@@ -96,7 +96,7 @@ impl PlaneFragmentInstruction {
     /// # Errors
     ///
     /// A device that does not commit to one width.
-    pub fn units(self, hw: &Hardware) -> Result<u32, Refusal> {
+    pub fn units(self, hw: &Hardware) -> Result<u32, Decline> {
         hw.plane_dim()
     }
 

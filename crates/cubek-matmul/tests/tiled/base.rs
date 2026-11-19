@@ -10,7 +10,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::{CubeElement, Scalar};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
 use cubek_matmul::kernels::{
     MatmulRoutine,
@@ -36,7 +36,7 @@ pub(crate) trait RoutineProduct: Debug + Clone {
         hw: &Hardware,
         client: &Client,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel;
@@ -66,7 +66,7 @@ impl RoutineProduct for Product {
         hw: &Hardware,
         client: &Client,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel,
@@ -178,7 +178,7 @@ where
     /// # Panics
     ///
     /// Where a routine that declines nothing refuses a product.
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let launched = case
             .product
             .launch(&self.routine, &self.hw, client, &case.settings);
@@ -186,7 +186,7 @@ where
         match (launched, self.declines) {
             (Ok(out), _) => Ok(Product::written(out)),
             (Err(why), Declines::AsItStates) => Err(why),
-            (Err(why @ Refusal::CubePastDevice { .. }), Declines::Never) if on_cpu => Err(why),
+            (Err(why @ Decline::CubePastDevice { .. }), Declines::Never) if on_cpu => Err(why),
             (Err(why), Declines::Never) => panic!("{case:?} refused: {why:?}"),
         }
     }

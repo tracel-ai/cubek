@@ -22,7 +22,7 @@ use crate::kernels::{
 };
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tune::{LocalTuner, Tunable, local_tuner};
 use cubecl::{self as cubecl, AutotuneKey, CubeTuneId};
 use cubecl_common::device::Device;
@@ -69,7 +69,7 @@ pub fn launch_tuned(
     device: &impl Device,
     tensors: MGroupedMatmulTensors,
     routines: GroupPriority,
-) -> Result<TensorHandle, Refusal> {
+) -> Result<TensorHandle, Decline> {
     let rows = tensors.source().rows();
     if rows == 0 {
         let [_, n] = tensors.slab_shape();
@@ -94,7 +94,7 @@ pub fn launch_tuned_padded(
     device: &impl Device,
     tensors: MGroupedMatmulTensors,
     routines: GroupPriority,
-) -> Result<PaddedRows, Refusal> {
+) -> Result<PaddedRows, Decline> {
     let client = tensors.client().clone();
     let hw = Hardware::from_client(&client);
     // A round must reach a floor that answers, and only a floor listed for the stack's kind can.
@@ -186,7 +186,7 @@ where
         move |tensors: MGroupedMatmulTensors| {
             listed
                 .admits(Product::of([tensors.stack_kind()]))
-                .map_err(|refusal| format!("{settings} {refusal:?}"))?;
+                .map_err(|decline| format!("{settings} {decline:?}"))?;
             let hw = Hardware::from_client(tensors.client());
             tensors
                 .launch(&hw, &routine, &settings)

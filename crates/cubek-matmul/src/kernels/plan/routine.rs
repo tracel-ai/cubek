@@ -4,7 +4,7 @@ use crate::kernels::MatmulTensors;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use core::marker::PhantomData;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::plan::{Declined, Plan, PlanTree};
 
@@ -43,7 +43,7 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> RoutinePlan<R, M, SM> {
 
 impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> RoutinePlan<R, M, SM> {
     /// The product into a buffer the launch allocates.
-    fn launch_allocating(&self, call: &MatmulCall) -> Result<TensorHandle, Refusal> {
+    fn launch_allocating(&self, call: &MatmulCall) -> Result<TensorHandle, Decline> {
         let (hw, client) = (&call.hw, &call.client);
         let (lhs, rhs) = (call.lhs.tensor.clone(), call.rhs.tensor.clone());
         let float = matches!(
@@ -64,7 +64,7 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> RoutinePlan<R, M, SM> {
         &self,
         call: &MatmulCall,
         destination: &TensorHandle,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         let (hw, client) = (&call.hw, &call.client);
         let tensors = MatmulTensors::writing_into(
             client,

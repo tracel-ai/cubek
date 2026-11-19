@@ -12,7 +12,7 @@ use cubecl::client::Client;
 use cubecl::ir::features::AtomicUsage;
 use cubecl::ir::{ElemType, FloatKind, IntKind, Type};
 use cubecl::prelude::TensorBinding;
-use cubecl::tile::launch::{Refusal, StoredTileOperand, Unbound};
+use cubecl::tile::launch::{Decline, StoredTileOperand, Unbound};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubecl::zspace::Shape;
@@ -175,7 +175,7 @@ impl TestedRoutine {
         self,
         hw: &Hardware,
         tensors: &ReduceTensors,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
         let mut settings = R::settings(hw);
         if let TestedRoutine::HypercubeLastArrival = self {
@@ -228,7 +228,7 @@ struct RoutineScopeUnderTest;
 impl ScopeUnderTest for RoutineScopeUnderTest {
     type Case = Reduction;
 
-    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
         let hw = Hardware::from_client(client);
         let (out_elem, out_shape) = (reduction.out_elem(), reduction.out_shape());
         let input = TestInput::builder(client.clone(), Shape::from(reduction.shape.clone()))
@@ -363,7 +363,7 @@ fn unbound_tensors<R: ReduceLauncher<M>, M>(
     input: &TensorBinding,
     out: TensorBinding,
     reduction: &Reduction,
-) -> Result<ReduceTensors<Geometry>, Refusal> {
+) -> Result<ReduceTensors<Geometry>, Decline> {
     let elements = ReduceElements {
         input: F32,
         accumulator: F32,
@@ -403,7 +403,7 @@ fn launch_unbound<R: ReduceLauncher<M>, M>(
     input: TensorBinding,
     out: TensorBinding,
     reduction: &Reduction,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     let tensors = unbound_tensors::<R, M>(client, &input, out, reduction)?;
     let hw = Hardware::from_client(client);
     let (blueprint, grid) = R::prepare_first_served(&hw, tensors.problem())?;
@@ -417,7 +417,7 @@ fn launch_atomic_unbound(
     input: TensorBinding,
     out: TensorBinding,
     reduction: &Reduction,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     let tensors =
         unbound_tensors::<HypercubeAtomicReduceRoutine, _>(client, &input, out, reduction)?;
     let hw = Hardware::from_client(client);
@@ -437,7 +437,7 @@ fn launch_atomic_unbound(
 impl ScopeUnderTest for UnboundRoutineScopeUnderTest {
     type Case = Reduction;
 
-    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
         let (out_elem, out_shape) = (reduction.out_elem(), reduction.out_shape());
         let input = TestInput::builder(client.clone(), Shape::from(reduction.shape.clone()))
             .dtype(F32)
@@ -668,10 +668,10 @@ fn every_shape_of_a_layout_compiles_one_kernel() {
 fn routines_decline_more_row_dims_than_the_grid_holds() {
     let hw = devices::m2_pro();
     let problem = problem(&[2, 2, 2, 2, 64], 4);
-    let declines = |prepared: Result<(), cubecl::tile::launch::Refusal>| {
+    let declines = |prepared: Result<(), cubecl::tile::launch::Decline>| {
         matches!(
             prepared,
-            Err(cubecl::tile::launch::Refusal::Declined { .. })
+            Err(cubecl::tile::launch::Decline::Unserved { .. })
         )
     };
     let cube = CubeStagedReduceRoutine::settings(&hw)[0];
@@ -708,7 +708,7 @@ fn routines_decline_on_a_device_without_their_features() {
         ..problem(&[4, 4096], 1)
     };
     let declines =
-        |prepared: Result<(), Refusal>| matches!(prepared, Err(Refusal::Declined { .. }));
+        |prepared: Result<(), Decline>| matches!(prepared, Err(Decline::Unserved { .. }));
     let plane = PlaneShuffleReduceRoutine::settings(&hw)[0];
     assert!(declines(
         PlaneShuffleReduceRoutine::prepare(&hw, &problem, &plane).map(|_| ())
@@ -741,7 +741,7 @@ fn the_hypercube_declines_without_device_memory_scope() {
     let hypercube = HypercubeLastArrivalReduceRoutine::settings(&hw)[0];
     assert!(matches!(
         HypercubeLastArrivalReduceRoutine::prepare(&hw, &problem, &hypercube),
-        Err(Refusal::Declined { .. })
+        Err(Decline::Unserved { .. })
     ));
     let cube = CubeStagedReduceRoutine::settings(&hw)[0];
     assert!(CubeStagedReduceRoutine::prepare(&hw, &problem, &cube).is_ok());

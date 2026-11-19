@@ -1,5 +1,5 @@
 use crate::kernels::select::problem::OperandKind;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 
 /// The kind of a product, which a candidate listed for the other kind declines before compiling
 /// anything.
@@ -85,12 +85,12 @@ impl<S: PartialEq> Listing<S> {
 }
 
 /// What a float setting declines: a packed input, which it was not listed for.
-pub const FLOAT_SETTING_PACKED_INPUT: Refusal = Refusal::Declined {
+pub const FLOAT_SETTING_PACKED_INPUT: Decline = Decline::Unserved {
     why: "a setting listed for float inputs reads them, and an input is packed",
 };
 
 /// What a packed setting declines: two float inputs, which it was not listed for.
-pub const PACKED_SETTING_FLOAT_INPUTS: Refusal = Refusal::Declined {
+pub const PACKED_SETTING_FLOAT_INPUTS: Decline = Decline::Unserved {
     why: "a setting listed for a packed input reads one, and both inputs are float",
 };
 
@@ -101,7 +101,7 @@ impl ListedFor {
     ///
     /// [`FLOAT_SETTING_PACKED_INPUT`] or [`PACKED_SETTING_FLOAT_INPUTS`], for the kind it is not
     /// listed for.
-    pub(crate) fn admits(self, actual: Product) -> Result<(), Refusal> {
+    pub(crate) fn admits(self, actual: Product) -> Result<(), Decline> {
         match (self, actual) {
             (Self::Either, _) | (Self::Float, Product::Float) | (Self::Packed, Product::Packed) => {
                 Ok(())
@@ -112,22 +112,22 @@ impl ListedFor {
     }
 }
 
-/// The first of `attempts` that is `Ok`, the rest never run; where none is, the last refusal.
+/// The first of `attempts` that is `Ok`, the rest never run; where none is, the last decline.
 ///
 /// # Panics
 ///
 /// On no attempt: a floor is listed for every kind of stack.
 pub(crate) fn first_served(
-    attempts: impl IntoIterator<Item = Result<(), Refusal>>,
-) -> Result<(), Refusal> {
-    let mut refusal = None;
+    attempts: impl IntoIterator<Item = Result<(), Decline>>,
+) -> Result<(), Decline> {
+    let mut decline = None;
     for attempt in attempts {
         match attempt {
             Ok(()) => return Ok(()),
-            Err(why) => refusal = Some(why),
+            Err(why) => decline = Some(why),
         }
     }
-    Err(refusal.expect("a floor is listed for every kind of stack"))
+    Err(decline.expect("a floor is listed for every kind of stack"))
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use cubecl::Device;
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::Geometry;
-use cubecl::tile::launch::{Refusal, TileOperand, Unbound};
+use cubecl::tile::launch::{Decline, TileOperand, Unbound};
 use cubek_std::autotune::TuneCandidate;
 
 /// A candidate of the autotune, whichever routine it launches: what the autotune identifies a
@@ -34,7 +34,7 @@ impl ReduceCandidate {
         &self,
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         self.launcher.launch_unbound::<I>(tensors, input)
     }
 
@@ -85,7 +85,7 @@ impl ReduceCandidateLauncher {
         &self,
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         match &self.dispatch {
             ReduceCandidateLauncherDispatch::UnitDirect(candidate) => {
                 candidate.launch_unbound::<I>(tensors, input)

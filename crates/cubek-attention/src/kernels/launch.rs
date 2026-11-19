@@ -3,7 +3,7 @@ use crate::kernels::{
     AttentionTensors,
 };
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
@@ -51,7 +51,7 @@ pub trait AttentionLaunch {
         hw: &Hardware,
         tensors: AttentionTensors,
         settings: &<Self::Routine as Routine>::Settings,
-    ) -> Result<TensorHandle, Refusal>;
+    ) -> Result<TensorHandle, Decline>;
 
     /// [`launch_on`](Self::launch_on) at the routine's lead, the first setting it lists on `hw`:
     /// what a caller naming no setting runs.
@@ -63,7 +63,7 @@ pub trait AttentionLaunch {
         &self,
         hw: &Hardware,
         tensors: AttentionTensors,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         let lead = Self::Routine::settings(hw)
             .into_iter()
             .next()
@@ -92,7 +92,7 @@ where
         hw: &Hardware,
         tensors: AttentionTensors,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         let (blueprint, grid) = R::prepare(hw, &tensors.problem(), settings)?;
         let binding = tensors.bind(&blueprint, &grid);
         self.0.dispatch(&tensors, binding, blueprint, grid);

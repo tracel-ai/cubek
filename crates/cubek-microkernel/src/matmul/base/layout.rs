@@ -25,7 +25,7 @@ impl MatmulLayout {
     /// buffer steps across its lines — or `None` for a matrix no cut here walks.
     ///
     /// The reading, apart from the tensor it is usually read off, because both of
-    /// its refusals are about the strides alone. The cuts walk one dimension in vectors
+    /// its declines are about the strides alone. The cuts walk one dimension in vectors
     /// and step rows of the other, so the matrix has to line along one of them; a
     /// dim of extent one addresses nothing and never competes for the unit stride.
     /// Padding is served, but a stride *below* the row it steps over is a

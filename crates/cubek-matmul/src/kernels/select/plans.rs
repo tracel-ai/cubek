@@ -53,7 +53,7 @@ fn render_all() -> String {
             let groups = MatmulAutotuneGroups::default();
             let plan = select(strategy, &product.problem, &product.hw, groups)
                 .map(|plan| plan.tree().to_string())
-                .unwrap_or_else(|refusal| format!("refused: {refusal}"));
+                .unwrap_or_else(|decline| format!("refused: {decline}"));
             out.push_str(&format!("{strategy:?}: {plan}\n"));
         }
         out.push('\n');

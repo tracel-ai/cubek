@@ -1,7 +1,7 @@
 //! The plane matmul microkernels on one work item.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Delivery, Grid, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Delivery, Grid, Vectorization};
 use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubecl::tile::{
     Launcher, Partitioning, Region, Scratch, Semiring, SoftwareMatmul, Space, StageStorage, Stages,
@@ -52,7 +52,7 @@ impl PlaneFragmentLaunch {
         settings: &PlaneFragmentMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item();
         let microkernel = PlaneFragmentMicrokernel::best(hw, &item, settings)?;
         let [m, n, k] = [M, N, K].map(|dimension| microkernel.tile_extent(dimension));
@@ -103,7 +103,7 @@ impl MatmulLaunch for PlaneFragmentLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let [m, n, k] = self.shape;
         let space = Space::new(&[(M, m), (N, n), (K, k)]);
         let partitioning = Partitioning::new(
@@ -240,7 +240,7 @@ impl PlaneShuffleLaunch {
         rows: WholeRows,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item_of(MatmulRows::Whole(rows.0), Self::RHS);
         let microkernel = PlaneShuffleMicrokernel::best(hw, &item, settings)?;
         let mut vectorization = Vectorization::new();
@@ -273,7 +273,7 @@ impl MatmulLaunch for PlaneShuffleLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let launcher = self
             .one_cube
             .launcher(client, self.microkernel.plane_width() as u32)?;

@@ -4,7 +4,7 @@ use crate::kernels::{ReduceBlueprint, ReduceElements, ReduceRoutineProblem};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
-use cubecl::tile::launch::{Bound, Refusal, Unbound};
+use cubecl::tile::launch::{Bound, Decline, Unbound};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Geometry, Launcher};
 use cubek_microkernel::reduce::ReduceOperation;
@@ -12,7 +12,7 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
 /// Why an unbound reduction declines where its microkernel reads narrower lines than the caller's
 /// input is stated at ([`ReduceTensors::unbound`]): the caller computes its lines whole.
-pub const UNBOUND_LINES_NARROWER: Refusal = Refusal::Declined {
+pub const UNBOUND_LINES_NARROWER: Decline = Decline::Unserved {
     why: "the microkernel reads narrower lines than the caller's input is stated at",
 };
 

@@ -5,7 +5,7 @@ use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,
 };
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -25,7 +25,7 @@ use cubek_std::routine::{Grid, Routine};
 /// slot's barrier after the fill returns ([`CubeStagedDelivery::AsyncCopy`]). Its planes store
 /// their own fragments.
 ///
-/// Refused where the device has no copy engine, where the ring holds its next stage in registers,
+/// Declined where the device has no copy engine, where the ring holds its next stage in registers,
 /// which the engine never passes through, and where a line it would copy is not 4, 8 or 16 bytes,
 /// as the delivery itself answers ([`Delivery::runs_on`](cubecl::tile::launch::Delivery::runs_on),
 /// [`holds`](cubecl::tile::launch::Delivery::holds),
@@ -184,7 +184,7 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let placement = CubeStagedPlacement::new(
             hw,
             problem,

@@ -101,7 +101,7 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
             move |tensors: ReduceTensors| {
                 ReduceKernel::Unit
                     .launch(&floor_hw, &tensors)
-                    .map_err(|refusal| refusal.to_string())
+                    .map_err(|decline| decline.to_string())
             },
         ))
         .finish()

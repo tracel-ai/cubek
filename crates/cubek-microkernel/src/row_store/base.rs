@@ -2,7 +2,7 @@ use cubecl::features::Plane;
 use cubecl::ir::ElemType;
 use cubecl::quant::scheme::QuantScheme;
 use cubecl::tile::kind::Field;
-use cubecl::tile::launch::{MaskedExtent, Refusal, VectorRequirement};
+use cubecl::tile::launch::{Decline, MaskedExtent, VectorRequirement};
 use cubecl::tile::{Dimension, Partitioning, Space};
 use cubecl::zspace::metadata::Metadata;
 use cubek_std::Hardware;
@@ -17,19 +17,19 @@ pub const WIDTH: Dimension = K;
 /// What a packed store declines before preparing anything: an output whose scales are not one
 /// level of blocks along the row, or a row that is not whole words of block scales, which every
 /// read of them takes.
-pub const PACKED_STORE_UNSERVED: Refusal = Refusal::Declined {
+pub const PACKED_STORE_UNSERVED: Decline = Decline::Unserved {
     why: "a packed store writes one level of block scales along each row, whole words of them a row",
 };
 
 /// What a routine declines a packed store with on a device without plane instructions: the
 /// encoding calibrates each word of block scales across the lanes holding its blocks.
-pub const PACKED_STORE_NEEDS_PLANES: Refusal = Refusal::Declined {
+pub const PACKED_STORE_NEEDS_PLANES: Decline = Decline::Unserved {
     why: "a packed store calibrates its block scales across a plane's lanes, and this device has no plane instructions",
 };
 
 /// What a routine whose owners meet in no cube declines a packed store with: the cube is where a
 /// stage of its rows is encoded.
-pub const PACKED_STORE_NEEDS_A_CUBE: Refusal = Refusal::Declined {
+pub const PACKED_STORE_NEEDS_A_CUBE: Decline = Decline::Unserved {
     why: "a packed store encodes a cube's stage once its owners have written it, and this routine \
           walks the launch's planes, which no cube holds",
 };
@@ -84,7 +84,7 @@ impl RowStore {
     /// # Errors
     ///
     /// [`PACKED_STORE_UNSERVED`].
-    pub fn packed(scheme: &QuantScheme, width: usize) -> Result<Self, Refusal> {
+    pub fn packed(scheme: &QuantScheme, width: usize) -> Result<Self, Decline> {
         let size = scheme
             .block_size()
             .filter(|_| scheme.num_levels() == 1 && scheme.packing_dim() == Some(0))
@@ -169,7 +169,7 @@ impl RowStore {
     /// # Errors
     ///
     /// [`PACKED_STORE_NEEDS_PLANES`].
-    pub fn runs_on(&self, hw: &Hardware) -> Result<(), Refusal> {
+    pub fn runs_on(&self, hw: &Hardware) -> Result<(), Decline> {
         let planes = hw.properties.features.plane.contains(Plane::Ops);
         match (self, planes) {
             (Self::Packed { .. }, false) => Err(PACKED_STORE_NEEDS_PLANES),

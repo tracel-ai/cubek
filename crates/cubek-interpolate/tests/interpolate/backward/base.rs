@@ -3,7 +3,7 @@
 
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_interpolate::definition::{InterpolateError, InterpolateMode, InterpolateOptions};
 use cubek_interpolate::eval::cpu_reference::cpu_reference_interpolate_backward_from_host;
 use cubek_interpolate::interpolate_backward;
@@ -50,8 +50,8 @@ impl ScopeUnderTest for Backward {
 
     /// # Panics
     ///
-    /// Where the launch fails for a reason other than a refusal.
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    /// Where the launch fails for a reason other than a decline.
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let (out_gradient, _) = case.uniform(client, case.out_gradient.to_vec(), case.seed);
         let (input, _) = case.uniform(client, case.input_shape(), case.seed.wrapping_add(1));
         let gradient = TestInput::builder(client.clone(), case.input_shape())
@@ -71,7 +71,7 @@ impl ScopeUnderTest for Backward {
                 tensor: gradient,
                 host: HostDataType::F32,
             }]),
-            Err(InterpolateError::Refused(why)) => Err(why),
+            Err(InterpolateError::Declined(why)) => Err(why),
             Err(error) => panic!("{case:?}: {error}"),
         }
     }

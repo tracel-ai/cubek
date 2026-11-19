@@ -11,7 +11,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::LaunchArg;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
+use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernelSettings;
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
@@ -95,9 +95,9 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if problem.rows().len() > MAX_SPLIT_ROW_DIMS {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the hypercube reduce runs its cubes along at most two row dims",
             });
         }

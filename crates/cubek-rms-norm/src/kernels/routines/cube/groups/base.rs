@@ -5,8 +5,8 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Levels;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::rms_norm::cube::{
     CubeGroupsRmsNormMicrokernel, CubeGroupsRmsNormMicrokernelSettings,
@@ -127,7 +127,7 @@ impl Routine for CubeGroupsRmsNormRoutine {
         hw: &Hardware,
         problem: &RmsNormRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let microkernel =
             CubeGroupsRmsNormMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let store = problem.store;

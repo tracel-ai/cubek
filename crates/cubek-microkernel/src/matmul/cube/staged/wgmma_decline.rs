@@ -1,11 +1,11 @@
 use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill};
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 
 /// Why a cube does not run a plane group MMA its plane microkernel elected: what only the cube's
 /// fill and drain decide, beside the device and product rules the plane microkernel checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CubeStagedWgmmaRefusal {
+pub enum CubeStagedWgmmaDecline {
     /// Its stages arrive by anything but the TMA engine, which alone lays the swizzled rows its
     /// descriptors read.
     Unlanded,
@@ -16,7 +16,7 @@ pub enum CubeStagedWgmmaRefusal {
     Merged,
 }
 
-impl CubeStagedWgmmaRefusal {
+impl CubeStagedWgmmaDecline {
     /// Why a cube filled as `fill`, its planes split `planes_along_k` ways along `K` and its sum
     /// merged where `merges`, cannot run a plane group MMA; `None` where it can.
     pub fn new(fill: &CubeStagedFill, planes_along_k: NonZeroUsize, merges: bool) -> Option<Self> {
@@ -32,20 +32,20 @@ impl CubeStagedWgmmaRefusal {
     }
 }
 
-impl From<CubeStagedWgmmaRefusal> for Refusal {
-    fn from(refusal: CubeStagedWgmmaRefusal) -> Self {
-        let details = match refusal {
-            CubeStagedWgmmaRefusal::Unlanded => {
+impl From<CubeStagedWgmmaDecline> for Decline {
+    fn from(decline: CubeStagedWgmmaDecline) -> Self {
+        let details = match decline {
+            CubeStagedWgmmaDecline::Unlanded => {
                 "a plane group MMA reads its stages as the TMA engine lands them"
             }
-            CubeStagedWgmmaRefusal::NoFillingPlanes => {
+            CubeStagedWgmmaDecline::NoFillingPlanes => {
                 "a plane group MMA releases its stages once its MMAs are done, which needs planes \
                  of their own to fill them"
             }
-            CubeStagedWgmmaRefusal::Merged => {
+            CubeStagedWgmmaDecline::Merged => {
                 "a plane group MMA's sum drains straight into its output, which no merge of the planes' sums reaches"
             }
         };
-        Refusal::Declined { why: details }
+        Decline::Unserved { why: details }
     }
 }

@@ -2,7 +2,7 @@ use super::kernel::unit_random_kernel;
 use crate::kernels::{RandomRoutine, RandomRoutineProblem, RandomTensor, VALUES};
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::LaunchArg;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tile::space::UnitCube;
 use cubecl::tile::{Levels, Partitioning};
 use cubek_microkernel::random::unit::{UnitRandomMicrokernel, UnitRandomMicrokernelSettings};
@@ -70,7 +70,7 @@ impl Routine for UnitRandomRoutine {
         hw: &Hardware,
         problem: &RandomRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let microkernel = UnitRandomMicrokernel::best(hw, &(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);

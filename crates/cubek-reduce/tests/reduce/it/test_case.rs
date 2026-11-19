@@ -1,5 +1,5 @@
 use cubecl::client::Client;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::{
     ir::{ElemType, FloatKind},
     prelude::*,
@@ -370,7 +370,7 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
     /// # Panics
     ///
     /// Where a case of explicit regression data is refused: it must execute.
-    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
         let case = &reduction.case;
         let (op, axis, operation) = (reduction.op, case.axis.unwrap(), reduction.op.operation());
         let (input, host) = reduction.input();
@@ -418,7 +418,7 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
         // case reports as a skip; any other error is the test's.
         match launched {
             Ok(()) => {}
-            Err(ReduceError::Refused(refusal)) => return Err(refusal),
+            Err(ReduceError::Declined(decline)) => return Err(decline),
             Err(why) => panic!("{reduction:?}: {why}"),
         }
         if case.custom_input.is_some() {

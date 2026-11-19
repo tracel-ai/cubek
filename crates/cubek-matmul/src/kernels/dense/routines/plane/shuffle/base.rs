@@ -4,7 +4,7 @@ use crate::kernels::{
     MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Dimension, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulMicrokernel;
@@ -101,21 +101,21 @@ pub type PlaneShuffleMatmulRoutineBlueprint = MatmulBlueprint<PlaneShuffleMicrok
 
 impl PlaneShuffleMatmulRoutine {
     /// What a float rhs declines a capped launch with.
-    pub const PERSISTENT_FLOAT: Refusal = Refusal::Declined {
+    pub const PERSISTENT_FLOAT: Decline = Decline::Unserved {
         why: "a plane shuffle's launch is capped only against a packed rhs, whose planes walk one \
               dimension of columns",
     };
 
     /// What a batched product, whose planes are handed batches beside columns, declines a capped
     /// launch with.
-    pub const PERSISTENT_BATCHED: Refusal = Refusal::Declined {
+    pub const PERSISTENT_BATCHED: Decline = Decline::Unserved {
         why: "a plane shuffle's capped launch walks one dimension of columns, not batches beside them",
     };
 
     /// What a device that does not say how many compute units it has declines a capped launch
     /// with: uncapped, it would be [`PACKED`](PlaneShuffleMatmulRoutineSettings::PACKED) again,
     /// raced twice under two names.
-    pub const PERSISTENT_UNSIZED: Refusal = Refusal::Declined {
+    pub const PERSISTENT_UNSIZED: Decline = Decline::Unserved {
         why: "a plane shuffle's launch is capped at planes a compute unit, and the device does \
               not say how many compute units it has",
     };
@@ -202,7 +202,7 @@ impl PlaneShuffleMatmulRoutine {
         problem: &MatmulRoutineProblem,
         microkernel: PlaneShuffleMicrokernel,
         partitioning: MatmulPartitioning,
-    ) -> Result<PlaneShuffleMatmulRoutineBlueprint, Refusal> {
+    ) -> Result<PlaneShuffleMatmulRoutineBlueprint, Decline> {
         let mut vectorization = Vectorization::new();
         PlaneShuffleMatmulRoutine::vectorize(&microkernel, &partitioning, &mut vectorization);
         Ok(MatmulBlueprint::new(
@@ -311,7 +311,7 @@ impl PlaneShuffleMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &PlaneShuffleMatmulRoutineSettings,
-    ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Refusal> {
+    ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Decline> {
         problem.check_plain()?;
         if settings.planes_per_worker.is_some() {
             return Err(Self::PERSISTENT_FLOAT);
@@ -339,7 +339,7 @@ impl PlaneShuffleMatmulRoutine {
         problem: &MatmulRoutineProblem,
         packing: &Packing,
         settings: &PlaneShuffleMatmulRoutineSettings,
-    ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Refusal> {
+    ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Decline> {
         // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
         let read = problem.rhs_read(settings.microkernel.by_block)?;
         let problem: &MatmulRoutineProblem = &read;
@@ -393,7 +393,7 @@ impl PlaneShufflePackedPlacement {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &PlaneShuffleMatmulRoutineSettings,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         if problem.packings.rhs.is_none() {
             return Err(MATMUL_STREAMED_INPUT_FLOAT);
         }
@@ -475,7 +475,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
     fn prepare_first_served(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let settings = match problem.packings.rhs {
             Some(_) => Self::packed_settings(),
             None => Self::settings(hw),
@@ -521,7 +521,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         match &problem.packings.rhs {
             Some(packing) => Self::prepare_packed(hw, problem, packing, settings),
             None => Self::prepare_float(hw, problem, settings),
@@ -620,7 +620,7 @@ mod tests {
                             assert_eq!(blueprint.widths.out, 1, "{settings} on {hw:?}");
                         }
                     }
-                    (Err(Refusal::Declined { why: details }), false) => {
+                    (Err(Decline::Unserved { why: details }), false) => {
                         assert_eq!(details, PlaneShuffleMicrokernel::DECLINE, "{settings}")
                     }
                     (prepared, _) => panic!("{settings} on {hw:?}: {prepared:?}"),
@@ -818,7 +818,7 @@ mod tests {
                 ) {
                     (Ok(_), true) => {}
                     (Err(why), false) if declines_rhs => assert_eq!(why, unread, "{settings}"),
-                    (Err(Refusal::Declined { why: details }), false) => {
+                    (Err(Decline::Unserved { why: details }), false) => {
                         assert_eq!(details, PlaneShuffleMicrokernel::DECLINE, "{settings}")
                     }
                     (prepared, _) => panic!("{settings} on {hw:?}: {prepared:?}"),

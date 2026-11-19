@@ -4,8 +4,8 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Levels;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::row_store::OwnerMemory;
 use cubek_microkernel::swiglu::cube::{CubeSwigluMicrokernel, CubeSwigluMicrokernelSettings};
@@ -148,7 +148,7 @@ impl Routine for CubeSwigluRoutine {
         hw: &Hardware,
         problem: &SwigluRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let microkernel = CubeSwigluMicrokernel::best(
             hw,
             &problem.work_item(),

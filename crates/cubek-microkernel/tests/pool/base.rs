@@ -4,7 +4,7 @@
 use crate::launch::pool::{Channels, PoolLaunch, WindowDimension};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
@@ -79,7 +79,7 @@ impl Pool {
     /// # Errors
     ///
     /// Why the device runs no max pool microkernel at `case`.
-    fn launch_at(&self, case: &PoolCase) -> Result<PoolLaunch, Refusal> {
+    fn launch_at(&self, case: &PoolCase) -> Result<PoolLaunch, Decline> {
         let per_unit = case.channel_block;
         let count = per_unit * self.hw.dispatch_plane_size() as usize * case.walks;
         PoolLaunch::new(
@@ -94,7 +94,7 @@ impl Pool {
 impl ScopeUnderTest for Pool {
     type Case = PoolCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let launch = self.launch_at(case)?;
         let windowed = launch.windowed;
         let ([h, w], c) = (windowed.input, windowed.channels);

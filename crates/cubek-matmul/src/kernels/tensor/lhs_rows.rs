@@ -1,6 +1,6 @@
 use crate::kernels::tensor::{PackedTensor, Placement, PlainTensor};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Bound, Delivery, Refusal};
+use cubecl::tile::launch::{Bound, Decline, Delivery};
 use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_microkernel::row_store::{ROWS, RowStore, WIDTH};
 use cubek_std::layout::stored::BlockScales;
@@ -9,7 +9,7 @@ use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// What a tiled launch declines before preparing anything: an output that is not a float matrix
 /// of the producer's rows stored in tiles, at the producer's element.
-pub const TILED_ROWS_UNSERVED: Refusal = Refusal::Declined {
+pub const TILED_ROWS_UNSERVED: Decline = Decline::Unserved {
     why: "a tiled output is a float matrix of the producer's rows, stored in tiles, at its element",
 };
 
@@ -49,7 +49,7 @@ impl TiledRows {
         rows: usize,
         width: usize,
         element: ElemType,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let fits = out.is_tiled() && out.elem == element && out.shape().as_slice() == [rows, width];
         match fits {
             true => Ok(Self { tensor: out }),
@@ -97,7 +97,7 @@ impl PackedRows {
     /// # Panics
     ///
     /// On an `out` not over `[M, K]` or not `rows` by `width`.
-    pub fn new(out: PackedTensor, rows: usize, width: usize) -> Result<Self, Refusal> {
+    pub fn new(out: PackedTensor, rows: usize, width: usize) -> Result<Self, Decline> {
         assert_eq!(
             out.dimensions(),
             [M, K],

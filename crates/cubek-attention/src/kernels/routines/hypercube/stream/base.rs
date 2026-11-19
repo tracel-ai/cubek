@@ -5,7 +5,7 @@ use crate::kernels::{
     HypercubeMerge, PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::{Space, StageStorage};
 use cubek_microkernel::attention::cube::CubeAttentionPlane;
 use cubek_microkernel::attention::hypercube::{
@@ -67,7 +67,7 @@ pub type HypercubeStreamFragmentAttentionRoutineBlueprint =
 impl HypercubeStreamFragmentAttentionRoutine {
     /// What it declines on a device that does not say how many workers it has, the count its grid
     /// is sized by.
-    pub const UNSIZED: Refusal = Refusal::Declined {
+    pub const UNSIZED: Decline = Decline::Unserved {
         why: "the stream routine sizes its grid by the device's workers, which this device does \
               not report",
     };
@@ -77,7 +77,7 @@ impl HypercubeStreamFragmentAttentionRoutine {
     /// worker never finished its launch, while the same box over one cube a worker, the cube
     /// routine and the second-launch routine match the reference with it. Until that is
     /// understood, this routine keeps the boxes whose value contracts a stage in one call.
-    pub const SCORE_RUNS: Refusal = Refusal::Declined {
+    pub const SCORE_RUNS: Decline = Decline::Unserved {
         why: "the stream routine keeps a plane's score in fragments only where the value \
               contracts a stage's keys in one call",
     };
@@ -87,7 +87,7 @@ impl HypercubeStreamFragmentAttentionRoutine {
     fn cubes(
         hw: &Hardware,
         settings: &HypercubeStreamFragmentAttentionRoutineSettings,
-    ) -> Result<NonZeroUsize, Refusal> {
+    ) -> Result<NonZeroUsize, Decline> {
         let workers = hw
             .workers()
             .and_then(|workers| NonZeroUsize::new(workers as usize))
@@ -182,7 +182,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if let AttentionCacheLayout::Packed(_) = problem.cache {
             return Err(ATTENTION_PACKED_UNREAD);
         }
@@ -198,7 +198,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
             return Err(Self::SCORE_RUNS);
         }
         if microkernel.cube.page_steps.is_some() {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the stream routine's runs cross from one box's keys into the next's, which \
                       a cache of pages does not lie in",
             });

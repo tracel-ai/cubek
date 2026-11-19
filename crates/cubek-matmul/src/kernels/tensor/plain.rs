@@ -4,7 +4,7 @@ use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::std::tensor::is_contiguous;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Dimension, Geometry, Projection};
 use cubecl::zspace::metadata::Metadata;
@@ -498,6 +498,6 @@ impl From<&PlainTensor> for Placement {
 
 /// What a launch declines on a device whose runtime does not compute in the operands' element and
 /// store it in a buffer, as WGSL does not bf16: the kernel would fail to compile there.
-pub const ELEMENT_NOT_ON_DEVICE: Refusal = Refusal::Declined {
+pub const ELEMENT_NOT_ON_DEVICE: Decline = Decline::Unserved {
     why: "the device's runtime does not compute in this element and store it in a buffer",
 };

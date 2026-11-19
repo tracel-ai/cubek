@@ -1,6 +1,6 @@
 use crate::matmul::cube::{
-    CubeStagedDelivery, CubeStagedFill, CubeStagedFillingRefusal, CubeStagedMicrokernelSettings,
-    CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaRefusal, MatmulCubeSpace, MatmulPlaneLayout,
+    CubeStagedDelivery, CubeStagedFill, CubeStagedFillingDecline, CubeStagedMicrokernelSettings,
+    CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaDecline, MatmulCubeSpace, MatmulPlaneLayout,
 };
 use crate::matmul::plane::{
     PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
@@ -11,7 +11,7 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::space::Coverage;
 use cubecl::tile::{FragmentSource, Levels, Scratch, Space, StageStorage};
@@ -83,7 +83,7 @@ pub enum CubeStagedDrain {
 
 impl CubeStagedMicrokernel {
     /// What a packed item whose scales do not group `K` is declined with.
-    pub const UNGROUPED_K: Refusal = Refusal::Declined {
+    pub const UNGROUPED_K: Decline = Decline::Unserved {
         why: "the packed staged matmul stages K a scale block at a time, and this packed input's scales do not group K",
     };
 
@@ -377,14 +377,14 @@ impl CubeStagedMicrokernel {
     /// # Errors
     ///
     /// A matrix instruction on a device that commits to no plane width; planes set aside to fill
-    /// where they cannot be ([`CubeStagedFillingRefusal`]); a plane group MMA its fill and drain do
-    /// not serve (`CubeStagedWgmmaRefusal`).
+    /// where they cannot be ([`CubeStagedFillingDecline`]); a plane group MMA its fill and drain do
+    /// not serve (`CubeStagedWgmmaDecline`).
     pub fn resolve(
         self,
         hw: &Hardware,
         item: &MatmulWorkItem,
         cube_space: &MatmulCubeSpace,
-    ) -> Result<CubeStagedResolved, Refusal> {
+    ) -> Result<CubeStagedResolved, Decline> {
         let stage = &self.stage(cube_space);
         let plane_width = self.plane.instruction.units(hw)?;
         let units = self.contracting_planes() * plane_width as usize;
@@ -406,15 +406,15 @@ impl CubeStagedMicrokernel {
         };
         let fill = self.fill;
         if fill.filling_planes > 0
-            && let Some(refusal) =
-                CubeStagedFillingRefusal::new(fill.delivery, &ring, window, self.planes_along_k)
+            && let Some(decline) =
+                CubeStagedFillingDecline::new(fill.delivery, &ring, window, self.planes_along_k)
         {
-            return Err(refusal.into());
+            return Err(decline.into());
         }
         if let PlaneFragmentInstruction::Wgmma { .. } = instruction
-            && let Some(refusal) = CubeStagedWgmmaRefusal::new(&fill, self.planes_along_k, merges)
+            && let Some(decline) = CubeStagedWgmmaDecline::new(&fill, self.planes_along_k, merges)
         {
-            return Err(refusal.into());
+            return Err(decline.into());
         }
         // A box lands a stage as one run of whole rows, as the instruction reads it; the units
         // copy it in the layout the setting names, its rows arranged as the instruction reads
@@ -644,7 +644,7 @@ impl Microkernel for CubeStagedMicrokernel {
 
     /// Items on matmul's own dimensions, which it places and stages in; a packed one, against a
     /// packed input whose scales group `K`, which it stages a block at a time.
-    fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
+    fn admits(item: &MatmulWorkItem) -> Result<(), Decline> {
         match item.blocks {
             None => MatmulCubeSpace::admits(item),
             Some(_) => Self::block(item).map(|_| ()).ok_or(Self::UNGROUPED_K),

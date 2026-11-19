@@ -10,7 +10,7 @@ use crate::kernels::{
     UnitDirectZeroReduceRoutine, launch_tuned, select,
 };
 use cubecl::Device;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,7 @@ pub enum ReduceOpStrategy {
     /// Pick by rule, reaching no further than the named family.
     Heuristic(ReduceKernelHeuristic),
     /// Run exactly this kernel, for measuring it or holding it to a reference. A kernel that
-    /// cannot run the problem returns its refusal, never another kernel's result.
+    /// cannot run the problem returns its decline, never another kernel's result.
     Specific(ReduceKernel),
 }
 
@@ -63,7 +63,7 @@ impl ReduceOpStrategy {
     ///
     /// # Errors
     ///
-    /// [`ReduceError::Refused`] where the picked kernel cannot run the problem on this device.
+    /// [`ReduceError::Declined`] where the picked kernel cannot run the problem on this device.
     pub(crate) fn launch(self, device: &Device, tensors: ReduceTensors) -> Result<(), ReduceError> {
         let hw = Hardware::from_client(tensors.client());
         match self {
@@ -146,7 +146,7 @@ impl ReduceKernel {
     /// # Panics
     ///
     /// As [`Reduce::execute`](crate::kernels::Reduce::execute).
-    pub fn launch(&self, hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
+    pub fn launch(&self, hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
         match self {
             Self::Unit => launch_first_served::<UnitDirectReduceRoutine, _>(hw, tensors),
             Self::PlaneShuffle => launch_first_served::<PlaneShuffleReduceRoutine, _>(hw, tensors),
@@ -160,8 +160,8 @@ impl ReduceKernel {
 }
 
 /// `tensors` summed by the atomic hypercube into their output, zeroed first. Both routines prepare
-/// before either launches, so a refusal leaves the output as the caller gave it.
-fn launch_zeroed_atomic(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Refusal> {
+/// before either launches, so a decline leaves the output as the caller gave it.
+fn launch_zeroed_atomic(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
     let (zero_blueprint, zero_grid) =
         UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
     let (blueprint, grid) =
@@ -175,7 +175,7 @@ fn launch_zeroed_atomic(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Re
 fn launch_first_served<R: ReduceLauncher<M>, M>(
     hw: &Hardware,
     tensors: &ReduceTensors,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     let (blueprint, grid) = R::prepare_first_served(hw, tensors.problem())?;
     R::launch(tensors, blueprint, grid);
     Ok(())

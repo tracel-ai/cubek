@@ -5,7 +5,7 @@ use crate::kernels::{
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
-use cubecl::tile::launch::{Refusal, TileOperand, Unbound, Vectorization};
+use cubecl::tile::launch::{Decline, TileOperand, Unbound, Vectorization};
 use cubecl::tile::space::UnitCube;
 use cubecl::tile::{Geometry, Launcher, Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::zero::ZeroOperand;
@@ -66,7 +66,7 @@ impl Routine for UnitDirectZeroReduceRoutine {
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let microkernel = UnitDirectZeroMicrokernel::best(hw, &(), &settings.microkernel)?;
         let mut vectorization = Vectorization::new();
         problem.work_item().require(&mut vectorization);
@@ -135,7 +135,7 @@ impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroReduceRoutine {
         blueprint: UnitDirectZeroReduceBlueprint,
         grid: Grid,
         _input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         Self::zero_unbound(tensors, blueprint, grid);
         Ok(())
     }

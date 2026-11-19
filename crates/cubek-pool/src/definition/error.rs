@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Error, Debug, Clone)]
 pub enum PoolError {
     #[error(transparent)]
-    Refused(#[from] cubecl::tile::launch::Refusal),
+    Declined(#[from] cubecl::tile::launch::Decline),
 
     #[error("Pooling dilation must be non-zero, got {dilation:?}")]
     InvalidDilation { dilation: Vec<usize> },

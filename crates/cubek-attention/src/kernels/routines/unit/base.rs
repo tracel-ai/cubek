@@ -5,7 +5,7 @@ use crate::kernels::{
     PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tile::space::UnitCube;
 use cubek_microkernel::attention::unit::{
     UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings,
@@ -130,7 +130,7 @@ impl Routine for UnitAttentionRoutine {
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if let AttentionCacheLayout::Packed(_) = problem.cache {
             return Err(ATTENTION_PACKED_UNREAD);
         }
@@ -249,7 +249,7 @@ mod tests {
             for (position, settings) in UnitAttentionRoutine::settings(&hw).iter().enumerate() {
                 for problem in problems() {
                     let prepared = UnitAttentionRoutine::prepare(&hw, &problem, settings);
-                    let outgrown = matches!(prepared, Err(Refusal::CubePastDevice { .. }));
+                    let outgrown = matches!(prepared, Err(Decline::CubePastDevice { .. }));
                     assert!(
                         prepared.is_ok() || (position > 0 && outgrown),
                         "{settings} on {hw:?}: {prepared:?}"

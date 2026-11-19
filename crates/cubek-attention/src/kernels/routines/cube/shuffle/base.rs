@@ -4,7 +4,7 @@ use crate::kernels::{
     AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors, QueryOrder,
 };
 use cubecl::tile::StageStorage;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::attention::AttentionOperand;
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings,
@@ -106,7 +106,7 @@ impl Routine for CubeShuffleAttentionRoutine {
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if let AttentionCacheLayout::Packed(_) = problem.cache {
             return Err(ATTENTION_PACKED_UNREAD);
         }
@@ -225,7 +225,7 @@ mod tests {
                     let prepared = CubeShuffleAttentionRoutine::prepare(&hw, &problem, settings);
                     let outgrown = matches!(
                         prepared,
-                        Err(Refusal::SharedMemoryPastDevice { .. } | Refusal::CubePastDevice { .. })
+                        Err(Decline::SharedMemoryPastDevice { .. } | Decline::CubePastDevice { .. })
                     );
                     assert!(
                         prepared.is_ok() || (position > 0 && outgrown),

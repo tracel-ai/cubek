@@ -1,4 +1,4 @@
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 
@@ -33,13 +33,13 @@ impl RoutedFloors {
     ///
     /// # Errors
     ///
-    /// The last floor's refusal, where none serves. The first that serves ends the walk.
+    /// The last floor's decline, where none serves. The first that serves ends the walk.
     pub(crate) fn served(
         &self,
         hw: &Hardware,
         stack: Product,
         tensors: &RoutedMatmulTensors,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let plane_shuffle = Listing::admitted(&self.plane_shuffle, stack)
             .map(|floor| tensors.served_by::<_, _, PlaneShuffleMatmulRoutine>(hw, &floor.settings));
         let cube_staged = Listing::admitted(&self.cube_staged, stack)

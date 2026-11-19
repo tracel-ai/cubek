@@ -4,7 +4,7 @@ use crate::kernels::{
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
-use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
+use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::cube::{
@@ -61,9 +61,9 @@ impl Routine for CubeStagedReduceRoutine {
         hw: &Hardware,
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if problem.owner_dimensions().len() > MAX_ROW_DIMS {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the cube reduce runs a cube per box of rows along at most three row dims",
             });
         }

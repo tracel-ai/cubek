@@ -1,5 +1,5 @@
 use core::fmt::{Debug, Display};
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tune::Work;
 
 use crate::Hardware;
@@ -13,7 +13,7 @@ pub const ADMITTED_PLAN_RUNS: &str =
 
 /// What [`Routine::prepare_first_served`] declines with for a routine listing no
 /// setting.
-pub const ROUTINE_LISTS_NO_SETTING: Refusal = Refusal::Declined {
+pub const ROUTINE_LISTS_NO_SETTING: Decline = Decline::Unserved {
     why: "the routine lists no setting on this device",
 };
 
@@ -56,7 +56,7 @@ pub trait Routine {
         hw: &Hardware,
         problem: &Self::Problem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal>;
+    ) -> Result<(Self::Blueprint, Grid), Decline>;
 
     /// The launch for `problem` at the first of the routine's own [`settings`](Self::settings)
     /// that prepares one on this device: what a caller naming the routine and no setting runs. A
@@ -70,7 +70,7 @@ pub trait Routine {
     fn prepare_first_served(
         hw: &Hardware,
         problem: &Self::Problem,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let mut declined = ROUTINE_LISTS_NO_SETTING;
         for settings in Self::settings(hw) {
             match Self::prepare(hw, problem, &settings) {

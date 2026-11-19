@@ -73,7 +73,7 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     {
         ListedFor::Float
             .admits(call.product())
-            .map_err(|refusal| format!("{refusal:?}"))?;
+            .map_err(|decline| format!("{decline:?}"))?;
         let settings = &self.settings;
         let destination = call.destination;
         let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);

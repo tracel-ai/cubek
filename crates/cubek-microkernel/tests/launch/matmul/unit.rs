@@ -2,7 +2,7 @@
 //! a step of its block at a time.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tile::space::{ComputeScope, UnitCube};
 use cubecl::tile::{Partitioning, Semiring, TileTensor};
 use cubecl::{self as cubecl, cube};
@@ -38,7 +38,7 @@ impl UnitRegistersLaunch {
         settings: &UnitRegistersMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let microkernel = UnitRegistersMicrokernel::best(hw, &elements.work_item(), settings)?;
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
@@ -76,7 +76,7 @@ impl MatmulLaunch for UnitRegistersLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let launcher = self.one_cube.launcher(client, 1)?;
         let [lhs, rhs, out] = self
             .elements

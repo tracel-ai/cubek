@@ -1,7 +1,7 @@
 use crate::kernels::MatmulPartitioning;
 use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem};
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{
     Dimension, Levels, Partitioning, Space,
     space::{ComputeScope, CubeOrder, PlaneOrder},
@@ -17,20 +17,20 @@ use cubek_std::matmul_dimensions::{K, M, N, blocked};
 
 /// What a launch holding every row whole declines whatever the device: an lhs or an output
 /// that does not hold every batch, whose batches no merge makes rows of one matrix.
-pub const MATMUL_WHOLE_ROWS_BATCHES_UNMERGED: Refusal = Refusal::Declined {
+pub const MATMUL_WHOLE_ROWS_BATCHES_UNMERGED: Decline = Decline::Unserved {
     why: "a matmul holding every row whole merges an lhs's batches into rows, so it reads an lhs and an output holding every batch",
 };
 
 /// What a launch holding every row whole declines whatever the device: an rhs held per batch,
 /// since such a launch reads one rhs matrix against every row, and none has a batch dimension to
 /// step through several.
-pub const MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH: Refusal = Refusal::Declined {
+pub const MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH: Decline = Decline::Unserved {
     why: "a launch holding every row whole reads one rhs matrix against every row, so it reads no rhs held per batch",
 };
 
 /// What a launch declines whatever the device: two packed operands whose scales group `K` in
 /// blocks of two lengths, so no one block-split space has both their blocks whole.
-pub const MATMUL_PACKED_BLOCKS_DISAGREE: Refusal = Refusal::Declined {
+pub const MATMUL_PACKED_BLOCKS_DISAGREE: Decline = Decline::Unserved {
     why: "two packed operands are read in one block-split space, so their scales group k alike",
 };
 
@@ -74,7 +74,7 @@ impl<'a> MatmulView<'a> {
     pub fn new(
         problem: &'a MatmulRoutineProblem,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         if let MatmulOperands {
             lhs: Some(lhs),
             rhs: Some(rhs),
@@ -315,7 +315,7 @@ impl<'a> MatmulView<'a> {
     ///
     /// [`MATMUL_STEPS_UNCLOSED`](cubek_microkernel::matmul::MATMUL_STEPS_UNCLOSED), and
     /// [`MATMUL_PACKED_READS_SPLIT`](cubek_microkernel::matmul::MATMUL_PACKED_READS_SPLIT).
-    pub fn check_steps(&self, hw: &Hardware) -> Result<(), Refusal> {
+    pub fn check_steps(&self, hw: &Hardware) -> Result<(), Decline> {
         let packings = self.problem.packings;
         if packings == MatmulOperands::all(None) {
             return Ok(());
@@ -584,7 +584,7 @@ mod tests {
     }
 
     /// Under a table, a launch holding rows whole keeps each batch's row apart instead of merging
-    /// the batches into rows, so a broadcast lhs is no refusal, and the rows are one batch's.
+    /// the batches into rows, so a broadcast lhs is no decline, and the rows are one batch's.
     #[test]
     fn a_table_keeps_the_batches_apart_where_rows_are_held_whole() {
         let problem = routed();

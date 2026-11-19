@@ -8,7 +8,7 @@ use core::marker::PhantomData;
 use cubecl::CubeDim;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::Geometry;
-use cubecl::tile::launch::{Refusal, TileOperand, Unbound};
+use cubecl::tile::launch::{Decline, TileOperand, Unbound};
 use cubek_std::Hardware;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate, short_of_the_device};
 use cubek_std::routine::{Grid, Routine};
@@ -51,7 +51,7 @@ where
     /// `tensors` reduced at this candidate's setting.
     pub(super) fn run(&self, tensors: ReduceTensors) -> Result<(), String> {
         let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)
-            .map_err(|refusal| refusal.to_string())?;
+            .map_err(|decline| decline.to_string())?;
         R::launch(&tensors, blueprint, grid);
         Ok(())
     }
@@ -67,7 +67,7 @@ where
         &self,
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)?;
         R::launch_unbound::<I>(tensors, blueprint, grid, input)
     }
@@ -85,10 +85,10 @@ impl ReduceRoutineRunner<HypercubeAtomicReduceRoutine> {
     pub(super) fn run_zeroed(&self, tensors: ReduceTensors) -> Result<(), String> {
         let (blueprint, grid) =
             HypercubeAtomicReduceRoutine::prepare(&self.hw, tensors.problem(), &self.settings)
-                .map_err(|refusal| refusal.to_string())?;
+                .map_err(|decline| decline.to_string())?;
         let (zero_blueprint, zero_grid) =
             UnitDirectZeroReduceRoutine::prepare_first_served(&self.hw, tensors.problem())
-                .map_err(|refusal| refusal.to_string())?;
+                .map_err(|decline| decline.to_string())?;
         UnitDirectZeroReduceRoutine::launch(&tensors, zero_blueprint, zero_grid);
         HypercubeAtomicReduceRoutine::launch(&tensors, blueprint, grid);
         Ok(())
@@ -105,7 +105,7 @@ impl ReduceRoutineRunner<HypercubeAtomicReduceRoutine> {
         &self,
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let (blueprint, grid) =
             HypercubeAtomicReduceRoutine::prepare(&self.hw, tensors.problem(), &self.settings)?;
         let (zero_blueprint, zero_grid) =

@@ -229,7 +229,7 @@ impl Reference {
                 }
                 reference.check(&client, gradients, tolerance)
             }
-            Err(refusal) => eprintln!("{settings}: declined on this device, {refusal:?}"),
+            Err(decline) => eprintln!("{settings}: declined on this device, {decline:?}"),
         }
     }
 
