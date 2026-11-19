@@ -1347,7 +1347,7 @@ mod base {
     fn rows_in_order_lay_a_matrix_instructions_stage() {
         let in_order = CubeStagedMatmulRoutineSettings {
             microkernel: CubeStagedMicrokernelSettings {
-                stage_layout: Some(StageLayout::Blocks),
+                stage_layout: StageLayout::Blocks,
                 ..CubeStagedMatmulRoutineSettings::DEFAULT.microkernel
             },
             ..CubeStagedMatmulRoutineSettings::DEFAULT
@@ -1374,6 +1374,35 @@ mod base {
             blueprint.microkernel.plane.orders,
         );
         assert_eq!(bytes, 12288);
+    }
+
+    /// A swizzled stage is one `cmma` cannot read, which takes its tiles off a pointer and a
+    /// stride: the tile pads its rows instead, the other arrangement that keeps them on distinct
+    /// banks, so the setting prepares and lays the default's stage rather than declining.
+    #[test]
+    fn a_swizzled_stage_is_padded_under_cmma() {
+        let swizzled = CubeStagedMatmulRoutineSettings {
+            microkernel: CubeStagedMicrokernelSettings {
+                stage_layout: StageLayout::SwizzledBlocks,
+                ..CubeStagedMatmulRoutineSettings::DEFAULT.microkernel
+            },
+            ..CubeStagedMatmulRoutineSettings::DEFAULT
+        };
+        let hw = offering(devices::strix_halo());
+        let (blueprint, _) = CubeStagedMatmulRoutine
+            .prepare(&hw, &problem(), &swizzled)
+            .expect("a swizzled stage prepares under cmma");
+        assert!(matches!(
+            blueprint.microkernel.plane.instruction,
+            PlaneFragmentInstruction::Cmma { .. }
+        ));
+        assert!(matches!(
+            blueprint.shared_memory,
+            StageStorage::Tiled {
+                chunks: RowChunks::Padded,
+                ..
+            }
+        ));
     }
 
     /// The planes meet in shared memory, so a device that cannot add an `f32` there declines,

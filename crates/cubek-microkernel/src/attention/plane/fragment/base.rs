@@ -2,18 +2,15 @@ use crate::attention::plane::{PlaneFragmentAttentionMicrokernelSettings, ScoreHo
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
 };
-use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-};
+use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Dimension, Level, Levels, Space};
+use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::{Dimension, Level, Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
-    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, SWIZZLED_STAGE_UNREAD,
-    StageLayout, UnitWork,
+    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork,
 };
 
 /// The rows of one head a plane owns: their scores against a stage of keys in the fragments
@@ -148,14 +145,14 @@ impl PlaneFragmentAttentionMicrokernel {
         holders
             .iter()
             .filter_map(|&holder| {
-                let score = holder.sum_pick(hw, &score_item, score_tile)?;
-                let value = holder.reader_pick(hw, score, &value_item, value_tile)?;
+                let score = holder.sum_plane(hw, &score_item, grid, score_tile)?;
+                let value = holder.reader_plane(hw, &score, &value_item, grid, value_tile)?;
                 Some(Self {
                     settings: settings.held_in(holder),
                     read,
                     cache_stage,
-                    score: PlaneFragmentMicrokernel::holding(&score_item, grid, score_tile, score)?,
-                    value: PlaneFragmentMicrokernel::holding(&value_item, grid, value_tile, value)?,
+                    score,
+                    value,
                 })
             })
             .collect()
@@ -242,8 +239,8 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             elements: self.out_edge(),
         });
 
-        // A manual fragment drains one cell at a time, wherever its unit holds it.
-        if self.value.instruction.drain() == PlaneFragmentDrain::CellByCell {
+        // A sum nothing bounces drains one cell at a time, wherever its unit holds it.
+        if self.value.cost.bounced_cell.is_none() {
             vectorization.require(VectorRequirement::Elementwise {
                 operand: AttentionOperand::Out,
             });
@@ -429,23 +426,32 @@ impl PlaneFragmentAttentionMicrokernel {
         }
     }
 
-    /// Whether its fragments read a stage laid out as `layout`.
-    ///
-    /// # Errors
-    ///
-    /// Swizzled tiles where it reads the score through its windows: a cmma fragment loads a tile
-    /// off a pointer and a stride, which a swizzled row does not have.
-    pub fn reads_stage(&self, layout: StageLayout) -> Result<(), Refusal> {
-        match (layout, self.score_holder()) {
-            (StageLayout::SwizzledBlocks, ScoreHolder::Window) => Err(SWIZZLED_STAGE_UNREAD),
-            (
-                StageLayout::Strided
-                | StageLayout::PaddedRows
-                | StageLayout::Blocks
-                | StageLayout::PaddedBlocks
-                | StageLayout::SwizzledBlocks,
-                _,
-            ) => Ok(()),
-        }
+    /// The storage a stage of keys and values over `stage` is held in, laid out as `layout` in
+    /// its stage blocks ([`stage_tile`](Self::stage_tile)) and filled by `delivery`: its rows
+    /// arranged as both products' instructions read them, the score's loading the keys and the
+    /// value's the values ([`PlaneFragmentMicrokernel::read_by`]). A swizzle a cmma fragment
+    /// cannot read is padded instead.
+    pub fn stage_storage(
+        &self,
+        layout: StageLayout,
+        delivery: Delivery,
+        stage: &Space,
+    ) -> StageStorage {
+        let stated = layout.storage(stage, self.stage_tile());
+        self.value
+            .read_by(self.score.read_by(stated, delivery), delivery)
+    }
+
+    /// The storage its query, staged once over `stage`, is held in, laid out as `layout` in the
+    /// tiles a fragment of the score reads ([`query_tile`](Self::query_tile)) and filled by
+    /// `delivery`: its rows arranged as the score's instruction reads them.
+    pub fn query_storage(
+        &self,
+        layout: StageLayout,
+        delivery: Delivery,
+        stage: &Space,
+    ) -> StageStorage {
+        self.score
+            .read_by(layout.storage(stage, self.query_tile()), delivery)
     }
 }

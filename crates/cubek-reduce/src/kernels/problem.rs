@@ -2,7 +2,7 @@
 
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Geometry, Partitioning, Space};
+use cubecl::tile::{Dimension, Geometry, Partitioning, Space};
 use cubecl::tune::Work;
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation, ReduceWorkItem};
 use cubek_std::routine::EstimatedProblem;
@@ -84,8 +84,8 @@ impl ReduceRoutineProblem {
     }
 
     /// The reduced axis.
-    pub fn reduced(&self) -> Axis {
-        dim_axis(self.axis)
+    pub fn reduced(&self) -> Dimension {
+        axis_dimension(self.axis)
     }
 
     /// The dimension of the cells a row writes, in place of the reduced one in the output.

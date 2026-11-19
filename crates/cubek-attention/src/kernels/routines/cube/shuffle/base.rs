@@ -60,9 +60,9 @@ impl Routine for CubeShuffleAttentionRoutine {
     /// Its microkernel's settings over plane shuffles
     /// ([`CubeAttentionMicrokernelSettings::listed`]) in query order, then its microkernel's lead
     /// with the boxes taken last first.
-    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         CubeAttentionMicrokernelSettings::SHUFFLE
-            .listed()
+            .listed(hw)
             .into_iter()
             .map(|microkernel| Self::Settings {
                 microkernel,

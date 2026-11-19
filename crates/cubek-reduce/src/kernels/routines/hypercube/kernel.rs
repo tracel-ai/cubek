@@ -1,6 +1,6 @@
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::TileOperand;
-use cubecl::tile::{Axis, Partitioning, Region, TileTensor};
+use cubecl::tile::{Dimension, Partitioning, Region, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::ReduceLayout;
 use cubek_microkernel::reduce::hypercube::{

@@ -1,6 +1,8 @@
 //! The cube staged routine: a cube's planes of fragments contracting the stages it fills.
 
-use cubek_attention::kernels::CubeStagedAttentionRoutine;
+use cubek_attention::kernels::{CubeStagedAttentionRoutine, CubeStagedAttentionRoutineSettings};
+use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
+use cubek_std::microkernel::StageLayout;
 use cubek_test_utils::ScopeUnderTest;
 
 use crate::attention::{
@@ -24,6 +26,27 @@ fn planes_splitting_the_keys_match_the_host() {
         .filter(|settings| settings.microkernel.planes_along_keys.get() > 1)
         .take(1);
     forward.check(forward.at(split, &[PROMPT]));
+}
+
+/// The lead's box in swizzled stages at a model's head dim. Where the device offers no manual
+/// `mma` the routine lists no swizzled stage: its cmma fragments read the stage padded, which
+/// this checks against the host.
+#[test]
+fn a_swizzled_stage_matches_the_host() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    let swizzled =
+        forward
+            .settings()
+            .into_iter()
+            .take(1)
+            .map(|lead| CubeStagedAttentionRoutineSettings {
+                microkernel: CubeAttentionMicrokernelSettings {
+                    layout: StageLayout::SwizzledBlocks,
+                    ..lead.microkernel
+                },
+                ..lead
+            });
+    forward.check(forward.at(swizzled, &[PROMPT_WIDE]));
 }
 
 /// Every setting the routine lists, the copy engine's among them, at a model's head dim: the

@@ -73,12 +73,12 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
     /// ([`HypercubeAttentionMicrokernelSettings::listed`]) on eight cubes a box, then four and
     /// sixteen, then seven, ten and thirteen: counts that are no power of two, which may fill the
     /// device's last wave of boxes where a power of two leaves it mostly idle.
-    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         [8, 4, 16, 7, 10, 13]
             .into_iter()
             .flat_map(|cubes| {
                 HypercubeAttentionMicrokernelSettings::FRAGMENT
-                    .listed()
+                    .listed(hw)
                     .into_iter()
                     .map(move |microkernel| Self::Settings {
                         microkernel,
@@ -136,10 +136,6 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
         }
         let item = problem.work_item();
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
-        microkernel
-            .cube
-            .plane
-            .reads_stage(microkernel.cube.settings.layout)?;
         let partitioning = AttentionPartitioning::new(
             problem.space(),
             microkernel.cube.tiling(),

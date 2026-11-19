@@ -193,13 +193,13 @@ impl ReduceTensors<Geometry> {
         });
         let input = launcher
             .unbound(&self.input)
-            .axes(&self.problem.input_axes())
+            .dimensions(&self.problem.input_dimensions())
             .vectorize(blueprint.width)
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);
         let out = launcher
             .arg(self.out.clone(), self.problem.elements.out)
-            .axes(&self.problem.out_axes())
+            .dimensions(&self.problem.out_dimensions())
             .vectorize(blueprint.out_width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);

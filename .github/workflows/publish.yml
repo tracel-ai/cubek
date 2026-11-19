@@ -119,19 +119,6 @@ jobs:
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
 
-  publish-cubek-linear-recurrence:
-    needs:
-      - publish-cubek-matmul
-      - publish-cubek-microkernel
-      - publish-cubek-test-utils
-      - publish-cubek-std
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v12
-    with:
-      crate: cubek-linear-recurrence
-      dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
-    secrets:
-      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
-
   publish-cubek-fft:
     needs:
       - publish-cubek-test-utils
@@ -213,7 +200,6 @@ jobs:
       - publish-cubek-attention
       - publish-cubek-convolution
       - publish-cubek-fft
-      - publish-cubek-linear-recurrence
       - publish-cubek-interpolate
       - publish-cubek-pool
       - publish-cubek-test-utils

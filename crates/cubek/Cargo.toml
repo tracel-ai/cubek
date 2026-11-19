@@ -30,7 +30,6 @@ default = [
     "cubek-convolution?/default",
     "cubek-attention?/default",
     "cubek-attention-backward?/default",
-    "cubek-linear-recurrence?/default",
     "cubek-interpolate?/default",
     "cubek-pool?/default",
     "cubek-fft?/default",
@@ -48,7 +47,6 @@ std = [
     "cubek-convolution?/std",
     "cubek-attention?/std",
     "cubek-attention-backward?/std",
-    "cubek-linear-recurrence?/std",
     "cubek-interpolate?/std",
     "cubek-pool?/std",
     "cubek-fft?/std",
@@ -58,8 +56,6 @@ std = [
 attention = ["cubek-attention"]
 # Attention's backward pass, for training: its own crate, off unless a caller asks for it.
 attention-backward = ["cubek-attention-backward"]
-# The linear recurrence family: the delta rule walk and the q|k|v conv.
-linear-recurrence = ["cubek-linear-recurrence"]
 interpolate = ["cubek-interpolate"]
 pool = ["cubek-pool"]
 convolution = ["cubek-convolution"]
@@ -81,7 +77,6 @@ fft = ["cubek-fft"]
 # Autotune compares every candidate's output against the first's: a debugging instrument.
 autotune-checks = [
     "cubek-matmul?/autotune-checks",
-    "cubek-linear-recurrence?/autotune-checks",
     "cubek-rms-norm?/autotune-checks",
     "cubek-swiglu?/autotune-checks",
 ]
@@ -93,7 +88,6 @@ cubek-attention = { workspace = true, optional = true }
 cubek-attention-backward = { workspace = true, optional = true }
 cubek-convolution = { workspace = true, optional = true }
 cubek-fft = { workspace = true, optional = true }
-cubek-linear-recurrence = { workspace = true, optional = true }
 cubek-interpolate = { workspace = true, optional = true }
 cubek-matmul = { workspace = true, optional = true }
 cubek-microkernel = { workspace = true, optional = true }
