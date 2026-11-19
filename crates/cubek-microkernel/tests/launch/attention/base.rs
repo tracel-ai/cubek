@@ -8,7 +8,7 @@ use cubecl::prelude::*;
 use cubecl::tile::Space;
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::attention::{
-    AttentionOperand, AttentionOperands, AttentionReading, AttentionStorage, AttentionVisibility,
+    AttentionCacheKind, AttentionOperand, AttentionOperands, AttentionReading, AttentionVisibility,
     AttentionWorkItem,
 };
 use cubek_std::Hardware;
@@ -43,8 +43,7 @@ impl AttentionElements {
             elements: self.stored(),
             sum: self.sum,
             reading: AttentionReading::AsStored,
-            storage: AttentionStorage::Floats,
-            page_size: None,
+            cache: AttentionCacheKind::Sequences,
             group: 1,
             head_dim,
             val_dim,

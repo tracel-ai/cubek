@@ -2,8 +2,8 @@ use crate::attention::cube::{
     CubeAttentionMicrokernelSettings, CubeAttentionPlane, CubePlaneLayout, CubePlaneReads,
 };
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
-    AttentionWorkItem, G, Q, S,
+    AttentionCacheKind, AttentionMicrokernel, AttentionOperand, AttentionOperands,
+    AttentionStagingCount, AttentionWorkItem, G, Q, S,
 };
 use crate::matmul::cube::CubeStagedDelivery;
 use crate::split_keys_merge::SlotShape;
@@ -52,8 +52,8 @@ impl CubeAttentionMicrokernel {
     /// walking steps.
     pub(crate) fn over_pages(self, item: &AttentionWorkItem) -> Self {
         let keys = self.seq_kv();
-        let page_steps = match (self.plane.reads(), item.page_size) {
-            (CubePlaneReads::Global, Some(page_size))
+        let page_steps = match (self.plane.reads(), item.cache) {
+            (CubePlaneReads::Global, AttentionCacheKind::Pages { page_size })
                 if page_size > keys && page_size.is_multiple_of(keys) =>
             {
                 NonZeroUsize::new(page_size / keys)

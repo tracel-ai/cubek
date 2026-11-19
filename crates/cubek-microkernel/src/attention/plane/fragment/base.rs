@@ -8,7 +8,7 @@ use crate::matmul::plane::{
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Level, Levels, Space};
+use cubecl::tile::{Axis, FragmentSource, Level, Levels, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
@@ -113,25 +113,21 @@ impl PlaneFragmentAttentionMicrokernel {
         read: AttentionRead,
         settings: PlaneFragmentAttentionMicrokernelSettings,
     ) -> Vec<Self> {
-        // A stage of the cache converts a side it reads at another element as it fills, as an
-        // `f32` read at tf32 or `e4m3` values read at `f16` are: its fragments load the values it
-        // decodes. Both sides converted so are converted to one element alike.
-        let converted = |stored: ElemType, read: ElemType| stored != read;
-        let (keys_converted, values_converted) = (
-            converted(item.elements.key, read.score),
-            converted(item.elements.value, read.value),
-        );
-        if keys_converted && values_converted && read.score != read.value {
+        // A stage of the cache decodes a side that lies packed, or that it reads at another
+        // element, as an `f32` read at tf32 or `e4m3` values read at `f16` are: its fragments load
+        // the values it decodes, and the kernel opens its sums on them as decoded. Both sides
+        // decoded are decoded to one element alike.
+        let [keys, values] = item.stage_sources(read);
+        if keys == FragmentSource::Decoded
+            && values == FragmentSource::Decoded
+            && read.score != read.value
+        {
             return Vec::new();
         }
-        let cache_stage = match values_converted {
-            true => read.value,
-            false => read.score,
+        let cache_stage = match values {
+            FragmentSource::Decoded => read.value,
+            _ => read.score,
         };
-        // The kernel opens the output's sum on the values as they are bound, before any stage
-        // decodes them: the tile picks from that source, and held cells name no element to
-        // decode them at.
-        let values = item.value_source(read.value);
         let item = &item.read_as(read);
         let (score_item, value_item) = (Self::score_item(item), Self::value_item(item));
         let grid = PlaneFragmentMicrokernelSettings {

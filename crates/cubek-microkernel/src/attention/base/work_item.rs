@@ -18,9 +18,7 @@ pub struct AttentionWorkItem {
     /// Which elements the query, keys and values may be read in.
     pub reading: AttentionReading,
     /// How the keys and values lie in memory.
-    pub storage: AttentionStorage,
-    /// Positions a page of the cache holds; `None` where the cache is not paged.
-    pub page_size: Option<usize>,
+    pub cache: AttentionCacheKind,
     /// Query heads per key head.
     pub group: usize,
     pub head_dim: usize,
@@ -39,10 +37,12 @@ pub enum AttentionReading {
 
 /// How an attention's keys and values lie in memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AttentionStorage {
-    /// Each value a float of its side's element.
-    Floats,
-    /// Codebook indices packed into words, which a stage decodes as its fill reads them.
+pub enum AttentionCacheKind {
+    /// As sequences of floats, each side in its own element.
+    Sequences,
+    /// In pools of pages of `page_size` positions of floats, each side in its own element.
+    Pages { page_size: usize },
+    /// Codebook indices packed into words, which a stage's fill decodes as it reads them.
     Packed,
 }
 
@@ -150,19 +150,24 @@ impl AttentionWorkItem {
         pairs.into_iter().chain(tf32)
     }
 
-    /// The values as a kernel that reads them at `read` opens a sum on them: values its stages'
-    /// fill decodes ([`FragmentSource::Decoded`]), where they lie packed or are bound as the
-    /// words of a float read at another element ([`served_kernel_elements`]); otherwise values
-    /// of their element.
+    /// The keys and the values as a kernel reading them at `read` opens its sums on them, in the
+    /// order [`stage`](Self::stage) stages them: values its stages' fill decodes
+    /// ([`FragmentSource::Decoded`]) where they lie packed, or are read at another element than
+    /// they are stored in, bound as their words ([`served_kernel_elements`]); values of their
+    /// element otherwise.
     ///
     /// [`served_kernel_elements`]: Self::served_kernel_elements
-    pub fn value_source(&self, read: ElemType) -> FragmentSource {
-        match (self.storage, self.elements.value == read) {
-            (AttentionStorage::Floats, true) => FragmentSource::Values(read),
-            (AttentionStorage::Packed, _) | (AttentionStorage::Floats, false) => {
-                FragmentSource::Decoded
+    pub fn stage_sources(&self, read: AttentionRead) -> [FragmentSource; 2] {
+        let source = |stored: ElemType, read: ElemType| match (self.cache, stored == read) {
+            (AttentionCacheKind::Sequences | AttentionCacheKind::Pages { .. }, true) => {
+                FragmentSource::Values(read)
             }
-        }
+            (AttentionCacheKind::Packed, _) | (_, false) => FragmentSource::Decoded,
+        };
+        [
+            source(self.elements.key, read.score),
+            source(self.elements.value, read.value),
+        ]
     }
 
     /// This work item with its query and keys read in `read.score` and its values in
