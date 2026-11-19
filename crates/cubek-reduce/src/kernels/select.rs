@@ -127,3 +127,37 @@ fn filling_the_device<R: ReduceLauncher<M>, M>(
         .ok()
         .filter(|(_, grid)| short_of_the_device(hw, &grid.launch) == 0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_std::devices;
+
+    /// Across the reduced axis a unit always keeps up: each lane its own row.
+    #[test]
+    fn a_unit_keeps_up_across_the_reduced_axis() {
+        let problem = ReduceRoutineProblem::dense(&[100_000, 8], 0, ReduceOperation::Sum);
+        assert!(unit_keeps_up(&devices::m2_pro(), &problem, 1));
+    }
+
+    /// Along it, a unit keeps up while the row holds no more lines than a plane has lanes.
+    #[test]
+    fn a_unit_keeps_up_along_a_row_no_longer_than_a_plane() {
+        let hw = devices::m2_pro();
+        let lanes = hw.plane_dim().expect("an M2 Pro commits to a plane width") as usize;
+        const WIDTH: usize = 4;
+        let short = ReduceRoutineProblem::dense(&[8, lanes * WIDTH], 1, ReduceOperation::Sum);
+        let long = ReduceRoutineProblem::dense(&[8, lanes * WIDTH + 1], 1, ReduceOperation::Sum);
+        assert!(unit_keeps_up(&hw, &short, WIDTH));
+        assert!(!unit_keeps_up(&hw, &long, WIDTH));
+    }
+
+    /// On a device with no committed plane width, nothing outruns the unit.
+    #[test]
+    fn a_unit_keeps_up_where_no_plane_routine_runs() {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        let long = ReduceRoutineProblem::dense(&[8, 100_000], 1, ReduceOperation::Sum);
+        assert!(unit_keeps_up(&hw, &long, 1));
+    }
+}

@@ -218,3 +218,38 @@ fn launch_first_served<R: ReduceLauncher<M>, M>(
     R::launch(tensors, blueprint, grid);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every strategy: the autotune first, then each policy, then each kernel pinned.
+    #[test]
+    fn every_strategy_lists_the_policies_before_the_pins() {
+        let all = ReduceOpStrategy::all();
+        assert_eq!(all[0], ReduceOpStrategy::Autotune);
+        let policies = all
+            .iter()
+            .take_while(|strategy| strategy.is_policy())
+            .count();
+        assert_eq!(policies, 1 + ReduceKernelHeuristic::all().len());
+        assert_eq!(all.len(), policies + ReduceKernel::all().len());
+    }
+
+    /// Every name is kebab case and names one strategy.
+    #[test]
+    fn every_name_is_kebab_case_and_its_own() {
+        let names: Vec<&str> = ReduceOpStrategy::all()
+            .iter()
+            .map(ReduceOpStrategy::name)
+            .collect();
+        for name in &names {
+            assert!(
+                name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+                "{name}"
+            );
+        }
+        let distinct: std::collections::HashSet<&&str> = names.iter().collect();
+        assert_eq!(distinct.len(), names.len());
+    }
+}

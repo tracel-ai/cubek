@@ -89,3 +89,36 @@ fn shape_with_rows(key: &ReduceKey) -> (Vec<usize>, usize) {
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+
+    /// The problem a key stands for has the key it came from, along the rows and across them.
+    #[test]
+    fn a_keys_problem_has_that_key() {
+        for (shape, axis) in [([3, 7, 300], 2), ([3, 300, 7], 1)] {
+            let key = ReduceKey::from(&ReduceRoutineProblem::dense(
+                &shape,
+                axis,
+                ReduceOperation::Sum,
+            ));
+            let problem = ReduceRoutineProblem::from(&key);
+            assert_eq!(ReduceKey::from(&problem), key, "{shape:?} along {axis}");
+        }
+    }
+
+    /// A key's problem is dense: its lines lie as the key says, its rows along one dim.
+    #[test]
+    fn a_keys_problem_is_dense_rows() {
+        let key = ReduceKey::from(&ReduceRoutineProblem::dense(
+            &[4, 300, 7],
+            1,
+            ReduceOperation::Sum,
+        ));
+        let problem = ReduceRoutineProblem::from(&key);
+        assert_eq!(problem.layout(), ReduceLayout::Across);
+        assert_eq!(problem.contiguous, Some(problem.shape.len() - 1));
+    }
+}
