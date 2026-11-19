@@ -19,7 +19,7 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
             value: line,
             index: lane_indices::<N>(line_index, row_lanes),
         };
-        *acc = Indexed::<Acc, N>::combine(*acc, read, monoid);
+        *acc = Indexed::<Acc, N>::combine_later(*acc, read, monoid);
     }
 
     fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self {

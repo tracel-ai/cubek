@@ -1,7 +1,7 @@
 use cubecl::zspace::{Shape, Strides};
 use cubek_test_utils::skip_unless_f16_arithmetic;
 
-use super::test_case::{PLANE, TestCase, UNIT};
+use super::test_case::{CUBE, PLANE, TestCase, UNIT};
 
 /// `case` holding the values `data` lays out for its shape and axis.
 fn with_values(case: TestCase, data: fn(&Shape, usize) -> Vec<f32>) -> TestCase {
@@ -67,6 +67,10 @@ fn plane_case(shape: Shape, strides: Strides, axis: usize) -> TestCase {
     TestCase::new::<f32>(shape, strides, Some(axis), PLANE)
 }
 
+fn cube_case(shape: Shape, strides: Strides, axis: usize) -> TestCase {
+    TestCase::new::<f32>(shape, strides, Some(axis), CUBE)
+}
+
 mod unit_parallel_f32 {
     extrema_tests!(
         unit_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
@@ -78,6 +82,20 @@ mod plane_parallel_f32 {
     extrema_tests!(
         plane_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
         nan_extrema_data
+    );
+}
+
+mod cube_parallel_f32 {
+    extrema_tests!(
+        cube_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
+        nan_extrema_data
+    );
+}
+
+mod cube_parallel_mixed_nan_f32 {
+    extrema_tests!(
+        cube_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
+        mixed_nan_extrema_data
     );
 }
 

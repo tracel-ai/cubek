@@ -12,7 +12,9 @@ pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
     /// `line` accumulated into `acc`, the line read `line_index` lines into the row, `row_lanes`
     /// of its lanes holding one row's values (all of them along the row, one across rows), under
     /// `monoid`. In place, since it runs once a line read: a carrier returned anew is copied back
-    /// slot by slot, which for a top-k's `K` slots costs more than the accumulation.
+    /// slot by slot, which for a top-k's `K` slots costs more than the accumulation. Each call's
+    /// `line_index` is above every earlier call's on `acc`, as a unit's reads along a row are, so
+    /// a tie keeps what `acc` holds.
     fn accumulate(
         acc: &mut Self,
         line: Vector<Acc, N>,
