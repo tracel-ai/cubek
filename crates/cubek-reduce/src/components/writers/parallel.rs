@@ -84,7 +84,7 @@ impl<'a, Out: NumericVector> ParallelWriter<'a, Out> {
             }
             Value::Single(element) => {
                 self.buffer
-                    .item()
+                    .item_mut()
                     .insert_dynamic(local_index, element.unwrap());
             }
             Value::None => {
