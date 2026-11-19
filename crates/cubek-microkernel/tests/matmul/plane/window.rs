@@ -2,7 +2,7 @@
 //! output as a memory window over an output that held other values, on a depth of `K` no step of a
 //! block divides.
 
-use crate::launch::matmul::{MatmulElements, MatmulLaunch, PlaneWindowLaunch};
+use crate::launch::matmul::{MatmulElements, MatmulLaunch, PlaneWindowLaunch, PlaneWindowShape};
 use crate::matmul::{F16, F32, HostMatmul};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
@@ -31,9 +31,11 @@ impl PlaneWindow {
             &self.hw,
             case.elements,
             &case.settings,
-            case.blocks,
-            case.units,
-            case.depth,
+            PlaneWindowShape {
+                blocks: case.blocks,
+                units: case.units,
+                depth: case.depth,
+            },
         )
     }
 

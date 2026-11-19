@@ -331,6 +331,15 @@ fn plane_shuffle_kernel<EA: Numeric, E: Numeric>(
     }
 }
 
+/// How a plane window launch deals its work: `blocks` blocks along the columns to `units` units,
+/// `depth` deep along `K`.
+#[derive(Debug, Clone, Copy)]
+pub struct PlaneWindowShape {
+    pub blocks: usize,
+    pub units: u32,
+    pub depth: usize,
+}
+
 /// One plane window microkernel ready to launch on one plane's block of the output: `blocks` blocks
 /// along the columns dealt to `units` units, `depth` deep along `K`, every operand one value a
 /// line.
@@ -352,21 +361,19 @@ impl PlaneWindowLaunch {
         hw: &Hardware,
         elements: MatmulElements,
         settings: &UnitRegistersMicrokernelSettings,
-        blocks: usize,
-        units: u32,
-        depth: usize,
+        shape: PlaneWindowShape,
     ) -> Result<Self, Refusal> {
         let microkernel = UnitRegistersMicrokernel::best(hw, &elements.work_item(), settings)?;
         let levels = microkernel
             .block_tiling()
-            .units_distributed(N, blocks)
+            .units_distributed(N, shape.blocks)
             .launch_planes(&[M, N], PlaneOrder::new(&[], CubeOrder::RowMajor))
             .build();
         Ok(Self {
             microkernel,
             elements,
-            units,
-            one_cube: OneCube::deep(levels, ComputeScope::Plane, depth),
+            units: shape.units,
+            one_cube: OneCube::deep(levels, ComputeScope::Plane, shape.depth),
         })
     }
 }
