@@ -8,8 +8,9 @@ pub enum StackLayout {
     PaddedRows,
     /// The same rows back to back, as Metal's and wgpu's allocators leave them.
     DenseRows,
-    /// Each row padded to the next 16 bytes, the widest load: the least padding that keeps every
-    /// row's words and scales aligned for a vectorized read.
+    /// Each row padded to whole vector loads, as the runtime lays rows out under
+    /// [`MemoryLayoutStrategy::LoadAligned`](cubecl::server::MemoryLayoutStrategy::LoadAligned):
+    /// the least padding that keeps every row's codes and scales aligned for a vectorized read.
     AlignedRows,
     /// Tile order, in the tile and the order this device's writer lays a packed weight in
     /// ([`stored_tile`](crate::tiled::storage::stored_tile),

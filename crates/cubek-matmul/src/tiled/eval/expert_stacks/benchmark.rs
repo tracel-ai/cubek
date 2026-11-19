@@ -8,6 +8,7 @@ use cubecl::future;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
+use cubecl::server::MemoryLayoutDescriptor;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Axis;
 use cubecl::tile::kind::Field;
@@ -188,7 +189,7 @@ impl Stack {
         let stack = match layout {
             StackLayout::PaddedRows => in_rows(pitch),
             StackLayout::DenseRows => in_rows(|bytes| bytes),
-            StackLayout::AlignedRows => in_rows(|bytes| bytes.next_multiple_of(16)),
+            StackLayout::AlignedRows => load_aligned(client, problem, global.clone(), operand),
             StackLayout::TileOrder => {
                 in_tile_order(client, &scheme, operand, sized, global.clone())?
             }
@@ -259,18 +260,75 @@ fn in_tile_order(
 /// `rows` rows of `k` NVFP4 codes, eight a word, each row `row_bytes` past the one before.
 fn words(client: &Client, rows: usize, k: usize, row_bytes: usize) -> PlainTensor {
     let (row_words, pitch_words) = (k / VALUES_PER_WORD, row_bytes / 4);
+    PlainTensor::of_handle(TensorHandle::new(
+        client.create_from_slice(u32::as_bytes(&word_rows(rows, k, pitch_words))),
+        [rows, row_words],
+        [pitch_words, 1],
+        WORD,
+    ))
+}
+
+/// `rows` rows of `k` NVFP4 codes, eight a word, each row `pitch_words` words past the one before.
+fn word_rows(rows: usize, k: usize, pitch_words: usize) -> Vec<u32> {
+    let row_words = k / VALUES_PER_WORD;
     let mut host = vec![0u32; rows * pitch_words];
     for (row, words) in host.chunks_mut(pitch_words).enumerate() {
         for (j, word) in words[..row_words].iter_mut().enumerate() {
             *word = mixed(row * row_words + j) as u32;
         }
     }
-    PlainTensor::of_handle(TensorHandle::new(
-        client.create_from_slice(u32::as_bytes(&host)),
+    host
+}
+
+/// The stack copied to the device as a weight's load copies it, its codes and block scales in one
+/// allocation, each laid out by the runtime under
+/// [`LoadAligned`](cubecl::server::MemoryLayoutStrategy::LoadAligned): every row padded to whole
+/// vector loads.
+fn load_aligned(
+    client: &Client,
+    problem: &ExpertStackProblem,
+    global: PlainTensor,
+    operand: Operand,
+) -> PackedTensor {
+    let (k, rows) = (problem.k, problem.rows());
+    let (row_words, blocks) = (k / VALUES_PER_WORD, k / 16);
+    let codes = word_rows(rows, k, row_words);
+    let scales = scale_rows(rows, k, blocks);
+    let [words, scales]: [_; 2] = client
+        .create_tensors_from_slices(vec![
+            (
+                MemoryLayoutDescriptor::load_aligned([rows, row_words].into(), 4),
+                u32::as_bytes(&codes),
+            ),
+            (
+                MemoryLayoutDescriptor::load_aligned([rows, blocks].into(), 1),
+                &scales,
+            ),
+        ])
+        .try_into()
+        .expect("one layout a descriptor");
+    let words = PlainTensor::of_handle(TensorHandle::new(
+        words.memory,
         [rows, row_words],
-        [pitch_words, 1],
+        [words.strides[0], 1],
         WORD,
-    ))
+    ));
+    // The scale bytes read as whole words, as a packed weight hands them over.
+    let scales = PlainTensor::of_handle(TensorHandle::new(
+        scales.memory,
+        [rows, blocks / 4],
+        [scales.strides[0] / 4, 1],
+        WORD,
+    ));
+    let scheme = tile_order::nvfp4_scheme();
+    PackedTensor::new(
+        words,
+        scales,
+        Some(global),
+        scheme,
+        operand,
+        [(K, k), (N, rows)],
+    )
 }
 
 /// `rows` rows of a `ue4m3` scale every 16 of `k`, one byte each, between 0.25 and 2, each row
