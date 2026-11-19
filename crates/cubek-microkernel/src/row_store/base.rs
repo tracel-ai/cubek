@@ -3,16 +3,16 @@ use cubecl::ir::ElemType;
 use cubecl::quant::scheme::QuantScheme;
 use cubecl::tile::kind::Field;
 use cubecl::tile::launch::{MaskedExtent, Refusal, VectorRequirement};
-use cubecl::tile::{Axis, Partitioning, Space};
+use cubecl::tile::{Dimension, Partitioning, Space};
 use cubecl::zspace::metadata::Metadata;
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, KB, KI, MB, MI};
+use cubek_std::matmul_dimensions::{K, KB, KI, MB, MI};
 
-/// The axis a producer's rows run along: the rows of the product's lhs it writes, which a packed
-/// matrix binds as the position inside the one block of the product's rows.
-pub const ROWS: Axis = MI;
-/// The axis a producer's row spans: the contraction of the product its rows feed.
-pub const WIDTH: Axis = K;
+/// The dimension a producer's rows run along: the rows of the product's lhs it writes, which a
+/// packed matrix binds as the position inside the one block of the product's rows.
+pub const ROWS: Dimension = MI;
+/// The dimension a producer's row spans: the contraction of the product its rows feed.
+pub const WIDTH: Dimension = K;
 
 /// What a packed store declines before preparing anything: an output whose scales are not one
 /// level of blocks along the row, or a row that is not whole words of block scales, which every
@@ -38,13 +38,13 @@ pub const PACKED_STORE_NEEDS_A_CUBE: Refusal = Refusal::Declined {
 /// scales of `block` elements along each row, `scales_per_word` of them a word, as the lhs of a
 /// product reads them.
 ///
-/// It decides the space the producer runs over: a plain store's rows and row span are [`ROWS`]
-/// and [`WIDTH`]; a packed one's are the axes a packed matrix binds over, [`M`] and [`K`] each
-/// split into its blocks and the position inside one, so its output binds as a product's packed
-/// lhs does and the producer's own operands are restated over the same space.
+/// It decides the space the producer runs over: a plain store's rows and row span are [`ROWS`] and
+/// [`WIDTH`]; a packed one's are the dimensions a packed matrix binds over, [`M`] and [`K`] each
+/// split into its blocks and the position inside one, so its output binds as a product's packed lhs
+/// does and the producer's own operands are restated over the same space.
 ///
-/// [`M`]: cubek_std::matmul_axes::M
-/// [`K`]: cubek_std::matmul_axes::K
+/// [`M`]: cubek_std::matmul_dimensions::M
+/// [`K`]: cubek_std::matmul_dimensions::K
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RowStore {
     /// Each line written as computed.
@@ -79,7 +79,7 @@ impl OwnerMemory {
 
 impl RowStore {
     /// The store a packed output under `scheme` takes for rows of `width` elements: one level of
-    /// block scales along the last axis, whole words of them a row.
+    /// block scales along the last dimension, whole words of them a row.
     ///
     /// # Errors
     ///
@@ -104,22 +104,22 @@ impl RowStore {
         }
     }
 
-    /// The axes `rows` rows are stated over: [`ROWS`], or the one block of the product's rows and
-    /// the rows inside it.
-    pub fn rows_axes(&self, rows: usize) -> Vec<(Axis, usize)> {
+    /// The dimensions `rows` rows are stated over: [`ROWS`], or the one block of the product's rows
+    /// and the rows inside it.
+    pub fn rows_dimensions(&self, rows: usize) -> Vec<(Dimension, usize)> {
         match self {
             Self::Plain => vec![(ROWS, rows)],
             Self::Packed { .. } => vec![(MB, 1), (ROWS, rows)],
         }
     }
 
-    /// The axes `extent` elements of a row are stated over: [`WIDTH`], or its blocks and the
+    /// The dimensions `extent` elements of a row are stated over: [`WIDTH`], or its blocks and the
     /// position inside one.
     ///
     /// # Panics
     ///
     /// Where `extent` is not whole blocks: a store's every run is.
-    pub fn width_axes(&self, extent: usize) -> Vec<(Axis, usize)> {
+    pub fn width_dimensions(&self, extent: usize) -> Vec<(Dimension, usize)> {
         match self {
             Self::Plain => vec![(WIDTH, extent)],
             Self::Packed { block, .. } => {
@@ -132,8 +132,8 @@ impl RowStore {
         }
     }
 
-    /// The axis a row is cut along between owners or cubes: [`WIDTH`], or its blocks.
-    pub fn cut(&self) -> Axis {
+    /// The dimension a row is cut along between owners or cubes: [`WIDTH`], or its blocks.
+    pub fn cut(&self) -> Dimension {
         match self {
             Self::Plain => WIDTH,
             Self::Packed { .. } => KB,
@@ -187,21 +187,21 @@ impl RowStore {
         }
     }
 
-    /// The axes a kernel leaves to the launch: the rows of a plain store. A packed store's scales
-    /// vary along the rows, and the tile engine windows them through extents it knows at
+    /// The dimensions a kernel leaves to the launch: the rows of a plain store. A packed store's
+    /// scales vary along the rows, and the tile engine windows them through extents it knows at
     /// expansion, so its rows are compiled in, as a product's packed lhs's are.
-    pub fn dynamic_axes(&self) -> &'static [Axis] {
+    pub fn dynamic_dimensions(&self) -> &'static [Dimension] {
         match self {
             Self::Plain => &[ROWS],
             Self::Packed { .. } => &[],
         }
     }
 
-    /// The mask `partitioning`'s tiles put on `operand`'s row where they overhang it anywhere
-    /// along the axes it is stated over, or none where they do not: a plain row's lines are tested
+    /// The mask `partitioning`'s tiles put on `operand`'s row where they overhang it anywhere along
+    /// the dimensions it is stated over, or none where they do not: a plain row's lines are tested
     /// against its width, which a dividing width never straddles; a packed row's edge spans its
-    /// blocks and the position inside one, two axes no line can be tested along whole, so it binds
-    /// one element at a time.
+    /// blocks and the position inside one, two dimensions no line can be tested along whole, so it
+    /// binds one element at a time.
     pub fn mask<O: Copy + Eq>(
         &self,
         operand: O,
@@ -220,24 +220,24 @@ impl RowStore {
     }
 
     /// The stage a cube writes its rows into first: none for a plain store, which writes them
-    /// straight out, or the cube's box over the axes a packed matrix binds over — the blocks of
-    /// the rows and the rows inside them, the blocks of the row and the position inside one —
-    /// each at the cube's extent along it. An axis of the cube's box the packed output does not
-    /// run along, a batch entry the partitioning walks apart or the halves of a gated row, is
-    /// left out, as the encoding's window, which the stage must be, leaves it out.
+    /// straight out, or the cube's box over the dimensions a packed matrix binds over — the blocks
+    /// of the rows and the rows inside them, the blocks of the row and the position inside one —
+    /// each at the cube's extent along it. A dimension of the cube's box the packed output does not
+    /// run along, a batch entry the partitioning walks apart or the halves of a gated row, is left
+    /// out, as the encoding's window, which the stage must be, leaves it out.
     pub fn cube_stage(&self, cube_box: &Space) -> CubeStage {
         match self {
             Self::Plain => CubeStage::Direct,
             Self::Packed { .. } => {
-                let axes: Vec<(Axis, usize)> = [MB, MI, KB, KI]
+                let dimensions: Vec<(Dimension, usize)> = [MB, MI, KB, KI]
                     .into_iter()
-                    .map(|axis| match cube_box.contains(axis) {
-                        true => (axis, cube_box.extent(axis)),
-                        false => (axis, 1),
+                    .map(|dimension| match cube_box.contains(dimension) {
+                        true => (dimension, cube_box.extent(dimension)),
+                        false => (dimension, 1),
                     })
                     .collect();
                 CubeStage::Encoded {
-                    cube_box: Space::new(&axes),
+                    cube_box: Space::new(&dimensions),
                 }
             }
         }
@@ -255,7 +255,7 @@ impl RowStore {
     /// `meta`, dense rows of `width` elements whose leading dims `leading` names, as the store
     /// binds them: as they lie over `leading` then [`WIDTH`], or with the last dim split into the
     /// blocks and the position inside one.
-    pub fn restated(&self, meta: &Metadata, leading: &[Axis]) -> (Metadata, Vec<Axis>) {
+    pub fn restated(&self, meta: &Metadata, leading: &[Dimension]) -> (Metadata, Vec<Dimension>) {
         match self {
             Self::Plain => (meta.clone(), [leading, &[WIDTH]].concat()),
             Self::Packed { block, .. } => {
@@ -360,23 +360,23 @@ mod tests {
         assert_eq!(RowStore::packed(&across, 2560), Err(PACKED_STORE_UNSERVED));
     }
 
-    /// A packed store states its rows over the axes a packed lhs binds over, the row split into
-    /// its blocks, and compiles its rows in; a plain one states them as they are and leaves them
-    /// to the launch.
+    /// A packed store states its rows over the dimensions a packed lhs binds over, the row split
+    /// into its blocks, and compiles its rows in; a plain one states them as they are and leaves
+    /// them to the launch.
     #[test]
     fn a_store_states_the_rows_it_writes() {
         let packed = RowStore::Packed {
             block: 32,
             scales_per_word: 4,
         };
-        assert_eq!(packed.rows_axes(3), vec![(MB, 1), (MI, 3)]);
-        assert_eq!(packed.width_axes(256), vec![(KB, 8), (KI, 32)]);
+        assert_eq!(packed.rows_dimensions(3), vec![(MB, 1), (MI, 3)]);
+        assert_eq!(packed.width_dimensions(256), vec![(KB, 8), (KI, 32)]);
         assert_eq!(packed.cut(), KB);
-        assert!(packed.dynamic_axes().is_empty());
+        assert!(packed.dynamic_dimensions().is_empty());
         assert!(packed.holds_cube_run(128) && !packed.holds_cube_run(96));
         assert!(packed.holds_owner_run(96) && !packed.holds_owner_run(48));
-        assert_eq!(RowStore::Plain.width_axes(256), vec![(K, 256)]);
-        assert_eq!(RowStore::Plain.dynamic_axes(), &[ROWS]);
+        assert_eq!(RowStore::Plain.width_dimensions(256), vec![(K, 256)]);
+        assert_eq!(RowStore::Plain.dynamic_dimensions(), &[ROWS]);
         assert!(RowStore::Plain.holds_cube_run(3) && RowStore::Plain.holds_owner_run(3));
     }
 

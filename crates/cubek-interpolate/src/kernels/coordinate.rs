@@ -1,5 +1,5 @@
 use crate::definition::Transform;
-use cubecl::tile::{Axis, layout::PhysicalAxisMap};
+use cubecl::tile::{Dimension, layout::PhysicalAxisMap};
 
 /// A source coordinate `(output * scale + offset) / divisor`, in lowest terms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -30,9 +30,14 @@ impl Rational {
     /// When `scale` is 0 (e.g., input extent of 1 under `align_corners`), the source coordinate
     /// does not move with the output. The output term is omitted since [`PhysicalAxisMap`] rejects
     /// zero coefficients.
-    pub fn tap_axis(self, output: Axis, tap: Axis, radius: usize) -> PhysicalAxisMap {
+    pub fn tap_dimension(
+        self,
+        output: Dimension,
+        tap: Dimension,
+        radius: usize,
+    ) -> PhysicalAxisMap {
         let moving = [(output, self.scale), (tap, self.divisor)];
-        let terms: &[(Axis, usize)] = if self.scale == 0 {
+        let terms: &[(Dimension, usize)] = if self.scale == 0 {
             &moving[1..]
         } else {
             &moving

@@ -209,6 +209,93 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
         ));
     }
 
+    // The shapes the default sweep spreads over, beside the one above: many short rows, few long
+    // rows, rows across the contiguous dim (strided), and a whole tensor summed into one value.
+    let spread = |name: &str, text: &str, shape: Vec<usize>, axis, config| {
+        let dims = shape
+            .iter()
+            .map(|extent| extent.to_string())
+            .collect::<Vec<_>>()
+            .join("x");
+        CatalogEntry::new(
+            id(format!("{name}_axis{axis}_{dims}")),
+            label(format!("{text} axis={axis} ({dims})")),
+            ReduceProblem {
+                shape,
+                axis,
+                config,
+                kind: ReduceBenchKind::Single,
+                precision,
+            },
+        )
+    };
+    entries.extend([
+        spread(
+            "sum_many_short_rows",
+            "Sum, many short rows,",
+            vec![262_144, 64],
+            1,
+            ReduceOperationConfig::Sum,
+        ),
+        spread(
+            "sum_few_long_rows",
+            "Sum, few long rows,",
+            vec![4, 4_194_304],
+            1,
+            ReduceOperationConfig::Sum,
+        ),
+        spread(
+            "sum_strided",
+            "Sum, strided rows,",
+            vec![32, 4095, 512],
+            1,
+            ReduceOperationConfig::Sum,
+        ),
+        spread(
+            "arg_topk1_strided",
+            "ArgTopK(1), strided rows,",
+            vec![32, 4095, 512],
+            1,
+            ReduceOperationConfig::ArgTopK(1),
+        ),
+        spread(
+            "sum_whole_tensor",
+            "Sum, a whole tensor,",
+            vec![1, 16_777_216],
+            1,
+            ReduceOperationConfig::Sum,
+        ),
+    ]);
+
+    // Every other operation, along the contiguous dim and across it: what each one's accumulator
+    // costs beside the sum's and the arg top-1's above.
+    for (name, text, config) in [
+        ("mean", "Mean", ReduceOperationConfig::Mean),
+        ("prod", "Prod", ReduceOperationConfig::Prod),
+        ("max", "Max", ReduceOperationConfig::Max),
+        ("min", "Min", ReduceOperationConfig::Min),
+        ("max_abs", "MaxAbs", ReduceOperationConfig::MaxAbs),
+        ("arg_max", "ArgMax", ReduceOperationConfig::ArgMax),
+        ("arg_min", "ArgMin", ReduceOperationConfig::ArgMin),
+        ("any", "Any", ReduceOperationConfig::Any),
+        ("all", "All", ReduceOperationConfig::All),
+    ] {
+        entries.push(spread(
+            &format!("{name}_rows"),
+            &format!("{text}, rows,"),
+            vec![32, 512, 4095],
+            2,
+            config,
+        ));
+        entries.push(spread(
+            &format!("{name}_strided"),
+            &format!("{text}, strided rows,"),
+            vec![32, 4095, 512],
+            1,
+            config,
+        ));
+    }
+
     // A decode sampler's row: one row of logits over a vocabulary, which one cube walks alone
     // unless the row is split across cubes. Its argmax, and a top-20 to sample among.
     let vocabulary = 151_936;

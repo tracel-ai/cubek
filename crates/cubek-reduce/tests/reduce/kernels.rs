@@ -1,6 +1,6 @@
 //! The reduce routines on the tile stack, against a CPU reference: a rank-3 tensor reduced along
-//! each of its dims, every operation, its values and its rows as they lie; and the hypercube's
-//! rows split into parts.
+//! each of its dims, every operation, its values and its rows as they lie; the hypercube's rows
+//! split into parts; and the kernel the rule and the autotune pick.
 
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, IntKind};
@@ -9,8 +9,9 @@ use cubecl::tile::layout::ElemAlignment;
 use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_reduce::kernels::{
-    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements, ReduceRoutine,
-    ReduceRoutineProblem, ReduceTensors, UnitReduceRoutine, launch_reduce_routine,
+    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceElements,
+    ReduceKernelHeuristic, ReduceOpStrategy, ReduceRoutine, ReduceRoutineProblem, ReduceTensors,
+    UnitReduceRoutine, launch_reduce_routine, launch_tuned, select,
 };
 use cubek_std::Hardware;
 use cubek_std::devices;
@@ -20,7 +21,7 @@ use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Test
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 const I32: ElemType = ElemType::Int(IntKind::I32);
 
-const OPERATIONS: [ReduceOperation; 12] = [
+const OPERATIONS: [ReduceOperation; 14] = [
     ReduceOperation::Sum,
     ReduceOperation::Prod,
     ReduceOperation::Mean,
@@ -33,6 +34,8 @@ const OPERATIONS: [ReduceOperation; 12] = [
     ReduceOperation::ArgMin,
     ReduceOperation::TopK { k: 3 },
     ReduceOperation::ArgTopK { k: 3 },
+    ReduceOperation::TopK { k: 1 },
+    ReduceOperation::ArgTopK { k: 1 },
 ];
 
 /// The `k` best of `row`, best first: the larger (smaller) value, then the lower index, a NaN
@@ -143,6 +146,8 @@ enum Scope {
     Plane,
     Cube,
     Hypercube,
+    /// The kernel a strategy picks: the rule's, the autotune's, or the one it names.
+    Picked(ReduceOpStrategy),
 }
 
 impl Scope {
@@ -237,6 +242,13 @@ impl ScopeUnderTest for Routines {
             Scope::Plane => scope.launch_with(&PlaneReduceRoutine, &hw, &tensors),
             Scope::Cube => scope.launch_with(&CubeReduceRoutine, &hw, &tensors),
             Scope::Hypercube => scope.launch_with(&HypercubeReduceRoutine, &hw, &tensors),
+            Scope::Picked(ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile)) => {
+                select(&hw, &tensors)?
+            }
+            Scope::Picked(ReduceOpStrategy::Specific(kernel)) => kernel.launch(&hw, &tensors)?,
+            Scope::Picked(ReduceOpStrategy::Autotune) => {
+                launch_tuned(tensors, &cubecl::test_device())
+            }
         }
         let host = match out_elem {
             I32 => HostDataType::I32,
@@ -332,6 +344,35 @@ fn the_hypercube_reduces_split_rows_like_the_cpu() {
                 axis,
                 operation,
             });
+        }
+    }
+    Routines.check(reductions);
+}
+
+/// Every strategy reduces like the CPU wherever it sends a problem: many short rows, one long row,
+/// and rows across the contiguous dim, at extents that are not powers of
+/// two. A kernel the device does not run, or that declines the problem, is skipped.
+#[test]
+fn every_strategy_reduces_like_the_cpu() {
+    let mut reductions = Vec::new();
+    // The pins first, so a failure names the kernel before a policy that picked it.
+    let mut strategies = ReduceOpStrategy::all();
+    strategies.rotate_left(2);
+    for strategy in strategies {
+        for (shape, axis) in [([96, 7, 300], 2), ([1, 1, 9000], 2), ([3, 2100, 5], 1)] {
+            for operation in [
+                ReduceOperation::Sum,
+                ReduceOperation::Mean,
+                ReduceOperation::ArgMax,
+                ReduceOperation::TopK { k: 3 },
+            ] {
+                reductions.push(Reduction {
+                    scope: Scope::Picked(strategy),
+                    shape: shape.to_vec(),
+                    axis,
+                    operation,
+                });
+            }
         }
     }
     Routines.check(reductions);

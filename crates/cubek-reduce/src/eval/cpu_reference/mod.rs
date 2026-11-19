@@ -42,7 +42,8 @@ use cubek_test_utils::{
 
 use crate::{
     ReduceDtypes, ReduceError, ReduceStrategy, ReduceWithIndicesDtypes,
-    components::instructions::ReduceOperationConfig, kernels, reduce, reduce_with_indices,
+    components::instructions::ReduceOperationConfig, kernels, launch::RoutineStrategy, reduce,
+    reduce_with_indices,
 };
 
 /// The bits a comparison runs on: the kernel launch and the CPU reference each
@@ -124,59 +125,104 @@ pub fn comparison_epsilon(config: ReduceOperationConfig) -> f32 {
     }
 }
 
-/// Which entry the suite and the benchmarks launch: today's kernels, or the tile routines
-/// ([`kernels`]) when `CUBEK_REDUCE_ON_TILES` is set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the suite and the benchmarks launch: today's kernels at an old [`ReduceStrategy`], or the
+/// tile routines ([`kernels`]) at a [`ReduceOpStrategy`](kernels::ReduceOpStrategy).
+#[derive(Debug, Clone)]
 pub enum ReduceEntry {
-    Kernels,
-    Tiles,
+    Kernels(ReduceStrategy),
+    Tiles(kernels::ReduceOpStrategy),
+}
+
+/// Today's kernels at `strategy`, or, when `CUBEK_REDUCE_ON_TILES` is set, the tile strategy
+/// standing for it: the unit kernel, the plane kernel, or for the cube the rule, which reaches the
+/// cube and the hypercube.
+impl From<ReduceStrategy> for ReduceEntry {
+    fn from(strategy: ReduceStrategy) -> Self {
+        if std::env::var_os("CUBEK_REDUCE_ON_TILES").is_none() {
+            return ReduceEntry::Kernels(strategy);
+        }
+        ReduceEntry::Tiles(match strategy.routine {
+            RoutineStrategy::Unit(_) => {
+                kernels::ReduceOpStrategy::Specific(kernels::ReduceKernel::Unit)
+            }
+            RoutineStrategy::Plane(_) => {
+                kernels::ReduceOpStrategy::Specific(kernels::ReduceKernel::PlaneShuffle)
+            }
+            RoutineStrategy::Cube(_) => {
+                kernels::ReduceOpStrategy::Heuristic(kernels::ReduceKernelHeuristic::Tile)
+            }
+        })
+    }
 }
 
 impl ReduceEntry {
-    /// The entry `CUBEK_REDUCE_ON_TILES` names.
-    pub fn from_env() -> Self {
-        match std::env::var_os("CUBEK_REDUCE_ON_TILES") {
-            Some(_) => ReduceEntry::Tiles,
-            None => ReduceEntry::Kernels,
-        }
-    }
-
-    /// [`reduce`], or its tile counterpart.
-    #[allow(clippy::type_complexity)]
+    /// [`reduce`], or [`kernels::reduce`] on the test device.
     pub fn reduce(
-        self,
-    ) -> fn(
-        &Client,
-        TensorBinding,
-        TensorBinding,
-        usize,
-        ReduceStrategy,
-        ReduceOperationConfig,
-        ReduceDtypes,
+        &self,
+        client: &Client,
+        input: TensorBinding,
+        output: TensorBinding,
+        axis: usize,
+        operation: ReduceOperationConfig,
+        dtypes: ReduceDtypes,
     ) -> Result<(), ReduceError> {
         match self {
-            ReduceEntry::Kernels => reduce,
-            ReduceEntry::Tiles => kernels::reduce_on_tiles,
+            ReduceEntry::Kernels(strategy) => reduce(
+                client,
+                input,
+                output,
+                axis,
+                strategy.clone(),
+                operation,
+                dtypes,
+            ),
+            ReduceEntry::Tiles(strategy) => kernels::reduce(
+                client,
+                &cubecl::test_device(),
+                input,
+                output,
+                axis,
+                *strategy,
+                operation,
+                dtypes,
+            ),
         }
     }
 
-    /// [`reduce_with_indices`], or its tile counterpart.
-    #[allow(clippy::type_complexity)]
+    /// [`reduce_with_indices`], or [`kernels::reduce_with_indices`] on the test device.
+    #[allow(clippy::too_many_arguments)]
     pub fn reduce_with_indices(
-        self,
-    ) -> fn(
-        &Client,
-        TensorBinding,
-        TensorBinding,
-        TensorBinding,
-        usize,
-        ReduceStrategy,
-        ReduceOperationConfig,
-        ReduceWithIndicesDtypes,
+        &self,
+        client: &Client,
+        input: TensorBinding,
+        values: TensorBinding,
+        indices: TensorBinding,
+        axis: usize,
+        operation: ReduceOperationConfig,
+        dtypes: ReduceWithIndicesDtypes,
     ) -> Result<(), ReduceError> {
         match self {
-            ReduceEntry::Kernels => reduce_with_indices,
-            ReduceEntry::Tiles => kernels::reduce_with_indices_on_tiles,
+            ReduceEntry::Kernels(strategy) => reduce_with_indices(
+                client,
+                input,
+                values,
+                indices,
+                axis,
+                strategy.clone(),
+                operation,
+                dtypes,
+            ),
+            ReduceEntry::Tiles(strategy) => kernels::reduce_with_indices(
+                client,
+                &cubecl::test_device(),
+                input,
+                values,
+                indices,
+                axis,
+                *strategy,
+                operation,
+                dtypes,
+            ),
         }
     }
 }
@@ -186,10 +232,11 @@ pub fn strategy_result(
     client: Client,
     shape: Vec<usize>,
     axis: usize,
-    strategy: ReduceStrategy,
+    strategy: impl Into<ReduceEntry>,
     config: ReduceOperationConfig,
     input: ReduceInput,
 ) -> Result<HostData, String> {
+    let entry = strategy.into();
     let input_dtype = input.dtype;
     let output_dtype = output_dtype_for(&config, input_dtype);
     let accumulation_dtype = accumulation_dtype();
@@ -211,16 +258,16 @@ pub fn strategy_result(
     };
 
     let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-        ReduceEntry::from_env().reduce()(
-            c,
-            input_handle.clone().binding(),
-            output_handle.clone().binding(),
-            axis,
-            strategy.clone(),
-            config,
-            dtypes,
-        )
-        .into()
+        entry
+            .reduce(
+                c,
+                input_handle.clone().binding(),
+                output_handle.clone().binding(),
+                axis,
+                config,
+                dtypes,
+            )
+            .into()
     });
 
     match outcome {
@@ -243,10 +290,11 @@ pub fn strategy_result_with_indices(
     client: Client,
     shape: Vec<usize>,
     axis: usize,
-    strategy: ReduceStrategy,
+    strategy: impl Into<ReduceEntry>,
     config: ReduceOperationConfig,
     input: ReduceInput,
 ) -> Result<HostData, String> {
+    let entry = strategy.into();
     let input_dtype = input.dtype;
     let index_dtype = u32::elem_type_native();
     let accumulation_dtype = accumulation_dtype();
@@ -276,17 +324,17 @@ pub fn strategy_result_with_indices(
         &client,
         &[&values_handle.handle, &indices_handle.handle],
         |c| {
-            ReduceEntry::from_env().reduce_with_indices()(
-                c,
-                input_handle.clone().binding(),
-                values_handle.clone().binding(),
-                indices_handle.clone().binding(),
-                axis,
-                strategy.clone(),
-                config,
-                dtypes,
-            )
-            .into()
+            entry
+                .reduce_with_indices(
+                    c,
+                    input_handle.clone().binding(),
+                    values_handle.clone().binding(),
+                    indices_handle.clone().binding(),
+                    axis,
+                    config,
+                    dtypes,
+                )
+                .into()
         },
     );
 

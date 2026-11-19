@@ -124,7 +124,7 @@ impl InterpolateTensors {
             .expect(ADMITTED_PLAN_RUNS);
         let output = launcher
             .arg(self.output.clone(), problem.element)
-            .axes(&[BATCH, OUTPUT_H, OUTPUT_W, CHANNEL])
+            .dimensions(&[BATCH, OUTPUT_H, OUTPUT_W, CHANNEL])
             .vectorize(width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);

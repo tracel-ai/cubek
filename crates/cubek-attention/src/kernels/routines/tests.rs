@@ -6,7 +6,7 @@ use crate::kernels::*;
 use cubecl::tile::stage::Prefetch;
 use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperands, Q, S};
-use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
+use cubek_std::microkernel::{StageLayout, StageRing};
 use cubek_std::routine::Routine;
 use cubek_std::{Hardware, devices};
 use std::collections::BTreeSet;
@@ -132,8 +132,6 @@ fn the_cube_reaches_every_ring_and_layout() {
 /// Every setting the hypercube fragment routine lists prepares, a decode step and a prompt's
 /// chunk alike, where the device offers a square instruction: its cubes of one plane along
 /// the keys fit the shared memory of the devices it is raced on.
-/// Past the lead, a setting whose stages are swizzled declines on a device whose fragments
-/// read the score through windows alone, and on no other grounds.
 #[test]
 fn every_hypercube_fragment_setting_prepares() {
     for hw in [
@@ -141,13 +139,11 @@ fn every_hypercube_fragment_setting_prepares() {
         offering(devices::h100(), 16),
     ] {
         let listed = HypercubeFragmentPartialAttentionRoutine.settings(&hw);
-        for (position, settings) in listed.iter().enumerate() {
+        for settings in &listed {
             for problem in [qwen(1, 4096), qwen(16, 1000)] {
-                match HypercubeFragmentPartialAttentionRoutine.prepare(&hw, &problem, settings) {
-                    Ok(_) => {}
-                    Err(why) if position > 0 && why == SWIZZLED_STAGE_UNREAD => {}
-                    prepared => panic!("{settings} on {hw:?}: {prepared:?}"),
-                }
+                let prepared =
+                    HypercubeFragmentPartialAttentionRoutine.prepare(&hw, &problem, settings);
+                assert!(prepared.is_ok(), "{settings} on {hw:?}: {prepared:?}");
             }
         }
     }

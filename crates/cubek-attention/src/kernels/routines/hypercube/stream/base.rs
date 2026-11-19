@@ -123,7 +123,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
             .into_iter()
             .flat_map(|cubes| {
                 HypercubeAttentionMicrokernelSettings::FRAGMENT
-                    .listed()
+                    .listed(hw)
                     .into_iter()
                     .map(move |microkernel| Self::Settings {
                         microkernel,
@@ -167,7 +167,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
             &cube
                 .extents()
                 .into_iter()
-                .map(|(axis, extent)| (axis, if axis == S { run } else { extent }))
+                .map(|(dimension, extent)| (dimension, if dimension == S { run } else { extent }))
                 .collect::<Vec<_>>(),
         );
         blueprint
@@ -195,10 +195,6 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
         HypercubeMerge::LastArrival.admits(hw)?;
         let item = problem.work_item();
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
-        microkernel
-            .cube
-            .plane
-            .reads_stage(microkernel.cube.settings.layout)?;
         if let CubeAttentionPlane::Fragment(plane) = &microkernel.cube.plane
             && plane.reads_keys_in_runs()
         {

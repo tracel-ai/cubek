@@ -16,7 +16,7 @@ use cubek_microkernel::matmul::hypercube::{
 };
 use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::Microkernel;
 
 use super::{MatmulElements, MatmulLaunch, OneCube};
@@ -31,7 +31,8 @@ const CUBES: usize = 4;
 const BOXES: usize = 2;
 
 /// One hypercube staged microkernel ready to launch on [`BOXES`] boxes, `steps` stages of `K` deep,
-/// their stages shared by [`CUBES`] cubes, its operands and the boxes' slots `widths` values a line.
+/// their stages shared by [`CUBES`] cubes, its operands and the boxes' slots `widths` values a
+/// line.
 #[derive(Debug, Clone)]
 pub struct HypercubeStagedLaunch {
     pub microkernel: HypercubeStagedMicrokernel,

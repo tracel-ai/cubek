@@ -3,43 +3,44 @@
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Partitioning, Space};
+use cubecl::tile::{Dimension, Partitioning, Space};
 use cubecl::tune::Work;
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation, ReduceWorkItem};
 use cubek_std::routine::EstimatedProblem;
 
-/// The rows: every dim of the input but the reduced one, as one axis, the first dim coarsest.
-pub const BATCH: Axis = Axis(0);
-/// The dim a row runs along, which the reduction reduces away.
-pub const REDUCED: Axis = Axis(1);
-/// The cells a row writes, `k` for a top-k: the output's axis in place of the reduced one.
-pub const SLOTS: Axis = Axis(2);
-/// A hypercube's partials, every part's carrier for a row side by side: the partials' axis in
+/// The rows: every axis of the input but the reduced one, as one dimension, the first axis
+/// coarsest.
+pub const BATCH: Dimension = Dimension(0);
+/// The axis a row runs along, which the reduction reduces away.
+pub const REDUCED: Dimension = Dimension(1);
+/// The cells a row writes, `k` for a top-k: the output's dimension in place of the reduced one.
+pub const SLOTS: Dimension = Dimension(2);
+/// A hypercube's partials, every part's carrier for a row side by side: the partials' dimension in
 /// place of the reduced one.
-pub const PARTIALS: Axis = Axis(3);
+pub const PARTIALS: Dimension = Dimension(3);
 
 /// The elements of a reduction: what the input is stored in, what it accumulates in, and what the
 /// output is written in (an index's, where it writes indices).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ReduceElements {
     pub input: ElemType,
     pub accumulator: ElemType,
     pub out: ElemType,
 }
 
-/// `out = operation(input)` along dim `axis` of an input of `shape`, as the host describes it:
+/// `out = operation(input)` along axis `axis` of an input of `shape`, as the host describes it:
 /// the output has the input's shape, with `axis` one wide (`k` wide for a top-k).
 ///
-/// Its space has the same axes whatever the rank: [`BATCH`], every dim but `axis` as one,
+/// Its space has the same dimensions whatever the rank: [`BATCH`], every axis but `axis` as one,
 /// [`REDUCED`], `axis` itself, and [`SLOTS`], the cells a row writes, which the output holds in
-/// place of `axis`. Each operand's layout maps its dims onto them.
+/// place of `axis`. Each operand's layout maps its axes onto them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReduceRoutineProblem {
     pub shape: Vec<usize>,
     pub axis: usize,
     pub operation: ReduceOperation,
     pub elements: ReduceElements,
-    /// The dim both operands step one element along, if they share one: what a line runs along.
+    /// The axis both operands step one element along, if they share one: what a line runs along.
     pub contiguous: Option<usize>,
     /// The alignment of the input's and the output's buffers in elements.
     pub elem_alignments: [ElemAlignment; 2],
@@ -49,36 +50,43 @@ pub struct ReduceRoutineProblem {
 }
 
 impl ReduceRoutineProblem {
-    /// `binding`, an operand of the input's dims holding `along` in place of the reduced dim
+    /// `binding`, an operand of the input's axes holding `along` in place of the reduced axis
     /// ([`REDUCED`] for the input, [`SLOTS`] for the output and its indices, [`PARTIALS`] for a
-    /// hypercube's partials), with the axis each of its dims carries: `along` for the reduced dim,
-    /// [`BATCH`] for every other, so [`BATCH`] spans the row dims, the first coarsest, on either
-    /// side of the reduced one. Neighbouring row dims that step as one dim (the outer's stride the
-    /// inner's whole span) merge into one, so a contiguous operand's rows before and after the
-    /// reduced dim are one dim each. An operand of one dim is given a row dim of one.
-    pub fn labelled(&self, mut binding: TensorBinding, along: Axis) -> (TensorBinding, Vec<Axis>) {
-        let mut dims: Vec<(Axis, (usize, usize))> = Vec::new();
+    /// hypercube's partials), with the dimension each of its axes carries: `along` for the reduced
+    /// axis, [`BATCH`] for every other, so [`BATCH`] spans the row axes, the first coarsest, on
+    /// either side of the reduced one. Neighbouring row axes that step as one axis (the outer's
+    /// stride the inner's whole span) merge into one, so a contiguous operand's rows before and
+    /// after the reduced axis are one axis each. An operand of one axis is given a row axis of one.
+    pub fn labelled(
+        &self,
+        mut binding: TensorBinding,
+        along: Dimension,
+    ) -> (TensorBinding, Vec<Dimension>) {
+        let mut axes: Vec<(Dimension, (usize, usize))> = Vec::new();
         for d in 0..binding.shape.len() {
-            let axis = match d == self.axis {
+            let dimension = match d == self.axis {
                 true => along,
                 false => BATCH,
             };
-            let dim = (binding.shape[d], binding.strides[d]);
-            let merged = match dims.last() {
-                Some(&(BATCH, outer)) if axis == BATCH => merged_rows(outer, dim),
+            let axis = (binding.shape[d], binding.strides[d]);
+            let merged = match axes.last() {
+                Some(&(BATCH, outer)) if dimension == BATCH => merged_rows(outer, axis),
                 _ => None,
             };
             match merged {
-                Some(merged) => dims.last_mut().expect("a merged dim has an outer one").1 = merged,
-                None => dims.push((axis, dim)),
+                Some(merged) => axes.last_mut().expect("a merged axis has an outer one").1 = merged,
+                None => axes.push((dimension, axis)),
             }
         }
-        if !dims.iter().any(|&(axis, _)| axis == BATCH) {
-            dims.insert(0, (BATCH, (1, 1)));
+        if !axes.iter().any(|&(dimension, _)| dimension == BATCH) {
+            axes.insert(0, (BATCH, (1, 1)));
         }
-        binding.shape = dims.iter().map(|&(_, (extent, _))| extent).collect();
-        binding.strides = dims.iter().map(|&(_, (_, stride))| stride).collect();
-        (binding, dims.into_iter().map(|(axis, _)| axis).collect())
+        binding.shape = axes.iter().map(|&(_, (extent, _))| extent).collect();
+        binding.strides = axes.iter().map(|&(_, (_, stride))| stride).collect();
+        (
+            binding,
+            axes.into_iter().map(|(dimension, _)| dimension).collect(),
+        )
     }
 
     /// Values a row reduces.
@@ -91,11 +99,11 @@ impl ReduceRoutineProblem {
         self.shape.iter().product::<usize>() / self.reduced_extent().max(1)
     }
 
-    /// How the lines lie: along the reduced dim where it is the contiguous one, across it where
+    /// How the lines lie: along the reduced axis where it is the contiguous one, across it where
     /// another is, each lane of a line its own row; along it, a value a line, where none is.
     pub fn layout(&self) -> ReduceLayout {
         match self.contiguous {
-            Some(dim) if dim != self.axis => ReduceLayout::Across,
+            Some(axis) if axis != self.axis => ReduceLayout::Across,
             _ => ReduceLayout::Along,
         }
     }
@@ -111,7 +119,7 @@ impl ReduceRoutineProblem {
         }
     }
 
-    /// Every axis of the problem at its extent: what a routine partitions.
+    /// Every dimension of the problem at its extent: what a routine partitions.
     pub fn space(&self) -> Space {
         Space::new(&[
             (BATCH, self.row_count()),
@@ -131,22 +139,22 @@ impl ReduceRoutineProblem {
         ])
     }
 
-    /// The box an owner holds: one row, or `width` rows side by side across the reduced dim, and
-    /// the cells it writes. It leaves the reduced dim to the space, so every owner spans its rows
+    /// The box an owner holds: one row, or `width` rows side by side across the reduced axis, and
+    /// the cells it writes. It leaves the reduced axis to the space, so every owner spans its rows
     /// whole.
-    pub fn owner_box(&self, width: usize) -> Vec<(Axis, usize)> {
+    pub fn owner_box(&self, width: usize) -> Vec<(Dimension, usize)> {
         vec![
             (BATCH, self.box_rows(width)),
             (SLOTS, self.operation.written_per_row()),
         ]
     }
 
-    /// How many boxes of rows the owners, `width` rows across the reduced dim, take.
+    /// How many boxes of rows the owners, `width` rows across the reduced axis, take.
     pub fn row_boxes(&self, width: usize) -> usize {
         self.row_count().div_ceil(self.box_rows(width))
     }
 
-    /// Rows an owner holds: `width` side by side across the reduced dim, one along it.
+    /// Rows an owner holds: `width` side by side across the reduced axis, one along it.
     fn box_rows(&self, width: usize) -> usize {
         match self.layout() {
             ReduceLayout::Across => width,
@@ -154,13 +162,16 @@ impl ReduceRoutineProblem {
         }
     }
 
-    /// `partitioning` as a kernel compiles it: every axis but the cells a row writes left to the
-    /// launch, the row length too, as today's reduce kernels read it, so one kernel serves every
-    /// shape of a rank, layout, elements and widths. An owner's window is one row high, which its
-    /// flat view reads with no division by the runtime length.
+    /// `partitioning` as a kernel compiles it: every dimension but the cells a row writes left to
+    /// the launch, the row length too, as today's reduce kernels read it, so one kernel serves
+    /// every shape of a rank, layout, elements and widths. An owner's window is one row high, which
+    /// its flat view reads with no division by the runtime length.
     pub fn kernel(&self, partitioning: &Partitioning) -> Partitioning {
         let space = partitioning.space();
-        let dynamic: Vec<Axis> = space.axes().filter(|axis| *axis != SLOTS).collect();
+        let dynamic: Vec<Dimension> = space
+            .dimensions()
+            .filter(|dimension| *dimension != SLOTS)
+            .collect();
         Partitioning::new(
             space.clone().with_dynamic(&dynamic),
             partitioning.levels().to_vec(),
@@ -168,7 +179,7 @@ impl ReduceRoutineProblem {
     }
 }
 
-/// Two neighbouring row dims as one, the outer `(extent, stride)` and the inner, where the outer
+/// Two neighbouring row axes as one, the outer `(extent, stride)` and the inner, where the outer
 /// steps the inner's whole span or either is one wide.
 fn merged_rows(outer: (usize, usize), inner: (usize, usize)) -> Option<(usize, usize)> {
     match (outer, inner) {

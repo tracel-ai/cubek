@@ -62,7 +62,7 @@ fn to_u32(extent: usize) -> u32 {
     u32::try_from(extent).expect("a reduced extent fits in 32 bits")
 }
 
-/// Values of a box of rows' partials along the partials axis, for parts of `part` values: a
+/// Values of a box of rows' partials along the partials dimension, for parts of `part` values: a
 /// carrier of the operation's cells a part, each line `width` values of one row along the reduced
 /// dim, one value of `width` rows across it.
 fn partial_extent(problem: &ReduceRoutineProblem, part: usize, width: usize) -> usize {
@@ -191,11 +191,11 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
         let partial_indices = TensorHandle::zeros(client, partial_shape, counter);
         let arrivals = TensorHandle::zeros(client, [problem.row_boxes(blueprint.width)], counter);
         let bind_partials = |handle: TensorHandle, element| {
-            let (partials, axes) = problem.labelled(handle.binding(), PARTIALS);
+            let (partials, dimensions) = problem.labelled(handle.binding(), PARTIALS);
             binding
                 .launcher
                 .arg(partials, element)
-                .axes(&axes)
+                .dimensions(&dimensions)
                 .vectorize(blueprint.width)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)

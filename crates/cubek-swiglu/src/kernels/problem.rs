@@ -18,7 +18,7 @@ pub struct SwigluRoutineProblem {
     pub dim: usize,
     /// The element every operand is stored in.
     pub element: ElemType,
-    /// The alignment of each operand's buffer in elements, over the axes this kind names.
+    /// The alignment of each operand's buffer in elements, over the dimensions this kind names.
     pub elem_alignments: SwigluOperands<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start.
     pub start_bytes: SwigluOperands<u64>,
@@ -41,16 +41,16 @@ impl SwigluRoutineProblem {
         }
     }
 
-    /// Every axis of the problem at its extent, its rows and its width as the store states them:
-    /// what a routine partitions.
+    /// Every dimension of the problem at its extent, its rows and its width as the store states
+    /// them: what a routine partitions.
     pub fn space(&self) -> Space {
-        let axes = [
-            self.store.rows_axes(self.rows),
+        let dimensions = [
+            self.store.rows_dimensions(self.rows),
             vec![(H, 2)],
-            self.store.width_axes(self.dim),
+            self.store.width_dimensions(self.dim),
         ]
         .concat();
-        Space::new(&axes)
+        Space::new(&dimensions)
     }
 
     /// How one cube walks its box, `cube_box`, rows by a run of their width: each line of either

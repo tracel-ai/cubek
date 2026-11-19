@@ -22,7 +22,7 @@ pub struct CubeStagedWalk {
     /// How the planes read each operand: as bound, or dequantized at the element they contract,
     /// which a stage the fill decodes holds too.
     pub reads: MatmulOperands<MatmulRead>,
-    /// The axis its planes' instruction lays its rows along, which the sum is opened for.
+    /// The dimension its planes' instruction lays its rows along, which the sum is opened for.
     pub rows_along: PlaneFragmentRowsAlong,
 }
 

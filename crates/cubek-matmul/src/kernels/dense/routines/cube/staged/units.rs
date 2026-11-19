@@ -190,7 +190,7 @@ impl Routine for CubeStagedMatmulRoutine {
                 cube_order: CubeOrder::RowMajor,
             });
         let rows_in_order_on_2x2 = CubeStagedMicrokernelSettings {
-            stage_layout: Some(StageLayout::Blocks),
+            stage_layout: StageLayout::Blocks,
             ..CubeStagedMicrokernelSettings::boxed(
                 PlaneFragmentMicrokernelSettings::DEFAULT,
                 MatmulPlaneLayout::new(2, 2),

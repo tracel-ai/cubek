@@ -144,7 +144,7 @@ impl Routine for CubeGroupsRmsNormRoutine {
             },
         );
         let groups = settings.groups_of(hw, microkernel.units, staged);
-        let row_box = [vec![(R, 1)], store.width_axes(problem.dim)].concat();
+        let row_box = [vec![(R, 1)], store.width_dimensions(problem.dim)].concat();
         let partitioning = RmsNormPartitioning::new(
             problem.space(),
             Levels::leaf(&row_box).planes(&[(R, groups)]),
@@ -177,10 +177,10 @@ impl RmsNormRoutine<CubeGroupsRmsNormMicrokernel> for CubeGroupsRmsNormRoutine {
         let problem = tensors.problem();
         let groups = grid.planes().count;
         // SAFETY: every operand is bound through the launcher, and the output through `O`, which
-        // mask the reads and writes of a tile the problem's edge cuts short, and the kernel
-        // indexes no buffer but through its tiles; its shared memory is the groups' slots,
-        // indexed by group and by unit or plane, and a packed store's stage, each group writing its own row,
-        // encoded only once the cube has synced.
+        // mask the reads and writes of a tile the problem's edge cuts short, and the kernel indexes
+        // no buffer but through its tiles; its shared memory is the groups' slots, indexed by group
+        // and by unit or plane, and a packed store's stage, each group writing its own row, encoded
+        // only once the cube has synced.
         unsafe {
             cube_groups_rms_norm_kernel::launch_unchecked::<O>(
                 tensors.client(),

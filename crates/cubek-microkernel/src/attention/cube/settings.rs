@@ -7,6 +7,7 @@ use crate::matmul::cube::CubeStagedDelivery;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 use cubek_std::microkernel::{StageLayout, StageRing};
+use cubek_std::{Hardware, manual_mma};
 
 /// The settings of the plane microkernel on each of its planes, the heads a cube holds and the
 /// planes each head's queries and keys are laid over, and, where its planes read a stage, how the
@@ -81,14 +82,29 @@ impl CubeAttentionMicrokernelSettings {
         query_as_keys: false,
     };
 
-    /// The cube's settings worth trying over planes of the kind this lead runs, the lead first: a
-    /// cube's own knobs are worth different values over each plane microkernel, so its list is one
-    /// for each.
-    pub fn listed(self) -> Vec<Self> {
-        match self.plane {
+    /// The cube's settings worth trying on `hw` over planes of the kind this lead runs, the lead
+    /// first: a cube's own knobs are worth different values over each plane microkernel, so its
+    /// list is one for each. Only the stage layouts its planes lay as named
+    /// ([`laid_as_named`](Self::laid_as_named)).
+    pub fn listed(self, hw: &Hardware) -> Vec<Self> {
+        let listed = match self.plane {
             CubeAttentionPlaneSettings::Fragment(plane) => Self::fragments_listed(self, plane),
             CubeAttentionPlaneSettings::Shuffle(plane) => Self::shuffles_listed(self, plane),
-        }
+        };
+        listed
+            .into_iter()
+            .filter(|settings| settings.laid_as_named(hw))
+            .collect()
+    }
+
+    /// Whether a plane on `hw` lays a stage as these settings name it. A swizzled stage is read
+    /// swizzled only through the manual `mma`, which hands every row its own address; a cmma
+    /// fragment reads a tile off a pointer and a stride, so the tile pads its rows instead
+    /// ([`StageStorage::read_by`](cubecl::tile::StageStorage::read_by)), the stage another setting
+    /// names. A device without the manual `mma` lists no swizzled stage, so a race times no
+    /// kernel twice.
+    pub fn laid_as_named(&self, hw: &Hardware) -> bool {
+        self.layout != StageLayout::SwizzledBlocks || manual_mma(hw).next().is_some()
     }
 
     /// A star off `lead`: each larger box of fragments, each count of heads, two and four planes
@@ -96,9 +112,9 @@ impl CubeAttentionMicrokernelSettings {
     /// bounced at once, and one head a cube with eight and sixteen fragments along its keys, or
     /// with two, four and eight planes along them, so a step reaches the hundreds of keys, with the
     /// default's others; then the larger boxes again in swizzled tiles, which a plane keeping its
-    /// score in fragments reads without bank conflicts and a cmma plane declines, the one-by-eight
-    /// box among them also on two planes along a head's queries, and the one-by-two box on two
-    /// heads and two planes along their queries; then the lead's box with its score the whole head
+    /// score in fragments reads without bank conflicts (`laid_as_named`), the one-by-eight box
+    /// among them also on two planes along a head's queries, and the one-by-two box on two heads
+    /// and two planes along their queries; then the lead's box with its score the whole head
     /// dim deep; then the one-by-four box on two slots the copy engine fills, over two and four
     /// heads; then eight planes a cube, four heads by two planes along their queries, on the boxes
     /// and rings a long causal prompt runs fastest on; then the one-by-two box of the four-plane

@@ -17,7 +17,7 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
 use super::window::{BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W};
-pub use super::window::{Channels, WindowAxis, WindowedLaunch};
+pub use super::window::{Channels, WindowDimension, WindowedLaunch};
 
 /// An interpolate microkernel ready to launch.
 #[derive(Debug, Clone, Copy)]
@@ -33,7 +33,7 @@ impl InterpolateLaunch {
     /// blocks of the plane.
     pub fn new(
         hw: &Hardware,
-        windows: [WindowAxis; 2],
+        windows: [WindowDimension; 2],
         input: [usize; 2],
         channels: Channels,
     ) -> Result<Self, Refusal> {

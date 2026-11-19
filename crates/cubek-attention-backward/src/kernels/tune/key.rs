@@ -3,7 +3,7 @@
 
 use crate::kernels::AttentionBackwardProblem;
 use cubecl::ir::ElemType;
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::{self as cubecl, AutotuneKey};
@@ -60,8 +60,8 @@ impl TryFrom<&AttentionBackwardKey> for AttentionBackwardProblem {
     /// [`ATTENTION_BACKWARD_GROUP_UNEVEN`]: crate::kernels::ATTENTION_BACKWARD_GROUP_UNEVEN
     fn try_from(key: &AttentionBackwardKey) -> Result<Self, Refusal> {
         let group = Self::group_of(key.heads, key.kv_heads)?;
-        // Each operand dense, its rows as long as its innermost axis.
-        let row = |axis: Axis| match axis {
+        // Each operand dense, its rows as long as its innermost dimension.
+        let row = |dimension: Dimension| match dimension {
             D => key.head_dim,
             DV => key.val_dim,
             _ => 1,

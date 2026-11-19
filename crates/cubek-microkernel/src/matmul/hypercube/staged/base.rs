@@ -10,7 +10,7 @@ use cubecl::tile::{Levels, Scratch};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
-use cubek_std::matmul_axes::{M, N};
+use cubek_std::matmul_dimensions::{M, N};
 use cubek_std::microkernel::{
     CubePlanes, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
 };
@@ -95,7 +95,7 @@ impl HypercubeStagedMicrokernelSettings {
     pub const fn rows_in_order(self) -> Self {
         Self {
             cube: CubeStagedMicrokernelSettings {
-                stage_layout: Some(StageLayout::Blocks),
+                stage_layout: StageLayout::Blocks,
                 ..self.cube
             },
         }
@@ -247,14 +247,14 @@ impl MatmulMicrokernel for HypercubeStagedMicrokernel {
 mod tests {
     use super::*;
     use crate::matmul::{
-        MatmulAxes, MatmulBlocks, MatmulDestination, MatmulLayout, MatmulReading, MatmulRows,
+        MatmulBlocks, MatmulDestination, MatmulDimensions, MatmulLayout, MatmulReading, MatmulRows,
     };
     use cubecl::features::MmaConfig;
     use cubecl::ir::FloatKind;
     use cubek_std::devices;
     use cubek_std::layout::stored::{Operand, Packing};
     use cubek_std::layout::tile_order;
-    use cubek_std::matmul_axes::K;
+    use cubek_std::matmul_dimensions::K;
 
     /// A packed input stages decoded, as each of its cubes reads it: bound as it lies, the cubes'
     /// instruction never expands and the launch leaves the output unwritten.
@@ -298,7 +298,7 @@ mod tests {
             }),
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes::INSIDE_BLOCKS,
+            dimensions: MatmulDimensions::INSIDE_BLOCKS,
             reading: MatmulReading::AsStored,
         };
         let hypercube = HypercubeStagedMicrokernel::best(

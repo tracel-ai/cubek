@@ -13,9 +13,8 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
 /// The input and the output of one reduction, and the problem they state.
 ///
-/// Both are read where they lie, at their own strides: each binds its dims onto the problem's
-/// axes ([`ReduceRoutineProblem::labelled`]), so a reduction along any dim of a tensor of any rank
-/// binds without a copy.
+/// Both are read where they lie, at their own strides: every axis of each is a dimension of the
+/// problem, so a reduction along any axis of a tensor of any rank binds without a copy.
 #[derive(Clone)]
 pub struct ReduceTensors {
     client: Client,
@@ -35,7 +34,7 @@ impl core::fmt::Debug for ReduceTensors {
 }
 
 impl ReduceTensors {
-    /// `out = operation(input)` along dim `axis`: `out` has `input`'s shape, `axis` one wide, or
+    /// `out = operation(input)` along axis `axis`: `out` has `input`'s shape, `axis` one wide, or
     /// `k` wide for a top-k.
     ///
     /// # Panics
@@ -61,7 +60,7 @@ impl ReduceTensors {
         assert_eq!(
             out.shape.to_vec(),
             expected,
-            "a reduction along dim {axis} writes the input's shape with that dim {} wide",
+            "a reduction along axis {axis} writes the input's shape with that axis {} wide",
             operation.written_per_row()
         );
         // A line runs along the innermost dim where both operands step one element along it.
@@ -88,7 +87,7 @@ impl ReduceTensors {
         }
     }
 
-    /// `values = operation(input)` along dim `axis`, and the indices of those values to
+    /// `values = operation(input)` along axis `axis`, and the indices of those values to
     /// `indices`, in `index_element`, from one launch: `indices` has `values`' shape and strides.
     ///
     /// # Panics
@@ -137,10 +136,10 @@ impl ReduceTensors {
             )
         });
         let bound = |binding: &TensorBinding, along, element, width| {
-            let (binding, axes) = self.problem.labelled(binding.clone(), along);
+            let (binding, dimensions) = self.problem.labelled(binding.clone(), along);
             launcher
                 .arg(binding, element)
-                .axes(&axes)
+                .dimensions(&dimensions)
                 .vectorize(width)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)

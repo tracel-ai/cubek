@@ -1,6 +1,6 @@
 use crate::matmul::plane::PlaneShuffleMicrokernel;
 use crate::matmul::{
-    MatmulAxes, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands,
+    MatmulDim, MatmulDimensions, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands,
     MatmulRows, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
@@ -16,9 +16,9 @@ use cubek_std::{Hardware, UNIT_REGISTERS};
 /// size it. It asks nothing of the hardware, so it is its settings and the order it reads the rhs
 /// in. Where its work item holds every row whole, the block holds all of them, compiled in.
 ///
-/// It reads the rhs along the axis its buffer runs: a col rhs down `K`, a line of it merged with a
-/// line of the lhs into each cell, and a row rhs, or one lined along neither axis, along `N`,
-/// lined with the output's cells.
+/// It reads the rhs along the dimension its buffer runs: a col rhs down `K`, a line of it merged
+/// with a line of the lhs into each cell, and a row rhs, or one lined along neither dimension,
+/// along `N`, lined with the output's cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitRegistersMicrokernel {
     pub settings: UnitRegistersMicrokernelSettings,
@@ -26,8 +26,8 @@ pub struct UnitRegistersMicrokernel {
     pub rows: usize,
     /// The order each operand is read in.
     pub orders: MatmulOperands<BindingOrder>,
-    /// The caller's axes its levels are stated along.
-    pub axes: MatmulAxes,
+    /// The caller's dimensions its levels are stated along.
+    pub dimensions: MatmulDimensions,
 }
 
 /// The size of the block a unit owns, and how deep one step of its walk reads.
@@ -124,8 +124,8 @@ impl Microkernel for UnitRegistersMicrokernel {
 
     const DECLINE: &'static str = "the unit microkernel asks nothing of the hardware";
 
-    /// The default block, then a smaller one and the two that double it along one axis: a larger
-    /// block reuses each read more and holds more registers.
+    /// The default block, then a smaller one and the two that double it along one dimension: a
+    /// larger block reuses each read more and holds more registers.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         let block = |rows: usize, columns: usize| Self::Settings {
             rows: NonZeroUsize::new(rows).unwrap(),
@@ -151,8 +151,8 @@ impl Microkernel for UnitRegistersMicrokernel {
         }
     }
 
-    /// The block the settings size, every row of a work item that holds them whole, reading the
-    /// rhs along the axis its buffer runs. It asks nothing of the hardware, so every device runs
+    /// The block the settings size, every row of a work item that holds them whole, reading the rhs
+    /// along the dimension its buffer runs. It asks nothing of the hardware, so every device runs
     /// it.
     fn candidates(
         _hw: &Hardware,
@@ -174,14 +174,15 @@ impl Microkernel for UnitRegistersMicrokernel {
                 rhs,
                 ..MatmulOperands::all(BindingOrder::Stated)
             },
-            axes: item.axes,
+            dimensions: item.dimensions,
         })
     }
 
     /// The lhs's step is the block's depth down `K`, and the rhs's its extent along its own
-    /// contiguous axis. A col rhs's step is contracted with the lhs's, a line of each summed into a
-    /// cell one value wide, so the output is written a value at a time; a row rhs's lands in the
-    /// output's cells, lined with them, and the output is written the block's columns at a time.
+    /// contiguous dimension. A col rhs's step is contracted with the lhs's, a line of each summed
+    /// into a cell one value wide, so the output is written a value at a time; a row rhs's lands in
+    /// the output's cells, lined with them, and the output is written the block's columns at a
+    /// time.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {
         let (rhs_partner, out) = match self.orders.rhs {
             BindingOrder::InBufferOrder => (MatmulOperand::Lhs, 1),
@@ -224,7 +225,7 @@ impl MatmulMicrokernel for UnitRegistersMicrokernel {
     /// around: one step of the block, walked through all of `K`.
     fn tiling(&self) -> Levels {
         let [rows, columns, depth] = self.extents();
-        let MatmulAxes { m, n, k } = self.axes;
+        let MatmulDimensions { m, n, k } = self.dimensions;
         Levels::leaf(&[(m, rows), (n, columns), (k, depth)]).walk_every(&[k])
     }
 

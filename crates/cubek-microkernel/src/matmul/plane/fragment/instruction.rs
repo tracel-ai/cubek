@@ -1,15 +1,14 @@
 use crate::matmul::plane::PlaneFragmentRowsAlong;
-use crate::matmul::{MatmulAxes, MatmulDim, MatmulLayout, MatmulOperands};
+use crate::matmul::{MatmulDim, MatmulDimensions, MatmulLayout, MatmulOperands};
 use cubecl::features::{MmaConfig, WgmmaConfig};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::ops::matmul::MmaIo;
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{Axis, BlockScaledOperands, Instruction, MmaOperands, StageStorage};
+use cubecl::tile::{BlockScaledOperands, Dimension, Instruction, MmaOperands, StepCost};
 use cubecl::wgmma::PLANE_GROUP_UNITS;
 use cubek_std::layout::BindingOrder;
-use cubek_std::microkernel::{ArithmeticInstruction, SWIZZLED_STAGE_UNREAD, StageLayout};
+use cubek_std::microkernel::ArithmeticInstruction;
 use cubek_std::{BlockScaledMma, Hardware};
 
 /// What a plane's fragments contract through: one of the device's matrix instructions, reached
@@ -114,12 +113,17 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// How the instruction's accumulator reaches its destination.
-    pub fn drain(self) -> PlaneFragmentDrain {
-        match self {
-            Self::Cmma { .. } => PlaneFragmentDrain::Bounce,
-            Self::Mma { .. } | Self::Wgmma { .. } => PlaneFragmentDrain::CellByCell,
-        }
+    /// What the instruction spends where its sum is drained: a cmma fragment hides which unit
+    /// holds a cell, so its sum bounces through shared memory one call's cell at a time; the
+    /// others' units write their own cells. The cost of a plane that states its instruction; a
+    /// plane that states its Step asks the tile
+    /// ([`ProductStep::cost`](cubecl::tile::ProductStep::cost)).
+    pub fn cost(self) -> StepCost {
+        let bounced_cell = match self {
+            Self::Cmma { shape } => Some([shape.m as usize, shape.n as usize]),
+            Self::Mma { .. } | Self::Wgmma { .. } => None,
+        };
+        StepCost { bounced_cell }
     }
 
     /// Which of the device's arithmetic rates the instruction runs at.
@@ -155,80 +159,39 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// The layout a stage the instruction reads lies in: `setting`'s, or the instruction's own
-    /// where it states none.
-    ///
-    /// Both matrix instructions' own keep the rows a fragment load reads at once on distinct
-    /// banks, each the way its transport can read. `cmma` reads a tile off a pointer and a stride,
-    /// so its rows are padded by a chunk: a padded row is still a run a stride from the next. The
-    /// manual `mma` hands every row its own address, so its rows' chunks are swizzled instead,
-    /// which spends no shared memory.
-    ///
-    /// Measured against padding: an L4's shared loads go from conflicted to conflict-free at a
-    /// level time; gfx1151's bank conflicts fall to zero, 8 to 20% faster on four of six boxes,
-    /// the others within noise (a stage 64 deep along a col rhs's `K` up to about 10% slower).
-    ///
-    /// A block-scaled instruction's stage holds the stored words in the same swizzled tiles: a
-    /// row of its tile is the instruction's `k` of words, read eight rows at a time as a 16-bit
-    /// instruction's are.
-    ///
-    /// # Errors
-    ///
-    /// Swizzled tiles under `cmma`, which has no stride to read them by.
-    pub fn stage_layout(self, setting: Option<StageLayout>) -> Result<StageLayout, Refusal> {
-        match (self, setting) {
-            (Self::Cmma { .. }, Some(StageLayout::SwizzledBlocks)) => Err(SWIZZLED_STAGE_UNREAD),
-            (_, Some(layout)) => Ok(layout),
-            (Self::Cmma { .. }, None) => Ok(StageLayout::PaddedBlocks),
-            (Self::Mma { .. } | Self::Wgmma { .. }, None) => Ok(StageLayout::SwizzledBlocks),
-        }
-    }
-
     /// The tile a fragment loads from a stage the instruction reads: the instruction's shape, its
-    /// rows along `rows`, and one of every batch axis in `batches`, so a fragment loads one
+    /// rows along `rows`, and one of every batch dimension in `batches`, so a fragment loads one
     /// contiguous tile where the stage is blocked.
     pub fn stage_tile(
         self,
-        batches: &[Axis],
-        axes: MatmulAxes,
+        batches: &[Dimension],
+        dimensions: MatmulDimensions,
         rows: PlaneFragmentRowsAlong,
-    ) -> Vec<(Axis, usize)> {
+    ) -> Vec<(Dimension, usize)> {
         batches
             .iter()
-            .map(|&axis| (axis, 1))
-            .chain(axes.name(self.shape_along(rows)))
+            .map(|&dimension| (dimension, 1))
+            .chain(dimensions.name(self.shape_along(rows)))
             .collect()
     }
 
-    /// How a stage the instruction reads holds its cells where one TMA box lands each operand's
-    /// stage whole, `depth` of `K` deep: in tiles of a matrix instruction along `m` and `n`, each
-    /// the whole stage deep along `K`, so the tiles stack whole rows one after another as a box
-    /// lands them, its rows along `rows`, and one of every batch axis in `batches`. The manual
-    /// `mma`'s rows swizzled as the descriptor swizzles them, which keeps the rows a fragment load
-    /// reads at once on distinct banks as its own [`stage_layout`](Self::stage_layout) does;
-    /// `cmma`'s in order, since a box lands no padding. The plane group MMA's swizzled as the
-    /// manual `mma`'s are: a row one swizzle span long lies as the instruction's descriptor reads
-    /// it.
-    pub fn landed_stage_storage(
+    /// The tile of a stage the instruction reads where one TMA box lands each operand's stage
+    /// whole, `depth` of `K` deep: a tile of the instruction along `m` and `n`, the whole stage
+    /// deep along `K`, so the tiles stack whole rows one after another as a box lands them, its
+    /// rows along `rows`, and one of every batch dimension in `batches`.
+    pub fn landed_stage_tile(
         self,
-        batches: &[Axis],
-        axes: MatmulAxes,
+        batches: &[Dimension],
+        dimensions: MatmulDimensions,
         depth: usize,
         rows: PlaneFragmentRowsAlong,
-    ) -> StageStorage {
-        let chunks = match self {
-            Self::Cmma { .. } => RowChunks::InOrder,
-            Self::Mma { .. } | Self::Wgmma { .. } => RowChunks::Swizzled,
-        };
+    ) -> Vec<(Dimension, usize)> {
         let [m, n, _] = self.shape_along(rows);
-        StageStorage::Tiled {
-            block: batches
-                .iter()
-                .map(|&axis| (axis, 1))
-                .chain(axes.name([m, n, (MatmulDim::K, depth)]))
-                .collect(),
-            chunks,
-        }
+        batches
+            .iter()
+            .map(|&dimension| (dimension, 1))
+            .chain(dimensions.name([m, n, (MatmulDim::K, depth)]))
+            .collect()
     }
 
     /// Whether this is a block-scaled instruction
@@ -284,20 +247,6 @@ impl PlaneFragmentInstruction {
             operands: MmaOperands::BlockScaled(instruction.form),
         }
     }
-}
-
-/// How an instruction's accumulator reaches its destination.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PlaneFragmentDrain {
-    /// Through the fragment's own store, which writes its whole window, where the destination
-    /// replaces and the window lies inside it; elsewhere through a window of shared memory, since
-    /// a cmma fragment hides which unit holds a cell: each fragment is spilled there and its cells
-    /// written on from it.
-    Bounce,
-    /// Each unit writing its own cells through the destination's write, one element at a time,
-    /// so the destination is bound one element wide: a manual mma fragment knows which unit
-    /// holds a cell, and its store reaches memory no other way.
-    CellByCell,
 }
 
 impl core::fmt::Display for PlaneFragmentInstruction {

@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Axis, Partitioning, SoftwareMatmul, StageStorage, Tile, TileTensor};
+use cubecl::tile::{Dimension, Partitioning, SoftwareMatmul, StageStorage, Tile, TileTensor};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings, CubeStagedMicrokernel,
@@ -15,7 +15,7 @@ use cubek_microkernel::matmul::{
     MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
 };
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{M, N};
+use cubek_std::matmul_dimensions::{M, N};
 use cubek_std::microkernel::Microkernel;
 
 use super::{MatmulElements, MatmulLaunch, OneCube, WholeRows};
@@ -132,7 +132,7 @@ fn cube_shuffle_kernel<EA: Numeric, E: Numeric>(
     partitioning: Partitioning,
     #[comptime] block: Option<SoftwareMatmul>,
     #[comptime] meet: CubeMeet,
-    #[comptime] split: Axis,
+    #[comptime] split: Dimension,
     #[comptime] planes: usize,
     #[comptime] reads: MatmulOperands<MatmulRead>,
     #[define(EA, E)] _elements: [ElemType; 2],

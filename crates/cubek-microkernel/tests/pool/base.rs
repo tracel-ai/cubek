@@ -1,7 +1,7 @@
 //! What every max pool microkernel computes alone: each output cell the largest tap of its window
 //! that lies inside the input.
 
-use crate::launch::pool::{Channels, PoolLaunch, WindowAxis};
+use crate::launch::pool::{Channels, PoolLaunch, WindowDimension};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
@@ -34,7 +34,7 @@ impl HostPool {
         let ([h, w], c) = (launch.input, launch.channels);
         let [rows, cols] = launch.windows;
         let [out_h, out_w] = launch.outputs();
-        let inside = |window: WindowAxis, output: usize, tap: usize, extent: usize| {
+        let inside = |window: WindowDimension, output: usize, tap: usize, extent: usize| {
             (output * window.stride + tap * window.dilation)
                 .checked_sub(window.padding)
                 .filter(|&at| at < extent)
@@ -68,7 +68,7 @@ pub(crate) struct Pool {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PoolCase {
     pub element: ElemType,
-    pub windows: [WindowAxis; 2],
+    pub windows: [WindowDimension; 2],
     pub input: [usize; 2],
     /// Channels per unit of the plane: the case has `channel_block · plane · walks` channels.
     pub channel_block: usize,

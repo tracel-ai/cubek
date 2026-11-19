@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::{Grid, Refusal};
 use cubecl::tile::space::{CubeOrder, PlaneOrder, UnitCube};
 use cubecl::tile::{
-    Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
+    Dimension, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::random::plane::{
@@ -18,8 +18,8 @@ use cubek_microkernel::random::{Distribution, DistributionArgs, Seeds, SeedsLaun
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
-/// The output's one axis.
-const VALUES: Axis = Axis(0);
+/// The output's one dimension.
+const VALUES: Dimension = Dimension(0);
 
 /// Which random microkernel draws the work item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

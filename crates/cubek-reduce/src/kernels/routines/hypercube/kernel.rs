@@ -39,8 +39,8 @@ fn split_place<N: Size>(cube: &Region, #[comptime] layout: ReduceLayout) -> Spli
     }
 }
 
-/// Every cube's part of its rows, accumulated into the carrier its operation accumulates into; the last of
-/// a box of rows' cubes merges their partials and writes the rows.
+/// Every cube's part of its rows, accumulated into the carrier its operation accumulates into; the
+/// last of a box of rows' cubes merges their partials and writes the rows.
 #[cube(launch_unchecked)]
 pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
@@ -82,8 +82,8 @@ pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>
     }
 }
 
-/// Every cube's part of its rows, as [`hypercube_reduce_kernel()`] reduces it, the values written to
-/// `out` and their indices to `indices`, laid out as `out`.
+/// Every cube's part of its rows, as [`hypercube_reduce_kernel()`] reduces it, the values written
+/// to `out` and their indices to `indices`, laid out as `out`.
 #[cube(launch_unchecked)]
 pub fn hypercube_reduce_with_indices_kernel<
     In: Numeric,

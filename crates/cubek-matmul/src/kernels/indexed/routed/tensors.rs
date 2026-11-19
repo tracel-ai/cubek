@@ -1,5 +1,5 @@
 use crate::kernels::indexed::routed::RoutedMatmulKey;
-use crate::kernels::indexed::stack::{SlabAxis, SlabView};
+use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
@@ -19,7 +19,7 @@ use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::Roofline;
 use cubek_std::layout::contiguous;
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_dimensions::{K, N};
 
 /// The operands of one routed product: the rows, the stack of `experts` slabs laid `along`, and
 /// each row's routes, `out[r, s] = lhs[r] · rhs[routes[r, s]]`.
@@ -35,7 +35,7 @@ pub struct RoutedMatmulTensors {
     routes: PlainTensor,
     experts: usize,
     slots: usize,
-    along: SlabAxis,
+    along: SlabDimension,
 }
 
 impl core::fmt::Debug for RoutedMatmulTensors {
@@ -59,7 +59,7 @@ impl RoutedMatmulTensors {
     /// `lhs[rows, k]` against the stack `rhs` of `experts` slabs laid `along`, float or packed,
     /// each row routed to the slabs its row of `routes[rows, slots]` names, on `client`'s device.
     /// The rows and the routes are made dense, and a float stack is copied only where it is
-    /// contiguous along neither axis.
+    /// contiguous along neither dimension.
     ///
     /// # Errors
     ///
@@ -76,7 +76,7 @@ impl RoutedMatmulTensors {
         rhs: StoredTensor,
         routes: PlainTensor,
         experts: usize,
-        along: SlabAxis,
+        along: SlabDimension,
     ) -> Result<Self, Refusal> {
         if rhs.values().is_tiled() {
             return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);

@@ -70,7 +70,6 @@ impl CubeAttentionLaunch {
             (DV, val_dim),
         ]);
         let storage = microkernel.stage_storage(&stage);
-        microkernel.plane.reads_stage(settings.layout)?;
         if settings.planes_along_keys.get() > 1 {
             microkernel.plane.merges_rows()?;
         }
@@ -147,8 +146,11 @@ impl AttentionLaunch for CubeAttentionLaunch {
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         let served = microkernel.served(item);
         let delivery = microkernel.delivery(&widths, item);
-        let bound = |tensor: TensorBinding, element, width, axes: &'static [_]| {
-            launcher.arg(tensor, element).axes(axes).vectorize(width)
+        let bound = |tensor: TensorBinding, element, width, dimensions: &'static [_]| {
+            launcher
+                .arg(tensor, element)
+                .dimensions(dimensions)
+                .vectorize(width)
         };
         let query = bound(
             query,

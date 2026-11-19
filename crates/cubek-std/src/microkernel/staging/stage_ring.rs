@@ -127,16 +127,16 @@ impl core::fmt::Display for StageRing {
 mod tests {
     use super::*;
     use crate::devices;
-    use crate::matmul_axes::{K, M, N};
+    use crate::matmul_dimensions::{K, M, N};
     use cubecl::ir::{ElemType, FloatKind};
-    use cubecl::tile::{Axis, Space};
+    use cubecl::tile::{Dimension, Space};
 
     /// A small stage of both operands of a product in `f16`, which fits in registers.
     fn small_stage() -> [StagedOperand; 2] {
-        let operand = |axes: [(Axis, usize); 2]| StagedOperand {
+        let operand = |dimensions: [(Dimension, usize); 2]| StagedOperand {
             element: ElemType::Float(FloatKind::F16),
-            space: Space::new(&axes),
-            innermost: axes[1].0,
+            space: Space::new(&dimensions),
+            innermost: dimensions[1].0,
             fill: StageFill::AsStored,
         };
         [operand([(M, 16), (K, 16)]), operand([(K, 16), (N, 16)])]

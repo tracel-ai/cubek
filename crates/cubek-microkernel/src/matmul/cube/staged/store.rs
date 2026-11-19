@@ -2,7 +2,7 @@ use crate::matmul::cube::{MatmulCubeSpace, MatmulCubeWrite};
 use crate::matmul::{MatmulBuffers, MatmulDestination, MatmulOperand, MatmulStage, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
-use cubek_std::matmul_axes::{MB, NB};
+use cubek_std::matmul_dimensions::{MB, NB};
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 
 /// Who moves a cube microkernel's box of the output into global memory once its walk ends. The
@@ -41,7 +41,7 @@ pub enum CubeStagedTmaStoreRefusal {
     /// The box's edge is past what one descriptor's box holds.
     BoxPastDescriptor,
     /// The product is a packed one's whose scales cut the output's rows or columns into several
-    /// blocks, so its box is stated in more than the two axes a descriptor's box moves.
+    /// blocks, so its box is stated in more than the two dimensions a descriptor's box moves.
     BlockSplit,
 }
 
@@ -91,7 +91,7 @@ impl CubeStagedTmaStoreRefusal {
             .moves(
                 &cube_space
                     .space
-                    .subspace(&cube_space.axes_kind.output_axes()),
+                    .subspace(&cube_space.dimensions_kind.output_dimensions()),
             )
             .is_err()
         {
@@ -109,8 +109,8 @@ impl CubeStagedStore {
         match self {
             Self::Fragments => 0,
             Self::Tma => {
-                let axes = stage.axes();
-                stage.extent(axes.m) * stage.extent(axes.n) * elem_bytes
+                let dimensions = stage.dimensions();
+                stage.extent(dimensions.m) * stage.extent(dimensions.n) * elem_bytes
                     + Delivery::TMA_STAGE_ALIGNMENT
             }
         }
