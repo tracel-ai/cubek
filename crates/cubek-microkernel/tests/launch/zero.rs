@@ -75,11 +75,11 @@ pub fn launch_unit_zero(
 /// - `out`: one tensor of `rows` rows of `cells` cells, row-major.
 #[cube(launch_unchecked)]
 fn unit_zero_kernel(
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitDirectZeroMicrokernel,
 ) {
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
     for unit in &partitioning {
         let mut cells = o.at(&unit);
         microkernel.runtime().execute(&mut cells);

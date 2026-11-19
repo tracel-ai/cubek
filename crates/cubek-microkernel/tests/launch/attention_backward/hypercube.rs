@@ -150,9 +150,9 @@ fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
     out_gradient: &TileTensor<'_>,
     logsumexp: &TileTensor<'_>,
     delta: &TileTensor<'_>,
-    key_gradient: &TileTensor<'_>,
-    value_gradient: &TileTensor<'_>,
-    query_gradient: &Output<'_, f32>,
+    key_gradient: &mut TileTensor<'_>,
+    value_gradient: &mut TileTensor<'_>,
+    query_gradient: &mut Output<'_, f32>,
     queries: u32,
     keys: u32,
     scale: f32,
@@ -170,10 +170,10 @@ fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
     let d_o = out_gradient.tile(&partitioning);
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let (d_k, d_v) = (
-        key_gradient.tile(&partitioning),
-        value_gradient.tile(&partitioning),
+        key_gradient.tile_mut(&partitioning),
+        value_gradient.tile_mut(&partitioning),
     );
-    let d_q = query_gradient.tile(&partitioning);
+    let d_q = query_gradient.tile_mut(&partitioning);
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
     for cube in &partitioning {

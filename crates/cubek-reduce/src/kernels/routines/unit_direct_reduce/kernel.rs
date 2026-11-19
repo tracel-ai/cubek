@@ -19,13 +19,13 @@ pub(crate) fn unit_direct_reduce_kernel<
     I: TileOperand,
 >(
     input: &I::Arg,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitDirectReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = I::tile::<In>(input, &partitioning);
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
     for unit in &partitioning {
         let mut rows_out = o.at(&unit);
         let rows = x.at(&unit);
@@ -55,15 +55,15 @@ pub(crate) fn unit_direct_reduce_with_indices_kernel<
     I: TileOperand,
 >(
     input: &I::Arg,
-    out: &TileTensor<'_>,
-    indices: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    indices: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitDirectReduceMicrokernel,
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
     let x = I::tile::<In>(input, &partitioning);
-    let o = out.tile(&partitioning);
-    let i = indices.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+    let i = indices.tile_mut(&partitioning);
     for unit in &partitioning {
         let mut rows_out = o.at(&unit);
         let rows = x.at(&unit);

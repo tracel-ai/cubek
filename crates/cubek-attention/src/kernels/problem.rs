@@ -9,7 +9,8 @@ use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{
-    AttentionOperand, AttentionOperands, AttentionReading, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    AttentionCacheKind, AttentionOperand, AttentionOperands, AttentionReading, AttentionWorkItem,
+    B, D, DV, G, KV, Q, S,
 };
 use cubek_std::routine::EstimatedProblem;
 
@@ -58,6 +59,18 @@ pub enum AttentionCacheLayout {
     Packed(PackedLayout),
 }
 
+impl AttentionCacheLayout {
+    /// How a microkernel sees the keys and values lie: a packed cache's bit widths and fix-up are
+    /// its kernel's to read.
+    pub fn kind(&self) -> AttentionCacheKind {
+        match *self {
+            Self::Sequences => AttentionCacheKind::Sequences,
+            Self::Pages { page_size } => AttentionCacheKind::Pages { page_size },
+            Self::Packed(_) => AttentionCacheKind::Packed,
+        }
+    }
+}
+
 impl AttentionRoutineProblem {
     /// The element every microkernel of this kind sums in, whatever it reads and writes.
     pub const SUM: ElemType = ElemType::Float(FloatKind::F32);
@@ -103,10 +116,7 @@ impl AttentionRoutineProblem {
                     AttentionReading::Rounded
                 }
             },
-            page_size: match self.cache {
-                AttentionCacheLayout::Pages { page_size } => Some(page_size),
-                AttentionCacheLayout::Sequences | AttentionCacheLayout::Packed(_) => None,
-            },
+            cache: self.cache.kind(),
             group: self.group,
             head_dim: self.head_dim,
             val_dim: self.val_dim,

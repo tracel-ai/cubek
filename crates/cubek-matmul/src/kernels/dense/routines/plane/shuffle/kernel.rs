@@ -14,7 +14,7 @@ use cubek_microkernel::matmul::plane::plane_shuffle_microkernel;
 pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destination>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &O::Arg<E>,
+    out: &mut O::Arg<E>,
     partitioning: Partitioning,
     #[comptime] block: SoftwareMatmul,
     #[define(EA, E)] _elements: [ElemType; 2],

@@ -399,6 +399,43 @@ mod fragment {
         }
     }
 
+    /// Over a packed cache the kernel opens the output's sum on values its stages decode, which
+    /// fragments held as the value's `A` name no element to contract against: where the lead
+    /// keeps its score in fragments over a float cache, it reads it through its windows over a
+    /// packed one, as the kernel can expand.
+    #[test]
+    fn a_packed_cache_is_read_with_its_score_through_the_windows() {
+        use crate::kernels::{AttentionCacheLayout, KeyFixup, KvBitWidths, PackedLayout};
+        let manual = |k| MmaConfig {
+            a_type: F16,
+            b_type: F16,
+            cd_type: F32,
+            m: 16,
+            n: 8,
+            k,
+        };
+        let hw = devices::offering_mma(offering(devices::h100(), 16), [manual(16), manual(8)]);
+        let holder = |problem: &AttentionRoutineProblem| {
+            let (blueprint, _) =
+                CubeStagedAttentionRoutine::prepare(&hw, problem, &Settings::DEFAULT)
+                    .expect("the lead prepares where both cmma and the manual mma are offered");
+            let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
+                panic!("the routine runs plane fragments")
+            };
+            plane.score_holder()
+        };
+        let [_, _, float, _] = problems();
+        let packed = AttentionRoutineProblem {
+            cache: AttentionCacheLayout::Packed(PackedLayout {
+                bits: KvBitWidths { key: 4, value: 4 },
+                fixup: KeyFixup::RoundOnly,
+            }),
+            ..float.clone()
+        };
+        assert_eq!(holder(&float), ScoreHolder::Fragments);
+        assert_eq!(holder(&packed), ScoreHolder::Window);
+    }
+
     /// A score kept in fragments leaves each unit its own rows' state, which no other plane's
     /// merges into: planes splitting the keys decline it where nothing else is offered.
     #[test]

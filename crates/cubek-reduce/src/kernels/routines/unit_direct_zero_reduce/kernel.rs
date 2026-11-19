@@ -13,12 +13,12 @@ use cubek_microkernel::zero::unit::UnitDirectZeroMicrokernel;
 )]
 #[cube(launch_unchecked)]
 pub(crate) fn unit_direct_zero_reduce_kernel<Out: Numeric>(
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitDirectZeroMicrokernel,
     #[define(Out)] _element: ElemType,
 ) {
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
     for unit in &partitioning {
         let mut cells = o.at(&unit);
         microkernel.runtime().execute(&mut cells);

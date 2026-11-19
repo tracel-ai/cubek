@@ -22,7 +22,7 @@ pub fn cube_shuffle_attention_kernel<
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     logsumexp: ComptimeOption<&TileTensor<'static>>,
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
@@ -41,7 +41,7 @@ pub fn cube_shuffle_attention_kernel<
     let k = TileStepReads::<EK>::new(&key.tile(&partitioning));
     let v = TileStepReads::<EV>::new(&value.tile(&partitioning));
 
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
 
     for sequence in &partitioning {

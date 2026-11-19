@@ -128,7 +128,7 @@ impl MatmulLaunch for CubeShuffleLaunch {
 fn cube_shuffle_kernel<EA: Numeric, E: Numeric>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] block: Option<SoftwareMatmul>,
     #[comptime] meet: CubeMeet,
@@ -139,7 +139,7 @@ fn cube_shuffle_kernel<EA: Numeric, E: Numeric>(
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = out.tile(&partitioning);
+    let c = out.tile_mut(&partitioning);
     for cube in &partitioning {
         cube_shuffle_microkernel::<EA, Tile>(
             &cube,
@@ -268,7 +268,7 @@ impl MatmulLaunch for CubeStagedLaunch {
 fn cube_staged_kernel<EA: Numeric, EL: Numeric>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,
@@ -276,7 +276,7 @@ fn cube_staged_kernel<EA: Numeric, EL: Numeric>(
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = out.tile(&partitioning);
+    let c = out.tile_mut(&partitioning);
     for cube in &partitioning {
         let b = b.at(&cube);
         cube_staged_microkernel::<EA, Tile>(

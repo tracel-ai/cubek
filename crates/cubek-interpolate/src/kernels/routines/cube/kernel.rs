@@ -11,7 +11,7 @@ use cubek_microkernel::interpolate::cube::{
 #[cube(launch)]
 pub fn cube_interpolate_kernel<E: Float, F: SeparableFilterFamily>(
     input: &TileTensor<'_>,
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] row: Rational,
     #[comptime] col: Rational,
@@ -20,7 +20,7 @@ pub fn cube_interpolate_kernel<E: Float, F: SeparableFilterFamily>(
 ) {
     let input = input.tile(&partitioning);
     let weights = separable_weights::<E, F>(&partitioning, row, col);
-    let output = output.tile(&partitioning);
+    let output = output.tile_mut(&partitioning);
     for cube in partitioning {
         for block in cube.walk() {
             cube_interpolate_microkernel(

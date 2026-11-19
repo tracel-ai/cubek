@@ -408,13 +408,13 @@ impl ReduceLaunch {
 #[cube(launch_unchecked)]
 fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitDirectReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = input.tile(&partitioning);
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
 
     for unit in &partitioning {
         let mut row_out = o.at(&unit);
@@ -436,13 +436,13 @@ fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 #[cube(launch_unchecked)]
 fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = input.tile(&partitioning);
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
 
     for plane in &partitioning {
         let mut row_out = o.at(&plane);
@@ -464,13 +464,13 @@ fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 #[cube(launch_unchecked)]
 fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeStagedReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = input.tile(&partitioning);
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
 
     for cube in &partitioning {
         let mut row_out = o.at(&cube);
@@ -495,8 +495,8 @@ fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 #[cube(launch_unchecked)]
 fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
-    out: &TileTensor<'_>,
-    partials: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    partials: &mut TileTensor<'_>,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     #[comptime] parts: usize,
@@ -506,8 +506,8 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = input.tile(&partitioning);
-    let o = out.tile(&partitioning);
-    let p = partials.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+    let p = partials.tile_mut(&partitioning);
 
     for cube in &partitioning {
         let mut row_out = o.at(&cube);
@@ -546,9 +546,9 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 #[cube(launch_unchecked)]
 fn hypercube_indexed_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
-    out: &TileTensor<'_>,
-    partials: &TileTensor<'_>,
-    partial_indices: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    partials: &mut TileTensor<'_>,
+    partial_indices: &mut TileTensor<'_>,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     #[comptime] parts: usize,
@@ -558,9 +558,9 @@ fn hypercube_indexed_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: S
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = input.tile(&partitioning);
-    let o = out.tile(&partitioning);
-    let p = partials.tile(&partitioning);
-    let pi = partial_indices.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+    let p = partials.tile_mut(&partitioning);
+    let pi = partial_indices.tile_mut(&partitioning);
 
     for cube in &partitioning {
         let mut row_out = o.at(&cube);

@@ -156,7 +156,7 @@ impl MatmulLaunch for PlaneFragmentLaunch {
 fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] stage: StageStorage,
     #[comptime] ring: StageRing,
@@ -164,7 +164,7 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = out.tile(&partitioning);
+    let c = out.tile_mut(&partitioning);
 
     for plane in &partitioning {
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
@@ -308,14 +308,14 @@ impl MatmulLaunch for PlaneShuffleLaunch {
 fn plane_shuffle_kernel<EA: Numeric, E: Numeric>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] block: SoftwareMatmul,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = out.tile(&partitioning);
+    let c = out.tile_mut(&partitioning);
     for plane in &partitioning {
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
         let mut sum = c.register_accumulator::<EA>(&a, &b, block, Semiring::SumProd);

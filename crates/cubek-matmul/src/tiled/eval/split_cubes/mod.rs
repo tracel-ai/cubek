@@ -69,13 +69,13 @@ fn plain_matmul(a: &TileTensor<'_>, b: &TileTensor<'_>, c: &TileTensor<'_>, spac
 fn atomic_matmul<E: Numeric>(
     a: &TileTensor<'_>,
     b: &TileTensor<'_>,
-    out: &AccumulateArg<'_, E>,
+    out: &mut AccumulateArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
-    let c = out.tile(&space);
+    let c = out.tile_mut(&space);
     for region in space {
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
@@ -93,13 +93,13 @@ fn atomic_matmul<E: Numeric>(
 fn atomic_matmul_units<E: Numeric>(
     a: &TileTensor<'_>,
     b: &TileTensor<'_>,
-    out: &AccumulateArg<'_, E>,
+    out: &mut AccumulateArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
-    let c = out.tile(&space);
+    let c = out.tile_mut(&space);
     for cube in space {
         let c_cube = c.at(&cube);
         let a_cube = a.at(&cube);
@@ -115,9 +115,9 @@ fn atomic_matmul_units<E: Numeric>(
 }
 
 #[cube(launch)]
-fn sum_splits(partials: &TileTensor<'_>, out: &TileTensor<'_>, space: Partitioning) {
+fn sum_splits(partials: &TileTensor<'_>, out: &mut TileTensor<'_>, space: Partitioning) {
     let partials = partials.tile(&space);
-    let out = out.tile(&space);
+    let out = out.tile_mut(&space);
     for region in space {
         let mut out_cube = out.at(&region);
         out_cube.reduce_dimension(&partials.at(&region), Monoid::Sum);
