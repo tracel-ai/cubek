@@ -116,12 +116,7 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
         seeds: &[u64],
     ) -> Result<HostData, String> {
         let client = cubecl::test_device().client();
-        Self::kernel_output(
-            client,
-            strategy,
-            problem,
-            ReduceInput::uniform(problem.precision.to_dtype(), seeds[0]),
-        )
+        Self::kernel_output(client, strategy, problem, seeded_input(problem, seeds))
     }
 
     fn reference_result(
@@ -131,12 +126,7 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
         progress: Option<&Progress>,
     ) -> Result<HostData, String> {
         let client = cubecl::test_device().client();
-        Self::reference_output(
-            client,
-            problem,
-            ReduceInput::uniform(problem.precision.to_dtype(), seeds[0]),
-            progress,
-        )
+        Self::reference_output(client, problem, seeded_input(problem, seeds), progress)
     }
 }
 
@@ -168,4 +158,9 @@ mod proof_shape_tests {
     fn keeps_a_whole_tensor_one_row() {
         assert_eq!(proof_shape(&[1, 16_777_216], 1), vec![1, 2048]);
     }
+}
+
+/// The input `problem` reduces, drawn uniformly in its precision from the first of `seeds`.
+fn seeded_input(problem: &ReduceProblem, seeds: &[u64]) -> ReduceInput {
+    ReduceInput::uniform(problem.precision.to_dtype(), seeds[0])
 }
