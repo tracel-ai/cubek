@@ -11,6 +11,9 @@ pub enum ReduceError {
     /// The axis is not a dim of the input.
     #[error("The provided axis ({axis}) must be smaller than the input tensor rank ({rank}).")]
     InvalidAxis { axis: usize, rank: usize },
+    /// A top-k keeps no value: `k` is 0.
+    #[error("A top-k keeps at least one value; k is 0.")]
+    EmptyTopK,
     /// The reduced dim is shorter than the `k` a top-k keeps.
     #[error(
         "The input reduce axis length (currently {axis_length:?}) should be at least k ({k:?})."

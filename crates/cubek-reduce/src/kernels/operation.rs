@@ -26,6 +26,7 @@ impl Reduce {
     /// # Errors
     ///
     /// [`ReduceError::InvalidAxis`] where `axis` is not a dim of `input`,
+    /// [`ReduceError::EmptyTopK`] where a top-k keeps `k = 0` values,
     /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is shorter than the `k` a top-k
     /// keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one above,
     /// and [`ReduceError::Declined`] with the kernel's decline where the kernel the strategy picks
@@ -34,8 +35,8 @@ impl Reduce {
     ///
     /// # Panics
     ///
-    /// Where `input` has 256 axes or more, a top-k keeps `k = 0` values, or a row split across
-    /// cubes is longer than `u32` counts.
+    /// Where `input` has 256 axes or more, or a row split across cubes is longer than `u32`
+    /// counts.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -159,6 +160,9 @@ fn validate_shape(
     axis: usize,
     written_per_row: usize,
 ) -> Result<(), ReduceError> {
+    if written_per_row == 0 {
+        return Err(ReduceError::EmptyTopK);
+    }
     if input_shape[axis] < written_per_row {
         return Err(ReduceError::ReduceAxisTooSmall {
             axis_length: input_shape[axis],
@@ -185,4 +189,43 @@ fn validate_indices(values: &TensorBinding, indices: &TensorBinding) -> Result<(
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ROWS: usize = 4;
+    const ROW_LEN: usize = 8;
+    const AXIS: usize = 1;
+
+    #[test]
+    fn a_top_k_keeping_nothing_is_outside_the_domain() {
+        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, 0], AXIS, 0);
+        assert!(matches!(result, Err(ReduceError::EmptyTopK)), "{result:?}");
+    }
+
+    #[test]
+    fn a_top_k_keeping_more_than_a_row_is_outside_the_domain() {
+        let k = ROW_LEN + 1;
+        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, k], AXIS, k);
+        assert!(
+            matches!(result, Err(ReduceError::ReduceAxisTooSmall { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn an_output_not_one_wide_along_the_axis_is_outside_the_domain() {
+        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, 2], AXIS, 1);
+        assert!(
+            matches!(result, Err(ReduceError::MismatchOutputShape { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_well_shaped_call_is_inside_the_domain() {
+        assert!(validate_shape(&[ROWS, ROW_LEN], &[ROWS, 1], AXIS, 1).is_ok());
+    }
 }
