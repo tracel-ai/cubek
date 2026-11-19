@@ -69,6 +69,7 @@ rand = { version = "0.10.0", default-features = false, features = [
 ] } # std_rng is for no_std
 
 # Testing
+approx = { version = "0.5.1", default-features = false }
 bytemuck = "1.16.1"
 half = { version = "2.5", features = [
     "alloc",

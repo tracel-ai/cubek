@@ -36,5 +36,6 @@ cubecl = { workspace = true, features = ["stdlib", "tile"] }
 serde = { workspace = true }
 
 [dev-dependencies]
+approx = { workspace = true }
 cubek-test-utils = { workspace = true }
 half = { workspace = true }

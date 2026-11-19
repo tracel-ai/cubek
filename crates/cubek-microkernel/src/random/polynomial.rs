@@ -157,24 +157,19 @@ pub fn ln<N: Size>(x: Vector<f32, N>) -> Vector<f32, N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::{assert_abs_diff_eq, assert_relative_eq};
     use cubecl::TestRuntime;
-
-    /// Within an `f32`'s precision of `expected`, lane by lane.
-    fn assert_close(actual: &[f32], expected: [f32; 4]) {
-        for (actual, expected) in actual.iter().zip(expected) {
-            assert!(
-                (actual - expected).abs() <= 1e-6 * expected.abs().max(1.0),
-                "{actual} where {expected} was expected"
-            );
-        }
-    }
 
     /// One, both sides of `√2` where the mantissa is halved, and an exponent far from zero.
     #[test]
     fn ln_is_the_logarithm_on_both_sides_of_the_octave_split() {
         let xs = [1.0f32, 1.41, 1.42, 1e-30];
         let ln = ln::harness::<TestRuntime, Const<4>>(&xs);
-        assert_close(&ln, xs.map(f32::ln));
+        assert_relative_eq!(
+            ln.as_slice(),
+            xs.map(f32::ln).as_slice(),
+            max_relative = 1e-6
+        );
     }
 
     /// One angle in each quadrant, the second on the eighth where the series meet.
@@ -183,8 +178,16 @@ mod tests {
         let turns = [0.0f32, 0.125, 0.3, 0.8];
         let (cosine, sine) = cos_sin_turns::harness::<TestRuntime, Const<4>>(&turns);
         let angles = turns.map(|turn| core::f32::consts::TAU * turn);
-        assert_close(&cosine, angles.map(f32::cos));
-        assert_close(&sine, angles.map(f32::sin));
+        assert_abs_diff_eq!(
+            cosine.as_slice(),
+            angles.map(f32::cos).as_slice(),
+            epsilon = 1e-6
+        );
+        assert_abs_diff_eq!(
+            sine.as_slice(),
+            angles.map(f32::sin).as_slice(),
+            epsilon = 1e-6
+        );
     }
 
     /// Each derived constant matches the f64 formula it computes.
