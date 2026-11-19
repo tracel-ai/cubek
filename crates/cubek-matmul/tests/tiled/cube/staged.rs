@@ -9,7 +9,7 @@ use cubek_matmul::kernels::{
 };
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::matmul::{Declines, F16, F32, Product, RhsTiles};
+use crate::matmul::{Declines, F16, F32, Product, RhsTiles, TileRows};
 use crate::tiled::ByRoutine;
 
 #[test]
@@ -30,11 +30,11 @@ fn every_cube_staged_setting_sums_i32_exactly() {
 fn the_cube_staged_lead_reads_a_weight_stored_in_tiles() {
     let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
     let products = [F16, F32].map(|element| {
-        Product::of(element)
-            .m(128)
-            .n(256)
-            .k(384)
-            .rhs_in(RhsTiles { n: 32, k: 32 })
+        Product::of(element).m(128).n(256).k(384).rhs_in(RhsTiles {
+            n: 32,
+            k: 32,
+            rows: TileRows::Whole,
+        })
     });
     staged.check(staged.at_its_lead(&products));
 }

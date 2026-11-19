@@ -3,6 +3,7 @@ use crate::kernels::{
     MATMUL_STREAMED_INPUT_FLOAT, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
     MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
+use crate::tiled::storage::{StoredValues, stored_tile};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
@@ -118,6 +119,13 @@ impl PlaneShuffleMatmulRoutine {
     pub const PERSISTENT_UNSIZED: Refusal = Refusal::Declined {
         why: "a plane shuffle's launch is capped at planes a compute unit, and the device does \
               not say how many compute units it has",
+    };
+
+    /// What a launch declines whose cubes overhang a float rhs stored in tiles, where a unit's
+    /// window is one unmasked run: past the last tile there is no storage to read.
+    pub const OVERHANGS_STORED_TILES: Refusal = Refusal::Declined {
+        why: "a plane shuffle's cubes overhang a float rhs stored in tiles, whose windows are read \
+              unmasked",
     };
 
     /// Steps of `K` a unit holds at once: its plane shuffles stage nothing in shared memory, and
@@ -316,6 +324,9 @@ impl PlaneShuffleMatmulRoutine {
             &[M, N],
             PlaneOrder::new(&[(N, settings.planes.get())], CubeOrder::RowMajor),
         );
+        if Self::reaches_past_stored_tiles(hw, problem, &partitioning) {
+            return Err(Self::OVERHANGS_STORED_TILES);
+        }
         let blueprint = self.blueprint(hw, problem, microkernel, partitioning)?;
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
@@ -323,6 +334,37 @@ impl PlaneShuffleMatmulRoutine {
         };
         let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
+    }
+
+    /// Whether a unit window of `partitioning` is read as one unmasked run of `problem`'s float rhs
+    /// stored in tiles (one row of `K` inside a tile's row, or a whole tile) while its cubes overhang
+    /// `n` padded to whole tiles. A float rhs stored in tiles is in the tile [`stored_tile`] gives.
+    fn reaches_past_stored_tiles(
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        partitioning: &MatmulPartitioning,
+    ) -> bool {
+        if !problem.elem_alignments.rhs.is_stored_piece() {
+            return false;
+        }
+        let values = StoredValues::Elements(problem.elements.rhs);
+        let Some(tile) = stored_tile(hw, MatmulOperand::Rhs, values, problem.elements.lhs) else {
+            return false;
+        };
+        let [tile_k, tile_n] = [K, N].map(|axis| tile.extent(axis));
+        let levels = partitioning.as_tile().levels();
+        let window = |axis: Axis, whole: usize| {
+            levels
+                .iter()
+                .rev()
+                .find_map(|level| level.tile(axis))
+                .unwrap_or(whole)
+        };
+        let [window_k, window_n] = [window(K, problem.k), window(N, problem.n)];
+        let in_one_run = (window_k == 1 && tile_n.is_multiple_of(window_n))
+            || (window_k == tile_k && window_n == tile_n);
+        let columns = partitioning.columns() as usize;
+        in_one_run && problem.n.next_multiple_of(columns) > problem.n.next_multiple_of(tile_n)
     }
 
     /// [`Routine::prepare`] against `packing`, a packed rhs.
@@ -694,6 +736,61 @@ mod tests {
         for m in 1..=PlaneShuffleMicrokernel::MAX_ROWS {
             let held = m.next_power_of_two();
             assert_eq!(rows(m), (held, held));
+        }
+    }
+
+    /// A one row product against a `5120 × 48` bf16 rhs stored in `32 × 16` tiles declines the
+    /// settings whose cubes overhang it, and plans every other, as it plans them all against the
+    /// rhs in rows.
+    #[test]
+    fn a_launch_overhanging_a_float_rhs_stored_in_tiles_declines() {
+        use cubecl::features::MmaConfig;
+        use cubecl::tile::layout::ElemAlignment;
+        let bf16 = ElemType::Float(FloatKind::BF16);
+        let wmma = |k| MmaConfig {
+            a_type: bf16,
+            b_type: bf16,
+            cd_type: ElemType::Float(FloatKind::F32),
+            m: 16,
+            n: 16,
+            k,
+        };
+        let hw = devices::offering_cmma(devices::strix_halo(), [wmma(16), wmma(32)]);
+        let [m, n, k] = [1, 48, 5120];
+        let read = 8;
+        let in_rows = MatmulRoutineProblem::dense(m, n, k, bf16);
+        let mut in_tiles = in_rows.clone();
+        in_tiles.elem_alignments.rhs = ElemAlignment::stored_piece(read);
+        in_tiles.buffer_alignments.rhs = ElemAlignment::stored_piece(read);
+        let on_four = |microkernel| PlaneShuffleMatmulRoutineSettings {
+            microkernel,
+            planes: NonZeroUsize::new(4).unwrap(),
+            planes_per_worker: None,
+        };
+        let declined = [
+            PlaneShuffleMicrokernelSettings::ONE_READ,
+            PlaneShuffleMicrokernelSettings::ONE_READ_ONE_TRANSACTION,
+            PlaneShuffleMicrokernelSettings::TWO_ROW_VECTORS,
+        ]
+        .map(on_four);
+        for settings in PlaneShuffleMatmulRoutine.settings(&hw) {
+            let prepared = PlaneShuffleMatmulRoutine
+                .prepare(&hw, &in_tiles, &settings)
+                .map(|_| ());
+            match declined.contains(&settings) {
+                true => assert_eq!(
+                    prepared,
+                    Err(PlaneShuffleMatmulRoutine::OVERHANGS_STORED_TILES),
+                    "{settings}"
+                ),
+                false => assert_eq!(prepared, Ok(()), "{settings}"),
+            }
+            assert!(
+                PlaneShuffleMatmulRoutine
+                    .prepare(&hw, &in_rows, &settings)
+                    .is_ok(),
+                "{settings}"
+            );
         }
     }
 

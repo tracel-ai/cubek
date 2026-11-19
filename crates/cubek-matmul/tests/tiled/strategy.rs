@@ -6,7 +6,7 @@ use cubek_matmul::kernels::{CubeStagedMatmulRoutineSettings, UnitRegistersMatmul
 use cubek_matmul::tiled::Strategy as Tiled;
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::matmul::{ByStrategy, Declines, F16, F32, Product, RhsTiles};
+use crate::matmul::{ByStrategy, Declines, F16, F32, Product, RhsTiles, TileRows};
 
 /// `Cmma` where the device offers a matrix instruction: square in both elements, a rectangle,
 /// batches, an lhs laid along `m`, a weight stored in tiles, and a wider output.
@@ -26,11 +26,11 @@ fn cmma_matches_the_host() {
             .k(64)
             .batched(shape![3], shape![3]),
         Product::of(F16).m(256).n(128).k(64).lhs_along_m(),
-        Product::of(F16)
-            .m(128)
-            .n(256)
-            .k(384)
-            .rhs_in(RhsTiles { n: 32, k: 32 }),
+        Product::of(F16).m(128).n(256).k(384).rhs_in(RhsTiles {
+            n: 32,
+            k: 32,
+            rows: TileRows::Whole,
+        }),
         Product::of(F16).m(64).n(48).k(96).writing(F32),
     ]);
 }

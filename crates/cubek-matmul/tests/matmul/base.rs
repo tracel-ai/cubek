@@ -21,6 +21,7 @@ use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, StridedLayout, TestInput, Written};
 
 pub(crate) const F16: ElemType = ElemType::Float(FloatKind::F16);
+pub(crate) const BF16: ElemType = ElemType::Float(FloatKind::BF16);
 pub(crate) const F32: ElemType = ElemType::Float(FloatKind::F32);
 pub(crate) const F64: ElemType = ElemType::Float(FloatKind::F64);
 pub(crate) const I32: ElemType = ElemType::Int(IntKind::I32);
@@ -51,6 +52,18 @@ pub(crate) enum Broadcast {
 pub(crate) struct RhsTiles {
     pub n: usize,
     pub k: usize,
+    pub rows: TileRows,
+}
+
+/// How the rows of a stored tile lie.
+#[cfg(feature = "tiled")]
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TileRows {
+    /// Each row whole.
+    Whole,
+    /// Each row split at the widest read the device serves, as a load stores a weight
+    /// ([`matrix_storage`](cubek_matmul::tiled::storage::matrix_storage)).
+    InReads,
 }
 
 #[cfg(feature = "tiled")]
@@ -58,10 +71,13 @@ impl RhsTiles {
     /// `rhs`, `[k, n]` of `element`, copied into these tiles.
     fn store(self, client: &Client, rhs: TensorHandle, element: ElemType) -> TensorHandle {
         use cubecl::tile::Axis;
-        use cubek_matmul::tiled::storage::{StorageLevels, tile};
+        use cubek_matmul::tiled::storage::{StorageLevels, matrix_storage, tile};
         const K: Axis = Axis(0);
         const N: Axis = Axis(1);
-        let storage = StorageLevels::new(&[(N, self.n), (K, self.k)]).grid(&[N, K]);
+        let storage = match self.rows {
+            TileRows::InReads => matrix_storage(client, element, [(K, self.k), (N, self.n)]),
+            TileRows::Whole => StorageLevels::new(&[(N, self.n), (K, self.k)]).grid(&[N, K]),
+        };
         tile(client, rhs.binding(), &[K, N], element, None, storage)
             .unwrap_or_else(|why| panic!("{self:?} store no such rhs: {why}"))
     }

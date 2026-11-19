@@ -180,7 +180,8 @@ where
 
     /// # Panics
     ///
-    /// Where a routine that declines nothing refuses a product.
+    /// Where a routine that declines nothing refuses a product, or any routine's prepare admits a
+    /// launch the bind refuses as checked inside a storage tile.
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
         let launched = case
             .product
@@ -188,6 +189,9 @@ where
         let on_cpu = client.properties().hardware.num_cpu_cores.is_some();
         match (launched, self.declines) {
             (Ok(out), _) => Ok(Product::written(out)),
+            (Err(why @ Refusal::CheckedInsideStorageTile { .. }), _) => {
+                panic!("{case:?} prepared but refused at bind: {why:?}")
+            }
             (Err(why), Declines::AsItStates) => Err(why),
             (Err(why @ Refusal::CubePastDevice { .. }), Declines::Never) if on_cpu => Err(why),
             (Err(why), Declines::Never) => panic!("{case:?} refused: {why:?}"),

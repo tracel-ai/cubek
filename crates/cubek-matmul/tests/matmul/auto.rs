@@ -77,14 +77,14 @@ fn auto_reads_through_a_stride_of_zero() {
 #[cfg(feature = "tiled")]
 #[test]
 fn auto_sends_a_weight_stored_in_tiles_to_the_tiled_cmma() {
-    use crate::matmul::RhsTiles;
+    use crate::matmul::{RhsTiles, TileRows};
     if crate::matmul::skip_unless_matrix_instruction() {
         return;
     }
     let auto = ByStrategy::new(Strategy::Auto, Declines::Never);
-    auto.check([Product::of(F32)
-        .m(64)
-        .n(512)
-        .k(256)
-        .rhs_in(RhsTiles { n: 64, k: 32 })]);
+    auto.check([Product::of(F32).m(64).n(512).k(256).rhs_in(RhsTiles {
+        n: 64,
+        k: 32,
+        rows: TileRows::Whole,
+    })]);
 }
