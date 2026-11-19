@@ -47,6 +47,7 @@ const STRIDE_2: Window = window([2, 2], [1, 1], [1, 1]);
 const DILATION_2: Window = window([1, 1], [2, 2], [2, 2]);
 const DILATION_UNEQUAL: Window = window([1, 1], [1, 2], [1, 2]);
 const SAME_1D: ConvolutionArgs<1> = window([1], [1], [1]);
+const VALID_1D: ConvolutionArgs<1> = window([1], [0], [1]);
 const SAME_3D: ConvolutionArgs<3> = window([1; 3], [1; 3], [1; 3]);
 const STRIDE_2_3D: ConvolutionArgs<3> = window([2; 3], [1; 3], [1; 3]);
 const ASYMMETRIC_3D: ConvolutionArgs<3> = window([1, 2, 1], [0, 1, 2], [2, 1, 1]);
@@ -226,6 +227,7 @@ mod cube {
         conv_1d_three_batches: conv(3, (64, 32), [37], [3], SAME_1D);
         conv_3d_stride_2: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], STRIDE_2_3D);
         conv_3d_asymmetric: conv(2, (32, 32), [7, 9, 7], [3, 3, 3], ASYMMETRIC_3D);
+        conv_3d_channels_first: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], SAME_3D).stored(Storage::ChannelsFirst);
     }
 
     cube! {
@@ -244,6 +246,7 @@ mod cube {
         gapped_out_grad: conv(2, (64, 32), [5, 12], [3, 3], SAME).out_grad_stored(Storage::Gapped);
         offset: conv(2, (64, 32), [5, 12], [3, 3], SAME).stored(Storage::Offset);
         conv_1d_overhanging: conv(2, (64, 32), [37], [3], SAME_1D);
+        conv_1d_short_output_beside_batch: conv(3, (32, 32), [7], [3], VALID_1D);
         conv_3d_stride_2: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], STRIDE_2_3D);
         conv_3d_asymmetric: conv(2, (32, 32), [7, 9, 7], [3, 3, 3], ASYMMETRIC_3D);
     }
