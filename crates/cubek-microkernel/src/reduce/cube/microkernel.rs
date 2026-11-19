@@ -1,5 +1,7 @@
 use super::base::CubeStagedReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, accumulate_strided, row_values};
+use crate::reduce::{
+    ReduceAccumulator, ReduceCarrier, accumulate_strided, is_first_unit_of_cube, row_values,
+};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -69,7 +71,7 @@ fn cube_staged_reduce<
 
     let values = row_values::<N>(count, layout);
 
-    if PLANE_POS == 0 && UNIT_POS_PLANE == 0 {
+    if is_first_unit_of_cube() {
         C::write::<Out, Idx>(
             total,
             out,

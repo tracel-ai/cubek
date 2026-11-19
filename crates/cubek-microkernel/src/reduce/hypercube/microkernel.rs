@@ -1,5 +1,5 @@
 use super::base::HypercubeLastArrivalReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier};
+use crate::reduce::{ReduceAccumulator, ReduceCarrier, is_first_unit_of_cube};
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -165,7 +165,7 @@ fn store_partial<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
     partial_indices: &ComptimeOption<Tile>,
     part: usize,
 ) {
-    if PLANE_POS == 0 && UNIT_POS_PLANE == 0 {
+    if is_first_unit_of_cube() {
         C::store(total, partials, partial_indices, part);
     }
 }
@@ -175,7 +175,7 @@ fn store_partial<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
 #[cube]
 fn count_in(arrivals: &[Atomic<u32>], counter: usize) -> u32 {
     let mut arrived = Shared::<[u32]>::new_slice(1usize);
-    if PLANE_POS == 0 && UNIT_POS_PLANE == 0 {
+    if is_first_unit_of_cube() {
         arrived[0] = arrivals[counter].fetch_add(1u32);
     }
 
@@ -198,7 +198,7 @@ fn merge_parts<Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size, C: ReduceAccum
     // What every other cube of the row stored is acquired before it is read.
     sync_storage();
 
-    if PLANE_POS == 0 && UNIT_POS_PLANE == 0 {
+    if is_first_unit_of_cube() {
         write_merged::<Acc, Out, Idx, N, C>(
             out,
             indices,

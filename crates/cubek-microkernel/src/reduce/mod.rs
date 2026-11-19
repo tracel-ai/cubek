@@ -15,10 +15,12 @@ pub mod hypercube;
 mod operand;
 mod operation;
 pub mod plane;
+mod position;
 pub mod unit;
 mod work_item;
 
 pub use accumulator::*;
 pub use operand::*;
 pub use operation::*;
+pub(crate) use position::*;
 pub use work_item::*;

@@ -91,7 +91,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         #[comptime] writes: ReduceWrites,
     ) {
         let lanes = N::value();
-        let lanes_share_a_row = comptime!(matches!(layout, ReduceLayout::Along) && lanes > 1);
+        let lanes_share_a_row = comptime!(layout.lanes_share_a_row(lanes));
         match lanes_share_a_row {
             true => write_row::<Out, Idx, Acc, N, K>(acc, out, indices, operation.monoid(), writes),
             false => write_rows::<Out, Idx, Acc, N, K>(acc, out, indices, writes),

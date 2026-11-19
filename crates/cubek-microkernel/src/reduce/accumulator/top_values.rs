@@ -80,7 +80,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
             "ReduceAccumulator: a top-k of values alone holds no index to write"
         ));
         let lanes = N::value();
-        let lanes_share_a_row = comptime!(matches!(layout, ReduceLayout::Along) && lanes > 1);
+        let lanes_share_a_row = comptime!(layout.lanes_share_a_row(lanes));
         match lanes_share_a_row {
             true => write_row::<Out, Acc, N, K>(acc, out, operation.monoid()),
             false => write_rows::<Out, Acc, N, K>(acc, out),

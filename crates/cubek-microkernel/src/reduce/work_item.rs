@@ -1,6 +1,7 @@
 use crate::reduce::{ReduceOperand, ReduceOperation, ReduceWrites};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::VectorRequirement;
+use cubek_std::microkernel::{ArithmeticInstruction, UnitWork};
 
 /// How a reduction's lines lie against the dimension it reduces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -11,6 +12,14 @@ pub enum ReduceLayout {
     /// Another dimension is the contiguous one: a line is one position of `width` rows side by
     /// side, each lane its own row's, and nothing reduces across lanes.
     Across,
+}
+
+impl ReduceLayout {
+    /// Whether the lanes of a line `lanes` wide hold values of one row, which then reduce across
+    /// lanes: along the row, past one lane.
+    pub const fn lanes_share_a_row(self, lanes: usize) -> bool {
+        matches!(self, ReduceLayout::Along) && lanes > 1
+    }
 }
 
 /// A reduced row as its microkernels see it: what it reduces with, what it reads and accumulates,
@@ -30,6 +39,16 @@ pub struct ReduceWorkItem {
 }
 
 impl ReduceWorkItem {
+    /// What one unit of any reduce microkernel works with: vector arithmetic, and registers for a
+    /// value and an index a slot of the row it writes, beside two of its own.
+    pub fn unit_work(&self) -> UnitWork {
+        let slots = self.operation.written_per_row() as u32;
+        UnitWork {
+            instruction: ArithmeticInstruction::Vector,
+            registers: 2 * slots + 2,
+        }
+    }
+
     /// What the owner writes: both halves where the indices go beside the values, what the
     /// operation writes otherwise.
     pub fn writes(&self) -> ReduceWrites {

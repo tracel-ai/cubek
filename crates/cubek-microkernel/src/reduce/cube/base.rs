@@ -4,9 +4,7 @@ use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
-use cubek_std::microkernel::{
-    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
-};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// A row reduced by one cube: its units read consecutive lines, each accumulating every `units`-th into
 /// a partial of its own; each plane's partials meet in its instructions, then the planes' in
@@ -206,11 +204,7 @@ impl Microkernel for CubeStagedReduceMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        let slots = self.item.operation.written_per_row() as u32;
-        estimate.work = Some(UnitWork {
-            instruction: ArithmeticInstruction::Vector,
-            registers: 2 * slots + 2,
-        });
+        estimate.work = Some(self.item.unit_work());
     }
 }
 
