@@ -197,7 +197,7 @@ fn lanczos_kernel<E: Float>(
 /// A filter over a recipe that is not an [`AffineCoordinate`], which is what the filters being
 /// generic over their inner recipe buys.
 #[cube(launch)]
-fn linear_over_axis_value_kernel<E: Float>(
+fn linear_over_dimension_value_kernel<E: Float>(
     output: &mut TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,

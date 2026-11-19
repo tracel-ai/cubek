@@ -6,14 +6,14 @@ use cubek_microkernel::reduce::plane::{PlaneReduceMicrokernel, plane_reduce_micr
 
 /// Every plane of the launch, reducing its rows into the carrier its operation accumulates into.
 #[cube(launch_unchecked)]
-pub fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
-    input: &TileTensor<'_>,
+pub fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size, I: TileOperand>(
+    input: &I::Arg,
     out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
-    let x = input.tile(&partitioning);
+    let x = I::tile::<In>(input, &partitioning);
     let o = out.tile_mut(&partitioning);
     for plane in &partitioning {
         let mut rows_out = o.at(&plane);
@@ -40,14 +40,14 @@ pub fn plane_reduce_with_indices_kernel<
     N: Size,
     I: TileOperand,
 >(
-    input: &TileTensor<'_>,
+    input: &I::Arg,
     out: &mut TileTensor<'_>,
     indices: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneReduceMicrokernel,
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
-    let x = input.tile(&partitioning);
+    let x = I::tile::<In>(input, &partitioning);
     let o = out.tile_mut(&partitioning);
     let i = indices.tile_mut(&partitioning);
     for plane in &partitioning {
