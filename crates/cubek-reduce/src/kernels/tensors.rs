@@ -1,6 +1,8 @@
 //! How a reduce launch reads its operands and binds them.
 
-use crate::kernels::{ReduceElements, ReduceRoutineBlueprint, ReduceRoutineProblem};
+use crate::kernels::{
+    REDUCED, ReduceElements, ReduceRoutineBlueprint, ReduceRoutineProblem, SLOTS,
+};
 use cubecl::client::Client;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::Launcher;
@@ -11,8 +13,9 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
 /// The input and the output of one reduction, and the problem they state.
 ///
-/// Both are read where they lie, at their own strides: every dim of each is an axis of the
-/// problem, so a reduction along any dim of a tensor of any rank binds without a copy.
+/// Both are read where they lie, at their own strides: each binds its dims onto the problem's
+/// axes ([`ReduceRoutineProblem::labelled`]), so a reduction along any dim of a tensor of any rank
+/// binds without a copy.
 #[derive(Clone)]
 pub struct ReduceTensors {
     client: Client,
@@ -133,30 +136,24 @@ impl ReduceTensors {
                 blueprint.partitioning.space().clone(),
             )
         });
-        let input = launcher
-            .arg(self.input.clone(), self.problem.elements.input)
-            .axes(&self.problem.input_axes())
-            .vectorize(blueprint.width)
-            .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        let out = launcher
-            .arg(self.out.clone(), self.problem.elements.out)
-            .axes(&self.problem.out_axes())
-            .vectorize(blueprint.out_width)
-            .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        let indices = self.indices.as_ref().map(|indices| {
+        let bound = |binding: &TensorBinding, along, element, width| {
+            let (binding, axes) = self.problem.labelled(binding.clone(), along);
             launcher
-                .arg(
-                    indices.clone(),
-                    self.problem
-                        .indices
-                        .expect("indices beside the values have an element"),
-                )
-                .axes(&self.problem.out_axes())
-                .vectorize(blueprint.out_width)
+                .arg(binding, element)
+                .axes(&axes)
+                .vectorize(width)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)
+        };
+        let elements = self.problem.elements;
+        let input = bound(&self.input, REDUCED, elements.input, blueprint.width);
+        let out = bound(&self.out, SLOTS, elements.out, blueprint.out_width);
+        let indices = self.indices.as_ref().map(|indices| {
+            let element = self
+                .problem
+                .indices
+                .expect("indices beside the values have an element");
+            bound(indices, SLOTS, element, blueprint.out_width)
         });
         ReduceBinding {
             launcher,

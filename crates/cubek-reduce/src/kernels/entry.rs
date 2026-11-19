@@ -170,9 +170,8 @@ fn launch_cube_or_split(tensors: &ReduceTensors) -> Result<(), Refusal> {
         let Some(fill) = hw.cubes_to_fill(units).map(|fill| fill as usize) else {
             break;
         };
-        let boxes = ReduceSplitExtents::row_boxes(problem, blueprint.width);
-        let parts = ReduceSplitExtents::new(problem, &blueprint.partitioning, blueprint.width).parts
-            as usize;
+        let boxes = problem.row_boxes(blueprint.width);
+        let parts = ReduceSplitExtents::new(problem, &blueprint.partitioning).parts as usize;
         if boxes >= fill {
             break;
         }

@@ -376,30 +376,36 @@ fn every_shape_of_a_layout_compiles_one_kernel() {
     assert_eq!(compiled(&[2, 5, 300], 1), compiled(&[4, 9, 308], 1));
 }
 
-/// Where a launch grid has too few dims for the rows, the cube and the hypercube decline rather
-/// than panic, and the unit and the plane still run: a rank-5 tensor, four row dims.
+/// Every routine reduces a tensor with more row dims than a launch grid has, the rows on both sides
+/// of the reduced dim or before it: a `[2, 3, 2, 2, 64]` tensor along its middle dim and its last.
+/// The plane and the cube where the device commits to a plane width; the hypercube where one cube's
+/// stores also reach another within a launch.
 #[test]
-fn routines_decline_more_row_dims_than_the_grid_holds() {
-    let hw = devices::m2_pro();
-    let problem = problem(&[2, 2, 2, 2, 64], 4);
-    let declines = |prepared: Result<(), cubecl::tile::launch::Refusal>| {
-        matches!(
-            prepared,
-            Err(cubecl::tile::launch::Refusal::Declined { .. })
-        )
-    };
-    let cube = CubeReduceRoutine.settings(&hw)[0];
-    assert!(declines(
-        CubeReduceRoutine.prepare(&hw, &problem, &cube).map(|_| ())
-    ));
-    let hypercube = HypercubeReduceRoutine.settings(&hw)[0];
-    assert!(declines(
-        HypercubeReduceRoutine
-            .prepare(&hw, &problem, &hypercube)
-            .map(|_| ())
-    ));
-    let unit = UnitReduceRoutine.settings(&hw)[0];
-    assert!(UnitReduceRoutine.prepare(&hw, &problem, &unit).is_ok());
-    let plane = PlaneReduceRoutine.settings(&hw)[0];
-    assert!(PlaneReduceRoutine.prepare(&hw, &problem, &plane).is_ok());
+fn every_routine_reduces_more_row_dims_than_the_grid_has() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    let mut scopes = vec![Scope::Unit];
+    if hw.plane_dim().is_ok() {
+        scopes.extend([Scope::Plane, Scope::Cube]);
+        if hw.properties.features.device_memory_scope {
+            scopes.push(Scope::Hypercube);
+        }
+    }
+    let mut reductions = Vec::new();
+    for scope in scopes {
+        for axis in [2, 4] {
+            for operation in [
+                ReduceOperation::Sum,
+                ReduceOperation::Mean,
+                ReduceOperation::ArgMax,
+            ] {
+                reductions.push(Reduction {
+                    scope,
+                    shape: vec![2, 3, 2, 2, 64],
+                    axis,
+                    operation,
+                });
+            }
+        }
+    }
+    Routines.check(reductions);
 }

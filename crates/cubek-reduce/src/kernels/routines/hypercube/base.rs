@@ -1,11 +1,11 @@
 use super::kernel::{
-    ReduceSplit, ReduceSplitExtents, ReduceSplitExtentsLaunch, hypercube_reduce_kernel,
+    ReduceSplitExtents, ReduceSplitExtentsLaunch, hypercube_reduce_kernel,
     hypercube_reduce_with_indices_kernel,
 };
 use crate::kernels::routines::cube::slot_bytes;
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
-    reduce_widths,
+    BATCH, PARTIALS, REDUCED, ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint,
+    ReduceRoutineProblem, ReduceTensors, reduce_widths,
 };
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
@@ -23,8 +23,6 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, CubeResources, Grid, Routine};
 /// Every row split into parts along the reduced dim, a cube a part, which reduces it as the cube
 /// routine reduces a row; the last of a row's cubes to finish merges the parts: few rows, too long
 /// for one cube each to keep the device busy, as a sampler's argmax over a vocabulary.
-///
-/// Its cubes run along the reduced dim and at most two row dims; it declines more row dims.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HypercubeReduceRoutine;
 
@@ -49,42 +47,14 @@ impl core::fmt::Display for HypercubeReduceRoutineSettings {
 
 pub type HypercubeReduceRoutineBlueprint = ReduceRoutineBlueprint<HypercubeReduceMicrokernel>;
 
-impl ReduceSplit {
-    /// Where the cubes of `problem`'s hypercube sit.
-    pub fn new(problem: &ReduceRoutineProblem) -> Self {
-        Self {
-            reduced: problem.reduced(),
-            rows: problem.rows(),
-        }
-    }
-}
-
 impl ReduceSplitExtents {
-    /// The extents of `problem` split by `partitioning`, its owners `width` rows across the
-    /// reduced dim.
-    pub fn new(problem: &ReduceRoutineProblem, partitioning: &Partitioning, width: usize) -> Self {
-        let part = partitioning
-            .box_of(ComputeScope::Cube)
-            .extent(problem.reduced());
-        let inner_boxes = problem
-            .row_boxes(width)
-            .last()
-            .map_or(1, |&(_, boxes)| boxes);
+    /// The extents of `problem` split by `partitioning`.
+    pub fn new(problem: &ReduceRoutineProblem, partitioning: &Partitioning) -> Self {
+        let part = partitioning.box_of(ComputeScope::Cube).extent(REDUCED);
         Self {
             parts: to_u32(problem.reduced_extent().div_ceil(part)),
             values: to_u32(problem.reduced_extent()),
-            inner_boxes: to_u32(inner_boxes),
         }
-    }
-
-    /// Boxes of rows of `problem`, its owners `width` rows across the reduced dim: each its cubes'
-    /// counter.
-    pub fn row_boxes(problem: &ReduceRoutineProblem, width: usize) -> usize {
-        problem
-            .row_boxes(width)
-            .iter()
-            .map(|&(_, boxes)| boxes)
-            .product()
     }
 }
 
@@ -102,9 +72,6 @@ fn partial_extent(problem: &ReduceRoutineProblem, part: usize, width: usize) -> 
         ReduceLayout::Across => cells,
     }
 }
-
-/// Most row dims a hypercube's cubes run along, beside the reduced dim: a launch grid has three.
-const MAX_ROW_DIMS: usize = 2;
 
 impl Routine for HypercubeReduceRoutine {
     type Problem = ReduceRoutineProblem;
@@ -144,11 +111,6 @@ impl Routine for HypercubeReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        if problem.rows().len() > MAX_ROW_DIMS {
-            return Err(Refusal::Declined {
-                why: "the hypercube reduce runs its cubes along at most two row dims",
-            });
-        }
         // The last cube merges a row's top-k lists one after another, `k` inserts a part, so the
         // shorter parts cost more in the merge than their extra cubes save.
         if matches!(
@@ -173,13 +135,11 @@ impl Routine for HypercubeReduceRoutine {
                 ReduceLayout::Along => widths[0],
                 ReduceLayout::Across => 1,
             };
-        let reduced = problem.reduced();
-        let owner = [problem.owner_box(widths[0]).as_slice(), &[(reduced, part)]].concat();
-        // The parts ride the grid's `X`, the boxes of rows its `Y` and `Z`.
-        let cube_axes = [&[reduced], problem.rows().as_slice()].concat();
+        let owner = [problem.owner_box(widths[0]).as_slice(), &[(REDUCED, part)]].concat();
+        // The parts ride the grid's `X`, the boxes of rows the rest.
         let partitioning = Partitioning::new(
             problem.split_space(partial_extent(problem, part, widths[0])),
-            Levels::leaf(&owner).cubes(&cube_axes).build(),
+            Levels::leaf(&owner).cubes(&[REDUCED, BATCH]).build(),
         );
         let cube = CubeResources {
             plane_width: units as u32,
@@ -216,10 +176,10 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
         let problem = tensors.problem();
         let elements = problem.elements;
         let client = tensors.client();
-        let extents = ReduceSplitExtents::new(problem, &blueprint.partitioning, blueprint.width);
+        let extents = ReduceSplitExtents::new(problem, &blueprint.partitioning);
         // A box of rows' partials lie where its output does, the reduced dim's cells holding
         // every part's carrier; the counters, one a box of rows, hold zero.
-        let partial_extent = blueprint.partitioning.space().extent(problem.partials());
+        let partial_extent = blueprint.partitioning.space().extent(PARTIALS);
         let partial_shape: Vec<usize> = (0..problem.shape.len())
             .map(|d| match d == problem.axis {
                 true => partial_extent,
@@ -229,13 +189,13 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
         let counter = ElemType::UInt(UIntKind::U32);
         let partials = TensorHandle::zeros(client, partial_shape.clone(), elements.accumulator);
         let partial_indices = TensorHandle::zeros(client, partial_shape, counter);
-        let row_boxes = ReduceSplitExtents::row_boxes(problem, blueprint.width);
-        let arrivals = TensorHandle::zeros(client, [row_boxes], counter);
+        let arrivals = TensorHandle::zeros(client, [problem.row_boxes(blueprint.width)], counter);
         let bind_partials = |handle: TensorHandle, element| {
+            let (partials, axes) = problem.labelled(handle.binding(), PARTIALS);
             binding
                 .launcher
-                .arg(handle.binding(), element)
-                .axes(&problem.partial_axes())
+                .arg(partials, element)
+                .axes(&axes)
                 .vectorize(blueprint.width)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)
@@ -263,12 +223,7 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
                     partial_indices.arg(),
                     arrivals,
                     binding.launcher.partitioning_arg(),
-                    ReduceSplitExtentsLaunch::new(
-                        extents.parts,
-                        extents.values,
-                        extents.inner_boxes,
-                    ),
-                    ReduceSplit::new(problem),
+                    ReduceSplitExtentsLaunch::new(extents.parts, extents.values),
                     blueprint.microkernel,
                     [elements.input, elements.accumulator, elements.out, index],
                 )
@@ -285,12 +240,7 @@ impl ReduceRoutine<HypercubeReduceMicrokernel> for HypercubeReduceRoutine {
                     partial_indices.arg(),
                     arrivals,
                     binding.launcher.partitioning_arg(),
-                    ReduceSplitExtentsLaunch::new(
-                        extents.parts,
-                        extents.values,
-                        extents.inner_boxes,
-                    ),
-                    ReduceSplit::new(problem),
+                    ReduceSplitExtentsLaunch::new(extents.parts, extents.values),
                     blueprint.microkernel,
                     [elements.input, elements.accumulator, elements.out],
                 )

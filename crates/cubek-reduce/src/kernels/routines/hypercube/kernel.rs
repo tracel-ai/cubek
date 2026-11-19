@@ -1,18 +1,11 @@
+use crate::kernels::{BATCH, REDUCED};
 use cubecl::ir::ElemType;
-use cubecl::tile::{Axis, Partitioning, Region, TileTensor};
+use cubecl::tile::{Partitioning, Region, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::ReduceLayout;
 use cubek_microkernel::reduce::hypercube::{
     HypercubeReduceMicrokernel, hypercube_reduce_microkernel,
 };
-
-/// Where a hypercube's cubes sit, compiled into its kernel: the reduced axis cut into parts, a cube
-/// a part, and the row axes, at most two, outermost first, that its boxes of rows lie along.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ReduceSplit {
-    pub reduced: Axis,
-    pub rows: Vec<Axis>,
-}
 
 /// The extents a hypercube launch is handed at run time, which its kernel does not compile.
 #[derive(CubeType, CubeLaunch, Debug, Clone, Copy)]
@@ -21,12 +14,10 @@ pub struct ReduceSplitExtents {
     pub parts: u32,
     /// Values a row holds, which a mean divides by.
     pub values: u32,
-    /// Boxes of rows along the inner row axis, where there are two.
-    pub inner_boxes: u32,
 }
 
 /// Where `cube` sits along its row: its box of rows' counter, its part, and its part's first line
-/// in the row.
+/// in the row. A box of rows' cubes share its [`BATCH`] coordinate, which counts them in.
 #[derive(CubeType)]
 struct SplitPlace {
     counter: usize,
@@ -35,28 +26,15 @@ struct SplitPlace {
 }
 
 #[cube]
-fn split_place<N: Size>(
-    cube: &Region,
-    extents: &ReduceSplitExtents,
-    #[comptime] split: ReduceSplit,
-    #[comptime] layout: ReduceLayout,
-) -> SplitPlace {
-    let counter = match split.rows.len() {
-        0 => 0usize,
-        1 => cube.coord(comptime!(split.rows[0])),
-        _ => {
-            cube.coord(comptime!(split.rows[0])) * extents.inner_boxes as usize
-                + cube.coord(comptime!(split.rows[1]))
-        }
-    };
+fn split_place<N: Size>(cube: &Region, #[comptime] layout: ReduceLayout) -> SplitPlace {
     let first_line = match layout {
         // Along, a line holds `N` values of the row.
-        ReduceLayout::Along => cube.origin(split.reduced) / N::value(),
-        ReduceLayout::Across => cube.origin(split.reduced),
+        ReduceLayout::Along => cube.origin(REDUCED) / N::value(),
+        ReduceLayout::Across => cube.origin(REDUCED),
     };
     SplitPlace {
-        counter,
-        part: cube.coord(split.reduced),
+        counter: cube.coord(BATCH),
+        part: cube.coord(REDUCED),
         first_line,
     }
 }
@@ -72,7 +50,6 @@ pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     extents: ReduceSplitExtents,
-    #[comptime] split: ReduceSplit,
     #[comptime] microkernel: HypercubeReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
@@ -81,7 +58,7 @@ pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>
     let p = partials.tile(&partitioning);
     let pi = partial_indices.tile(&partitioning);
     for cube in &partitioning {
-        let place = split_place::<N>(&cube, &extents, split.clone(), microkernel.item.layout);
+        let place = split_place::<N>(&cube, microkernel.item.layout);
         let mut rows_out = o.at(&cube);
         // One output: the indices are never written, so they get the output's own window.
         let mut unwritten = o.at(&cube);
@@ -123,7 +100,6 @@ pub fn hypercube_reduce_with_indices_kernel<
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     extents: ReduceSplitExtents,
-    #[comptime] split: ReduceSplit,
     #[comptime] microkernel: HypercubeReduceMicrokernel,
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
@@ -133,7 +109,7 @@ pub fn hypercube_reduce_with_indices_kernel<
     let p = partials.tile(&partitioning);
     let pi = partial_indices.tile(&partitioning);
     for cube in &partitioning {
-        let place = split_place::<N>(&cube, &extents, split.clone(), microkernel.item.layout);
+        let place = split_place::<N>(&cube, microkernel.item.layout);
         let mut rows_out = o.at(&cube);
         let mut rows_indices = i.at(&cube);
         let rows = x.at(&cube);

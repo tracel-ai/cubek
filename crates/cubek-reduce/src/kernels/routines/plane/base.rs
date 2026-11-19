@@ -1,7 +1,7 @@
 use super::kernel::{plane_reduce_kernel, plane_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
-    reduce_widths,
+    BATCH, ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem,
+    ReduceTensors, reduce_widths,
 };
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
@@ -73,16 +73,12 @@ impl Routine for PlaneReduceRoutine {
         let mut vectorization = Vectorization::new();
         microkernel.vectorize(&(), &mut vectorization);
         let widths = reduce_widths(hw, problem, vectorization);
-        let owners = problem.owner_axes();
-        let innermost = *owners
-            .last()
-            .expect("a problem places its owners along an axis");
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box(widths[0]))
                 .launch_planes(
-                    &owners,
-                    PlaneOrder::new(&[(innermost, settings.planes)], CubeOrder::RowMajor),
+                    &[BATCH],
+                    PlaneOrder::new(&[(BATCH, settings.planes)], CubeOrder::RowMajor),
                 )
                 .build(),
         );
