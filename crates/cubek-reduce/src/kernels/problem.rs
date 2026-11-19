@@ -339,6 +339,33 @@ impl ReduceRoutineProblem {
         Space::new(&dimensions)
     }
 
+    /// The values of a row one cube of `units` units reduces when the row is split across cubes,
+    /// each unit `unit_lines` lines of `width` values: along, a line holds `width` values of the
+    /// row; across, one.
+    pub(crate) fn split_part(&self, units: usize, unit_lines: usize, width: usize) -> usize {
+        let values_a_line = match self.layout() {
+            ReduceLayout::Along => width,
+            ReduceLayout::Across => 1,
+        };
+        units * unit_lines * values_a_line
+    }
+
+    /// The box a cube owns where a row is split across cubes: the owner's box at `width`, `part`
+    /// values long along the reduced dim.
+    pub(crate) fn split_owner_box(&self, width: usize, part: usize) -> Vec<(Dimension, usize)> {
+        [
+            self.owner_box_at_width(width).as_slice(),
+            &[(self.reduced(), part)],
+        ]
+        .concat()
+    }
+
+    /// The dims a split row's cubes run along: the reduced dim first, on the grid's `X`, then the
+    /// row dims on its `Y` and `Z`.
+    pub(crate) fn split_cube_dimensions(&self) -> Vec<Dimension> {
+        [&[self.reduced()], self.rows().as_slice()].concat()
+    }
+
     /// The box an owner holds: one row, or `width` rows side by side across the reduced axis, and
     /// the cells it writes. It leaves the reduced axis to the space, so every owner spans its rows
     /// whole.

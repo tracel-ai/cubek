@@ -78,7 +78,7 @@ impl Routine for CubeStagedReduceRoutine {
                 .build(),
         );
         let cube = CubeResources {
-            plane_width: (microkernel.lanes() * microkernel.planes()) as u32,
+            plane_width: microkernel.units() as u32,
             shared_memory: microkernel.shared_memory_bytes_at_width(widths[0]),
         };
         let grid = Grid::new(hw, &partitioning, cube)?;

@@ -108,22 +108,10 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
             &settings.microkernel,
         )?;
         let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
-        let units = microkernel.part().lanes() * microkernel.part().planes();
-        // Along, a line holds `width` values of the row; across, one.
-        let part = units
-            * settings.unit_lines
-            * match problem.layout() {
-                ReduceLayout::Along => widths[0],
-                ReduceLayout::Across => 1,
-            };
-        let reduced = problem.reduced();
-        let owner = [
-            problem.owner_box_at_width(widths[0]).as_slice(),
-            &[(reduced, part)],
-        ]
-        .concat();
-        // The parts ride the grid's `X`, the boxes of rows its `Y` and `Z`.
-        let cube_dimensions = [&[reduced], problem.rows().as_slice()].concat();
+        let units = microkernel.part().units();
+        let part = problem.split_part(units, settings.unit_lines, widths[0]);
+        let owner = problem.split_owner_box(widths[0], part);
+        let cube_dimensions = problem.split_cube_dimensions();
         let partitioning = Partitioning::new(
             problem.split_space_with_partial_extent(partial_extent(problem, part, widths[0])),
             Levels::leaf(&owner).cubes(&cube_dimensions).build(),

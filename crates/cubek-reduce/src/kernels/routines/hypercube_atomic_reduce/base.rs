@@ -15,7 +15,7 @@ use cubecl::tile::{Geometry, Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::cube::{
     CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings,
 };
-use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand, ReduceOperation};
+use cubek_microkernel::reduce::{ReduceOperand, ReduceOperation};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -108,22 +108,10 @@ impl Routine for HypercubeAtomicReduceRoutine {
         let microkernel =
             CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
-        let units = microkernel.lanes() * microkernel.planes();
-        // Along, a line holds `width` values of the row; across, one.
-        let part = units
-            * settings.unit_lines
-            * match problem.layout() {
-                ReduceLayout::Along => widths[0],
-                ReduceLayout::Across => 1,
-            };
-        let reduced = problem.reduced();
-        let owner = [
-            problem.owner_box_at_width(widths[0]).as_slice(),
-            &[(reduced, part)],
-        ]
-        .concat();
-        // The parts ride the grid's `X`, the boxes of rows its `Y` and `Z`.
-        let cube_axes = [&[reduced], problem.rows().as_slice()].concat();
+        let units = microkernel.units();
+        let part = problem.split_part(units, settings.unit_lines, widths[0]);
+        let owner = problem.split_owner_box(widths[0], part);
+        let cube_axes = problem.split_cube_dimensions();
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&owner).cubes(&cube_axes).build(),

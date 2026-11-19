@@ -52,6 +52,11 @@ impl CubeStagedReduceMicrokernel {
         self.planes
     }
 
+    /// The units of its cube: its planes, each `lanes` wide.
+    pub fn units(&self) -> usize {
+        self.lanes * self.planes
+    }
+
     /// The widest line its carrier keeps apart at its lane slots, where the carrier bounds it.
     pub fn widest_line(&self) -> Option<usize> {
         self.item
