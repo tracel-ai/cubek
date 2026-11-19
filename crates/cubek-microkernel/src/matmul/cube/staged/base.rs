@@ -200,9 +200,12 @@ impl CubeStagedMicrokernel {
         item: &MatmulWorkItem,
         settings: &CubeStagedMicrokernelSettings,
     ) -> Vec<Self> {
+        // A stage read as stored is one step of the instruction: deeper ones are the decoding
+        // planes' alone.
+        let one_step = settings.stage_steps.get() == 1;
         let mut candidates: Vec<Self> = match item.as_stored() {
-            Some(stored) => Self::as_stored_candidates(hw, &stored, settings),
-            None => Vec::new(),
+            Some(stored) if one_step => Self::as_stored_candidates(hw, &stored, settings),
+            _ => Vec::new(),
         };
         candidates.extend(Self::decoding_candidates(hw, item, settings));
         candidates
@@ -212,9 +215,10 @@ impl CubeStagedMicrokernel {
     /// float product's plane microkernels on the decoded stages, the tile layer's instruction
     /// first, one for each matrix instruction under which a step of `K`, the stage, is
     /// whole scale blocks, each a whole number of the instruction's steps. A plane holds the
-    /// settings' steps of `M` and `N` and walks a step of `K` through each stage, block by block,
-    /// in the instruction's calls ([`MatmulStep::calls`]). The units filling
-    /// each stage decode every packed input into [`MatmulWorkItem::decoded_element`].
+    /// settings' steps of `M` and `N` and walks the settings' steps of `K` through each stage
+    /// ([`CubeStagedMicrokernelSettings::stage_steps`]), block by block, in the instruction's
+    /// calls ([`MatmulStep::calls`]). The units filling each stage decode every packed input into
+    /// [`MatmulWorkItem::decoded_element`].
     fn decoding_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -257,7 +261,9 @@ impl CubeStagedMicrokernel {
                     },
                     ..plane
                 };
-                let depth = CubeStagedDepth::ScaleBlocks(NonZeroUsize::new(blocks)?);
+                let depth = CubeStagedDepth::ScaleBlocks(
+                    NonZeroUsize::new(blocks)?.checked_mul(settings.stage_steps)?,
+                );
                 Some(Self::new(settings, plane, depth, item.decoding_reads()))
             })
             .collect()
@@ -688,6 +694,8 @@ impl Microkernel for CubeStagedMicrokernel {
             .is_some_and(|space| space.packings.rhs.is_some_and(|p| p.reads_scale_bytes()));
         let candidates: Vec<Self> = match item.blocks {
             _ if settings.by_block && !rhs_read_by_block => Vec::new(),
+            // A float stage is its planes' step: deeper stages hold a packed input's blocks.
+            None if settings.stage_steps.get() > 1 => Vec::new(),
             None => Self::as_stored_candidates(hw, item, settings),
             Some(_) => Self::candidates_in_blocks(hw, item, settings),
         };

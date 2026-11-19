@@ -31,6 +31,11 @@ pub struct CubeStagedMicrokernelSettings {
     /// scales' blocks, so each stage holds as many times fewer values: MXFP4's 32-wide blocks
     /// stage 32 of `K` a step rather than 128.
     pub by_block: bool,
+    /// Steps of `K` one stage holds against a packed input its units decode: one where a step is
+    /// a word of scales' blocks, more where it is a block read alone
+    /// ([`by_block`](Self::by_block)). Two MXFP4 blocks read alone stage 64 of `K`, as one word
+    /// of NVFP4's scales does, where one would hold half the stage between two barriers.
+    pub stage_steps: NonZeroUsize,
 }
 
 impl CubeStagedMicrokernelSettings {
@@ -43,6 +48,7 @@ impl CubeStagedMicrokernelSettings {
         ring: StageRing::SINGLE,
         stage_layout: Self::SWIZZLED,
         by_block: false,
+        stage_steps: NonZeroUsize::MIN,
     };
 
     /// The layout a stage takes where a table names none: tiles of the instruction, their rows'
@@ -92,6 +98,7 @@ impl CubeStagedMicrokernelSettings {
             ring,
             stage_layout: Self::SWIZZLED,
             by_block: false,
+            stage_steps: NonZeroUsize::MIN,
         }
     }
 
@@ -121,6 +128,7 @@ impl CubeStagedMicrokernelSettings {
             ring,
             stage_layout: Self::SWIZZLED,
             by_block: false,
+            stage_steps: NonZeroUsize::MIN,
         }
     }
 
@@ -166,6 +174,18 @@ impl CubeStagedMicrokernelSettings {
         }
     }
 
+    /// These settings with each stage holding `steps` steps of `K` against a packed input.
+    ///
+    /// # Panics
+    ///
+    /// On a count of zero.
+    pub const fn stage_steps(self, steps: usize) -> Self {
+        Self {
+            stage_steps: NonZeroUsize::new(steps).unwrap(),
+            ..self
+        }
+    }
+
     /// These settings holding their stages in `ring`.
     pub const fn ringed(self, ring: StageRing) -> Self {
         Self { ring, ..self }
@@ -186,8 +206,9 @@ impl CubeStagedMicrokernelSettings {
     }
 }
 
-/// Nothing for one plane along `K`, a one-fragment scratch, the swizzled stage layout or a read a
-/// word of scales at a time, so the settings that hold them keep their names.
+/// Nothing for one plane along `K`, a one-fragment scratch, the swizzled stage layout, a read a
+/// word of scales at a time or a stage of one step, so the settings that hold them keep their
+/// names.
 impl core::fmt::Display for CubeStagedMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} {}", self.plane, self.planes)?;
@@ -203,6 +224,9 @@ impl core::fmt::Display for CubeStagedMicrokernelSettings {
         }
         if self.by_block {
             write!(f, " by_block")?;
+        }
+        if self.stage_steps.get() > 1 {
+            write!(f, " stage_steps={}", self.stage_steps)?;
         }
         Ok(())
     }

@@ -647,9 +647,9 @@ impl Packing {
 
     /// Whether its block scales are one byte each, `ue4m3` or `ue8m0`.
     fn scales_are_bytes(&self) -> bool {
-        self.scheme.block_scale().is_some_and(|block| {
-            matches!(block.dtype, ScaleDtype::UE4M3 | ScaleDtype::UE8M0)
-        })
+        self.scheme
+            .block_scale()
+            .is_some_and(|block| matches!(block.dtype, ScaleDtype::UE4M3 | ScaleDtype::UE8M0))
     }
 
     /// Bits one value holds, packed.

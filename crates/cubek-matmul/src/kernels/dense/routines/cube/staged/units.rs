@@ -123,8 +123,9 @@ impl CubeStagedMatmulRoutine {
 
     /// The settings a product against a packed input races on `hw`: the lead, the boxes several
     /// steps tall the float routine races, one stage at a time and with a second in flight, each
-    /// reading the rhs a word of scales at a time and a scale block at a time
-    /// ([`by_block`](CubeStagedMicrokernelSettings::by_block)), then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
+    /// reading the rhs a word of scales at a time, and a scale block at a time two steps a stage
+    /// ([`by_block`](CubeStagedMicrokernelSettings::by_block),
+    /// [`stage_steps`](CubeStagedMicrokernelSettings::stage_steps)), then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
     /// a device without a copy engine, the boxes staged as stored (`STORED`). Planes splitting
     /// `K` only on a device whose shared memory takes the atomic `f32` add they merge through:
     /// elsewhere they would only be tried and declined. Its cubes in the grid's order.
@@ -134,10 +135,12 @@ impl CubeStagedMatmulRoutine {
     /// third once the projection's residual add is fused into its store, which its fragments
     /// drain into cell by cell.
     ///
-    /// Read by block, a step of `K` is one scale block deep rather than a word of scales' blocks,
-    /// which a stage of the same box holds in as many times less shared memory: on an RTX PRO
-    /// 6000, MXFP4's word of four 32-wide blocks staged 128 of `K` a step, and the boxes with a
-    /// second stage in flight that lead NVFP4 outgrew the device's shared memory.
+    /// Read by block, a step of `K` is one scale block deep rather than a word of scales' blocks.
+    /// On an RTX PRO 6000, MXFP4's word of four 32-wide blocks staged 128 of `K` a step, and the
+    /// boxes with a second stage in flight that lead NVFP4 outgrew the device's shared memory;
+    /// read by block two steps a stage, MXFP4 stages 64 of `K` as NVFP4 does, and its down
+    /// projection of a 27B model at 512 rows ran as fast as NVFP4's (672 against 674 µs), where a
+    /// stage of one block lost a fifth to the barriers between twice as many stages.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
         let boxed = [StageRing::SINGLE, StageRing::DOUBLE]
             .into_iter()
@@ -146,7 +149,7 @@ impl CubeStagedMatmulRoutine {
                     CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
                 })
             })
-            .flat_map(|settings| [settings, settings.by_block()]);
+            .flat_map(|settings| [settings, settings.by_block().stage_steps(2)]);
         let one_step = self
             .packed_one_step_settings()
             .into_iter()

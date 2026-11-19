@@ -1671,7 +1671,7 @@ mod base {
     /// An MXFP4 weight read a scale block at a time stages one 32-wide block of `K` a step, where
     /// read a word of scales at a time it stages the word's four: on an RTX PRO 6000 the box with
     /// a second stage in flight that leads NVFP4 at a prompt's rows outgrows shared memory read
-    /// by the word, and fits read by block.
+    /// by the word, and fits read by block, two steps a stage holding 64 of `K` as NVFP4's does.
     #[test]
     fn an_mxfp4_weight_read_by_block_stages_one_block_a_step() {
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
@@ -1717,7 +1717,7 @@ mod base {
         assert_eq!(depth(single), blocks(4));
         assert_eq!(depth(single.by_block()), blocks(1));
         assert!(depth(double).is_err(), "two stages of four blocks fit");
-        assert_eq!(depth(double.by_block()), blocks(1));
+        assert_eq!(depth(double.by_block().stage_steps(2)), blocks(2));
     }
 
     /// Against an NVFP4 weight the units decode into its stages, the setting that hands the float
