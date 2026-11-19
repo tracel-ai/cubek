@@ -1,6 +1,7 @@
 //! The problem a routine computes.
 
 use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
+use cubecl::prelude::TensorBinding;
 use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::BoundaryPolicy;
 use cubecl::tile::layout::ElemAlignment;
@@ -149,11 +150,55 @@ impl ReduceRoutineProblem {
         }
     }
 
-    /// This problem with the indices of its values written beside them in `element`, to a buffer
-    /// of `indices`' geometry: a line runs along the innermost axis only where that buffer steps
-    /// one element along it too.
-    pub(crate) fn writing_indices(mut self, element: ElemType, indices: &Geometry) -> Self {
-        self.contiguous = self.contiguous.filter(|&inner| steps_one(indices, inner));
+    /// The problem `out = operation(input)` along axis `axis` states, both read where they lie.
+    ///
+    /// # Panics
+    ///
+    /// As [`stated`](Self::stated).
+    pub(crate) fn of_buffers(
+        input: &TensorBinding,
+        out: &TensorBinding,
+        axis: usize,
+        operation: ReduceOperation,
+        elements: ReduceElements,
+    ) -> Self {
+        Self::stated(
+            &Geometry::from(input),
+            &Geometry::from(out),
+            axis,
+            operation,
+            elements,
+        )
+    }
+
+    /// The problem `out = operation(input)` along axis `axis` states, the input bound by the caller
+    /// and read at exactly `width`.
+    ///
+    /// # Panics
+    ///
+    /// As [`stated`](Self::stated).
+    pub(crate) fn of_unbound(
+        input: &Geometry,
+        width: usize,
+        out: &TensorBinding,
+        axis: usize,
+        operation: ReduceOperation,
+        elements: ReduceElements,
+    ) -> Self {
+        let stated = Self::stated(input, &Geometry::from(out), axis, operation, elements);
+        let [_, out_alignment] = stated.elem_alignments;
+        Self {
+            elem_alignments: [ElemAlignment::stored_piece(width), out_alignment],
+            ..stated
+        }
+    }
+
+    /// This problem with the indices of its values written beside them in `element`, to
+    /// `indices`: a line runs along the innermost axis only where that buffer steps one element
+    /// along it too.
+    pub(crate) fn writing_indices(mut self, element: ElemType, indices: &TensorBinding) -> Self {
+        let indices = Geometry::from(indices);
+        self.contiguous = self.contiguous.filter(|&inner| steps_one(&indices, inner));
         self.indices = Some(ReduceIndices {
             element,
             elem_alignment: ElemAlignment::new(indices.shape(), indices.strides()),

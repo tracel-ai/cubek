@@ -5,7 +5,6 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Bound, Decline, Unbound};
-use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Geometry, Launcher};
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
@@ -67,13 +66,7 @@ impl ReduceTensors<TensorBinding> {
         operation: ReduceOperation,
         elements: ReduceElements,
     ) -> Self {
-        let problem = ReduceRoutineProblem::stated(
-            &Geometry::from(&input),
-            &Geometry::from(&out),
-            axis,
-            operation,
-            elements,
-        );
+        let problem = ReduceRoutineProblem::of_buffers(&input, &out, axis, operation, elements);
         Self {
             client: client.clone(),
             input,
@@ -114,9 +107,7 @@ impl ReduceTensors<TensorBinding> {
             "the indices have the values' shape"
         );
         let mut tensors = Self::new(client, input, values, axis, operation, elements);
-        tensors.problem = tensors
-            .problem
-            .writing_indices(index_element, &Geometry::from(&indices));
+        tensors.problem = tensors.problem.writing_indices(index_element, &indices);
         tensors.indices = Some(indices);
         tensors
     }
@@ -155,9 +146,8 @@ impl ReduceTensors<Geometry> {
         operation: ReduceOperation,
         elements: ReduceElements,
     ) -> Self {
-        let mut problem =
-            ReduceRoutineProblem::stated(&input, &Geometry::from(&out), axis, operation, elements);
-        problem.elem_alignments[0] = ElemAlignment::stored_piece(width);
+        let problem =
+            ReduceRoutineProblem::of_unbound(&input, width, &out, axis, operation, elements);
         Self {
             client: client.clone(),
             input,
