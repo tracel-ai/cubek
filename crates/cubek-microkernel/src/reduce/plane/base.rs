@@ -140,3 +140,37 @@ impl Microkernel for PlaneShuffleReduceMicrokernel {
         estimate.work = Some(self.item.unit_work());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reduce::ReduceOperation;
+    use cubek_std::devices;
+
+    /// A candidate's lanes are the plane width the device commits to.
+    #[test]
+    fn its_lanes_are_the_devices_plane_width() {
+        let hw = devices::m2_pro();
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let settings = PlaneShuffleReduceMicrokernel::settings(&hw)[0];
+        let plane = PlaneShuffleReduceMicrokernel::best(&hw, &item, &settings)
+            .expect("an M2 Pro commits to a plane width");
+        assert_eq!(
+            plane.lanes() as u32,
+            hw.plane_dim().expect("a committed width")
+        );
+    }
+
+    /// Only a top-k bounds the line.
+    #[test]
+    fn its_widest_line_is_its_carriers() {
+        const LANES: usize = 32;
+        const LANE_SLOTS: usize = 32;
+        let sum = PlaneShuffleReduceMicrokernel::new(
+            ReduceWorkItem::along_f32(ReduceOperation::Sum),
+            LANES,
+            LANE_SLOTS,
+        );
+        assert_eq!(sum.widest_line(), None);
+    }
+}

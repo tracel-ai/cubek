@@ -76,6 +76,22 @@ impl ReduceWorkItem {
 }
 
 #[cfg(test)]
+impl ReduceWorkItem {
+    /// `operation` on f32 values, its lines along the row and no indices beside them: what a
+    /// microkernel's Small Tests reduce.
+    pub(crate) fn along_f32(operation: ReduceOperation) -> Self {
+        let f32 = ElemType::Float(cubecl::ir::FloatKind::F32);
+        Self {
+            operation,
+            input: f32,
+            accumulator: f32,
+            layout: ReduceLayout::Along,
+            with_indices: false,
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use cubecl::ir::FloatKind;

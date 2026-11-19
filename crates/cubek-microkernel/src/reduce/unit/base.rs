@@ -122,3 +122,37 @@ impl Microkernel for UnitDirectReduceMicrokernel {
         estimate.work = Some(self.item.unit_work());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reduce::{ReduceOperation, TOP_K_LANE_SLOTS};
+    use cubek_std::devices;
+
+    /// Only a top-k bounds the line, to its lane slots spread over `k`.
+    #[test]
+    fn its_widest_line_is_its_carriers() {
+        const LANE_SLOTS: usize = 32;
+        const K: usize = 4;
+        let sum = UnitDirectReduceMicrokernel::new(
+            ReduceWorkItem::along_f32(ReduceOperation::Sum),
+            LANE_SLOTS,
+        );
+        let top_k = UnitDirectReduceMicrokernel::new(
+            ReduceWorkItem::along_f32(ReduceOperation::TopK { k: K }),
+            LANE_SLOTS,
+        );
+        assert_eq!(sum.widest_line(), None);
+        assert_eq!(top_k.widest_line(), Some(LANE_SLOTS / K));
+    }
+
+    /// One setting a lane-slot count, and a candidate on a device lacking every feature.
+    #[test]
+    fn it_runs_on_a_device_lacking_every_feature() {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        let settings = UnitDirectReduceMicrokernel::settings(&hw);
+        assert_eq!(settings.len(), TOP_K_LANE_SLOTS.len());
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        assert!(UnitDirectReduceMicrokernel::best(&hw, &item, &settings[0]).is_ok());
+    }
+}

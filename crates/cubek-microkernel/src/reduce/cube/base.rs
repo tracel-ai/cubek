@@ -211,24 +211,15 @@ impl Microkernel for CubeStagedReduceMicrokernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reduce::ReduceOperation;
     use crate::reduce::plane::{
         PlaneShuffleReduceMicrokernel, PlaneShuffleReduceMicrokernelSettings,
     };
     use crate::reduce::unit::{UnitDirectReduceMicrokernel, UnitDirectReduceMicrokernelSettings};
-    use crate::reduce::{ReduceLayout, ReduceOperation};
-    use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
 
-    const F32: ElemType = ElemType::Float(FloatKind::F32);
-
     fn item() -> ReduceWorkItem {
-        ReduceWorkItem {
-            operation: ReduceOperation::ArgMax,
-            input: F32,
-            accumulator: F32,
-            layout: ReduceLayout::Along,
-            with_indices: false,
-        }
+        ReduceWorkItem::along_f32(ReduceOperation::ArgMax)
     }
 
     /// The unit runs everywhere; the plane and the cube only where the device commits to a plane
@@ -285,5 +276,36 @@ mod tests {
             lane_slots: TOP_K_LANE_SLOTS[0],
         };
         assert!(CubeStagedReduceMicrokernel::best(&hw, &item(), &settings).is_err());
+    }
+
+    /// A cube's units are its planes' lanes, and its shared memory a carrier's slot a plane.
+    #[test]
+    fn a_cube_holds_a_slot_a_plane() {
+        const LANES: usize = 32;
+        const PLANES: usize = 4;
+        const LANE_SLOTS: usize = 32;
+        const WIDTH: usize = 4;
+        let item = ReduceWorkItem::along_f32(ReduceOperation::ArgMax);
+        let cube = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
+        assert_eq!(cube.units(), LANES * PLANES);
+        let slot = item
+            .operation
+            .carrier()
+            .bytes(WIDTH, item.accumulator.size());
+        assert_eq!(cube.shared_memory_bytes_at_width(WIDTH), PLANES * slot);
+    }
+
+    /// Its settings are each plane count with each lane-slot count, the planes outermost.
+    #[test]
+    fn its_settings_cross_planes_with_lane_slots() {
+        let settings = CubeStagedReduceMicrokernel::settings(&devices::m2_pro());
+        assert_eq!(
+            settings.len(),
+            CubeStagedReduceMicrokernelSettings::PLANES.len() * TOP_K_LANE_SLOTS.len()
+        );
+        assert_eq!(
+            settings[0].planes,
+            CubeStagedReduceMicrokernelSettings::PLANES[0]
+        );
     }
 }

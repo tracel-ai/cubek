@@ -62,3 +62,17 @@ impl Microkernel for UnitDirectZeroMicrokernel {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubek_std::devices;
+
+    /// It runs on a device lacking every feature.
+    #[test]
+    fn it_runs_on_a_device_lacking_every_feature() {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        let settings = UnitDirectZeroMicrokernel::settings(&hw)[0];
+        assert!(UnitDirectZeroMicrokernel::best(&hw, &(), &settings).is_ok());
+    }
+}

@@ -140,3 +140,38 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reduce::cube::CubeStagedReduceMicrokernel;
+    use crate::reduce::{ReduceOperation, ReduceWorkItem};
+    use cubek_std::devices;
+
+    /// A hypercube's cube holds its part's shared memory and one arrival slot beside it.
+    #[test]
+    fn a_cube_holds_its_parts_memory_and_an_arrival_slot() {
+        const LANES: usize = 32;
+        const PLANES: usize = 4;
+        const LANE_SLOTS: usize = 32;
+        const WIDTH: usize = 4;
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let part = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
+        let hypercube = HypercubeLastArrivalReduceMicrokernel::new(part);
+        assert_eq!(
+            hypercube.shared_memory_bytes_at_width(WIDTH),
+            part.shared_memory_bytes_at_width(WIDTH) + size_of::<u32>()
+        );
+        assert_eq!(hypercube.widest_line(), part.widest_line());
+    }
+
+    /// Its cubes meet through device memory, so without device memory scope it has no candidate.
+    #[test]
+    fn it_needs_device_memory_scope() {
+        let mut hw = devices::m2_pro();
+        devices::features(&mut hw).device_memory_scope = false;
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let settings = HypercubeLastArrivalReduceMicrokernel::settings(&hw)[0];
+        assert!(HypercubeLastArrivalReduceMicrokernel::best(&hw, &item, &settings).is_err());
+    }
+}
