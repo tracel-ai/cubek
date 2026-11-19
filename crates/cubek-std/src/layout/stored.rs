@@ -628,9 +628,9 @@ pub struct Packing {
 
 impl Packing {
     /// This packing read a scale block at a time: a unit loads one block of values and its one
-    /// scale. Only `ue4m3` block scales are read so, each a byte a unit loads alone, in rows or in
-    /// tile order; any other scale's word is read whole. `None` where the scheme or the operand
-    /// reads no block whole.
+    /// scale. Only one-byte block scales, `ue4m3` and `ue8m0`, are read so, each a byte a unit
+    /// loads alone, in rows or in tile order; any other scale's word is read whole. `None` where
+    /// the scheme or the operand reads no block whole.
     pub fn by_block(&self) -> Option<Packing> {
         Some(Packing {
             operand: self.operand.by_block()?,
@@ -639,17 +639,17 @@ impl Packing {
         .filter(Packing::scales_are_bytes)
     }
 
-    /// Whether its reads take each `ue4m3` scale byte alone, as [`by_block`](Self::by_block)
+    /// Whether its reads take each one-byte scale alone, as [`by_block`](Self::by_block)
     /// reads them: what binds its block scales a byte apiece.
     pub fn reads_scale_bytes(&self) -> bool {
         self.operand.reads_scales_alone() && self.scales_are_bytes()
     }
 
-    /// Whether its block scales are `ue4m3` bytes.
+    /// Whether its block scales are one byte each, `ue4m3` or `ue8m0`.
     fn scales_are_bytes(&self) -> bool {
-        self.scheme
-            .block_scale()
-            .is_some_and(|block| block.dtype == ScaleDtype::UE4M3)
+        self.scheme.block_scale().is_some_and(|block| {
+            matches!(block.dtype, ScaleDtype::UE4M3 | ScaleDtype::UE8M0)
+        })
     }
 
     /// Bits one value holds, packed.

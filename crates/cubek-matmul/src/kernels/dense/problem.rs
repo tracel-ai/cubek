@@ -126,11 +126,21 @@ impl MatmulRoutineProblem {
     }
 
     /// What a setting reading the rhs a scale block at a time declines where it reads none so
-    /// ([`Packing::by_block`]): no packed rhs, block scales that are not `ue4m3`, blocks that are
-    /// no whole number of reads in rows, or tiles whose block is not the scheme's.
+    /// ([`Packing::by_block`]): no packed rhs, block scales wider than a byte, blocks that are no
+    /// whole number of reads in rows, or tiles whose block is not the scheme's.
     pub const RHS_UNREAD_BY_BLOCK: Refusal = Refusal::Declined {
-        why: "reading the rhs a block at a time needs a packed rhs with ue4m3 block scales, in \
-              blocks that are whole reads in rows or the tiles' own block in tile order",
+        why: "reading the rhs a block at a time needs a packed rhs with one-byte block scales \
+              (ue4m3 or ue8m0), in blocks that are whole reads in rows or the tiles' own block in \
+              tile order",
+    };
+
+    /// What a setting reading the rhs a scale block at a time declines against a packed lhs: the
+    /// lhs is still read a word of scales at a time, and a stage holding the two read apart
+    /// decodes the product wrong. The lhs's word sets the step besides, so a read by block of the
+    /// rhs would stage no less of `K`.
+    pub const PACKED_LHS_UNREAD_BY_BLOCK: Refusal = Refusal::Declined {
+        why: "reading the rhs a block at a time against a packed lhs, which is read a word of \
+              scales at a time: the stage decodes two inputs read apart wrong",
     };
 
     /// This problem with its packed rhs read a scale block at a time ([`Packing::by_block`]): the
@@ -138,8 +148,12 @@ impl MatmulRoutineProblem {
     ///
     /// # Errors
     ///
-    /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where its rhs reads none so.
+    /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where its rhs reads none so, and
+    /// [`PACKED_LHS_UNREAD_BY_BLOCK`](Self::PACKED_LHS_UNREAD_BY_BLOCK) where its lhs is packed.
     pub fn rhs_by_block(&self) -> Result<Self, Refusal> {
+        if self.packings.lhs.is_some() {
+            return Err(Self::PACKED_LHS_UNREAD_BY_BLOCK);
+        }
         let mut by_block = self.clone();
         let rhs = by_block
             .packings
@@ -155,8 +169,7 @@ impl MatmulRoutineProblem {
     ///
     /// # Errors
     ///
-    /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where it reads by block and its rhs
-    /// reads none so.
+    /// As [`rhs_by_block`](Self::rhs_by_block), where it reads by block.
     pub fn rhs_read(&self, by_block: bool) -> Result<Cow<'_, Self>, Refusal> {
         match by_block {
             true => self.rhs_by_block().map(Cow::Owned),

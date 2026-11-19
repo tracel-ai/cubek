@@ -191,19 +191,19 @@ mod cube_shuffle {
         assert!(prepared > 0);
     }
 
-    /// The by-block split of `K` reads NVFP4 alone, in rows and in tile order in either word
-    /// order, a block of one row lying together in each: no other scale is bound a byte apiece.
+    /// The by-block split of `K` reads the formats whose block scales are a byte each, NVFP4's
+    /// `ue4m3` and MXFP4's and MXFP8's `ue8m0`, NVFP4 in rows and in tile order in either word
+    /// order, a block of one row lying together in each: no wider scale is bound a byte apiece.
     #[test]
-    fn the_split_k_reads_nvfp4_alone() {
+    fn the_split_k_reads_one_byte_scales_alone() {
         let hw = devices::m2_pro();
         let settings = crate::kernels::LoadingSchedule::SPLIT_K.settings();
         for (name, problem) in problems(1) {
             let prepared = CubeShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
-            assert_eq!(
-                prepared.is_ok(),
-                name.starts_with("nvfp4"),
-                "{name}: {prepared:?}"
-            );
+            let byte_scales = ["nvfp4", "mxfp4", "mxfp8"]
+                .iter()
+                .any(|format| name.starts_with(format));
+            assert_eq!(prepared.is_ok(), byte_scales, "{name}: {prepared:?}");
         }
     }
 }

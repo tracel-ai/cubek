@@ -6,7 +6,7 @@
 use super::PlainTensor;
 use core::marker::PhantomData;
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
+use cubecl::ir::{ElemType, IntKind, UIntKind};
 use cubecl::prelude::{TensorBinding, TensorMapArg, TensorMapSwizzle};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal, TmaCoordinates, TmaLanding, TmaTerm};
@@ -651,11 +651,11 @@ impl PackedTensor {
                 .gathered(Self::over_whole_matrix(&words_dimensions, tiled_along))
         });
         match scales {
-            // A read taking its one `ue4m3` scale alone ([`Packing::by_block`]): each a byte of
-            // its own, bound as the `e4m3` byte it is with its sign clear, so a unit loads the byte
-            // it uses rather than the word around it.
+            // A read taking its one scale alone ([`Packing::by_block`]): each a byte of its own,
+            // bound as the element it is, a `ue4m3` the `e4m3` byte with its sign clear, so a unit
+            // loads the byte it uses rather than the word around it.
             BlockScales::Fields if self.packing().reads_scale_bytes() => {
-                let e4m3 = ElemType::Float(FloatKind::E4M3);
+                let scale = ElemType::from_scale_dtype(self.scheme.scale_dtype());
                 let scales_dimensions = tile_order::scales_dimensions(across);
                 // In the tiles tile order stores them in, where it does, stated a row a read: a
                 // statement counted in scales, which bound as bytes is counted in bytes.
@@ -664,7 +664,7 @@ impl PackedTensor {
                 });
                 let block_scales = match in_tiles {
                     None => launcher
-                        .arg(self.per_slab(self.block_scale_bytes(rows, blocks)), e4m3)
+                        .arg(self.per_slab(self.block_scale_bytes(rows, blocks)), scale)
                         .gathered(
                             self.stack_dim()
                                 .axis(scale_rows)
@@ -673,7 +673,7 @@ impl PackedTensor {
                                 .scales_per(blocks_dimension),
                         ),
                     Some(stated) => launcher
-                        .arg(self.block_scales.bound_as(stated), e4m3)
+                        .arg(self.block_scales.bound_as(stated), scale)
                         .dimensions(&scales_dimensions),
                 }
                 .vectorize(1);
