@@ -416,7 +416,7 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
     out: &mut TileTensor<'_>,
     partials: &mut TileTensor<'_>,
-    partial_indices: &TileTensor<'_>,
+    partial_indices: &mut TileTensor<'_>,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     #[comptime] parts: usize,
@@ -428,7 +428,7 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     let x = input.tile(&partitioning);
     let o = out.tile_mut(&partitioning);
     let p = partials.tile_mut(&partitioning);
-    let pi = partial_indices.tile(&partitioning);
+    let pi = partial_indices.tile_mut(&partitioning);
 
     for cube in &partitioning {
         let mut row_out = o.at(&cube);
