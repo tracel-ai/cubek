@@ -15,7 +15,6 @@ use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
-use cubek_std::layout::contiguous;
 use cubek_std::matmul_axes::{K, N};
 
 /// The operands of one grouped product, `out[r] = lhs[r] · rhs[group(r)]`: where the rows come
@@ -47,7 +46,8 @@ impl MGroupedMatmulTensors {
     /// # Errors
     ///
     /// As [`MatmulInputs::new`] for a float stack, and [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for
-    /// an operand stored in tiles.
+    /// rows or a float stack stored in tiles; a packed stack is read as its slabs when launched
+    /// ([`PackedTensor::stacked`](crate::kernels::tensor::PackedTensor::stacked)).
     ///
     /// # Panics
     ///
@@ -68,7 +68,7 @@ impl MGroupedMatmulTensors {
             2,
             "a grouped product's rows are `[rows, k]`: {shape:?}"
         );
-        if rows.is_tiled() || rhs.values().is_tiled() {
+        if rows.is_tiled() || matches!(&rhs, StoredTensor::Plain(rhs) if rhs.is_tiled()) {
             return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
         }
         let rhs = match rhs {
@@ -157,7 +157,7 @@ impl MGroupedMatmulTensors {
             self.groups(),
             MatmulTuneKey::anchored(self.source.rows(), Self::ROWS_KEYED),
             self.stack_kind(),
-            OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
+            OperandLayout::of(&self.rhs.values().meta(), self.rhs.kind(), [K, N]),
             self.along,
             self.source.kind(),
         )

@@ -21,7 +21,7 @@ use cubek_test_utils::{
 };
 
 use crate::matmul::{Declines, skip_unless_matrix_instruction};
-use crate::tiled::indexed::{Chunked, GroupedRows};
+use crate::tiled::indexed::{Chunked, GroupedRows, Stack};
 use crate::tiled::packed::{PackedFormat, PackedSlabs};
 use crate::tiled::{AtSetting, ByRoutine, upload};
 
@@ -118,6 +118,31 @@ fn every_packed_cube_staged_setting_reads_each_group_s_packed_slab() {
     grouped.check_some(grouped.at(
         MGroupedSettings::cube_staged_packed(&grouped.hw),
         &FORMATS.map(GroupedRows::of),
+    ));
+}
+
+/// Rows grouped against an NVFP4 stack laid in each tile order, through the plane shuffle's
+/// packed settings: each group's slab is a fixed run of whole strips.
+#[test]
+fn every_packed_plane_shuffle_setting_reads_each_group_s_slab_of_a_stack_in_tile_order() {
+    let grouped = ByGroupedRoutine::new(PlaneShuffleMatmulRoutine);
+    grouped.check_some(grouped.at(
+        MGroupedSettings::plane_shuffle_packed(),
+        &Stack::TILE_ORDERS.map(GroupedRows::stored),
+    ));
+}
+
+/// The same through the cube staged routine's packed settings: skipped on a device with no
+/// matrix instruction.
+#[test]
+fn every_packed_cube_staged_setting_reads_each_group_s_slab_of_a_stack_in_tile_order() {
+    if skip_unless_matrix_instruction() {
+        return;
+    }
+    let grouped = ByGroupedRoutine::new(CubeStagedMatmulRoutine);
+    grouped.check_some(grouped.at(
+        MGroupedSettings::cube_staged_packed(&grouped.hw),
+        &Stack::TILE_ORDERS.map(GroupedRows::stored),
     ));
 }
 
@@ -274,7 +299,7 @@ where
         let tensors = MGroupedMatmulTensors::new(
             client,
             grouped.activation(client),
-            StoredTensor::Packed(stack.matrix()),
+            StoredTensor::Packed(stack.laid(client, grouped.laid)),
             upload(client, &[grouped.sizes.len()], &grouped.ends()),
             SlabAxis::Output,
         )
