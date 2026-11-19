@@ -9,7 +9,8 @@ use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{
-    AttentionOperand, AttentionOperands, AttentionReading, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    AttentionOperand, AttentionOperands, AttentionReading, AttentionStorage, AttentionWorkItem, B,
+    D, DV, G, KV, Q, S,
 };
 use cubek_std::routine::EstimatedProblem;
 
@@ -100,6 +101,12 @@ impl AttentionRoutineProblem {
                 AttentionCacheLayout::Pages { .. } => AttentionReading::AsStored,
                 AttentionCacheLayout::Sequences | AttentionCacheLayout::Packed(_) => {
                     AttentionReading::Rounded
+                }
+            },
+            storage: match self.cache {
+                AttentionCacheLayout::Packed(_) => AttentionStorage::Packed,
+                AttentionCacheLayout::Sequences | AttentionCacheLayout::Pages { .. } => {
+                    AttentionStorage::Floats
                 }
             },
             page_size: match self.cache {

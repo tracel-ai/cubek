@@ -128,6 +128,10 @@ impl PlaneFragmentAttentionMicrokernel {
             true => read.value,
             false => read.score,
         };
+        // The kernel opens the output's sum on the values as they are bound, before any stage
+        // decodes them: the tile picks from that source, and held cells name no element to
+        // decode them at.
+        let values = item.value_source(read.value);
         let item = &item.read_as(read);
         let (score_item, value_item) = (Self::score_item(item), Self::value_item(item));
         let grid = PlaneFragmentMicrokernelSettings {
@@ -149,7 +153,7 @@ impl PlaneFragmentAttentionMicrokernel {
             .iter()
             .filter_map(|&holder| {
                 let score = holder.sum_pick(hw, &score_item, score_tile)?;
-                let value = holder.reader_pick(hw, score, &value_item, value_tile)?;
+                let value = holder.reader_pick(hw, score, &value_item, values, value_tile)?;
                 Some(Self {
                     settings: settings.held_in(holder),
                     read,

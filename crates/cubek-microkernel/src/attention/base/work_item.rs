@@ -4,7 +4,7 @@ use crate::matmul::{
     MatmulWorkItem,
 };
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::{Axis, Space};
+use cubecl::tile::{Axis, FragmentSource, Space};
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::StagedOperand;
 
@@ -17,6 +17,8 @@ pub struct AttentionWorkItem {
     pub sum: ElemType,
     /// Which elements the query, keys and values may be read in.
     pub reading: AttentionReading,
+    /// How the keys and values lie in memory.
+    pub storage: AttentionStorage,
     /// Positions a page of the cache holds; `None` where the cache is not paged.
     pub page_size: Option<usize>,
     /// Query heads per key head.
@@ -33,6 +35,15 @@ pub enum AttentionReading {
     /// The keys and values as stored only: a pool read through a page table is bound as stored,
     /// never as words. The query, which no table places, may still be converted.
     AsStored,
+}
+
+/// How an attention's keys and values lie in memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AttentionStorage {
+    /// Each value a float of its side's element.
+    Floats,
+    /// Codebook indices packed into words, which a stage decodes as its fill reads them.
+    Packed,
 }
 
 /// The elements an attention's operands reach its two matrix instructions in: the query and the
@@ -137,6 +148,21 @@ impl AttentionWorkItem {
             })
             .collect();
         pairs.into_iter().chain(tf32)
+    }
+
+    /// The values as a kernel that reads them at `read` opens a sum on them: values its stages'
+    /// fill decodes ([`FragmentSource::Decoded`]), where they lie packed or are bound as the
+    /// words of a float read at another element ([`served_kernel_elements`]); otherwise values
+    /// of their element.
+    ///
+    /// [`served_kernel_elements`]: Self::served_kernel_elements
+    pub fn value_source(&self, read: ElemType) -> FragmentSource {
+        match (self.storage, self.elements.value == read) {
+            (AttentionStorage::Floats, true) => FragmentSource::Values(read),
+            (AttentionStorage::Packed, _) | (AttentionStorage::Floats, false) => {
+                FragmentSource::Decoded
+            }
+        }
     }
 
     /// This work item with its query and keys read in `read.score` and its values in
