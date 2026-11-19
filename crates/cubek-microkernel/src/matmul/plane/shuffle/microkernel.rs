@@ -3,9 +3,7 @@ use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// `sum += a · b` over one step of `plane`: each unit adds its block. The caller opens `sum` (a
-/// `register_accumulator` of the
-/// [`block`](crate::matmul::plane::PlaneShuffleMicrokernel::block)), walks
-/// `K` and drains it; the drain sums the units' partials across the plane. Each unit reads its
+/// `register_accumulator` of the unit's block), walks `K` and drains it; the drain sums the units' partials across the plane. Each unit reads its
 /// window of each operand as `reads` says.
 #[cube]
 pub fn plane_shuffle_microkernel(

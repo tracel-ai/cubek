@@ -1056,7 +1056,7 @@ impl PlaneFragmentMicrokernel {
     }
 
     /// The extent along `dimension`, one of the caller's, of the tile one plane holds: its edges
-    /// along `m` and `n` ([`tile_edges`](Self::tile_edges)), and the steps of `K` it walks through
+    /// along `m` and `n` (`tile_edges`), and the steps of `K` it walks through
     /// one stage; a tile stated in elements, as it states it.
     pub fn tile_extent(&self, dimension: Dimension) -> usize {
         match self.unit {
