@@ -1,10 +1,7 @@
 use cubecl::zspace::{Shape, Strides};
+use cubek_test_utils::skip_unless_f16_arithmetic;
 
 use super::test_case::{PLANE, TestCase, UNIT};
-
-fn supports_f16_arithmetic() -> bool {
-    cubek_test_utils::supports_f16_arithmetic(&cubecl::test_device().client())
-}
 
 fn run_extrema(case: TestCase, data: Vec<f32>) {
     let case = case.with_data(data);
@@ -95,7 +92,7 @@ fn plane_strided_f32() {
 
 #[test]
 fn plane_parallel_f16() {
-    if !supports_f16_arithmetic() {
+    if skip_unless_f16_arithmetic(&cubecl::test_device().client()) {
         return;
     }
     run_nan_extrema(TestCase::new::<half::f16>(

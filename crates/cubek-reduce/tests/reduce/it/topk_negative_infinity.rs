@@ -7,14 +7,11 @@
 
 use cubecl::zspace::{Shape, Strides};
 use cubek_reduce::kernels::ReduceOpStrategy;
+use cubek_test_utils::skip_unless_f16_arithmetic;
 
 use super::test_case::{CUBE, PLANE, TestCase, UNIT};
 
 const K: usize = 4;
-
-fn supports_f16_arithmetic() -> bool {
-    cubek_test_utils::supports_f16_arithmetic(&cubecl::test_device().client())
-}
 
 fn case(shape: Shape, strides: Strides, axis: usize, strategy: ReduceOpStrategy) -> TestCase {
     TestCase::new::<f32>(shape, strides, Some(axis), strategy)
@@ -110,7 +107,7 @@ fn cube_f32() {
 
 #[test]
 fn unit_parallel_f16() {
-    if !supports_f16_arithmetic() {
+    if skip_unless_f16_arithmetic(&cubecl::test_device().client()) {
         return;
     }
     run_topk(
@@ -121,7 +118,7 @@ fn unit_parallel_f16() {
 
 #[test]
 fn plane_parallel_f16() {
-    if !supports_f16_arithmetic() {
+    if skip_unless_f16_arithmetic(&cubecl::test_device().client()) {
         return;
     }
     run_topk(
