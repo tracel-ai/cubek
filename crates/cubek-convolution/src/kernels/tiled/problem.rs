@@ -34,6 +34,9 @@ impl ConvAxis {
     const FIRST_SPATIAL: u8 = CI.0 + 1;
     /// A spatial dim takes two labels: its out axis, then its tap axis.
     const PER_SPATIAL_DIM: u8 = 2;
+    /// The most spatial dims whose labels, the last tap axis included, fit in a label.
+    pub const MAX_SPATIAL_DIMS: usize =
+        ((u8::MAX - Self::FIRST_SPATIAL) / Self::PER_SPATIAL_DIM) as usize;
 
     /// The axis of this measure, the label [`Self::of`] reads back.
     pub const fn axis(self) -> Axis {

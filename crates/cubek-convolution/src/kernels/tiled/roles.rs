@@ -257,11 +257,15 @@ impl ConvRoles {
     ///
     /// # Errors
     ///
-    /// [`ConvDecline::NoSpatialDim`], for no spatial dim, and [`ConvDecline::Transposed`], for a
-    /// transposed forward.
+    /// [`ConvDecline::NoSpatialDim`], for no spatial dim, [`ConvDecline::TooManySpatialDims`], for
+    /// more than [`ConvAxis::MAX_SPATIAL_DIMS`], and [`ConvDecline::Transposed`], for a transposed
+    /// forward.
     pub fn of(operation: ConvolutionOperation, spatial_dims: usize) -> Result<Self, Refusal> {
         if spatial_dims == 0 {
             return Err(ConvDecline::NoSpatialDim.into());
+        }
+        if spatial_dims > ConvAxis::MAX_SPATIAL_DIMS {
+            return Err(ConvDecline::TooManySpatialDims.into());
         }
         let spatial = SpatialAxes::new(spatial_dims);
         match operation {
@@ -498,6 +502,16 @@ mod tests {
         assert_eq!(
             ConvRoles::of(Forward, 0),
             Err(ConvDecline::NoSpatialDim.into())
+        );
+    }
+
+    #[test]
+    fn spatial_dims_past_the_label_range_are_refused_by_name() {
+        let max = ConvAxis::MAX_SPATIAL_DIMS;
+        assert!(ConvRoles::of(Forward, max).is_ok());
+        assert_eq!(
+            ConvRoles::of(Forward, max + 1),
+            Err(ConvDecline::TooManySpatialDims.into())
         );
     }
 

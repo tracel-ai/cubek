@@ -10,6 +10,8 @@ pub enum ConvDecline {
     Groups,
     /// A convolution over no spatial dim.
     NoSpatialDim,
+    /// A convolution over more spatial dims than the axis labels number.
+    TooManySpatialDims,
     /// Operands whose rank is not two more than the arguments' spatial dims: channels last
     /// activations and a `[co, taps.., ci]` weight or weight gradient.
     RankMismatch,
@@ -61,6 +63,9 @@ impl ConvDecline {
                 "the tiled convolution contracts every input channel, so it has no groups"
             }
             Self::NoSpatialDim => "the tiled convolution has at least one spatial dimension",
+            Self::TooManySpatialDims => {
+                "the tiled convolution labels each axis in a byte, which bounds how many spatial dimensions it has"
+            }
             Self::RankMismatch => {
                 "the tiled convolution reads channels last tensors and a [co, taps.., ci] weight, one dim per spatial dimension of its arguments"
             }
