@@ -4,8 +4,8 @@ use super::kernel::{
     hypercube_last_arrival_reduce_with_indices_kernel,
 };
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, estimate_reduce,
-    microkernel_widths,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, each_microkernel_with,
+    estimate_reduce, microkernel_widths,
 };
 use cubecl::bytes::Bytes;
 use cubecl::client::Client;
@@ -71,17 +71,14 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
 
     /// Its microkernel's planes, each with the longest parts first.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
-        HypercubeLastArrivalReduceMicrokernel::settings(hw)
-            .into_iter()
-            .flat_map(|microkernel| {
-                HypercubeLastArrivalReduceSettings::UNIT_LINES.map(|unit_lines| {
-                    HypercubeLastArrivalReduceSettings {
-                        microkernel,
-                        unit_lines,
-                    }
-                })
-            })
-            .collect()
+        each_microkernel_with(
+            HypercubeLastArrivalReduceMicrokernel::settings(hw),
+            HypercubeLastArrivalReduceSettings::UNIT_LINES,
+            |microkernel, unit_lines| HypercubeLastArrivalReduceSettings {
+                microkernel,
+                unit_lines,
+            },
+        )
     }
 
     fn vectorize(

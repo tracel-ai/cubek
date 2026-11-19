@@ -83,6 +83,19 @@ pub(crate) fn estimate_reduce<M: Microkernel<WorkItem = ReduceWorkItem, CubeSpac
     microkernel.estimate(&problem.work_item(), &(), grid.planes(), estimate);
 }
 
+/// A routine's settings: each of its microkernel's `microkernels` with each of its own `knobs`,
+/// the microkernel's order outermost, built by `settings`.
+pub(crate) fn each_microkernel_with<M: Copy, K: Copy, S, const N: usize>(
+    microkernels: Vec<M>,
+    knobs: [K; N],
+    settings: impl Fn(M, K) -> S,
+) -> Vec<S> {
+    microkernels
+        .into_iter()
+        .flat_map(|microkernel| knobs.map(|knob| settings(microkernel, knob)))
+        .collect()
+}
+
 impl<M> ReduceBlueprint<M> {
     /// `microkernel` placed by `partitioning`, its operands bound at `widths`.
     pub fn new(microkernel: M, partitioning: Partitioning, widths: [usize; 2]) -> Self {

@@ -1,7 +1,7 @@
 use super::kernel::{unit_direct_reduce_kernel, unit_direct_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, estimate_reduce,
-    microkernel_widths,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, each_microkernel_with,
+    estimate_reduce, microkernel_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -28,6 +28,11 @@ pub struct UnitDirectReduceSettings {
     pub planes: usize,
 }
 
+impl UnitDirectReduceSettings {
+    /// Planes a cube holds, the likeliest fastest first.
+    pub const PLANES: [usize; 3] = [4, 1, 8];
+}
+
 impl core::fmt::Display for UnitDirectReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} planes={}", self.microkernel, self.planes)
@@ -45,15 +50,14 @@ impl Routine for UnitDirectReduceRoutine {
 
     /// Four planes of units a cube by default, then one and eight.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
-        UnitDirectReduceMicrokernel::settings(hw)
-            .into_iter()
-            .flat_map(|microkernel| {
-                [4, 1, 8].map(|planes| UnitDirectReduceSettings {
-                    microkernel,
-                    planes,
-                })
-            })
-            .collect()
+        each_microkernel_with(
+            UnitDirectReduceMicrokernel::settings(hw),
+            UnitDirectReduceSettings::PLANES,
+            |microkernel, planes| UnitDirectReduceSettings {
+                microkernel,
+                planes,
+            },
+        )
     }
 
     fn vectorize(

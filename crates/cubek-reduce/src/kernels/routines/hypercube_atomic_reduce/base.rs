@@ -1,7 +1,8 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::{
     MAX_SPLIT_ROW_DIMS, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
-    ReduceTensors, UNBOUND_LINES_NARROWER, estimate_reduce, microkernel_widths,
+    ReduceTensors, UNBOUND_LINES_NARROWER, each_microkernel_with, estimate_reduce,
+    microkernel_widths,
 };
 use core::convert::identity;
 use cubecl::client::Client;
@@ -60,17 +61,14 @@ impl Routine for HypercubeAtomicReduceRoutine {
 
     /// Its microkernel's planes, each with the longest parts first.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
-        CubeStagedReduceMicrokernel::settings(hw)
-            .into_iter()
-            .flat_map(|microkernel| {
-                HypercubeAtomicReduceSettings::UNIT_LINES.map(|unit_lines| {
-                    HypercubeAtomicReduceSettings {
-                        microkernel,
-                        unit_lines,
-                    }
-                })
-            })
-            .collect()
+        each_microkernel_with(
+            CubeStagedReduceMicrokernel::settings(hw),
+            HypercubeAtomicReduceSettings::UNIT_LINES,
+            |microkernel, unit_lines| HypercubeAtomicReduceSettings {
+                microkernel,
+                unit_lines,
+            },
+        )
     }
 
     fn vectorize(
