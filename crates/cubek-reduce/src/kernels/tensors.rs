@@ -5,7 +5,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Bound, Decline, Unbound};
-use cubecl::tile::{Geometry, Launcher};
+use cubecl::tile::{Dimension, Geometry, Launcher};
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
@@ -294,10 +294,32 @@ fn out_bound<M>(
     problem: &ReduceRoutineProblem,
     blueprint: &ReduceBlueprint<M>,
 ) -> Bound {
+    bound_at(
+        launcher,
+        buffer.clone(),
+        element,
+        &problem.out_dimensions(),
+        blueprint.out_width,
+    )
+}
+
+/// `buffer`, one a launch writes, bound in `element` over `dimensions` at `width`.
+///
+/// # Panics
+///
+/// Where the launch the launcher was prepared for cannot bind it, which its routine's prepare
+/// rules out.
+pub(crate) fn bound_at(
+    launcher: &Launcher,
+    buffer: TensorBinding,
+    element: ElemType,
+    dimensions: &[Dimension],
+    width: usize,
+) -> Bound {
     launcher
-        .arg(buffer.clone(), element)
-        .dimensions(&problem.out_dimensions())
-        .vectorize(blueprint.out_width)
+        .arg(buffer, element)
+        .dimensions(dimensions)
+        .vectorize(width)
         .build()
         .expect(ADMITTED_PLAN_RUNS)
 }

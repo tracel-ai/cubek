@@ -4,8 +4,8 @@ use super::kernel::{
     hypercube_last_arrival_reduce_with_indices_kernel,
 };
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, each_microkernel_with,
-    estimate_reduce, microkernel_widths,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, bound_at,
+    each_microkernel_with, estimate_reduce, microkernel_widths,
 };
 use cubecl::bytes::Bytes;
 use cubecl::client::Client;
@@ -19,7 +19,7 @@ use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Every row split into parts along the reduced dim, a cube a part, which reduces it as the cube
 /// routine reduces a row; the last of a row's cubes to finish merges the parts: few rows, too long
@@ -160,14 +160,15 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
             client.create(Bytes::from_elems(vec![0u32; row_boxes])),
             counter,
         );
+        let partial_dimensions = problem.partial_dimensions();
         let bind_partials = |handle: TensorHandle, element| {
-            binding
-                .launcher
-                .arg(handle.binding(), element)
-                .dimensions(&problem.partial_dimensions())
-                .vectorize(blueprint.width)
-                .build()
-                .expect(ADMITTED_PLAN_RUNS)
+            bound_at(
+                &binding.launcher,
+                handle.binding(),
+                element,
+                &partial_dimensions,
+                blueprint.width,
+            )
         };
         let partials = bind_partials(partials, elements.accumulator);
         // The partials' indices, only where the carrier keeps any.

@@ -56,9 +56,11 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
         };
         let mut out_shape = shape.clone();
         out_shape[axis] = key.operation.written_per_row();
+        let elem_alignments =
+            [&shape, &out_shape].map(|shape| ElemAlignment::dense_rows(shape[shape.len() - 1]));
+        let [_, out_alignment] = elem_alignments;
         Self {
-            elem_alignments: [&shape, &out_shape]
-                .map(|shape| ElemAlignment::dense_rows(shape[shape.len() - 1])),
+            elem_alignments,
             contiguous: Some(shape.len() - 1),
             shape,
             axis,
@@ -66,7 +68,7 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
             elements: key.elements,
             indices: key.indices.map(|element| ReduceIndices {
                 element,
-                elem_alignment: ElemAlignment::dense_rows(out_shape[out_shape.len() - 1]),
+                elem_alignment: out_alignment,
             }),
         }
     }
