@@ -22,7 +22,9 @@ pub enum ReduceError {
     /// The output's shape is not the input's with the reduced dim one wide (`k` wide for a top-k).
     #[error("The output shape (currently {output_shape:?}) should be {expected_shape:?}.")]
     MismatchOutputShape {
+        /// The shape the output should have, one extent an axis, shown in order (Arrival Usage).
         expected_shape: Vec<usize>,
+        /// The output's shape, shown in order (Arrival Usage).
         output_shape: Vec<usize>,
     },
     /// The indices output's shape differs from the values output's.
@@ -30,7 +32,9 @@ pub enum ReduceError {
         "The indices shape (currently {indices_shape:?}) should match the values shape ({values_shape:?})."
     )]
     MismatchIndicesShape {
+        /// The values output's shape, one extent an axis, shown in order (Arrival Usage).
         values_shape: Vec<usize>,
+        /// The indices output's shape, shown in order (Arrival Usage).
         indices_shape: Vec<usize>,
     },
     /// The operation has no index to write beside its values.

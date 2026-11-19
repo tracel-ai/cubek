@@ -16,6 +16,8 @@ pub(crate) const MAX_SPLIT_ROW_DIMS: usize = 2;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct ReduceSplit {
     pub reduced: Dimension,
+    /// The row dims the cubes' boxes of rows lie along, outermost first, read by position
+    /// (Position Usage).
     pub rows: Vec<Dimension>,
 }
 

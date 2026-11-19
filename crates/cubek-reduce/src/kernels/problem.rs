@@ -83,13 +83,15 @@ fn widened(input: ElemType) -> ElemType {
 /// `slots`, since it holds the cells a row writes, not the values it read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReduceRoutineProblem {
+    /// The input's extent along each axis, read by axis (Position Usage).
     pub shape: Vec<usize>,
     pub axis: usize,
     pub operation: ReduceOperation,
     pub elements: ReduceElements,
     /// The axis both operands step one element along, if they share one: what a line runs along.
     pub contiguous: Option<usize>,
-    /// The alignment of the input's and the output's buffers in elements.
+    /// The alignment in elements of the input's buffer, then the output's, read by that position
+    /// (Position Usage).
     pub elem_alignments: [ElemAlignment; 2],
     /// The indices written beside the values, to a second output of their shape, where they are.
     pub indices: Option<ReduceIndices>,

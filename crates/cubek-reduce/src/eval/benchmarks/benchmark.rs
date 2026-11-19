@@ -30,7 +30,7 @@ pub fn bench(
         axis: problem.axis,
         operation: problem.operation,
         kind: problem.kind,
-        value_dtype: problem.precision.dtype(),
+        value_dtype: problem.precision.to_dtype(),
         strategy: *strategy,
         device,
         client,
@@ -122,6 +122,7 @@ const UNIFORM_LOW: f32 = 0.0;
 const UNIFORM_HIGH: f32 = 1.0;
 
 struct ReduceBenchmark {
+    /// The input's extent along each axis, read by axis (Position Usage).
     shape: Vec<usize>,
     axis: usize,
     operation: ReduceOperation,

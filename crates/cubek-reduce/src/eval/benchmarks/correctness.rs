@@ -23,7 +23,7 @@ impl ReduceCorrectness {
             precision: problem.precision,
         };
         let input = ReduceInput {
-            dtype: proof.precision.dtype(),
+            dtype: proof.precision.to_dtype(),
             values: ReduceValues::Ramp,
         };
 
@@ -120,7 +120,7 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
             client,
             strategy,
             problem,
-            ReduceInput::uniform(problem.precision.dtype(), seeds[0]),
+            ReduceInput::uniform(problem.precision.to_dtype(), seeds[0]),
         )
     }
 
@@ -134,7 +134,7 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
         Self::reference_output(
             client,
             problem,
-            ReduceInput::uniform(problem.precision.dtype(), seeds[0]),
+            ReduceInput::uniform(problem.precision.to_dtype(), seeds[0]),
             progress,
         )
     }

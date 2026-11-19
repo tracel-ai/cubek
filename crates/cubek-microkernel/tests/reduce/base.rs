@@ -87,6 +87,7 @@ impl ReduceCase {
 /// A reduction on the host: its rows and what each writes.
 struct HostReduce {
     case: ReduceCase,
+    /// Each row's values, read in order and by row (Arrival and Position Usage).
     rows: Vec<Vec<f32>>,
 }
 

@@ -193,6 +193,7 @@ impl TestedRoutine {
 #[derive(Debug, Clone)]
 struct Reduction {
     routine: TestedRoutine,
+    /// The input's extent along each axis, read by axis (Position Usage).
     shape: Vec<usize>,
     axis: usize,
     operation: ReduceOperation,

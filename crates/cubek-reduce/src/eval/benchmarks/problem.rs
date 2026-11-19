@@ -31,7 +31,7 @@ pub enum ReduceBenchPrecision {
 }
 
 impl ReduceBenchPrecision {
-    pub fn dtype(self) -> ElemType {
+    pub fn to_dtype(self) -> ElemType {
         match self {
             ReduceBenchPrecision::F32 => f32::elem_type_native(),
             ReduceBenchPrecision::F16 => half::f16::elem_type_native(),
@@ -67,11 +67,12 @@ static PRECISIONS: LazyLock<Vec<ReduceBenchPrecision>> = LazyLock::new(|| {
     precisions
 });
 
-pub fn precisions() -> Vec<ReduceBenchPrecision> {
-    PRECISIONS.clone()
+pub fn precisions() -> &'static [ReduceBenchPrecision] {
+    &PRECISIONS
 }
 
 pub struct ReduceProblem {
+    /// The input's extent along each axis, read by axis (Position Usage).
     pub shape: Vec<usize>,
     pub axis: usize,
     pub operation: ReduceOperation,
@@ -92,7 +93,7 @@ fn extended_tier() -> bool {
 }
 
 pub fn problems() -> Vec<CatalogEntry<ReduceProblem>> {
-    precisions().into_iter().flat_map(problems_at).collect()
+    precisions().iter().copied().flat_map(problems_at).collect()
 }
 
 fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProblem>> {
@@ -333,6 +334,7 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
 struct SpreadShape<'a> {
     pub name: &'a str,
     pub text: &'a str,
+    /// The input's extent along each axis, read by axis (Position Usage).
     pub shape: Vec<usize>,
     pub axis: usize,
     pub operation: ReduceOperation,

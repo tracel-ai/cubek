@@ -54,7 +54,7 @@ impl cubek_test_utils::Category for Category {
     /// the harness makes: a two-launch reduction reads and writes twice, which is the harness's
     /// doing.
     fn work(&self, problem: &ReduceProblem) -> Option<CategoryWork> {
-        let value_dtype = problem.precision.dtype();
+        let value_dtype = problem.precision.to_dtype();
         let values: usize = problem.shape.iter().product();
         let cells = values / problem.shape[problem.axis] * problem.operation.written_per_row();
         let out_dtype = output_dtype_for(problem.operation, value_dtype);
