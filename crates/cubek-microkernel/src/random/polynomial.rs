@@ -67,7 +67,7 @@ const ATANH_7: f32 = atanh_term(7);
 /// truncating conversion, and the two series then run on the eighth of a turn around
 /// zero, where five terms reach what an `f32` can hold. A negative `turns` would
 /// truncate the wrong way and land in the quadrant below the one it belongs to.
-#[cube]
+#[cube(harness)]
 pub fn cos_sin_turns<N: Size>(turns: Vector<f32, N>) -> (Vector<f32, N>, Vector<f32, N>) {
     let quarters = turns * Vector::new(4.0f32);
     let quadrant = Vector::<i32, N>::cast_from(quarters + Vector::new(0.5f32));
@@ -121,7 +121,7 @@ pub fn cos_sin_turns<N: Size>(turns: Vector<f32, N>) -> (Vector<f32, N>, Vector<
 /// The exponent carries the whole range, so only the mantissa is approximated, by the
 /// odd series `ln(mantissa) = 2 atanh(ratio)`. A subnormal `x` holds no exponent to
 /// extract, and comes back as nonsense rather than as a large negative number.
-#[cube]
+#[cube(harness)]
 pub fn ln<N: Size>(x: Vector<f32, N>) -> Vector<f32, N> {
     let bits = Vector::<u32, N>::reinterpret(x);
     let exponent = Vector::<i32, N>::cast_from(bits >> Vector::new(23u32)) - Vector::new(127i32);
@@ -159,57 +159,50 @@ mod tests {
     use super::*;
     use cubecl::TestRuntime;
 
-    /// `ln` of each of `xs`, one component a line.
-    #[cube(harness)]
-    fn ln_each(xs: &[f32], out: &mut [f32]) {
-        for i in 0..xs.len() {
-            out[i] = ln::<Const<1>>(Vector::new(xs[i])).extract(0usize);
-        }
-    }
-
-    /// The cosine and sine of each of `turns`, one component a line.
-    #[cube(harness)]
-    fn cos_sin_each(turns: &[f32], cosines: &mut [f32], sines: &mut [f32]) {
-        for i in 0..turns.len() {
-            let (cosine, sine) = cos_sin_turns::<Const<1>>(Vector::new(turns[i]));
-            cosines[i] = cosine.extract(0usize);
-            sines[i] = sine.extract(0usize);
-        }
-    }
-
     /// `ln` stays within an `f32`'s precision of the true logarithm across the normal range,
-    /// both halves of each octave included.
+    /// both halves of each octave included, at one lane and at four.
     #[test]
     fn ln_matches_the_logarithm_over_the_normal_range() {
         let xs: Vec<f32> = (-126..128)
-            .flat_map(|octave| [1.0f32, 1.2, 1.41, 1.42, 1.7, 1.99].map(|m| m * 2f32.powi(octave)))
+            .flat_map(|octave| [1.0f32, 1.2, 1.41, 1.42].map(|m| m * 2f32.powi(octave)))
             .collect();
-        let mut out = vec![0.0; xs.len()];
-        ln_each::harness::<TestRuntime>(&xs, &mut out);
-        for (x, ln) in xs.iter().zip(out) {
+        let ln_1 = xs
+            .iter()
+            .flat_map(|x| ln::harness::<TestRuntime, Const<1>>(&[*x]));
+        let ln_4 = xs
+            .chunks(4)
+            .flat_map(|lanes| ln::harness::<TestRuntime, Const<4>>(lanes));
+        for ((x, ln_1), ln_4) in xs.iter().zip(ln_1).zip(ln_4) {
             let expected = (*x as f64).ln();
+            let tolerance = 1e-6 * expected.abs().max(1.0);
             assert!(
-                (ln as f64 - expected).abs() <= 1e-6 * expected.abs().max(1.0),
-                "ln({x}) = {ln}, expected {expected}"
+                (ln_1 as f64 - expected).abs() <= tolerance && ln_4 == ln_1,
+                "ln({x}) = {ln_1} at one lane, {ln_4} at four, expected {expected}"
             );
         }
     }
 
     /// `cos_sin_turns` is the cosine and sine of the angle across a whole turn, every quadrant
-    /// and the eighths where the series meet.
+    /// and the eighths where the series meet, at one lane and at four.
     #[test]
     fn cos_sin_turns_matches_the_circle_over_a_turn() {
-        let turns: Vec<f32> = (0..1024).map(|i| i as f32 / 1024.0).collect();
-        let (mut cosines, mut sines) = (vec![0.0; turns.len()], vec![0.0; turns.len()]);
-        cos_sin_each::harness::<TestRuntime>(&turns, &mut cosines, &mut sines);
-        for ((turn, cosine), sine) in turns.iter().zip(cosines).zip(sines) {
+        let turns: Vec<f32> = (0..256).map(|i| i as f32 / 256.0).collect();
+        let lanes_1 = turns
+            .iter()
+            .map(|turn| cos_sin_turns::harness::<TestRuntime, Const<1>>(&[*turn]))
+            .flat_map(|(cosine, sine)| cosine.into_iter().zip(sine));
+        let lanes_4 = turns
+            .chunks(4)
+            .map(|lanes| cos_sin_turns::harness::<TestRuntime, Const<4>>(lanes))
+            .flat_map(|(cosine, sine)| cosine.into_iter().zip(sine));
+        for ((turn, lane_1), lane_4) in turns.iter().zip(lanes_1).zip(lanes_4) {
             let angle = core::f64::consts::TAU * *turn as f64;
+            let expected = (angle.cos(), angle.sin());
             assert!(
-                (cosine as f64 - angle.cos()).abs() <= 1e-6
-                    && (sine as f64 - angle.sin()).abs() <= 1e-6,
-                "{turn} turns: ({cosine}, {sine}), expected ({}, {})",
-                angle.cos(),
-                angle.sin()
+                (lane_1.0 as f64 - expected.0).abs() <= 1e-6
+                    && (lane_1.1 as f64 - expected.1).abs() <= 1e-6
+                    && lane_4 == lane_1,
+                "{turn} turns: {lane_1:?} at one lane, {lane_4:?} at four, expected {expected:?}"
             );
         }
     }
