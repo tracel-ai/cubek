@@ -471,6 +471,17 @@ mod reduce_dim {
         );
     }
 
+    // The input's axes below the reduce axis sort as [1, 3, 0] and the output's
+    // as [3, 1, 0]: the orders share no prefix, so no perpendicular vector may
+    // span them, even though axis 0 lines up after the mismatch.
+    mod perpendicular_rank_four_tensor_unshared_order {
+        testgen_reduce!(
+            shape: shape![4, 5, 3, 4],
+            strides: strides![20, 1, 80, 5],
+            axis: Some(2),
+        );
+    }
+
     mod parallel_rank_three_tensor_unexact_shape {
         testgen_reduce!(
             shape: shape![11, 12, 13],
