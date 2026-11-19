@@ -1,8 +1,3 @@
-use super::{
-    reference_all, reference_any, reference_argmax, reference_argmin, reference_argtopk,
-    reference_max, reference_max_abs, reference_mean, reference_min, reference_prod, reference_sum,
-    reference_topk,
-};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{
     client::Client,
@@ -16,6 +11,7 @@ use cubek_test_utils::{
 
 use crate::ReduceOperation;
 use crate::kernels::{self, ReduceElements, ReduceOpStrategy};
+use cubek_microkernel::reduce::ReduceWrites;
 
 /// The bits a comparison runs on: the kernel launch and the CPU reference each
 /// build their input from this alone, so the two see the same values.
@@ -254,34 +250,7 @@ pub fn cpu_reference_result(
     // tensor ended up holding rather than what the generator was handed.
     let (_input_handle, input_host) = input.tensor(client, shape).generate_with_f32_host_data();
 
-    Ok(reference_for_operation(
-        &input_host,
-        axis,
-        operation,
-        progress,
-    ))
-}
-
-fn reference_for_operation(
-    input: &HostData,
-    axis: usize,
-    operation: ReduceOperation,
-    progress: Option<&Progress>,
-) -> HostData {
-    match operation {
-        ReduceOperation::Sum => reference_sum(input, axis, progress),
-        ReduceOperation::Mean => reference_mean(input, axis, progress),
-        ReduceOperation::Prod => reference_prod(input, axis, progress),
-        ReduceOperation::Min => reference_min(input, axis, progress),
-        ReduceOperation::Max => reference_max(input, axis, progress),
-        ReduceOperation::MaxAbs => reference_max_abs(input, axis, progress),
-        ReduceOperation::ArgMax => reference_argmax(input, axis, progress),
-        ReduceOperation::ArgMin => reference_argmin(input, axis, progress),
-        ReduceOperation::ArgTopK { k } => reference_argtopk(input, axis, k, progress),
-        ReduceOperation::TopK { k } => reference_topk(input, axis, k, progress),
-        ReduceOperation::Any => reference_any(input, axis, progress),
-        ReduceOperation::All => reference_all(input, axis, progress),
-    }
+    Ok(reference(&input_host, axis, operation, progress))
 }
 
 /// Number of progress bumps the reduce reference will produce: one per output
@@ -327,129 +296,29 @@ pub fn contiguous_strides(shape: &[usize]) -> Strides {
     Strides::new(&s)
 }
 
-pub(crate) fn output_shape(input_shape: &Shape, axis: usize) -> Vec<usize> {
-    let mut out: Vec<usize> = input_shape.iter().copied().collect();
-    out[axis] = 1;
-    out
-}
-
-pub(super) fn should_replace_max(current: f32, candidate: f32) -> bool {
-    !current.is_nan() && (candidate.is_nan() || candidate > current)
-}
-
-pub(super) fn should_replace_min(current: f32, candidate: f32) -> bool {
-    !current.is_nan() && (candidate.is_nan() || candidate < current)
-}
-
-pub(crate) fn for_each_output_coord(output_shape: &[usize], mut f: impl FnMut(usize, &[usize])) {
-    let rank = output_shape.len();
-    if rank == 0 {
-        f(0, &[]);
-        return;
-    }
-    let num: usize = output_shape.iter().product();
-    let mut coord = vec![0usize; rank];
-    for linear in 0..num {
-        let mut rem = linear;
-        for d in (0..rank).rev() {
-            coord[d] = rem % output_shape[d];
-            rem /= output_shape[d];
-        }
-        f(linear, &coord);
-    }
-}
-
-pub(crate) fn build_f32_output(input: &HostData, axis: usize, data: Vec<f32>) -> HostData {
-    let out_shape_vec = output_shape(&input.shape, axis);
-    let strides = contiguous_strides(&out_shape_vec);
-    HostData {
-        data: HostDataVec::F32(data),
-        shape: Shape::from(out_shape_vec),
-        strides,
-    }
-}
-
-/// `progress` advanced by one output cell, where the caller tracks any.
-pub(crate) fn bump(progress: Option<&Progress>) {
-    if let Some(progress) = progress {
-        progress.bump();
-    }
-}
-
-/// The values of `input` along `axis` that reduce into the output cell at `out_coord`, in order.
-pub(crate) fn row_along<'a>(
-    input: &'a HostData,
-    axis: usize,
-    out_coord: &[usize],
-) -> impl Iterator<Item = f32> + 'a {
-    let mut coord = out_coord.to_vec();
-    (0..input.shape[axis]).map(move |i| {
-        coord[axis] = i;
-        input.get_f32(&coord)
-    })
-}
-
-/// The best of `values`, starting from `start`, and its position: a value takes the place of the
-/// best so far where `replaces(best, value)`.
-pub(crate) fn best_of(
-    values: impl Iterator<Item = f32>,
-    start: f32,
-    replaces: fn(f32, f32) -> bool,
-) -> (u32, f32) {
-    values
-        .enumerate()
-        .fold((0, start), |(at, best), (i, value)| {
-            if replaces(best, value) {
-                (i as u32, value)
-            } else {
-                (at, best)
-            }
-        })
-}
-
-/// Each row of `input` along `axis` reduced to one value by `reduce_row`, handed the row's values
-/// in order: the output of a reduction one cell wide along `axis`.
-pub(crate) fn reference_rows(
+/// What `operation` writes for every row of `input` along `axis`, laid as its output is: each
+/// row's [`ReduceOperation::reference_cells`] along `axis`, and past a row shorter than `k` the
+/// lowest `f32` for a value, `u32::MAX` for an index.
+pub fn reference(
     input: &HostData,
     axis: usize,
+    operation: ReduceOperation,
     progress: Option<&Progress>,
-    reduce_row: impl Fn(&[f32]) -> f32,
 ) -> HostData {
-    let out_shape = output_shape(&input.shape, axis);
-    let mut data = vec![0.0f32; out_shape.iter().product()];
-    for_each_output_coord(&out_shape, |linear, out_coord| {
-        let row: Vec<f32> = row_along(input, axis, out_coord).collect();
-        data[linear] = reduce_row(&row);
-        bump(progress);
-    });
-    build_f32_output(input, axis, data)
-}
-
-/// Each row of `input` along `axis` ranked from its largest value, its first `k` places written
-/// along `axis` as `pick` reads each (a value and its index, or none past the row's end).
-pub(crate) fn reference_ranked(
-    input: &HostData,
-    axis: usize,
-    k: usize,
-    progress: Option<&Progress>,
-    pick: impl Fn(Option<&(f32, u32)>) -> f32,
-) -> HostData {
-    let mut out_shape: Vec<usize> = input.shape.iter().copied().collect();
-    out_shape[axis] = k;
+    let out_shape = output_shape_for(input.shape.as_slice(), axis, operation);
     let out_strides = contiguous_strides(&out_shape);
-    let mut data = vec![0.0f32; out_shape.iter().product()];
-    for_each_output_coord(&output_shape(&input.shape, axis), |_, row_coord| {
-        let mut ranked: Vec<(f32, u32)> = row_along(input, axis, row_coord).zip(0u32..).collect();
-        ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(core::cmp::Ordering::Equal));
-        let mut coord = row_coord.to_vec();
-        for slot in 0..k {
-            coord[axis] = slot;
-            let at: usize = coord
-                .iter()
-                .zip(out_strides.iter())
-                .map(|(c, s)| c * s)
-                .sum();
-            data[at] = pick(ranked.get(slot));
+    let mut rows_shape = out_shape.clone();
+    rows_shape[axis] = 1;
+    let mut data = vec![padding(operation); out_shape.iter().product()];
+    for_each_coord(&rows_shape, |row_coord| {
+        let row: Vec<f32> = row_along(input, axis, row_coord).collect();
+        let first: usize = row_coord
+            .iter()
+            .zip(out_strides.iter())
+            .map(|(c, s)| c * s)
+            .sum();
+        for (slot, cell) in operation.reference_cells(&row).into_iter().enumerate() {
+            data[first + slot * out_strides[axis]] = cell;
             bump(progress);
         }
     });
@@ -458,6 +327,48 @@ pub(crate) fn reference_ranked(
         shape: Shape::from(out_shape),
         strides: out_strides,
     }
+}
+
+/// What a cell past a row shorter than `k` holds: the lowest `f32` for a value, `u32::MAX` for an
+/// index.
+fn padding(operation: ReduceOperation) -> f32 {
+    match operation.writes() {
+        ReduceWrites::Indices => u32::MAX as f32,
+        ReduceWrites::Values | ReduceWrites::Both => f32::MIN,
+    }
+}
+
+/// `visit` called on every coordinate of `shape`, the last axis fastest.
+fn for_each_coord(shape: &[usize], mut visit: impl FnMut(&[usize])) {
+    let mut coord = vec![0usize; shape.len()];
+    for linear in 0..shape.iter().product() {
+        let mut rest = linear;
+        for d in (0..shape.len()).rev() {
+            coord[d] = rest % shape[d];
+            rest /= shape[d];
+        }
+        visit(&coord);
+    }
+}
+
+/// `progress` advanced by one output cell, where the caller tracks any.
+fn bump(progress: Option<&Progress>) {
+    if let Some(progress) = progress {
+        progress.bump();
+    }
+}
+
+/// The values of `input` along `axis` that reduce into the row at `row_coord`, in order.
+fn row_along<'a>(
+    input: &'a HostData,
+    axis: usize,
+    row_coord: &[usize],
+) -> impl Iterator<Item = f32> + 'a {
+    let mut coord = row_coord.to_vec();
+    (0..input.shape[axis]).map(move |i| {
+        coord[axis] = i;
+        input.get_f32(&coord)
+    })
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@
 //! each of its dims, every operation, its values and its rows as they lie; the hypercube's rows
 //! split into parts; and the kernel the rule and the autotune pick.
 
+use crate::eval::cpu_reference;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceLauncher,
@@ -39,99 +40,6 @@ const OPERATIONS: [ReduceOperation; 14] = [
     ReduceOperation::TopK { k: 1 },
     ReduceOperation::ArgTopK { k: 1 },
 ];
-
-/// The `k` largest values of `row` and their positions, best first.
-fn largest(row: &[f32], k: usize) -> Vec<(f32, usize)> {
-    ranked(row, true, k)
-}
-
-/// The `k` smallest values of `row` and their positions, best first.
-fn smallest(row: &[f32], k: usize) -> Vec<(f32, usize)> {
-    ranked(row, false, k)
-}
-
-/// The `k` best of `row`, best first: the larger (smaller) value, then the lower index, a NaN
-/// ahead of every number.
-fn ranked(row: &[f32], largest: bool, k: usize) -> Vec<(f32, usize)> {
-    let mut order: Vec<(f32, usize)> = row.iter().copied().zip(0..).collect();
-    order.sort_by(|a, b| {
-        let by_value = match (a.0.is_nan(), b.0.is_nan()) {
-            (true, true) => core::cmp::Ordering::Equal,
-            (true, false) => core::cmp::Ordering::Less,
-            (false, true) => core::cmp::Ordering::Greater,
-            _ if largest => b.0.partial_cmp(&a.0).unwrap(),
-            _ => a.0.partial_cmp(&b.0).unwrap(),
-        };
-        by_value.then(a.1.cmp(&b.1))
-    });
-    order.truncate(k);
-    order
-}
-
-/// What `operation` writes for `row`.
-fn reference(row: &[f32], operation: ReduceOperation) -> Vec<f32> {
-    let nan = row.iter().any(|v| v.is_nan());
-    let keeping_nan = |v: f32| if nan { f32::NAN } else { v };
-    match operation {
-        ReduceOperation::Sum => vec![row.iter().sum()],
-        ReduceOperation::Prod => vec![row.iter().product()],
-        ReduceOperation::Mean => vec![row.iter().sum::<f32>() / row.len() as f32],
-        ReduceOperation::Max => vec![keeping_nan(
-            row.iter().copied().fold(f32::NEG_INFINITY, f32::max),
-        )],
-        ReduceOperation::Min => vec![keeping_nan(
-            row.iter().copied().fold(f32::INFINITY, f32::min),
-        )],
-        ReduceOperation::MaxAbs => vec![keeping_nan(
-            row.iter()
-                .map(|v| v.abs())
-                .fold(f32::NEG_INFINITY, f32::max),
-        )],
-        ReduceOperation::Any => vec![if row.iter().any(|v| *v != 0.0) {
-            1.0
-        } else {
-            0.0
-        }],
-        ReduceOperation::All => vec![if row.iter().all(|v| *v != 0.0) {
-            1.0
-        } else {
-            0.0
-        }],
-        ReduceOperation::ArgMax => vec![largest(row, 1)[0].1 as f32],
-        ReduceOperation::ArgMin => vec![smallest(row, 1)[0].1 as f32],
-        ReduceOperation::TopK { k } => largest(row, k).iter().map(|e| e.0).collect(),
-        ReduceOperation::ArgTopK { k } => largest(row, k).iter().map(|e| e.1 as f32).collect(),
-    }
-}
-
-/// Row-major strides of `shape`.
-fn strides(shape: &[usize]) -> Vec<usize> {
-    let mut strides = vec![1; shape.len()];
-    for d in (0..shape.len() - 1).rev() {
-        strides[d] = strides[d + 1] * shape[d + 1];
-    }
-    strides
-}
-
-/// Every row of `values`, of `shape`, along dim `axis`: its values, and the index of its first.
-fn rows_along(values: &[f32], shape: &[usize], axis: usize) -> Vec<Vec<f32>> {
-    let strides = strides(shape);
-    let count: usize = shape.iter().product::<usize>() / shape[axis];
-    (0..count)
-        .map(|row| {
-            // The row's coordinates on every dim but `axis`, outermost first.
-            let mut rest = row;
-            let mut base = 0;
-            for d in (0..shape.len()).rev().filter(|d| *d != axis) {
-                base += (rest % shape[d]) * strides[d];
-                rest /= shape[d];
-            }
-            (0..shape[axis])
-                .map(|i| values[base + i * strides[axis]])
-                .collect()
-        })
-        .collect()
-}
 
 /// Small whole numbers, so every sum is exact; some ties and zeros, and a NaN rare enough that
 /// most rows, even long ones, hold none and check their numbers; for a product,
@@ -286,30 +194,17 @@ impl ScopeUnderTest for RoutineScopeUnderTest {
         }])
     }
 
-    /// Every row's reference written where the row's cells lie in the output.
+    /// What the reduce reference writes for the input.
     fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
-        let out_shape = reduction.out_shape();
-        let out_strides = strides(&out_shape);
-        let axis = reduction.axis;
-        let mut out = vec![0.0f32; out_shape.iter().product()];
-        let rows = rows_along(&reduction.input(), &reduction.shape, axis);
-        for (row, values) in rows.iter().enumerate() {
-            let mut rest = row;
-            let mut base = 0;
-            for d in (0..out_shape.len()).rev().filter(|d| *d != axis) {
-                base += (rest % out_shape[d]) * out_strides[d];
-                rest /= out_shape[d];
-            }
-            for (cell, want) in reference(values, reduction.operation)
-                .into_iter()
-                .enumerate()
-            {
-                out[base + cell * out_strides[axis]] = want;
-            }
-        }
-        vec![HostData::row_major(
-            HostDataVec::F32(out),
-            Shape::from(out_shape),
+        let input = HostData::row_major(
+            HostDataVec::F32(reduction.input()),
+            Shape::from(reduction.shape.clone()),
+        );
+        vec![cpu_reference::reference(
+            &input,
+            reduction.axis,
+            reduction.operation,
+            None,
         )]
     }
 

@@ -168,7 +168,7 @@ impl HostReduce {
         let per_row: Vec<Vec<f32>> = self
             .rows
             .iter()
-            .map(|row| Self::cells(row, self.case.operation))
+            .map(|row| self.case.operation.reference_cells(row))
             .collect();
         let values = match self.case.lines {
             LineDirection::Along => per_row.concat(),
@@ -177,53 +177,6 @@ impl HostReduce {
                 .collect(),
         };
         HostData::row_major(HostDataVec::F32(values), self.out_shape())
-    }
-
-    /// What `operation` writes for `row`: its cells, values or indices as numbers.
-    fn cells(row: &[f32], operation: ReduceOperation) -> Vec<f32> {
-        let nan = row.iter().any(|v| v.is_nan());
-        let reduce_row = |init: f32, f: fn(f32, f32) -> f32| row.iter().copied().fold(init, f);
-        let keeping_nan = |v: f32| if nan { f32::NAN } else { v };
-        let flag = |holds: bool| if holds { 1.0 } else { 0.0 };
-        match operation {
-            ReduceOperation::Sum => vec![row.iter().sum()],
-            ReduceOperation::Prod => vec![row.iter().product()],
-            ReduceOperation::Mean => vec![row.iter().sum::<f32>() / row.len() as f32],
-            ReduceOperation::Max => vec![keeping_nan(reduce_row(f32::NEG_INFINITY, f32::max))],
-            ReduceOperation::Min => vec![keeping_nan(reduce_row(f32::INFINITY, f32::min))],
-            ReduceOperation::MaxAbs => vec![keeping_nan(
-                row.iter()
-                    .map(|v| v.abs())
-                    .fold(f32::NEG_INFINITY, f32::max),
-            )],
-            ReduceOperation::Any => vec![flag(row.iter().any(|v| *v != 0.0))],
-            ReduceOperation::All => vec![flag(row.iter().all(|v| *v != 0.0))],
-            ReduceOperation::ArgMax => vec![Self::ranked(row, true, 1)[0].1 as f32],
-            ReduceOperation::ArgMin => vec![Self::ranked(row, false, 1)[0].1 as f32],
-            ReduceOperation::TopK { k } => Self::ranked(row, true, k).iter().map(|e| e.0).collect(),
-            ReduceOperation::ArgTopK { k } => Self::ranked(row, true, k)
-                .iter()
-                .map(|e| e.1 as f32)
-                .collect(),
-        }
-    }
-
-    /// The `k` best of `row` under `largest`, with their indices: the larger (smaller) value
-    /// first, the lower index between equal values, a NaN ahead of every number.
-    fn ranked(row: &[f32], largest: bool, k: usize) -> Vec<(f32, usize)> {
-        let mut order: Vec<(f32, usize)> = row.iter().copied().zip(0..).collect();
-        order.sort_by(|a, b| {
-            let by_value = match (a.0.is_nan(), b.0.is_nan()) {
-                (true, true) => core::cmp::Ordering::Equal,
-                (true, false) => core::cmp::Ordering::Less,
-                (false, true) => core::cmp::Ordering::Greater,
-                _ if largest => b.0.partial_cmp(&a.0).unwrap(),
-                _ => a.0.partial_cmp(&b.0).unwrap(),
-            };
-            by_value.then(a.1.cmp(&b.1))
-        });
-        order.truncate(k);
-        order
     }
 }
 

@@ -25,7 +25,7 @@ heavy = []
 extended = ["heavy"]
 full = ["extended", "benchmarks"]
 
-cpu-reference = ["dep:cubek-test-utils"]
+cpu-reference = ["dep:cubek-test-utils", "cubek-microkernel/cpu-reference"]
 # Enables `pub mod benchmarks` — catalogue of reduce benchmark problems /
 # strategies and the bench harness. The seeded `ReduceCorrectness` impl
 # inside that module is additionally gated on `cpu-reference`.
