@@ -2,9 +2,12 @@
 //! units shuffling their partial sums together. It holds at most a decode step's rows.
 
 use cubek_matmul::kernels::PlaneShuffleMatmulRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_matmul::tiled::storage::{StoredValues, stored_tile};
+use cubek_microkernel::matmul::MatmulOperand;
+use cubek_std::matmul_axes::{K, N};
+use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
 
-use crate::matmul::{Declines, I32, Product};
+use crate::matmul::{BF16, Declines, I32, Product, RhsTiles};
 use crate::tiled::ByRoutine;
 
 #[test]
@@ -24,5 +27,26 @@ fn every_plane_shuffle_setting_sums_i32_exactly() {
         vec![prime_depth.clone(), prime_depth.rhs_along_k()],
     ]
     .concat();
+    shuffle.check(shuffle.at_every_setting(&products));
+}
+
+/// A bf16 decode projection against a weight stored as a load stores it on the test device: every
+/// setting either declines it or matches the host.
+#[test]
+fn every_plane_shuffle_setting_reads_a_weight_stored_in_tiles() {
+    let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
+    let values = StoredValues::Elements(BF16);
+    let Some(tile) = stored_tile(shuffle.hw(), MatmulOperand::Rhs, values, BF16) else {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "the device stores no bf16 weight in tiles".to_string(),
+        ))
+        .enforce();
+        return;
+    };
+    let tiles = RhsTiles {
+        n: tile.extent(N),
+        k: tile.extent(K),
+    };
+    let products = [48, 96].map(|n| Product::of(BF16).m(1).n(n).k(5120).rhs_in_reads(tiles));
     shuffle.check(shuffle.at_every_setting(&products));
 }

@@ -21,6 +21,7 @@ use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, StridedLayout, TestInput, Written};
 
 pub(crate) const F16: ElemType = ElemType::Float(FloatKind::F16);
+pub(crate) const BF16: ElemType = ElemType::Float(FloatKind::BF16);
 pub(crate) const F32: ElemType = ElemType::Float(FloatKind::F32);
 pub(crate) const F64: ElemType = ElemType::Float(FloatKind::F64);
 pub(crate) const I32: ElemType = ElemType::Int(IntKind::I32);
@@ -53,15 +54,35 @@ pub(crate) struct RhsTiles {
     pub k: usize,
 }
 
+/// How the rows of a stored tile lie.
+#[cfg(feature = "tiled")]
+#[derive(Debug, Clone, Copy)]
+enum TileRows {
+    /// Each row whole.
+    Whole,
+    /// Each row split at the widest read the device serves, as a load stores a weight
+    /// ([`matrix_storage`](cubek_matmul::tiled::storage::matrix_storage)).
+    InReads,
+}
+
 #[cfg(feature = "tiled")]
 impl RhsTiles {
-    /// `rhs`, `[k, n]` of `element`, copied into these tiles.
-    fn store(self, client: &Client, rhs: TensorHandle, element: ElemType) -> TensorHandle {
+    /// `rhs`, `[k, n]` of `element`, copied into these tiles, their rows lying as `rows` says.
+    fn store(
+        self,
+        client: &Client,
+        rhs: TensorHandle,
+        element: ElemType,
+        rows: TileRows,
+    ) -> TensorHandle {
         use cubecl::tile::Axis;
-        use cubek_matmul::tiled::storage::{StorageLevels, tile};
+        use cubek_matmul::tiled::storage::{StorageLevels, matrix_storage, tile};
         const K: Axis = Axis(0);
         const N: Axis = Axis(1);
-        let storage = StorageLevels::new(&[(N, self.n), (K, self.k)]).grid(&[N, K]);
+        let storage = match rows {
+            TileRows::InReads => matrix_storage(client, element, [(K, self.k), (N, self.n)]),
+            TileRows::Whole => StorageLevels::new(&[(N, self.n), (K, self.k)]).grid(&[N, K]),
+        };
         tile(client, rhs.binding(), &[K, N], element, None, storage)
             .unwrap_or_else(|why| panic!("{self:?} store no such rhs: {why}"))
     }
@@ -90,7 +111,7 @@ pub(crate) struct Product {
     broadcast: Option<Broadcast>,
     values: Values,
     #[cfg(feature = "tiled")]
-    rhs_tiles: Option<RhsTiles>,
+    rhs_tiles: Option<(RhsTiles, TileRows)>,
 }
 
 /// Which operand an input is.
@@ -190,7 +211,17 @@ impl Product {
     #[cfg(feature = "tiled")]
     pub(crate) fn rhs_in(self, tiles: RhsTiles) -> Self {
         Self {
-            rhs_tiles: Some(tiles),
+            rhs_tiles: Some((tiles, TileRows::Whole)),
+            ..self
+        }
+    }
+
+    /// The same product, its rhs stored in `tiles` as a load stores a weight
+    /// ([`TileRows::InReads`]).
+    #[cfg(feature = "tiled")]
+    pub(crate) fn rhs_in_reads(self, tiles: RhsTiles) -> Self {
+        Self {
+            rhs_tiles: Some((tiles, TileRows::InReads)),
             ..self
         }
     }
@@ -295,7 +326,7 @@ impl Product {
         let (rhs, _) = self.operand(client, Side::Rhs);
         #[cfg(feature = "tiled")]
         let rhs = match self.rhs_tiles {
-            Some(tiles) => tiles.store(client, rhs, self.elems.rhs),
+            Some((tiles, rows)) => tiles.store(client, rhs, self.elems.rhs, rows),
             None => rhs,
         };
         (lhs, rhs, self.poisoned_out(client))
@@ -363,8 +394,8 @@ impl Debug for Product {
             write!(f, ", in eighths")?;
         }
         #[cfg(feature = "tiled")]
-        if let Some(tiles) = self.rhs_tiles {
-            write!(f, ", rhs in {tiles:?}")?;
+        if let Some((tiles, rows)) = self.rhs_tiles {
+            write!(f, ", rhs in {tiles:?}, rows {rows:?}")?;
         }
         Ok(())
     }

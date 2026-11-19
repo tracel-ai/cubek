@@ -3,6 +3,7 @@ use crate::kernels::{
     MATMUL_STREAMED_INPUT_FLOAT, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
     MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
+use crate::tiled::storage::{StoredValues, stored_tile};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
@@ -120,6 +121,14 @@ impl PlaneShuffleMatmulRoutine {
               not say how many compute units it has",
     };
 
+    /// What a float rhs stored in tiles declines a launch that overhangs it with, where a level's
+    /// window is a run the rhs stores whole: the tile launcher reads such a window unmasked, and
+    /// refuses to bind the rhs.
+    pub const CHECKED_STORED_RHS: Refusal = Refusal::Declined {
+        why: "a plane shuffle's launch overhangs a float rhs stored in tiles, which a level's \
+              window reads as one unmasked stored run",
+    };
+
     /// Steps of `K` a unit holds at once: its plane shuffles stage nothing in shared memory, and
     /// load a step once the last is summed.
     const STAGES_IN_FLIGHT: u32 = 1;
@@ -202,6 +211,46 @@ impl PlaneShuffleMatmulRoutine {
             vectorization,
             (),
         ))
+    }
+
+    /// Whether the tile launcher would refuse `problem`'s rhs under `partitioning`
+    /// ([`CHECKED_STORED_RHS`](Self::CHECKED_STORED_RHS)): a float rhs in the tile a load stores it
+    /// in on `hw`, which the launch overhangs along `K` or `N` while some level's window is a run
+    /// of that tile.
+    fn refuses_stored_rhs(
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        partitioning: &MatmulPartitioning,
+    ) -> bool {
+        let rhs = problem.elem_alignments.rhs;
+        if !rhs.is_stored_piece() || ![K, N].into_iter().any(|axis| partitioning.overhangs(axis)) {
+            return false;
+        }
+        let values = StoredValues::Elements(problem.elements.rhs);
+        let Some(tile) = stored_tile(hw, MatmulOperand::Rhs, values, problem.elements.lhs) else {
+            return false;
+        };
+        let [tile_k, tile_n] = [K, N].map(|axis| tile.extent(axis));
+        let read = (1..=tile_n).rev().find(|&width| rhs.admits(width));
+        // What the launcher addresses with one stride an axis, over `[K, N]`: a read, a row of the
+        // tile and the tile.
+        let runs = [
+            [Some(1), read],
+            [Some(1), Some(tile_n)],
+            [Some(tile_k), Some(tile_n)],
+        ];
+        // A level that cuts no axis keeps the window above it, and an extent the kernel leaves
+        // dynamic is no stored run.
+        let kernel = partitioning.kernel();
+        let mut window = [K, N].map(|axis| {
+            (!kernel.space().is_dynamic(axis)).then(|| partitioning.space().extent(axis))
+        });
+        partitioning.as_tile().levels().iter().any(|level| {
+            for (cut, axis) in window.iter_mut().zip([K, N]) {
+                *cut = level.tile(axis).or(*cut);
+            }
+            runs.contains(&window)
+        })
     }
 
     /// [`Routine::estimate`] against a float rhs.
@@ -316,6 +365,9 @@ impl PlaneShuffleMatmulRoutine {
             &[M, N],
             PlaneOrder::new(&[(N, settings.planes.get())], CubeOrder::RowMajor),
         );
+        if Self::refuses_stored_rhs(hw, problem, &partitioning) {
+            return Err(Self::CHECKED_STORED_RHS);
+        }
         let blueprint = self.blueprint(hw, problem, microkernel, partitioning)?;
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
@@ -561,8 +613,10 @@ impl MatmulRoutine<PlaneShuffleMicrokernel> for PlaneShuffleMatmulRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+    use cubecl::tile::layout::ElemAlignment;
     use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
@@ -913,6 +967,54 @@ mod tests {
                 .err(),
             Some(PlaneShuffleMatmulRoutine::PERSISTENT_FLOAT)
         );
+    }
+
+    /// A bf16 decode projection against an rhs stored in tiles read 8 wide, on a wave32 RDNA
+    /// device offering bf16 WMMA: the three settings whose launch overhangs the 48 columns while a
+    /// level's window is one read, or one row, of a stored tile decline; every other setting plans,
+    /// and every setting plans against the rhs in rows.
+    #[test]
+    fn an_overhanging_launch_declines_a_window_inside_the_rhs_storage_tile() {
+        use PlaneShuffleMicrokernelSettings as Block;
+        let [bf16, f32] = [FloatKind::BF16, FloatKind::F32].map(ElemType::Float);
+        let wmma = |k| MmaConfig {
+            a_type: bf16,
+            b_type: bf16,
+            cd_type: f32,
+            m: 16,
+            n: 16,
+            k,
+        };
+        let hw = devices::offering_cmma(devices::strix_halo(), [wmma(16), wmma(32)]);
+        let [m, n, k] = [1, 48, 5120];
+        let read = ElemAlignment::stored_piece(8);
+        let rows = MatmulRoutineProblem::dense(m, n, k, bf16);
+        let in_tiles = MatmulRoutineProblem {
+            elem_alignments: rows.elem_alignments.with(MatmulOperand::Rhs, read),
+            buffer_alignments: rows.buffer_alignments.with(MatmulOperand::Rhs, read),
+            ..rows.clone()
+        };
+        let checked = [
+            (Block::ONE_READ, 4),
+            (Block::ONE_READ_ONE_TRANSACTION, 4),
+            (Block::TWO_ROW_VECTORS, 4),
+        ];
+        for settings in PlaneShuffleMatmulRoutine.settings(&hw) {
+            let declines = checked.contains(&(settings.microkernel, settings.planes.get()));
+            assert_eq!(
+                PlaneShuffleMatmulRoutine
+                    .prepare(&hw, &in_tiles, &settings)
+                    .err(),
+                declines.then_some(PlaneShuffleMatmulRoutine::CHECKED_STORED_RHS),
+                "{settings}"
+            );
+            assert!(
+                PlaneShuffleMatmulRoutine
+                    .prepare(&hw, &rows, &settings)
+                    .is_ok(),
+                "{settings} in rows"
+            );
+        }
     }
 
     /// A product of no rows, or of more than a work item holds, is declined before anything is
