@@ -69,13 +69,16 @@ impl ScoreHolder {
     }
 
     /// The tile's pick for a product that reads the sum kept here as its `A`, `item` over the
-    /// plane's `tile`: out of the window, cast to the operands' element; held in registers, runs
-    /// of `kept`'s cells as they lie ([`FragmentSource::Fragments`]).
+    /// plane's `tile`, against `rhs`, its `B` as the kernel opens the product's sum on it: out of
+    /// the window, cast to the operands' element; held in registers, runs of `kept`'s cells as
+    /// they lie ([`FragmentSource::Fragments`]). Held cells name no element, so the tile picks
+    /// nothing for them against values a stage's fill decodes ([`FragmentSource::Decoded`]).
     pub(crate) fn reader_pick(
         self,
         hw: &Hardware,
         kept: ShapedInstruction,
         item: &MatmulWorkItem,
+        rhs: FragmentSource,
         tile: [usize; 3],
     ) -> Option<ShapedInstruction> {
         let lhs = match self {
@@ -90,7 +93,7 @@ impl ScoreHolder {
             &hw.target,
             ComputeScope::Plane,
             lhs,
-            FragmentSource::Values(item.elements.rhs),
+            rhs,
             item.sum,
             tile,
         )

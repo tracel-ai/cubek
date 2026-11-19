@@ -9,7 +9,7 @@ use crate::matmul::plane::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Level, Levels, Partitioning, Scratch};
+use cubecl::tile::{Axis, FragmentSource, Level, Levels, Partitioning, Scratch};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -190,7 +190,13 @@ impl PlaneQueryGradientMicrokernel {
         let holder = settings.score;
         let score_call = holder.sum_pick(hw, &score_item, score_tile)?;
         let gradient_call = holder.sum_pick(hw, &gradient_item, gradient_tile)?;
-        let query_call = holder.reader_pick(hw, gradient_call, &query_item, query_tile)?;
+        let query_call = holder.reader_pick(
+            hw,
+            gradient_call,
+            &query_item,
+            FragmentSource::Values(query_item.elements.rhs),
+            query_tile,
+        )?;
         Some(Self {
             settings,
             score: PlaneFragmentMicrokernel::holding(&score_item, grid, score_tile, score_call)?,
