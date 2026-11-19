@@ -1,12 +1,13 @@
 //! A reduce launch's compile-time decisions.
 
 use crate::kernels::ReduceRoutineProblem;
-use cubecl::tile::Partitioning;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
+use cubecl::tile::space::UnitCube;
+use cubecl::tile::{Levels, Partitioning};
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand, ReduceWorkItem};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::Grid;
+use cubek_std::routine::{CubeResources, Grid};
 
 /// What a launch of this kind compiles: the microkernel, the partitioning that places its owners,
 /// and the width each operand binds at.
@@ -81,6 +82,39 @@ pub(crate) fn estimate_reduce<M: Microkernel<WorkItem = ReduceWorkItem, CubeSpac
     estimate: &mut KernelEstimate,
 ) {
     microkernel.estimate(&problem.work_item(), &(), grid.planes(), estimate);
+}
+
+/// The launch of a unit an owner: `problem`'s owners at `width`, each its own unit, in cubes of
+/// `planes` planes as wide as `hw` dispatches one, holding no shared memory.
+///
+/// # Errors
+///
+/// Where the device cannot launch that grid.
+pub(crate) fn unit_launch(
+    hw: &Hardware,
+    problem: &ReduceRoutineProblem,
+    width: usize,
+    planes: usize,
+) -> Result<(Partitioning, Grid), Decline> {
+    let plane_width = hw.dispatch_plane_size() as usize;
+    let partitioning = Partitioning::new(
+        problem.space(),
+        Levels::leaf(&problem.owner_box_at_width(width))
+            .launch_units(
+                &problem.owner_dimensions_innermost_first(),
+                UnitCube {
+                    plane_width,
+                    planes,
+                },
+            )
+            .build(),
+    );
+    let cube = CubeResources {
+        plane_width: plane_width as u32,
+        shared_memory: 0,
+    };
+    let grid = Grid::new(hw, &partitioning, cube)?;
+    Ok((partitioning, grid))
 }
 
 /// A routine's settings: each of its microkernel's `microkernels` with each of its own `knobs`,

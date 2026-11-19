@@ -1,20 +1,19 @@
 use super::kernel::{unit_direct_reduce_kernel, unit_direct_reduce_with_indices_kernel};
 use crate::kernels::{
     ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, each_microkernel_with,
-    estimate_reduce, microkernel_widths,
+    estimate_reduce, microkernel_widths, unit_launch,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
-use cubecl::tile::space::UnitCube;
-use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
+use cubecl::tile::{Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::unit::{
     UnitDirectReduceMicrokernel, UnitDirectReduceMicrokernelSettings,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{Grid, Routine};
 
 /// Every owner a unit of the launch, which reduces its rows alone: many short rows, a unit each.
 /// The launch groups its units in cubes of `planes` planes as wide as the device dispatches one.
@@ -76,24 +75,7 @@ impl Routine for UnitDirectReduceRoutine {
         let microkernel =
             UnitDirectReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
-        let plane_width = hw.dispatch_plane_size() as usize;
-        let partitioning = Partitioning::new(
-            problem.space(),
-            Levels::leaf(&problem.owner_box_at_width(widths[0]))
-                .launch_units(
-                    &problem.owner_dimensions_innermost_first(),
-                    UnitCube {
-                        plane_width,
-                        planes: settings.planes,
-                    },
-                )
-                .build(),
-        );
-        let cube = CubeResources {
-            plane_width: plane_width as u32,
-            shared_memory: 0,
-        };
-        let grid = Grid::new(hw, &partitioning, cube)?;
+        let (partitioning, grid) = unit_launch(hw, problem, widths[0], settings.planes)?;
         Ok((
             ReduceBlueprint::new(microkernel, partitioning, widths),
             grid,

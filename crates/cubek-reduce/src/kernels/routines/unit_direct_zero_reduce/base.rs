@@ -1,18 +1,17 @@
 use super::kernel::unit_direct_zero_reduce_kernel;
 use crate::kernels::{
     ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
-    reduce_widths,
+    reduce_widths, unit_launch,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Decline, TileOperand, Unbound, Vectorization};
-use cubecl::tile::space::UnitCube;
-use cubecl::tile::{Geometry, Launcher, Levels, Partitioning, TileTensorLaunch};
+use cubecl::tile::{Geometry, Launcher, Partitioning, TileTensorLaunch};
 use cubek_microkernel::zero::ZeroOperand;
 use cubek_microkernel::zero::unit::{UnitDirectZeroMicrokernel, UnitDirectZeroMicrokernelSettings};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{Grid, Routine};
 
 /// A reduction's output zeroed, a unit per box of rows' cells: what a reduction that adds its
 /// parts into the output starts from ([`HypercubeAtomicReduceRoutine`](crate::kernels::HypercubeAtomicReduceRoutine)).
@@ -72,24 +71,7 @@ impl Routine for UnitDirectZeroReduceRoutine {
         vectorization.require(problem.work_item().requirement());
         // It zeroes a sum's output ahead of the atomic routine, which no top-k bounds.
         let widths = reduce_widths(hw, problem, vectorization, None);
-        let plane_width = hw.dispatch_plane_size() as usize;
-        let partitioning = Partitioning::new(
-            problem.space(),
-            Levels::leaf(&problem.owner_box_at_width(widths[0]))
-                .launch_units(
-                    &problem.owner_dimensions_innermost_first(),
-                    UnitCube {
-                        plane_width,
-                        planes: settings.planes,
-                    },
-                )
-                .build(),
-        );
-        let cube = CubeResources {
-            plane_width: plane_width as u32,
-            shared_memory: 0,
-        };
-        let grid = Grid::new(hw, &partitioning, cube)?;
+        let (partitioning, grid) = unit_launch(hw, problem, widths[0], settings.planes)?;
         Ok((
             ReduceBlueprint::new(microkernel, partitioning, widths),
             grid,
