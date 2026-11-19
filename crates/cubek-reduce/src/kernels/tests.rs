@@ -24,37 +24,27 @@ use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Test
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 const I32: ElemType = ElemType::Int(IntKind::I32);
 
-const OPERATIONS: [ReduceOperation; 14] = [
-    ReduceOperation::Sum,
-    ReduceOperation::Prod,
-    ReduceOperation::Mean,
-    ReduceOperation::Max,
-    ReduceOperation::Min,
-    ReduceOperation::MaxAbs,
-    ReduceOperation::Any,
-    ReduceOperation::All,
-    ReduceOperation::ArgMax,
-    ReduceOperation::ArgMin,
-    ReduceOperation::TopK { k: 3 },
-    ReduceOperation::ArgTopK { k: 3 },
-    ReduceOperation::TopK { k: 1 },
-    ReduceOperation::ArgTopK { k: 1 },
-];
-
-/// Small whole numbers, so every sum is exact; some ties and zeros, and a NaN rare enough that
-/// most rows, even long ones, hold none and check their numbers; for a product,
-/// `±1`, `2` and `0.5` on a cycle of seven, prime to every extent here so no row repeats one
-/// value, with as many `2` as `0.5` so that a long row's product stays exact and finite.
+/// Small whole numbers, so every sum is exact, with ties and zeros; for a product, `±1`, `2` and
+/// `0.5` on a cycle of seven, prime to every extent here so no row repeats one value, with as many
+/// `2` as `0.5` so that a long row's product stays exact and finite. A NaN, an infinity or a row
+/// of ties is a behavior of its own, which the microkernels' Component Tests check.
 fn values(len: usize, product: bool) -> Vec<f32> {
     (0..len)
-        .map(|i| match (product, i % 97) {
-            (true, _) => [1.0, -1.0, 2.0, 0.5, 1.0, 2.0, 0.5][i % 7],
-            (false, _) if i % 9973 == 13 => f32::NAN,
-            (false, 29 | 30) => 9.0,
-            (false, 50) => 0.0,
-            _ => ((i * 7) % 11) as f32 - 5.0,
+        .map(|i| match product {
+            true => [1.0, -1.0, 2.0, 0.5, 1.0, 2.0, 0.5][i % 7],
+            false => whole_value(i),
         })
         .collect()
+}
+
+/// Value `i` of a row that is not a product's: a run of ties, a zero, and between them small whole
+/// numbers on a cycle of eleven.
+fn whole_value(i: usize) -> f32 {
+    match i % 97 {
+        29 | 30 => 9.0,
+        50 => 0.0,
+        _ => ((i * 7) % 11) as f32 - 5.0,
+    }
 }
 
 /// Which routine a reduction launches, and at which of its settings: the first the device
@@ -214,37 +204,6 @@ impl ScopeUnderTest for RoutineScopeUnderTest {
     }
 }
 
-/// Every routine reduces a `[2, 5, 300]` tensor along each dim, every operation whose rows hold
-/// what it writes: along the contiguous dim, and across it, each lane its own row. The plane and the
-/// cube skip where the device commits to no plane width.
-#[test]
-fn every_routine_reduces_every_dim_like_the_cpu() {
-    let routines = [
-        TestedRoutine::UnitDirect,
-        TestedRoutine::PlaneShuffle,
-        TestedRoutine::CubeStaged,
-    ];
-    let mut reductions = Vec::new();
-    for routine in routines {
-        for axis in [2, 1, 0] {
-            for operation in OPERATIONS {
-                // A row shorter than `k` leaves cells no reference states: what the kernel pads
-                // them with is its own.
-                if operation.written_per_row() > [2, 5, 300][axis] {
-                    continue;
-                }
-                reductions.push(Reduction {
-                    routine,
-                    shape: vec![2, 5, 300],
-                    axis,
-                    operation,
-                });
-            }
-        }
-    }
-    RoutineScopeUnderTest.check(reductions);
-}
-
 /// A reduce routine of the tile stack launched unbound, its input bound by the caller as a plain
 /// buffer once the launch is prepared, at the width the routine picks for it: what a fused read
 /// stands in for, against the host.
@@ -379,80 +338,6 @@ impl ScopeUnderTest for UnboundRoutineScopeUnderTest {
     }
 }
 
-/// The unit, plane and cube routines launched unbound reduce a `[2, 5, 300]` tensor along its
-/// contiguous dim and across it as they do bound: a sum, a max, a mean and an argmax. The plane
-/// and the cube skip where the device commits to no plane width.
-#[test]
-fn unbound_routines_reduce_like_the_cpu() {
-    let routines = [
-        TestedRoutine::UnitDirect,
-        TestedRoutine::PlaneShuffle,
-        TestedRoutine::CubeStaged,
-    ];
-    let mut reductions = Vec::new();
-    for routine in routines {
-        for axis in [2, 1] {
-            for operation in [
-                ReduceOperation::Sum,
-                ReduceOperation::Max,
-                ReduceOperation::Mean,
-                ReduceOperation::ArgMax,
-            ] {
-                reductions.push(Reduction {
-                    routine,
-                    shape: vec![2, 5, 300],
-                    axis,
-                    operation,
-                });
-            }
-        }
-    }
-    UnboundRoutineScopeUnderTest.check(reductions);
-}
-
-/// The sums the atomic hypercube is checked on: one long row; rows along the contiguous dim; rows
-/// across it; and four rows of a matrix, whose output's rows lie side by side in memory.
-fn atomic_sums() -> Vec<Reduction> {
-    let shapes: [(&[usize], usize); 4] = [
-        (&[1, 1, 9000], 2),
-        (&[2, 3, 5000], 2),
-        (&[3, 2100, 4], 1),
-        (&[4, 9000], 1),
-    ];
-    shapes
-        .into_iter()
-        .map(|(shape, axis)| Reduction {
-            routine: TestedRoutine::Picked(ReduceOpStrategy::Specific(
-                ReduceKernel::HypercubeAtomic,
-            )),
-            shape: shape.to_vec(),
-            axis,
-            operation: ReduceOperation::Sum,
-        })
-        .collect()
-}
-
-/// The atomic hypercube sums rows split into parts, each part added into the zeroed output, on
-/// [`atomic_sums`]. It must launch wherever the device adds floats atomically; a sum is the only
-/// operation it serves.
-#[test]
-fn the_atomic_hypercube_sums_split_rows_like_the_cpu() {
-    match adds_floats_atomically() {
-        true => RoutineScopeUnderTest.check_some(atomic_sums()),
-        false => RoutineScopeUnderTest.check(atomic_sums()),
-    }
-}
-
-/// The atomic hypercube launched unbound sums as it does bound, into an output that starts away
-/// from zero, so the zeroing before it is checked too, on [`atomic_sums`].
-#[test]
-fn the_atomic_hypercube_sums_an_unbound_input_like_the_cpu() {
-    match adds_floats_atomically() {
-        true => UnboundRoutineScopeUnderTest.check_some(atomic_sums()),
-        false => UnboundRoutineScopeUnderTest.check(atomic_sums()),
-    }
-}
-
 /// Whether the test device runs the atomic hypercube's sums: a plane width it commits to, for the
 /// cube microkernel each cube runs, and an atomic add of floats. Where it does, a sum must launch;
 /// where it does not, the routine's decline is a skip.
@@ -463,55 +348,6 @@ fn adds_floats_atomically() -> bool {
             .properties
             .atomic_type_usage(Type::atomic(F32))
             .contains(AtomicUsage::Add)
-}
-
-/// The hypercube splits rows into parts, the last one short, and merges them: a `[2, 3, 5000]`
-/// tensor along its contiguous dim, in three parts; across it, a `[3, 2100, 4]` tensor along its
-/// middle dim, in five; and a row of one part. It skips where the device commits to no plane width
-/// or one cube's stores do not reach another within a launch.
-#[test]
-fn the_hypercube_reduces_split_rows_like_the_cpu() {
-    let mut reductions = Vec::new();
-    for (shape, axis) in [([2, 3, 5000], 2), ([3, 2100, 4], 1), ([2, 3, 5000], 1)] {
-        for operation in OPERATIONS {
-            reductions.push(Reduction {
-                routine: TestedRoutine::HypercubeLastArrival,
-                shape: shape.to_vec(),
-                axis,
-                operation,
-            });
-        }
-    }
-    RoutineScopeUnderTest.check(reductions);
-}
-
-/// Every strategy reduces like the CPU wherever it sends a problem: many short rows, one long row,
-/// and rows across the contiguous dim, at extents that are not powers of
-/// two. A kernel the device does not run, or that declines the problem, is skipped.
-#[test]
-fn every_strategy_reduces_like_the_cpu() {
-    let mut reductions = Vec::new();
-    // The pins first, so a failure names the kernel before a policy that picked it.
-    let mut strategies = ReduceOpStrategy::all();
-    strategies.rotate_left(2);
-    for strategy in strategies {
-        for (shape, axis) in [([96, 7, 300], 2), ([1, 1, 9000], 2), ([3, 2100, 5], 1)] {
-            for operation in [
-                ReduceOperation::Sum,
-                ReduceOperation::Mean,
-                ReduceOperation::ArgMax,
-                ReduceOperation::TopK { k: 3 },
-            ] {
-                reductions.push(Reduction {
-                    routine: TestedRoutine::Picked(strategy),
-                    shape: shape.to_vec(),
-                    axis,
-                    operation,
-                });
-            }
-        }
-    }
-    RoutineScopeUnderTest.check(reductions);
 }
 
 /// A buffer of `shape` in f32 on the test device, holding zeros.
@@ -557,33 +393,378 @@ fn indices_of_another_shape_panic() {
     tensors_with_indices(ReduceOperation::ArgMax, &[1, 4]);
 }
 
-/// Every routine reduces a tensor with more row axes than a launch grid has, the rows on both sides
-/// of the reduced axis or before it: a `[2, 3, 2, 2, 64]` tensor along its middle axis and its last.
-/// Each routine's row axes are one [`BATCH`](crate::kernels::BATCH). A routine the device declines
-/// is skipped.
-#[test]
-fn every_routine_reduces_more_row_axes_than_the_grid_has() {
-    let mut reductions = Vec::new();
-    for routine in [
-        TestedRoutine::UnitDirect,
-        TestedRoutine::PlaneShuffle,
-        TestedRoutine::CubeStaged,
-        TestedRoutine::HypercubeLastArrival,
-    ] {
-        for axis in [2, 4] {
-            for operation in [
-                ReduceOperation::Sum,
-                ReduceOperation::Mean,
-                ReduceOperation::ArgMax,
-            ] {
-                reductions.push(Reduction {
-                    routine,
-                    shape: vec![2, 3, 2, 2, 64],
-                    axis,
-                    operation,
+/// `reduction` launched once and checked against the reduce reference; a routine that declines it
+/// is a skip.
+fn reduces_like_the_cpu(reduction: Reduction) {
+    RoutineScopeUnderTest.check([reduction]);
+}
+
+/// `reduction` launched once unbound, its input bound back as the plain buffer it is, and checked
+/// against the reduce reference; a routine that declines it is a skip.
+fn reduces_unbound_like_the_cpu(reduction: Reduction) {
+    UnboundRoutineScopeUnderTest.check([reduction]);
+}
+
+/// A sum by the atomic hypercube, checked through `scope`: it must launch wherever the device adds
+/// floats atomically, and is a skip elsewhere.
+fn sums_atomically_like_the_cpu(
+    scope: impl ScopeUnderTest<Case = Reduction>,
+    reduction: Reduction,
+) {
+    match adds_floats_atomically() {
+        true => scope.check_some([reduction]),
+        false => scope.check([reduction]),
+    }
+}
+
+/// A test for each `name: operation`, each one launch of `check` on `shape` reduced along `axis`
+/// by `routine`.
+macro_rules! reduction_tests {
+    (
+        $check:ident,
+        $routine:expr,
+        $shape:expr,
+        $axis:expr,
+        [$($name:ident: $operation:expr),* $(,)?]
+    ) => {
+        $(
+            #[test]
+            fn $name() {
+                $check(Reduction {
+                    routine: $routine,
+                    shape: $shape.to_vec(),
+                    axis: $axis,
+                    operation: $operation,
                 });
             }
+        )*
+    };
+}
+
+/// [`reduction_tests`] for every operation whose rows hold what it writes, a top-3 needing three
+/// values a row.
+macro_rules! every_operation {
+    ($check:ident, $routine:expr, $shape:expr, $axis:expr) => {
+        reduction_tests!($check, $routine, $shape, $axis, [
+            sum: ReduceOperation::Sum,
+            prod: ReduceOperation::Prod,
+            mean: ReduceOperation::Mean,
+            max: ReduceOperation::Max,
+            min: ReduceOperation::Min,
+            max_abs: ReduceOperation::MaxAbs,
+            any: ReduceOperation::Any,
+            all: ReduceOperation::All,
+            arg_max: ReduceOperation::ArgMax,
+            arg_min: ReduceOperation::ArgMin,
+            top_1: ReduceOperation::TopK { k: 1 },
+            arg_top_1: ReduceOperation::ArgTopK { k: 1 },
+        ]);
+        reduction_tests!($check, $routine, $shape, $axis, [
+            top_3: ReduceOperation::TopK { k: 3 },
+            arg_top_3: ReduceOperation::ArgTopK { k: 3 },
+        ]);
+    };
+    ($check:ident, $routine:expr, $shape:expr, $axis:expr, rows_shorter_than_three) => {
+        reduction_tests!($check, $routine, $shape, $axis, [
+            sum: ReduceOperation::Sum,
+            prod: ReduceOperation::Prod,
+            mean: ReduceOperation::Mean,
+            max: ReduceOperation::Max,
+            min: ReduceOperation::Min,
+            max_abs: ReduceOperation::MaxAbs,
+            any: ReduceOperation::Any,
+            all: ReduceOperation::All,
+            arg_max: ReduceOperation::ArgMax,
+            arg_min: ReduceOperation::ArgMin,
+            top_1: ReduceOperation::TopK { k: 1 },
+            arg_top_1: ReduceOperation::ArgTopK { k: 1 },
+        ]);
+    };
+}
+
+/// Each routine reduces a `[2, 5, 300]` tensor along each dim by every operation: along the
+/// contiguous dim, and across it, each lane its own row. The plane and the cube skip where the
+/// device commits to no plane width.
+macro_rules! reduces_each_dim {
+    ($routine:expr) => {
+        /// Rows 300 long, along the contiguous dim.
+        mod along_the_contiguous_dim {
+            use super::super::*;
+            every_operation!(reduces_like_the_cpu, $routine, [2, 5, 300], 2);
+        }
+
+        /// Rows 5 long, across the contiguous dim.
+        mod across_the_middle_dim {
+            use super::super::*;
+            every_operation!(reduces_like_the_cpu, $routine, [2, 5, 300], 1);
+        }
+
+        /// Rows 2 long, across the contiguous dim, too short for a top-3.
+        mod across_the_outer_dim {
+            use super::super::*;
+            every_operation!(reduces_like_the_cpu, $routine, [2, 5, 300], 0, rows_shorter_than_three);
+        }
+
+        /// Launched unbound, as a fused read stands in for, the input bound back as the plain
+        /// buffer it is: along the contiguous dim and across it.
+        mod unbound {
+            /// Rows 300 long, along the contiguous dim.
+            mod along_the_contiguous_dim {
+                use super::super::super::*;
+                reduction_tests!(reduces_unbound_like_the_cpu, $routine, [2, 5, 300], 2, [
+                    sum: ReduceOperation::Sum,
+                    max: ReduceOperation::Max,
+                    mean: ReduceOperation::Mean,
+                    arg_max: ReduceOperation::ArgMax,
+                ]);
+            }
+
+            /// Rows 5 long, across the contiguous dim.
+            mod across_the_middle_dim {
+                use super::super::super::*;
+                reduction_tests!(reduces_unbound_like_the_cpu, $routine, [2, 5, 300], 1, [
+                    sum: ReduceOperation::Sum,
+                    max: ReduceOperation::Max,
+                    mean: ReduceOperation::Mean,
+                    arg_max: ReduceOperation::ArgMax,
+                ]);
+            }
+        }
+    };
+}
+
+/// A tensor with more row axes than a launch grid has, `[2, 3, 2, 2, 64]`, each routine's row axes
+/// one [`BATCH`](crate::kernels::BATCH): rows on both sides of the reduced axis, or all before it.
+macro_rules! reduces_more_row_axes_than_the_grid_has {
+    ($routine:expr) => {
+        /// More row axes than a grid has, the rows on both sides of the reduced axis.
+        mod more_row_axes_around_the_reduced_one {
+            use super::super::*;
+            reduction_tests!(reduces_like_the_cpu, $routine, [2, 3, 2, 2, 64], 2, [
+                sum: ReduceOperation::Sum,
+                mean: ReduceOperation::Mean,
+                arg_max: ReduceOperation::ArgMax,
+            ]);
+        }
+
+        /// More row axes than a grid has, all before the reduced axis.
+        mod more_row_axes_before_the_reduced_one {
+            use super::super::*;
+            reduction_tests!(reduces_like_the_cpu, $routine, [2, 3, 2, 2, 64], 4, [
+                sum: ReduceOperation::Sum,
+                mean: ReduceOperation::Mean,
+                arg_max: ReduceOperation::ArgMax,
+            ]);
+        }
+    };
+}
+
+/// The unit routine: a unit reduces each row.
+mod unit_direct {
+    reduces_each_dim!(TestedRoutine::UnitDirect);
+    reduces_more_row_axes_than_the_grid_has!(TestedRoutine::UnitDirect);
+}
+
+/// The plane routine: a plane reduces each row, its lanes meeting by shuffles.
+mod plane_shuffle {
+    reduces_each_dim!(TestedRoutine::PlaneShuffle);
+    reduces_more_row_axes_than_the_grid_has!(TestedRoutine::PlaneShuffle);
+}
+
+/// The cube routine: a cube reduces each row, its planes meeting in shared memory.
+mod cube_staged {
+    reduces_each_dim!(TestedRoutine::CubeStaged);
+    reduces_more_row_axes_than_the_grid_has!(TestedRoutine::CubeStaged);
+}
+
+/// The last-arrival hypercube, at its shortest parts: rows split into parts, the last one short,
+/// and merged by the last cube to arrive. It skips where the device commits to no plane width or
+/// one cube's stores do not reach another within a launch.
+mod hypercube_last_arrival {
+
+    /// A `[2, 3, 5000]` tensor along its contiguous dim, in three parts.
+    mod along_the_contiguous_dim {
+        use super::super::*;
+        every_operation!(
+            reduces_like_the_cpu,
+            TestedRoutine::HypercubeLastArrival,
+            [2, 3, 5000],
+            2
+        );
+    }
+
+    /// A `[3, 2100, 4]` tensor along its middle dim, across the contiguous one, in five parts.
+    mod across_the_contiguous_dim {
+        use super::super::*;
+        every_operation!(
+            reduces_like_the_cpu,
+            TestedRoutine::HypercubeLastArrival,
+            [3, 2100, 4],
+            1
+        );
+    }
+
+    /// Rows three long, of one part.
+    mod rows_of_one_part {
+        use super::super::*;
+        every_operation!(
+            reduces_like_the_cpu,
+            TestedRoutine::HypercubeLastArrival,
+            [2, 3, 5000],
+            1
+        );
+    }
+
+    reduces_more_row_axes_than_the_grid_has!(TestedRoutine::HypercubeLastArrival);
+}
+
+/// The atomic hypercube sums rows split into parts, each part added into the zeroed output. Bound,
+/// and unbound into an output that starts away from zero, so the zeroing before it is checked too.
+/// A sum is the only operation it serves.
+mod hypercube_atomic {
+    use super::*;
+
+    /// The atomic hypercube's kernel, named by a strategy that pins it.
+    const ATOMIC: TestedRoutine =
+        TestedRoutine::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic));
+
+    /// A sum of `shape` along `axis` by the atomic hypercube.
+    fn sum(shape: &[usize], axis: usize) -> Reduction {
+        Reduction {
+            routine: ATOMIC,
+            shape: shape.to_vec(),
+            axis,
+            operation: ReduceOperation::Sum,
         }
     }
-    RoutineScopeUnderTest.check(reductions);
+
+    /// One row 9000 long.
+    #[test]
+    fn sums_one_long_row() {
+        sums_atomically_like_the_cpu(RoutineScopeUnderTest, sum(&[1, 1, 9000], 2));
+    }
+
+    /// Rows along the contiguous dim.
+    #[test]
+    fn sums_rows_along_the_contiguous_dim() {
+        sums_atomically_like_the_cpu(RoutineScopeUnderTest, sum(&[2, 3, 5000], 2));
+    }
+
+    /// Rows across the contiguous dim.
+    #[test]
+    fn sums_rows_across_the_contiguous_dim() {
+        sums_atomically_like_the_cpu(RoutineScopeUnderTest, sum(&[3, 2100, 4], 1));
+    }
+
+    /// Four rows of a matrix, whose output's rows lie side by side in memory.
+    #[test]
+    fn sums_the_rows_of_a_matrix() {
+        sums_atomically_like_the_cpu(RoutineScopeUnderTest, sum(&[4, 9000], 1));
+    }
+
+    /// One row 9000 long, unbound.
+    #[test]
+    fn sums_one_long_row_unbound() {
+        sums_atomically_like_the_cpu(UnboundRoutineScopeUnderTest, sum(&[1, 1, 9000], 2));
+    }
+
+    /// Rows along the contiguous dim, unbound.
+    #[test]
+    fn sums_rows_along_the_contiguous_dim_unbound() {
+        sums_atomically_like_the_cpu(UnboundRoutineScopeUnderTest, sum(&[2, 3, 5000], 2));
+    }
+
+    /// Rows across the contiguous dim, unbound.
+    #[test]
+    fn sums_rows_across_the_contiguous_dim_unbound() {
+        sums_atomically_like_the_cpu(UnboundRoutineScopeUnderTest, sum(&[3, 2100, 4], 1));
+    }
+
+    /// Four rows of a matrix, unbound.
+    #[test]
+    fn sums_the_rows_of_a_matrix_unbound() {
+        sums_atomically_like_the_cpu(UnboundRoutineScopeUnderTest, sum(&[4, 9000], 1));
+    }
+}
+
+/// Every strategy reduces like the CPU wherever it sends a problem: many short rows, one long row,
+/// and rows across the contiguous dim, at extents that are not powers of two. A kernel the device
+/// does not run, or that declines the problem, is skipped.
+macro_rules! strategy_reduces_each_problem {
+    ($strategy:expr) => {
+        /// `[96, 7, 300]` along its contiguous dim: many short rows.
+        mod many_short_rows {
+            use super::super::*;
+            reduction_tests!(reduces_like_the_cpu, TestedRoutine::Picked($strategy), [96, 7, 300], 2, [
+                sum: ReduceOperation::Sum,
+                mean: ReduceOperation::Mean,
+                arg_max: ReduceOperation::ArgMax,
+                top_3: ReduceOperation::TopK { k: 3 },
+            ]);
+        }
+
+        /// `[1, 1, 9000]` along its contiguous dim: one long row.
+        mod one_long_row {
+            use super::super::*;
+            reduction_tests!(reduces_like_the_cpu, TestedRoutine::Picked($strategy), [1, 1, 9000], 2, [
+                sum: ReduceOperation::Sum,
+                mean: ReduceOperation::Mean,
+                arg_max: ReduceOperation::ArgMax,
+                top_3: ReduceOperation::TopK { k: 3 },
+            ]);
+        }
+
+        /// `[3, 2100, 5]` along its middle dim: rows across the contiguous dim.
+        mod rows_across_the_contiguous_dim {
+            use super::super::*;
+            reduction_tests!(reduces_like_the_cpu, TestedRoutine::Picked($strategy), [3, 2100, 5], 1, [
+                sum: ReduceOperation::Sum,
+                mean: ReduceOperation::Mean,
+                arg_max: ReduceOperation::ArgMax,
+                top_3: ReduceOperation::TopK { k: 3 },
+            ]);
+        }
+    };
+}
+
+/// The kernel each strategy picks, or the one it pins.
+mod strategy {
+    use super::*;
+
+    /// The autotune's pick.
+    mod autotune {
+        strategy_reduces_each_problem!(ReduceOpStrategy::Autotune);
+    }
+
+    /// The rule's pick.
+    mod tile_heuristic {
+        strategy_reduces_each_problem!(ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile));
+    }
+
+    /// The unit kernel, pinned.
+    mod unit {
+        strategy_reduces_each_problem!(ReduceOpStrategy::Specific(ReduceKernel::Unit));
+    }
+
+    /// The plane kernel, pinned.
+    mod plane_shuffle {
+        strategy_reduces_each_problem!(ReduceOpStrategy::Specific(ReduceKernel::PlaneShuffle));
+    }
+
+    /// The cube kernel, pinned.
+    mod cube_staged {
+        strategy_reduces_each_problem!(ReduceOpStrategy::Specific(ReduceKernel::CubeStaged));
+    }
+
+    /// The last-arrival hypercube, pinned.
+    mod hypercube_last_arrival {
+        strategy_reduces_each_problem!(ReduceOpStrategy::Specific(
+            ReduceKernel::HypercubeLastArrival
+        ));
+    }
+
+    /// The atomic hypercube, pinned: it serves sums alone and declines the rest.
+    mod hypercube_atomic {
+        strategy_reduces_each_problem!(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic));
+    }
 }
