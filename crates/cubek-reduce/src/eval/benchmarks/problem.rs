@@ -273,6 +273,35 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
         }),
     ]);
 
+    // Every other operation, along the contiguous dim and across it: what each one's accumulator
+    // costs beside the sum's and the arg top-1's above.
+    for (name, text, operation) in [
+        ("mean", "Mean", ReduceOperation::Mean),
+        ("prod", "Prod", ReduceOperation::Prod),
+        ("max", "Max", ReduceOperation::Max),
+        ("min", "Min", ReduceOperation::Min),
+        ("max_abs", "MaxAbs", ReduceOperation::MaxAbs),
+        ("arg_max", "ArgMax", ReduceOperation::ArgMax),
+        ("arg_min", "ArgMin", ReduceOperation::ArgMin),
+        ("any", "Any", ReduceOperation::Any),
+        ("all", "All", ReduceOperation::All),
+    ] {
+        entries.push(spread(SpreadShape {
+            name: &format!("{name}_rows"),
+            text: &format!("{text}, rows,"),
+            shape: vec![32, 512, 4095],
+            axis: 2,
+            operation,
+        }));
+        entries.push(spread(SpreadShape {
+            name: &format!("{name}_strided"),
+            text: &format!("{text}, strided rows,"),
+            shape: vec![32, 4095, 512],
+            axis: 1,
+            operation,
+        }));
+    }
+
     // A decode sampler's row: one row of logits over a vocabulary, which one cube walks alone
     // unless the row is split across cubes. Its argmax, and a top-20 to sample among.
     let vocabulary = 151_936;
@@ -301,9 +330,9 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
 
 /// One shape of the default sweep: its catalogue id `name`, its label `text`, and the reduction
 /// along `axis` by `operation`.
-struct SpreadShape {
-    pub name: &'static str,
-    pub text: &'static str,
+struct SpreadShape<'a> {
+    pub name: &'a str,
+    pub text: &'a str,
     pub shape: Vec<usize>,
     pub axis: usize,
     pub operation: ReduceOperation,
