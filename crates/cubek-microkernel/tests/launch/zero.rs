@@ -57,8 +57,8 @@ pub fn launch_unit_zero(
 
 /// Every plane's row, zeroed by its first unit alone.
 #[cube(launch_unchecked)]
-fn unit_zero_kernel(out: &TileTensor<'_>, partitioning: Partitioning) {
-    let o = out.tile(&partitioning);
+fn unit_zero_kernel(out: &mut TileTensor<'_>, partitioning: Partitioning) {
+    let o = out.tile_mut(&partitioning);
     for plane in &partitioning {
         if UNIT_POS_PLANE == 0 {
             let mut cells = o.at(&plane);

@@ -66,8 +66,8 @@ fn split_place<N: Size>(
 /// Every cube's part of its rows, accumulated into the carrier its operation accumulates into; the
 /// last of a box of rows' cubes merges their partials and writes the rows.
 #[cube(launch_unchecked)]
-pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size, I: TileOperand>(
-    input: &I::Arg,
+pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
+    input: &TileTensor<'_>,
     out: &mut TileTensor<'_>,
     partials: &mut TileTensor<'_>,
     partial_indices: &mut TileTensor<'_>,
@@ -78,7 +78,7 @@ pub fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size,
     #[comptime] microkernel: HypercubeReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
-    let x = I::tile::<In>(input, &partitioning);
+    let x = input.tile(&partitioning);
     let o = out.tile_mut(&partitioning);
     let p = partials.tile_mut(&partitioning);
     let pi = partial_indices.tile_mut(&partitioning);
@@ -118,7 +118,7 @@ pub fn hypercube_reduce_with_indices_kernel<
     N: Size,
     I: TileOperand,
 >(
-    input: &I::Arg,
+    input: &TileTensor<'_>,
     out: &mut TileTensor<'_>,
     indices: &mut TileTensor<'_>,
     partials: &mut TileTensor<'_>,
@@ -130,7 +130,7 @@ pub fn hypercube_reduce_with_indices_kernel<
     #[comptime] microkernel: HypercubeReduceMicrokernel,
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
-    let x = I::tile::<In>(input, &partitioning);
+    let x = input.tile(&partitioning);
     let o = out.tile_mut(&partitioning);
     let i = indices.tile_mut(&partitioning);
     let p = partials.tile_mut(&partitioning);

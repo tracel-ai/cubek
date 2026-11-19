@@ -52,10 +52,15 @@ const COLS: usize = 1;
 const SUM_COLS: usize = 32;
 
 #[cube(launch)]
-fn plain_matmul(a: &TileTensor<'_>, b: &TileTensor<'_>, c: &TileTensor<'_>, space: Partitioning) {
+fn plain_matmul(
+    a: &TileTensor<'_>,
+    b: &TileTensor<'_>,
+    c: &mut TileTensor<'_>,
+    space: Partitioning,
+) {
     let a = a.tile(&space);
     let b = b.tile(&space);
-    let c = c.tile(&space);
+    let c = c.tile_mut(&space);
     for region in space {
         let mut c_cube = c
             .at(&region)

@@ -184,7 +184,7 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
     out: &mut TileTensor<'_>,
-    logsumexp: ComptimeOption<&TileTensor<'static>>,
+    logsumexp: ComptimeOption<&mut TileTensor<'static>>,
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
@@ -200,7 +200,7 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
     let o = out.tile_mut(&partitioning);
-    let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+    let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile_mut(&partitioning));
 
     for plane in &partitioning {
         let visible = VisibleKeys::new(

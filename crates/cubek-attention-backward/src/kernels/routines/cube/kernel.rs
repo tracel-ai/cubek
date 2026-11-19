@@ -18,10 +18,10 @@ pub fn cube_staged_query_gradient_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &mut TileTensor<'_>,
+    out: &TileTensor<'_>,
     out_gradient: &TileTensor<'_>,
     logsumexp: &TileTensor<'_>,
-    delta: &TileTensor<'_>,
+    delta: &mut TileTensor<'_>,
     query_gradient: &mut TileTensor<'_>,
     queries: u32,
     keys: u32,
@@ -37,11 +37,8 @@ pub fn cube_staged_query_gradient_kernel<EA: Float, ES: Float>(
         key.tile(&partitioning),
         value.tile(&partitioning),
     );
-    let (o, d_o) = (
-        out.tile_mut(&partitioning),
-        out_gradient.tile(&partitioning),
-    );
-    let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
+    let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
+    let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile_mut(&partitioning));
     let d_q = query_gradient.tile_mut(&partitioning);
 
     let visible = VisibleKeys::of_keys(keys, queries, visibility);

@@ -19,7 +19,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float, EV: Float>(
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
     out: &mut TileTensor<'_>,
-    logsumexp: ComptimeOption<&TileTensor<'static>>,
+    logsumexp: ComptimeOption<&mut TileTensor<'static>>,
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     query_ends: ComptimeOption<&Tensor<u32>>,
@@ -38,7 +38,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float, EV: Float>(
     let value = value.tile(&partitioning);
 
     let o = out.tile_mut(&partitioning);
-    let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+    let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile_mut(&partitioning));
 
     for sequence in &partitioning {
         for cube in sequence {
