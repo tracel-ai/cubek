@@ -8,7 +8,7 @@ use crate::matmul::plane::{
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Level, Levels, Space};
+use cubecl::tile::{Axis, Level, Levels, Scratch, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
@@ -346,8 +346,23 @@ impl PlaneFragmentAttentionMicrokernel {
         self.value.tile_extent(S)
     }
 
+    /// The scratch the output's sum bounces through as a correction scales it: the settings',
+    /// for a sum read against the score's windows that drains by bouncing, a cmma one. None for
+    /// a sum whose units hold their own cells and scale them in place, a manual mma's, which the
+    /// tile bounces through no scratch; nor where the plane keeps its score in its fragments,
+    /// whose sum is always a manual mma's.
+    pub fn sum_scratch(&self) -> Scratch {
+        match (self.score_holder(), self.value.instruction.drain()) {
+            (ScoreHolder::Window, PlaneFragmentDrain::Bounce) => self.settings.scratch,
+            (ScoreHolder::Window, PlaneFragmentDrain::CellByCell) | (ScoreHolder::Fragments, _) => {
+                Scratch::None
+            }
+        }
+    }
+
     /// Its window of scores and of probabilities, and the fragments of its output the
-    /// correction bounces through at once; none where it keeps the score in its fragments.
+    /// correction bounces through at once ([`sum_scratch`](Self::sum_scratch)); none where it
+    /// keeps the score in its fragments.
     pub fn window_bytes(&self, item: &AttentionWorkItem) -> usize {
         if self.score_holder() == ScoreHolder::Fragments {
             return 0;
@@ -356,7 +371,7 @@ impl PlaneFragmentAttentionMicrokernel {
         let cells = self.seq_q() * self.seq_kv();
         let bounced = self
             .value
-            .scratch_bytes(&Self::value_item(item), self.settings.scratch);
+            .scratch_bytes(&Self::value_item(item), self.sum_scratch());
         cells * (item.sum.size() + item.elements.value.size()) + bounced
     }
 

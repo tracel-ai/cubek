@@ -117,20 +117,18 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
     }
 
     /// The output's accumulator every stage's product adds into, at `EA`, opened at zero on `out`
-    /// against what each stage contracts with the value, `score`'s probabilities: a window's sum
-    /// through the fragment API with the scratch its rows are scaled through, the fragments' sum
-    /// in their own instruction, which scales its rows in place.
+    /// against what each stage contracts with the value, `score`'s probabilities: a cmma sum with
+    /// the scratch its rows are scaled through, a manual mma's, which scales its rows in place,
+    /// with none ([`PlaneFragmentAttentionMicrokernel::sum_scratch`]).
     fn open_sum(
         out: &Tile,
         score: &StageScore,
         value: &Tile,
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
     ) -> Tile {
-        let opened = out.accumulator::<EA>(&score.probabilities(), value, Semiring::SUM_PROD);
-        let mut sum = match microkernel.score_holder() {
-            ScoreHolder::Window => opened.with_scratch(microkernel.settings.scratch),
-            ScoreHolder::Fragments => opened,
-        };
+        let mut sum = out
+            .accumulator::<EA>(&score.probabilities(), value, Semiring::SUM_PROD)
+            .with_scratch(microkernel.sum_scratch());
 
         sum.zero();
         sum

@@ -3,9 +3,14 @@
 
 use crate::kernels::test_support::{offering, qwen};
 use crate::kernels::*;
+use cubecl::tile::Scratch;
 use cubecl::tile::stage::Prefetch;
-use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
+use cubek_microkernel::attention::cube::{
+    CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings, CubeAttentionPlane,
+};
+use cubek_microkernel::attention::plane::{PlaneFragmentAttentionMicrokernel, ScoreHolder};
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperands, Q, S};
+use cubek_microkernel::matmul::plane::PlaneFragmentDrain;
 use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 use cubek_std::routine::Routine;
 use cubek_std::{Hardware, devices};
@@ -290,4 +295,124 @@ fn every_fp8_cache_is_read_at_a_prompt_and_at_a_decode_step() {
             "the unit routine reads {key:?} keys beside {value:?} values"
         );
     }
+}
+
+/// An RTX PRO 6000 offering what cubecl's CUDA runtime registers on `sm_120`, each summed in
+/// `f32`: the fragment API's `f16` and `bf16` at `16×16×16`, `32×8×16` and `8×32×16` and tf32 at
+/// `16×16×8`, and the manual `mma`'s 16-bit forms at `16×8×8` and `16×8×16` beside its `e4m3`
+/// one at `16×8×32`. No fragment API call reads `e4m3`.
+fn offering_cuda() -> Hardware {
+    use cubecl::ir::{ElemType, FloatKind};
+    let [f16, bf16, tf32, f32, e4m3] = [
+        FloatKind::F16,
+        FloatKind::BF16,
+        FloatKind::TF32,
+        FloatKind::F32,
+        FloatKind::E4M3,
+    ]
+    .map(ElemType::Float);
+    let form = |a, (m, n, k)| cubecl::features::MmaConfig {
+        a_type: a,
+        b_type: a,
+        cd_type: f32,
+        m,
+        n,
+        k,
+    };
+    let fragment_api = [f16, bf16]
+        .into_iter()
+        .flat_map(|a| [(16, 16, 16), (32, 8, 16), (8, 32, 16)].map(|shape| form(a, shape)))
+        .chain([form(tf32, (16, 16, 8))]);
+    let manual = [f16, bf16]
+        .into_iter()
+        .flat_map(|a| [(16, 8, 8), (16, 8, 16)].map(|shape| form(a, shape)))
+        .chain([form(e4m3, (16, 8, 32))]);
+    devices::offering_mma(
+        devices::offering_cmma(devices::rtx_pro_6000(), fragment_api),
+        manual,
+    )
+}
+
+/// Every plane fragment microkernel `routine` prepares for `problem` on `hw` at any setting it
+/// lists, `cube` reading the cube's microkernel out of the blueprint's.
+fn fragment_planes<M, SM, R>(
+    routine: R,
+    hw: &Hardware,
+    problem: &AttentionRoutineProblem,
+    cube: impl Fn(&M) -> &CubeAttentionMicrokernel,
+) -> Vec<PlaneFragmentAttentionMicrokernel>
+where
+    R: Routine<Problem = AttentionRoutineProblem, Blueprint = AttentionBlueprint<M, SM>>,
+{
+    routine
+        .settings(hw)
+        .iter()
+        .filter_map(|settings| routine.prepare(hw, problem, settings).ok())
+        .filter_map(|(blueprint, _)| match cube(&blueprint.microkernel).plane {
+            CubeAttentionPlane::Fragment(plane) => Some(plane),
+            CubeAttentionPlane::Shuffle(_) => None,
+        })
+        .collect()
+}
+
+/// A plane reading its score through its windows sums the output on whatever instruction the
+/// tile picks for the probabilities and the values: on CUDA, `e4m3` values read as stored sum on
+/// the manual `mma`, which the fragment API does not offer. Only a cmma sum bounces through a
+/// scratch, so such a plane opens its sum with none, whatever its settings ask, and every
+/// routine over plane fragments prepares a sum its kernel expands, for a `bf16` prompt and a
+/// decode step over every FP8 cache.
+#[test]
+fn a_sum_on_a_manual_mma_bounces_through_no_scratch() {
+    let hw = offering_cuda();
+    let bf16 = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::BF16);
+    let mut windows_on_mma = 0;
+    // The cache's 16-bit side is the model's `bf16`, as Devstral's FP8 cache stores it.
+    let model = |side| if side == F16 { bf16 } else { side };
+    for (key, value) in FP8_CACHES.map(|(key, value)| (model(key), model(value))) {
+        for queries in [512, 1] {
+            let cached = cached(queries, 4096, key, value);
+            let problem = AttentionRoutineProblem {
+                elements: AttentionOperands {
+                    query: bf16,
+                    out: bf16,
+                    ..cached.elements
+                },
+                ..cached
+            };
+            let planes = [
+                fragment_planes(CubeStagedAttentionRoutine, &hw, &problem, |m| m),
+                fragment_planes(
+                    HypercubeFragmentPartialAttentionRoutine,
+                    &hw,
+                    &problem,
+                    |m| &m.cube,
+                ),
+                fragment_planes(
+                    HypercubeStreamFragmentAttentionRoutine,
+                    &hw,
+                    &problem,
+                    |m| &m.cube,
+                ),
+            ]
+            .concat();
+            for plane in planes {
+                let on_mma = plane.value.instruction.drain() == PlaneFragmentDrain::CellByCell;
+                let asks_a_bounce = plane.settings.scratch != Scratch::None;
+                if on_mma && plane.score_holder() == ScoreHolder::Window && asks_a_bounce {
+                    windows_on_mma += 1;
+                }
+                assert!(
+                    !on_mma || plane.sum_scratch() == Scratch::None,
+                    "{plane} over {key:?} keys and {value:?} values at {queries} queries bounces \
+                     a manual mma's sum through {:?}",
+                    plane.sum_scratch()
+                );
+            }
+        }
+    }
+    assert!(
+        windows_on_mma > 0,
+        "some plane reads its score through its windows and sums on the manual mma at settings \
+         asking for a scratch"
+    );
 }
