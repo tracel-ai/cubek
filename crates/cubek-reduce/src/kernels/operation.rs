@@ -62,15 +62,15 @@ impl Reduce {
     }
 
     /// [`execute`](Self::execute), the values written to `values` in `elements.out` and their
-    /// indices to `indices` in `index_element`, from one launch. `indices` has `values`' shape and
-    /// strides. `Max`, `Min` and `TopK` write the same pair as `ArgMax`, `ArgMin` and `ArgTopK`.
+    /// indices to `indices` in `index_element`, from one launch. `indices` has `values`' shape, and
+    /// each is written at its own strides. `Max`, `Min` and `TopK` write the same pair as `ArgMax`,
+    /// `ArgMin` and `ArgTopK`.
     ///
     /// # Errors
     ///
     /// As [`execute`](Self::execute); [`ReduceError::IndicesUnsupported`] for an operation whose
-    /// values carry no index; and [`ReduceError::MismatchIndicesShape`] or
-    /// [`ReduceError::MismatchIndicesStrides`] where `indices` differs from `values` in shape or
-    /// strides.
+    /// values carry no index; and [`ReduceError::MismatchIndicesShape`] where `indices` differs
+    /// from `values` in shape.
     ///
     /// # Panics
     ///
@@ -176,19 +176,12 @@ fn validate_shape(
     Ok(())
 }
 
-/// Whether `indices` has `values`' shape and strides: both outputs are written through one
-/// layout, derived from the values alone.
+/// Whether `indices` has `values`' shape: an index for every value.
 fn validate_indices(values: &TensorBinding, indices: &TensorBinding) -> Result<(), ReduceError> {
     if indices.shape.as_slice() != values.shape.as_slice() {
         return Err(ReduceError::MismatchIndicesShape {
             values_shape: values.shape.to_vec(),
             indices_shape: indices.shape.to_vec(),
-        });
-    }
-    if indices.strides != values.strides {
-        return Err(ReduceError::MismatchIndicesStrides {
-            values_strides: values.strides.to_vec(),
-            indices_strides: indices.strides.to_vec(),
         });
     }
     Ok(())

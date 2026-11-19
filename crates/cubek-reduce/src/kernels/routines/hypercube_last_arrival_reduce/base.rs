@@ -229,7 +229,12 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                             extents.inner_boxes,
                         ),
                         blueprint.microkernel,
-                        [elements.input, elements.accumulator, elements.out, index],
+                        [
+                            elements.input,
+                            elements.accumulator,
+                            elements.out,
+                            index.element,
+                        ],
                     )
                 }
                 Some((partial_indices, None)) => {

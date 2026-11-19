@@ -28,7 +28,8 @@ pub struct ReduceTensors<In = TensorBinding> {
     client: Client,
     input: In,
     out: TensorBinding,
-    /// The indices written beside the values, laid out as `out`, where they are.
+    /// The indices written beside the values, of `out`'s shape at their own strides, where they
+    /// are.
     indices: Option<TensorBinding>,
     problem: ReduceRoutineProblem,
 }
@@ -83,12 +84,13 @@ impl ReduceTensors<TensorBinding> {
     }
 
     /// `values = operation(input)` along axis `axis`, and the indices of those values to
-    /// `indices`, in `index_element`, from one launch: `indices` has `values`' shape and strides.
+    /// `indices`, in `index_element`, from one launch: `indices` has `values`' shape, each written
+    /// at its own strides.
     ///
     /// # Panics
     ///
     /// As [`new`](Self::new), and where the operation's values carry no index (a sum's do not),
-    /// or `indices` is not laid out as `values`.
+    /// or `indices` does not have `values`' shape.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -108,11 +110,13 @@ impl ReduceTensors<TensorBinding> {
             "{operation:?} accumulates the values themselves, which carry no index"
         );
         assert!(
-            indices.shape == values.shape && indices.strides == values.strides,
-            "the indices are laid out as the values"
+            indices.shape == values.shape,
+            "the indices have the values' shape"
         );
         let mut tensors = Self::new(client, input, values, axis, operation, elements);
-        tensors.problem.indices = Some(index_element);
+        tensors.problem = tensors
+            .problem
+            .writing_indices(index_element, &Geometry::from(&indices));
         tensors.indices = Some(indices);
         tensors
     }
@@ -234,7 +238,8 @@ impl ReduceBinding {
         let indices = indices.map(|indices| {
             let element = problem
                 .indices
-                .expect("indices beside the values have an element");
+                .expect("indices beside the values have an element")
+                .element;
             out_bound(&launcher, indices, element, problem, blueprint)
         });
         ReduceBinding {
@@ -290,8 +295,8 @@ fn launcher_of<M>(
     })
 }
 
-/// `buffer`, an output of `problem` or the indices laid out as one, bound in `element` at the
-/// output's width.
+/// `buffer`, an output of `problem` or the indices beside it, bound in `element` at the output's
+/// width.
 fn out_bound<M>(
     launcher: &Launcher,
     buffer: &TensorBinding,
