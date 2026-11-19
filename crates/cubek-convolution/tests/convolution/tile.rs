@@ -360,7 +360,7 @@ mod plane_window {
     use super::*;
 
     /// A row of a table: the plane window routine, which refuses nothing here.
-    macro_rules! unit {
+    macro_rules! window {
         ($table:ident, $pass:ident; $($name:ident: $conv:expr;)*) => {
             mod $table {
                 use super::*;
@@ -374,7 +374,7 @@ mod plane_window {
         };
     }
 
-    unit! {
+    window! {
         forward, Forward;
         same_3x3: conv32(2, (64, 32), [9, 9], [3, 3], SAME);
         stride_2: conv32(2, (64, 32), [12, 15], [3, 3], STRIDE_2);
@@ -392,7 +392,7 @@ mod plane_window {
         conv_3d_asymmetric: conv32(2, (16, 12), [7, 9, 7], [3, 3, 3], ASYMMETRIC_3D);
     }
 
-    unit! {
+    window! {
         weight_grad, BackwardWeight;
         same_3x3: conv32(2, (64, 32), [6, 12], [3, 3], SAME);
         stride_2: conv32(2, (32, 32), [7, 21], [3, 3], STRIDE_2);
@@ -407,7 +407,7 @@ mod plane_window {
         conv_3d_asymmetric: conv32(2, (16, 12), [7, 9, 7], [3, 3, 3], ASYMMETRIC_3D);
     }
 
-    unit! {
+    window! {
         data_grad, BackwardData;
         same_3x3: conv32(2, (64, 32), [6, 12], [3, 3], SAME);
         no_padding: conv32(2, (32, 32), [7, 12], [3, 3], VALID);

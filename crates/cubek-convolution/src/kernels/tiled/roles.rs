@@ -1,4 +1,4 @@
-use super::{B, CI, CO, ConvAxis, ConvDecline, ConvDim, SpatialDims};
+use super::{B, CI, CO, ConvAxis, ConvDecline, ConvDim, SpatialDimCount};
 use crate::components::ConvolutionOperation;
 use crate::launch::SpatialWindow;
 use cubecl::prelude::TensorBinding;
@@ -160,8 +160,8 @@ pub enum ViewOrder {
 
 impl ViewOrder {
     /// The dim of a buffer over `spatial_dims` spatial dims that each dim of its view reads.
-    pub fn buffer_dims(self, spatial_dims: SpatialDims) -> Vec<usize> {
-        let spatial = spatial_dims.get();
+    pub fn buffer_dims(self, spatial_dims: SpatialDimCount) -> Vec<usize> {
+        let spatial = spatial_dims.0;
         match self {
             Self::Stored => (0..spatial + 2).collect(),
             Self::ChannelsOutLast => (1..spatial + 2).chain([0]).collect(),
@@ -170,7 +170,7 @@ impl ViewOrder {
     }
 
     /// `values`, one per dim of a buffer, in the order of its view.
-    fn view(self, spatial_dims: SpatialDims, values: &[usize]) -> Vec<usize> {
+    fn view(self, spatial_dims: SpatialDimCount, values: &[usize]) -> Vec<usize> {
         let buffer_dims = self.buffer_dims(spatial_dims);
         buffer_dims.into_iter().map(|dim| values[dim]).collect()
     }
@@ -179,7 +179,7 @@ impl ViewOrder {
     fn permute(
         self,
         mut tensor: TensorBinding,
-        spatial_dims: SpatialDims,
+        spatial_dims: SpatialDimCount,
     ) -> Result<TensorBinding, Refusal> {
         if self == Self::Stored {
             return Ok(tensor);
@@ -197,7 +197,7 @@ impl ViewOrder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConvRoles {
     /// The spatial dims of the convolution.
-    pub spatial_dims: SpatialDims,
+    pub spatial_dims: SpatialDimCount,
     pub free: ConvFreeAxes,
     pub contracted: ConvContractedAxes,
     /// The axes of the space, the rows before the columns: the planes of a cube take them in the
@@ -225,7 +225,7 @@ pub struct ConvRoles {
 /// sit in the operands' views.
 #[derive(Debug)]
 struct SpatialAxes {
-    spatial_dims: SpatialDims,
+    spatial_dims: SpatialDimCount,
     outs: Vec<Axis>,
     taps: Vec<Axis>,
 }
@@ -236,7 +236,7 @@ fn joined(parts: &[&[Axis]]) -> Vec<Axis> {
 }
 
 impl SpatialAxes {
-    fn new(spatial_dims: SpatialDims) -> Self {
+    fn new(spatial_dims: SpatialDimCount) -> Self {
         let (outs, taps) = ConvAxis::spatial(spatial_dims)
             .map(|[out, tap]| (out, tap))
             .unzip();
@@ -249,7 +249,7 @@ impl SpatialAxes {
 
     /// The channels dim of `operand`'s view, after the batch or filters and the spatial dims.
     fn channels(&self, operand: MatmulOperand) -> ViewDim {
-        ViewDim::at(operand, self.spatial_dims.get() + 1)
+        ViewDim::at(operand, self.spatial_dims.0 + 1)
     }
 
     /// The spatial dims of `operand`'s view, from `first`.
@@ -257,7 +257,7 @@ impl SpatialAxes {
         ViewRun {
             operand,
             first,
-            len: self.spatial_dims.get(),
+            len: self.spatial_dims.0,
         }
     }
 }
@@ -271,11 +271,14 @@ impl ConvRoles {
     /// [`ConvDecline::NoSpatialDim`], for no spatial dim, [`ConvDecline::TooManySpatialDims`], for
     /// more than [`ConvAxis::MAX_SPATIAL_DIMS`], and [`ConvDecline::Transposed`], for a transposed
     /// forward.
-    pub fn of(operation: ConvolutionOperation, spatial_dims: SpatialDims) -> Result<Self, Refusal> {
-        if spatial_dims.get() == 0 {
+    pub fn of(
+        operation: ConvolutionOperation,
+        spatial_dims: SpatialDimCount,
+    ) -> Result<Self, Refusal> {
+        if spatial_dims.0 == 0 {
             return Err(ConvDecline::NoSpatialDim.into());
         }
-        if spatial_dims.get() > ConvAxis::MAX_SPATIAL_DIMS {
+        if spatial_dims.0 > ConvAxis::MAX_SPATIAL_DIMS {
             return Err(ConvDecline::TooManySpatialDims.into());
         }
         let spatial = SpatialAxes::new(spatial_dims);
@@ -472,8 +475,8 @@ impl ConvRoles {
         extents.all(|extent| Some(extent) == first)
     }
 
-    /// The axes a unit launch lays its planes over: the rows, the columns, the one across and
-    /// the outer ones.
+    /// The axes a plane window launch lays its planes over: the rows, the columns, the one
+    /// across and the outer ones.
     pub fn plane_axes(&self) -> Vec<Axis> {
         let free = &self.free;
         joined(&[&[free.m, free.n, free.across], &free.outer[..]])
@@ -512,7 +515,7 @@ mod tests {
     #[test]
     fn the_transposed_forward_is_refused_by_name() {
         assert_eq!(
-            ConvRoles::of(ConvolutionOperation::ForwardTransposed, SpatialDims::new(2)),
+            ConvRoles::of(ConvolutionOperation::ForwardTransposed, SpatialDimCount(2)),
             Err(ConvDecline::Transposed.into())
         );
     }
@@ -520,7 +523,7 @@ mod tests {
     #[test]
     fn no_spatial_dim_is_refused_by_name() {
         assert_eq!(
-            ConvRoles::of(Forward, SpatialDims::new(0)),
+            ConvRoles::of(Forward, SpatialDimCount(0)),
             Err(ConvDecline::NoSpatialDim.into())
         );
     }
@@ -528,9 +531,9 @@ mod tests {
     #[test]
     fn spatial_dims_past_the_label_range_are_refused_by_name() {
         let max = ConvAxis::MAX_SPATIAL_DIMS;
-        assert!(ConvRoles::of(Forward, SpatialDims::new(max)).is_ok());
+        assert!(ConvRoles::of(Forward, SpatialDimCount(max)).is_ok());
         assert_eq!(
-            ConvRoles::of(Forward, SpatialDims::new(max + 1)),
+            ConvRoles::of(Forward, SpatialDimCount(max + 1)),
             Err(ConvDecline::TooManySpatialDims.into())
         );
     }
@@ -538,12 +541,12 @@ mod tests {
     /// Over two spatial dims the roles are the 2D tables.
     #[test]
     fn two_spatial_dims_state_the_two_dimensional_tables() {
-        let [[oh, rh], [ow, rw]] = ConvAxis::spatial(SpatialDims::new(2))
+        let [[oh, rh], [ow, rw]] = ConvAxis::spatial(SpatialDimCount(2))
             .collect::<Vec<_>>()
             .try_into()
             .expect("two spatial dims");
         let roles =
-            |operation| ConvRoles::of(operation, SpatialDims::new(2)).expect("a served operation");
+            |operation| ConvRoles::of(operation, SpatialDimCount(2)).expect("a served operation");
 
         let forward = roles(Forward);
         assert_eq!(forward.free.in_order(), [B, oh, ow, CO]);
@@ -552,11 +555,11 @@ mod tests {
         assert_eq!(forward.lhs, [B, oh, ow, rh, rw, CI]);
         assert_eq!(forward.rhs, [CO, rh, rw, CI]);
         assert_eq!(
-            forward.rhs_order.buffer_dims(SpatialDims::new(2)),
+            forward.rhs_order.buffer_dims(SpatialDimCount(2)),
             [0, 1, 2, 3]
         );
         assert_eq!(
-            forward.out_order.buffer_dims(SpatialDims::new(2)),
+            forward.out_order.buffer_dims(SpatialDimCount(2)),
             [0, 1, 2, 3]
         );
         assert_eq!(
@@ -577,11 +580,11 @@ mod tests {
         assert_eq!(weight.lhs, [rh, rw, B, oh, ow, CI]);
         assert_eq!(weight.rhs, [B, oh, ow, CO]);
         assert_eq!(
-            weight.rhs_order.buffer_dims(SpatialDims::new(2)),
+            weight.rhs_order.buffer_dims(SpatialDimCount(2)),
             [0, 1, 2, 3]
         );
         assert_eq!(
-            weight.out_order.buffer_dims(SpatialDims::new(2)),
+            weight.out_order.buffer_dims(SpatialDimCount(2)),
             [1, 2, 3, 0]
         );
         assert_eq!(
@@ -601,14 +604,8 @@ mod tests {
         assert_eq!(data.space, [B, oh, ow, CI, rh, rw, CO]);
         assert_eq!(data.lhs, [B, oh, ow, rh, rw, CO]);
         assert_eq!(data.rhs, [rh, rw, CO, CI]);
-        assert_eq!(
-            data.rhs_order.buffer_dims(SpatialDims::new(2)),
-            [1, 2, 0, 3]
-        );
-        assert_eq!(
-            data.out_order.buffer_dims(SpatialDims::new(2)),
-            [0, 1, 2, 3]
-        );
+        assert_eq!(data.rhs_order.buffer_dims(SpatialDimCount(2)), [1, 2, 0, 3]);
+        assert_eq!(data.out_order.buffer_dims(SpatialDimCount(2)), [0, 1, 2, 3]);
         assert_eq!(
             data.inner,
             MatmulOperands {
@@ -627,7 +624,7 @@ mod tests {
     fn roles_of_any_spatial_count_name_each_axis_once() {
         for operation in OPERATIONS {
             for count in [1, 3] {
-                let spatial_dims = SpatialDims::new(count);
+                let spatial_dims = SpatialDimCount(count);
                 let roles = ConvRoles::of(operation, spatial_dims).expect("a served operation");
                 let space: HashSet<Axis> = roles.space.iter().copied().collect();
                 assert_eq!(space.len(), roles.space.len(), "{operation:?} {count}");

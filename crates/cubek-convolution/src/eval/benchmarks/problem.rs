@@ -8,7 +8,7 @@ use cubek_test_utils::CatalogEntry;
 use crate::{
     ConvolutionArgs, SpatialExtent, TapCount,
     components::ConvolutionOperation,
-    kernels::tiled::{ConvProblem, ConvRoles, SpatialDims},
+    kernels::tiled::{ConvProblem, ConvRoles, SpatialDimCount},
 };
 
 /// The element a problem's operands are stored in and its sums run in.
@@ -70,7 +70,7 @@ impl Conv2dProblem {
 /// starts, summing in `f32`.
 impl From<&Conv2dProblem> for ConvProblem {
     fn from(problem: &Conv2dProblem) -> Self {
-        let roles = ConvRoles::of(problem.operation, SpatialDims::new(2))
+        let roles = ConvRoles::of(problem.operation, SpatialDimCount(2))
             .expect("the host states no transposed forward");
         let [lhs, rhs, out] = problem.shapes().map(|shape| shape.to_vec());
         let shapes = MatmulOperands { lhs, rhs, out };

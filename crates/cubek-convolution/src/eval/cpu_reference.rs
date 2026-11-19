@@ -565,7 +565,12 @@ pub fn naive_data_grad(
                 for tap in 0..taps {
                     let at_tap = unravel(tap, kernel);
                     let read = out.iter().enumerate().try_fold(0, |flat, (dim, &extent)| {
-                        let at = output_reading(&windows[dim], at[dim], at_tap[dim], extent)?;
+                        let at = output_reading(
+                            &windows[dim],
+                            SpatialPosition(at[dim]),
+                            TapIndex(at_tap[dim]),
+                            SpatialExtent(extent),
+                        )?;
                         Some(flat * extent + at)
                     });
                     let Some(read) = read else {
@@ -585,12 +590,17 @@ pub fn naive_data_grad(
 
 /// The output position along spatial `dim` whose window, at tap `tap`, reads input position `pos`
 /// of an output `extent` long, if there is one.
-fn output_reading(window: &SpatialWindow, pos: usize, tap: usize, extent: usize) -> Option<usize> {
-    let reach = window.gradient_position(SpatialPosition(pos), TapIndex(tap));
+fn output_reading(
+    window: &SpatialWindow,
+    pos: SpatialPosition,
+    tap: TapIndex,
+    extent: SpatialExtent,
+) -> Option<usize> {
+    let reach = window.gradient_position(pos, tap);
     let stride = window.stride as isize;
     let at = usize::try_from(reach)
         .ok()
         .filter(|_| reach % stride == 0)?
         / stride as usize;
-    (at < extent).then_some(at)
+    (at < extent.0).then_some(at)
 }

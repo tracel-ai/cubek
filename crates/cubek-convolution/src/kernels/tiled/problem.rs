@@ -19,17 +19,7 @@ pub const CI: Axis = Axis(2);
 
 /// How many spatial dims a convolution has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpatialDims(usize);
-
-impl SpatialDims {
-    pub const fn new(count: usize) -> Self {
-        Self(count)
-    }
-
-    pub const fn get(self) -> usize {
-        self.0
-    }
-}
+pub struct SpatialDimCount(pub usize);
 
 /// What an axis of the space measures: the one place that numbers the labels of the axes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,8 +76,8 @@ impl ConvAxis {
     }
 
     /// The `[out, tap]` axis pair of each of `spatial_dims` spatial dims.
-    pub fn spatial(spatial_dims: SpatialDims) -> impl Iterator<Item = [Axis; 2]> {
-        (0..spatial_dims.get()).map(|dim| [Self::Out(dim).axis(), Self::Tap(dim).axis()])
+    pub fn spatial(spatial_dims: SpatialDimCount) -> impl Iterator<Item = [Axis; 2]> {
+        (0..spatial_dims.0).map(|dim| [Self::Out(dim).axis(), Self::Tap(dim).axis()])
     }
 }
 
@@ -145,7 +135,7 @@ impl ConvProblem {
         alignments: MatmulOperands<ElemAlignment>,
         start_bytes: MatmulOperands<u64>,
     ) -> Self {
-        let extents = ConvRoles::of(operation, SpatialDims::new(window.len()))
+        let extents = ConvRoles::of(operation, SpatialDimCount(window.len()))
             .expect("a problem is stated by tensors that were checked")
             .extents;
         let (kernel, out) = (extents.kernel.read(&views), extents.out.read(&views));
@@ -177,7 +167,7 @@ impl ConvProblem {
     /// On a transposed forward, which [`ConvTensors`](super::ConvTensors) refuses before any
     /// problem is stated.
     pub fn roles(&self) -> ConvRoles {
-        ConvRoles::of(self.operation, SpatialDims::new(self.spatial.len()))
+        ConvRoles::of(self.operation, SpatialDimCount(self.spatial.len()))
             .expect("a problem is stated by tensors that were checked")
     }
 
