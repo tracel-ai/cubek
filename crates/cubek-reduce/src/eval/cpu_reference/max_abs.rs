@@ -1,23 +1,9 @@
 use cubek_test_utils::{HostData, Progress};
 
-use super::{
-    best_of, build_f32_output, bump, for_each_output_coord, output_shape, row_along,
-    should_replace_max,
-};
+use super::{best_of, reference_rows, should_replace_max};
 
 pub fn reference_max_abs(input: &HostData, axis: usize, progress: Option<&Progress>) -> HostData {
-    let out_shape_vec = output_shape(&input.shape, axis);
-    let mut data = vec![0.0f32; out_shape_vec.iter().product()];
-
-    for_each_output_coord(&out_shape_vec, |linear, out_coord| {
-        data[linear] = best_of(
-            row_along(input, axis, out_coord).map(f32::abs),
-            0.0,
-            should_replace_max,
-        )
-        .1;
-        bump(progress);
-    });
-
-    build_f32_output(input, axis, data)
+    reference_rows(input, axis, progress, |row| {
+        best_of(row.iter().map(|value| value.abs()), 0.0, should_replace_max).1
+    })
 }

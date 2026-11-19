@@ -1,7 +1,6 @@
-use cubecl::zspace::Shape;
-use cubek_test_utils::{HostData, HostDataVec, Progress};
+use cubek_test_utils::{HostData, Progress};
 
-use super::{bump, contiguous_strides};
+use super::reference_ranked;
 
 /// ArgTopK returns the `k` axis indices of the top values per output slice, laid out as
 /// [`reference_topk`](super::reference_topk) lays out their values.
@@ -11,52 +10,7 @@ pub fn reference_argtopk(
     k: usize,
     progress: Option<&Progress>,
 ) -> HostData {
-    let axis_len = input.shape[axis];
-
-    let mut out_shape_vec: Vec<usize> = input.shape.iter().copied().collect();
-    out_shape_vec[axis] = k;
-
-    let num_outputs_batches: usize = input.shape.iter().product::<usize>() / axis_len;
-    let mut data = vec![0.0f32; num_outputs_batches * k];
-
-    let out_strides = contiguous_strides(&out_shape_vec);
-
-    let rank = input.shape.len();
-    let mut batch_coord = vec![0usize; rank];
-
-    let mut batch_shape: Vec<usize> = input.shape.iter().copied().collect();
-    batch_shape[axis] = 1;
-
-    for batch in 0..num_outputs_batches {
-        let mut rem = batch;
-        for d in (0..rank).rev() {
-            batch_coord[d] = rem % batch_shape[d];
-            rem /= batch_shape[d];
-        }
-
-        let mut pairs: Vec<(f32, u32)> = Vec::with_capacity(axis_len);
-        let mut coord = batch_coord.clone();
-        for i in 0..axis_len {
-            coord[axis] = i;
-            pairs.push((input.get_f32(&coord), i as u32));
-        }
-        pairs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-        for i in 0..k {
-            coord[axis] = i;
-            let idx = coord
-                .iter()
-                .zip(out_strides.iter())
-                .map(|(c, s)| c * s)
-                .sum::<usize>();
-            data[idx] = pairs.get(i).map_or(u32::MAX, |&(_, index)| index) as f32;
-            bump(progress);
-        }
-    }
-
-    HostData {
-        data: HostDataVec::F32(data),
-        shape: Shape::from(out_shape_vec),
-        strides: out_strides,
-    }
+    reference_ranked(input, axis, k, progress, |pair| {
+        pair.map_or(u32::MAX, |&(_, index)| index) as f32
+    })
 }

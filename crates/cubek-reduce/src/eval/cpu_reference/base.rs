@@ -404,3 +404,56 @@ pub(crate) fn best_of(
             }
         })
 }
+
+/// Each row of `input` along `axis` reduced to one value by `reduce_row`, handed the row's values
+/// in order: the output of a reduction one cell wide along `axis`.
+pub(crate) fn reference_rows(
+    input: &HostData,
+    axis: usize,
+    progress: Option<&Progress>,
+    reduce_row: impl Fn(&[f32]) -> f32,
+) -> HostData {
+    let out_shape = output_shape(&input.shape, axis);
+    let mut data = vec![0.0f32; out_shape.iter().product()];
+    for_each_output_coord(&out_shape, |linear, out_coord| {
+        let row: Vec<f32> = row_along(input, axis, out_coord).collect();
+        data[linear] = reduce_row(&row);
+        bump(progress);
+    });
+    build_f32_output(input, axis, data)
+}
+
+/// Each row of `input` along `axis` ranked from its largest value, its first `k` places written
+/// along `axis` as `pick` reads each (a value and its index, or none past the row's end).
+pub(crate) fn reference_ranked(
+    input: &HostData,
+    axis: usize,
+    k: usize,
+    progress: Option<&Progress>,
+    pick: impl Fn(Option<&(f32, u32)>) -> f32,
+) -> HostData {
+    let mut out_shape: Vec<usize> = input.shape.iter().copied().collect();
+    out_shape[axis] = k;
+    let out_strides = contiguous_strides(&out_shape);
+    let mut data = vec![0.0f32; out_shape.iter().product()];
+    for_each_output_coord(&output_shape(&input.shape, axis), |_, row_coord| {
+        let mut ranked: Vec<(f32, u32)> = row_along(input, axis, row_coord).zip(0u32..).collect();
+        ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(core::cmp::Ordering::Equal));
+        let mut coord = row_coord.to_vec();
+        for slot in 0..k {
+            coord[axis] = slot;
+            let at: usize = coord
+                .iter()
+                .zip(out_strides.iter())
+                .map(|(c, s)| c * s)
+                .sum();
+            data[at] = pick(ranked.get(slot));
+            bump(progress);
+        }
+    });
+    HostData {
+        data: HostDataVec::F32(data),
+        shape: Shape::from(out_shape),
+        strides: out_strides,
+    }
+}
