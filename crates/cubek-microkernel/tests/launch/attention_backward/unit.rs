@@ -205,11 +205,11 @@ fn unit_query_gradient_kernel<EA: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &mut TileTensor<'_>,
+    out: &TileTensor<'_>,
     out_gradient: &TileTensor<'_>,
     logsumexp: &TileTensor<'_>,
-    delta: &TileTensor<'_>,
-    query_gradient: &TileTensor<'_>,
+    delta: &mut TileTensor<'_>,
+    query_gradient: &mut TileTensor<'_>,
     queries: u32,
     keys: u32,
     scale: f32,
@@ -223,12 +223,9 @@ fn unit_query_gradient_kernel<EA: Float>(
         key.tile(&partitioning),
         value.tile(&partitioning),
     );
-    let (o, d_o) = (
-        out.tile_mut(&partitioning),
-        out_gradient.tile(&partitioning),
-    );
-    let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
-    let d_q = query_gradient.tile(&partitioning);
+    let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
+    let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile_mut(&partitioning));
+    let d_q = query_gradient.tile_mut(&partitioning);
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.bias::<EA>(&partitioning);
     for unit in &partitioning {
@@ -260,8 +257,8 @@ fn unit_key_gradient_kernel<EA: Float>(
     out_gradient: &TileTensor<'_>,
     logsumexp: &TileTensor<'_>,
     delta: &TileTensor<'_>,
-    key_gradient: &TileTensor<'_>,
-    value_gradient: &TileTensor<'_>,
+    key_gradient: &mut TileTensor<'_>,
+    value_gradient: &mut TileTensor<'_>,
     queries: u32,
     keys: u32,
     scale: f32,
@@ -278,8 +275,8 @@ fn unit_key_gradient_kernel<EA: Float>(
     let d_o = out_gradient.tile(&partitioning);
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let (d_k, d_v) = (
-        key_gradient.tile(&partitioning),
-        value_gradient.tile(&partitioning),
+        key_gradient.tile_mut(&partitioning),
+        value_gradient.tile_mut(&partitioning),
     );
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);

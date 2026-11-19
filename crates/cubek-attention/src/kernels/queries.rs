@@ -329,4 +329,114 @@ mod tests {
         }
         None
     }
+
+    /// Many sequences of one query at Devstral Small 2's heads, 32 of 128 over 8 key heads,
+    /// packed in one launch, write what the same sequences laid out as a batch do. The packed
+    /// query and output, viewed once per sequence with the batch at stride zero, are `2^36`
+    /// values as their logical shapes count them, past a `u32` whatever the width they are bound
+    /// at, against `2^24` in their buffers: the launch counts what the buffers hold.
+    #[test]
+    fn many_packed_sequences_match_a_batch() {
+        const SEQUENCES: usize = 4096;
+        const HEADS: usize = 32;
+        const KV_HEADS: usize = 8;
+        const HEAD_DIM: usize = 128;
+        /// Keys a page holds, every sequence's in one page of a pool of `POOL`.
+        const PAGE_SIZE: usize = 16;
+        const POOL: usize = 4;
+
+        let client: Client = cubecl::test_device().client();
+        if let Err(refusal) = Hardware::from_client(&client).plane_dim() {
+            eprintln!("declined on this device: {refusal:?}");
+            return;
+        }
+        let (f16, u32) = (half::f16::elem_type_native(), u32::elem_type_native());
+        let tensor = |shape: &[usize], element, data: Vec<f32>| {
+            PlainTensor::of_handle(
+                TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
+                    .dtype(element)
+                    .custom(data)
+                    .generate_without_host_data(),
+            )
+        };
+        let values = |seed: usize, count: usize| -> Vec<f32> {
+            (0..count)
+                .map(|i| (((i * 7919 + seed * 104_729) % 97) as f32 - 48.) / 64.)
+                .collect()
+        };
+        let queries = values(1, SEQUENCES * HEADS * HEAD_DIM);
+        let pool = [POOL, KV_HEADS, PAGE_SIZE, HEAD_DIM];
+        let (keys, cached_values) = (
+            values(2, pool.iter().product()),
+            values(3, pool.iter().product()),
+        );
+        let table: Vec<f32> = (0..SEQUENCES).map(|b| (b % POOL) as f32).collect();
+        // Each sequence attends a length of its own, so a run read at another sequence's place
+        // writes another value.
+        let lengths: Vec<f32> = (0..SEQUENCES).map(|b| (1 + b % PAGE_SIZE) as f32).collect();
+        let cache = || {
+            KvSource::new(AttentionCache::Float {
+                key: tensor(&pool, f16, keys.clone()),
+                value: tensor(&pool, f16, cached_values.clone()),
+            })
+            .paged(tensor(&[SEQUENCES, 1], u32, table.clone()))
+        };
+        let scoring = AttentionScoring::standard(
+            AttentionVisibility::new(true, None, QueryPlacement::Last),
+            HEAD_DIM,
+        );
+        let ends: Vec<f32> = (1..=SEQUENCES).map(|end| end as f32).collect();
+        let packed = || AttentionQueries::Packed {
+            query: tensor(&[SEQUENCES, HEADS, HEAD_DIM], f16, queries.clone()),
+            ends: tensor(&[SEQUENCES], u32, ends.clone()),
+            longest: 1,
+            lengths: tensor(&[SEQUENCES], u32, lengths.clone()),
+        };
+        // `[Σ q, h, d]` at one query a sequence is `[b, h, 1, d]` in the same order.
+        let batch = || AttentionQueries::Dense {
+            query: tensor(&[SEQUENCES, HEADS, 1, HEAD_DIM], f16, queries.clone()),
+            lengths: tensor(&[SEQUENCES], u32, lengths.clone()),
+        };
+        type Routine<'a> = &'a dyn Fn(AttentionQueries) -> Option<TensorHandle>;
+        let routines: [(&str, Routine); 2] = [
+            ("cube staged", &|queries| {
+                lead(
+                    DirectAttention(CubeStagedAttentionRoutine),
+                    &client,
+                    queries,
+                    cache(),
+                    scoring,
+                )
+            }),
+            ("cube shuffle", &|queries| {
+                lead(
+                    DirectAttention(CubeShuffleAttentionRoutine),
+                    &client,
+                    queries,
+                    cache(),
+                    scoring,
+                )
+            }),
+        ];
+        for (name, launch) in routines {
+            let Some(packed) = launch(packed()) else {
+                continue;
+            };
+            let batch = launch(batch()).expect("what reads packed queries reads dense ones");
+            let packed = HostData::from_tensor_handle(&client, packed, HostDataType::F32);
+            let batch = HostData::from_tensor_handle(&client, batch, HostDataType::F32);
+            for sequence in 0..SEQUENCES {
+                for head in 0..HEADS {
+                    for c in 0..HEAD_DIM {
+                        let want = batch.get_f32(&[sequence, 0, head, c]);
+                        let got = packed.get_f32(&[sequence, head, c]);
+                        assert!(
+                            (got - want).abs() <= 5e-3 * (1. + want.abs()),
+                            "{name}: sequence {sequence} head {head} [{c}]: {got}, expected {want}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
