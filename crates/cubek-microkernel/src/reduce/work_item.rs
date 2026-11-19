@@ -74,3 +74,80 @@ impl ReduceWorkItem {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::FloatKind;
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    fn item(
+        operation: ReduceOperation,
+        layout: ReduceLayout,
+        with_indices: bool,
+    ) -> ReduceWorkItem {
+        ReduceWorkItem {
+            operation,
+            input: F32,
+            accumulator: F32,
+            layout,
+            with_indices,
+        }
+    }
+
+    /// Along the row, a line of several lanes holds one row's values; one lane, or a line across
+    /// rows, does not.
+    #[test]
+    fn lanes_share_a_row_only_along_it_past_one_lane() {
+        assert!(ReduceLayout::Along.lanes_share_a_row(4));
+        assert!(!ReduceLayout::Along.lanes_share_a_row(1));
+        assert!(!ReduceLayout::Across.lanes_share_a_row(4));
+    }
+
+    /// Along the reduced dim the output takes one cell a row; across it, an input line is an
+    /// output line.
+    #[test]
+    fn the_requirement_follows_the_layout() {
+        assert_eq!(
+            item(ReduceOperation::Sum, ReduceLayout::Along, false).requirement(),
+            VectorRequirement::Elementwise {
+                operand: ReduceOperand::Out
+            }
+        );
+        assert_eq!(
+            item(ReduceOperation::Sum, ReduceLayout::Across, false).requirement(),
+            VectorRequirement::Together {
+                operand: ReduceOperand::Input,
+                with: ReduceOperand::Out,
+            }
+        );
+    }
+
+    /// A unit holds a value and an index a slot, beside two registers of its own.
+    #[test]
+    fn a_unit_holds_two_registers_a_slot_and_two() {
+        const K: u32 = 3;
+        let work = item(
+            ReduceOperation::TopK { k: K as usize },
+            ReduceLayout::Along,
+            false,
+        )
+        .unit_work();
+        assert_eq!(work.registers, 2 * K + 2);
+        assert_eq!(work.instruction, ArithmeticInstruction::Vector);
+    }
+
+    /// With indices beside them, both halves are written; otherwise what the operation writes.
+    #[test]
+    fn indices_beside_the_values_write_both() {
+        assert_eq!(
+            item(ReduceOperation::ArgMax, ReduceLayout::Along, true).writes(),
+            ReduceWrites::Both
+        );
+        assert_eq!(
+            item(ReduceOperation::ArgMax, ReduceLayout::Along, false).writes(),
+            ReduceWrites::Indices
+        );
+    }
+}
