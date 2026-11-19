@@ -6,7 +6,7 @@ use cubek_microkernel::matmul::MatmulOperands;
 use cubek_test_utils::CatalogEntry;
 
 use crate::{
-    ConvolutionArgs,
+    ConvolutionArgs, SpatialExtent, TapCount,
     components::ConvolutionOperation,
     kernels::tiled::{ConvProblem, ConvRoles, SpatialDims},
 };
@@ -42,7 +42,10 @@ impl Conv2dProblem {
         let [_, _, h, w] = self.input_shape;
         let [_, _, kh, kw] = self.weight_shape;
         let [window_h, window_w] = self.args.windows();
-        [window_h.output(h, kh), window_w.output(w, kw)]
+        [
+            window_h.output(SpatialExtent(h), TapCount(kh)),
+            window_w.output(SpatialExtent(w), TapCount(kw)),
+        ]
     }
 
     /// The shapes of the operands the operation reads and writes, `[lhs, rhs, out]`, each NHWC

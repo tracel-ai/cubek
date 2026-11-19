@@ -17,7 +17,8 @@ use cubek_test_utils::{
 };
 
 use crate::{
-    ConvolutionArgs, ConvolutionInputs, SpatialWindow, Strategy,
+    ConvolutionArgs, ConvolutionInputs, SpatialExtent, SpatialPosition, SpatialWindow, Strategy,
+    TapCount, TapIndex,
     components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
     launch_ref,
 };
@@ -139,8 +140,8 @@ impl ConvSpec {
         let [window_h, window_w] = self.args.windows();
         let [kh, kw] = self.kernel_size;
         [
-            window_h.output(self.in_h, kh),
-            window_w.output(self.in_w, kw),
+            window_h.output(SpatialExtent(self.in_h), TapCount(kh)),
+            window_w.output(SpatialExtent(self.in_w), TapCount(kw)),
         ]
     }
 
@@ -517,8 +518,9 @@ pub fn naive_weight_grad(
                 for b in 0..batches {
                     for cell in 0..cells {
                         let at = unravel(cell, out);
-                        let positions = (0..SPATIAL_DIMS)
-                            .map(|dim| windows[dim].position(at[dim], at_tap[dim]));
+                        let positions = (0..SPATIAL_DIMS).map(|dim| {
+                            windows[dim].position(SpatialPosition(at[dim]), TapIndex(at_tap[dim]))
+                        });
                         let Some(read) = within(gathered, positions) else {
                             continue;
                         };
@@ -584,7 +586,7 @@ pub fn naive_data_grad(
 /// The output position along spatial `dim` whose window, at tap `tap`, reads input position `pos`
 /// of an output `extent` long, if there is one.
 fn output_reading(window: &SpatialWindow, pos: usize, tap: usize, extent: usize) -> Option<usize> {
-    let reach = window.gradient_position(pos, tap);
+    let reach = window.gradient_position(SpatialPosition(pos), TapIndex(tap));
     let stride = window.stride as isize;
     let at = usize::try_from(reach)
         .ok()

@@ -3,7 +3,7 @@ use super::{
     TileConvBlueprint,
 };
 use crate::components::ConvolutionOperation;
-use crate::launch::SpatialWindow;
+use crate::launch::{SpatialExtent, SpatialWindow, TapCount};
 use cubecl::client::Client;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::kind::Boundary;
@@ -171,7 +171,10 @@ impl ConvTensors {
         let roles = ConvRoles::of(self.operation, SpatialDims::new(self.window.len()))?;
         let states_output = |conv_dim: &ConvDim| {
             let (input, output) = roles.gather.window_ends(conv_dim);
-            conv_dim.window.output(input, conv_dim.kernel) == output
+            conv_dim
+                .window
+                .output(SpatialExtent(input), TapCount(conv_dim.kernel))
+                == output
         };
         match problem.spatial.iter().all(states_output) {
             true => Ok(()),

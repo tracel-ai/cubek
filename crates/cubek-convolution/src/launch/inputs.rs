@@ -70,12 +70,28 @@ pub struct SpatialWindow {
     pub dilation: usize,
 }
 
+/// The length of a spatial dim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpatialExtent(pub usize);
+
+/// How many taps a window has along a spatial dim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TapCount(pub usize);
+
+/// A position along a spatial dim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpatialPosition(pub usize);
+
+/// The index of a tap along a spatial dim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TapIndex(pub usize);
+
 impl SpatialWindow {
     /// The extent a window of `kernel` taps yields over an `input` of that extent, zero where the
     /// dilated taps do not fit the padded input.
-    pub fn output(&self, input: usize, kernel: usize) -> usize {
-        let padded = input + 2 * self.padding;
-        let span = self.dilation * kernel.saturating_sub(1) + 1;
+    pub fn output(&self, input: SpatialExtent, kernel: TapCount) -> usize {
+        let padded = input.0 + 2 * self.padding;
+        let span = self.dilation * kernel.0.saturating_sub(1) + 1;
         match padded.checked_sub(span) {
             Some(room) => room / self.stride + 1,
             None => 0,
@@ -84,14 +100,14 @@ impl SpatialWindow {
 
     /// The input position a forward window reads at output position `out` and tap `tap`,
     /// `out * stride + tap * dilation - padding`: negative before the input's start.
-    pub fn position(&self, out: usize, tap: usize) -> isize {
-        (out * self.stride + tap * self.dilation) as isize - self.padding as isize
+    pub fn position(&self, out: SpatialPosition, tap: TapIndex) -> isize {
+        (out.0 * self.stride + tap.0 * self.dilation) as isize - self.padding as isize
     }
 
     /// The gradient position the data backward reads at input position `pos` and tap `tap`,
     /// `pos + padding - tap * dilation`, at stride 1: negative before the gradient's start.
-    pub fn gradient_position(&self, pos: usize, tap: usize) -> isize {
-        (pos + self.padding) as isize - (tap * self.dilation) as isize
+    pub fn gradient_position(&self, pos: SpatialPosition, tap: TapIndex) -> isize {
+        (pos.0 + self.padding) as isize - (tap.0 * self.dilation) as isize
     }
 
     /// [`Self::position`] as a map over the axes `out` and `tap`, for a tile projection.
