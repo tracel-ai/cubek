@@ -7,7 +7,7 @@ use crate::matmul::MatmulDim;
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Dimension, Level, Levels, Partitioning, Scratch};
+use cubecl::tile::{Dimension, FragmentSource, Level, Levels, Partitioning, Scratch};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -194,6 +194,7 @@ impl PlaneQueryGradientMicrokernel {
                 hw,
                 &score_gradient,
                 &query_item,
+                FragmentSource::Values(query_item.elements.rhs),
                 grid,
                 query_tile,
             )?,

@@ -7,7 +7,7 @@ use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSet
 use crate::matmul::{MatmulDim, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Dimension, Level, Levels, Partitioning, Scratch};
+use cubecl::tile::{Dimension, FragmentSource, Level, Levels, Partitioning, Scratch};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -206,8 +206,22 @@ impl PlaneKeyGradientMicrokernel {
         let score_gradient = holder.sum_plane(hw, &gradient_item, grid, gradient_tile)?;
         Some(Self {
             settings,
-            value_gradient: holder.reader_plane(hw, &score, &value_item, grid, value_tile)?,
-            key_gradient: holder.reader_plane(hw, &score_gradient, &key_item, grid, key_tile)?,
+            value_gradient: holder.reader_plane(
+                hw,
+                &score,
+                &value_item,
+                FragmentSource::Values(value_item.elements.rhs),
+                grid,
+                value_tile,
+            )?,
+            key_gradient: holder.reader_plane(
+                hw,
+                &score_gradient,
+                &key_item,
+                FragmentSource::Values(key_item.elements.rhs),
+                grid,
+                key_tile,
+            )?,
             score,
             score_gradient,
         })
