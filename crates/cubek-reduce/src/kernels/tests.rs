@@ -5,8 +5,8 @@
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceLauncher,
-    ReduceOpStrategy, ReduceTensors, UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine,
-    launch_kernel, launch_tuned, select,
+    ReduceOpStrategy, ReduceTensors, UnitDirectReduceRoutine, launch_kernel, launch_tuned,
+    launch_zeroed_atomic_unbound, select,
 };
 use cubecl::client::Client;
 use cubecl::ir::features::AtomicUsage;
@@ -420,17 +420,8 @@ fn launch_atomic_unbound(
     let tensors =
         unbound_tensors::<HypercubeAtomicReduceRoutine, _>(client, &input, out, reduction)?;
     let hw = Hardware::from_client(client);
-    let (blueprint, grid) =
-        HypercubeAtomicReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
-    let (zero_blueprint, zero_grid) =
-        UnitDirectZeroReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
-    UnitDirectZeroReduceRoutine::zero_unbound(&tensors, zero_blueprint, zero_grid);
-    HypercubeAtomicReduceRoutine::launch_unbound::<StoredTileOperand>(
-        &tensors,
-        blueprint,
-        grid,
-        bound_back(input),
-    )
+    let prepared = HypercubeAtomicReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
+    launch_zeroed_atomic_unbound::<StoredTileOperand>(&hw, &tensors, prepared, bound_back(input))
 }
 
 impl ScopeUnderTest for UnboundRoutineScopeUnderTest {

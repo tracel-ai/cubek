@@ -2,7 +2,7 @@
 
 use crate::kernels::{
     HypercubeAtomicReduceRoutine, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
-    ReduceTensors, UnitDirectZeroReduceRoutine, tune::*,
+    ReduceTensors, launch_zeroed_atomic, launch_zeroed_atomic_unbound, tune::*,
 };
 use core::marker::PhantomData;
 use cubecl::CubeDim;
@@ -83,15 +83,9 @@ impl ReduceRoutineRunner<HypercubeAtomicReduceRoutine> {
     /// `tensors` summed at this candidate's setting into their output, which the zeroing, timed
     /// with it, sets first. Both routines prepare before either launches.
     pub(super) fn run_zeroed(&self, tensors: ReduceTensors) -> Result<(), String> {
-        let (blueprint, grid) =
-            HypercubeAtomicReduceRoutine::prepare(&self.hw, tensors.problem(), &self.settings)
-                .map_err(|decline| decline.to_string())?;
-        let (zero_blueprint, zero_grid) =
-            UnitDirectZeroReduceRoutine::prepare_first_served(&self.hw, tensors.problem())
-                .map_err(|decline| decline.to_string())?;
-        UnitDirectZeroReduceRoutine::launch(&tensors, zero_blueprint, zero_grid);
-        HypercubeAtomicReduceRoutine::launch(&tensors, blueprint, grid);
-        Ok(())
+        HypercubeAtomicReduceRoutine::prepare(&self.hw, tensors.problem(), &self.settings)
+            .and_then(|prepared| launch_zeroed_atomic(&self.hw, &tensors, prepared))
+            .map_err(|decline| decline.to_string())
     }
 
     /// [`launch_unbound`](Self::launch_unbound) after the output is zeroed, since the routine only
@@ -106,12 +100,9 @@ impl ReduceRoutineRunner<HypercubeAtomicReduceRoutine> {
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Decline> {
-        let (blueprint, grid) =
+        let prepared =
             HypercubeAtomicReduceRoutine::prepare(&self.hw, tensors.problem(), &self.settings)?;
-        let (zero_blueprint, zero_grid) =
-            UnitDirectZeroReduceRoutine::prepare_first_served(&self.hw, tensors.problem())?;
-        UnitDirectZeroReduceRoutine::zero_unbound(tensors, zero_blueprint, zero_grid);
-        HypercubeAtomicReduceRoutine::launch_unbound::<I>(tensors, blueprint, grid, input)
+        launch_zeroed_atomic_unbound::<I>(&self.hw, tensors, prepared, input)
     }
 }
 

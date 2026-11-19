@@ -5,14 +5,16 @@
 
 use crate::ReduceError;
 use crate::kernels::{
-    CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
-    PlaneShuffleReduceRoutine, ReduceLauncher, ReduceTensors, UnitDirectReduceRoutine,
-    UnitDirectZeroReduceRoutine, launch_tuned, select,
+    CubeStagedReduceRoutine, HypercubeAtomicReduceBlueprint, HypercubeAtomicReduceRoutine,
+    HypercubeLastArrivalReduceRoutine, PlaneShuffleReduceRoutine, ReduceLauncher, ReduceTensors,
+    UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine, launch_tuned, select,
 };
 use cubecl::Device;
-use cubecl::tile::launch::Decline;
+use cubecl::prelude::LaunchArg;
+use cubecl::tile::Geometry;
+use cubecl::tile::launch::{Decline, TileOperand, Unbound};
 use cubek_std::Hardware;
-use cubek_std::routine::Routine;
+use cubek_std::routine::{Grid, Routine};
 use serde::{Deserialize, Serialize};
 
 /// How a reduction picks its kernel: measure the routines, pick one by rule, or run one named
@@ -161,20 +163,50 @@ pub(crate) fn launch_kernel(
         ReduceKernel::HypercubeLastArrival => {
             launch_first_served::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors)
         }
-        ReduceKernel::HypercubeAtomic => launch_zeroed_atomic(hw, tensors),
+        ReduceKernel::HypercubeAtomic => launch_zeroed_atomic(
+            hw,
+            tensors,
+            HypercubeAtomicReduceRoutine::prepare_first_served(hw, tensors.problem())?,
+        ),
     }
 }
 
-/// `tensors` summed by the atomic hypercube into their output, zeroed first. Both routines prepare
-/// before either launches, so a decline leaves the output as the caller gave it.
-fn launch_zeroed_atomic(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
+/// `tensors` summed by the atomic hypercube, at the launch `prepared` holds, into their output,
+/// zeroed first. The zeroing prepares before either launches, so a decline leaves the output as
+/// the caller gave it.
+///
+/// # Errors
+///
+/// Why the zeroing cannot run the problem here.
+pub(crate) fn launch_zeroed_atomic(
+    hw: &Hardware,
+    tensors: &ReduceTensors,
+    prepared: (HypercubeAtomicReduceBlueprint, Grid),
+) -> Result<(), Decline> {
     let (zero_blueprint, zero_grid) =
         UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
-    let (blueprint, grid) =
-        HypercubeAtomicReduceRoutine::prepare_first_served(hw, tensors.problem())?;
+    let (blueprint, grid) = prepared;
     UnitDirectZeroReduceRoutine::launch(tensors, zero_blueprint, zero_grid);
     HypercubeAtomicReduceRoutine::launch(tensors, blueprint, grid);
     Ok(())
+}
+
+/// [`launch_zeroed_atomic`] on an input the caller binds through `input`.
+///
+/// # Errors
+///
+/// Why the zeroing cannot run the problem here, or why the routine cannot read the caller's input.
+pub(crate) fn launch_zeroed_atomic_unbound<I: TileOperand>(
+    hw: &Hardware,
+    tensors: &ReduceTensors<Geometry>,
+    prepared: (HypercubeAtomicReduceBlueprint, Grid),
+    input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
+) -> Result<(), Decline> {
+    let (zero_blueprint, zero_grid) =
+        UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
+    let (blueprint, grid) = prepared;
+    UnitDirectZeroReduceRoutine::zero_unbound(tensors, zero_blueprint, zero_grid);
+    HypercubeAtomicReduceRoutine::launch_unbound::<I>(tensors, blueprint, grid, input)
 }
 
 /// `tensors` reduced by `R` at the first of its settings `hw` prepares them at.
