@@ -4,8 +4,8 @@
 //! families.
 
 use crate::kernels::{
-    CubeReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine, ReduceRoutine, ReduceTensors,
-    UnitReduceRoutine,
+    CubeReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeReduceRoutine, PlaneReduceRoutine,
+    ReduceRoutine, ReduceTensors, UnitReduceRoutine, UnitZeroRoutine,
 };
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
@@ -49,6 +49,9 @@ pub enum ReduceKernel {
     /// [`HypercubeReduceRoutine`]: a row split across cubes, the last cube to arrive merging
     /// every part.
     HypercubeLastArrival,
+    /// [`HypercubeAtomicReduceRoutine`] after [`UnitZeroRoutine`]: a row split across cubes, each
+    /// adding its part into the zeroed output. Sums only.
+    HypercubeAtomic,
 }
 
 impl ReduceOpStrategy {
@@ -101,6 +104,7 @@ impl ReduceKernel {
             Self::PlaneShuffle,
             Self::CubeStaged,
             Self::HypercubeLastArrival,
+            Self::HypercubeAtomic,
         ]
     }
 
@@ -111,6 +115,7 @@ impl ReduceKernel {
             Self::PlaneShuffle => "plane-shuffle",
             Self::CubeStaged => "cube-staged",
             Self::HypercubeLastArrival => "hypercube-last-arrival",
+            Self::HypercubeAtomic => "hypercube-atomic",
         }
     }
 
@@ -125,6 +130,10 @@ impl ReduceKernel {
             Self::PlaneShuffle => launch_first_served(&PlaneReduceRoutine, hw, tensors),
             Self::CubeStaged => launch_first_served(&CubeReduceRoutine, hw, tensors),
             Self::HypercubeLastArrival => launch_first_served(&HypercubeReduceRoutine, hw, tensors),
+            Self::HypercubeAtomic => {
+                launch_first_served(&UnitZeroRoutine, hw, tensors)?;
+                launch_first_served(&HypercubeAtomicReduceRoutine, hw, tensors)
+            }
         }
     }
 }

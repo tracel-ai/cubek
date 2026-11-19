@@ -45,7 +45,7 @@ impl<In> ReduceTensors<In> {
 }
 
 impl ReduceTensors<TensorBinding> {
-    /// `out = operation(input)` along dim `axis`: `out` has `input`'s shape, `axis` one wide, or
+    /// `out = operation(input)` along axis `axis`: `out` has `input`'s shape, `axis` one wide, or
     /// `k` wide for a top-k.
     ///
     /// # Panics

@@ -131,7 +131,15 @@ pub fn comparison_epsilon(config: ReduceOperationConfig) -> f32 {
 pub enum ReduceEntry {
     Kernels(ReduceStrategy),
     Tiles(kernels::ReduceOpStrategy),
+    /// Today's whole-tensor sum in one launch ([`shared_sum`](crate::shared_sum)) over that many
+    /// cubes, which adds into an output of one value: for measuring the atomic hypercube against.
+    SharedSum(u32),
 }
+
+/// Why [`ReduceEntry::SharedSum`] refuses anything but a whole tensor summed into one value.
+const SHARED_SUM_SUMS_A_WHOLE_TENSOR: ReduceError = ReduceError::Validation {
+    details: "shared_sum sums a whole tensor into one value, and writes no indices",
+};
 
 /// Today's kernels at `strategy`, or, when `CUBEK_REDUCE_ON_TILES` is set, the tile strategy
 /// standing for it: the unit kernel, the plane kernel, or for the cube the rule, which reaches the
@@ -186,6 +194,12 @@ impl ReduceEntry {
                 operation,
                 dtypes,
             ),
+            ReduceEntry::SharedSum(cubes) => match (operation, output.shape.iter().product()) {
+                (ReduceOperationConfig::Sum, 1usize) => {
+                    crate::shared_sum(client, input, output, *cubes, dtypes.input)
+                }
+                _ => Err(SHARED_SUM_SUMS_A_WHOLE_TENSOR),
+            },
         }
     }
 
@@ -223,6 +237,7 @@ impl ReduceEntry {
                 operation,
                 dtypes,
             ),
+            ReduceEntry::SharedSum(_) => Err(SHARED_SUM_SUMS_A_WHOLE_TENSOR),
         }
     }
 }

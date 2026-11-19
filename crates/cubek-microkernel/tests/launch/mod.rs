@@ -32,6 +32,8 @@ pub mod split_keys_merge;
 pub mod swiglu;
 #[cfg(any(feature = "pool", feature = "interpolate"))]
 mod window;
+#[cfg(feature = "zero")]
+pub mod zero;
 
 #[cfg(any(feature = "matmul", feature = "attention"))]
 pub use lines::Lines;
