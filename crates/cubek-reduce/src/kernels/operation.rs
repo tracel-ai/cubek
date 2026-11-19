@@ -100,7 +100,7 @@ impl Reduce {
             axis,
             operation.written_per_row(),
         )?;
-        validate_indices(&values, &indices)?;
+        validate_indices(&values.shape, &indices.shape)?;
         let tensors = ReduceTensors::with_indices(
             client,
             input,
@@ -180,12 +180,12 @@ fn validate_shape(
     Ok(())
 }
 
-/// Whether `indices` has `values`' shape: an index for every value.
-fn validate_indices(values: &TensorBinding, indices: &TensorBinding) -> Result<(), ReduceError> {
-    if indices.shape.as_slice() != values.shape.as_slice() {
+/// Whether the indices' shape is the values': an index for every value.
+fn validate_indices(values_shape: &[usize], indices_shape: &[usize]) -> Result<(), ReduceError> {
+    if indices_shape != values_shape {
         return Err(ReduceError::MismatchIndicesShape {
-            values_shape: values.shape.to_vec(),
-            indices_shape: indices.shape.to_vec(),
+            values_shape: values_shape.to_vec(),
+            indices_shape: indices_shape.to_vec(),
         });
     }
     Ok(())
@@ -222,6 +222,42 @@ mod tests {
             matches!(result, Err(ReduceError::MismatchOutputShape { .. })),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn an_axis_past_the_rank_is_outside_the_domain() {
+        let rank = 2;
+        let result = validate_axis(rank, rank);
+        assert!(
+            matches!(result, Err(ReduceError::InvalidAxis { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn indices_of_another_shape_are_outside_the_domain() {
+        let result = validate_indices(&[ROWS, 1], &[1, ROWS]);
+        assert!(
+            matches!(result, Err(ReduceError::MismatchIndicesShape { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_sum_has_no_index_to_write() {
+        let result = indexed(ReduceOperation::Sum);
+        assert!(
+            matches!(result, Err(ReduceError::IndicesUnsupported { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_max_with_indices_writes_an_argmax() {
+        assert!(matches!(
+            indexed(ReduceOperation::Max),
+            Ok(ReduceOperation::ArgMax)
+        ));
     }
 
     #[test]

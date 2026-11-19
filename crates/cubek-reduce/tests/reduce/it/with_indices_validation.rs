@@ -1,5 +1,6 @@
-//! Argument validation for `Reduce::execute_with_indices`, and the indices
-//! written at their own strides where they differ from the values'.
+//! `Reduce::execute_with_indices` on calls inside its Domain: outputs that match,
+//! min and max, and indices written at their own strides. The calls outside it
+//! are Small Tests in `kernels/operation.rs`.
 
 use cubecl::{prelude::*, zspace::Shape};
 use cubek_reduce::kernels::{Reduce, ReduceElements};
@@ -133,15 +134,6 @@ fn writes_indices_at_their_own_strides() {
 }
 
 #[test]
-fn rejects_indices_with_mismatched_shape() {
-    let result = try_launch([2, 4], vec![4, 1]);
-    assert!(
-        matches!(result, Err(ReduceError::MismatchIndicesShape { .. })),
-        "expected MismatchIndicesShape, got {result:?}"
-    );
-}
-
-#[test]
 fn accepts_matching_outputs() {
     let result = try_launch([4, 2], vec![2, 1]);
     assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -156,13 +148,4 @@ fn accepts_min_and_max() {
             "expected Ok for {operation:?}, got {result:?}"
         );
     }
-}
-
-#[test]
-fn rejects_operation_without_indices() {
-    let result = try_launch_config(ReduceOperation::Sum, 1, [4, 1], vec![1, 1]);
-    assert!(
-        matches!(result, Err(ReduceError::IndicesUnsupported { .. })),
-        "expected IndicesUnsupported, got {result:?}"
-    );
 }

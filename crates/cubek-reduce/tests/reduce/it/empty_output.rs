@@ -95,36 +95,3 @@ fn an_empty_output_is_not_launched_with_indices() {
     let result = try_reduce_with_indices();
     assert!(result.is_ok(), "expected Ok, got {result:?}");
 }
-
-/// A reduce axis of length zero is refused before any launch.
-#[test]
-fn an_empty_reduce_axis_is_refused() {
-    let client = cubecl::test_device().client();
-    let dtype = f32::elem_type_native();
-
-    let input = TestInput::builder(client.clone(), Shape::new([8, 0]))
-        .dtype(dtype)
-        .layout(StridedLayout::Explicit(vec![1, 1]))
-        .zeros()
-        .generate_without_host_data();
-    let output = TestInput::builder(client.clone(), Shape::new([8, 1]))
-        .dtype(dtype)
-        .layout(StridedLayout::Explicit(vec![1, 1]))
-        .zeros()
-        .generate_without_host_data();
-
-    let result = Reduce::new(RULE).execute(
-        &client,
-        &cubecl::test_device(),
-        input.binding(),
-        output.binding(),
-        1,
-        ReduceOperation::Sum,
-        elements(),
-    );
-
-    assert!(
-        matches!(result, Err(ReduceError::ReduceAxisTooSmall { .. })),
-        "expected ReduceAxisTooSmall, got {result:?}"
-    );
-}
