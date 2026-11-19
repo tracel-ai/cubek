@@ -275,4 +275,101 @@ mod tests {
         assert_eq!(Op::ArgTopK { k: 7 }.written_per_row(), 7);
         assert_eq!(Op::ArgMax.written_per_row(), 1);
     }
+
+    /// A read past the edge leaves the total unchanged: each operation's edge monoid is the one
+    /// whose identity its map leaves as it is.
+    #[test]
+    fn each_edge_reads_the_identity_its_map_keeps() {
+        use ReduceOperation as Op;
+        let rows = [
+            (Op::Sum, Monoid::Sum),
+            (Op::Mean, Monoid::Sum),
+            (Op::MaxAbs, Monoid::Sum),
+            (Op::Any, Monoid::Sum),
+            (Op::Prod, Monoid::Prod),
+            (Op::All, Monoid::Prod),
+            (Op::Max, Monoid::Max),
+            (Op::ArgMax, Monoid::Max),
+            (Op::TopK { k: 3 }, Monoid::Max),
+            (Op::ArgTopK { k: 3 }, Monoid::Max),
+            (Op::Min, Monoid::Min),
+            (Op::ArgMin, Monoid::Min),
+        ];
+        for (operation, edge) in rows {
+            assert_eq!(operation.edge_monoid(), edge, "{operation:?}");
+        }
+    }
+
+    /// A carrier holds its slots' values, each lane of each, and a `u32` beside each value where
+    /// it carries indices.
+    #[test]
+    fn a_carrier_holds_its_values_and_indices() {
+        const WIDTH: usize = 2;
+        const F32_BYTES: usize = 4;
+        const K: usize = 3;
+        let index = size_of::<u32>();
+        assert_eq!(
+            ReduceCarrier::Values.bytes(WIDTH, F32_BYTES),
+            WIDTH * F32_BYTES
+        );
+        assert_eq!(
+            ReduceCarrier::Indexed.bytes(WIDTH, F32_BYTES),
+            WIDTH * (F32_BYTES + index)
+        );
+        assert_eq!(
+            ReduceCarrier::TopValues { k: K }.bytes(WIDTH, F32_BYTES),
+            K * WIDTH * F32_BYTES
+        );
+        assert_eq!(
+            ReduceCarrier::TopK { k: K }.bytes(WIDTH, F32_BYTES),
+            K * WIDTH * (F32_BYTES + index)
+        );
+    }
+
+    /// Only a mean divides by the count.
+    #[test]
+    fn only_a_mean_divides_by_the_count() {
+        assert!(ReduceOperation::Mean.divides_by_count());
+        assert!(!ReduceOperation::Sum.divides_by_count());
+    }
+
+    /// No carrier but a top-k's bounds the line.
+    #[test]
+    fn a_line_is_unbounded_but_for_a_top_k() {
+        const LANE_SLOTS: usize = 32;
+        assert_eq!(
+            ReduceOperation::Sum.widest_line_at_lane_slots(LANE_SLOTS),
+            None
+        );
+    }
+
+    /// A top-k's line spreads its lane slots over its `k` values.
+    #[test]
+    fn a_top_k_line_spreads_its_slots_over_k() {
+        const LANE_SLOTS: usize = 32;
+        const K: usize = 4;
+        assert_eq!(
+            ReduceOperation::TopK { k: K }.widest_line_at_lane_slots(LANE_SLOTS),
+            Some(LANE_SLOTS / K)
+        );
+    }
+
+    /// Past the unroll budget, a top-k's lists live in local memory, so its line is one value.
+    #[test]
+    fn a_top_k_past_the_unroll_budget_reads_one_value_a_line() {
+        const LANE_SLOTS: usize = 32;
+        let k = TOP_K_UNROLL_BUDGET;
+        assert_eq!(
+            ReduceOperation::ArgTopK { k }.widest_line_at_lane_slots(LANE_SLOTS),
+            Some(1)
+        );
+    }
+
+    /// A top-k keeping no value has no line: its documented panic.
+    #[test]
+    #[should_panic]
+    fn a_top_k_keeping_nothing_panics() {
+        const LANE_SLOTS: usize = 32;
+        ReduceOperation::TopK { k: 0 }.widest_line_at_lane_slots(LANE_SLOTS);
+    }
 }
