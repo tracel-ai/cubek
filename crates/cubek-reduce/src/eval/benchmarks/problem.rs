@@ -267,6 +267,35 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
         ),
     ]);
 
+    // Every other operation, along the contiguous dim and across it: what each one's accumulator
+    // costs beside the sum's and the arg top-1's above.
+    for (name, text, config) in [
+        ("mean", "Mean", ReduceOperationConfig::Mean),
+        ("prod", "Prod", ReduceOperationConfig::Prod),
+        ("max", "Max", ReduceOperationConfig::Max),
+        ("min", "Min", ReduceOperationConfig::Min),
+        ("max_abs", "MaxAbs", ReduceOperationConfig::MaxAbs),
+        ("arg_max", "ArgMax", ReduceOperationConfig::ArgMax),
+        ("arg_min", "ArgMin", ReduceOperationConfig::ArgMin),
+        ("any", "Any", ReduceOperationConfig::Any),
+        ("all", "All", ReduceOperationConfig::All),
+    ] {
+        entries.push(spread(
+            &format!("{name}_rows"),
+            &format!("{text}, rows,"),
+            vec![32, 512, 4095],
+            2,
+            config,
+        ));
+        entries.push(spread(
+            &format!("{name}_strided"),
+            &format!("{text}, strided rows,"),
+            vec![32, 4095, 512],
+            1,
+            config,
+        ));
+    }
+
     // A decode sampler's row: one row of logits over a vocabulary, which one cube walks alone
     // unless the row is split across cubes. Its argmax, and a top-20 to sample among.
     let vocabulary = 151_936;

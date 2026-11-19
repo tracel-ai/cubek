@@ -1,26 +1,26 @@
 use cubecl::prelude::*;
 
 use cubecl::tile::{
-    Axis,
+    Dimension,
     procedural::{AffineCoordinate, Reads, Recipe, RecipeCoords, RecipeExpand},
 };
 
 /// Windowed-sinc Lanczos filter over an [`AffineCoordinate`].
-pub type LanczosAxis<T> = Lanczos<AffineCoordinate<T>>;
+pub type LanczosDimension<T> = Lanczos<AffineCoordinate<T>>;
 
-/// Construct a [`LanczosAxis`] recipe filtering along a single coordinate axis.
+/// Construct a [`LanczosDimension`] recipe filtering along a single coordinate dimension.
 #[cube]
 pub fn lanczos_along<T: Float>(
-    #[comptime] axis: Axis,
+    #[comptime] dimension: Dimension,
     offset: T,
     coefficient: T,
     #[comptime] lobes: u8,
-) -> LanczosAxis<T> {
-    LanczosAxis::<T> {
+) -> LanczosDimension<T> {
+    LanczosDimension::<T> {
         coordinate: AffineCoordinate::<T> {
             offset,
             coefficient,
-            axis,
+            dimension,
         },
         lobes,
     }
@@ -77,7 +77,7 @@ impl<C: CubeType> Reads for LanczosExpand<C>
 where
     C::ExpandType: Reads,
 {
-    fn reads(&self, scope: &Scope, axis: Axis) -> bool {
-        self.coordinate.reads(scope, axis)
+    fn reads(&self, scope: &Scope, dimension: Dimension) -> bool {
+        self.coordinate.reads(scope, dimension)
     }
 }

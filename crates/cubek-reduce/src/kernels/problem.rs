@@ -16,11 +16,11 @@ pub struct ReduceElements {
     pub out: ElemType,
 }
 
-/// `out = operation(input)` along dim `axis` of an input of `shape`, as the host describes it:
+/// `out = operation(input)` along axis `axis` of an input of `shape`, as the host describes it:
 /// the output has the input's shape, with `axis` one wide (`k` wide for a top-k).
 ///
-/// Every dim is an axis of the problem's space, `Axis(d)` for dim `d`; the reduced dim is the
-/// reduced axis, and every other dim a row axis. The output's `axis` is its own,
+/// Every axis is a dimension of the problem's space, `Dimension(d)` for axis `d`; the reduced axis
+/// is the reduced dimension, and every other axis a row dimension. The output's `axis` is its own,
 /// [`slots`](Self::slots), since it holds the cells a row writes, not the values it read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReduceRoutineProblem {
@@ -28,7 +28,7 @@ pub struct ReduceRoutineProblem {
     pub axis: usize,
     pub operation: ReduceOperation,
     pub elements: ReduceElements,
-    /// The dim both operands step one element along, if they share one: what a line runs along.
+    /// The axis both operands step one element along, if they share one: what a line runs along.
     pub contiguous: Option<usize>,
     /// The alignment of the input's and the output's buffers in elements.
     pub elem_alignments: [ElemAlignment; 2],
@@ -88,56 +88,69 @@ impl ReduceRoutineProblem {
         dim_axis(self.axis)
     }
 
-    /// The axis of the cells a row writes, in place of the reduced one in the output.
-    pub fn slots(&self) -> Axis {
-        dim_axis(self.shape.len())
+    /// The dimension of the cells a row writes, in place of the reduced one in the output.
+    pub fn slots(&self) -> Dimension {
+        axis_dimension(self.shape.len())
     }
 
-    /// The axis a hypercube's partials run along in place of the reduced one: every part's
+    /// The dimension a hypercube's partials run along in place of the reduced one: every part's
     /// carrier for a row, side by side.
-    pub fn partials(&self) -> Axis {
-        dim_axis(self.shape.len() + 1)
+    pub fn partials(&self) -> Dimension {
+        axis_dimension(self.shape.len() + 1)
     }
 
-    /// Every row axis, outermost first.
-    pub fn rows(&self) -> Vec<Axis> {
+    /// Every row dimension, outermost first.
+    pub fn rows(&self) -> Vec<Dimension> {
         (0..self.shape.len())
             .filter(|d| *d != self.axis)
-            .map(dim_axis)
+            .map(axis_dimension)
             .collect()
     }
 
-    /// The axes the owners are placed along: the row axes, or the slots where there is none, a
-    /// tensor of one dim reduced whole into its one row.
-    pub fn owner_axes(&self) -> Vec<Axis> {
+    /// The dimensions the owners are placed along, outermost first: the row
+    /// dimensions, or the slots where there is none, a tensor of one axis reduced whole into its one row.
+    pub fn owner_dimensions(&self) -> Vec<Dimension> {
         match self.rows() {
             rows if rows.is_empty() => vec![self.slots()],
             rows => rows,
         }
     }
 
-    /// The input's axes, one a dim.
-    pub fn input_axes(&self) -> Vec<Axis> {
-        (0..self.shape.len()).map(dim_axis).collect()
+    /// [`owner_dimensions`](Self::owner_dimensions), innermost first. A launch deals its owners
+    /// first dimension fastest, so neighbouring units and planes take neighbouring rows: their
+    /// reads land a row apart instead of a whole outer axis apart. Rows across the reduced axis
+    /// share their lines' memory, so there it is what keeps a unit or plane routine level with a
+    /// kernel reading the rows in order (on Metal, a strided f16 sum: 1083 µs outermost first,
+    /// 752 µs innermost first). A cube routine, whose cube spreads one owner's rows over all its
+    /// units, measured slower this way (1045 µs to 1236 µs), so it keeps them outermost first.
+    pub fn owner_dimensions_innermost_first(&self) -> Vec<Dimension> {
+        let mut dimensions = self.owner_dimensions();
+        dimensions.reverse();
+        dimensions
     }
 
-    /// The output's axes, one a dim: the input's, the reduced dim's being the slots.
-    pub fn out_axes(&self) -> Vec<Axis> {
+    /// The input's dimensions, one an axis.
+    pub fn input_dimensions(&self) -> Vec<Dimension> {
+        (0..self.shape.len()).map(axis_dimension).collect()
+    }
+
+    /// The output's dimensions, one an axis: the input's, the reduced axis's being the slots.
+    pub fn out_dimensions(&self) -> Vec<Dimension> {
         (0..self.shape.len())
             .map(|d| match d == self.axis {
                 true => self.slots(),
-                false => dim_axis(d),
+                false => axis_dimension(d),
             })
             .collect()
     }
 
-    /// A hypercube's partials' axes, one a dim: the input's, the reduced dim's being the
+    /// A hypercube's partials' dimensions, one an axis: the input's, the reduced axis's being the
     /// partials.
-    pub fn partial_axes(&self) -> Vec<Axis> {
+    pub fn partial_dimensions(&self) -> Vec<Dimension> {
         (0..self.shape.len())
             .map(|d| match d == self.axis {
                 true => self.partials(),
-                false => dim_axis(d),
+                false => axis_dimension(d),
             })
             .collect()
     }
@@ -152,11 +165,11 @@ impl ReduceRoutineProblem {
         self.shape.iter().product::<usize>() / self.reduced_extent().max(1)
     }
 
-    /// How the lines lie: along the reduced dim where it is the contiguous one, across it where
+    /// How the lines lie: along the reduced axis where it is the contiguous one, across it where
     /// another is, each lane of a line its own row; along it, a value a line, where none is.
     pub fn layout(&self) -> ReduceLayout {
         match self.contiguous {
-            Some(dim) if dim != self.axis => ReduceLayout::Across,
+            Some(axis) if axis != self.axis => ReduceLayout::Across,
             _ => ReduceLayout::Along,
         }
     }
@@ -172,71 +185,78 @@ impl ReduceRoutineProblem {
         }
     }
 
-    /// Every axis of the problem at its extent, the slots among them: what a routine partitions.
+    /// Every dimension of the problem at its extent, the slots among them: what a routine
+    /// partitions.
     pub fn space(&self) -> Space {
-        let mut axes: Vec<(Axis, usize)> = self
+        let mut dimensions: Vec<(Dimension, usize)> = self
             .shape
             .iter()
             .enumerate()
-            .map(|(d, extent)| (dim_axis(d), *extent))
+            .map(|(d, extent)| (axis_dimension(d), *extent))
             .collect();
-        axes.push((self.slots(), self.operation.written_per_row()));
-        Space::new(&axes)
+        dimensions.push((self.slots(), self.operation.written_per_row()));
+        Space::new(&dimensions)
     }
 
     /// [`space`](Self::space) and a hypercube's partials, `partial_extent` values of each box of
-    /// rows' along their axis.
+    /// rows' along their dimension.
     pub fn split_space(&self, partial_extent: usize) -> Space {
         let space = self.space();
-        let mut axes: Vec<(Axis, usize)> = space
-            .axes()
-            .map(|axis| (axis, space.extent(axis)))
+        let mut dimensions: Vec<(Dimension, usize)> = space
+            .dimensions()
+            .map(|dimension| (dimension, space.extent(dimension)))
             .collect();
-        axes.push((self.partials(), partial_extent));
-        Space::new(&axes)
+        dimensions.push((self.partials(), partial_extent));
+        Space::new(&dimensions)
     }
 
-    /// The box an owner holds: one row, or `width` rows side by side across the reduced dim, and
-    /// the cells it writes. It leaves the reduced dim to the space, so every owner spans its rows
+    /// The box an owner holds: one row, or `width` rows side by side across the reduced axis, and
+    /// the cells it writes. It leaves the reduced axis to the space, so every owner spans its rows
     /// whole.
-    pub fn owner_box(&self, width: usize) -> Vec<(Axis, usize)> {
-        let mut extents: Vec<(Axis, usize)> = (0..self.shape.len())
+    pub fn owner_box(&self, width: usize) -> Vec<(Dimension, usize)> {
+        let mut extents: Vec<(Dimension, usize)> = (0..self.shape.len())
             .filter(|d| *d != self.axis)
             .map(|d| {
                 let extent = match (self.layout(), self.contiguous) {
                     (ReduceLayout::Across, Some(inner)) if d == inner => width,
                     _ => 1,
                 };
-                (dim_axis(d), extent)
+                (axis_dimension(d), extent)
             })
             .collect();
         extents.push((self.slots(), self.operation.written_per_row()));
         extents
     }
 
-    /// How many boxes of rows the owners, `width` rows across the reduced dim, take along each
-    /// row axis, outermost first.
-    pub fn row_boxes(&self, width: usize) -> Vec<(Axis, usize)> {
+    /// How many boxes of rows the owners, `width` rows across the reduced axis, take along each
+    /// row dimension, outermost first.
+    pub fn row_boxes(&self, width: usize) -> Vec<(Dimension, usize)> {
         let owner = self.owner_box(width);
         self.rows()
             .into_iter()
-            .map(|axis| {
+            .map(|dimension| {
                 let tile = owner
                     .iter()
-                    .find_map(|&(a, extent)| (a == axis).then_some(extent))
-                    .expect("the owner's box names every row axis");
-                (axis, self.shape[usize::from(axis.0)].div_ceil(tile))
+                    .find_map(|&(d, extent)| (d == dimension).then_some(extent))
+                    .expect("the owner's box names every row dimension");
+                (
+                    dimension,
+                    self.shape[usize::from(dimension.0)].div_ceil(tile),
+                )
             })
             .collect()
     }
 
-    /// `partitioning` as a kernel compiles it: every axis but the cells a row writes left to the
-    /// launch, the row length too, as today's reduce kernels read it, so one kernel serves every
-    /// shape of a rank, layout, elements and widths. An owner's window is one row high, which its
-    /// flat view reads with no division by the runtime length.
+    /// `partitioning` as a kernel compiles it: every dimension but the cells a row writes left to
+    /// the launch, the row length too, as today's reduce kernels read it, so one kernel serves
+    /// every shape of a rank, layout, elements and widths. An owner's window is one row high, which
+    /// its flat view reads with no division by the runtime length.
     pub fn kernel(&self, partitioning: &Partitioning) -> Partitioning {
         let space = partitioning.space();
-        let dynamic: Vec<Axis> = space.axes().filter(|axis| *axis != self.slots()).collect();
+        let dynamic: Vec<Dimension> = space
+            .dimensions()
+            .filter(|dimension| *dimension != self.slots())
+            .collect();
         Partitioning::new(
             space.clone().with_dynamic(&dynamic),
             partitioning.levels().to_vec(),
@@ -244,9 +264,9 @@ impl ReduceRoutineProblem {
     }
 }
 
-/// The axis of dim `d`.
-pub fn dim_axis(d: usize) -> Axis {
-    Axis(u8::try_from(d).expect("a tensor has fewer than 256 dims"))
+/// The dimension of axis `d`.
+pub fn axis_dimension(d: usize) -> Dimension {
+    Dimension(u8::try_from(d).expect("a tensor has fewer than 256 axes"))
 }
 
 impl EstimatedProblem for ReduceRoutineProblem {

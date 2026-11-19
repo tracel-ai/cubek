@@ -27,7 +27,7 @@ use std::sync::Arc;
 /// What makes two gated activations want the same kernel.
 ///
 /// The width of a half is **exact**: it is a `d_ff`, fixed by the model config, and the kernel
-/// compiles it. The row count is anchored, being the axis a caller varies.
+/// compiles it. The row count is anchored, being the dimension a caller varies.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct SwigluKey {
     elem: ElemType,

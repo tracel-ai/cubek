@@ -9,20 +9,20 @@ pub enum RecurrenceWalkOperand {
     Key,
     /// `[batch, position, key_head, head_in_group, value_feature]`: the values.
     Value,
-    /// `[batch, position, key_head, head_in_group]`: the log of the factor the state decays by before each
-    /// write.
+    /// `[batch, position, key_head, head_in_group]`: the log of the factor the state decays by
+    /// before each write.
     Decay,
     /// `[batch, position, key_head, head_in_group]`: the strength of each write.
     Strength,
-    /// `[batch, key_head, head_in_group, key_feature, value_feature]`: the state the walk resumes from.
-    /// In a store's slots the first axis is the store's, `[store_slot, ..]`, and the walk writes
-    /// the state after its last position back to it.
+    /// `[batch, key_head, head_in_group, key_feature, value_feature]`: the state the walk resumes
+    /// from. In a store's slots the first dimension is the store's, `[store_slot, ..]`, and the
+    /// walk writes the state after its last position back to it.
     State,
-    /// `[batch, position, key_head, head_in_group, value_feature]`: what each position reads of the state
-    /// it wrote.
+    /// `[batch, position, key_head, head_in_group, value_feature]`: what each position reads of the
+    /// state it wrote.
     Out,
-    /// `[kept_state, batch, key_head, head_in_group, key_feature, value_feature]`: the states after the
-    /// walk's last positions, oldest first.
+    /// `[kept_state, batch, key_head, head_in_group, key_feature, value_feature]`: the states after
+    /// the walk's last positions, oldest first.
     Kept,
 }
 

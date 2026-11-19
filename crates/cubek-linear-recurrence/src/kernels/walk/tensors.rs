@@ -10,7 +10,7 @@ use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Indexing, Launcher, TileSpec, TileTensorLaunch};
+use cubecl::tile::{Dimension, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
@@ -200,8 +200,8 @@ impl StateTensors {
         Option<TileTensorLaunch>,
         Option<TileTensorLaunch>,
     ) {
-        let bind = |tensor, axes: &'static [Axis], width| {
-            RecurrenceWalkTensors::bound(launcher, tensor, axes, width)
+        let bind = |tensor, dimensions: &'static [Dimension], width| {
+            RecurrenceWalkTensors::bound(launcher, tensor, dimensions, width)
         };
         match self {
             Self::Owned { state, kept } => (
@@ -325,8 +325,8 @@ impl RecurrenceWalkTensors {
             value_features,
         };
 
-        // The value heads a key head groups are two axes, `[key_head, head_in_group]`, over the caller's
-        // stride along the value heads.
+        // The value heads a key head groups are two axes, `[key_head, head_in_group]`, over the
+        // caller's stride along the value heads.
         let grouped = |tensor: &PlainTensor, head_axis: usize| {
             let mut shape = tensor.shape().to_vec();
             let mut strides = tensor.binding.strides.to_vec();
@@ -473,8 +473,8 @@ impl RecurrenceWalkTensors {
             )
         });
         let width = blueprint.width;
-        let bind = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
-            Self::bound(&launcher, tensor, axes, width)
+        let bind = |tensor: &PlainTensor, dimensions: &'static [Dimension], width: usize| {
+            Self::bound(&launcher, tensor, dimensions, width)
         };
         let (state, kept, lengths) = self.states.bind(&launcher, width);
         RecurrenceWalkBinding {
@@ -507,16 +507,16 @@ impl RecurrenceWalkTensors {
         }
     }
 
-    /// `tensor` bound under `launcher` along `axes`, `width` values a line.
+    /// `tensor` bound under `launcher` along `dimensions`, `width` values a line.
     fn bound(
         launcher: &Launcher,
         tensor: &PlainTensor,
-        axes: &'static [Axis],
+        dimensions: &'static [Dimension],
         width: usize,
     ) -> TileTensorLaunch {
         launcher
             .arg(tensor.binding.clone(), tensor.elem)
-            .axes(axes)
+            .dimensions(dimensions)
             .vectorize(width)
             .build()
             .expect(ADMITTED_PLAN_RUNS)

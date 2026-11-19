@@ -48,11 +48,11 @@ pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOpera
             | QuantValue::E5M2
     );
     let numbers = scheme.mode == QuantMode::Symmetric;
-    // A rule runs ahead of the launch, so the strides that decide the axis everywhere else are not
-    // here and the scheme's own claim answers.
-    let axes = input.axes();
-    let laid = Operand::axis_of(scheme, axes)
-        .and_then(|axis| Operand::of_scheme(scheme, axis, axes))
+    // A rule runs ahead of the launch, so the strides that decide the dimension everywhere else are
+    // not here and the scheme's own claim answers.
+    let dimensions = input.dimensions();
+    let laid = Operand::dimension_of(scheme, dimensions)
+        .and_then(|dimension| Operand::of_scheme(scheme, dimension, dimensions))
         .is_some();
     value && numbers && laid
 }
