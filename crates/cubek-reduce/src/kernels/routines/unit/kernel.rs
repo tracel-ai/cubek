@@ -8,13 +8,13 @@ use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, unit_reduce_microke
 #[cube(launch_unchecked)]
 pub fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size, I: TileOperand>(
     input: &I::Arg,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = I::tile::<In>(input, &partitioning);
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
     for unit in &partitioning {
         let mut rows_out = o.at(&unit);
         // One output: the indices are never written, so they get the output's own window.
@@ -41,15 +41,15 @@ pub fn unit_reduce_with_indices_kernel<
     I: TileOperand,
 >(
     input: &I::Arg,
-    out: &TileTensor<'_>,
-    indices: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    indices: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitReduceMicrokernel,
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
     let x = I::tile::<In>(input, &partitioning);
-    let o = out.tile(&partitioning);
-    let i = indices.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+    let i = indices.tile_mut(&partitioning);
     for unit in &partitioning {
         let mut rows_out = o.at(&unit);
         let mut rows_indices = i.at(&unit);

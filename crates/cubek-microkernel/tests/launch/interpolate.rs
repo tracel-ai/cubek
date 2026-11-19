@@ -100,14 +100,14 @@ impl InterpolateLaunch {
 fn cube_interpolate_kernel<E: Float>(
     input: &TileTensor<'_>,
     weights: &TileTensor<'_>,
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeInterpolateMicrokernel,
     #[define(E)] _element: ElemType,
 ) {
     let input = input.tile(&partitioning);
     let weights = weights.tile(&partitioning);
-    let output = output.tile(&partitioning);
+    let output = output.tile_mut(&partitioning);
     for cube in partitioning {
         for block in cube.walk() {
             cube_interpolate_microkernel(

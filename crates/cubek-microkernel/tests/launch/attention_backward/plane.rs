@@ -233,7 +233,7 @@ fn plane_query_gradient_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     out_gradient: &TileTensor<'_>,
     logsumexp: &TileTensor<'_>,
     delta: &TileTensor<'_>,
@@ -252,7 +252,10 @@ fn plane_query_gradient_kernel<EA: Float, ES: Float>(
         key.tile(&partitioning),
         value.tile(&partitioning),
     );
-    let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
+    let (o, d_o) = (
+        out.tile_mut(&partitioning),
+        out_gradient.tile(&partitioning),
+    );
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let d_q = query_gradient.tile(&partitioning);
     let visible = VisibleKeys::of_keys(keys, queries, visibility);

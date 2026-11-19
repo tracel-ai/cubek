@@ -181,12 +181,12 @@ impl DepthwiseSpace {
 fn depthwise_kernel(
     weight: &TileTensor<'_>,
     input: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     space: Partitioning,
 ) {
     let weight = weight.tile(&space);
     let input = input.tile(&space);
-    let out = out.tile(&space);
+    let out = out.tile_mut(&space);
 
     for cube in space {
         let out = out.at(&cube);
