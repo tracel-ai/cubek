@@ -1,11 +1,12 @@
 use super::kernel::{unit_reduce_kernel, unit_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, ReduceTensors,
-    reduce_widths,
+    ReduceBinding, ReduceRoutine, ReduceRoutineBlueprint, ReduceRoutineProblem, reduce_widths,
 };
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::client::Client;
+use cubecl::prelude::LaunchArg;
+use cubecl::tile::launch::{Refusal, TileOperand, Vectorization};
 use cubecl::tile::space::UnitCube;
-use cubecl::tile::{Levels, Partitioning};
+use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::unit::{UnitReduceMicrokernel, UnitReduceMicrokernelSettings};
 use cubek_std::Hardware;
@@ -111,26 +112,27 @@ impl Routine for UnitReduceRoutine {
 }
 
 impl ReduceRoutine<UnitReduceMicrokernel> for UnitReduceRoutine {
-    fn dispatch(
+    fn dispatch<I: TileOperand>(
         &self,
-        tensors: &ReduceTensors,
-        binding: ReduceBinding,
+        problem: &ReduceRoutineProblem,
+        client: &Client,
+        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: UnitReduceRoutineBlueprint,
         grid: Grid,
     ) {
-        let elements = tensors.problem().elements;
+        let elements = problem.elements;
         // SAFETY: both operands are bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles; it holds no shared memory.
-        match (binding.indices, tensors.problem().indices) {
+        match (binding.indices, problem.indices) {
             (Some(indices), Some(index)) => unsafe {
-                unit_reduce_with_indices_kernel::launch_unchecked(
-                    tensors.client(),
+                unit_reduce_with_indices_kernel::launch_unchecked::<I>(
+                    client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
                     blueprint.width,
-                    binding.input.arg(),
-                    binding.out.arg(),
+                    binding.input,
+                    binding.out,
                     indices.arg(),
                     binding.launcher.partitioning_arg(),
                     blueprint.microkernel,
@@ -138,13 +140,13 @@ impl ReduceRoutine<UnitReduceMicrokernel> for UnitReduceRoutine {
                 )
             },
             _ => unsafe {
-                unit_reduce_kernel::launch_unchecked(
-                    tensors.client(),
+                unit_reduce_kernel::launch_unchecked::<I>(
+                    client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
                     blueprint.width,
-                    binding.input.arg(),
-                    binding.out.arg(),
+                    binding.input,
+                    binding.out,
                     binding.launcher.partitioning_arg(),
                     blueprint.microkernel,
                     [elements.input, elements.accumulator, elements.out],
