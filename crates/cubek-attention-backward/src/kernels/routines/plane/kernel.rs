@@ -38,7 +38,10 @@ pub fn plane_fragment_query_gradient_kernel<EA: Float, ES: Float>(
         key.tile(&partitioning),
         value.tile(&partitioning),
     );
-    let (o, d_o) = (out.tile_mut(&partitioning), out_gradient.tile(&partitioning));
+    let (o, d_o) = (
+        out.tile_mut(&partitioning),
+        out_gradient.tile(&partitioning),
+    );
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let d_q = query_gradient.tile(&partitioning);
 
@@ -136,7 +139,10 @@ pub fn plane_delta_kernel<EA: Float>(
     partitioning: Partitioning,
     #[define(EA)] _sum: ElemType,
 ) {
-    let (o, d_o) = (out.tile_mut(&partitioning), out_gradient.tile(&partitioning));
+    let (o, d_o) = (
+        out.tile_mut(&partitioning),
+        out_gradient.tile(&partitioning),
+    );
     let delta = delta.tile(&partitioning);
 
     for plane in &partitioning {

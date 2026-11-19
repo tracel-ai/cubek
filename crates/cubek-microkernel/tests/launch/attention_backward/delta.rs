@@ -112,7 +112,10 @@ fn plane_delta_kernel<EA: Float>(
     partitioning: Partitioning,
     #[define(EA)] _sum: ElemType,
 ) {
-    let (o, d_o) = (out.tile_mut(&partitioning), out_gradient.tile(&partitioning));
+    let (o, d_o) = (
+        out.tile_mut(&partitioning),
+        out_gradient.tile(&partitioning),
+    );
     let delta = delta.tile(&partitioning);
     for plane in &partitioning {
         plane_delta_microkernel::<EA>(&plane, &delta.at(&plane), &d_o.at(&plane), &o.at(&plane));
