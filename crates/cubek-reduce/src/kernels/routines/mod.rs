@@ -4,8 +4,10 @@ mod cube;
 mod hypercube;
 mod plane;
 mod unit;
+mod zero;
 
 pub use cube::*;
 pub use hypercube::*;
 pub use plane::*;
 pub use unit::*;
+pub use zero::*;

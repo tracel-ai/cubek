@@ -38,7 +38,7 @@ pub struct ReduceRoutineProblem {
 }
 
 impl ReduceRoutineProblem {
-    /// The problem `out = operation(input)` along dim `axis` states, `out` having `input`'s shape
+    /// The problem `out = operation(input)` along axis `axis` states, `out` having `input`'s shape
     /// with `axis` as wide as the operation writes per row.
     ///
     /// # Panics
@@ -63,10 +63,10 @@ impl ReduceRoutineProblem {
         assert_eq!(
             out.shape(),
             expected.as_slice(),
-            "a reduction along dim {axis} writes the input's shape with that dim {} wide",
+            "a reduction along axis {axis} writes the input's shape with that axis {} wide",
             operation.written_per_row()
         );
-        // A line runs along the innermost dim where both operands step one element along it.
+        // A line runs along the innermost axis where both operands step one element along it.
         let inner = shape.len() - 1;
         let steps_one =
             |geometry: &Geometry| geometry.strides()[inner] == 1 || geometry.shape()[inner] == 1;
@@ -83,7 +83,7 @@ impl ReduceRoutineProblem {
         }
     }
 
-    /// The reduced axis.
+    /// The reduced dimension.
     pub fn reduced(&self) -> Dimension {
         axis_dimension(self.axis)
     }
