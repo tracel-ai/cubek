@@ -10,6 +10,17 @@ use cubecl::tune::Work;
 use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation, ReduceWorkItem};
 use cubek_std::routine::EstimatedProblem;
 
+/// The rows: every axis of the input but the reduced one, as one dimension, the first axis
+/// coarsest.
+pub(crate) const BATCH: Dimension = Dimension(0);
+/// The axis a row runs along, which the reduction takes away.
+pub(crate) const REDUCED: Dimension = Dimension(1);
+/// The cells a row writes, `k` for a top-k: the output's dimension in place of the reduced one.
+pub(crate) const SLOTS: Dimension = Dimension(2);
+/// A hypercube's partials, every part's carrier for a row side by side: the partials' dimension in
+/// place of the reduced one.
+pub(crate) const PARTIALS: Dimension = Dimension(3);
+
 /// The elements of a reduction: what the input is stored in, what it accumulates in, and what the
 /// output is written in (an index's, where it writes indices).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -79,9 +90,9 @@ fn widened(input: ElemType) -> ElemType {
 /// `out = operation(input)` along axis `axis` of an input of `shape`, as the host describes it:
 /// the output has the input's shape, with `axis` one wide (`k` wide for a top-k).
 ///
-/// Every axis is a dimension of the problem's space, `Dimension(d)` for axis `d`; the reduced axis
-/// is the reduced dimension, and every other axis a row dimension. The output's `axis` is its own,
-/// `slots`, since it holds the cells a row writes, not the values it read.
+/// Its space has the same dimensions whatever the rank: `BATCH`, every axis but `axis` as one,
+/// `REDUCED`, `axis` itself, and `SLOTS`, the cells a row writes, which the output holds in place
+/// of `axis`. Each operand's layout maps its axes onto them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReduceRoutineProblem {
     /// The input's extent along each axis, read by axis (Position Usage).
@@ -199,73 +210,72 @@ impl ReduceRoutineProblem {
         self
     }
 
-    pub(crate) fn reduced(&self) -> Dimension {
-        axis_dimension(self.axis)
+    /// `binding`, an operand of the input's axes holding `along` in place of the reduced axis
+    /// ([`REDUCED`] for the input, [`SLOTS`] for the output and its indices, [`PARTIALS`] for a
+    /// hypercube's partials), with the dimension each of its axes carries
+    /// ([`labelled_axes`](Self::labelled_axes)).
+    pub(crate) fn labelled(
+        &self,
+        mut binding: TensorBinding,
+        along: Dimension,
+    ) -> (TensorBinding, Vec<Dimension>) {
+        let (axes, dimensions) = self.labelled_axes(&binding.shape, &binding.strides, along);
+        binding.shape = axes.iter().map(|&(extent, _)| extent).collect();
+        binding.strides = axes.iter().map(|&(_, stride)| stride).collect();
+        (binding, dimensions)
     }
 
-    /// The dimension of the cells a row writes, in place of the reduced one in the output.
-    pub(crate) fn slots(&self) -> Dimension {
-        axis_dimension(self.shape.len())
+    /// [`labelled`](Self::labelled) for an operand stated by its `geometry` alone, which the
+    /// caller binds.
+    pub(crate) fn labelled_geometry(
+        &self,
+        geometry: &Geometry,
+        along: Dimension,
+    ) -> (Geometry, Vec<Dimension>) {
+        let (axes, dimensions) = self.labelled_axes(geometry.shape(), geometry.strides(), along);
+        (Geometry::new(&axes), dimensions)
     }
 
-    /// The dimension a hypercube's partials run along in place of the reduced one: every part's
-    /// carrier for a row, side by side.
-    pub(crate) fn partials(&self) -> Dimension {
-        axis_dimension(self.shape.len() + 1)
-    }
-
-    /// Every row dimension, outermost first.
-    pub(crate) fn rows(&self) -> Vec<Dimension> {
-        (0..self.shape.len())
-            .filter(|d| *d != self.axis)
-            .map(axis_dimension)
-            .collect()
-    }
-
-    /// The dimensions the owners are placed along, outermost first: the row
-    /// dimensions, or the slots where there is none, a tensor of one axis reduced whole into its one row.
-    pub(crate) fn owner_dimensions(&self) -> Vec<Dimension> {
-        let rows = self.rows();
-        if rows.is_empty() {
-            return vec![self.slots()];
+    /// The `(extent, stride)` of each axis of an operand of `shape` at `strides`, in its order,
+    /// and the dimension each carries: `along` for the reduced axis, [`BATCH`] for every other, so
+    /// [`BATCH`] spans the row axes, the first coarsest, on either side of the reduced one.
+    /// Neighbouring row axes that step as one (the outer's stride the inner's whole span) merge
+    /// into one, so a contiguous operand's rows before and after the reduced axis are one axis
+    /// each. An operand of one axis is given a row axis of one.
+    fn labelled_axes(
+        &self,
+        shape: &[usize],
+        strides: &[usize],
+        along: Dimension,
+    ) -> (Vec<(usize, usize)>, Vec<Dimension>) {
+        let mut labelled: Vec<(Dimension, (usize, usize))> = Vec::new();
+        for d in 0..shape.len() {
+            let dimension = match d == self.axis {
+                true => along,
+                false => BATCH,
+            };
+            let axis = (shape[d], strides[d]);
+            let merged = match labelled.last() {
+                Some(&(BATCH, outer)) if dimension == BATCH => merged_rows(outer, axis),
+                _ => None,
+            };
+            match merged {
+                Some(merged) => {
+                    labelled
+                        .last_mut()
+                        .expect("a merged axis has an outer one")
+                        .1 = merged
+                }
+                None => labelled.push((dimension, axis)),
+            }
         }
-        rows
-    }
-
-    /// [`owner_dimensions`](Self::owner_dimensions), innermost first. A launch deals its owners
-    /// first dimension fastest, so neighbouring units and planes take neighbouring rows: their
-    /// reads land a row apart instead of a whole outer axis apart. Rows across the reduced axis
-    /// share their lines' memory, so there it is what keeps a unit or plane routine level with a
-    /// kernel reading the rows in order (on Metal, a strided f16 sum: 1083 µs outermost first,
-    /// 752 µs innermost first). A cube routine, whose cube spreads one owner's rows over all its
-    /// units, measured slower this way (1045 µs to 1236 µs), so it keeps them outermost first.
-    pub(crate) fn owner_dimensions_innermost_first(&self) -> Vec<Dimension> {
-        let mut dimensions = self.owner_dimensions();
-        dimensions.reverse();
-        dimensions
-    }
-
-    /// The input's dimensions, one an axis.
-    pub(crate) fn input_dimensions(&self) -> Vec<Dimension> {
-        (0..self.shape.len()).map(axis_dimension).collect()
-    }
-
-    /// The output's dimensions, one an axis: the input's, the reduced axis's being the slots.
-    pub(crate) fn out_dimensions(&self) -> Vec<Dimension> {
-        self.dimensions_with_reduced(self.slots())
-    }
-
-    /// A hypercube's partials' dimensions, one an axis: the input's, the reduced axis's being the
-    /// partials.
-    pub(crate) fn partial_dimensions(&self) -> Vec<Dimension> {
-        self.dimensions_with_reduced(self.partials())
-    }
-
-    /// The input's dimensions, one an axis, the reduced axis's being `reduced`.
-    fn dimensions_with_reduced(&self, reduced: Dimension) -> Vec<Dimension> {
-        let mut dimensions = self.input_dimensions();
-        dimensions[self.axis] = reduced;
-        dimensions
+        if !labelled.iter().any(|&(dimension, _)| dimension == BATCH) {
+            labelled.insert(0, (BATCH, (1, 1)));
+        }
+        labelled
+            .into_iter()
+            .map(|(dimension, axis)| (axis, dimension))
+            .unzip()
     }
 
     /// The input's shape with the reduced axis `extent` long.
@@ -309,29 +319,24 @@ impl ReduceRoutineProblem {
         }
     }
 
-    /// Every dimension of the problem at its extent, the slots among them: what a routine
-    /// partitions.
+    /// Every dimension of the problem at its extent: what a routine partitions.
     pub(crate) fn space(&self) -> Space {
-        let mut dimensions: Vec<(Dimension, usize)> = self
-            .shape
-            .iter()
-            .enumerate()
-            .map(|(d, extent)| (axis_dimension(d), *extent))
-            .collect();
-        dimensions.push((self.slots(), self.operation.written_per_row()));
-        Space::new(&dimensions)
+        Space::new(&[
+            (BATCH, self.row_count()),
+            (REDUCED, self.reduced_extent()),
+            (SLOTS, self.operation.written_per_row()),
+        ])
     }
 
     /// [`space`](Self::space) and a hypercube's partials, `partial_extent` values of each box of
-    /// rows' along their dimension.
+    /// rows'.
     pub(crate) fn split_space_with_partial_extent(&self, partial_extent: usize) -> Space {
-        let space = self.space();
-        let mut dimensions: Vec<(Dimension, usize)> = space
-            .dimensions()
-            .map(|dimension| (dimension, space.extent(dimension)))
-            .collect();
-        dimensions.push((self.partials(), partial_extent));
-        Space::new(&dimensions)
+        Space::new(&[
+            (BATCH, self.row_count()),
+            (REDUCED, self.reduced_extent()),
+            (SLOTS, self.operation.written_per_row()),
+            (PARTIALS, partial_extent),
+        ])
     }
 
     /// The values of a row one cube of `units` units reduces when the row is split across cubes,
@@ -346,55 +351,36 @@ impl ReduceRoutineProblem {
     }
 
     /// The box a cube owns where a row is split across cubes: the owner's box at `width`, `part`
-    /// values long along the reduced dim.
+    /// values long along [`REDUCED`].
     pub(crate) fn split_owner_box(&self, width: usize, part: usize) -> Vec<(Dimension, usize)> {
         [
             self.owner_box_at_width(width).as_slice(),
-            &[(self.reduced(), part)],
+            &[(REDUCED, part)],
         ]
         .concat()
     }
 
-    /// The dims a split row's cubes run along: the reduced dim first, on the grid's `X`, then the
-    /// row dims on its `Y` and `Z`.
-    pub(crate) fn split_cube_dimensions(&self) -> Vec<Dimension> {
-        [&[self.reduced()], self.rows().as_slice()].concat()
-    }
-
     /// The box an owner holds: one row, or `width` rows side by side across the reduced axis, and
-    /// the cells it writes. It leaves the reduced axis to the space, so every owner spans its rows
+    /// the cells it writes. It leaves [`REDUCED`] to the space, so every owner spans its rows
     /// whole.
     pub(crate) fn owner_box_at_width(&self, width: usize) -> Vec<(Dimension, usize)> {
-        let mut extents: Vec<(Dimension, usize)> = (0..self.shape.len())
-            .filter(|d| *d != self.axis)
-            .map(|d| {
-                let across_lines =
-                    self.layout() == ReduceLayout::Across && self.contiguous == Some(d);
-                let extent = if across_lines { width } else { 1 };
-                (axis_dimension(d), extent)
-            })
-            .collect();
-        extents.push((self.slots(), self.operation.written_per_row()));
-        extents
+        vec![
+            (BATCH, self.box_rows_at_width(width)),
+            (SLOTS, self.operation.written_per_row()),
+        ]
     }
 
-    /// How many boxes of rows the owners, `width` rows across the reduced axis, take along each
-    /// row dimension, outermost first.
-    pub(crate) fn row_boxes_at_width(&self, width: usize) -> Vec<(Dimension, usize)> {
-        let owner = self.owner_box_at_width(width);
-        self.rows()
-            .into_iter()
-            .map(|dimension| {
-                let tile = owner
-                    .iter()
-                    .find_map(|&(d, extent)| (d == dimension).then_some(extent))
-                    .expect("the owner's box names every row dimension");
-                (
-                    dimension,
-                    self.shape[usize::from(dimension.0)].div_ceil(tile),
-                )
-            })
-            .collect()
+    /// How many boxes of rows the owners, `width` rows across the reduced axis, take.
+    pub(crate) fn row_boxes_at_width(&self, width: usize) -> usize {
+        self.row_count().div_ceil(self.box_rows_at_width(width))
+    }
+
+    /// Rows an owner holds: `width` side by side across the reduced axis, one along it.
+    fn box_rows_at_width(&self, width: usize) -> usize {
+        match self.layout() {
+            ReduceLayout::Across => width,
+            ReduceLayout::Along => 1,
+        }
     }
 
     /// `partitioning` as a kernel compiles it: every dimension but the cells a row writes left to
@@ -405,7 +391,7 @@ impl ReduceRoutineProblem {
         let space = partitioning.space();
         let dynamic: Vec<Dimension> = space
             .dimensions()
-            .filter(|dimension| *dimension != self.slots())
+            .filter(|dimension| *dimension != SLOTS)
             .collect();
         Partitioning::new(
             space.clone().with_dynamic(&dynamic),
@@ -414,9 +400,16 @@ impl ReduceRoutineProblem {
     }
 }
 
-/// The dimension of axis `d`.
-pub(crate) fn axis_dimension(d: usize) -> Dimension {
-    Dimension(u8::try_from(d).expect("a tensor has fewer than 256 axes"))
+/// Two neighbouring row axes as one, the outer `(extent, stride)` and the inner, where the outer
+/// steps the inner's whole span or either is one wide.
+fn merged_rows(outer: (usize, usize), inner: (usize, usize)) -> Option<(usize, usize)> {
+    match (outer, inner) {
+        ((1, _), _) => Some(inner),
+        (_, (1, _)) => Some(outer),
+        ((extent, stride), (inner_extent, inner_stride)) => {
+            (stride == inner_extent * inner_stride).then_some((extent * inner_extent, inner_stride))
+        }
+    }
 }
 
 impl EstimatedProblem for ReduceRoutineProblem {
@@ -558,47 +551,51 @@ mod tests {
         let across = ReduceRoutineProblem::dense(&[5, 8], 0, ReduceOperation::TopK { k: K });
         assert_eq!(
             across.owner_box_at_width(WIDTH),
-            vec![(axis_dimension(1), WIDTH), (across.slots(), K)]
+            vec![(BATCH, WIDTH), (SLOTS, K)]
         );
         let along = ReduceRoutineProblem::dense(&[5, 8], 1, ReduceOperation::TopK { k: K });
         assert_eq!(
             along.owner_box_at_width(WIDTH),
-            vec![(axis_dimension(0), 1), (along.slots(), K)]
+            vec![(BATCH, 1), (SLOTS, K)]
         );
     }
 
-    /// The boxes of rows along each row dim are its extent over the owner's, rounded up.
+    /// The boxes of rows are the rows over an owner's, rounded up.
     #[test]
     fn row_boxes_round_up_the_rows_over_an_owner() {
         const WIDTH: usize = 4;
-        let across = ReduceRoutineProblem::dense(&[3, 10], 0, ReduceOperation::Sum);
-        assert_eq!(
-            across.row_boxes_at_width(WIDTH),
-            vec![(axis_dimension(1), 10_usize.div_ceil(WIDTH))]
-        );
+        const ROWS: usize = 10;
+        let across = ReduceRoutineProblem::dense(&[3, ROWS], 0, ReduceOperation::Sum);
+        assert_eq!(across.row_boxes_at_width(WIDTH), ROWS.div_ceil(WIDTH));
     }
 
-    /// A tensor of one axis has one row, its owner along the slots.
+    /// A tensor of one axis is one row: it is given a row axis of one.
     #[test]
-    fn a_tensor_of_one_axis_owns_its_slots() {
+    fn a_tensor_of_one_axis_is_one_row() {
         let problem = ReduceRoutineProblem::dense(&[9], 0, ReduceOperation::Sum);
-        assert!(problem.rows().is_empty());
-        assert_eq!(problem.owner_dimensions(), vec![problem.slots()]);
+        let (geometry, dimensions) = problem.labelled_geometry(&Geometry::row_major(&[9]), REDUCED);
+        assert_eq!(dimensions, vec![BATCH, REDUCED]);
+        assert_eq!(geometry.shape(), &[1, 9]);
         assert_eq!(problem.row_count(), 1);
     }
 
-    /// The output and the partials keep the input's dimensions, the reduced axis's swapped.
+    /// Row axes that step as one merge into one: a dense tensor reduced along its last axis is one
+    /// [`BATCH`] axis and the [`REDUCED`] one.
     #[test]
-    fn the_output_and_partials_swap_the_reduced_dimension() {
+    fn dense_row_axes_merge_into_one() {
+        let problem = ReduceRoutineProblem::dense(&[2, 3, 4], 2, ReduceOperation::Sum);
+        let (geometry, dimensions) =
+            problem.labelled_geometry(&Geometry::row_major(&[2, 3, 4]), REDUCED);
+        assert_eq!(dimensions, vec![BATCH, REDUCED]);
+        assert_eq!(geometry.shape(), &[6, 4]);
+    }
+
+    /// Rows on either side of the reduced axis do not step as one, so [`BATCH`] spans two axes.
+    #[test]
+    fn rows_on_either_side_of_the_reduced_axis_stay_two_axes() {
         let problem = ReduceRoutineProblem::dense(&[2, 3, 4], 1, ReduceOperation::Sum);
-        assert_eq!(
-            problem.out_dimensions(),
-            vec![axis_dimension(0), problem.slots(), axis_dimension(2)]
-        );
-        assert_eq!(
-            problem.partial_dimensions(),
-            vec![axis_dimension(0), problem.partials(), axis_dimension(2)]
-        );
+        let (_, dimensions) = problem.labelled_geometry(&Geometry::row_major(&[2, 3, 4]), SLOTS);
+        assert_eq!(dimensions, vec![BATCH, SLOTS, BATCH]);
         assert_eq!(problem.shape_with_reduced_extent(7), vec![2, 7, 4]);
     }
 
@@ -619,10 +616,6 @@ mod tests {
             across.split_part(UNITS, UNIT_LINES, WIDTH),
             UNITS * UNIT_LINES
         );
-        assert_eq!(
-            along.split_cube_dimensions(),
-            vec![along.reduced(), axis_dimension(0)]
-        );
     }
 
     /// A kernel leaves every dimension to the launch but the cells a row writes.
@@ -632,18 +625,12 @@ mod tests {
         let partitioning = Partitioning::new(
             problem.space(),
             cubecl::tile::Levels::leaf(&problem.owner_box_at_width(1))
-                .cubes(&problem.owner_dimensions())
+                .cubes(&[BATCH])
                 .build(),
         );
         let space = problem.kernel(&partitioning).space().clone();
-        assert!(space.is_dynamic(axis_dimension(1)));
-        assert!(!space.is_dynamic(problem.slots()));
-    }
-
-    /// 256 axes do not fit a dimension's label.
-    #[test]
-    #[should_panic]
-    fn an_axis_past_255_panics() {
-        axis_dimension(256);
+        assert!(space.is_dynamic(REDUCED));
+        assert!(space.is_dynamic(BATCH));
+        assert!(!space.is_dynamic(SLOTS));
     }
 }

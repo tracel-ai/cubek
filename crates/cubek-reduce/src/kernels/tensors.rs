@@ -1,6 +1,6 @@
 //! How a reduce launch reads its operands and binds them.
 
-use crate::kernels::{ReduceBlueprint, ReduceElements, ReduceRoutineProblem};
+use crate::kernels::{REDUCED, ReduceBlueprint, ReduceElements, ReduceRoutineProblem, SLOTS};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
@@ -20,8 +20,8 @@ pub const UNBOUND_LINES_NARROWER: Decline = Decline::Unserved {
 /// ([`Geometry`], [`ReduceCandidate::launch_unbound`](crate::kernels::ReduceCandidate::launch_unbound)),
 /// the output a buffer.
 ///
-/// Both are read where they lie, at their own strides: every axis of each is a dimension of the
-/// problem, so a reduction along any axis of a tensor of any rank binds without a copy.
+/// Both are read where they lie, at their own strides: each binds its axes onto the problem's
+/// dimensions, so a reduction along any axis of a tensor of any rank binds without a copy.
 #[derive(Clone)]
 pub struct ReduceTensors<In = TensorBinding> {
     client: Client,
@@ -217,9 +217,10 @@ impl ReduceBinding {
         grid: &Grid,
     ) -> Self {
         let launcher = launcher_of(client, problem, blueprint, grid);
+        let (input, dimensions) = problem.labelled(input.clone(), REDUCED);
         let input = launcher
-            .arg(input.clone(), problem.elements.input)
-            .dimensions(&problem.input_dimensions())
+            .arg(input, problem.elements.input)
+            .dimensions(&dimensions)
             .boundary(problem.input_boundary())
             .vectorize(blueprint.width)
             .build()
@@ -253,9 +254,10 @@ impl ReduceBinding<Unbound, Bound> {
         grid: &Grid,
     ) -> Self {
         let launcher = launcher_of(client, problem, blueprint, grid);
+        let (input, dimensions) = problem.labelled_geometry(input, REDUCED);
         let input = launcher
-            .unbound(input)
-            .dimensions(&problem.input_dimensions())
+            .unbound(&input)
+            .dimensions(&dimensions)
             .boundary(problem.input_boundary())
             .vectorize(blueprint.width)
             .build_spec()
@@ -296,14 +298,16 @@ fn out_bound<M>(
 ) -> Bound {
     bound_at(
         launcher,
+        problem,
         buffer.clone(),
+        SLOTS,
         element,
-        &problem.out_dimensions(),
         blueprint.out_width,
     )
 }
 
-/// `buffer`, one a launch writes, bound in `element` over `dimensions` at `width`.
+/// `buffer`, one a launch of `problem` writes holding `along` in place of the reduced axis, bound
+/// in `element` at `width` ([`ReduceRoutineProblem::labelled`]).
 ///
 /// # Panics
 ///
@@ -311,14 +315,16 @@ fn out_bound<M>(
 /// rules out.
 pub(crate) fn bound_at(
     launcher: &Launcher,
+    problem: &ReduceRoutineProblem,
     buffer: TensorBinding,
+    along: Dimension,
     element: ElemType,
-    dimensions: &[Dimension],
     width: usize,
 ) -> Bound {
+    let (buffer, dimensions) = problem.labelled(buffer, along);
     launcher
         .arg(buffer, element)
-        .dimensions(dimensions)
+        .dimensions(&dimensions)
         .vectorize(width)
         .build()
         .expect(ADMITTED_PLAN_RUNS)

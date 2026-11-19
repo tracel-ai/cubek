@@ -1,7 +1,7 @@
 use super::kernel::{plane_shuffle_reduce_kernel, plane_shuffle_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, each_microkernel_with,
-    estimate_reduce, microkernel_widths,
+    BATCH, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
+    each_microkernel_with, estimate_reduce, microkernel_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -76,16 +76,12 @@ impl Routine for PlaneShuffleReduceRoutine {
         let microkernel =
             PlaneShuffleReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
-        let owners = problem.owner_dimensions_innermost_first();
-        let innermost = *owners
-            .first()
-            .expect("a problem places its owners along a dimension");
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box_at_width(widths[0]))
                 .launch_planes(
-                    &owners,
-                    PlaneOrder::new(&[(innermost, settings.planes)], CubeOrder::RowMajor),
+                    &[BATCH],
+                    PlaneOrder::new(&[(BATCH, settings.planes)], CubeOrder::RowMajor),
                 )
                 .build(),
         );
@@ -168,9 +164,9 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    /// Four row dims, more than a launch grid has: a plane takes its row from the partitioning.
+    /// Four row axes, more than a launch grid has: every row axis is one [`BATCH`](crate::kernels::BATCH).
     #[test]
-    fn prepares_more_row_dims_than_the_grid_holds() {
+    fn prepares_more_row_axes_than_the_grid_holds() {
         let hw = devices::m2_pro();
         let problem = ReduceRoutineProblem::dense(&[2, 2, 2, 2, 64], 4, ReduceOperation::ArgMax);
         let settings = PlaneShuffleReduceRoutine::settings(&hw)[0];

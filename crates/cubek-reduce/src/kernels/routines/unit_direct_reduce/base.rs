@@ -176,9 +176,9 @@ mod tests {
         assert_eq!(compiled(&[2, 5, 300], 1), compiled(&[4, 9, 308], 1));
     }
 
-    /// Four row dims, more than a launch grid has: a unit takes its row from the partitioning.
+    /// Four row axes, more than a launch grid has: every row axis is one [`BATCH`](crate::kernels::BATCH).
     #[test]
-    fn prepares_more_row_dims_than_the_grid_holds() {
+    fn prepares_more_row_axes_than_the_grid_holds() {
         let hw = devices::m2_pro();
         let problem = ReduceRoutineProblem::dense(&[2, 2, 2, 2, 64], 4, ReduceOperation::ArgMax);
         let settings = UnitDirectReduceRoutine::settings(&hw)[0];

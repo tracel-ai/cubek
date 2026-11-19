@@ -8,17 +8,14 @@ use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation};
 use serde::{Deserialize, Serialize};
 
 /// What tells one reduction from another for the autotune: its elements, its operation, how its
-/// lines lie, how many dims its rows run along, how long a row is and how many rows there are.
-///
-/// The row dims are kept whole, since the cube and the hypercube decline more than they place
-/// their cubes along: a winner for a matrix would otherwise be launched on a tensor of more dims.
+/// lines lie, how long a row is and how many rows there are. How many axes the rows run along is
+/// not: every routine places its owners along one dimension of rows whatever the rank.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct ReduceKey {
     elements: ReduceElements,
     indices: Option<ElemType>,
     operation: ReduceOperation,
     layout: ReduceLayout,
-    row_dims: usize,
     #[autotune(anchor(exp(min = 16, max = 1048576, base = 4)))]
     reduced: usize,
     #[autotune(anchor(exp(max = 1048576, base = 8)))]
@@ -38,7 +35,6 @@ impl From<&ReduceRoutineProblem> for ReduceKey {
             problem.indices.map(|indices| indices.element),
             problem.operation,
             problem.layout(),
-            problem.rows().len(),
             problem.reduced_extent(),
             problem.row_count(),
         )
@@ -46,13 +42,12 @@ impl From<&ReduceRoutineProblem> for ReduceKey {
 }
 
 impl From<&ReduceKey> for ReduceRoutineProblem {
-    /// A dense tensor of `rows` rows of `reduced` values, its rows along the innermost of its row
-    /// dims, the others one wide: the reduced dim the innermost where the lines lie along it, and
-    /// next to it where they lie across it.
+    /// A dense matrix of `rows` rows of `reduced` values: the reduced axis the inner one where the
+    /// lines lie along it, the outer where they lie across it.
     fn from(key: &ReduceKey) -> Self {
-        let (shape, axis) = match key.row_dims {
-            0 => (vec![key.reduced], 0),
-            _ => shape_with_rows(key),
+        let (shape, axis) = match key.layout {
+            ReduceLayout::Along => (vec![key.rows, key.reduced], 1),
+            ReduceLayout::Across => (vec![key.reduced, key.rows], 0),
         };
         let mut out_shape = shape.clone();
         out_shape[axis] = key.operation.written_per_row();
@@ -71,22 +66,6 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
                 elem_alignment: out_alignment,
             }),
         }
-    }
-}
-
-/// The shape of the dense tensor `key` describes, whose rows run along at least one dim, and its
-/// reduced axis: the innermost where the lines lie along it, next to it where they lie across it.
-fn shape_with_rows(key: &ReduceKey) -> (Vec<usize>, usize) {
-    let outer = vec![1; key.row_dims - 1];
-    match key.layout {
-        ReduceLayout::Along => (
-            [outer.as_slice(), &[key.rows, key.reduced]].concat(),
-            key.row_dims,
-        ),
-        ReduceLayout::Across => (
-            [outer.as_slice(), &[key.reduced, key.rows]].concat(),
-            key.row_dims - 1,
-        ),
     }
 }
 

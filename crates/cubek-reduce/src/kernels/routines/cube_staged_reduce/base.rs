@@ -1,6 +1,6 @@
 use super::kernel::{cube_staged_reduce_kernel, cube_staged_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, estimate_reduce,
+    BATCH, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, estimate_reduce,
     microkernel_widths,
 };
 use cubecl::client::Client;
@@ -17,7 +17,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Every owner a cube, whose units reduce its rows together: few long rows, a cube each. The
 /// cube's units are its `x`, as many as its microkernel's planes hold, and the hardware splits them
-/// into its planes. Its cubes run along at most three row dims; it declines more.
+/// into its planes. Its cubes run along [`BATCH`].
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct CubeStagedReduceRoutine;
 
@@ -63,18 +63,13 @@ impl Routine for CubeStagedReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        if problem.owner_dimensions().len() > MAX_ROW_DIMS {
-            return Err(Decline::Unserved {
-                why: "the cube reduce runs a cube per box of rows along at most three row dims",
-            });
-        }
         let microkernel =
             CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
         let partitioning = Partitioning::new(
             problem.space(),
             Levels::leaf(&problem.owner_box_at_width(widths[0]))
-                .cubes(&problem.owner_dimensions())
+                .cubes(&[BATCH])
                 .build(),
         );
         let cube = CubeResources {
@@ -97,9 +92,6 @@ impl Routine for CubeStagedReduceRoutine {
         estimate_reduce(problem, &blueprint.microkernel, grid, estimate);
     }
 }
-
-/// Most row dims the cubes run along: a launch grid has three.
-const MAX_ROW_DIMS: usize = 3;
 
 impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
     const NAME: &'static str = "cube-staged-reduce";
@@ -160,17 +152,15 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    /// Four row dims, more than a launch grid has: a Decline, not a panic.
+    /// Four row axes, more than a launch grid has: every row axis is one [`BATCH`](crate::kernels::BATCH),
+    /// so it prepares.
     #[test]
-    fn declines_more_row_dims_than_the_grid_holds() {
+    fn prepares_more_row_axes_than_the_grid_holds() {
         let hw = devices::m2_pro();
         let problem = ReduceRoutineProblem::dense(&[2, 2, 2, 2, 64], 4, ReduceOperation::ArgMax);
         let settings = CubeStagedReduceRoutine::settings(&hw)[0];
         let prepared = CubeStagedReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
-        assert!(
-            matches!(prepared, Err(Decline::Unserved { .. })),
-            "{prepared:?}"
-        );
+        assert!(prepared.is_ok(), "{prepared:?}");
     }
 
     /// tracel:kernel::routine-tested-without-features: no planes, so a Decline.

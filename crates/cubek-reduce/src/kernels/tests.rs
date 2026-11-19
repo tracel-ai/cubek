@@ -390,9 +390,14 @@ fn unbound_tensors<R: ReduceLauncher<M>, M>(
     ))
 }
 
-/// `input` bound back as the plain buffer it is, at the spec and width the launch derived.
-fn bound_back(input: TensorBinding) -> impl FnOnce(Unbound) -> TileTensorLaunch {
-    move |bound| TileTensorLaunch::new(input.into_tensor_arg(), F32, bound.vector_size, bound.spec)
+/// `input` bound back as the plain buffer it is, at the geometry, spec and width the launch
+/// derived: its row axes may be merged into one.
+fn bound_back(mut input: TensorBinding) -> impl FnOnce(Unbound) -> TileTensorLaunch {
+    move |bound| {
+        input.shape = bound.geometry.shape().iter().copied().collect();
+        input.strides = bound.geometry.strides().iter().copied().collect();
+        TileTensorLaunch::new(input.into_tensor_arg(), F32, bound.vector_size, bound.spec)
+    }
 }
 
 /// `reduction`'s routine launched unbound over `input`, bound back as the buffer it is, into
@@ -655,4 +660,35 @@ fn indices_beside_a_sum_panic() {
 #[should_panic]
 fn indices_of_another_shape_panic() {
     tensors_with_indices(ReduceOperation::ArgMax, &[1, 4]);
+}
+
+/// Every routine reduces a tensor with more row axes than a launch grid has, the rows on both sides
+/// of the reduced axis or before it: a `[2, 3, 2, 2, 64]` tensor along its middle axis and its last.
+/// Each routine's row axes are one [`BATCH`](crate::kernels::BATCH). A routine the device declines
+/// is skipped.
+#[test]
+fn every_routine_reduces_more_row_axes_than_the_grid_has() {
+    let mut reductions = Vec::new();
+    for routine in [
+        TestedRoutine::UnitDirect,
+        TestedRoutine::PlaneShuffle,
+        TestedRoutine::CubeStaged,
+        TestedRoutine::HypercubeLastArrival,
+    ] {
+        for axis in [2, 4] {
+            for operation in [
+                ReduceOperation::Sum,
+                ReduceOperation::Mean,
+                ReduceOperation::ArgMax,
+            ] {
+                reductions.push(Reduction {
+                    routine,
+                    shape: vec![2, 3, 2, 2, 64],
+                    axis,
+                    operation,
+                });
+            }
+        }
+    }
+    RoutineScopeUnderTest.check(reductions);
 }

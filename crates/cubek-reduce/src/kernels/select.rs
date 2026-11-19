@@ -97,9 +97,8 @@ fn hypercube_filling_the_device(
         };
         let units = blueprint.microkernel.part().units() as u32;
         let fill = hw.cubes_to_fill(units)? as usize;
-        let boxes = ReduceSplitExtents::row_boxes(problem, blueprint.width);
-        let parts = ReduceSplitExtents::new(problem, &blueprint.partitioning, blueprint.width).parts
-            as usize;
+        let boxes = problem.row_boxes_at_width(blueprint.width);
+        let parts = ReduceSplitExtents::new(problem, &blueprint.partitioning).parts as usize;
         if boxes >= fill {
             return None;
         }

@@ -1,11 +1,10 @@
 use super::kernel::{
-    MAX_SPLIT_ROW_DIMS, ReduceSplitExtents, ReduceSplitExtentsLaunch,
-    hypercube_last_arrival_reduce_indexed_kernel, hypercube_last_arrival_reduce_kernel,
-    hypercube_last_arrival_reduce_with_indices_kernel,
+    ReduceSplitExtents, ReduceSplitExtentsLaunch, hypercube_last_arrival_reduce_indexed_kernel,
+    hypercube_last_arrival_reduce_kernel, hypercube_last_arrival_reduce_with_indices_kernel,
 };
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, bound_at,
-    each_microkernel_with, estimate_reduce, microkernel_widths,
+    BATCH, PARTIALS, REDUCED, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
+    bound_at, each_microkernel_with, estimate_reduce, microkernel_widths,
 };
 use cubecl::bytes::Bytes;
 use cubecl::client::Client;
@@ -25,7 +24,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// routine reduces a row; the last of a row's cubes to finish merges the parts: few rows, too long
 /// for one cube each to keep the device busy, as a sampler's argmax over a vocabulary.
 ///
-/// Its cubes run along the reduced dim and at most two row dims; it declines more row dims.
+/// Its cubes run along [`REDUCED`], then [`BATCH`].
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct HypercubeLastArrivalReduceRoutine;
 
@@ -94,11 +93,6 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        if problem.rows().len() > MAX_SPLIT_ROW_DIMS {
-            return Err(Decline::Unserved {
-                why: "the hypercube reduce runs its cubes along at most two row dims",
-            });
-        }
         let microkernel = HypercubeLastArrivalReduceMicrokernel::best(
             hw,
             &problem.work_item(),
@@ -108,10 +102,10 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
         let units = microkernel.part().units();
         let part = problem.split_part(units, settings.unit_lines, widths[0]);
         let owner = problem.split_owner_box(widths[0], part);
-        let cube_dimensions = problem.split_cube_dimensions();
+        // The parts ride the grid's `X`, the boxes of rows the rest.
         let partitioning = Partitioning::new(
             problem.split_space_with_partial_extent(partial_extent(problem, part, widths[0])),
-            Levels::leaf(&owner).cubes(&cube_dimensions).build(),
+            Levels::leaf(&owner).cubes(&[REDUCED, BATCH]).build(),
         );
         let cube = CubeResources {
             plane_width: units as u32,
@@ -145,28 +139,28 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
         grid: Grid,
     ) {
         let elements = problem.elements;
-        let extents = ReduceSplitExtents::new(problem, &blueprint.partitioning, blueprint.width);
+        let extents = ReduceSplitExtents::new(problem, &blueprint.partitioning);
         // A box of rows' partials lie where its output does, the reduced dim's cells holding
         // every part's carrier, each stored by its part's cube before any is read, so they start
         // unset; the counters, one a box of rows, start at zero, copied from the host rather than
         // set by a launch of their own.
-        let partial_extent = blueprint.partitioning.space().extent(problem.partials());
+        let partial_extent = blueprint.partitioning.space().extent(PARTIALS);
         let partial_shape = problem.shape_with_reduced_extent(partial_extent);
         let counter = ElemType::UInt(UIntKind::U32);
         let partials = TensorHandle::empty(client, partial_shape.clone(), elements.accumulator);
-        let row_boxes = ReduceSplitExtents::row_boxes(problem, blueprint.width);
+        let row_boxes = problem.row_boxes_at_width(blueprint.width);
         let arrivals = TensorHandle::new_contiguous(
             [row_boxes],
             client.create(Bytes::from_elems(vec![0u32; row_boxes])),
             counter,
         );
-        let partial_dimensions = problem.partial_dimensions();
         let bind_partials = |handle: TensorHandle, element| {
             bound_at(
                 &binding.launcher,
+                problem,
                 handle.binding(),
+                PARTIALS,
                 element,
-                &partial_dimensions,
                 blueprint.width,
             )
         };
@@ -200,11 +194,7 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                         partial_indices.arg(),
                         arrivals,
                         binding.launcher.partitioning_arg(),
-                        ReduceSplitExtentsLaunch::new(
-                            extents.parts,
-                            extents.values,
-                            extents.inner_boxes,
-                        ),
+                        ReduceSplitExtentsLaunch::new(extents.parts, extents.values),
                         blueprint.microkernel,
                         [
                             elements.input,
@@ -226,11 +216,7 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                         partial_indices.arg(),
                         arrivals,
                         binding.launcher.partitioning_arg(),
-                        ReduceSplitExtentsLaunch::new(
-                            extents.parts,
-                            extents.values,
-                            extents.inner_boxes,
-                        ),
+                        ReduceSplitExtentsLaunch::new(extents.parts, extents.values),
                         blueprint.microkernel,
                         [elements.input, elements.accumulator, elements.out],
                     )
@@ -245,11 +231,7 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                     partials.arg(),
                     arrivals,
                     binding.launcher.partitioning_arg(),
-                    ReduceSplitExtentsLaunch::new(
-                        extents.parts,
-                        extents.values,
-                        extents.inner_boxes,
-                    ),
+                    ReduceSplitExtentsLaunch::new(extents.parts, extents.values),
                     blueprint.microkernel,
                     [elements.input, elements.accumulator, elements.out],
                 ),
@@ -265,18 +247,16 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    /// Four row dims, more than a launch grid has: a Decline, not a panic.
+    /// Four row axes, more than a launch grid has: every row axis is one [`BATCH`](crate::kernels::BATCH),
+    /// so it prepares.
     #[test]
-    fn declines_more_row_dims_than_the_grid_holds() {
+    fn prepares_more_row_axes_than_the_grid_holds() {
         let hw = devices::m2_pro();
         let problem = ReduceRoutineProblem::dense(&[2, 2, 2, 2, 64], 4, ReduceOperation::ArgMax);
         let settings = HypercubeLastArrivalReduceRoutine::settings(&hw)[0];
         let prepared =
             HypercubeLastArrivalReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
-        assert!(
-            matches!(prepared, Err(Decline::Unserved { .. })),
-            "{prepared:?}"
-        );
+        assert!(prepared.is_ok(), "{prepared:?}");
     }
 
     /// tracel:kernel::routine-tested-without-features: a Decline.

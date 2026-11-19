@@ -1,6 +1,6 @@
 //! A reduce launch's compile-time decisions.
 
-use crate::kernels::ReduceRoutineProblem;
+use crate::kernels::{BATCH, ReduceRoutineProblem};
 use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::space::UnitCube;
 use cubecl::tile::{Levels, Partitioning};
@@ -101,7 +101,7 @@ pub(crate) fn unit_launch(
         problem.space(),
         Levels::leaf(&problem.owner_box_at_width(width))
             .launch_units(
-                &problem.owner_dimensions_innermost_first(),
+                &[BATCH],
                 UnitCube {
                     plane_width,
                     planes,
