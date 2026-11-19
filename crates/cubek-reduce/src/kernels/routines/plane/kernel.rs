@@ -7,13 +7,13 @@ use cubek_microkernel::reduce::plane::{PlaneReduceMicrokernel, plane_reduce_micr
 #[cube(launch_unchecked)]
 pub fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     input: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = input.tile(&partitioning);
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
     for plane in &partitioning {
         let mut rows_out = o.at(&plane);
         // One output: the indices are never written, so they get the output's own window.
@@ -39,15 +39,15 @@ pub fn plane_reduce_with_indices_kernel<
     N: Size,
 >(
     input: &TileTensor<'_>,
-    out: &TileTensor<'_>,
-    indices: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    indices: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneReduceMicrokernel,
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
     let x = input.tile(&partitioning);
-    let o = out.tile(&partitioning);
-    let i = indices.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+    let i = indices.tile_mut(&partitioning);
     for plane in &partitioning {
         let mut rows_out = o.at(&plane);
         let mut rows_indices = i.at(&plane);

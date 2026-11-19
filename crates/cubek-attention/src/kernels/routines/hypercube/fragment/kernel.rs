@@ -19,7 +19,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float, EV: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     slot_out: &mut Tensor<Vector<EA, Const<1>>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
@@ -56,7 +56,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float, EV: Float>(
     let v = value
         .tile(&partitioning)
         .within(S, 0, visible.attended as usize);
-    let o = out.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
     let bias = visible.step_bias::<EA>(&partitioning, &first_step);
 
     let steps = visible.steps(

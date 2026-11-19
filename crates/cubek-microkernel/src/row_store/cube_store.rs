@@ -87,8 +87,8 @@ impl Destination for Encoded {
     type Arg<E: Numeric> = TileTensor<'static>;
     type Served<E: Numeric> = Tile;
 
-    fn serve<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
-        arg.tile(partitioning)
+    fn serve<E: Numeric, V: Size>(arg: &mut Self::Arg<E>, partitioning: &Partitioning) -> Tile {
+        arg.tile_mut(partitioning)
     }
 }
 

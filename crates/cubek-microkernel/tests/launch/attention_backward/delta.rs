@@ -108,12 +108,12 @@ impl PlaneDeltaLaunch {
 fn plane_delta_kernel<EA: Float>(
     out: &TileTensor<'_>,
     out_gradient: &TileTensor<'_>,
-    delta: &TileTensor<'_>,
+    delta: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[define(EA)] _sum: ElemType,
 ) {
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
-    let delta = delta.tile(&partitioning);
+    let delta = delta.tile_mut(&partitioning);
     for plane in &partitioning {
         plane_delta_microkernel::<EA>(&plane, &delta.at(&plane), &d_o.at(&plane), &o.at(&plane));
     }

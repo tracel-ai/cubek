@@ -26,8 +26,8 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &TileTensor<'_>,
-    logsumexp: ComptimeOption<&TileTensor<'static>>,
+    out: &mut TileTensor<'_>,
+    logsumexp: ComptimeOption<&mut TileTensor<'static>>,
     slot_out: &mut Tensor<Vector<EA, Const<1>>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
@@ -49,8 +49,8 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
 
-    let o = out.tile(&partitioning);
-    let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+    let o = out.tile_mut(&partitioning);
+    let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile_mut(&partitioning));
 
     let keys_per_step = microkernel.cube.seq_kv();
 

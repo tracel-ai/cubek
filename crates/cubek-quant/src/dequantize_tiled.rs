@@ -117,8 +117,8 @@ pub fn launch_ref(
 #[cube(launch)]
 /// The values are fields of the scheme's element read out of `u32` words, served as the output's
 /// element under their scale, which the copy that says so multiplies in.
-pub fn dequantize(input: &TileTensor<'_>, output: &TileTensor<'_>, space: Partitioning) {
+pub fn dequantize(input: &TileTensor<'_>, output: &mut TileTensor<'_>, space: Partitioning) {
     let input = input.tile(&space);
-    let mut output = output.tile(&space);
+    let mut output = output.tile_mut(&space);
     output.dequantize_from(&input);
 }

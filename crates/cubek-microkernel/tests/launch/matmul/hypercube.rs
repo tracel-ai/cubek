@@ -221,8 +221,8 @@ impl HypercubeStagedLaunch {
 fn hypercube_staged_kernel<EA: Numeric, EL: Numeric, VO: Size>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &TileTensor<'_>,
-    slots: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    slots: &mut TileTensor<'_>,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     #[comptime] walk: CubeStagedWalk,
@@ -231,7 +231,7 @@ fn hypercube_staged_kernel<EA: Numeric, EL: Numeric, VO: Size>(
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = out.tile(&partitioning);
+    let c = out.tile_mut(&partitioning);
     let stages = comptime!(partitioning.levels()[1].clone());
     let portion = partitioning.walk().portion(stages.clone());
     for i in 0..portion.touched() {

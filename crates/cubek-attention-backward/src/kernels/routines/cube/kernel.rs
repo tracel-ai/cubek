@@ -21,8 +21,8 @@ pub fn cube_staged_query_gradient_kernel<EA: Float, ES: Float>(
     out: &TileTensor<'_>,
     out_gradient: &TileTensor<'_>,
     logsumexp: &TileTensor<'_>,
-    delta: &TileTensor<'_>,
-    query_gradient: &TileTensor<'_>,
+    delta: &mut TileTensor<'_>,
+    query_gradient: &mut TileTensor<'_>,
     queries: u32,
     keys: u32,
     scale: f32,
@@ -38,8 +38,8 @@ pub fn cube_staged_query_gradient_kernel<EA: Float, ES: Float>(
         value.tile(&partitioning),
     );
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
-    let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
-    let d_q = query_gradient.tile(&partitioning);
+    let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile_mut(&partitioning));
+    let d_q = query_gradient.tile_mut(&partitioning);
 
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.bias::<EA>(&partitioning);
@@ -76,8 +76,8 @@ pub fn cube_staged_key_gradient_kernel<EA: Float, ES: Float>(
     out_gradient: &TileTensor<'_>,
     logsumexp: &TileTensor<'_>,
     delta: &TileTensor<'_>,
-    key_gradient: &TileTensor<'_>,
-    value_gradient: &TileTensor<'_>,
+    key_gradient: &mut TileTensor<'_>,
+    value_gradient: &mut TileTensor<'_>,
     queries: u32,
     keys: u32,
     scale: f32,
@@ -94,8 +94,8 @@ pub fn cube_staged_key_gradient_kernel<EA: Float, ES: Float>(
         &out_gradient.tile(&partitioning),
         &logsumexp.tile(&partitioning),
         &delta.tile(&partitioning),
-        &key_gradient.tile(&partitioning),
-        &value_gradient.tile(&partitioning),
+        &key_gradient.tile_mut(&partitioning),
+        &value_gradient.tile_mut(&partitioning),
         queries,
         keys,
         scale,
@@ -117,8 +117,8 @@ pub fn cube_staged_key_gradient_sum_kernel<ES: Float>(
     out_gradient: &TileTensor<'_>,
     logsumexp: &TileTensor<'_>,
     delta: &TileTensor<'_>,
-    key_gradient: &Output<'_, f32>,
-    value_gradient: &Output<'_, f32>,
+    key_gradient: &mut Output<'_, f32>,
+    value_gradient: &mut Output<'_, f32>,
     queries: u32,
     keys: u32,
     scale: f32,
@@ -135,8 +135,8 @@ pub fn cube_staged_key_gradient_sum_kernel<ES: Float>(
         &out_gradient.tile(&partitioning),
         &logsumexp.tile(&partitioning),
         &delta.tile(&partitioning),
-        &key_gradient.tile(&partitioning),
-        &value_gradient.tile(&partitioning),
+        &key_gradient.tile_mut(&partitioning),
+        &value_gradient.tile_mut(&partitioning),
         queries,
         keys,
         scale,

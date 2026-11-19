@@ -23,8 +23,8 @@ pub fn hypercube_last_arrival_matmul_kernel<
 >(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &O::Arg<E>,
-    slots: &TileTensor<'_>,
+    out: &mut O::Arg<E>,
+    slots: &mut TileTensor<'_>,
     arrivals: &[Atomic<u32>],
     partitioning: Partitioning,
     #[comptime] microkernel: HypercubeStagedMicrokernel,
