@@ -120,12 +120,18 @@ impl ConvTensors {
         }
         let roles = ConvRoles::of(operation, window.len())?;
         let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);
-        let channels =
-            |axis| (axis == roles.inner.lhs).then_some(input.shape[roles.spatial_dims + 1]);
+        let extents = &roles.extents;
+        let channels = |axis| {
+            (axis == roles.inner.lhs).then_some(extents.lhs_channels.read_shape(&input.shape))
+        };
         let checks = [
             (CI, ConvDecline::Groups, channels(CI)),
             (CO, ConvDecline::OutChannels, channels(CO)),
-            (B, ConvDecline::Batch, Some(input.shape[0])),
+            (
+                B,
+                ConvDecline::Batch,
+                Some(extents.batch.read_shape(&input.shape)),
+            ),
         ];
         if let Some(&(_, declined, _)) = checks
             .iter()

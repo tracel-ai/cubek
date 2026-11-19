@@ -17,7 +17,7 @@ use cubek_test_utils::{
 };
 
 use crate::{
-    ConvolutionArgs, ConvolutionInputs, Strategy,
+    ConvolutionArgs, ConvolutionInputs, SpatialWindow, Strategy,
     components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
     launch_ref,
 };
@@ -553,6 +553,7 @@ pub fn naive_data_grad(
         kernel.iter().product::<usize>(),
         input.iter().product::<usize>(),
     );
+    let windows = args.windows();
     let mut grad = vec![0.0; batches * inputs * channels];
     for b in 0..batches {
         for position in 0..inputs {
@@ -562,7 +563,7 @@ pub fn naive_data_grad(
                 for tap in 0..taps {
                     let at_tap = unravel(tap, kernel);
                     let read = out.iter().enumerate().try_fold(0, |flat, (dim, &extent)| {
-                        let at = output_reading(args, dim, at[dim], at_tap[dim], extent)?;
+                        let at = output_reading(&windows[dim], at[dim], at_tap[dim], extent)?;
                         Some(flat * extent + at)
                     });
                     let Some(read) = read else {
@@ -582,15 +583,9 @@ pub fn naive_data_grad(
 
 /// The output position along spatial `dim` whose window, at tap `tap`, reads input position `pos`
 /// of an output `extent` long, if there is one.
-fn output_reading(
-    args: &ConvolutionArgs<SPATIAL_DIMS>,
-    dim: usize,
-    pos: usize,
-    tap: usize,
-    extent: usize,
-) -> Option<usize> {
-    let reach = (pos + args.padding[dim]) as isize - (tap * args.dilation[dim]) as isize;
-    let stride = args.stride[dim] as isize;
+fn output_reading(window: &SpatialWindow, pos: usize, tap: usize, extent: usize) -> Option<usize> {
+    let reach = window.gradient_position(pos, tap);
+    let stride = window.stride as isize;
     let at = usize::try_from(reach)
         .ok()
         .filter(|_| reach % stride == 0)?

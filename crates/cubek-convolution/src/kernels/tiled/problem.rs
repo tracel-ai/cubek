@@ -135,14 +135,15 @@ impl ConvProblem {
             .expect("a problem is stated by tensors that were checked")
             .extents;
         let (kernel, out) = (extents.kernel.read(&views), extents.out.read(&views));
+        let gathered = extents.gathered.read(&views);
         Self {
             operation,
-            batch: views.lhs[0],
+            batch: extents.batch.read(&views),
             channels_in: extents.channels_in.read(&views),
             channels_out: extents.channels_out.read(&views),
             spatial: (0..window.len())
                 .map(|dim| ConvDim {
-                    gathered: views.lhs[dim + 1],
+                    gathered: gathered[dim],
                     kernel: kernel[dim],
                     out: out[dim],
                     window: window[dim],

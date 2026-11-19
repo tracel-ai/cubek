@@ -109,7 +109,12 @@ impl ViewDim {
 
     /// The extent of this dim in `views`.
     pub fn read(self, views: &MatmulOperands<Vec<usize>>) -> usize {
-        views.get_ref(self.operand)[self.dim]
+        self.read_shape(views.get_ref(self.operand))
+    }
+
+    /// The extent of this dim in `shape`, the shape of its operand's view.
+    pub fn read_shape(self, shape: &[usize]) -> usize {
+        shape[self.dim]
     }
 }
 
@@ -131,6 +136,11 @@ impl ViewRun {
 /// Where each extent of a problem lives in the operands' views.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConvExtents {
+    pub batch: ViewDim,
+    /// The channels of the gathered input, whichever of the input and output channels they are.
+    pub lhs_channels: ViewDim,
+    /// The spatial extents of the gathered input.
+    pub gathered: ViewRun,
     pub channels_in: ViewDim,
     pub channels_out: ViewDim,
     pub kernel: ViewRun,
@@ -296,6 +306,9 @@ impl ConvRoles {
             },
             gather: ConvGather::Window,
             extents: ConvExtents {
+                batch: ViewDim::at(Lhs, 0),
+                lhs_channels: spatial.channels(Lhs),
+                gathered: spatial.run(Lhs, 1),
                 channels_in: spatial.channels(Lhs),
                 channels_out: ViewDim::at(Rhs, 0),
                 kernel: spatial.run(Rhs, 1),
@@ -325,6 +338,9 @@ impl ConvRoles {
             },
             gather: ConvGather::Window,
             extents: ConvExtents {
+                batch: ViewDim::at(Lhs, 0),
+                lhs_channels: spatial.channels(Lhs),
+                gathered: spatial.run(Lhs, 1),
                 channels_in: spatial.channels(Lhs),
                 channels_out: spatial.channels(Out),
                 kernel: spatial.run(Out, 0),
@@ -354,6 +370,9 @@ impl ConvRoles {
             },
             gather: ConvGather::Gradient,
             extents: ConvExtents {
+                batch: ViewDim::at(Lhs, 0),
+                lhs_channels: spatial.channels(Lhs),
+                gathered: spatial.run(Lhs, 1),
                 channels_in: spatial.channels(Out),
                 channels_out: spatial.channels(Lhs),
                 kernel: spatial.run(Rhs, 0),
