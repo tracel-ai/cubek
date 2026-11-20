@@ -7,7 +7,9 @@ use cubecl::{
 use cubek_std::{MatrixLayout, cube_count::HypercubeBlueprint};
 
 use crate::{
-    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    definition::{
+        MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, require_plane_ops,
+    },
     multi_level::{
         args::*,
         components::{
@@ -173,6 +175,8 @@ impl BatchMatmulFamily<()> for GemmFamily {
         // OuterM/OuterN are CPU-only because they don't reduce across units.
         match blueprint.variant {
             Variant::Dot => {
+                // Past one unit per plane, the units of a plane sum their partials with plane_sum.
+                require_plane_ops(client, plane_dim)?;
                 let tile_dim = plane_dim * vs;
                 if !problem.k.is_multiple_of(tile_dim) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
