@@ -27,11 +27,10 @@ pub(crate) fn cube_staged_reduce_kernel<
     let x = I::tile::<In>(input, &partitioning);
     let o = out.tile_mut(&partitioning);
     for cube in &partitioning {
-        let mut rows_out = o.at(&cube);
-        let rows = x.at(&cube);
         microkernel.runtime().execute::<In, Acc, Out, Out, N>(
-            &rows,
-            &mut rows_out,
+            &cube,
+            &x,
+            &o,
             &ComptimeOption::new_None(),
         );
     }
@@ -64,13 +63,10 @@ pub(crate) fn cube_staged_reduce_with_indices_kernel<
     let x = I::tile::<In>(input, &partitioning);
     let o = out.tile_mut(&partitioning);
     let i = indices.tile_mut(&partitioning);
+    let indices = ComptimeOption::new_Some(i);
     for cube in &partitioning {
-        let mut rows_out = o.at(&cube);
-        let rows = x.at(&cube);
-        microkernel.runtime().execute::<In, Acc, Out, Idx, N>(
-            &rows,
-            &mut rows_out,
-            &ComptimeOption::new_Some(i.at(&cube)),
-        );
+        microkernel
+            .runtime()
+            .execute::<In, Acc, Out, Idx, N>(&cube, &x, &o, &indices);
     }
 }

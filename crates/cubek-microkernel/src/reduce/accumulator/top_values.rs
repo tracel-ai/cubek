@@ -19,16 +19,23 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
     /// Only the first plane, which holds the cube's first unit, merges the planes' lists, and
     /// its loop over them stays a loop: only each value's walk unrolls
     /// ([`TOP_K_UNROLL_BUDGET`]).
-    fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self {
+    fn across_planes(
+        acc: Self,
+        column: usize,
+        stages: bool,
+        #[comptime] planes: usize,
+        #[comptime] columns: usize,
+        #[comptime] monoid: Monoid,
+    ) -> Self {
         let k = K::value();
-        let mut values = Shared::<[Vector<Acc, N>]>::new_slice(comptime!(planes * k));
-        if UNIT_POS_PLANE == 0 {
-            stage_plane_list::<Acc, N, K>(&mut values, acc);
+        let mut values = Shared::<[Vector<Acc, N>]>::new_slice(comptime!(planes * columns * k));
+        if stages {
+            stage_plane_list::<Acc, N, K>(&mut values, PLANE_POS as usize * columns + column, acc);
         }
 
         sync_cube();
 
-        let total = merged_by_first_plane::<Acc, N, K>(&values, planes, monoid);
+        let total = merged_by_first_plane::<Acc, N, K>(&values, column, planes, columns, monoid);
 
         sync_cube();
         total
@@ -81,45 +88,54 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
     }
 }
 
-/// This plane's list, `acc`, staged in its `K` slots of `values`.
+/// A plane's list, `acc`, staged as list `list` of `values`, `K` slots each.
 #[cube]
 fn stage_plane_list<Acc: Numeric, N: Size, K: Size>(
     values: &mut Shared<[Vector<Acc, N>]>,
+    list: usize,
     acc: TopValues<Acc, N, K>,
 ) {
     let k = K::value();
     #[unroll]
     for slot in 0..k {
-        values[PLANE_POS as usize * k + slot] = acc.values[slot];
+        values[list * k + slot] = acc.values[slot];
     }
 }
 
-/// The `planes` lists staged in `values`, merged by the cube's first plane; every other unit is
-/// left with the identity.
+/// The lists of `column` the `planes` planes staged in `values`, `columns` lists a plane, merged
+/// by the cube's first plane; every other unit is left with the identity.
 #[cube]
 fn merged_by_first_plane<Acc: Numeric, N: Size, K: Size>(
     values: &Shared<[Vector<Acc, N>]>,
+    column: usize,
     #[comptime] planes: usize,
+    #[comptime] columns: usize,
     #[comptime] monoid: Monoid,
 ) -> TopValues<Acc, N, K> {
     let mut total = TopValues::<Acc, N, K>::identity(monoid);
     if PLANE_POS == 0 {
-        insert_plane_lists::<Acc, N, K>(&mut total, values, planes, monoid);
+        insert_plane_lists::<Acc, N, K>(&mut total, values, column, planes, columns, monoid);
     }
     total
 }
 
-/// The `planes` lists staged in `values`, inserted into `total`.
+/// The lists of `column` the `planes` planes staged in `values`, `columns` lists a plane,
+/// inserted into `total`.
 #[cube]
 fn insert_plane_lists<Acc: Numeric, N: Size, K: Size>(
     total: &mut TopValues<Acc, N, K>,
     values: &Shared<[Vector<Acc, N>]>,
+    column: usize,
     #[comptime] planes: usize,
+    #[comptime] columns: usize,
     #[comptime] monoid: Monoid,
 ) {
     let k = K::value();
-    for slot in 0..comptime!(planes * k) {
-        total.insert(values[slot], monoid);
+    for plane in 0..planes {
+        let list = (plane * columns + column) * k;
+        for slot in 0..k {
+            total.insert(values[list + slot], monoid);
+        }
     }
 }
 

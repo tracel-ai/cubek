@@ -482,9 +482,9 @@ macro_rules! every_operation {
     };
 }
 
-/// Each routine reduces a `[2, 5, 300]` tensor along each dim by every operation: along the
-/// contiguous dim, and across it, each lane its own row. The plane and the cube skip where the
-/// device commits to no plane width.
+/// Each routine reduces a `[2, 5, 300]` tensor along each dim by every operation, and a
+/// `[3, 1001, 36]` one along its middle dim: along the contiguous dim, and across it, each lane
+/// its own row. The plane and the cube skip where the device commits to no plane width.
 macro_rules! reduces_each_dim {
     ($routine:expr) => {
         /// Rows 300 long, along the contiguous dim.
@@ -497,6 +497,14 @@ macro_rules! reduces_each_dim {
         mod across_the_middle_dim {
             use super::super::*;
             every_operation!(reduces_like_the_cpu, $routine, [2, 5, 300], 1);
+        }
+
+        /// Rows 1001 long across the contiguous dim, 108 of them: whole steps and a last part
+        /// step for a plane or a cube whose units lie across lines of rows, and a last box of
+        /// rows with fewer lines than columns.
+        mod across_a_long_middle_dim {
+            use super::super::*;
+            every_operation!(reduces_like_the_cpu, $routine, [3, 1001, 36], 1);
         }
 
         /// Rows 2 long, across the contiguous dim, too short for a top-3.

@@ -22,11 +22,23 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
         *acc = Indexed::<Acc, N>::combine_later(*acc, read, monoid);
     }
 
-    fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self {
-        let mut values = Shared::<[Vector<Acc, N>]>::new_slice(planes);
-        let mut indices = Shared::<[Vector<u32, N>]>::new_slice(planes);
-        if UNIT_POS_PLANE == 0 {
-            stage_plane_partial::<Acc, N>(&mut values, &mut indices, acc);
+    fn across_planes(
+        acc: Self,
+        column: usize,
+        stages: bool,
+        #[comptime] planes: usize,
+        #[comptime] columns: usize,
+        #[comptime] monoid: Monoid,
+    ) -> Self {
+        let mut values = Shared::<[Vector<Acc, N>]>::new_slice(comptime!(planes * columns));
+        let mut indices = Shared::<[Vector<u32, N>]>::new_slice(comptime!(planes * columns));
+        if stages {
+            stage_plane_partial::<Acc, N>(
+                &mut values,
+                &mut indices,
+                PLANE_POS as usize * columns + column,
+                acc,
+            );
         }
 
         sync_cube();
@@ -35,8 +47,8 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
         #[unroll]
         for plane in 0..planes {
             let slot = Indexed::<Acc, N> {
-                value: values[plane],
-                index: indices[plane],
+                value: values[plane * columns + column],
+                index: indices[plane * columns + column],
             };
             total = Indexed::<Acc, N>::combine(total, slot, monoid);
         }
@@ -77,15 +89,16 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
     }
 }
 
-/// This plane's partial, `acc`, staged in its slot of `values` and `indices`.
+/// A plane's partial, `acc`, staged in slot `slot` of `values` and `indices`.
 #[cube]
 fn stage_plane_partial<Acc: Numeric, N: Size>(
     values: &mut Shared<[Vector<Acc, N>]>,
     indices: &mut Shared<[Vector<u32, N>]>,
+    slot: usize,
     acc: Indexed<Acc, N>,
 ) {
-    values[PLANE_POS as usize] = acc.value;
-    indices[PLANE_POS as usize] = acc.index;
+    values[slot] = acc.value;
+    indices[slot] = acc.index;
 }
 
 /// `acc`, whose lanes hold one row, reduced lane by lane as one-lane carriers under `monoid` and
