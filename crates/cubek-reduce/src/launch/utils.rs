@@ -90,7 +90,8 @@ pub fn generate_vector_size(
 
             let max_vector_size = input_sorted_axis
                 .zip(output_sorted_axis)
-                .filter_map(|(i, o)| (i == o).then_some(output.shape[i]))
+                .take_while(|(i, o)| i == o)
+                .map(|(i, _)| output.shape[i])
                 .product();
 
             match client.properties().hardware.num_cpu_cores.is_some() {
