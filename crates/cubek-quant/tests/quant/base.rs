@@ -6,7 +6,7 @@ use cubecl::client::Client;
 use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
 use cubek_quant::scheme::QuantScheme;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
@@ -96,9 +96,9 @@ pub(crate) struct Quantized;
 impl ScopeUnderTest for Quantized {
     type Case = RoundTrip;
 
-    fn launch(&self, client: &Client, trip: &RoundTrip) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, trip: &RoundTrip) -> Result<Vec<Written>, Decline> {
         if !trip.held(client) {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the runtime holds no type the round trip needs",
             });
         }

@@ -106,8 +106,7 @@ impl MGroupedSettings<PlaneShuffleMatmulRoutineSettings> {
     /// which pad a small group less and read a large one's slab more often.
     pub fn plane_shuffle(hw: &Hardware) -> Vec<Self> {
         let most = PlaneShuffleMicrokernel::MAX_ROWS;
-        let full = PlaneShuffleMatmulRoutine
-            .settings(hw)
+        let full = PlaneShuffleMatmulRoutine::settings(hw)
             .into_iter()
             .map(|routine| Self {
                 routine,
@@ -127,8 +126,7 @@ impl MGroupedSettings<PlaneShuffleMatmulRoutineSettings> {
     /// ([`PACKED_PERSISTENT`](PlaneShuffleMatmulRoutineSettings::PACKED_PERSISTENT)): an indexed
     /// launch hands its cubes the chunks beside the columns, which a capped launch declines.
     pub fn plane_shuffle_packed() -> Vec<Self> {
-        PlaneShuffleMatmulRoutine
-            .indexed_packed_settings()
+        PlaneShuffleMatmulRoutine::indexed_packed_settings()
             .into_iter()
             .filter(|routine| routine.planes_per_worker.is_none())
             .map(|routine| Self {
@@ -162,7 +160,7 @@ impl MGroupedSettings<CubeStagedMatmulRoutineSettings> {
     /// The cube staged routine's settings worth racing on `hw` against a float stack, each over
     /// chunks of the tile its cubes hold.
     pub fn cube_staged(hw: &Hardware) -> Vec<Self> {
-        Self::over_cube_tiles(CubeStagedMatmulRoutine.settings(hw))
+        Self::over_cube_tiles(CubeStagedMatmulRoutine::settings(hw))
     }
 
     /// The cube staged routine's settings worth racing on `hw` against a packed stack, each over
@@ -186,8 +184,7 @@ impl MGroupedSettings<CubeStagedAsyncCopyMatmulRoutineSettings> {
     /// The copy engine's cube staged routine's settings worth racing on `hw`, each over chunks of
     /// the tile its cubes hold.
     pub fn cube_staged_async_copy(hw: &Hardware) -> Vec<Self> {
-        CubeStagedAsyncCopyMatmulRoutine
-            .settings(hw)
+        CubeStagedAsyncCopyMatmulRoutine::settings(hw)
             .into_iter()
             .map(|routine| Self {
                 routine,

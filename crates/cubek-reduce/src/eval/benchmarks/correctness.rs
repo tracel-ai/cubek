@@ -3,47 +3,48 @@ use cubek_test_utils::{HostData, Progress, ValidationResult, assert_equals_appro
 
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 use crate::eval::cpu_reference::{
-    RAMP_MAX_ELEMS, ReduceEntry, ReduceInput, ReduceValues, comparison_epsilon,
-    cpu_reference_result, strategy_result, strategy_result_with_indices,
+    RAMP_MAX_ELEMS, ReduceInput, ReduceValues, comparison_epsilon, cpu_reference_result,
+    strategy_result, strategy_result_with_indices,
 };
+use crate::kernels::ReduceOpStrategy;
 
 pub struct ReduceCorrectness;
 
 impl ReduceCorrectness {
     /// Proves `strategy` correct on a small shape before it's timed, so a wrong
     /// kernel can't win a benchmark by being fast.
-    pub fn verify(strategy: &ReduceEntry, problem: &ReduceProblem) -> Result<(), String> {
+    pub fn verify(strategy: &ReduceOpStrategy, problem: &ReduceProblem) -> Result<(), String> {
         let client = cubecl::test_device().client();
         let proof = ReduceProblem {
             shape: proof_shape(&problem.shape, problem.axis),
             axis: problem.axis,
-            config: problem.config,
+            operation: problem.operation,
             kind: problem.kind,
             precision: problem.precision,
         };
         let input = ReduceInput {
-            dtype: proof.precision.dtype(),
+            dtype: proof.precision.to_dtype(),
             values: ReduceValues::Ramp,
         };
 
         let actual = Self::kernel_output(client.clone(), strategy, &proof, input)?;
         let expected = Self::reference_output(client, &proof, input, None)?;
 
-        match assert_equals_approx(&actual, &expected, comparison_epsilon(proof.config)) {
+        match assert_equals_approx(&actual, &expected, comparison_epsilon(proof.operation)) {
             ValidationResult::Pass | ValidationResult::Skipped(_) => Ok(()),
             ValidationResult::Fail(reason) | ValidationResult::Error(reason) => Err(format!(
                 "{:?} computes the wrong {:?} at {:?}, so its timing would be meaningless: {reason}",
-                strategy, proof.config, proof.shape
+                strategy, proof.operation, proof.shape
             )),
         }
     }
 
     /// Validate the path that is actually benchmarked. The two-launch kind runs
-    /// the same `reduce` as `Single` for its values half, so only the fused kind
+    /// the same `Reduce::execute` as `Single` for its values half, so only the fused kind
     /// needs the dedicated entrypoint.
     fn kernel_output(
         client: Client,
-        strategy: &ReduceEntry,
+        strategy: &ReduceOpStrategy,
         problem: &ReduceProblem,
         input: ReduceInput,
     ) -> Result<HostData, String> {
@@ -52,16 +53,16 @@ impl ReduceCorrectness {
                 client,
                 problem.shape.clone(),
                 problem.axis,
-                strategy.clone(),
-                problem.config,
+                *strategy,
+                problem.operation,
                 input,
             ),
             ReduceBenchKind::Fused => strategy_result_with_indices(
                 client,
                 problem.shape.clone(),
                 problem.axis,
-                strategy.clone(),
-                problem.config,
+                *strategy,
+                problem.operation,
                 input,
             ),
         }
@@ -77,7 +78,7 @@ impl ReduceCorrectness {
             client,
             problem.shape.clone(),
             problem.axis,
-            problem.config,
+            problem.operation,
             input,
             progress,
         )
@@ -106,21 +107,16 @@ fn proof_shape(shape: &[usize], axis: usize) -> Vec<usize> {
 
 impl cubek_test_utils::Correctness for ReduceCorrectness {
     type Problem = ReduceProblem;
-    type Strategy = ReduceEntry;
+    type Strategy = ReduceOpStrategy;
 
     fn kernel_result(
         &self,
-        strategy: &ReduceEntry,
+        strategy: &ReduceOpStrategy,
         problem: &ReduceProblem,
         seeds: &[u64],
     ) -> Result<HostData, String> {
         let client = cubecl::test_device().client();
-        Self::kernel_output(
-            client,
-            strategy,
-            problem,
-            ReduceInput::uniform(problem.precision.dtype(), seeds[0]),
-        )
+        Self::kernel_output(client, strategy, problem, seeded_input(problem, seeds))
     }
 
     fn reference_result(
@@ -130,13 +126,13 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
         progress: Option<&Progress>,
     ) -> Result<HostData, String> {
         let client = cubecl::test_device().client();
-        Self::reference_output(
-            client,
-            problem,
-            ReduceInput::uniform(problem.precision.dtype(), seeds[0]),
-            progress,
-        )
+        Self::reference_output(client, problem, seeded_input(problem, seeds), progress)
     }
+}
+
+/// The input `problem` reduces, drawn uniformly in its precision from the first of `seeds`.
+fn seeded_input(problem: &ReduceProblem, seeds: &[u64]) -> ReduceInput {
+    ReduceInput::uniform(problem.precision.to_dtype(), seeds[0])
 }
 
 #[cfg(test)]

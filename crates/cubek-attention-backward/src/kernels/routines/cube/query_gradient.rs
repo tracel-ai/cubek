@@ -5,7 +5,7 @@ use crate::kernels::{
     AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
 };
 use cubecl::tile::Partitioning;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::{B, G, KV, Q, S};
 use cubek_microkernel::attention_backward::query_gradient::cube::{
     CubeQueryGradientMicrokernel, CubeQueryGradientMicrokernelSettings,
@@ -42,7 +42,7 @@ impl CubeStagedQueryGradientRoutine {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &CubeStagedQueryGradientRoutineSettings,
-    ) -> Result<CubeStagedQueryGradientBlueprint, Refusal> {
+    ) -> Result<CubeStagedQueryGradientBlueprint, Decline> {
         let item = problem.work_item();
         let microkernel = CubeQueryGradientMicrokernel::best(hw, &item, &settings.microkernel)?;
         // Under a causal mask a later box of queries sees more keys: the heaviest start first and

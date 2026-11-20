@@ -1,61 +1,175 @@
-use crate::reduce::{ReduceOperand, ReduceWorkItem};
+use super::microkernel::{cube_staged_reduce_microkernel, cube_staged_reduce_part};
+use crate::reduce::{ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS};
+use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
+use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
-use cubek_std::microkernel::{
-    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
-};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// A row reduced by one cube: its units read consecutive lines, each accumulating every `units`-th into
 /// a partial of its own; each plane's partials meet in its instructions, then the planes' in
 /// shared memory, one slot of the carrier a plane.
 ///
 /// It runs where the device commits to a plane width, as the plane's does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeReduceMicrokernel {
-    pub item: ReduceWorkItem,
+#[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CubeStagedReduceMicrokernel {
+    #[cube(comptime)]
+    item: ReduceWorkItem,
     /// Units of a plane, as wide as the device commits to.
-    pub lanes: usize,
+    #[cube(comptime)]
+    lanes: usize,
     /// Planes of the cube.
-    pub planes: usize,
+    #[cube(comptime)]
+    planes: usize,
+    /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
+    #[cube(comptime)]
+    lane_slots: usize,
 }
 
-/// How many planes a cube runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeReduceMicrokernelSettings {
-    pub planes: usize,
-}
+impl CubeStagedReduceMicrokernel {
+    /// A cube of `planes` planes of `lanes` units reducing `item`, keeping `lane_slots` top-k
+    /// slots across a line.
+    pub fn new(item: ReduceWorkItem, lanes: usize, planes: usize, lane_slots: usize) -> Self {
+        Self {
+            item,
+            lanes,
+            planes,
+            lane_slots,
+        }
+    }
 
-impl CubeReduceMicrokernelSettings {
-    /// The planes worth trying: a cube of four, then of eight.
-    pub const ALL: [Self; 2] = [Self { planes: 4 }, Self { planes: 8 }];
-}
+    pub fn item(&self) -> ReduceWorkItem {
+        self.item
+    }
 
-impl core::fmt::Display for CubeReduceMicrokernelSettings {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "planes={}", self.planes)
+    pub fn lanes(&self) -> usize {
+        self.lanes
+    }
+
+    pub fn planes(&self) -> usize {
+        self.planes
+    }
+
+    /// The units of its cube: its planes, each `lanes` wide.
+    pub fn units(&self) -> usize {
+        self.lanes * self.planes
+    }
+
+    /// The widest line its carrier keeps apart at its lane slots, where the carrier bounds it.
+    pub fn widest_line(&self) -> Option<usize> {
+        self.item
+            .operation
+            .widest_line_at_lane_slots(self.lane_slots)
     }
 }
 
-impl core::fmt::Display for CubeReduceMicrokernel {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{:?} {:?} lanes={} planes={}",
-            self.item.operation, self.item.layout, self.lanes, self.planes
+#[cube]
+impl CubeStagedReduceMicrokernel {
+    /// One cube's row of `input` reduced into `out` and `indices` (`cube_staged_reduce_microkernel`).
+    ///
+    /// # Panics
+    ///
+    /// Where its item writes the indices beside the values and `indices` is none.
+    pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+        &self,
+        input: &Tile,
+        out: &mut Tile,
+        indices: &ComptimeOption<Tile>,
+    ) {
+        cube_staged_reduce_microkernel::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            comptime!(CubeStagedReduceMicrokernel {
+                item: self.item,
+                lanes: self.lanes,
+                planes: self.planes,
+                lane_slots: self.lane_slots
+            }),
+        )
+    }
+
+    /// The first `count` lines of `input` accumulated by the cube into `C`, the line at `l` read
+    /// as line `first_line + l` of its row: a part of a row that cubes split, which the cube's
+    /// first unit is left holding (`cube_staged_reduce_part`).
+    pub fn reduce_part<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+        &self,
+        input: &Tile,
+        first_line: usize,
+        count: usize,
+    ) -> C {
+        cube_staged_reduce_part::<In, Acc, N, C>(
+            input,
+            first_line,
+            count,
+            comptime!(CubeStagedReduceMicrokernel {
+                item: self.item,
+                lanes: self.lanes,
+                planes: self.planes,
+                lane_slots: self.lane_slots
+            }),
         )
     }
 }
 
-impl Microkernel for CubeReduceMicrokernel {
+/// How many planes a cube runs, and its top-k lane slots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CubeStagedReduceMicrokernelSettings {
+    pub planes: usize,
+    /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
+    pub lane_slots: usize,
+}
+
+impl CubeStagedReduceMicrokernelSettings {
+    /// The planes worth trying: a cube of four, then of eight.
+    pub const PLANES: [usize; 2] = [4, 8];
+}
+
+impl CubeStagedReduceMicrokernel {
+    /// Bytes of shared memory it allocates with its lines `width` lanes wide: one slot of the
+    /// carrier a plane, which its planes meet through.
+    pub fn shared_memory_bytes_at_width(&self, width: usize) -> usize {
+        let slot = self
+            .item
+            .operation
+            .carrier()
+            .bytes(width, self.item.accumulator.size());
+        self.planes * slot
+    }
+}
+
+impl core::fmt::Display for CubeStagedReduceMicrokernelSettings {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "planes={} lane_slots={}", self.planes, self.lane_slots)
+    }
+}
+
+impl core::fmt::Display for CubeStagedReduceMicrokernel {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{:?} {:?} lanes={} planes={}",
+            self.item.operation, self.item.lines_along, self.lanes, self.planes
+        )
+    }
+}
+
+impl Microkernel for CubeStagedReduceMicrokernel {
     type WorkItem = ReduceWorkItem;
-    type Settings = CubeReduceMicrokernelSettings;
+    type Settings = CubeStagedReduceMicrokernelSettings;
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
     const DECLINE: &'static str = "the cube reduce needs a plane width the device commits to, and a cube that holds its planes";
 
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
-        CubeReduceMicrokernelSettings::ALL.to_vec()
+        CubeStagedReduceMicrokernelSettings::PLANES
+            .into_iter()
+            .flat_map(|planes| {
+                TOP_K_LANE_SLOTS
+                    .map(|lane_slots| CubeStagedReduceMicrokernelSettings { planes, lane_slots })
+            })
+            .collect()
     }
 
     fn candidates(
@@ -64,6 +178,7 @@ impl Microkernel for CubeReduceMicrokernel {
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
         let planes = settings.planes;
+        let lane_slots = settings.lane_slots;
         let fits = planes <= hw.full_cube_planes();
         hw.plane_dim()
             .ok()
@@ -73,11 +188,12 @@ impl Microkernel for CubeReduceMicrokernel {
                 item: *item,
                 lanes: lanes as usize,
                 planes,
+                lane_slots,
             })
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {
-        self.item.require(vectorization);
+        vectorization.require(self.item.requirement());
     }
 
     /// Each unit holds its carrier and one line; the cube a slot of the carrier a plane.
@@ -88,33 +204,22 @@ impl Microkernel for CubeReduceMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        let slots = self.item.operation.written_per_row() as u32;
-        estimate.work = Some(UnitWork {
-            instruction: ArithmeticInstruction::Vector,
-            registers: 2 * slots + 2,
-        });
+        estimate.work = Some(self.item.unit_work());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reduce::plane::{PlaneReduceMicrokernel, PlaneReduceMicrokernelSettings};
-    use crate::reduce::unit::{UnitReduceMicrokernel, UnitReduceMicrokernelSettings};
-    use crate::reduce::{ReduceLayout, ReduceOperation};
-    use cubecl::ir::{ElemType, FloatKind};
+    use crate::reduce::ReduceOperation;
+    use crate::reduce::plane::{
+        PlaneShuffleReduceMicrokernel, PlaneShuffleReduceMicrokernelSettings,
+    };
+    use crate::reduce::unit::{UnitDirectReduceMicrokernel, UnitDirectReduceMicrokernelSettings};
     use cubek_std::devices;
 
-    const F32: ElemType = ElemType::Float(FloatKind::F32);
-
     fn item() -> ReduceWorkItem {
-        ReduceWorkItem {
-            operation: ReduceOperation::ArgMax,
-            input: F32,
-            accumulator: F32,
-            layout: ReduceLayout::Along,
-            with_indices: false,
-        }
+        ReduceWorkItem::along_f32(ReduceOperation::ArgMax)
     }
 
     /// The unit runs everywhere; the plane and the cube only where the device commits to a plane
@@ -130,15 +235,29 @@ mod tests {
         ] {
             let commits = hw.plane_dim().is_ok();
             assert!(
-                UnitReduceMicrokernel::best(&hw, &item(), &UnitReduceMicrokernelSettings).is_ok()
+                UnitDirectReduceMicrokernel::best(
+                    &hw,
+                    &item(),
+                    &UnitDirectReduceMicrokernelSettings {
+                        lane_slots: TOP_K_LANE_SLOTS[0],
+                    }
+                )
+                .is_ok()
             );
             assert_eq!(
-                PlaneReduceMicrokernel::best(&hw, &item(), &PlaneReduceMicrokernelSettings).is_ok(),
+                PlaneShuffleReduceMicrokernel::best(
+                    &hw,
+                    &item(),
+                    &PlaneShuffleReduceMicrokernelSettings {
+                        lane_slots: TOP_K_LANE_SLOTS[0],
+                    }
+                )
+                .is_ok(),
                 commits,
                 "{hw:?}"
             );
-            for settings in CubeReduceMicrokernel::settings(&hw) {
-                let cube = CubeReduceMicrokernel::best(&hw, &item(), &settings);
+            for settings in CubeStagedReduceMicrokernel::settings(&hw) {
+                let cube = CubeStagedReduceMicrokernel::best(&hw, &item(), &settings);
                 assert_eq!(cube.is_ok(), commits, "{settings} on {hw:?}");
                 if let Ok(cube) = cube {
                     assert_eq!(cube.lanes as u32, hw.plane_dim().unwrap());
@@ -152,7 +271,41 @@ mod tests {
     fn a_cube_the_device_cannot_hold_declines() {
         let hw = devices::m2_pro();
         let planes = hw.full_cube_planes() + 1;
-        let settings = CubeReduceMicrokernelSettings { planes };
-        assert!(CubeReduceMicrokernel::best(&hw, &item(), &settings).is_err());
+        let settings = CubeStagedReduceMicrokernelSettings {
+            planes,
+            lane_slots: TOP_K_LANE_SLOTS[0],
+        };
+        assert!(CubeStagedReduceMicrokernel::best(&hw, &item(), &settings).is_err());
+    }
+
+    /// A cube's units are its planes' lanes, and its shared memory a carrier's slot a plane.
+    #[test]
+    fn a_cube_holds_a_slot_a_plane() {
+        const LANES: usize = 32;
+        const PLANES: usize = 4;
+        const LANE_SLOTS: usize = 32;
+        const WIDTH: usize = 4;
+        let item = ReduceWorkItem::along_f32(ReduceOperation::ArgMax);
+        let cube = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
+        assert_eq!(cube.units(), LANES * PLANES);
+        let slot = item
+            .operation
+            .carrier()
+            .bytes(WIDTH, item.accumulator.size());
+        assert_eq!(cube.shared_memory_bytes_at_width(WIDTH), PLANES * slot);
+    }
+
+    /// Its settings are each plane count with each lane-slot count, the planes outermost.
+    #[test]
+    fn its_settings_cross_planes_with_lane_slots() {
+        let settings = CubeStagedReduceMicrokernel::settings(&devices::m2_pro());
+        assert_eq!(
+            settings.len(),
+            CubeStagedReduceMicrokernelSettings::PLANES.len() * TOP_K_LANE_SLOTS.len()
+        );
+        assert_eq!(
+            settings[0].planes,
+            CubeStagedReduceMicrokernelSettings::PLANES[0]
+        );
     }
 }

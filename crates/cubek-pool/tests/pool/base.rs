@@ -7,7 +7,7 @@ use core::ops::Range;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, IntKind};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_pool::definition::{PoolBackwardProblem, PoolError, PoolForwardProblem, PoolMode};
 use cubek_pool::eval::cpu_reference::{
     cpu_reference_max_pool_indices, cpu_reference_pool, cpu_reference_pool_backward,
@@ -227,7 +227,7 @@ where
 {
     type Case = Pooled<N>;
 
-    fn launch(&self, client: &Client, case: &Pooled<N>) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Pooled<N>) -> Result<Vec<Written>, Decline> {
         let (input, _) = case.input.of(&case.problem.input_shape);
         let shape = case.output_shape();
         let output = Seeded::poisoned(client, &shape, input.dtype);
@@ -319,7 +319,7 @@ where
 {
     type Case = Unpooled<N>;
 
-    fn launch(&self, client: &Client, case: &Unpooled<N>) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Unpooled<N>) -> Result<Vec<Written>, Decline> {
         let input_shape = case.input_shape();
         let grad_shape = case.problem.out_grad_shape.to_vec();
         let (input, _) = case.input.of(&input_shape);

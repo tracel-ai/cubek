@@ -79,7 +79,7 @@ fn open_sum<EA: Numeric>(
     #[comptime] block: Option<SoftwareMatmul>,
 ) -> Tile {
     match block {
-        Some(block) => over.register_accumulator::<EA>(a, b, block, Semiring::SUM_PROD),
-        None => over.accumulator::<EA>(a, b, Semiring::SUM_PROD),
+        Some(block) => over.register_accumulator::<EA>(a, b, block, Semiring::SumProd),
+        None => over.accumulator::<EA>(a, b, Semiring::SumProd),
     }
 }

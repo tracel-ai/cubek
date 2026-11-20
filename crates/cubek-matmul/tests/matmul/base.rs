@@ -8,7 +8,7 @@ use cubecl::client::Client;
 use cubecl::ir::{AddressType, ElemType, FloatKind, IntKind};
 use cubecl::prelude::{Scalar, tf32};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
@@ -376,7 +376,7 @@ impl Debug for Product {
     }
 }
 
-/// Which refusals a scope may answer a product with.
+/// Which declines a scope may answer a product with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Declines {
     /// None: a floor, which serves any product on any device. On the CPU runtime, which holds one
@@ -424,7 +424,7 @@ impl ScopeUnderTest for ByStrategy {
     /// # Panics
     ///
     /// Where a strategy that declines nothing refuses a product.
-    fn launch(&self, client: &Client, product: &Product) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, product: &Product) -> Result<Vec<Written>, Decline> {
         let (lhs, rhs, out) = product.tensors(client);
         let elems = &product.elems;
         let launched = launch_ref(
@@ -437,7 +437,7 @@ impl ScopeUnderTest for ByStrategy {
         );
         match (launched, self.declines) {
             (Ok(()), _) => Ok(Product::written(out)),
-            (Err(_), Declines::AsItStates) => Err(Refusal::Declined {
+            (Err(_), Declines::AsItStates) => Err(Decline::Unserved {
                 why: "the strategy serves no such product on this device",
             }),
             (Err(why), Declines::Never) => {

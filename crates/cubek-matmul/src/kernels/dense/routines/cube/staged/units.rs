@@ -3,7 +3,7 @@ use crate::kernels::{
     CUBE_STRIPS, MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, cube_order_name,
 };
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -181,7 +181,7 @@ impl Routine for CubeStagedMatmulRoutine {
     /// order. Then its own knob around the
     /// boxes it suits: the default, the default's grid on two by two planes with its stage's rows
     /// in order, and the planes splitting `K`, in strips.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         let [along_m, _] = CUBE_STRIPS;
         let on_grid = CubeStagedMicrokernel::settings(hw)
             .into_iter()
@@ -215,7 +215,6 @@ impl Routine for CubeStagedMatmulRoutine {
     }
 
     fn vectorize(
-        &self,
         microkernel: &CubeStagedMicrokernel,
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -224,7 +223,6 @@ impl Routine for CubeStagedMatmulRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeStagedMatmulRoutineBlueprint,
         grid: &Grid,
@@ -237,11 +235,10 @@ impl Routine for CubeStagedMatmulRoutine {
     /// problem's space or, against packed inputs, its block-split space, its stages filled by its
     /// units and its fragments stored by its planes (`CubeStagedPlacement`).
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         CubeStagedPlacement::new(
             hw,
             problem,

@@ -1,7 +1,7 @@
 //! The plane attention microkernels on one work item: every query one plane's rows.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubecl::tile::{Launcher, Partitioning, Space, Tile, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
@@ -47,7 +47,7 @@ impl PlaneFragmentAttentionLaunch {
         settings: &PlaneFragmentAttentionMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item([head_dim, val_dim]);
         let microkernel = PlaneFragmentAttentionMicrokernel::best(hw, &item, settings)?;
         let plane_width = hw.plane_dim()?;
@@ -89,7 +89,7 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
         lengths: TensorArg,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let [queries, keys] = self.seq;
         let item = &self.item;
         let space = Space::new(&[

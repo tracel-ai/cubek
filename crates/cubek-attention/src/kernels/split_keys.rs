@@ -5,7 +5,7 @@ use crate::kernels::{
     PartialAttentionRoutine, PlaneSplitKeysMergeBlueprint, PlaneSplitKeysMergeRoutine,
 };
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, Routine};
@@ -37,7 +37,7 @@ where
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         blueprint: &AttentionBlueprint<M, SM>,
-    ) -> Result<PlaneSplitKeysMergeBlueprint, Refusal> {
+    ) -> Result<PlaneSplitKeysMergeBlueprint, Decline> {
         PlaneSplitKeysMergeRoutine.prepare(
             hw,
             problem,
@@ -81,9 +81,9 @@ where
         hw: &Hardware,
         tensors: AttentionTensors,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         let problem = tensors.problem();
-        let (blueprint, grid) = self.partial.prepare(hw, &problem, settings)?;
+        let (blueprint, grid) = R::prepare(hw, &problem, settings)?;
         let merge = self.merge(hw, &problem, &blueprint)?;
         self.dispatch(&tensors, blueprint, grid, merge);
         Ok(tensors.into_out())
@@ -113,9 +113,9 @@ mod tests {
             + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>,
     {
         let mut merged = 0;
-        for settings in split.partial.settings(hw) {
+        for settings in R::settings(hw) {
             for problem in problems {
-                let Ok((blueprint, _)) = split.partial.prepare(hw, problem, &settings) else {
+                let Ok((blueprint, _)) = R::prepare(hw, problem, &settings) else {
                     continue;
                 };
                 let merge = split.merge(hw, problem, &blueprint);

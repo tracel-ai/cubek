@@ -67,7 +67,7 @@ fn render_all() -> String {
         for strategy in AttentionOpStrategy::all() {
             let plan = select(strategy, queries, cache, AttentionAutotuneGroups::default())
                 .map(|plan| plan.tree().to_string())
-                .unwrap_or_else(|refusal| format!("refused: {refusal}"));
+                .unwrap_or_else(|decline| format!("refused: {decline}"));
             out.push_str(&format!("{}: {plan}\n", strategy.name()));
         }
         out.push('\n');

@@ -1,85 +1,64 @@
-//! Top-k with a vectorized parallel output whose row count is not a multiple
-//! of the output vector size.
+//! Top-k with a row count that is not a multiple of the output's vector width.
 //!
-//! Each k slot of the output is one contiguous run of rows. With 9 rows and
-//! `k = 4` the whole output holds 36 scalars, a multiple of 4, while a run of
-//! 9 is not: a vector of 4 rows starting at row 8 would spill into the next
-//! slot's run.
+//! Each k slot of the output is one contiguous run of rows. With 9 rows and `k = 4` the whole
+//! output holds 36 scalars, a multiple of 4, while a run of 9 is not: a vector of 4 rows starting
+//! at row 8 would spill into the next slot's run.
 
-use cubecl::{
-    config::autotune::AutotuneLevel,
-    features::Plane,
-    zspace::{Shape, Strides},
-};
-use cubek_reduce::{
-    ReduceStrategy,
-    launch::{RoutineStrategy, VectorizationStrategy},
-    routines::{BlueprintStrategy, cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy},
-};
+use cubecl::zspace::{Shape, Strides};
+use cubek_reduce::kernels::ReduceOpStrategy;
 
-use super::test_case::TestCase;
+use super::test_case::{CUBE, PLANE, RULE, TestCase, UNIT};
 
-fn supports_plane() -> bool {
-    let client = cubecl::test_device().client();
-    client.properties().features.plane.contains(Plane::Ops)
-}
-
-fn vectorized(routine: RoutineStrategy) -> ReduceStrategy {
-    ReduceStrategy {
-        autotune_level: AutotuneLevel::Full,
-        vectorization: VectorizationStrategy {
-            parallel_output_vectorization: true,
-        },
-        routine,
-    }
-}
-
-fn run_topk(routine: RoutineStrategy, rows: usize, k: usize) {
-    let case = TestCase::new::<f32>(
+/// `rows` rows 64 values long, reduced along their contiguous dim by `strategy`.
+fn case(strategy: ReduceOpStrategy, rows: usize) -> TestCase {
+    TestCase::new::<f32>(
         Shape::new([rows, 64]),
         Strides::new(&[64, 1]),
         Some(1),
-        vectorized(routine),
-    );
-    case.test_topk(k);
-    case.test_argtopk(k);
-    case.test_topk_with_indices(k);
+        strategy,
+    )
 }
 
-fn routines() -> Vec<RoutineStrategy> {
-    let mut routines = vec![
-        RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
-        RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
-            use_planes: false,
-        })),
-    ];
-    if supports_plane() {
-        for independent in [false, true] {
-            routines.push(RoutineStrategy::Plane(BlueprintStrategy::Inferred(
-                PlaneStrategy { independent },
-            )));
+/// A test for each top-`k` of `rows` rows through each of the unit kernel, the rule, and the
+/// plane and cube kernels, which skip where the device has no planes; each one launch: its values,
+/// its indices, and both at once.
+macro_rules! top_k_tests {
+    ($rows:expr, $k:expr) => {
+        top_k_tests!(@strategy unit, UNIT, $rows, $k);
+        top_k_tests!(@strategy rule, RULE, $rows, $k);
+        top_k_tests!(@strategy plane, PLANE, $rows, $k);
+        top_k_tests!(@strategy cube, CUBE, $rows, $k);
+    };
+    (@strategy $name:ident, $strategy:ident, $rows:expr, $k:expr) => {
+        mod $name {
+            use super::super::*;
+
+            #[test]
+            fn top_k() {
+                case($strategy, $rows).test_topk($k);
+            }
+
+            #[test]
+            fn arg_top_k() {
+                case($strategy, $rows).test_argtopk($k);
+            }
+
+            #[test]
+            fn top_k_with_indices() {
+                case($strategy, $rows).test_topk_with_indices($k);
+            }
         }
-    }
-    routines
+    };
 }
 
-#[test]
-fn rows_not_multiple_of_vector_k4() {
-    for routine in routines() {
-        run_topk(routine, 9, 4);
-    }
+mod rows_not_multiple_of_vector_k4 {
+    top_k_tests!(9, 4);
 }
 
-#[test]
-fn rows_not_multiple_of_vector_k2() {
-    for routine in routines() {
-        run_topk(routine, 6, 2);
-    }
+mod rows_not_multiple_of_vector_k2 {
+    top_k_tests!(6, 2);
 }
 
-#[test]
-fn rows_multiple_of_vector_k4() {
-    for routine in routines() {
-        run_topk(routine, 8, 4);
-    }
+mod rows_multiple_of_vector_k4 {
+    top_k_tests!(8, 4);
 }

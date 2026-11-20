@@ -10,7 +10,7 @@ use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::QuantValue;
-use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{
@@ -102,13 +102,13 @@ impl PlaneFragmentMicrokernel {
 
     /// What a packed item of no rows, or of more than [`MAX_PACKED_ROWS`](Self::MAX_PACKED_ROWS),
     /// is declined with.
-    pub const ROWS_OUT_OF_RANGE: Refusal = Refusal::Declined {
+    pub const ROWS_OUT_OF_RANGE: Decline = Decline::Unserved {
         why: "the plane fragment holds from one row to `PlaneFragmentMicrokernel::MAX_PACKED_ROWS` against a packed rhs, the rows of one fragment",
     };
 
     /// What a packed item whose operands are not a 16-bit lhs against an rhs of
     /// sixteen-value blocks along `K`, read along `K` alone, is declined with.
-    pub(crate) const OPERANDS_UNSERVED: Refusal = Refusal::Declined {
+    pub(crate) const OPERANDS_UNSERVED: Decline = Decline::Unserved {
         why: "the plane fragment contracts a packed rhs against a 16-bit lhs, the rhs read along K alone, in blocks of sixteen",
     };
 
@@ -1263,7 +1263,7 @@ impl Microkernel for PlaneFragmentMicrokernel {
     /// Any float item. A packed one ([`MatmulWorkItem::blocks`]) of from one row to
     /// [`MAX_PACKED_ROWS`](Self::MAX_PACKED_ROWS), every one held whole, against operands it
     /// contracts (`OPERANDS_UNSERVED`).
-    fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
+    fn admits(item: &MatmulWorkItem) -> Result<(), Decline> {
         let Some(space) = &item.blocks else {
             return Ok(());
         };

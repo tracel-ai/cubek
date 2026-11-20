@@ -2,7 +2,7 @@
 //! uniform in `[-3, 3)`, resampled to an output size under a filter and a coordinate transform.
 
 use cubecl::client::Client;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_interpolate::definition::{
     InterpolateError, InterpolateForwardProblem, InterpolateMode, InterpolateOptions, NearestMode,
 };
@@ -116,8 +116,8 @@ impl ScopeUnderTest for Forward {
 
     /// # Panics
     ///
-    /// Where the launch fails for a reason other than a refusal.
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    /// Where the launch fails for a reason other than a decline.
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let resampling = case.resampling;
         let (input, _) = resampling.input(client);
         let output = TestInput::builder(client.clone(), resampling.problem().output_shape())
@@ -137,7 +137,7 @@ impl ScopeUnderTest for Forward {
                 tensor: output,
                 host: HostDataType::F32,
             }]),
-            Err(InterpolateError::Refused(why)) => Err(why),
+            Err(InterpolateError::Declined(why)) => Err(why),
             Err(error) => panic!("{case:?}: {error}"),
         }
     }

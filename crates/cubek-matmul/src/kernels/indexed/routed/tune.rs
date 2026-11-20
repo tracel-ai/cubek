@@ -5,7 +5,7 @@
 
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tune::{LocalTuner, Tunable, TuneGroup, local_tuner};
 use cubecl::{self as cubecl, AutotuneKey, CubeTuneId};
 use cubecl_common::device::Device;
@@ -61,7 +61,7 @@ pub fn launch_tuned(
     device: &impl Device,
     tensors: RoutedMatmulTensors,
     routines: GroupPriority,
-) -> Result<TensorHandle, Refusal> {
+) -> Result<TensorHandle, Decline> {
     if tensors.rows() == 0 {
         return Ok(tensors.output());
     }
@@ -189,7 +189,7 @@ where
         move |tensors: RoutedMatmulTensors| {
             listed
                 .admits(tensors.product())
-                .map_err(|refusal| format!("{settings} {refusal:?}"))?;
+                .map_err(|decline| format!("{settings} {decline:?}"))?;
             let hw = Hardware::from_client(tensors.client());
             tensors
                 .launch(&hw, &routine, &settings)

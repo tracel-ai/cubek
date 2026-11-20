@@ -3,7 +3,7 @@ use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,
 };
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{ComputeScope, CubeOrder};
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -23,7 +23,7 @@ use cubek_std::routine::{Grid, Routine};
 /// stages the TMA engine lands swizzled, issued by planes set aside to fill, which release a stage
 /// only once the MMAs reading it are done; each group's sum drains straight into its output.
 ///
-/// Refused where the device or product takes no plane group MMA, where the TMA engine cannot land
+/// Declined where the device or product takes no plane group MMA, where the TMA engine cannot land
 /// the stages, and where the sum would be merged, along `K` or through a bounce.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedWgmmaMatmulRoutine;
@@ -64,7 +64,7 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
     /// Two plane groups along `m`, each one `64 × 128` instruction four steps of `K` a stage (a
     /// 128-byte swizzle span of `f16`), two stages in flight. None without a bulk tensor copy and
     /// a plane group MMA.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.bulk_tensor_copy() || hw.properties.features.matmul.wgmma.iter().next().is_none() {
             return Vec::new();
         }
@@ -80,7 +80,6 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
     }
 
     fn vectorize(
-        &self,
         microkernel: &CubeStagedMicrokernel,
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -89,7 +88,6 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeStagedMatmulRoutineBlueprint,
         grid: &Grid,
@@ -102,11 +100,10 @@ impl Routine for CubeStagedWgmmaMatmulRoutine {
     /// over one filling plane; the microkernel refuses a plane group MMA its fill and drain do not
     /// serve.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let placement = CubeStagedPlacement::new(
             hw,
             problem,

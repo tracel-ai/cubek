@@ -6,7 +6,7 @@
 use crate::kernels::indexed::k_grouped::KGroupedMatmulTensors;
 use crate::kernels::{CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
@@ -35,7 +35,7 @@ pub const K_GROUPED_SETTINGS: CubeStagedMatmulRoutineSettings = CubeStagedMatmul
 /// # Errors
 ///
 /// Why the device cannot run the product at [`K_GROUPED_SETTINGS`].
-pub fn launch(tensors: &KGroupedMatmulTensors) -> Result<TensorHandle, Refusal> {
+pub fn launch(tensors: &KGroupedMatmulTensors) -> Result<TensorHandle, Decline> {
     let hw = Hardware::from_client(tensors.client());
     tensors.launch(&hw, &CubeStagedMatmulRoutine, &K_GROUPED_SETTINGS)
 }

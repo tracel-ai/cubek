@@ -7,37 +7,37 @@ use cubecl::calculate_cube_count_elemwise;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 
 /// What an attention routine declines where a packed cache is read through an index list.
-pub const INDEXED_KEYS_UNREAD: Refusal = Refusal::Declined {
+pub const INDEXED_KEYS_UNREAD: Decline = Decline::Unserved {
     why: "the packed attention reads every attended key of a packed cache, not an index list",
 };
 
 /// What an attention routine declines where the keys read through an index list are hidden from
 /// a query by their position: a listed key's position is its slot in the list, not the cache's.
-pub const INDEXED_VISIBILITY_UNREAD: Refusal = Refusal::Declined {
+pub const INDEXED_VISIBILITY_UNREAD: Decline = Decline::Unserved {
     why: "keys read through an index list are attended whole: no mask places them by position",
 };
 
 /// What an attention routine declines where a listed block of keys would straddle two pages, or
 /// the key and value buffers would place the blocks apart.
-pub const KEY_BLOCK_SPLITS_A_PAGE: Refusal = Refusal::Declined {
+pub const KEY_BLOCK_SPLITS_A_PAGE: Decline = Decline::Unserved {
     why: "a block of listed keys lies in one page, and at the same place of the key and value \
           buffers",
 };
 
 /// What an attention routine declines where a packed cache lies in pools of pages.
-pub const PAGED_PACKED_UNREAD: Refusal = Refusal::Declined {
+pub const PAGED_PACKED_UNREAD: Decline = Decline::Unserved {
     why: "the packed attention reads a packed cache laid out as sequences, not in pages",
 };
 
 /// What an attention routine declines where a packed cache is stated under per-tensor scales: its
 /// keys and values are read under the norms it stores.
-pub const SCALED_PACKED_UNREAD: Refusal = Refusal::Declined {
+pub const SCALED_PACKED_UNREAD: Decline = Decline::Unserved {
     why: "a packed cache is read under the norms it stores, not under per-tensor scales",
 };
 
@@ -169,7 +169,7 @@ impl KvSource {
         self,
         client: &Client,
         visibility: AttentionVisibility,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let Some(blocks) = self.blocks else {
             return Ok(self);
         };
@@ -260,7 +260,7 @@ impl BlockPool {
     ///
     /// [`KEY_BLOCK_SPLITS_A_PAGE`] where `size` does not tile a page, or a page's stride is not a
     /// whole number of blocks.
-    fn of(buffer: &PlainTensor, size: NonZeroUsize) -> Result<Self, Refusal> {
+    fn of(buffer: &PlainTensor, size: NonZeroUsize) -> Result<Self, Decline> {
         let (shape, strides) = (buffer.shape(), &buffer.binding.strides);
         let size = size.get();
         let block_stride = size * strides[2];
@@ -494,8 +494,8 @@ mod tests {
                     .indexed(listed(), block),
             ];
             for source in listed_sources {
-                let actual = run(source).unwrap_or_else(|refusal| {
-                    panic!("{kernel:?} reads the gathered keys, and declines the listed: {refusal}")
+                let actual = run(source).unwrap_or_else(|decline| {
+                    panic!("{kernel:?} reads the gathered keys, and declines the listed: {decline}")
                 });
                 let compared = cubek_test_utils::assert_equals_approx(&actual, &expected, 1e-4);
                 assert!(

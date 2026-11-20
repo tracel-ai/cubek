@@ -12,7 +12,7 @@ use crate::kernels::{
 };
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{
-    Delivery, DestinationLaunch, Refusal, TmaStored, VectorRequirement, Vectorization,
+    Decline, Delivery, DestinationLaunch, TmaStored, VectorRequirement, Vectorization,
 };
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::CubeOrder;
@@ -20,7 +20,7 @@ use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
-    CubeStagedResolved, CubeStagedStore, CubeStagedTmaRefusal, CubeStagedTmaStoreRefusal,
+    CubeStagedResolved, CubeStagedStore, CubeStagedTmaDecline, CubeStagedTmaStoreDecline,
     MatmulCubeSpace, MatmulCubeWrite,
 };
 use cubek_microkernel::matmul::{
@@ -56,7 +56,7 @@ impl<'a> CubeStagedPlacement<'a> {
     /// and its box stored by `store`, placed one cube a box in `cube_order` and resolved. A
     /// microkernel decoding a packed input reads it in whole steps ([`MatmulView::check_steps`]).
     /// A box the TMA engine stores is checked before resolving, which sizes the shared memory it
-    /// is drained into ([`CubeStagedTmaStoreRefusal`]).
+    /// is drained into ([`CubeStagedTmaStoreDecline`]).
     /// A stage an engine fills lands as it lies, so there a float product's planes read their
     /// stages undecoded, never rounded by the units on the way in.
     pub(crate) fn new(
@@ -66,7 +66,7 @@ impl<'a> CubeStagedPlacement<'a> {
         cube_order: CubeOrder,
         fill: CubeStagedFill,
         store: CubeStagedStore,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let view = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         CubeStagedMicrokernel::admits(&item)?;
@@ -85,7 +85,7 @@ impl<'a> CubeStagedPlacement<'a> {
                 }
                 .summed(hw, &item)
             })
-            .ok_or(Refusal::Declined {
+            .ok_or(Decline::Unserved {
                 why: CubeStagedMicrokernel::decline(settings),
             })?;
         if microkernel.walk().decoded().is_some() {
@@ -121,20 +121,20 @@ impl<'a> CubeStagedPlacement<'a> {
 
     /// Whether the TMA engine can fill its stages: the device has it and the ring holds what it
     /// lands ([`Delivery::runs_on`], [`Delivery::holds`]), a box lands each stage as its
-    /// instruction reads it ([`CubeStagedTmaRefusal`]), the operands are read through no index,
+    /// instruction reads it ([`CubeStagedTmaDecline`]), the operands are read through no index,
     /// and no input's rows are one element wide.
-    pub(crate) fn check_tma_fill(&self, hw: &Hardware) -> Result<(), Refusal> {
+    pub(crate) fn check_tma_fill(&self, hw: &Hardware) -> Result<(), Decline> {
         let microkernel = self.microkernel();
         Delivery::Tma.runs_on(&hw.properties)?;
         Delivery::Tma.holds(microkernel.ring.prefetch)?;
         let orders = microkernel.plane.orders;
-        if let Some(refusal) = CubeStagedTmaRefusal::new(
+        if let Some(decline) = CubeStagedTmaDecline::new(
             &self.contracted,
             &self.problem.buffers(orders),
             &self.cube_space,
             microkernel,
         ) {
-            return Err(refusal.into());
+            return Err(decline.into());
         }
         if self.problem.index.is_some() {
             return Err(MATMUL_INDEX_UNREAD_BY_TMA);
@@ -152,7 +152,7 @@ impl<'a> CubeStagedPlacement<'a> {
     /// Whether the copy engine can fill its stages through its ring: the device has it, and the
     /// ring holds what it lands ([`Delivery::runs_on`], [`Delivery::holds`]); the lines it copies
     /// are checked once the blueprint binds their widths ([`check_copy_engine_lines`]).
-    pub(crate) fn check_copy_engine(&self, hw: &Hardware) -> Result<(), Refusal> {
+    pub(crate) fn check_copy_engine(&self, hw: &Hardware) -> Result<(), Decline> {
         Delivery::AsyncPerUnit.runs_on(&hw.properties)?;
         Delivery::AsyncPerUnit.holds(self.microkernel().ring.prefetch)
     }
@@ -162,7 +162,7 @@ impl<'a> CubeStagedPlacement<'a> {
     pub(crate) fn prepare(
         self,
         hw: &Hardware,
-    ) -> Result<(CubeStagedMatmulRoutineBlueprint, Grid), Refusal> {
+    ) -> Result<(CubeStagedMatmulRoutineBlueprint, Grid), Decline> {
         let Self {
             problem,
             view,
@@ -207,7 +207,7 @@ impl<'a> CubeStagedPlacement<'a> {
 }
 
 /// Whether the TMA engine can store `microkernel`'s box of `problem`, stated as `contracted`, in
-/// the box `cube_space`, each cube writing its own box once ([`CubeStagedTmaStoreRefusal`]), the
+/// the box `cube_space`, each cube writing its own box once ([`CubeStagedTmaStoreDecline`]), the
 /// output's rows more than one element wide.
 fn check_tma_store(
     hw: &Hardware,
@@ -215,9 +215,9 @@ fn check_tma_store(
     contracted: &MatmulWorkItem,
     cube_space: &MatmulCubeSpace,
     microkernel: &CubeStagedMicrokernel,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     let orders = microkernel.plane.orders;
-    if let Some(refusal) = CubeStagedTmaStoreRefusal::new(
+    if let Some(decline) = CubeStagedTmaStoreDecline::new(
         hw,
         contracted,
         &problem.buffers(orders),
@@ -225,7 +225,7 @@ fn check_tma_store(
         MatmulCubeWrite::Replace,
         microkernel.planes_along_k,
     ) {
-        return Err(refusal.into());
+        return Err(decline.into());
     }
     match problem.rows_one_element_wide(MatmulOperand::Out, orders.out) {
         true => Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA),
@@ -238,7 +238,7 @@ fn check_tma_store(
 pub(crate) fn check_copy_engine_lines(
     blueprint: &CubeStagedMatmulRoutineBlueprint,
     contracted: &MatmulWorkItem,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     MatmulOperand::INPUTS
         .into_iter()
         .filter(|&operand| blueprint.microkernel.reads.get(operand).staged().is_none())

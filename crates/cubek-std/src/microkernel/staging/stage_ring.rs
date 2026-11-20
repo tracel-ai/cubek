@@ -71,7 +71,7 @@ impl StageRing {
 
     /// The ring that fills stages of `operands` on a cube of `units` units: this one, prefetching
     /// into its slots where the tile DSL would refuse to hold the next stage in registers. A
-    /// refusal is made at expansion, where it is a launch that writes nothing; so every setting
+    /// decline is made at expansion, where it is a launch that writes nothing; so every setting
     /// runs on every problem, and where it resolves to another's ring it compiles that one's
     /// launch.
     ///
@@ -155,7 +155,7 @@ mod tests {
     }
 
     /// The tile DSL holds one stage ahead in registers and refuses a deeper ring at expansion,
-    /// where the refusal is a launch that writes nothing: a deeper ring keeps its depth and
+    /// where the decline is a launch that writes nothing: a deeper ring keeps its depth and
     /// prefetches into its slots instead.
     #[test]
     fn a_ring_deeper_than_two_prefetches_into_its_slots() {

@@ -2,7 +2,7 @@
 //! or contracting stages the cube's units fill.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Dimension, Partitioning, SoftwareMatmul, StageStorage, Tile, TileTensor};
 use cubecl::{self as cubecl, cube};
@@ -48,7 +48,7 @@ impl CubeShuffleLaunch {
         rows: WholeRows,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item_of(MatmulRows::Whole(rows.0), Self::RHS);
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, settings)?;
         let mut vectorization = Vectorization::new();
@@ -83,7 +83,7 @@ impl MatmulLaunch for CubeShuffleLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let microkernel = &self.microkernel;
         let launcher = self
             .one_cube
@@ -178,14 +178,14 @@ impl CubeStagedLaunch {
         settings: &CubeStagedMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item();
         CubeStagedMicrokernel::admits(&item)?;
         // A stage the fill decodes binds its input as words, which this launch's plain bindings
         // do not: the first candidate staging its inputs as they lie.
         let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
             .find(|candidate| candidate.walk().decoded().is_none())
-            .ok_or(Refusal::Declined {
+            .ok_or(Decline::Unserved {
                 why: "every cube staged candidate decodes its stages, which bind words",
             })?;
         let contracted = microkernel.contracted(&item);
@@ -196,7 +196,7 @@ impl CubeStagedLaunch {
         );
         let resolved = microkernel.resolve(hw, &contracted, &placed.cube_space())?;
         if resolved.shared_memory > hw.shared_memory_budget() {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the cube's stages hold more shared memory than the device has",
             });
         }
@@ -234,7 +234,7 @@ impl MatmulLaunch for CubeStagedLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let launcher = self.one_cube.launcher(client, self.plane_width)?;
         let [lhs, rhs, out] = self
             .elements

@@ -6,7 +6,7 @@
 use core::fmt::Debug;
 use cubecl::prelude::*;
 use cubecl::tile::Space;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::attention::{
     AttentionCacheKind, AttentionOperand, AttentionOperands, AttentionReading, AttentionVisibility,
     AttentionWorkItem,
@@ -113,5 +113,5 @@ pub trait AttentionLaunch: Debug {
         lengths: TensorArg,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal>;
+    ) -> Result<(), Decline>;
 }

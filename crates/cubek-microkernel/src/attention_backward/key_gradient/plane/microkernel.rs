@@ -132,12 +132,12 @@ impl KeyGradientSums {
         #[comptime] microkernel: PlaneKeyGradientMicrokernel,
     ) -> KeyGradientSums {
         let mut key = key_gradient
-            .accumulator::<EA>(scores, query, Semiring::SUM_PROD)
+            .accumulator::<EA>(scores, query, Semiring::SumProd)
             .with_scratch(microkernel.sum_scratch());
         key.zero();
 
         let mut value = value_gradient
-            .accumulator::<EA>(scores, out_gradient, Semiring::SUM_PROD)
+            .accumulator::<EA>(scores, out_gradient, Semiring::SumProd)
             .with_scratch(microkernel.sum_scratch());
         value.zero();
 

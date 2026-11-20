@@ -4,7 +4,7 @@
 use core::cmp::Reverse;
 use std::sync::Arc;
 
-use cubecl::tile::launch::{Delivery, Refusal};
+use cubecl::tile::launch::{Decline, Delivery};
 use cubecl::tile::layout::Stagger;
 use cubecl::{
     CubeDim,
@@ -75,15 +75,15 @@ impl Hardware {
     ///
     /// # Errors
     ///
-    /// [`Refusal::PlanesUnavailable`] without plane operations, [`Refusal::ImprecisePlaneDim`]
+    /// [`Decline::PlanesUnavailable`] without plane operations, [`Decline::ImprecisePlaneDim`]
     /// where the runtime reports a range.
-    pub fn plane_dim(&self) -> Result<u32, Refusal> {
+    pub fn plane_dim(&self) -> Result<u32, Decline> {
         let hardware = &self.properties.hardware;
         if !self.properties.features.plane.contains(Plane::Ops) {
-            return Err(Refusal::PlanesUnavailable);
+            return Err(Decline::PlanesUnavailable);
         }
         if hardware.plane_size_min != hardware.plane_size_max {
-            return Err(Refusal::ImprecisePlaneDim {
+            return Err(Decline::ImprecisePlaneDim {
                 min: hardware.plane_size_min,
                 max: hardware.plane_size_max,
             });
@@ -103,7 +103,7 @@ impl Hardware {
     /// # Errors
     ///
     /// [`plane_dim`](Self::plane_dim)'s, for a fabricated width or a range.
-    pub fn plane_size(&self) -> Result<u32, Refusal> {
+    pub fn plane_size(&self) -> Result<u32, Decline> {
         let hardware = &self.properties.hardware;
         let single_unit = !self.properties.features.plane.contains(Plane::Ops)
             && hardware.plane_size_min == 1
@@ -638,11 +638,11 @@ mod tests {
         assert_eq!(device(1, 1, false, Some(12)).plane_size(), Ok(1));
         assert_eq!(
             device(8, 128, false, None).plane_dim(),
-            Err(Refusal::PlanesUnavailable)
+            Err(Decline::PlanesUnavailable)
         );
         assert_eq!(
             device(32, 64, true, None).plane_dim(),
-            Err(Refusal::ImprecisePlaneDim { min: 32, max: 64 })
+            Err(Decline::ImprecisePlaneDim { min: 32, max: 64 })
         );
     }
 

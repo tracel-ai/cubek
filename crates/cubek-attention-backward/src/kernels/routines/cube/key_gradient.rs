@@ -3,7 +3,7 @@
 use super::kernel::cube_staged_key_gradient_kernel;
 use super::{CubeStagedKeyWalkBlueprint, CubeStagedKeyWalkSettings, key_walk};
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::S;
 use cubek_std::Hardware;
 
@@ -24,7 +24,7 @@ impl CubeStagedKeyGradientRoutine {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &CubeStagedKeyWalkSettings,
-    ) -> Result<CubeStagedKeyWalkBlueprint, Refusal> {
+    ) -> Result<CubeStagedKeyWalkBlueprint, Decline> {
         key_walk(hw, problem, settings, |tiling| Ok(tiling.cubes(&[S])))
     }
 

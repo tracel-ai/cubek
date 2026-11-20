@@ -5,7 +5,7 @@ use cubecl::CubeTuneId;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::metadata::Metadata;
 use cubek_std::Hardware;
 use cubek_std::plan::BoxedPlan;
@@ -84,7 +84,7 @@ pub struct MatmulCallInput {
 }
 
 /// The framework's dequantize of one packed input, into the element the product is written in.
-pub type FrameworkDequantize = Arc<dyn Fn() -> Result<PlainTensor, Refusal> + Send + Sync>;
+pub type FrameworkDequantize = Arc<dyn Fn() -> Result<PlainTensor, Decline> + Send + Sync>;
 
 impl MatmulCallInput {
     /// A float input, which no dequantize is asked about.

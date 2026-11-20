@@ -4,7 +4,7 @@ use crate::matmul::{
     MatmulOperands, MatmulRows, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::layout::Run;
 use cubecl::tile::{Dimension, Levels, SoftwareMatmul};
 use cubek_std::Hardware;
@@ -100,12 +100,12 @@ impl PlaneShuffleMicrokernel {
     pub const MAX_ROWS: usize = 8;
 
     /// What a product of no rows, or of more than [`MAX_ROWS`](Self::MAX_ROWS), is declined with.
-    pub const ROWS_OUT_OF_RANGE: Refusal = Refusal::Declined {
+    pub const ROWS_OUT_OF_RANGE: Decline = Decline::Unserved {
         why: "the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs",
     };
 
     /// What an rhs lined along neither of its dimensions is declined with.
-    pub(crate) const STRIDED_RHS: Refusal = Refusal::Declined {
+    pub(crate) const STRIDED_RHS: Decline = Decline::Unserved {
         why: "the plane shuffle reads an rhs lined along `K` or `N`",
     };
 
@@ -432,7 +432,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
 
     /// From one row to [`MAX_ROWS`](Self::MAX_ROWS), every one held whole, and an rhs lined
     /// along one of its dimensions.
-    fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
+    fn admits(item: &MatmulWorkItem) -> Result<(), Decline> {
         match item.rows {
             MatmulRows::Whole(rows) if (1..=Self::MAX_ROWS).contains(&rows) => {}
             MatmulRows::Whole(_) | MatmulRows::Tiled => return Err(Self::ROWS_OUT_OF_RANGE),

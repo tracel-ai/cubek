@@ -6,7 +6,7 @@ use crate::kernels::{
     MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::{Space, StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::{CubeStagedDelivery, MatmulCubeWrite};
 use cubek_microkernel::matmul::hypercube::{
@@ -78,7 +78,7 @@ pub type HypercubeLastArrivalMatmulRoutineBlueprint =
 impl HypercubeLastArrivalMatmulRoutine {
     /// What it declines on a device that does not say how many workers it has, the count its grid
     /// is sized by.
-    pub const UNSIZED: Refusal = Refusal::Declined {
+    pub const UNSIZED: Decline = Decline::Unserved {
         why: "the last-arrival routine sizes its grid by the device's workers, which this device does not report",
     };
 
@@ -87,7 +87,7 @@ impl HypercubeLastArrivalMatmulRoutine {
     fn cubes(
         hw: &Hardware,
         settings: &HypercubeLastArrivalMatmulRoutineSettings,
-    ) -> Result<NonZeroUsize, Refusal> {
+    ) -> Result<NonZeroUsize, Decline> {
         let workers = hw
             .workers()
             .and_then(|workers| NonZeroUsize::new(workers as usize))
@@ -131,7 +131,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
     /// ([`HypercubeStagedMicrokernel::settings`]). Nothing where one
     /// cube's stores do not reach another within a launch, or where the device does not say how
     /// many workers it has, where every one of them declines.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.properties.features.device_memory_scope || hw.workers().is_none() {
             return Vec::new();
         }
@@ -154,7 +154,6 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
     /// Nothing of its own: it only distributes the cubes, and their microkernel makes every
     /// access.
     fn vectorize(
-        &self,
         microkernel: &HypercubeStagedMicrokernel,
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -172,7 +171,6 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
     /// for each tile it touches, which is at most one more. The launch zeroing the arrival counters
     /// is the launch's, outside the kernel's estimate.
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &HypercubeLastArrivalMatmulRoutineBlueprint,
         grid: &Grid,
@@ -195,11 +193,10 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
     /// arrival. The slots hold the sum's element and the merge copies one into the output line for
     /// line, so the output is no wider than a line of the sum.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_unindexed()?;
         let view = MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
@@ -262,7 +259,7 @@ impl HypercubeLastArrivalMatmulRoutine {
     /// four cubes a worker. None where the routine's own list is empty: on a
     /// device whose cubes do not meet within a launch, or that reports no workers.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<HypercubeLastArrivalMatmulRoutineSettings> {
-        if self.settings(hw).is_empty() {
+        if HypercubeLastArrivalMatmulRoutine::settings(hw).is_empty() {
             return Vec::new();
         }
         CubeStagedMatmulRoutine
@@ -394,9 +391,9 @@ mod tests {
             ring: StageRing::DOUBLE,
             ..cube
         };
-        let declined = HypercubeLastArrivalMatmulRoutine.prepare(&hw, &problem, &settings);
+        let declined = HypercubeLastArrivalMatmulRoutine::prepare(&hw, &problem, &settings);
         assert!(
-            matches!(declined, Err(Refusal::Declined { .. })),
+            matches!(declined, Err(Decline::Unserved { .. })),
             "{settings}: {declined:?}"
         );
     }
@@ -408,10 +405,10 @@ mod tests {
     fn every_setting_prepares_where_cubes_meet() {
         let problem = MatmulRoutineProblem::dense(37, 29, 300, F16);
         for hw in [devices::strix_halo(), devices::h100()].map(offering) {
-            for settings in HypercubeLastArrivalMatmulRoutine.settings(&hw) {
-                let (blueprint, _) = HypercubeLastArrivalMatmulRoutine
-                    .prepare(&hw, &problem, &settings)
-                    .unwrap_or_else(|refusal| panic!("{settings}: {refusal:?}"));
+            for settings in HypercubeLastArrivalMatmulRoutine::settings(&hw) {
+                let (blueprint, _) =
+                    HypercubeLastArrivalMatmulRoutine::prepare(&hw, &problem, &settings)
+                        .unwrap_or_else(|decline| panic!("{settings}: {decline:?}"));
                 let partitioning = &blueprint.partitioning;
                 assert_eq!(
                     blueprint.microkernel.cube.stage(&partitioning.cube_space()),
@@ -434,11 +431,11 @@ mod tests {
             devices::features(&mut hw).device_memory_scope = false;
             hw
         };
-        let declined = HypercubeLastArrivalMatmulRoutine.prepare(&isolated, &problem, &settings);
+        let declined = HypercubeLastArrivalMatmulRoutine::prepare(&isolated, &problem, &settings);
         assert!(
             matches!(
                 declined,
-                Err(Refusal::Declined {
+                Err(Decline::Unserved {
                     why: HypercubeStagedMicrokernel::DECLINE
                 })
             ),
@@ -449,7 +446,7 @@ mod tests {
             devices::topology(&mut hw).num_streaming_multiprocessors = None;
             hw
         };
-        let declined = HypercubeLastArrivalMatmulRoutine.prepare(&uncounted, &problem, &settings);
+        let declined = HypercubeLastArrivalMatmulRoutine::prepare(&uncounted, &problem, &settings);
         assert!(
             matches!(declined, Err(HypercubeLastArrivalMatmulRoutine::UNSIZED)),
             "{declined:?}"
@@ -465,9 +462,9 @@ mod tests {
         let settings = HypercubeLastArrivalMatmulRoutineSettings::DEFAULT;
         for (m, n, k) in [(159 * 128, 256, 512), (2560, 2048, 256), (2048, 4096, 1024)] {
             let problem = MatmulRoutineProblem::dense(m, n, k, F16);
-            let (blueprint, grid) = HypercubeLastArrivalMatmulRoutine
-                .prepare(&hw, &problem, &settings)
-                .expect("the routine runs here");
+            let (blueprint, grid) =
+                HypercubeLastArrivalMatmulRoutine::prepare(&hw, &problem, &settings)
+                    .expect("the routine runs here");
             assert_eq!(grid.cubes(), Some(160), "{m}x{n}x{k}");
             assert_eq!(
                 blueprint.partitioning.cube_space().extent(K),
@@ -485,13 +482,12 @@ mod tests {
     fn a_cube_is_estimated_by_its_run() {
         let hw = offering(devices::strix_halo());
         let problem = MatmulRoutineProblem::dense(4096, 2048, 1024, F16);
-        let (blueprint, grid) = HypercubeLastArrivalMatmulRoutine
-            .prepare(
-                &hw,
-                &problem,
-                &HypercubeLastArrivalMatmulRoutineSettings::DEFAULT,
-            )
-            .expect("the routine runs here");
+        let (blueprint, grid) = HypercubeLastArrivalMatmulRoutine::prepare(
+            &hw,
+            &problem,
+            &HypercubeLastArrivalMatmulRoutineSettings::DEFAULT,
+        )
+        .expect("the routine runs here");
         let partitioning = &blueprint.partitioning;
         let cube = partitioning.cube_space().space;
         assert_eq!((cube.extent(M), cube.extent(N)), (128, 256));

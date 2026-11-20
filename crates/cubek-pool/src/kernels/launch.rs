@@ -7,7 +7,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::kind::Boundary;
-use cubecl::tile::launch::{Bound, BoundaryPolicy, Refusal};
+use cubecl::tile::launch::{Bound, BoundaryPolicy, Decline};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Launcher, Partitioning};
 use cubek_std::Hardware;
@@ -29,8 +29,8 @@ pub fn launch_pool_routine<R: PoolRoutine>(
     hw: &Hardware,
     tensors: &PoolTensors,
     settings: &R::Settings,
-) -> Result<(), Refusal> {
-    let (blueprint, grid) = routine.prepare(hw, tensors.problem(), settings)?;
+) -> Result<(), Decline> {
+    let (blueprint, grid) = R::prepare(hw, tensors.problem(), settings)?;
     routine.dispatch(tensors, blueprint, grid);
     Ok(())
 }

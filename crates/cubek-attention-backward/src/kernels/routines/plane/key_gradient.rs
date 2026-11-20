@@ -7,7 +7,7 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Partitioning;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_microkernel::attention::{B, KV, Q, S};
 use cubek_microkernel::attention_backward::key_gradient::plane::{
@@ -49,7 +49,7 @@ impl PlaneFragmentKeyGradientRoutine {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &PlaneFragmentKeyGradientRoutineSettings,
-    ) -> Result<PlaneFragmentKeyGradientBlueprint, Refusal> {
+    ) -> Result<PlaneFragmentKeyGradientBlueprint, Decline> {
         let item = problem.work_item();
         let microkernel = PlaneKeyGradientMicrokernel::best(hw, &item, &settings.microkernel)?;
         let planes = settings.planes.get();

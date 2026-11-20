@@ -3,7 +3,7 @@
 
 use core::fmt::Debug;
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::{
     Dimension, Launcher, Level, Partitioning, Space, StageStorage, TileSpec, TileTensorLaunch,
 };
@@ -61,7 +61,7 @@ pub trait AttentionBackwardLaunch: Debug {
         args: AttentionBackwardOperandArgs,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal>;
+    ) -> Result<(), Decline>;
 }
 
 /// A launch over one sequence of `seq` queries and keys of one head.
@@ -81,7 +81,7 @@ impl OneSequence {
         client: &Client,
         levels: Vec<Level>,
         plane_width: u32,
-    ) -> Result<Launcher, Refusal> {
+    ) -> Result<Launcher, Decline> {
         let [queries, keys] = self.seq;
         let space = Space::new(&[
             (B, 1),
@@ -116,7 +116,7 @@ impl OneSequence {
         window_bytes: usize,
         body_bytes: usize,
         plane_width: u32,
-    ) -> Result<StageRing, Refusal> {
+    ) -> Result<StageRing, Decline> {
         let operand = |row: Dimension, width: usize| {
             StagedOperand::new(
                 self.item.element,
@@ -136,7 +136,7 @@ impl OneSequence {
         if ring.bytes(stage_bytes) + window_bytes + ring.bodies() * body_bytes
             > hw.shared_memory_budget()
         {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the walk's stage holds more shared memory than the device has",
             });
         }

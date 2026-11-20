@@ -11,7 +11,7 @@ use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::prelude::TensorArg;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Delivery, Refusal};
+use cubecl::tile::launch::{Decline, Delivery};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::layout::PhysicalAxisMap;
 use cubecl::tile::{
@@ -29,20 +29,20 @@ use cubek_std::routine::Grid;
 
 /// What a launch declines before preparing anything: an element the routines do not take, or
 /// operands of two elements other than an FP8 score's.
-pub const ATTENTION_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+pub const ATTENTION_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
     why: "the microkernel attention takes an f32, f16 or bf16 query, and keys and values each in \
           one of those or in e4m3",
 };
 
 /// What a packed launch declines before preparing anything: an operand packed at a width the
 /// decode does not read, two, four and eight bits being the ones it does.
-pub const PACKED_WIDTH_UNREAD: Refusal = Refusal::Declined {
+pub const PACKED_WIDTH_UNREAD: Decline = Decline::Unserved {
     why: "the packed attention reads operands of two, four and eight bits",
 };
 
 /// What a launch declines before preparing anything: query heads that do not split evenly over
 /// the key heads.
-pub const ATTENTION_GROUP_UNEVEN: Refusal = Refusal::Declined {
+pub const ATTENTION_GROUP_UNEVEN: Decline = Decline::Unserved {
     why: "the microkernel attention's query heads are a whole group per key head",
 };
 
@@ -133,7 +133,7 @@ impl AttentionTensors {
         queries: AttentionQueries,
         kv: KvSource,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let (query, lengths, query_runs) = match queries {
             AttentionQueries::Dense { query, lengths } => (query, lengths, None),
             AttentionQueries::Packed {
@@ -193,7 +193,7 @@ impl AttentionTensors {
         value: PlainTensor,
         lengths: PlainTensor,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let queries = AttentionQueries::Dense { query, lengths };
         let kv = KvSource::new(AttentionCache::Float { key, value });
         Self::attention(client, queries, kv, scoring)
@@ -220,7 +220,7 @@ impl AttentionTensors {
         pages: PlainTensor,
         lengths: PlainTensor,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let queries = AttentionQueries::Dense { query, lengths };
         let kv = KvSource::new(AttentionCache::Float { key, value }).paged(pages);
         Self::attention(client, queries, kv, scoring)
@@ -243,7 +243,7 @@ impl AttentionTensors {
         cache: PackedAttentionCache,
         lengths: PlainTensor,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let queries = AttentionQueries::Dense { query, lengths };
         let kv = KvSource::new(AttentionCache::Packed(cache));
         Self::attention(client, queries, kv, scoring)
@@ -277,7 +277,7 @@ impl AttentionTensors {
         key: &PlainTensor,
         value: &PlainTensor,
         pages: Option<&PlainTensor>,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         Self::admit_elements(client, query, key, value)?;
         let (q_shape, k_shape, v_shape) = (query.shape(), key.shape(), value.shape());
         assert!(
@@ -330,7 +330,7 @@ impl AttentionTensors {
         client: &Client,
         query: &PlainTensor,
         cache: &PackedAttentionCache,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         Self::admit_element(client, query)?;
         if ![cache.bits.key, cache.bits.value]
             .iter()
@@ -363,7 +363,7 @@ impl AttentionTensors {
         query: &PlainTensor,
         key: &PlainTensor,
         value: &PlainTensor,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         Self::admit_element(client, query)?;
         for side in [key, value] {
             let verified =
@@ -388,7 +388,7 @@ impl AttentionTensors {
     /// # Errors
     ///
     /// [`ATTENTION_ELEMENT_UNVERIFIED`] and [`ELEMENT_NOT_ON_DEVICE`].
-    fn admit_element(client: &Client, query: &PlainTensor) -> Result<(), Refusal> {
+    fn admit_element(client: &Client, query: &PlainTensor) -> Result<(), Decline> {
         if !Self::VERIFIED.contains(&query.elem) {
             return Err(ATTENTION_ELEMENT_UNVERIFIED);
         }
@@ -403,7 +403,7 @@ impl AttentionTensors {
     /// # Errors
     ///
     /// [`ATTENTION_GROUP_UNEVEN`].
-    fn group(query: &PlainTensor, kv_heads: usize) -> Result<usize, Refusal> {
+    fn group(query: &PlainTensor, kv_heads: usize) -> Result<usize, Decline> {
         let heads = query.shape()[1];
         if kv_heads == 0 || !heads.is_multiple_of(kv_heads) {
             return Err(ATTENTION_GROUP_UNEVEN);

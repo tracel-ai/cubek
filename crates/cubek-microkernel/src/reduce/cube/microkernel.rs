@@ -1,5 +1,8 @@
-use super::base::CubeReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
+use super::base::CubeStagedReduceMicrokernel;
+use crate::reduce::{
+    ReduceAccumulator, ReduceCarrier, accumulate_strided, is_first_unit_of_cube, row_lanes,
+    row_values,
+};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -8,40 +11,47 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// the rows it reduces, consecutive units reading consecutive lines; each plane's lanes meet in the
 /// plane's instructions, the planes meet in shared memory ([`ReduceAccumulator::across_planes`]), and the
 /// cube's first unit writes the total to `out`, the cube's window of the output.
-///
-/// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-pub fn cube_reduce_microkernel<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+pub(crate) fn cube_staged_reduce_microkernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+>(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
-    #[comptime] microkernel: CubeReduceMicrokernel,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
 ) {
-    match microkernel.item.operation.carrier() {
-        ReduceCarrier::Values => {
-            cube_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(input, out, indices, microkernel)
-        }
-        ReduceCarrier::Indexed => {
-            cube_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(input, out, indices, microkernel)
-        }
+    match microkernel.item().operation.carrier() {
+        ReduceCarrier::Values => cube_staged_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
+            input,
+            out,
+            indices,
+            microkernel,
+        ),
+        ReduceCarrier::Indexed => cube_staged_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
+            input,
+            out,
+            indices,
+            microkernel,
+        ),
         ReduceCarrier::TopK { k } => {
-            let size!(K) = k;
-            cube_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+            cube_staged_reduce_top_k::<In, Acc, Out, Idx, N>(input, out, indices, microkernel, k)
         }
-        ReduceCarrier::TopValues { k } => {
-            let size!(K) = k;
-            cube_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
-                input,
-                out,
-                indices,
-                microkernel,
-            )
-        }
+        ReduceCarrier::TopValues { k } => cube_staged_reduce_top_values::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            microkernel,
+            k,
+        ),
     }
 }
 
 #[cube]
-fn cube_reduce<
+fn cube_staged_reduce<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -51,47 +61,90 @@ fn cube_reduce<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
-    #[comptime] microkernel: CubeReduceMicrokernel,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
 ) {
-    let operation = microkernel.item.operation;
-    let monoid = operation.monoid();
-    let layout = microkernel.item.layout;
-    let units = microkernel.lanes * microkernel.planes;
+    let operation = microkernel.item().operation;
+    let row_lanes = row_lanes(input);
+    let count = input.flat::<In, N>().shape();
 
-    let unit = PLANE_POS as usize * microkernel.lanes + UNIT_POS_PLANE as usize;
+    let total = cube_staged_reduce_part::<In, Acc, N, C>(input, 0, count, microkernel);
 
-    let lines = input.flat::<In, N>();
-    let count = lines.shape();
+    let values = row_values(count, row_lanes);
 
-    let mut acc = C::identity(monoid);
-    for step in 0..count.div_ceil(units) {
-        let line = unit + step * units;
-        if line < count {
-            let read = read_mapped::<Acc, N>(
-                Vector::<Acc, N>::cast_from(lines.read(line)),
-                operation.read_map(),
-            );
-            C::accumulate(&mut acc, read, line, layout, monoid);
-        }
-    }
-
-    let plane = C::across(acc, UnitShare::Plane, monoid);
-    let total = C::across_planes(plane, microkernel.planes, monoid);
-
-    if unit == 0 {
-        let values = match layout {
-            ReduceLayout::Along => count * N::value(),
-            ReduceLayout::Across => count,
-        };
+    if is_first_unit_of_cube() {
         C::write::<Out, Idx>(
             total,
             out,
             indices,
             values,
-            layout,
+            row_lanes,
             operation,
-            microkernel.item.writes(),
+            microkernel.item().writes(),
         );
     }
+}
+
+/// The first `count` lines of `input`, the line at `l` read as line `first_line + l` of its row,
+/// accumulated by the cube into `C`: each unit takes every `units`-th line, consecutive units
+/// reading consecutive lines, each plane's lanes meet in the plane's instructions and the planes in
+/// shared memory ([`ReduceAccumulator::across_planes`]). The cube's first unit is left with the
+/// total.
+#[cube]
+pub(crate) fn cube_staged_reduce_part<
+    In: Numeric,
+    Acc: Numeric,
+    N: Size,
+    C: ReduceAccumulator<Acc, N>,
+>(
+    input: &Tile,
+    first_line: usize,
+    count: usize,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+) -> C {
+    let monoid = microkernel.item().operation.monoid();
+    let unit = PLANE_POS as usize * microkernel.lanes() + UNIT_POS_PLANE as usize;
+    let acc = accumulate_strided::<In, Acc, N, C>(
+        input,
+        unit,
+        microkernel.units(),
+        count,
+        first_line,
+        microkernel.item(),
+    );
+
+    let plane = C::across(acc, UnitShare::Plane, monoid);
+    C::across_planes(plane, microkernel.planes(), monoid)
+}
+
+/// [`cube_staged_reduce`] into a top-k of `k` slots, `K` bound in the function that uses it.
+#[cube]
+fn cube_staged_reduce_top_k<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    cube_staged_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+}
+
+/// [`cube_staged_reduce`] into a top-k of `k` values without their indices, `K` bound in the
+/// function that uses it.
+#[cube]
+fn cube_staged_reduce_top_values<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    cube_staged_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+        input,
+        out,
+        indices,
+        microkernel,
+    )
 }

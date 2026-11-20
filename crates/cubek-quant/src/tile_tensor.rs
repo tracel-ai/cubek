@@ -3,7 +3,7 @@
 use cubecl::tile::{
     TileTensorLaunch,
     kind::Field,
-    launch::{Arg, Labelled, Refusal},
+    launch::{Arg, Decline, Labelled},
 };
 use cubecl_common::quant::scheme::QuantScheme;
 
@@ -15,7 +15,7 @@ pub fn quantized_arg<'a>(
     scheme: &QuantScheme,
     values: Arg<'a, Labelled>,
     scales: impl IntoIterator<Item = Arg<'a, Labelled>>,
-) -> Result<TileTensorLaunch, Refusal> {
+) -> Result<TileTensorLaunch, Decline> {
     quantized_arg_shifted(scheme, values, scales, Vec::new())
 }
 
@@ -27,7 +27,7 @@ pub fn quantized_arg_shifted<'a>(
     values: Arg<'a, Labelled>,
     scales: impl IntoIterator<Item = Arg<'a, Labelled>>,
     offsets: Vec<i32>,
-) -> Result<TileTensorLaunch, Refusal> {
+) -> Result<TileTensorLaunch, Decline> {
     let fields = scheme
         .block_scale()
         .map(|block| block.dtype)

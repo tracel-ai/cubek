@@ -2,7 +2,7 @@
 //! cube's only unit.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::space::{ComputeScope, UnitCube};
 use cubecl::tile::{Launcher, Partitioning, Space, Tile, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
@@ -42,7 +42,7 @@ impl UnitAttentionLaunch {
         settings: &UnitAttentionMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item(dims);
         let microkernel = UnitAttentionMicrokernel::best(hw, &item, settings)?;
         Ok(Self {
@@ -77,7 +77,7 @@ impl AttentionLaunch for UnitAttentionLaunch {
         lengths: TensorArg,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let [queries, keys] = self.seq;
         let item = &self.item;
         let space = Space::new(&[

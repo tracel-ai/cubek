@@ -1,6 +1,6 @@
 //! What a walk stages in shared memory, and the grid that holds it.
 
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{Partitioning, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{StageRing, StagedOperand};
@@ -33,7 +33,7 @@ impl WalkStages {
         &self,
         hw: &Hardware,
         partitioning: &Partitioning,
-    ) -> Result<(Grid, StageRing), Refusal> {
+    ) -> Result<(Grid, StageRing), Decline> {
         let plane_width = hw.plane_dim()?;
         let ring = self
             .ring

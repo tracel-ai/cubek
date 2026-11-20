@@ -1,112 +1,58 @@
-//! Cube-routine coverage for the fused reduce paths.
+//! The cube kernel on the fused reduce paths, values and indices from one launch.
 //!
-//! The `reduce_dim` matrix only instantiates the unit and plane routines, so
-//! nothing there reaches [`GlobalFullCubeReduce`]. That matters for the fused
-//! path specifically: the cube routine is the only one that stages accumulators
-//! in shared memory, so it is the only caller of `TopKSharedAccumulator`. The
-//! single-output `reduce` never reaches that type either, as it goes through the
-//! mixed `ReduceOperation` and its `DynamicSharedAccumulator`, which left the
-//! top-k shared accumulator entirely unexercised until `reduce_with_indices`
-//! started monomorphising over `TopK` directly.
-//!
-//! These shapes are small so the cube kernels stay cheap to compile (the top-k
-//! insert/merge are unrolled over `k`), unlike the `heavy` suites.
+//! The `reduce_dim` matrix runs the cube kernel only under `heavy`, and the cube is the kernel
+//! whose planes meet through shared memory, the values and their indices staged side by side. These
+//! shapes are small so the cube kernels stay cheap to compile (the top-k insert and merge are
+//! unrolled over `k`).
 
-use cubecl::{
-    config::autotune::AutotuneLevel,
-    zspace::{Shape, Strides},
-};
-use cubek_reduce::{
-    ReduceStrategy,
-    launch::{RoutineStrategy, VectorizationStrategy},
-    routines::{BlueprintStrategy, cube::CubeStrategy},
-};
+use cubecl::zspace::{Shape, Strides};
 
-use crate::reduce::it::test_case::TestCase;
+use crate::reduce::it::test_case::{CUBE, TestCase};
 
-fn cube_strategy(use_planes: bool) -> ReduceStrategy {
-    ReduceStrategy {
-        vectorization: VectorizationStrategy {
-            parallel_output_vectorization: false,
-        },
-        routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy { use_planes })),
-        autotune_level: AutotuneLevel::Full,
-    }
+fn case() -> TestCase {
+    TestCase::new::<f32>(Shape::new([4, 256]), Strides::new(&[256, 1]), Some(1), CUBE)
 }
 
-fn case(use_planes: bool) -> TestCase {
-    TestCase::new::<f32>(
-        Shape::new([4, 256]),
-        Strides::new(&[256, 1]),
-        Some(1),
-        cube_strategy(use_planes),
-    )
-}
-
-// `k > 1` is the interesting case: the shared accumulator holds one slice per k,
-// so a `k == 1` accumulator stays correct even if the per-k slices are not built.
+// `k > 1` is the interesting case: the staged carrier holds one slot per k, so a `k == 1` carrier
+// stays correct even if the per-k slots are not merged.
 #[test]
-fn cube_planes_topk_with_indices_k1() {
-    case(true).test_topk_with_indices(1);
+fn cube_topk_with_indices_k1() {
+    case().test_topk_with_indices(1);
 }
 
 #[test]
-fn cube_planes_topk_with_indices_k2() {
-    case(true).test_topk_with_indices(2);
+fn cube_topk_with_indices_k2() {
+    case().test_topk_with_indices(2);
 }
 
 #[test]
-fn cube_planes_topk_with_indices_k3() {
-    case(true).test_topk_with_indices(3);
+fn cube_topk_with_indices_k3() {
+    case().test_topk_with_indices(3);
 }
 
 #[test]
-fn cube_planes_topk_with_indices_k5() {
-    case(true).test_topk_with_indices(5);
-}
-
-// The fused min/max monomorphise over `Min`/`Max` the same way, so the cube
-// routine is likewise the only caller of `ArgAccumulator`'s optional index
-// slices; the single-output paths stage through the mixed accumulator instead.
-#[test]
-fn cube_planes_min_with_indices() {
-    case(true).test_min_with_indices();
+fn cube_topk_with_indices_k5() {
+    case().test_topk_with_indices(5);
 }
 
 #[test]
-fn cube_planes_max_with_indices() {
-    case(true).test_max_with_indices();
+fn cube_min_with_indices() {
+    case().test_min_with_indices();
 }
 
 #[test]
-fn cube_units_min_with_indices() {
-    case(false).test_min_with_indices();
+fn cube_max_with_indices() {
+    case().test_max_with_indices();
+}
+
+// The values-only and indices-only paths, for comparison: a failure here means the breakage is not
+// specific to writing both.
+#[test]
+fn cube_topk_values_only_k3() {
+    case().test_topk(3);
 }
 
 #[test]
-fn cube_units_max_with_indices() {
-    case(false).test_max_with_indices();
-}
-
-#[test]
-fn cube_units_topk_with_indices_k3() {
-    case(false).test_topk_with_indices(3);
-}
-
-#[test]
-fn cube_units_topk_with_indices_k5() {
-    case(false).test_topk_with_indices(5);
-}
-
-// The values-only and indices-only cube paths, for comparison: these go through
-// the mixed accumulator and were already working, so a failure here means the
-// breakage is not fused-specific.
-#[test]
-fn cube_planes_topk_values_only_k3() {
-    case(true).test_topk(3);
-}
-
-#[test]
-fn cube_planes_argtopk_k3() {
-    case(true).test_argtopk(3);
+fn cube_argtopk_k3() {
+    case().test_argtopk(3);
 }

@@ -64,7 +64,7 @@ fn plain_matmul(
     for region in space {
         let mut c_cube = c
             .at(&region)
-            .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
+            .accumulating(SOFTWARE_MATMUL, Semiring::SumProd);
         c_cube.mm(&a.at(&region), &b.at(&region));
     }
 }
@@ -86,7 +86,7 @@ fn atomic_matmul<E: Numeric>(
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
         let mut acc =
-            c_cube.register_accumulator::<E>(&a_cube, &b_cube, SOFTWARE_MATMUL, Semiring::SUM_PROD);
+            c_cube.register_accumulator::<E>(&a_cube, &b_cube, SOFTWARE_MATMUL, Semiring::SumProd);
         acc.mma(&a_cube, &b_cube);
         c_cube.copy_cast_from(&acc);
     }
@@ -110,7 +110,7 @@ fn atomic_matmul_units<E: Numeric>(
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
         let acc =
-            c_cube.register_accumulator::<E>(&a_cube, &b_cube, SOFTWARE_MATMUL, Semiring::SUM_PROD);
+            c_cube.register_accumulator::<E>(&a_cube, &b_cube, SOFTWARE_MATMUL, Semiring::SumProd);
         for unit in cube {
             let mut acc_unit = acc.at(&unit);
             acc_unit.mma(&a_cube.at(&unit), &b_cube.at(&unit));
@@ -195,7 +195,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
-                    .unwrap_or_else(|refusal| panic!("{refusal}"))
+                    .unwrap_or_else(|decline| panic!("{decline}"))
             }
             Mapping::Workspace { .. } => {
                 let partitioning = Partitioning::new(
@@ -207,7 +207,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
-                    .unwrap_or_else(|refusal| panic!("{refusal}"))
+                    .unwrap_or_else(|decline| panic!("{decline}"))
             }
             // The cube's slice of K cut again across the plane: each unit contracts its own
             // sixteenth (or whatever the unit count makes it), the plane combines in registers,
@@ -222,7 +222,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
-                    .unwrap_or_else(|refusal| panic!("{refusal}"))
+                    .unwrap_or_else(|decline| panic!("{decline}"))
             }
         }
     }
@@ -239,7 +239,7 @@ impl Mapping {
             );
             let concrete = partitioning.space().clone();
             Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
-                .unwrap_or_else(|refusal| panic!("{refusal}"))
+                .unwrap_or_else(|decline| panic!("{decline}"))
         }
     }
 
