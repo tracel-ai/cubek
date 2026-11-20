@@ -4,7 +4,7 @@
 use cubek_matmul::kernels::{
     CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings,
     CubeStagedTmaFillerMatmulRoutine, CubeStagedTmaMatmulRoutine, CubeStagedTmaStoredMatmulRoutine,
-    PlaneShuffleMatmulRoutine,
+    HypercubeLastArrivalMatmulRoutine, PlaneShuffleMatmulRoutine,
 };
 use cubek_test_utils::ScopeUnderTest;
 
@@ -91,6 +91,12 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
     let filler = ByRoutine::new(CubeStagedTmaFillerMatmulRoutine, Declines::AsItStates);
     filler.check(filler.at(
         CubeStagedTmaFillerMatmulRoutine.packed_settings(filler.hw()),
+        products,
+    ));
+
+    let hypercube = ByRoutine::new(HypercubeLastArrivalMatmulRoutine, Declines::AsItStates);
+    hypercube.check(hypercube.at(
+        HypercubeLastArrivalMatmulRoutine.packed_settings(hypercube.hw()),
         products,
     ));
 

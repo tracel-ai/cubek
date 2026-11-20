@@ -62,13 +62,13 @@ served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19, cube-s
 
 # rtx-pro-6000 · 1 rows · q8 × q8 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · q8 × q4 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -79,26 +79,26 @@ served by: none
 
 # rtx-pro-6000 · 1 rows · q8 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · q8 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · q4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize, cube-shuffle): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · q4 × q4 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -109,13 +109,13 @@ served by: none
 
 # rtx-pro-6000 · 1 rows · q4 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · q4 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -131,9 +131,9 @@ served by: none
 
 # rtx-pro-6000 · 1 rows · nvfp4 × nvfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19, cube-staged-tma 12/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 4/9
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
-  refused (cube-staged, cube-staged-async-copy): this launch's units copy its block scales as words of their rows, and this matrix keeps them in tiles of their own, which only the TMA engine lands
+  refused (cube-staged, cube-staged-async-copy, hypercube-last-arrival): this launch's units copy its block scales as words of their rows, and this matrix keeps them in tiles of their own, which only the TMA engine lands
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · nvfp4 × mxfp4 (tiles)
@@ -148,14 +148,14 @@ served by: none
 
 # rtx-pro-6000 · 1 rows · mxfp4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize, cube-shuffle): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · mxfp4 × q4 (rows)
 served by: cube-shuffle 2/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -166,26 +166,25 @@ served by: none
   refused (plane-shuffle, plane-dequantize, cube-shuffle, cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored, hypercube-last-arrival): two packed operands are read in one block-split space, so their scales group k alike
 
 # rtx-pro-6000 · 1 rows · mxfp4 × mxfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19, cube-staged 40/88, cube-staged-async-copy 15/21, cube-staged-tma 12/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 4/9
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19, cube-staged 40/88, cube-staged-async-copy 15/21, cube-staged-tma 12/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 4/9, hypercube-last-arrival 5/113
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · mxfp4 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · mxfp8 × q8 (rows)
 served by: cube-shuffle 2/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · mxfp8 × q4 (rows)
 served by: cube-shuffle 2/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -197,13 +196,12 @@ served by: none
 
 # rtx-pro-6000 · 1 rows · mxfp8 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · mxfp8 × mxfp8 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19, cube-staged 40/88, cube-staged-async-copy 16/21, cube-staged-tma 19/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 8/9
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19, cube-staged 40/88, cube-staged-async-copy 16/21, cube-staged-tma 19/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 8/9, hypercube-last-arrival 5/113
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · f16 × f16 (rows)
@@ -280,14 +278,14 @@ served by: plane-dequantize 1/1, cube-staged 61/88, cube-staged-async-copy 18/21
 
 # rtx-pro-6000 · 512 rows · q8 × q8 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · q8 × q4 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -299,21 +297,21 @@ served by: none
 
 # rtx-pro-6000 · 512 rows · q8 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · q8 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · q4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -321,7 +319,7 @@ served by: none
 
 # rtx-pro-6000 · 512 rows · q4 × q4 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -333,14 +331,14 @@ served by: none
 
 # rtx-pro-6000 · 512 rows · q4 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · q4 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -357,10 +355,10 @@ served by: none
 
 # rtx-pro-6000 · 512 rows · nvfp4 × nvfp4 (tiles)
 served by: plane-dequantize 1/1, cube-staged-tma 12/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 4/9
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
-  refused (cube-staged, cube-staged-async-copy): this launch's units copy its block scales as words of their rows, and this matrix keeps them in tiles of their own, which only the TMA engine lands
+  refused (cube-staged, cube-staged-async-copy, hypercube-last-arrival): this launch's units copy its block scales as words of their rows, and this matrix keeps them in tiles of their own, which only the TMA engine lands
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · nvfp4 × mxfp4 (tiles)
@@ -375,7 +373,7 @@ served by: none
 
 # rtx-pro-6000 · 512 rows · mxfp4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -383,7 +381,7 @@ served by: none
 
 # rtx-pro-6000 · 512 rows · mxfp4 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -395,21 +393,20 @@ served by: none
   refused (plane-shuffle, plane-dequantize, cube-shuffle, cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored, hypercube-last-arrival): two packed operands are read in one block-split space, so their scales group k alike
 
 # rtx-pro-6000 · 512 rows · mxfp4 × mxfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 40/88, cube-staged-async-copy 15/21, cube-staged-tma 12/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 4/9
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+served by: plane-dequantize 1/1, cube-staged 40/88, cube-staged-async-copy 15/21, cube-staged-tma 12/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 4/9, hypercube-last-arrival 5/113
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · mxfp4 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · mxfp8 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -417,7 +414,7 @@ served by: none
 
 # rtx-pro-6000 · 512 rows · mxfp8 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -430,14 +427,13 @@ served by: none
 
 # rtx-pro-6000 · 512 rows · mxfp8 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · mxfp8 × mxfp8 (tiles)
-served by: plane-dequantize 1/1, cube-staged 40/88, cube-staged-async-copy 16/21, cube-staged-tma 19/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 8/9
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+served by: plane-dequantize 1/1, cube-staged 40/88, cube-staged-async-copy 16/21, cube-staged-tma 19/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 8/9, hypercube-last-arrival 5/113
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -505,13 +501,13 @@ served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19, cube-s
 
 # h100 · 1 rows · q8 × q8 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · q8 × q4 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -522,26 +518,26 @@ served by: none
 
 # h100 · 1 rows · q8 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · q8 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · q4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize, cube-shuffle): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · q4 × q4 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -552,13 +548,13 @@ served by: none
 
 # h100 · 1 rows · q4 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · q4 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -574,7 +570,7 @@ served by: none
 
 # h100 · 1 rows · nvfp4 × nvfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -590,14 +586,14 @@ served by: none
 
 # h100 · 1 rows · mxfp4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize, cube-shuffle): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · mxfp4 × q4 (rows)
 served by: cube-shuffle 2/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -609,26 +605,26 @@ served by: none
 
 # h100 · 1 rows · mxfp4 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · mxfp4 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · mxfp8 × q8 (rows)
 served by: cube-shuffle 2/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · mxfp8 × q4 (rows)
 served by: cube-shuffle 2/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -640,13 +636,13 @@ served by: none
 
 # h100 · 1 rows · mxfp8 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · mxfp8 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -724,14 +720,14 @@ served by: plane-dequantize 1/1, cube-staged 81/88, cube-staged-async-copy 12/12
 
 # h100 · 512 rows · q8 × q8 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 512 rows · q8 × q4 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -743,21 +739,21 @@ served by: none
 
 # h100 · 512 rows · q8 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 512 rows · q8 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 512 rows · q4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -765,7 +761,7 @@ served by: none
 
 # h100 · 512 rows · q4 × q4 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -777,14 +773,14 @@ served by: none
 
 # h100 · 512 rows · q4 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 512 rows · q4 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -801,7 +797,7 @@ served by: none
 
 # h100 · 512 rows · nvfp4 × nvfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -818,7 +814,7 @@ served by: none
 
 # h100 · 512 rows · mxfp4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -826,7 +822,7 @@ served by: none
 
 # h100 · 512 rows · mxfp4 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -839,21 +835,21 @@ served by: none
 
 # h100 · 512 rows · mxfp4 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 512 rows · mxfp4 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 512 rows · mxfp8 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -861,7 +857,7 @@ served by: none
 
 # h100 · 512 rows · mxfp8 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -874,14 +870,14 @@ served by: none
 
 # h100 · 512 rows · mxfp8 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 512 rows · mxfp8 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -938,13 +934,13 @@ served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-s
 
 # rdna4-rocm · 1 rows · q8 × q8 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · q8 × q4 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -955,26 +951,26 @@ served by: none
 
 # rdna4-rocm · 1 rows · q8 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · q8 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · q4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize, cube-shuffle): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · q4 × q4 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -985,13 +981,13 @@ served by: none
 
 # rdna4-rocm · 1 rows · q4 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · q4 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -1007,7 +1003,7 @@ served by: none
 
 # rdna4-rocm · 1 rows · nvfp4 × nvfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -1023,14 +1019,14 @@ served by: none
 
 # rdna4-rocm · 1 rows · mxfp4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize, cube-shuffle): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · mxfp4 × q4 (rows)
 served by: cube-shuffle 2/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -1042,26 +1038,26 @@ served by: none
 
 # rdna4-rocm · 1 rows · mxfp4 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · mxfp4 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · mxfp8 × q8 (rows)
 served by: cube-shuffle 2/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · mxfp8 × q4 (rows)
 served by: cube-shuffle 2/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -1073,13 +1069,13 @@ served by: none
 
 # rdna4-rocm · 1 rows · mxfp8 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · mxfp8 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -1145,14 +1141,14 @@ served by: plane-dequantize 1/1, cube-staged 33/91, hypercube-last-arrival 25/12
 
 # rdna4-rocm · 512 rows · q8 × q8 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · q8 × q4 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -1164,21 +1160,21 @@ served by: none
 
 # rdna4-rocm · 512 rows · q8 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · q8 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · q4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1186,7 +1182,7 @@ served by: none
 
 # rdna4-rocm · 512 rows · q4 × q4 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -1198,14 +1194,14 @@ served by: none
 
 # rdna4-rocm · 512 rows · q4 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · q4 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -1222,7 +1218,7 @@ served by: none
 
 # rdna4-rocm · 512 rows · nvfp4 × nvfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -1239,7 +1235,7 @@ served by: none
 
 # rdna4-rocm · 512 rows · mxfp4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1247,7 +1243,7 @@ served by: none
 
 # rdna4-rocm · 512 rows · mxfp4 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1260,21 +1256,21 @@ served by: none
 
 # rdna4-rocm · 512 rows · mxfp4 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · mxfp4 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · mxfp8 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1282,7 +1278,7 @@ served by: none
 
 # rdna4-rocm · 512 rows · mxfp8 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1295,14 +1291,14 @@ served by: none
 
 # rdna4-rocm · 512 rows · mxfp8 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · mxfp8 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -1406,7 +1402,7 @@ served by: none
 # rdna-vulkan · 1 rows · q8 × q8 (rows)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1414,7 +1410,7 @@ served by: none
 # rdna-vulkan · 1 rows · q8 × q4 (rows)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1427,7 +1423,7 @@ served by: none
 # rdna-vulkan · 1 rows · q8 × mxfp4 (tiles)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1435,14 +1431,14 @@ served by: none
 # rdna-vulkan · 1 rows · q8 × mxfp8 (tiles)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna-vulkan · 1 rows · q4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize, cube-shuffle): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1450,7 +1446,7 @@ served by: none
 # rdna-vulkan · 1 rows · q4 × q4 (rows)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1463,7 +1459,7 @@ served by: none
 # rdna-vulkan · 1 rows · q4 × mxfp4 (tiles)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1471,7 +1467,7 @@ served by: none
 # rdna-vulkan · 1 rows · q4 × mxfp8 (tiles)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1489,7 +1485,7 @@ served by: none
 # rdna-vulkan · 1 rows · nvfp4 × nvfp4 (tiles)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1506,7 +1502,7 @@ served by: none
 
 # rdna-vulkan · 1 rows · mxfp4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize, cube-shuffle): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1514,7 +1510,7 @@ served by: none
 # rdna-vulkan · 1 rows · mxfp4 × q4 (rows)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1527,7 +1523,7 @@ served by: none
 # rdna-vulkan · 1 rows · mxfp4 × mxfp4 (tiles)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1535,7 +1531,7 @@ served by: none
 # rdna-vulkan · 1 rows · mxfp4 × mxfp8 (tiles)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1543,7 +1539,7 @@ served by: none
 # rdna-vulkan · 1 rows · mxfp8 × q8 (rows)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1551,7 +1547,7 @@ served by: none
 # rdna-vulkan · 1 rows · mxfp8 × q4 (rows)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1564,7 +1560,7 @@ served by: none
 # rdna-vulkan · 1 rows · mxfp8 × mxfp4 (tiles)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1572,7 +1568,7 @@ served by: none
 # rdna-vulkan · 1 rows · mxfp8 × mxfp8 (tiles)
 served by: none
   refused (cube-shuffle): the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers, unit-whole-k): this routine reads float operands; a packed one runs on the packed routines
@@ -1675,7 +1671,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · q8 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1683,7 +1679,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · q8 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1696,7 +1692,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · q8 × mxfp4 (tiles)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1704,7 +1700,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · q8 × mxfp8 (tiles)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1712,7 +1708,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · q4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1720,7 +1716,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · q4 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1733,7 +1729,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · q4 × mxfp4 (tiles)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1741,7 +1737,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · q4 × mxfp8 (tiles)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1759,7 +1755,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · nvfp4 × nvfp4 (tiles)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1777,7 +1773,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · mxfp4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1785,7 +1781,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · mxfp4 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1798,7 +1794,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · mxfp4 × mxfp4 (tiles)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1806,7 +1802,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · mxfp4 × mxfp8 (tiles)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1814,7 +1810,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · mxfp8 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1822,7 +1818,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · mxfp8 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1835,7 +1831,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · mxfp8 × mxfp4 (tiles)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1843,7 +1839,7 @@ served by: none
 
 # rdna-vulkan · 512 rows · mxfp8 × mxfp8 (tiles)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -1901,13 +1897,13 @@ served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-s
 
 # m2-pro · 1 rows · q8 × q8 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · q8 × q4 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -1918,26 +1914,26 @@ served by: none
 
 # m2-pro · 1 rows · q8 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · q8 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · q4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize, cube-shuffle): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · q4 × q4 (rows)
 served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -1948,13 +1944,13 @@ served by: none
 
 # m2-pro · 1 rows · q4 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · q4 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -1970,7 +1966,7 @@ served by: none
 
 # m2-pro · 1 rows · nvfp4 × nvfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -1986,14 +1982,14 @@ served by: none
 
 # m2-pro · 1 rows · mxfp4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize, cube-shuffle): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · mxfp4 × q4 (rows)
 served by: cube-shuffle 2/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -2005,26 +2001,26 @@ served by: none
 
 # m2-pro · 1 rows · mxfp4 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · mxfp4 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · mxfp8 × q8 (rows)
 served by: cube-shuffle 2/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · mxfp8 × q4 (rows)
 served by: cube-shuffle 2/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -2036,13 +2032,13 @@ served by: none
 
 # m2-pro · 1 rows · mxfp8 × mxfp4 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · mxfp8 × mxfp8 (tiles)
 served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -2108,14 +2104,14 @@ served by: plane-dequantize 1/1, cube-staged 52/91, hypercube-last-arrival 68/12
 
 # m2-pro · 512 rows · q8 × q8 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · q8 × q4 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -2127,21 +2123,21 @@ served by: none
 
 # m2-pro · 512 rows · q8 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · q8 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · q4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -2149,7 +2145,7 @@ served by: none
 
 # m2-pro · 512 rows · q4 × q4 (rows)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -2161,14 +2157,14 @@ served by: none
 
 # m2-pro · 512 rows · q4 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · q4 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -2185,7 +2181,7 @@ served by: none
 
 # m2-pro · 512 rows · nvfp4 × nvfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
@@ -2202,7 +2198,7 @@ served by: none
 
 # m2-pro · 512 rows · mxfp4 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -2210,7 +2206,7 @@ served by: none
 
 # m2-pro · 512 rows · mxfp4 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -2223,21 +2219,21 @@ served by: none
 
 # m2-pro · 512 rows · mxfp4 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · mxfp4 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · mxfp8 × q8 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -2245,7 +2241,7 @@ served by: none
 
 # m2-pro · 512 rows · mxfp8 × q4 (rows)
 served by: none
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (plane-dequantize): the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
@@ -2258,14 +2254,14 @@ served by: none
 
 # m2-pro · 512 rows · mxfp8 × mxfp4 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · mxfp8 × mxfp8 (tiles)
 served by: plane-dequantize 1/1
-  refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (hypercube-last-arrival): the hypercube's cubes meet at their box, which needs a device where one cube's stores reach another within a launch, and planes that each drain their own tile with none set aside to fill
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (cube-staged): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
