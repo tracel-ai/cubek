@@ -4,7 +4,7 @@ use crate::kernels::{
     MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Dimension, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulMicrokernel;
@@ -101,21 +101,21 @@ pub type PlaneShuffleMatmulRoutineBlueprint = MatmulBlueprint<PlaneShuffleMicrok
 
 impl PlaneShuffleMatmulRoutine {
     /// What a float rhs declines a capped launch with.
-    pub const PERSISTENT_FLOAT: Refusal = Refusal::Declined {
+    pub const PERSISTENT_FLOAT: Decline = Decline::Unserved {
         why: "a plane shuffle's launch is capped only against a packed rhs, whose planes walk one \
               dimension of columns",
     };
 
     /// What a batched product, whose planes are handed batches beside columns, declines a capped
     /// launch with.
-    pub const PERSISTENT_BATCHED: Refusal = Refusal::Declined {
+    pub const PERSISTENT_BATCHED: Decline = Decline::Unserved {
         why: "a plane shuffle's capped launch walks one dimension of columns, not batches beside them",
     };
 
     /// What a device that does not say how many compute units it has declines a capped launch
     /// with: uncapped, it would be [`PACKED`](PlaneShuffleMatmulRoutineSettings::PACKED) again,
     /// raced twice under two names.
-    pub const PERSISTENT_UNSIZED: Refusal = Refusal::Declined {
+    pub const PERSISTENT_UNSIZED: Decline = Decline::Unserved {
         why: "a plane shuffle's launch is capped at planes a compute unit, and the device does \
               not say how many compute units it has",
     };
@@ -131,7 +131,7 @@ impl PlaneShuffleMatmulRoutine {
     /// ([`PlaneShuffleMicrokernelSettings::stepping`]) on a count of planes a cube. What the
     /// packed few-rows table races, and what a caller naming the routine and no setting runs
     /// against a packed rhs, in this order.
-    pub fn packed_settings(&self) -> Vec<PlaneShuffleMatmulRoutineSettings> {
+    pub fn packed_settings() -> Vec<PlaneShuffleMatmulRoutineSettings> {
         use PlaneShuffleMicrokernelSettings as Block;
         let on = |microkernel, planes| PlaneShuffleMatmulRoutineSettings {
             microkernel,
@@ -154,12 +154,12 @@ impl PlaneShuffleMatmulRoutine {
     /// time ([`by_block`](PlaneShuffleMicrokernelSettings::by_block)), which close a `K` that is
     /// no whole number of words of scales, a tensor-parallel slice of an expert. What the routed
     /// and m-grouped products race, so the dense packed tables never pay the by-block tuning.
-    pub fn indexed_packed_settings(&self) -> Vec<PlaneShuffleMatmulRoutineSettings> {
+    pub fn indexed_packed_settings() -> Vec<PlaneShuffleMatmulRoutineSettings> {
         let by_block = [
             PlaneShuffleMatmulRoutineSettings::PACKED_BY_BLOCK,
             PlaneShuffleMatmulRoutineSettings::BY_BLOCK_TWO_COLUMNS,
         ];
-        [self.packed_settings(), by_block.to_vec()].concat()
+        [Self::packed_settings(), by_block.to_vec()].concat()
     }
 
     /// Whether `settings` sizes a plane against `problem`'s packed rhs on a device committing to
@@ -202,14 +202,13 @@ impl PlaneShuffleMatmulRoutine {
     ///
     /// Why the microkernel cannot read the widths the problem admits.
     pub fn blueprint(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         microkernel: PlaneShuffleMicrokernel,
         partitioning: MatmulPartitioning,
-    ) -> Result<PlaneShuffleMatmulRoutineBlueprint, Refusal> {
+    ) -> Result<PlaneShuffleMatmulRoutineBlueprint, Decline> {
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        PlaneShuffleMatmulRoutine::vectorize(&microkernel, &partitioning, &mut vectorization);
         Ok(MatmulBlueprint::new(
             hw,
             problem,
@@ -222,7 +221,6 @@ impl PlaneShuffleMatmulRoutine {
 
     /// [`Routine::estimate`] against a float rhs.
     fn float_estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &PlaneShuffleMatmulRoutineBlueprint,
         grid: &Grid,
@@ -265,7 +263,6 @@ impl PlaneShuffleMatmulRoutine {
 
     /// [`Routine::estimate`] against `packing`, a packed rhs.
     fn packed_estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         packing: &Packing,
         blueprint: &PlaneShuffleMatmulRoutineBlueprint,
@@ -331,11 +328,10 @@ impl PlaneShuffleMatmulRoutine {
 
     /// [`Routine::prepare`] against a float rhs.
     fn prepare_float(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &PlaneShuffleMatmulRoutineSettings,
-    ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Refusal> {
+    ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Decline> {
         problem.check_plain()?;
         if settings.planes_per_worker.is_some() {
             return Err(Self::PERSISTENT_FLOAT);
@@ -351,7 +347,7 @@ impl PlaneShuffleMatmulRoutine {
                 CubeOrder::RowMajor,
             ),
         );
-        let blueprint = self.blueprint(hw, problem, microkernel, partitioning)?;
+        let blueprint = Self::blueprint(hw, problem, microkernel, partitioning)?;
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
             shared_memory: 0,
@@ -362,12 +358,11 @@ impl PlaneShuffleMatmulRoutine {
 
     /// [`Routine::prepare`] against `packing`, a packed rhs.
     fn prepare_packed(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         packing: &Packing,
         settings: &PlaneShuffleMatmulRoutineSettings,
-    ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Refusal> {
+    ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Decline> {
         // The problem its microkernel plans on, every packed input read as it reads it: planned
         // before any step is checked, which is the planned reads'.
         let item = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?.work_item();
@@ -424,7 +419,7 @@ impl PlaneShufflePackedPlacement {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &PlaneShuffleMatmulRoutineSettings,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         if problem.inputs.rhs.packing().is_none() {
             return Err(MATMUL_STREAMED_INPUT_FLOAT);
         }
@@ -470,7 +465,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
     /// pin and the `Tile` policy launch the first setting that serves the product
     /// ([`launch_first_served_on`](MatmulRoutine::launch_first_served_on)), so a reorder changes
     /// what they run, not only the order a table measures in.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         use PlaneShuffleMicrokernelSettings as Block;
         let on = |microkernel, planes| Self::Settings {
             microkernel,
@@ -504,17 +499,16 @@ impl Routine for PlaneShuffleMatmulRoutine {
     ///
     /// The last setting's decline, where none serves.
     fn prepare_first_served(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let settings = match problem.inputs.rhs.packing() {
-            Some(_) => self.packed_settings(),
-            None => self.settings(hw),
+            Some(_) => Self::packed_settings(),
+            None => Self::settings(hw),
         };
         let mut declined = ROUTINE_LISTS_NO_SETTING;
         for settings in settings {
-            match self.prepare(hw, problem, &settings) {
+            match Self::prepare(hw, problem, &settings) {
                 Ok(prepared) => return Ok(prepared),
                 Err(why) => declined = why,
             }
@@ -524,7 +518,6 @@ impl Routine for PlaneShuffleMatmulRoutine {
 
     /// Nothing of its own: it walks the launch's planes, and its microkernel makes every access.
     fn vectorize(
-        &self,
         microkernel: &PlaneShuffleMicrokernel,
         _: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -536,15 +529,14 @@ impl Routine for PlaneShuffleMatmulRoutine {
     /// rhs's columns it owns, straight from global memory, once: its values, or its words and
     /// scales where it is packed. Then its microkernel, for the work.
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &PlaneShuffleMatmulRoutineBlueprint,
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
         match &problem.inputs.rhs.packing() {
-            Some(packing) => self.packed_estimate(problem, packing, blueprint, grid, estimate),
-            None => self.float_estimate(problem, blueprint, grid, estimate),
+            Some(packing) => Self::packed_estimate(problem, packing, blueprint, grid, estimate),
+            None => Self::float_estimate(problem, blueprint, grid, estimate),
         }
     }
 
@@ -552,14 +544,13 @@ impl Routine for PlaneShuffleMatmulRoutine {
     /// packed one, over its block-split space, as many planes a cube as divide the runs of columns
     /// its microkernel reads (`PlaneShufflePackedPlacement`).
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         match &problem.inputs.rhs.packing() {
-            Some(packing) => self.prepare_packed(hw, problem, packing, settings),
-            None => self.prepare_float(hw, problem, settings),
+            Some(packing) => Self::prepare_packed(hw, problem, packing, settings),
+            None => Self::prepare_float(hw, problem, settings),
         }
     }
 }
@@ -628,7 +619,7 @@ mod tests {
     /// The default leads the list and no setting is listed twice.
     #[test]
     fn the_default_leads_and_no_setting_repeats() {
-        let settings = PlaneShuffleMatmulRoutine.settings(&devices::strix_halo());
+        let settings = PlaneShuffleMatmulRoutine::settings(&devices::strix_halo());
         assert_eq!(settings[0], PlaneShuffleMatmulRoutineSettings::DEFAULT);
         let names: std::collections::HashSet<_> =
             settings.iter().map(ToString::to_string).collect();
@@ -645,9 +636,9 @@ mod tests {
             .into_iter()
             .chain([devices::wgpu_no_subgroups(), devices::rdna_range()])
         {
-            for settings in PlaneShuffleMatmulRoutine.settings(&hw) {
+            for settings in PlaneShuffleMatmulRoutine::settings(&hw) {
                 match (
-                    PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings),
+                    PlaneShuffleMatmulRoutine::prepare(&hw, &problem, &settings),
                     hw.plane_size().is_ok(),
                 ) {
                     (Ok((blueprint, _)), true) => {
@@ -655,7 +646,7 @@ mod tests {
                             assert_eq!(blueprint.widths.out, 1, "{settings} on {hw:?}");
                         }
                     }
-                    (Err(Refusal::Declined { why: details }), false) => {
+                    (Err(Decline::Unserved { why: details }), false) => {
                         assert_eq!(details, PlaneShuffleMicrokernel::DECLINE, "{settings}")
                     }
                     (prepared, _) => panic!("{settings} on {hw:?}: {prepared:?}"),
@@ -671,13 +662,12 @@ mod tests {
     fn the_rhs_is_read_along_the_dimension_its_buffer_runs() {
         let hw = devices::strix_halo();
         let widths = |rhs_layout| {
-            let (blueprint, _) = PlaneShuffleMatmulRoutine
-                .prepare(
-                    &hw,
-                    &projection(1, rhs_layout),
-                    &PlaneShuffleMatmulRoutineSettings::DEFAULT,
-                )
-                .expect("the default prepares on a committed wave32");
+            let (blueprint, _) = PlaneShuffleMatmulRoutine::prepare(
+                &hw,
+                &projection(1, rhs_layout),
+                &PlaneShuffleMatmulRoutineSettings::DEFAULT,
+            )
+            .expect("the default prepares on a committed wave32");
             let widths = blueprint.widths;
             (widths.lhs, widths.rhs, widths.out)
         };
@@ -696,18 +686,15 @@ mod tests {
         };
         let ragged = |rhs_layout| problem(2041, rhs_layout);
         let settings = PlaneShuffleMatmulRoutineSettings::DEFAULT;
-        let (ragged_col, _) = PlaneShuffleMatmulRoutine
-            .prepare(&hw, &ragged(MatmulLayout::Col), &settings)
-            .expect("a col rhs one element wide runs");
+        let (ragged_col, _) =
+            PlaneShuffleMatmulRoutine::prepare(&hw, &ragged(MatmulLayout::Col), &settings)
+                .expect("a col rhs one element wide runs");
         assert_eq!(ragged_col.widths.rhs, 1);
         assert!(
-            PlaneShuffleMatmulRoutine
-                .prepare(&hw, &ragged(MatmulLayout::Row), &settings)
-                .is_ok()
+            PlaneShuffleMatmulRoutine::prepare(&hw, &ragged(MatmulLayout::Row), &settings).is_ok()
         );
         assert!(
-            PlaneShuffleMatmulRoutine
-                .prepare(&hw, &problem(2040, MatmulLayout::Col), &settings)
+            PlaneShuffleMatmulRoutine::prepare(&hw, &problem(2040, MatmulLayout::Col), &settings)
                 .is_ok()
         );
     }
@@ -718,13 +705,12 @@ mod tests {
     fn a_cube_holds_every_row() {
         let hw = devices::strix_halo();
         let rows = |m| {
-            let (blueprint, _) = PlaneShuffleMatmulRoutine
-                .prepare(
-                    &hw,
-                    &projection(m, MatmulLayout::Col),
-                    &PlaneShuffleMatmulRoutineSettings::DEFAULT,
-                )
-                .expect("the default prepares on a committed wave32");
+            let (blueprint, _) = PlaneShuffleMatmulRoutine::prepare(
+                &hw,
+                &projection(m, MatmulLayout::Col),
+                &PlaneShuffleMatmulRoutineSettings::DEFAULT,
+            )
+            .expect("the default prepares on a committed wave32");
             (
                 blueprint.microkernel.rows,
                 blueprint.partitioning.cube_space().extent(M),
@@ -745,9 +731,9 @@ mod tests {
         for rhs_layout in [MatmulLayout::Col, MatmulLayout::Row] {
             let problem =
                 MatmulRoutineProblem::dense(1, 48, 5120, F16).laid(MatmulOperand::Rhs, rhs_layout);
-            for settings in PlaneShuffleMatmulRoutine.settings(&hw) {
+            for settings in PlaneShuffleMatmulRoutine::settings(&hw) {
                 let Ok((blueprint, _)) =
-                    PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings)
+                    PlaneShuffleMatmulRoutine::prepare(&hw, &problem, &settings)
                 else {
                     continue;
                 };
@@ -770,7 +756,7 @@ mod tests {
         let settings = PlaneShuffleMatmulRoutineSettings::DEFAULT;
         for m in [0, PlaneShuffleMicrokernel::MAX_ROWS + 1] {
             assert!(matches!(
-                PlaneShuffleMatmulRoutine.prepare(&devices::strix_halo(), &projection(m, MatmulLayout::Col), &settings),
+                PlaneShuffleMatmulRoutine::prepare(&devices::strix_halo(), &projection(m, MatmulLayout::Col), &settings),
                 Err(error) if error == PlaneShuffleMicrokernel::ROWS_OUT_OF_RANGE
             ));
         }
@@ -782,8 +768,7 @@ mod tests {
         let problem = projection(1, MatmulLayout::Col);
         let settings = PlaneShuffleMatmulRoutineSettings::DEFAULT;
         let prepare = |hw: Hardware| {
-            PlaneShuffleMatmulRoutine
-                .prepare(&hw, &problem, &settings)
+            PlaneShuffleMatmulRoutine::prepare(&hw, &problem, &settings)
                 .expect("the default prepares on a committed width")
         };
         let (wave32, wave32_grid) = prepare(devices::strix_halo());
@@ -860,7 +845,7 @@ mod tests {
     /// The packed lead leads the packed settings and no setting is listed twice.
     #[test]
     fn the_packed_lead_leads_and_no_packed_setting_repeats() {
-        let settings = PlaneShuffleMatmulRoutine.packed_settings();
+        let settings = PlaneShuffleMatmulRoutine::packed_settings();
         assert_eq!(settings[0], PlaneShuffleMatmulRoutineSettings::PACKED);
         let names: std::collections::HashSet<_> =
             settings.iter().map(ToString::to_string).collect();
@@ -876,14 +861,14 @@ mod tests {
             .into_iter()
             .chain([devices::wgpu_no_subgroups(), devices::rdna_range()])
         {
-            for settings in PlaneShuffleMatmulRoutine.indexed_packed_settings() {
+            for settings in PlaneShuffleMatmulRoutine::indexed_packed_settings() {
                 match (
-                    PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings),
+                    PlaneShuffleMatmulRoutine::prepare(&hw, &problem, &settings),
                     hw.plane_size().is_ok()
                         && PlaneShuffleMatmulRoutine::sizes_packed(&settings, &problem),
                 ) {
                     (Ok(_), true) => {}
-                    (Err(Refusal::Declined { why: details }), false) => {
+                    (Err(Decline::Unserved { why: details }), false) => {
                         assert_eq!(details, PlaneShuffleMicrokernel::DECLINE, "{settings}")
                     }
                     (prepared, _) => panic!("{settings} on {hw:?}: {prepared:?}"),
@@ -907,14 +892,13 @@ mod tests {
         ];
         for hw in committed() {
             for problem in &problems {
-                for settings in PlaneShuffleMatmulRoutine
-                    .packed_settings()
+                for settings in PlaneShuffleMatmulRoutine::packed_settings()
                     .into_iter()
                     .filter(|settings| PlaneShuffleMatmulRoutine::sizes_packed(settings, problem))
                 {
-                    let (blueprint, grid) = PlaneShuffleMatmulRoutine
-                        .prepare(&hw, problem, &settings)
-                        .expect("a committed width places the projection");
+                    let (blueprint, grid) =
+                        PlaneShuffleMatmulRoutine::prepare(&hw, problem, &settings)
+                            .expect("a committed width places the projection");
                     let cubes = grid.cubes().expect("a static grid");
                     let boxes = problem.n as u64 / blueprint.partitioning.columns();
                     assert_eq!(
@@ -947,13 +931,12 @@ mod tests {
         devices::topology(&mut hw).num_streaming_multiprocessors = None;
         assert_eq!(hw.workers(), None);
         assert_eq!(
-            PlaneShuffleMatmulRoutine
-                .prepare(
-                    &hw,
-                    &packed_projection(1),
-                    &PlaneShuffleMatmulRoutineSettings::PACKED_PERSISTENT
-                )
-                .err(),
+            PlaneShuffleMatmulRoutine::prepare(
+                &hw,
+                &packed_projection(1),
+                &PlaneShuffleMatmulRoutineSettings::PACKED_PERSISTENT
+            )
+            .err(),
             Some(PlaneShuffleMatmulRoutine::PERSISTENT_UNSIZED)
         );
     }
@@ -967,13 +950,12 @@ mod tests {
             ..PlaneShuffleMatmulRoutineSettings::DEFAULT
         };
         assert_eq!(
-            PlaneShuffleMatmulRoutine
-                .prepare(
-                    &devices::strix_halo(),
-                    &projection(1, MatmulLayout::Col),
-                    &settings
-                )
-                .err(),
+            PlaneShuffleMatmulRoutine::prepare(
+                &devices::strix_halo(),
+                &projection(1, MatmulLayout::Col),
+                &settings
+            )
+            .err(),
             Some(PlaneShuffleMatmulRoutine::PERSISTENT_FLOAT)
         );
     }
@@ -986,20 +968,17 @@ mod tests {
         let settings = PlaneShuffleMatmulRoutineSettings::PACKED;
         for m in [0, PlaneShuffleMicrokernel::MAX_ROWS + 1] {
             assert_eq!(
-                PlaneShuffleMatmulRoutine
-                    .prepare(&hw, &packed_projection(m), &settings)
-                    .err(),
+                PlaneShuffleMatmulRoutine::prepare(&hw, &packed_projection(m), &settings).err(),
                 Some(PlaneShuffleMicrokernel::ROWS_OUT_OF_RANGE)
             );
         }
         assert!(
-            PlaneShuffleMatmulRoutine
-                .prepare(
-                    &hw,
-                    &packed_projection(PlaneShuffleMicrokernel::MAX_ROWS),
-                    &settings
-                )
-                .is_ok()
+            PlaneShuffleMatmulRoutine::prepare(
+                &hw,
+                &packed_projection(PlaneShuffleMicrokernel::MAX_ROWS),
+                &settings
+            )
+            .is_ok()
         );
     }
 }

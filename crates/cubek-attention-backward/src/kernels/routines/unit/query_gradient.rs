@@ -5,7 +5,7 @@ use super::unit_cube;
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk};
 use core::num::NonZeroUsize;
 use cubecl::tile::Partitioning;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::{B, G, KV, Q};
 use cubek_microkernel::attention_backward::query_gradient::unit::{
     UnitQueryGradientMicrokernel, UnitQueryGradientMicrokernelSettings,
@@ -40,7 +40,7 @@ impl UnitQueryGradientRoutine {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &UnitQueryGradientRoutineSettings,
-    ) -> Result<UnitQueryGradientBlueprint, Refusal> {
+    ) -> Result<UnitQueryGradientBlueprint, Decline> {
         let microkernel =
             UnitQueryGradientMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let (cube, resources) = unit_cube(hw, settings.planes);

@@ -15,7 +15,7 @@ use crate::kernels::{
     UnitRegistersMatmulRoutineSettings, UnitWholeKMatmulRoutine, UnitWholeKMatmulRoutineSettings,
 };
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Refusal, SinkLaunchVisitor};
+use cubecl::tile::launch::{Decline, SinkLaunchVisitor};
 
 /// A routine at one of its settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,7 +46,7 @@ impl MatmulRoutineSettings {
     /// # Errors
     ///
     /// Why the device cannot run the product at these settings.
-    pub fn launch(self, call: &MatmulCall) -> Result<TensorHandle, Refusal> {
+    pub fn launch(self, call: &MatmulCall) -> Result<TensorHandle, Decline> {
         match self {
             Self::UnitRegisters(settings) => launch(UnitRegistersMatmulRoutine, call, &settings),
             Self::PlaneShuffle(settings) => launch(PlaneShuffleMatmulRoutine, call, &settings),
@@ -174,7 +174,7 @@ fn launch<R, M, SM>(
     routine: R,
     call: &MatmulCall,
     settings: &R::Settings,
-) -> Result<TensorHandle, Refusal>
+) -> Result<TensorHandle, Decline>
 where
     R: MatmulRoutine<M, SM>,
     M: cubek_microkernel::matmul::MatmulMicrokernel,

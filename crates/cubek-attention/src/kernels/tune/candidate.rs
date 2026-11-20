@@ -7,7 +7,7 @@ use crate::kernels::{
     SplitKeysAttention,
 };
 use cubecl::CubeDim;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
@@ -34,8 +34,7 @@ pub struct AttentionRoutineCandidate<R: Routine> {
 impl<R: Routine + Copy> AttentionRoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, as autotune candidates, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        routine
-            .settings(hw)
+        R::settings(hw)
             .into_iter()
             .map(|settings| Self {
                 routine,
@@ -62,7 +61,7 @@ where
     pub fn launch(&self, inputs: AttentionTuneInputs) -> Result<(), String> {
         let tensors = inputs.tensors;
         self.prepared
-            .prepare(&self.routine, &self.hw, &tensors.problem(), &self.settings)
+            .prepare(&self.hw, &tensors.problem(), &self.settings)
             .map(|(blueprint, grid)| {
                 let binding = tensors.bind(&blueprint, &grid);
                 self.routine.dispatch(&tensors, binding, blueprint, grid);
@@ -89,7 +88,7 @@ where
         };
         let (blueprint, grid) = self
             .prepared
-            .prepare(&self.routine, &self.hw, &problem, &self.settings)
+            .prepare(&self.hw, &problem, &self.settings)
             .map_err(|why| self.declines(why))?;
         let merge = split
             .merge(&self.hw, &problem, &blueprint)
@@ -108,7 +107,7 @@ where
         >,
 {
     /// What a launch reports where the routine declines its problem.
-    fn declines(&self, why: Refusal) -> String {
+    fn declines(&self, why: Decline) -> String {
         let settings = &self.settings;
         format!("{settings} does not serve this problem: {why:?}")
     }
@@ -117,9 +116,7 @@ where
     /// routine declines it on this device.
     fn prepared(&self, key: &AttentionKey) -> Option<(AttentionBlueprint<M, SM>, Grid)> {
         let problem = AttentionRoutineProblem::try_from(key).ok()?;
-        self.routine
-            .prepare(&self.hw, &problem, &self.settings)
-            .ok()
+        R::prepare(&self.hw, &problem, &self.settings).ok()
     }
 }
 
@@ -215,7 +212,7 @@ mod tests {
             .iter()
             .map(|candidate| *candidate.strategy())
             .collect();
-        assert_eq!(listed, CubeStagedAttentionRoutine.settings(&hw));
+        assert_eq!(listed, CubeStagedAttentionRoutine::settings(&hw));
     }
 
     /// A key whose query heads do not split over its key heads is declined by every candidate:

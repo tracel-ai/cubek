@@ -2,11 +2,11 @@
 //! ([`KeyHeads::Apart`](crate::kernels::KeyHeads::Apart)).
 
 use cubecl::tile::Levels;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::{G, S};
 
 /// What heads apart decline: a group of one head has none to set apart.
-pub(crate) const ONE_HEAD_A_GROUP: Refusal = Refusal::Declined {
+pub(crate) const ONE_HEAD_A_GROUP: Decline = Decline::Unserved {
     why: "the key walk's heads apart need a group of more than one head",
 };
 
@@ -16,7 +16,7 @@ pub(crate) const ONE_HEAD_A_GROUP: Refusal = Refusal::Declined {
 /// # Errors
 ///
 /// [`ONE_HEAD_A_GROUP`] for a group of one head.
-pub(crate) fn cubes_with_heads_apart(tiling: Levels, group: usize) -> Result<Levels, Refusal> {
+pub(crate) fn cubes_with_heads_apart(tiling: Levels, group: usize) -> Result<Levels, Decline> {
     match group > 1 {
         true => Ok(tiling.cubes(&[S, G]).across(G, group)),
         false => Err(ONE_HEAD_A_GROUP),

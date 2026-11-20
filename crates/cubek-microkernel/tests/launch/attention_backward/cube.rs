@@ -3,7 +3,7 @@
 //! cube's keys walked over every query into theirs and their values'.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::attention::{AttentionVisibility, B, G, KV, Q, S, VisibleKeys};
@@ -43,7 +43,7 @@ impl CubeQueryGradientLaunch {
         item: AttentionBackwardWorkItem,
         settings: &CubeQueryGradientMicrokernelSettings,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let microkernel = CubeQueryGradientMicrokernel::best(hw, &item, settings)?;
         let plane_width = hw.plane_dim()?;
         let seq = [microkernel.seq_q(), microkernel.seq_kv() * steps];
@@ -80,7 +80,7 @@ impl AttentionBackwardLaunch for CubeQueryGradientLaunch {
         args: AttentionBackwardOperandArgs,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         use AttentionBackwardOperand as Operand;
         let sequence = OneSequence {
             item: self.item,
@@ -144,7 +144,7 @@ impl CubeKeyGradientLaunch {
         item: AttentionBackwardWorkItem,
         settings: &CubeKeyGradientMicrokernelSettings,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let microkernel = CubeKeyGradientMicrokernel::best(hw, &item, settings)?;
         let plane_width = hw.plane_dim()?;
         let seq = [microkernel.seq_q() * steps, microkernel.seq_kv()];
@@ -181,7 +181,7 @@ impl AttentionBackwardLaunch for CubeKeyGradientLaunch {
         args: AttentionBackwardOperandArgs,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         use AttentionBackwardOperand as Operand;
         let sequence = OneSequence {
             item: self.item,

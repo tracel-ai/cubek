@@ -46,7 +46,7 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
             &microkernel,
             MatmulPackedCandidate::of(
                 PlaneShuffleMatmulRoutine,
-                PlaneShuffleMatmulRoutine.packed_settings(),
+                PlaneShuffleMatmulRoutine::packed_settings(),
                 &hw,
             ),
             RoutineIdentity::new,
@@ -56,7 +56,7 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
             &microkernel,
             MatmulPackedCandidate::of(
                 CubeShuffleMatmulRoutine,
-                CubeShuffleMatmulRoutine.packed_settings(&hw),
+                CubeShuffleMatmulRoutine::packed_settings(&hw),
                 &hw,
             ),
             RoutineIdentity::new,
@@ -80,7 +80,7 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
             &microkernel,
             MatmulPackedCandidate::of(
                 PlaneShuffleMatmulRoutine,
-                PlaneShuffleMatmulRoutine.packed_settings(),
+                PlaneShuffleMatmulRoutine::packed_settings(),
                 &hw,
             ),
             MatmulPackedCandidate::activation_decoded_identity,
@@ -90,7 +90,7 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
             &microkernel,
             MatmulPackedCandidate::of(
                 CubeShuffleMatmulRoutine,
-                CubeShuffleMatmulRoutine.packed_settings(&hw),
+                CubeShuffleMatmulRoutine::packed_settings(&hw),
                 &hw,
             ),
             MatmulPackedCandidate::activation_decoded_identity,

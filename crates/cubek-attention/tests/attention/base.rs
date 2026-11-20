@@ -7,7 +7,7 @@ use core::fmt::Debug;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
 use cubek_attention::kernels::{
     AttentionCache, AttentionLaunch, AttentionQueries, AttentionScoring, AttentionTensors,
@@ -444,14 +444,7 @@ impl<L: AttentionLaunch> Forward<L> {
     /// The routine's lead, the first setting it lists on the test device, on each of `cases`;
     /// none where the device lists none.
     pub(crate) fn at_its_lead(&self, cases: &[AttentionCase]) -> Vec<ForwardCase<SettingsOf<L>>> {
-        self.at(
-            self.launched
-                .routine()
-                .settings(&self.hw)
-                .into_iter()
-                .take(1),
-            cases,
-        )
+        self.at(L::Routine::settings(&self.hw).into_iter().take(1), cases)
     }
 
     /// Every setting the routine lists on the test device, on each of `cases`.
@@ -459,7 +452,7 @@ impl<L: AttentionLaunch> Forward<L> {
         &self,
         cases: &[AttentionCase],
     ) -> Vec<ForwardCase<SettingsOf<L>>> {
-        self.at(self.launched.routine().settings(&self.hw), cases)
+        self.at(L::Routine::settings(&self.hw), cases)
     }
 
     /// Each of `settings` on each of `cases`.
@@ -481,14 +474,14 @@ impl<L: AttentionLaunch> Forward<L> {
 
     /// The settings the routine lists on the test device.
     pub(crate) fn settings(&self) -> Vec<SettingsOf<L>> {
-        self.launched.routine().settings(&self.hw)
+        L::Routine::settings(&self.hw)
     }
 }
 
 impl<L: AttentionLaunch> ScopeUnderTest for Forward<L> {
     type Case = ForwardCase<SettingsOf<L>>;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let tensors = case.case.tensors(client);
         let logsumexp = tensors.logsumexp().expect("asked for");
         let out = self.launched.launch_on(&self.hw, tensors, &case.settings)?;

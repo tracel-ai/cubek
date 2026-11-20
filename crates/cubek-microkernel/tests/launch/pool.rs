@@ -3,7 +3,7 @@
 //! [`WindowedLaunch`] says. The reduce reads the max's identity past the input's edge.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::pool::PoolWorkItem;
@@ -31,7 +31,7 @@ impl PoolLaunch {
         windows: [WindowDimension; 2],
         input: [usize; 2],
         channels: Channels,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let windowed = WindowedLaunch::new(hw, windows, input, channels)?;
         let item = PoolWorkItem {
             channels: channels.per_unit,
@@ -53,7 +53,7 @@ impl PoolLaunch {
         input: TensorArg,
         output: TensorArg,
         element: ElemType,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let launcher = self.windowed.launcher(client)?;
         // SAFETY: both operands are bound through the launcher at the problem's own extents, the
         // input's reads past its edge masked, and the kernel indexes no buffer but through its

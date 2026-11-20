@@ -4,7 +4,7 @@ use crate::matmul::{
     MatmulOperands, MatmulRows, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::layout::Run;
 use cubecl::tile::{Dimension, Levels, SoftwareMatmul};
 use cubek_std::Hardware;
@@ -102,17 +102,17 @@ impl PlaneShuffleMicrokernel {
     /// What a packed lhs whose read along `K` is longer than the packed rhs's is declined with: the
     /// plane lines the lhs at the values the rhs serves a step, which would split a word of the
     /// lhs. A `q4` activation's word of eight against a `q8` weight's of four, say.
-    pub const PACKED_LHS_READ_PAST_RHS: Refusal = Refusal::Declined {
+    pub const PACKED_LHS_READ_PAST_RHS: Decline = Decline::Unserved {
         why: "the plane shuffle lines a packed lhs at the values the rhs serves a step, and a read of the lhs along K is longer than the rhs's",
     };
 
     /// What a product of no rows, or of more than [`MAX_ROWS`](Self::MAX_ROWS), is declined with.
-    pub const ROWS_OUT_OF_RANGE: Refusal = Refusal::Declined {
+    pub const ROWS_OUT_OF_RANGE: Decline = Decline::Unserved {
         why: "the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs",
     };
 
     /// What an rhs lined along neither of its dimensions is declined with.
-    pub(crate) const STRIDED_RHS: Refusal = Refusal::Declined {
+    pub(crate) const STRIDED_RHS: Decline = Decline::Unserved {
         why: "the plane shuffle reads an rhs lined along `K` or `N`",
     };
 
@@ -439,7 +439,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
 
     /// From one row to [`MAX_ROWS`](Self::MAX_ROWS), every one held whole, an rhs lined along one
     /// of its dimensions, and a packed lhs read along `K` no longer than a packed rhs.
-    fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
+    fn admits(item: &MatmulWorkItem) -> Result<(), Decline> {
         match item.rows {
             MatmulRows::Whole(rows) if (1..=Self::MAX_ROWS).contains(&rows) => {}
             MatmulRows::Whole(_) | MatmulRows::Tiled => return Err(Self::ROWS_OUT_OF_RANGE),

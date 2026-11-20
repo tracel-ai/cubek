@@ -4,7 +4,7 @@
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use cubecl::client::Client;
 use cubecl::tile::Dimension;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulLayout;
 use cubek_std::matmul_dimensions::{K, N};
@@ -88,7 +88,7 @@ impl SlabDimension {
         self,
         stack: &StoredTensor,
         slabs: usize,
-    ) -> Result<StoredTensor, Refusal> {
+    ) -> Result<StoredTensor, Decline> {
         match stack {
             StoredTensor::Packed(packed) => Ok(StoredTensor::Packed(
                 packed.clone().stacked(slabs, self.dimension())?,

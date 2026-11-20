@@ -1,5 +1,5 @@
 use crate::Hardware;
-use cubecl::tile::launch::{Refusal, spawnable};
+use cubecl::tile::launch::{Decline, spawnable};
 use cubecl::{CubeCount, CubeDim};
 
 /// The half of a routine's `prepare` the blueprint does not hold as a field:
@@ -32,7 +32,7 @@ impl<V> LaunchSettings<V> {
     /// # Errors
     ///
     /// The cap the cube or the grid passes.
-    pub fn validate(self, hw: &Hardware) -> Result<Self, Refusal> {
+    pub fn validate(self, hw: &Hardware) -> Result<Self, Decline> {
         spawnable(&hw.properties.hardware, self.cube_dim, &self.cube_count)?;
         Ok(self)
     }

@@ -4,8 +4,8 @@ use crate::kernels::{
     RmsNormTensors,
 };
 use cubecl::tile::Levels;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::rms_norm::cube::{CubeRmsNormMicrokernel, CubeRmsNormMicrokernelSettings};
 use cubek_microkernel::rms_norm::{R, RmsNormOperand, RmsNormPartitioning};
@@ -49,7 +49,7 @@ impl Routine for CubeRmsNormRoutine {
 
     /// Its microkernel's settings ([`CubeRmsNormMicrokernel::settings`]): it has no knob of its
     /// own.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeRmsNormMicrokernel::settings(hw)
             .into_iter()
             .map(|microkernel| Self::Settings { microkernel })
@@ -59,7 +59,6 @@ impl Routine for CubeRmsNormRoutine {
     /// Nothing of its own: it walks cubes, and its microkernel walks their planes and makes every
     /// access.
     fn vectorize(
-        &self,
         microkernel: &CubeRmsNormMicrokernel,
         _: &RmsNormPartitioning,
         vectorization: &mut Vectorization<RmsNormOperand>,
@@ -70,7 +69,6 @@ impl Routine for CubeRmsNormRoutine {
     /// Each cube reads its row once, a plane a run, straight from global memory, the weight once,
     /// and writes the row once. Then its microkernel, for the work.
     fn estimate(
-        &self,
         problem: &RmsNormRoutineProblem,
         blueprint: &CubeRmsNormRoutineBlueprint,
         grid: &Grid,
@@ -88,11 +86,10 @@ impl Routine for CubeRmsNormRoutine {
     /// The planes are launched as wide as the device commits to, along `y`, one run of the row
     /// each; a run the bound width leaves too many lines a lane for its registers declines.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &RmsNormRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let microkernel =
             CubeRmsNormMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let store = problem.store;
@@ -110,7 +107,7 @@ impl Routine for CubeRmsNormRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
             RmsNormBlueprint::new(hw, problem, microkernel, partitioning, vectorization)
                 .planned_at(microkernel.plane.width)?;
@@ -172,9 +169,12 @@ mod tests {
                     planes: NonZeroUsize::new(target).unwrap(),
                 },
             };
-            let (blueprint, _) = CubeRmsNormRoutine
-                .prepare(&hw, &RmsNormRoutineProblem::dense(1, dim, F16), &settings)
-                .expect("a committed wave32 runs the cube");
+            let (blueprint, _) = CubeRmsNormRoutine::prepare(
+                &hw,
+                &RmsNormRoutineProblem::dense(1, dim, F16),
+                &settings,
+            )
+            .expect("a committed wave32 runs the cube");
             let microkernel = blueprint.microkernel;
             (microkernel.planes, microkernel.plane.run)
         };
@@ -190,9 +190,9 @@ mod tests {
         let problem = RmsNormRoutineProblem::dense(1, 2560, F16);
         for hw in [devices::wgpu_no_subgroups(), devices::rdna_range()] {
             let prepared =
-                CubeRmsNormRoutine.prepare(&hw, &problem, &CubeRmsNormRoutineSettings::DEFAULT);
+                CubeRmsNormRoutine::prepare(&hw, &problem, &CubeRmsNormRoutineSettings::DEFAULT);
             assert!(
-                matches!(prepared, Err(Refusal::Declined { why: details }) if details == CubeRmsNormMicrokernel::DECLINE),
+                matches!(prepared, Err(Decline::Unserved { why: details }) if details == CubeRmsNormMicrokernel::DECLINE),
                 "{hw:?}"
             );
         }
@@ -202,8 +202,7 @@ mod tests {
             devices::h100(),
         ] {
             assert!(
-                CubeRmsNormRoutine
-                    .prepare(&hw, &problem, &CubeRmsNormRoutineSettings::DEFAULT)
+                CubeRmsNormRoutine::prepare(&hw, &problem, &CubeRmsNormRoutineSettings::DEFAULT)
                     .is_ok()
             );
         }

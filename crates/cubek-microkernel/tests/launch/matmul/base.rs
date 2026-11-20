@@ -6,7 +6,7 @@
 use core::fmt::Debug;
 use cubecl::prelude::*;
 use cubecl::tile::kind::Boundary;
-use cubecl::tile::launch::{BoundaryPolicy, Grid, Refusal, Vectorization};
+use cubecl::tile::launch::{BoundaryPolicy, Decline, Grid, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Launcher, Level, Partitioning, Space, TileSpec, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::MatmulCubeSpace;
@@ -107,7 +107,7 @@ pub trait MatmulLaunch: Debug {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal>;
+    ) -> Result<(), Decline>;
 }
 
 /// The problem one instance of a launch's outermost scope covers (one cube, or the one plane or
@@ -162,7 +162,7 @@ impl OneCube {
     /// # Errors
     ///
     /// Why the tile DSL cannot place it.
-    pub(crate) fn launcher(&self, client: &Client, plane_width: u32) -> Result<Launcher, Refusal> {
+    pub(crate) fn launcher(&self, client: &Client, plane_width: u32) -> Result<Launcher, Decline> {
         let partitioning = &self.partitioning;
         let grid = Grid::Stated {
             cube_count: partitioning.cube_count(),

@@ -4,7 +4,7 @@
 use crate::launch::attention_backward::PlaneDeltaLaunch;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
 use cubek_microkernel::attention_backward::delta::plane::{
@@ -34,7 +34,7 @@ impl PlaneDelta {
     /// # Errors
     ///
     /// Why the device runs no plane delta microkernel at `case`.
-    fn launch_at(&self, case: &PlaneDeltaCase) -> Result<PlaneDeltaLaunch, Refusal> {
+    fn launch_at(&self, case: &PlaneDeltaCase) -> Result<PlaneDeltaLaunch, Decline> {
         let item = AttentionBackwardWorkItem {
             element: case.element,
             sum: F32,
@@ -59,7 +59,7 @@ impl PlaneDelta {
 impl ScopeUnderTest for PlaneDelta {
     type Case = PlaneDeltaCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let launch = self.launch_at(case)?;
         let (queries, val_dim) = (launch.queries(), case.val_dim);
         let [out, out_gradient] = Self::operands(queries, val_dim);

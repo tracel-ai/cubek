@@ -9,7 +9,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, IntKind, UIntKind};
 use cubecl::prelude::{TensorBinding, TensorMapArg, TensorMapSwizzle};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
-use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal, TmaCoordinates, TmaLanding, TmaTerm};
+use cubecl::tile::launch::{Arg, Decline, Delivery, Labelled, TmaCoordinates, TmaLanding, TmaTerm};
 use cubecl::tile::{
     Dimension, Launcher, Projection, TileTensorLaunch,
     kind::Field,
@@ -33,24 +33,24 @@ const WORD: ElemType = ElemType::UInt(UIntKind::U32);
 
 /// What [`PackedTensor::of_quantized`] declines: a scheme with no block scales along the dimension
 /// its words run along.
-pub const SCALES_NOT_ALONG_WORDS: Refusal = Refusal::Declined {
+pub const SCALES_NOT_ALONG_WORDS: Decline = Decline::Unserved {
     why: "the packed routines read block scales along the dimension the words run along",
 };
 
 /// What [`PackedTensor::of_quantized`] declines: a batch of matrices, or values stored other than
 /// in contiguous rows.
-pub const PACKED_NOT_ONE_MATRIX_IN_ROWS: Refusal = Refusal::Declined {
+pub const PACKED_NOT_ONE_MATRIX_IN_ROWS: Decline = Decline::Unserved {
     why: "the packed routines read one quantized matrix in row-major rows",
 };
 
 /// What a read of a packed tensor declines: anything but one packed, block-scaled matrix.
-pub const TENSOR_NOT_PACKED: Refusal = Refusal::Declined {
+pub const TENSOR_NOT_PACKED: Decline = Decline::Unserved {
     why: "a packed read takes one packed, block-scaled matrix",
 };
 
 /// What reading a packed tensor as a stack of slabs declines: words stored in tiles, or slabs that
 /// split one read of its words, one block of its scales or one word of block scales.
-pub const PACKED_STACK_UNREAD: Refusal = Refusal::Declined {
+pub const PACKED_STACK_UNREAD: Decline = Decline::Unserved {
     why: "a packed stack is read slab by slab from words in rows, each slab whole reads, whole \
           scale blocks and whole words of block scales",
 };
@@ -58,13 +58,13 @@ pub const PACKED_STACK_UNREAD: Refusal = Refusal::Declined {
 /// What reading a packed tensor as a batch of matrices, or a window of its rows, declines: words
 /// stored in tiles, a two-level scheme, whose per-tensor scale is the whole tensor's, a read
 /// already stacked or windowed, rows a batch does not divide, or rows past the matrix's.
-pub const PACKED_BATCH_UNREAD: Refusal = Refusal::Declined {
+pub const PACKED_BATCH_UNREAD: Decline = Decline::Unserved {
     why: "a packed batch or window is read from words in rows under a one-level scheme, once, \
           over rows the matrix holds",
 };
 
 /// What a read of a packed tensor declines: values stored in tiles it reads no whole load of.
-pub const STORED_TILES_UNREAD: Refusal = Refusal::Declined {
+pub const STORED_TILES_UNREAD: Decline = Decline::Unserved {
     why: "a packed read takes values stored in tiles shaped [n, k / block, block] from a \
               whole word, a load one run along k and one along n",
 };
@@ -181,7 +181,7 @@ impl PackedTensor {
         block_scales: PlainTensor,
         global_scale: Option<PlainTensor>,
         dimensions: [Dimension; 2],
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let operand = Operand::dimension_of(&scheme, dimensions)
             .and_then(|dimension| Operand::of_scheme(&scheme, dimension, dimensions))
             .ok_or(SCALES_NOT_ALONG_WORDS)?;
@@ -235,7 +235,7 @@ impl PackedTensor {
         scheme: QuantScheme,
         operand: Operand,
         dimensions: [Dimension; 2],
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let shape = words.shape();
         if shape.rank() != 2 {
             return Err(STORED_TILES_UNREAD);
@@ -268,7 +268,7 @@ impl PackedTensor {
     ///
     /// [`PACKED_STACK_UNREAD`]: words stored in tiles, or slabs that split a read, a scale's block,
     /// or a word of block scales.
-    pub fn stacked(self, slabs: usize, along: Dimension) -> Result<Self, Refusal> {
+    pub fn stacked(self, slabs: usize, along: Dimension) -> Result<Self, Decline> {
         let extent = self.extent(along);
         if self.operand.tile_order().is_some() || slabs == 0 || !extent.is_multiple_of(slabs) {
             return Err(PACKED_STACK_UNREAD);
@@ -314,7 +314,7 @@ impl PackedTensor {
         sized: [(Dimension, usize); 2],
         operand: Operand,
         matrix: &Metadata,
-    ) -> Result<Operand, Refusal> {
+    ) -> Result<Operand, Decline> {
         // Tile order reads a matrix stated `[k, rows]`; an `[m, k]` input states it swapped.
         let (k, across, matrix) = match sized {
             [(K, k), (across, _)] => (k, across, matrix.clone()),
@@ -341,7 +341,7 @@ impl PackedTensor {
     ///
     /// [`PACKED_BATCH_UNREAD`]: words stored in tiles, a two-level scheme, a stack or a window
     /// already, or rows `batches` does not divide.
-    pub fn batched(self, batches: usize, dimension: Dimension) -> Result<Self, Refusal> {
+    pub fn batched(self, batches: usize, dimension: Dimension) -> Result<Self, Decline> {
         let rows_dimension = self.rows_dimension();
         let rows = self.extent(rows_dimension);
         let unread = self.operand.tile_order().is_some()
@@ -378,7 +378,7 @@ impl PackedTensor {
     ///
     /// [`PACKED_BATCH_UNREAD`]: words stored in tiles, a two-level scheme, slabs or a window
     /// already, or rows past the matrix's.
-    pub fn window(self, at: usize, count: usize) -> Result<Self, Refusal> {
+    pub fn window(self, at: usize, count: usize) -> Result<Self, Decline> {
         let rows_dimension = self.rows_dimension();
         let stored = self.extent(rows_dimension);
         let unread = self.operand.tile_order().is_some()
@@ -1068,7 +1068,7 @@ impl PackedTensor {
         words: Arg<'_, Labelled>,
         block_scales: TileTensorLaunch,
         global: Option<Arg<'_, Labelled>>,
-    ) -> Result<TileTensorLaunch, Refusal> {
+    ) -> Result<TileTensorLaunch, Decline> {
         let words = words.packed(self.scheme.value).build()?.arg();
         self.scaled_by_words(words, block_scales, global)
     }
@@ -1081,7 +1081,7 @@ impl PackedTensor {
         words: TileTensorLaunch,
         block_scales: TileTensorLaunch,
         global: Option<Arg<'_, Labelled>>,
-    ) -> Result<TileTensorLaunch, Refusal> {
+    ) -> Result<TileTensorLaunch, Decline> {
         let tile = words.scales(block_scales);
         self.under_global(tile, global)
     }
@@ -1132,7 +1132,7 @@ impl PackedTensor {
         words: Arg<'_, Labelled>,
         block_scales: Arg<'_, Labelled>,
         global: Option<Arg<'_, Labelled>>,
-    ) -> Result<TileTensorLaunch, Refusal> {
+    ) -> Result<TileTensorLaunch, Decline> {
         let offsets = self.runtime_offsets();
         let shifted = |arg: TileTensorLaunch| match offsets.is_empty() {
             true => arg,
@@ -1149,7 +1149,7 @@ impl PackedTensor {
         &self,
         tile: TileTensorLaunch,
         global: Option<Arg<'_, Labelled>>,
-    ) -> Result<TileTensorLaunch, Refusal> {
+    ) -> Result<TileTensorLaunch, Decline> {
         match (global, self.scheme.tensor_scale()) {
             (Some(global), Some(field)) => {
                 Ok(tile.scales(global.packed(Field::of_scale(field)).build()?.arg()))
@@ -1183,7 +1183,7 @@ impl PackedTensor {
         blocks_dimension: Dimension,
         blocks: usize,
         delivery: Option<Delivery>,
-    ) -> Result<TileTensorLaunch, Refusal> {
+    ) -> Result<TileTensorLaunch, Decline> {
         let per_word = self.operand.scales_per_word();
         let rows = self.stored_rows();
         let arg = launcher

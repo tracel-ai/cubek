@@ -10,7 +10,7 @@ use crate::kernels::{
     MatmulRoutineProblem,
 };
 use cubecl::client::Client;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands};
@@ -59,7 +59,7 @@ impl MGroupedMatmulTensors {
         rhs: StoredTensor,
         ends: PlainTensor,
         along: SlabDimension,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let source = source.into();
         let rows = source.buffer();
         let shape = rows.shape();
@@ -172,17 +172,14 @@ impl MGroupedMatmulTensors {
     pub fn served_by<Mk, SM, R>(
         &self,
         hw: &Hardware,
-        routine: &R,
         settings: &MGroupedSettings<R::Settings>,
-    ) -> Result<(), Refusal>
+    ) -> Result<(), Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
     {
-        let rows = self.chunk_rows(hw, routine, settings)?;
-        routine
-            .prepare(hw, &self.slab_problem(rows)?, &settings.routine)
-            .map(|_| ())
+        let rows = self.chunk_rows::<Mk, SM, R>(hw, settings)?;
+        R::prepare(hw, &self.slab_problem(rows)?, &settings.routine).map(|_| ())
     }
 
     /// The product on `routine` at `settings`, prepared for `hw`, its groups padded to the chunks
@@ -202,7 +199,7 @@ impl MGroupedMatmulTensors {
         hw: &Hardware,
         routine: &R,
         settings: &MGroupedSettings<R::Settings>,
-    ) -> Result<PaddedRows, Refusal>
+    ) -> Result<PaddedRows, Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -211,7 +208,7 @@ impl MGroupedMatmulTensors {
             self.source.rows() > 0,
             "a padded product has a row at least"
         );
-        let chunk_rows = self.chunk_rows(hw, routine, settings)?;
+        let chunk_rows = self.chunk_rows::<Mk, SM, R>(hw, settings)?;
         let stack = self.along.read_slabs(&self.rhs, self.groups())?;
         let (lhs, layout) = self
             .source
@@ -259,20 +256,19 @@ impl MGroupedMatmulTensors {
     fn chunk_rows<Mk, SM, R>(
         &self,
         hw: &Hardware,
-        routine: &R,
         settings: &MGroupedSettings<R::Settings>,
-    ) -> Result<usize, Refusal>
+    ) -> Result<usize, Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
     {
         match settings.chunk {
             MGroupedChunk::Rows(rows) => Ok(rows.get()),
-            MGroupedChunk::CubeTile => self.rows_a_cube_holds(hw, routine, &settings.routine),
+            MGroupedChunk::CubeTile => self.rows_a_cube_holds::<Mk, SM, R>(hw, &settings.routine),
         }
     }
 
-    /// The rows one cube of `routine` at `settings` holds against the stack, float or packed,
+    /// The rows one cube of `R` at `settings` holds against the stack, float or packed,
     /// prepared for `hw` over every grouped row as one dense product.
     ///
     /// # Errors
@@ -282,15 +278,14 @@ impl MGroupedMatmulTensors {
     fn rows_a_cube_holds<Mk, SM, R>(
         &self,
         hw: &Hardware,
-        routine: &R,
         settings: &R::Settings,
-    ) -> Result<usize, Refusal>
+    ) -> Result<usize, Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
     {
         let problem = self.slab_problem(self.source.rows())?;
-        let (blueprint, _) = routine.prepare(hw, &problem, settings)?;
+        let (blueprint, _) = R::prepare(hw, &problem, settings)?;
         Ok(blueprint.partitioning.rows() as usize)
     }
 
@@ -300,7 +295,7 @@ impl MGroupedMatmulTensors {
     /// # Errors
     ///
     /// What reading a packed stack slab by slab declines.
-    fn slab_problem(&self, rows: usize) -> Result<MatmulRoutineProblem, Refusal> {
+    fn slab_problem(&self, rows: usize) -> Result<MatmulRoutineProblem, Decline> {
         let elem = self.source.buffer().elem;
         match &self.rhs {
             StoredTensor::Packed(packed) => {

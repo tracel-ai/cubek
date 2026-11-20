@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 use cubecl::server::LaunchError;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_matmul::definition::{MatmulAvailabilityError, MatmulSetupError};
 use cubek_std::InvalidConfigError;
 
@@ -70,9 +70,9 @@ impl From<MatmulSetupError> for ConvSetupError {
 }
 
 /// A launch the tile engine refused is a configuration this routine cannot run.
-impl From<Refusal> for ConvSetupError {
-    fn from(refusal: Refusal) -> Self {
-        Self::InvalidConfig(Box::new(refusal))
+impl From<Decline> for ConvSetupError {
+    fn from(decline: Decline) -> Self {
+        Self::InvalidConfig(Box::new(decline))
     }
 }
 

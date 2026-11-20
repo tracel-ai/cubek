@@ -6,7 +6,7 @@ use crate::matmul::cube::{
 use crate::matmul::plane::PlaneFragmentMicrokernelSettings;
 use crate::matmul::{MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulWorkItem};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Delivery, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Delivery, Vectorization};
 use cubecl::tile::{Levels, Scratch};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -155,7 +155,7 @@ impl Microkernel for HypercubeStagedMicrokernel {
     }
 
     /// Its cubes' items.
-    fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
+    fn admits(item: &MatmulWorkItem) -> Result<(), Decline> {
         CubeStagedMicrokernel::admits(item)
     }
 

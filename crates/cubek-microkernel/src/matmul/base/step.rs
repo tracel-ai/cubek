@@ -1,6 +1,6 @@
 use crate::matmul::{MatmulOperand, MatmulOperands};
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{Dimension, Space};
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_dimensions::{K, M, N};
@@ -9,13 +9,13 @@ use cubek_std::{Hardware, Instructions, TMA_ROW_BYTES, block_scaled_mma};
 /// What a launch of this kind declines whatever the routine: a packed input a read of which
 /// straddles two scale tiles, or an `n` or a `k` that is not a whole number of
 /// [steps](MatmulStep).
-pub const MATMUL_STEPS_UNCLOSED: Refusal = Refusal::Declined {
+pub const MATMUL_STEPS_UNCLOSED: Decline = Decline::Unserved {
     why: "the packed routines read packed inputs whose reads sit inside one scale tile, and whose n and k are whole steps: the least box every load of the inputs' values and of their scales fills whole",
 };
 
 /// What a product of two packed inputs declines where a read of one along `K` splits a word of
 /// the other: the two are contracted a read at a time.
-pub const MATMUL_PACKED_READS_SPLIT: Refusal = Refusal::Declined {
+pub const MATMUL_PACKED_READS_SPLIT: Decline = Decline::Unserved {
     why: "two packed inputs are contracted a read along k at a time, and a read of one splits a word of the other",
 };
 
@@ -217,7 +217,7 @@ impl MatmulStep {
         operands: MatmulOperands<Operand>,
         n: usize,
         k: usize,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let straddles = MatmulOperand::INPUTS.into_iter().any(|input| {
             let operand = operands.get(input);
             let lined = operand.lined();

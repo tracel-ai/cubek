@@ -1,7 +1,7 @@
 //! The plane matmul microkernels on one work item.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Delivery, Grid, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Delivery, Grid, Vectorization};
 use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubecl::tile::{
     Launcher, Partitioning, Region, Scratch, Semiring, SoftwareMatmul, Space, StageStorage, Stages,
@@ -52,7 +52,7 @@ impl PlaneFragmentLaunch {
         settings: &PlaneFragmentMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item();
         let microkernel = PlaneFragmentMicrokernel::best(hw, &item, settings)?;
         let [m, n, k] = [M, N, K].map(|dimension| microkernel.tile_extent(dimension));
@@ -103,7 +103,7 @@ impl MatmulLaunch for PlaneFragmentLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let [m, n, k] = self.shape;
         let space = Space::new(&[(M, m), (N, n), (K, k)]);
         let partitioning = Partitioning::new(
@@ -170,7 +170,7 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
 
         let mut sum = c
-            .accumulator::<EA>(&a, &b, Semiring::SUM_PROD)
+            .accumulator::<EA>(&a, &b, Semiring::SumProd)
             .with_scratch(Scratch::None);
         sum.zero();
 
@@ -240,7 +240,7 @@ impl PlaneShuffleLaunch {
         rows: WholeRows,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item_of(MatmulRows::Whole(rows.0), Self::RHS);
         let microkernel = PlaneShuffleMicrokernel::best(hw, &item, settings)?;
         let mut vectorization = Vectorization::new();
@@ -273,7 +273,7 @@ impl MatmulLaunch for PlaneShuffleLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let launcher = self
             .one_cube
             .launcher(client, self.microkernel.plane_width() as u32)?;
@@ -318,7 +318,7 @@ fn plane_shuffle_kernel<EA: Numeric, E: Numeric>(
     let c = out.tile_mut(&partitioning);
     for plane in &partitioning {
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
-        let mut sum = c.register_accumulator::<EA>(&a, &b, block, Semiring::SUM_PROD);
+        let mut sum = c.register_accumulator::<EA>(&a, &b, block, Semiring::SumProd);
         sum.zero();
         for k_step in plane.walk_within(&b) {
             plane_shuffle_microkernel(&k_step, &sum, &a, &b, MatmulOperands::AS_BOUND);

@@ -120,11 +120,11 @@ fn packed_inputs_of_two_widths_answer_or_are_declined_by_the_plane_shuffle() {
     };
     let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
     shuffle.check_some(shuffle.at(
-        PlaneShuffleMatmulRoutine.packed_settings(),
+        PlaneShuffleMatmulRoutine::packed_settings(),
         &[product(PackedFormat::Q8, PackedFormat::Q4)],
     ));
     shuffle.check(shuffle.at(
-        PlaneShuffleMatmulRoutine.packed_settings(),
+        PlaneShuffleMatmulRoutine::packed_settings(),
         &[product(PackedFormat::Q4, PackedFormat::Q8)],
     ));
 }

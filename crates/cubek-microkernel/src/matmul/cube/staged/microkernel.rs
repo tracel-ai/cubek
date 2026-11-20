@@ -46,8 +46,8 @@ impl CubeStagedWalk {
         #[comptime] walk: CubeStagedWalk,
     ) -> Tile {
         let mut sum = match walk.rows_along {
-            PlaneFragmentRowsAlong::M => over.accumulator::<EA>(a, b, Semiring::SUM_PROD),
-            PlaneFragmentRowsAlong::N => over.accumulator::<EA>(b, a, Semiring::SUM_PROD),
+            PlaneFragmentRowsAlong::M => over.accumulator::<EA>(a, b, Semiring::SumProd),
+            PlaneFragmentRowsAlong::N => over.accumulator::<EA>(b, a, Semiring::SumProd),
         };
 
         sum.zero();

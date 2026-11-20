@@ -5,7 +5,7 @@ use super::kernel::cube_staged_key_gradient_sum_kernel;
 use super::{CubeStagedKeyWalkBlueprint, CubeStagedKeyWalkSettings, key_walk};
 use crate::kernels::routines::heads_apart::cubes_with_heads_apart;
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, KeyGradientSums};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
 use cubek_std::Hardware;
 
@@ -28,7 +28,7 @@ impl CubeStagedKeyGradientSumRoutine {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &CubeStagedKeyWalkSettings,
-    ) -> Result<CubeStagedKeyWalkBlueprint, Refusal> {
+    ) -> Result<CubeStagedKeyWalkBlueprint, Decline> {
         key_walk(hw, problem, settings, |tiling| {
             cubes_with_heads_apart(tiling, problem.group)
         })

@@ -3,7 +3,7 @@
 //! values'. The cube's only unit runs it.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::space::UnitCube;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube};
@@ -47,7 +47,7 @@ impl UnitQueryGradientLaunch {
         item: AttentionBackwardWorkItem,
         settings: &UnitQueryGradientMicrokernelSettings,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let microkernel = UnitQueryGradientMicrokernel::best(hw, &item, settings)?;
         Ok(Self {
             seq: [microkernel.seq_q(), microkernel.seq_kv() * steps],
@@ -72,7 +72,7 @@ impl AttentionBackwardLaunch for UnitQueryGradientLaunch {
         args: AttentionBackwardOperandArgs,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         use AttentionBackwardOperand as Operand;
         let sequence = OneSequence {
             item: self.item,
@@ -132,7 +132,7 @@ impl UnitKeyGradientLaunch {
         item: AttentionBackwardWorkItem,
         settings: &UnitKeyGradientMicrokernelSettings,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let microkernel = UnitKeyGradientMicrokernel::best(hw, &item, settings)?;
         Ok(Self {
             seq: [microkernel.seq_q() * steps, microkernel.seq_kv()],
@@ -157,7 +157,7 @@ impl AttentionBackwardLaunch for UnitKeyGradientLaunch {
         args: AttentionBackwardOperandArgs,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         use AttentionBackwardOperand as Operand;
         let sequence = OneSequence {
             item: self.item,

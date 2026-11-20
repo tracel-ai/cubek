@@ -8,7 +8,7 @@ use cubecl::client::Client;
 use cubecl::prelude::Scalar;
 use cubecl::quant::scheme::QuantStore;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::MatmulRoutine;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
@@ -216,7 +216,7 @@ impl RoutineProduct for PackedProduct {
         hw: &Hardware,
         client: &Client,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel,

@@ -5,7 +5,7 @@
 use crate::launch::random::{RandomLaunch, RandomMicrokernel, UnitRun};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_microkernel::random::plane::PlaneRandomMicrokernelSettings;
 use cubek_microkernel::random::{Bernoulli, DistributionArgs, Normal, SeedsLaunch, Uniform};
@@ -156,7 +156,7 @@ impl Random {
     /// # Errors
     ///
     /// Why the device runs no such microkernel.
-    fn launch_at(&self, case: &RandomCase) -> Result<RandomLaunch, Refusal> {
+    fn launch_at(&self, case: &RandomCase) -> Result<RandomLaunch, Decline> {
         match case.scope {
             RandomScope::Unit { lines } => RandomLaunch::unit(
                 &self.hw,
@@ -199,7 +199,7 @@ impl Random {
 impl ScopeUnderTest for Random {
     type Case = RandomCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let launch = self.launch_at(case)?;
         let out = TestInput::builder(client.clone(), shape![launch.values])
             .dtype(F32)

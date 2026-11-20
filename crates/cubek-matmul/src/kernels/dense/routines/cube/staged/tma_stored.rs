@@ -6,7 +6,7 @@ use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,
 };
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -28,8 +28,8 @@ use cubek_std::routine::{Grid, Routine};
 /// and one bulk copy stores it, clipped at the output's edge, every row of the box leaving whole
 /// ([`CubeStagedStore::Tma`]).
 ///
-/// Refused where its fill is, and where a descriptor cannot store the box
-/// ([`CubeStagedTmaStoreRefusal`](cubek_microkernel::matmul::cube::CubeStagedTmaStoreRefusal)): an
+/// Declined where its fill is, and where a descriptor cannot store the box
+/// ([`CubeStagedTmaStoreDecline`](cubek_microkernel::matmul::cube::CubeStagedTmaStoreDecline)): an
 /// output a sink or one whose rows are one element wide, among others.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedTmaStoredMatmulRoutine;
@@ -75,7 +75,7 @@ impl CubeStagedTmaStoredMatmulRoutine {
                 cube_order: CubeOrder::RowMajor,
             }
         };
-        let mut listed = block_scaled::block_scaled_settings(hw, *self, &shapes, settings(0));
+        let mut listed = block_scaled::block_scaled_settings::<Self>(hw, &shapes, settings(0));
         // The `128 × 128` box beside two filling planes: the activation's scale words, which the
         // units copy, are then theirs alone, so the planes that contract never wait for a slot to
         // empty before filling it. The box takes the ring's bytes once the walk is over, which
@@ -89,9 +89,8 @@ impl CubeStagedTmaStoredMatmulRoutine {
             },
             ..shapes[0]
         };
-        listed.extend(block_scaled::block_scaled_settings(
+        listed.extend(block_scaled::block_scaled_settings::<Self>(
             hw,
-            *self,
             &[deep],
             settings(2),
         ));
@@ -125,7 +124,7 @@ impl Routine for CubeStagedTmaStoredMatmulRoutine {
     /// Qwen3-0.6B's output projection is 128 of the `64 × 128` boxes for 188 cores, and on the
     /// `64 × 64` it takes 16.4 µs against 22.5, what cuBLAS takes. Both fit their ring and box in
     /// 99 KB. None without a bulk tensor copy.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.bulk_tensor_copy() {
             return Vec::new();
         }
@@ -145,7 +144,6 @@ impl Routine for CubeStagedTmaStoredMatmulRoutine {
     }
 
     fn vectorize(
-        &self,
         microkernel: &CubeStagedMicrokernel,
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -154,7 +152,6 @@ impl Routine for CubeStagedTmaStoredMatmulRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeStagedMatmulRoutineBlueprint,
         grid: &Grid,
@@ -167,11 +164,10 @@ impl Routine for CubeStagedTmaStoredMatmulRoutine {
     /// engine checked against the box it stores too, before the box is sized
     /// (`CubeStagedPlacement::new`).
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let fill = CubeStagedFill {
             delivery: CubeStagedDelivery::Tma,
             filling_planes: settings.filling_planes,

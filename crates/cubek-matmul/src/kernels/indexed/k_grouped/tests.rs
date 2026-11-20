@@ -10,7 +10,7 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Dimension;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::{Hardware, Instructions};
 use cubek_test_utils::client;
 
@@ -28,7 +28,7 @@ fn launch_grouped(
     lhs: PlainTensor,
     rhs: PlainTensor,
     ends: &[u32],
-) -> Result<TensorHandle, Refusal> {
+) -> Result<TensorHandle, Decline> {
     let ends = PlainTensor::of_handle(upload(client, ends));
     launch(&KGroupedMatmulTensors::new(client, lhs, rhs, ends)?)
 }

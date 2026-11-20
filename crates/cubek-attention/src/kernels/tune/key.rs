@@ -18,7 +18,7 @@ use crate::kernels::{
     QueryDimension, ScoreScale,
 };
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::{self as cubecl, AutotuneKey};
 use cubek_microkernel::attention::AttentionOperands;
@@ -222,13 +222,13 @@ impl AttentionKey {
 /// h, d]`, the value dim the head dim. A key carries no value dim of its own: every attention
 /// reaching autotune has `DV = D`.
 impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
-    type Error = Refusal;
+    type Error = Decline;
 
     /// # Errors
     ///
     /// [`ATTENTION_GROUP_UNEVEN`], where the key's query heads do not split evenly over its key
     /// heads.
-    fn try_from(key: &AttentionKey) -> Result<Self, Refusal> {
+    fn try_from(key: &AttentionKey) -> Result<Self, Decline> {
         let group = key.group().ok_or(ATTENTION_GROUP_UNEVEN)?;
         let (elements, head) = (key.elements(), key.head_dim());
         let rows = |innermost: usize| ElemAlignment::new(&[1, innermost], &[innermost, 1]);

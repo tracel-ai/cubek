@@ -5,7 +5,7 @@
 
 use crate::kernels::{RmsNormBinding, RmsNormBlueprint, RmsNormRoutineProblem, RmsNormTensors};
 use cubecl::tile::Geometry;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::launch::SinkLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Unbound};
 use cubek_std::routine::{Grid, Routine};
@@ -43,7 +43,7 @@ pub struct RmsNormRoutineSinkLaunch<R, M> {
 }
 
 /// What a sink launch declines: rows of no rows, which no grid spawns and no sink takes.
-pub const RMS_NORM_SINK_TAKES_NO_ROWS: Refusal = Refusal::Declined {
+pub const RMS_NORM_SINK_TAKES_NO_ROWS: Decline = Decline::Unserved {
     why: "a sink takes the norm of at least one row",
 };
 

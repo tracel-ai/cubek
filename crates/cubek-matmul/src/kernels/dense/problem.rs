@@ -3,7 +3,7 @@ use std::borrow::Cow;
 
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Geometry;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Dimension, Indexing};
 use cubecl::tune::Work;
@@ -118,7 +118,7 @@ impl MatmulRoutineProblem {
     /// # Errors
     ///
     /// [`MATMUL_PACKED_UNREAD`], for a packed operand.
-    pub fn check_plain(&self) -> Result<(), Refusal> {
+    pub fn check_plain(&self) -> Result<(), Decline> {
         match self.packings() == MatmulOperands::all(None) {
             true => Ok(()),
             false => Err(MATMUL_PACKED_UNREAD),
@@ -156,7 +156,7 @@ impl MatmulRoutineProblem {
     /// # Errors
     ///
     /// [`MATMUL_INDEX_UNREAD`], for a product with a table.
-    pub fn check_unindexed(&self) -> Result<(), Refusal> {
+    pub fn check_unindexed(&self) -> Result<(), Decline> {
         match self.index {
             None => Ok(()),
             Some(_) => Err(MATMUL_INDEX_UNREAD),
@@ -177,7 +177,7 @@ impl MatmulRoutineProblem {
         &self,
         block_scales: BlockScales,
         by_tma: bool,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let scales_in_tiles = [self.inputs.lhs, self.inputs.rhs]
             .into_iter()
             .filter_map(|input| input.operand.tile_order())
@@ -530,27 +530,27 @@ impl EstimatedProblem for MatmulRoutineProblem {
 
 /// What a routine whose kernel reads no packed operand declines: a packed one, which the packed
 /// routines read.
-pub const MATMUL_PACKED_UNREAD: Refusal = Refusal::Declined {
+pub const MATMUL_PACKED_UNREAD: Decline = Decline::Unserved {
     why: "this routine reads float operands; a packed one runs on the packed routines",
 };
 
 /// What a routine whose kernel walks no indexed input declines: a product whose inputs read a
 /// table, which the routines walking within their inputs serve.
-pub const MATMUL_INDEX_UNREAD: Refusal = Refusal::Declined {
+pub const MATMUL_INDEX_UNREAD: Decline = Decline::Unserved {
     why: "this routine's kernel walks no indexed input; a routed or grouped product runs on the \
           routines that walk within it",
 };
 
 /// What a fill the TMA engine delivers declines: a product whose inputs read a table, which a
 /// tensor map, addressing its tensor whole, does not.
-pub const MATMUL_INDEX_UNREAD_BY_TMA: Refusal = Refusal::Declined {
+pub const MATMUL_INDEX_UNREAD_BY_TMA: Decline = Decline::Unserved {
     why: "a tensor map reads no table; an indexed input is staged by the cube's units",
 };
 
 /// What a launch taking its block scales as words copied by the units declines: scales kept in
 /// tiles of their own ([`TileOrder::scales_in_tiles`]). The units bind the words from the rows a
 /// matrix in rows keeps them in; only the TMA engine lands the tiles whole.
-pub const MATMUL_SCALE_WORDS_IN_TILES: Refusal = Refusal::Declined {
+pub const MATMUL_SCALE_WORDS_IN_TILES: Decline = Decline::Unserved {
     why: "this launch's units copy its block scales as words of their rows, and this matrix keeps \
           them in tiles of their own, which only the TMA engine lands",
 };
@@ -558,14 +558,14 @@ pub const MATMUL_SCALE_WORDS_IN_TILES: Refusal = Refusal::Declined {
 /// What a fill or a store the TMA engine moves declines: an operand of rows one element wide
 /// ([`rows_one_element_wide`](MatmulRoutineProblem::rows_one_element_wide)), whose rows a tensor
 /// map cannot step between, so the cube's units move them.
-pub const MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA: Refusal = Refusal::Declined {
+pub const MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA: Decline = Decline::Unserved {
     why: "a tensor map steps between rows by whole 16-byte lines, and this operand's rows are one \
           element wide; the cube's units move them",
 };
 
 /// What a launch over a packed input declines where its levels reach past the end of `K`: the
 /// input is bound a whole read wide along `K`, and no mask checks a vector line of its words.
-pub const MATMUL_PACKED_WALK_PAST_K: Refusal = Refusal::Declined {
+pub const MATMUL_PACKED_WALK_PAST_K: Decline = Decline::Unserved {
     why: "a packed input is read a whole read wide along k, which no mask checks, and this \
           launch's levels reach past the end of k",
 };
@@ -573,7 +573,7 @@ pub const MATMUL_PACKED_WALK_PAST_K: Refusal = Refusal::Declined {
 /// What the hypercube routines decline: a packed lhs. They read a packed rhs beside a float lhs;
 /// two packed inputs contract on the block-scaled instruction, whose operands only the cube
 /// staged routine binds, so a hypercube launch over them would fail to expand.
-pub const MATMUL_HYPERCUBE_PACKED_LHS: Refusal = Refusal::Declined {
+pub const MATMUL_HYPERCUBE_PACKED_LHS: Decline = Decline::Unserved {
     why: "the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed",
 };
 

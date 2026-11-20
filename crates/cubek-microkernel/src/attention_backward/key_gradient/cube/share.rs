@@ -126,7 +126,7 @@ impl<EA: Float> StageQueryGradientShare<EA> {
         let mut part = self
             .sum
             .at(plane)
-            .accumulator::<EA>(score_gradient, key, Semiring::SUM_PROD)
+            .accumulator::<EA>(score_gradient, key, Semiring::SumProd)
             .with_scratch(scratch);
         part.zero();
 

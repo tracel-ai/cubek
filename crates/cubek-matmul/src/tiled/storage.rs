@@ -9,8 +9,8 @@
 //! through its layout, however many levels lie inside that tile.
 
 use cubecl::tile::{
-    Geometry, Launcher, Level, Levels, Partitioning, Space, TileTensor, kind::Field, launch::Grid,
-    launch::Refusal,
+    Geometry, Launcher, Level, Levels, Partitioning, Space, TileTensor, kind::Field,
+    launch::Decline, launch::Grid,
 };
 use cubecl::{
     client::Client,
@@ -270,7 +270,7 @@ impl StoredLayout {
                 },
             )
             .collect();
-        let misfit = |misfit: Refusal| refused(misfit.to_string());
+        let misfit = |misfit: Decline| refused(misfit.to_string());
         let in_values = storage.physical(&values).map_err(misfit)?;
         let in_words = words_storage.physical(&word_extents).map_err(misfit)?;
         let batch_dims: Vec<usize> = shape[..batches].to_vec();

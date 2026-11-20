@@ -12,7 +12,7 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Dimension;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::autotune::GroupPriority;
 use cubek_test_utils::client;
 
@@ -37,7 +37,7 @@ fn launch(
     rhs: PlainTensor,
     ends: PlainTensor,
     along: SlabDimension,
-) -> Result<TensorHandle, Refusal> {
+) -> Result<TensorHandle, Decline> {
     let tensors = MGroupedMatmulTensors::new(client, lhs, StoredTensor::Plain(rhs), ends, along)?;
     launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT)
 }

@@ -250,9 +250,8 @@ struct Served {
     refusals: Vec<String>,
 }
 
-/// `routine` at every setting of `lists`, each counted once, on `problem`.
+/// `R` at every setting of `lists`, each counted once, on `problem`.
 fn served<R>(
-    routine: R,
     hw: &Hardware,
     problem: &MatmulRoutineProblem,
     lists: impl IntoIterator<Item = Vec<R::Settings>>,
@@ -270,7 +269,7 @@ where
     let mut prepared = 0;
     let mut refusals = Vec::new();
     for setting in &settings {
-        match routine.prepare(hw, problem, setting) {
+        match R::prepare(hw, problem, setting) {
             Ok(_) => prepared += 1,
             Err(refusal) => {
                 let refusal = refusal.to_string();
@@ -295,63 +294,53 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
     vec![
         (
             "unit-registers",
-            served(
-                UnitRegistersMatmulRoutine,
+            served::<UnitRegistersMatmulRoutine>(
                 hw,
                 problem,
-                [UnitRegistersMatmulRoutine.settings(hw)],
+                [UnitRegistersMatmulRoutine::settings(hw)],
             ),
         ),
         (
             "unit-whole-k",
-            served(
-                UnitWholeKMatmulRoutine,
-                hw,
-                problem,
-                [UnitWholeKMatmulRoutine.settings(hw)],
-            ),
+            served::<UnitWholeKMatmulRoutine>(hw, problem, [UnitWholeKMatmulRoutine::settings(hw)]),
         ),
         (
             "plane-shuffle",
-            served(
-                PlaneShuffleMatmulRoutine,
+            served::<PlaneShuffleMatmulRoutine>(
                 hw,
                 problem,
                 [
-                    PlaneShuffleMatmulRoutine.settings(hw),
-                    packed(any_packed, PlaneShuffleMatmulRoutine.packed_settings()),
+                    PlaneShuffleMatmulRoutine::settings(hw),
+                    packed(any_packed, PlaneShuffleMatmulRoutine::packed_settings()),
                 ],
             ),
         ),
         (
             "plane-dequantize",
-            served(
-                PlaneDequantizeMatmulRoutine,
+            served::<PlaneDequantizeMatmulRoutine>(
                 hw,
                 problem,
-                [PlaneDequantizeMatmulRoutine.settings(hw)],
+                [PlaneDequantizeMatmulRoutine::settings(hw)],
             ),
         ),
         (
             "cube-shuffle",
-            served(
-                CubeShuffleMatmulRoutine,
+            served::<CubeShuffleMatmulRoutine>(
                 hw,
                 problem,
                 [
-                    CubeShuffleMatmulRoutine.settings(hw),
-                    packed(any_packed, CubeShuffleMatmulRoutine.packed_settings(hw)),
+                    CubeShuffleMatmulRoutine::settings(hw),
+                    packed(any_packed, CubeShuffleMatmulRoutine::packed_settings(hw)),
                 ],
             ),
         ),
         (
             "cube-staged",
-            served(
-                CubeStagedMatmulRoutine,
+            served::<CubeStagedMatmulRoutine>(
                 hw,
                 problem,
                 [
-                    CubeStagedMatmulRoutine.settings(hw),
+                    CubeStagedMatmulRoutine::settings(hw),
                     packed(any_packed, CubeStagedMatmulRoutine.packed_settings(hw)),
                     packed(
                         any_packed,
@@ -362,12 +351,11 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
         ),
         (
             "cube-staged-async-copy",
-            served(
-                CubeStagedAsyncCopyMatmulRoutine,
+            served::<CubeStagedAsyncCopyMatmulRoutine>(
                 hw,
                 problem,
                 [
-                    CubeStagedAsyncCopyMatmulRoutine.settings(hw),
+                    CubeStagedAsyncCopyMatmulRoutine::settings(hw),
                     packed(
                         any_packed,
                         CubeStagedAsyncCopyMatmulRoutine.packed_settings(hw),
@@ -381,12 +369,11 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
         ),
         (
             "cube-staged-tma",
-            served(
-                CubeStagedTmaMatmulRoutine,
+            served::<CubeStagedTmaMatmulRoutine>(
                 hw,
                 problem,
                 [
-                    CubeStagedTmaMatmulRoutine.settings(hw),
+                    CubeStagedTmaMatmulRoutine::settings(hw),
                     packed(
                         any_packed,
                         CubeStagedTmaMatmulRoutine.block_scaled_settings(hw),
@@ -396,12 +383,11 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
         ),
         (
             "cube-staged-tma-filler",
-            served(
-                CubeStagedTmaFillerMatmulRoutine,
+            served::<CubeStagedTmaFillerMatmulRoutine>(
                 hw,
                 problem,
                 [
-                    CubeStagedTmaFillerMatmulRoutine.settings(hw),
+                    CubeStagedTmaFillerMatmulRoutine::settings(hw),
                     packed(
                         any_packed,
                         CubeStagedTmaFillerMatmulRoutine.packed_settings(hw),
@@ -411,12 +397,11 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
         ),
         (
             "cube-staged-tma-stored",
-            served(
-                CubeStagedTmaStoredMatmulRoutine,
+            served::<CubeStagedTmaStoredMatmulRoutine>(
                 hw,
                 problem,
                 [
-                    CubeStagedTmaStoredMatmulRoutine.settings(hw),
+                    CubeStagedTmaStoredMatmulRoutine::settings(hw),
                     packed(
                         any_packed,
                         CubeStagedTmaStoredMatmulRoutine.block_scaled_settings(hw),
@@ -426,21 +411,19 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
         ),
         (
             "cube-staged-wgmma",
-            served(
-                CubeStagedWgmmaMatmulRoutine,
+            served::<CubeStagedWgmmaMatmulRoutine>(
                 hw,
                 problem,
-                [CubeStagedWgmmaMatmulRoutine.settings(hw)],
+                [CubeStagedWgmmaMatmulRoutine::settings(hw)],
             ),
         ),
         (
             "hypercube-last-arrival",
-            served(
-                HypercubeLastArrivalMatmulRoutine,
+            served::<HypercubeLastArrivalMatmulRoutine>(
                 hw,
                 problem,
                 [
-                    HypercubeLastArrivalMatmulRoutine.settings(hw),
+                    HypercubeLastArrivalMatmulRoutine::settings(hw),
                     packed(
                         any_packed,
                         HypercubeLastArrivalMatmulRoutine.packed_settings(hw),

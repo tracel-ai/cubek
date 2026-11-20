@@ -34,8 +34,7 @@ pub struct MatmulRoutineCandidate<R: Routine> {
 impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        routine
-            .settings(hw)
+        R::settings(hw)
             .into_iter()
             .map(|settings| Self {
                 routine,
@@ -74,7 +73,7 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     {
         ListedFor::Float
             .admits(call.product())
-            .map_err(|refusal| format!("{refusal:?}"))?;
+            .map_err(|decline| format!("{decline:?}"))?;
         let settings = &self.settings;
         let destination = call.destination;
         let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
@@ -91,7 +90,7 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
         let launched = tensors.and_then(|tensors| {
             let (blueprint, grid) =
                 self.prepared
-                    .prepare(&self.routine, &self.hw, &tensors.problem(), settings)?;
+                    .prepare(&self.hw, &tensors.problem(), settings)?;
             self.routine
                 .dispatch_into_buffer(&tensors, blueprint, grid)?;
             Ok(match destination {
@@ -128,10 +127,7 @@ where
     /// packing: what a packed key's product becomes once its inputs are decoded.
     pub fn prepared_float(&self, key: &MatmulTuneKey) -> Option<(MatmulBlueprint<M, SM>, CubeDim)> {
         let problem = MatmulRoutineProblem::from(&key.shape());
-        let (blueprint, grid) = self
-            .routine
-            .prepare(&self.hw, &problem, &self.settings)
-            .ok()?;
+        let (blueprint, grid) = R::prepare(&self.hw, &problem, &self.settings).ok()?;
         Some((blueprint, grid.launch.cube_dim))
     }
 

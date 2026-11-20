@@ -4,7 +4,7 @@ use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,
 };
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -24,8 +24,8 @@ use cubek_std::routine::{Grid, Routine};
 /// contracts ([`CubeStagedDelivery::Tma`]). Its operands are tensor maps, read one element wide;
 /// its planes store their own fragments.
 ///
-/// Refused where one box cannot land a stage as its instruction reads it
-/// ([`CubeStagedTmaRefusal`](cubek_microkernel::matmul::cube::CubeStagedTmaRefusal)), where the
+/// Declined where one box cannot land a stage as its instruction reads it
+/// ([`CubeStagedTmaDecline`](cubek_microkernel::matmul::cube::CubeStagedTmaDecline)), where the
 /// operands are read through an index, and where an input's rows are one element wide.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedTmaMatmulRoutine;
@@ -74,7 +74,7 @@ impl CubeStagedTmaMatmulRoutine {
             shape((4, 4, 1), (2, 4), 1, triple),
             shape((2, 8, 1), (4, 2), 1, triple),
         ];
-        block_scaled::block_scaled_settings(hw, *self, &shapes, |microkernel| {
+        block_scaled::block_scaled_settings::<Self>(hw, &shapes, |microkernel| {
             CubeStagedTmaMatmulRoutineSettings {
                 microkernel,
                 cube_order: CubeOrder::RowMajor,
@@ -110,7 +110,7 @@ impl Routine for CubeStagedTmaMatmulRoutine {
     /// fragments reuse each operand load twice as much; the `256 × 128` and `128 × 256` boxes, on
     /// eight planes, for the long products. Every one of them fits two stages in 64 KB. None
     /// without a bulk tensor copy.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.bulk_tensor_copy() {
             return Vec::new();
         }
@@ -135,7 +135,6 @@ impl Routine for CubeStagedTmaMatmulRoutine {
     }
 
     fn vectorize(
-        &self,
         microkernel: &CubeStagedMicrokernel,
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -144,7 +143,6 @@ impl Routine for CubeStagedTmaMatmulRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeStagedMatmulRoutineBlueprint,
         grid: &Grid,
@@ -156,11 +154,10 @@ impl Routine for CubeStagedTmaMatmulRoutine {
     /// As [`CubeStagedMatmulRoutine`](crate::kernels::CubeStagedMatmulRoutine)'s, the TMA engine
     /// checked against the stage it lands.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         // The problem its microkernel plans on, every packed input read as it reads it.
         let (read, picked) = CubeStagedPlacement::planned(
             hw,

@@ -22,6 +22,9 @@ attention = ["matmul"]
 attention-backward = ["attention"]
 random = []
 reduce = []
+# The host's answer to each reduce operation, for the tests that check the reduce microkernels and
+# kernels against it.
+cpu-reference = ["reduce"]
 zero = []
 rms-norm = ["row-store"]
 swiglu = ["row-store"]
@@ -37,5 +40,7 @@ cubecl = { workspace = true, features = ["stdlib", "tile"] }
 serde = { workspace = true }
 
 [dev-dependencies]
+# Enable the reduce reference for tests without publishing a versioned self-dependency.
+cubek-microkernel = { path = ".", default-features = false, features = ["cpu-reference"] }
 cubek-test-utils = { workspace = true }
 half = { workspace = true }

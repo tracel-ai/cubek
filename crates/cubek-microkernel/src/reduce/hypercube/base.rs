@@ -1,64 +1,111 @@
+use super::microkernel::hypercube_last_arrival_reduce_microkernel;
+use crate::reduce::cube::{CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings};
 use crate::reduce::{ReduceOperand, ReduceWorkItem};
+use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
+use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
 
-/// A row split across cubes, each reducing its part as the cube's microkernel reduces a row, then
-/// storing its partial apart: the last of the row's cubes to finish merges the partials and writes
-/// the row.
+/// A row split across cubes, each reducing its part with the cube's microkernel, then storing its
+/// partial apart: the last of the row's cubes to finish merges the partials and writes the row.
 ///
-/// It runs where the device commits to a plane width, as the cube's does, and where one cube's
-/// stores reach another within a launch (`device_memory_scope`), which is how the cubes meet: on
-/// WGSL, whose storage barrier orders a workgroup's own memory only, the last cube was seen reading
-/// another's partial as the zero it held before the write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HypercubeReduceMicrokernel {
-    pub item: ReduceWorkItem,
-    /// Units of a plane, as wide as the device commits to.
-    pub lanes: usize,
-    /// Planes of each cube.
-    pub planes: usize,
+/// It runs where the cube's microkernel runs and where one cube's stores reach another within a
+/// launch (`device_memory_scope`), which is how the cubes meet: on WGSL, whose storage barrier
+/// orders a workgroup's own memory only, the last cube was seen reading another's partial as the
+/// zero it held before the write.
+#[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HypercubeLastArrivalReduceMicrokernel {
+    /// The cube microkernel each cube reduces its part with.
+    #[cube(comptime)]
+    part: CubeStagedReduceMicrokernel,
 }
 
-/// How many planes each cube runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HypercubeReduceMicrokernelSettings {
-    pub planes: usize,
-}
+impl HypercubeLastArrivalReduceMicrokernel {
+    /// A hypercube whose cubes each reduce their part with `part`.
+    pub fn new(part: CubeStagedReduceMicrokernel) -> Self {
+        Self { part }
+    }
 
-impl HypercubeReduceMicrokernelSettings {
-    /// The planes worth trying: cubes of four, then of eight.
-    pub const ALL: [Self; 2] = [Self { planes: 4 }, Self { planes: 8 }];
-}
+    /// The widest line its part's carrier keeps apart.
+    pub fn widest_line(&self) -> Option<usize> {
+        self.part.widest_line()
+    }
 
-impl core::fmt::Display for HypercubeReduceMicrokernelSettings {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "planes={}", self.planes)
+    pub fn part(&self) -> CubeStagedReduceMicrokernel {
+        self.part
     }
 }
 
-impl core::fmt::Display for HypercubeReduceMicrokernel {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{:?} {:?} lanes={} planes={}",
-            self.item.operation, self.item.layout, self.lanes, self.planes
+#[cube]
+impl HypercubeLastArrivalReduceMicrokernel {
+    /// One cube's part of a row of `input`, the row's last cube writing it to `out` and `indices` (`hypercube_last_arrival_reduce_microkernel`).
+    ///
+    /// # Panics
+    ///
+    /// Where its item writes the indices beside the values and `indices` is none.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the operands and the cube's place in its row, as the microkernel takes them"
+    )]
+    pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+        &self,
+        input: &Tile,
+        out: &mut Tile,
+        indices: &ComptimeOption<Tile>,
+        partials: &mut Tile,
+        partial_indices: &ComptimeOption<Tile>,
+        arrivals: &[Atomic<u32>],
+        counter: usize,
+        part: usize,
+        parts: usize,
+        first_line: usize,
+        values: usize,
+    ) {
+        hypercube_last_arrival_reduce_microkernel::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            partials,
+            partial_indices,
+            arrivals,
+            counter,
+            part,
+            parts,
+            first_line,
+            values,
+            comptime!(HypercubeLastArrivalReduceMicrokernel { part: self.part }),
         )
     }
 }
 
-impl Microkernel for HypercubeReduceMicrokernel {
+impl HypercubeLastArrivalReduceMicrokernel {
+    /// Bytes of shared memory each cube allocates with its lines `width` lanes wide: its part's,
+    /// and the slot its first unit hands the cube its arrival through.
+    pub fn shared_memory_bytes_at_width(&self, width: usize) -> usize {
+        self.part.shared_memory_bytes_at_width(width) + size_of::<u32>()
+    }
+}
+
+impl core::fmt::Display for HypercubeLastArrivalReduceMicrokernel {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.part)
+    }
+}
+
+impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
     type WorkItem = ReduceWorkItem;
-    type Settings = HypercubeReduceMicrokernelSettings;
+    type Settings = CubeStagedReduceMicrokernelSettings;
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
-    const DECLINE: &'static str = "the hypercube reduce needs a plane width the device commits to, cubes that hold their planes, and one cube's stores reaching another within a launch";
+    const DECLINE: &'static str = "the hypercube reduce needs the cube reduce, and one cube's stores reaching another within a launch";
 
-    fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
-        HypercubeReduceMicrokernelSettings::ALL.to_vec()
+    /// The cube microkernel's.
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
+        CubeStagedReduceMicrokernel::settings(hw)
     }
 
     fn candidates(
@@ -66,22 +113,15 @@ impl Microkernel for HypercubeReduceMicrokernel {
         item: &ReduceWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        let planes = settings.planes;
         // The cubes meet through device memory, which must stay coherent across them in a launch.
-        let fits = planes <= hw.full_cube_planes() && hw.properties.features.device_memory_scope;
-        hw.plane_dim()
-            .ok()
-            .filter(move |_| fits)
-            .into_iter()
-            .map(move |lanes| Self {
-                item: *item,
-                lanes: lanes as usize,
-                planes,
-            })
+        let meets = hw.properties.features.device_memory_scope;
+        CubeStagedReduceMicrokernel::candidates(hw, item, settings)
+            .filter(move |_| meets)
+            .map(|part| Self { part })
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {
-        self.item.require(vectorization);
+        self.part.vectorize(&(), vectorization);
     }
 
     /// Each unit holds its carrier and one line; each cube a slot of the carrier a plane, and the
@@ -93,10 +133,45 @@ impl Microkernel for HypercubeReduceMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        let slots = self.item.operation.written_per_row() as u32;
+        let slots = self.part.item().operation.written_per_row() as u32;
         estimate.work = Some(UnitWork {
             instruction: ArithmeticInstruction::Vector,
             registers: 4 * slots + 2,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reduce::cube::CubeStagedReduceMicrokernel;
+    use crate::reduce::{ReduceOperation, ReduceWorkItem};
+    use cubek_std::devices;
+
+    /// A hypercube's cube holds its part's shared memory and one arrival slot beside it.
+    #[test]
+    fn a_cube_holds_its_parts_memory_and_an_arrival_slot() {
+        const LANES: usize = 32;
+        const PLANES: usize = 4;
+        const LANE_SLOTS: usize = 32;
+        const WIDTH: usize = 4;
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let part = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
+        let hypercube = HypercubeLastArrivalReduceMicrokernel::new(part);
+        assert_eq!(
+            hypercube.shared_memory_bytes_at_width(WIDTH),
+            part.shared_memory_bytes_at_width(WIDTH) + size_of::<u32>()
+        );
+        assert_eq!(hypercube.widest_line(), part.widest_line());
+    }
+
+    /// Its cubes meet through device memory, so without device memory scope it has no candidate.
+    #[test]
+    fn it_needs_device_memory_scope() {
+        let mut hw = devices::m2_pro();
+        devices::features(&mut hw).device_memory_scope = false;
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let settings = HypercubeLastArrivalReduceMicrokernel::settings(&hw)[0];
+        assert!(HypercubeLastArrivalReduceMicrokernel::best(&hw, &item, &settings).is_err());
     }
 }

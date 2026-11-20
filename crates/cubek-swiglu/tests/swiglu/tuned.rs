@@ -2,7 +2,7 @@
 
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::autotune::GroupPriority;
 use cubek_swiglu::kernels::launch_tuned;
 use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, Written};
@@ -22,7 +22,7 @@ struct TunedSwigluCase {
 impl ScopeUnderTest for TunedSwiglu {
     type Case = TunedSwigluCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let out = launch_tuned(
             case.rows.call(client, case.element),
             &cubecl::test_device(),

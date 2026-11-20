@@ -1,7 +1,7 @@
 //! The problem a routine computes.
 
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Dimension, Space};
 use cubek_microkernel::attention::{AttentionVisibility, B, D, DV, G, KV, Q, S};
@@ -12,7 +12,7 @@ use cubek_std::microkernel::StagedOperand;
 
 /// What a backward pass declines before preparing anything: query heads that do not split
 /// evenly over the key heads.
-pub const ATTENTION_BACKWARD_GROUP_UNEVEN: Refusal = Refusal::Declined {
+pub const ATTENTION_BACKWARD_GROUP_UNEVEN: Decline = Decline::Unserved {
     why: "attention's backward pass reads a whole group of query heads per key head",
 };
 
@@ -48,7 +48,7 @@ impl AttentionBackwardProblem {
     /// # Errors
     ///
     /// [`ATTENTION_BACKWARD_GROUP_UNEVEN`], where they do not split evenly.
-    pub(crate) fn group_of(heads: usize, kv_heads: usize) -> Result<usize, Refusal> {
+    pub(crate) fn group_of(heads: usize, kv_heads: usize) -> Result<usize, Decline> {
         if kv_heads == 0 || !heads.is_multiple_of(kv_heads) {
             return Err(ATTENTION_BACKWARD_GROUP_UNEVEN);
         }

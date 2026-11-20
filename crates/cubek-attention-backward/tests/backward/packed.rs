@@ -6,7 +6,7 @@ use super::reference::Case;
 use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_attention::kernels::{
     AttentionLaunch, AttentionScoring, AttentionTensors, CubeStagedAttentionRoutine,
@@ -185,7 +185,7 @@ fn check_packed(case: Case) {
     }
 
     let mut read = 0;
-    for settings in CubeStagedAttentionRoutine.settings(&hw) {
+    for settings in CubeStagedAttentionRoutine::settings(&hw) {
         let lengths = TestInput::builder(client.clone(), Shape::new([1]))
             .dtype(u32::elem_type_native())
             .custom(vec![seq_kv as f32])
@@ -227,8 +227,8 @@ fn check_packed(case: Case) {
                 }
                 read += 1;
             }
-            Err(Refusal::Declined { why }) => eprintln!("{settings}: declined, {why}"),
-            Err(refusal) => eprintln!("{settings}: declined, {refusal:?}"),
+            Err(Decline::Unserved { why }) => eprintln!("{settings}: declined, {why}"),
+            Err(decline) => eprintln!("{settings}: declined, {decline:?}"),
         }
     }
     assert!(

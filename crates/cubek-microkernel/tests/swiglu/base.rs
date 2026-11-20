@@ -5,7 +5,7 @@ use crate::launch::RowBatch;
 use crate::launch::swiglu::SwigluLaunch;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_microkernel::swiglu::cube::CubeSwigluMicrokernelSettings;
 use cubek_std::Hardware;
@@ -62,7 +62,7 @@ impl Swiglu {
     /// # Errors
     ///
     /// Why the device runs no SwiGLU microkernel at `case`.
-    fn launch_at(&self, case: &SwigluCase) -> Result<SwigluLaunch, Refusal> {
+    fn launch_at(&self, case: &SwigluCase) -> Result<SwigluLaunch, Decline> {
         SwigluLaunch::new(&self.hw, case.element, case.batch, &case.settings)
     }
 }
@@ -70,7 +70,7 @@ impl Swiglu {
 impl ScopeUnderTest for Swiglu {
     type Case = SwigluCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let launch = self.launch_at(case)?;
         let host = HostSwiglu::new(case.batch);
         let input = TestInput::builder(client.clone(), shape![case.batch.rows, 2, case.batch.dim])

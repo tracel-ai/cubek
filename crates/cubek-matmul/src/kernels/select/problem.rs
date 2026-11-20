@@ -16,7 +16,7 @@ use cubecl::zspace::Shape;
 /// Two of the fields are the *product*'s dimensions and two are the
 /// *routing*'s, and they are not interchangeable: the rules read `k`, `n` and
 /// [`streamed_rows`](Self::streamed_rows), while `m` and `batches` describe the shape a
-/// caller passed and are what a refusal names back at them.
+/// caller passed and are what a decline names back at them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MatmulProblem {
     pub m: usize,

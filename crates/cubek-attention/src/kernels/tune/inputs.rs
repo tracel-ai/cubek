@@ -9,7 +9,7 @@ use crate::kernels::{
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::throughput::MemoryAccess;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_matmul::kernels::tensor::PlainTensor;
@@ -78,7 +78,7 @@ impl AttentionTuneInputs {
         lengths: PlainTensor,
         arrivals: Option<PlainTensor>,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let kv = KvSource::new(AttentionCache::Float { key, value });
         let kv = match pages {
             Some(pages) => kv.paged(pages),
@@ -103,7 +103,7 @@ impl AttentionTuneInputs {
         kv: KvSource,
         arrivals: Option<PlainTensor>,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let kv = kv.read_as_block_pages(client, scoring.visibility)?;
         let AttentionCache::Float { key, value } = kv.cache.clone() else {
             return Err(ATTENTION_PACKED_UNREAD);
@@ -673,7 +673,7 @@ mod tests {
             for queries in [1, 512] {
                 let caches = [(F16, F16), (e4m3, F16), (e4m3, e4m3)].map(|(key, value)| {
                     let inputs = match over(queries, key, value) {
-                        Err(Refusal::Declined { why }) => return Err(why),
+                        Err(Decline::Unserved { why }) => return Err(why),
                         inputs => inputs.expect("an even group of float elements"),
                     };
                     let (keyed, round) = match queries {

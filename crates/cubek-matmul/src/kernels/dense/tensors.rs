@@ -10,7 +10,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::{BufferArg, TensorMapArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Arg, Labelled, Refusal, TmaCoordinates, TmaTerm};
+use cubecl::tile::launch::{Arg, Decline, Labelled, TmaCoordinates, TmaTerm};
 use cubecl::tile::{
     Dimension, Geometry, Launcher, Space, StageStorage, TileSpec, TileTensorLaunch, launch::Bound,
     launch::TmaBox, launch::Unbound,
@@ -35,53 +35,53 @@ use cubek_std::routine::Grid;
 /// What a launch writing into its caller's output declines: an output of another shape than the
 /// product's, of an element the routines do not write, stored in tiles, or, beside a packed input,
 /// other than row-major.
-pub const MATMUL_OUTPUT_UNREAD: Refusal = Refusal::Declined {
+pub const MATMUL_OUTPUT_UNREAD: Decline = Decline::Unserved {
     why: "the output handed in is not the product's shape, in an element the routines write, laid in rows",
 };
 
 /// What a launch beside a packed input declines before preparing anything: a float operand of an
 /// element it is not verified at.
-pub const MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+pub const MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
     why: "the packed routines are verified at f32, f16 or bf16 float operands",
 };
 
 /// What a routine streaming the `[k, n]` input packed declines: a float one. A packed `[m, k]`
 /// input against it is decoded first.
-pub const MATMUL_STREAMED_INPUT_FLOAT: Refusal = Refusal::Declined {
+pub const MATMUL_STREAMED_INPUT_FLOAT: Decline = Decline::Unserved {
     why: "the packed placement walks the block-split space of the [k, n] input it streams, and this one is float",
 };
 
 /// What a launch declines before preparing anything: operands of two elements, or of one the
 /// routines do not take.
-pub const MATMUL_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+pub const MATMUL_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
     why: "the microkernel matmul takes f32, f16, bf16 and i32 operands of one element",
 };
 
 /// What a routed or grouped product declines before preparing anything: an operand stored in
 /// tiles that its routines would read in rows, a slab at a time. That is either grouped operand,
 /// and the routed product's stack; a routed lhs is laid back in rows instead.
-pub const MATMUL_SLABS_TAKE_NO_STORED_TILES: Refusal = Refusal::Declined {
+pub const MATMUL_SLABS_TAKE_NO_STORED_TILES: Decline = Decline::Unserved {
     why: "the routed and grouped products read their operands in rows, slab by slab; store \
               them untiled",
 };
 
 /// An operand stored in tiles that each step down a column first
 /// ([`PlainTensor::is_tiled_column_first`]), which a tile read by its columns cannot walk.
-pub const MATMUL_COLUMN_FIRST_TILES: Refusal = Refusal::Declined {
+pub const MATMUL_COLUMN_FIRST_TILES: Decline = Decline::Unserved {
     why: "the matmul kernels read storage tiles stored a row at a time; this operand's are \
               stored a column at a time",
 };
 
 /// What a launch tiling the rows declines before preparing anything: operands of two ranks, which
 /// the routines do not broadcast.
-pub const MATMUL_TILED_ROWS_RANKS_DIFFER: Refusal = Refusal::Declined {
+pub const MATMUL_TILED_ROWS_RANKS_DIFFER: Decline = Decline::Unserved {
     why: "a matmul tiling its rows reads operands of one rank",
 };
 
 /// What a launch holding every row whole declines before preparing anything: an rhs contiguous
 /// along neither of its dimensions, or one stored in tiles, which no routine holding every row
 /// whole reads in vectors.
-pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined {
+pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Decline = Decline::Unserved {
     why: "a matmul holding every row whole reads one rhs matrix contiguous along `k` or `n`",
 };
 
@@ -160,7 +160,7 @@ impl MatmulTensors {
         lhs: StoredTensor,
         rhs: StoredTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         match (lhs, rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 Self::float(client, lhs, rhs, rows_kind)
@@ -183,7 +183,7 @@ impl MatmulTensors {
         lhs: StoredTensor,
         rhs: StoredTensor,
         out: ElemType,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         Self::packed(client, lhs, rhs, out)
     }
 
@@ -207,7 +207,7 @@ impl MatmulTensors {
         rhs: StoredTensor,
         out: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let (lhs, rhs) = match (lhs, rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => (lhs, rhs),
             (lhs, rhs) => return Self::packed_into(client, lhs, rhs, out),
@@ -260,7 +260,7 @@ impl MatmulTensors {
         table: MatmulIndexTable,
         out: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         assert_eq!(
             table.entries.elem,
             ElemType::UInt(UIntKind::U32),
@@ -282,7 +282,7 @@ impl MatmulTensors {
         table: MatmulIndexTable,
         out: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?
             .addressable(client)
             .into_parts();
@@ -307,7 +307,7 @@ impl MatmulTensors {
         rhs: PackedTensor,
         table: MatmulIndexTable,
         out: PlainTensor,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let MatmulIndex::Slab { slabs } = table.index else {
             return Err(PACKED_STACK_UNREAD);
         };
@@ -346,7 +346,7 @@ impl MatmulTensors {
         n: usize,
         table: &MatmulIndexTable,
         out: PlainTensor,
-    ) -> Result<MatmulOutputBuffer, Refusal> {
+    ) -> Result<MatmulOutputBuffer, Decline> {
         let shape = lhs.shape();
         let rank = shape.rank();
         assert_eq!(shape[rank - 1], k, "the contraction dims must agree");
@@ -397,7 +397,7 @@ impl MatmulTensors {
         tensor: PlainTensor,
         dimensions: [Dimension; 2],
         k: usize,
-    ) -> Result<PlainTensor, Refusal> {
+    ) -> Result<PlainTensor, Decline> {
         if !MatmulInputs::FLOATS.contains(&tensor.elem) {
             return Err(MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED);
         }
@@ -426,7 +426,7 @@ impl MatmulTensors {
         operand: StoredTensor,
         dimensions: [Dimension; 2],
         k: usize,
-    ) -> Result<StoredTensor, Refusal> {
+    ) -> Result<StoredTensor, Decline> {
         match operand {
             StoredTensor::Plain(tensor) => {
                 Self::beside_packed(client, tensor, dimensions, k).map(StoredTensor::Plain)
@@ -460,7 +460,7 @@ impl MatmulTensors {
         lhs: PlainTensor,
         rhs: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let operands = Operands::read(client, lhs, rhs, rows_kind)?;
         let (tensor, out) =
             PlainTensor::empty(client, operands.out_shape.clone().into(), operands.lhs.elem);
@@ -483,7 +483,7 @@ impl MatmulTensors {
         lhs: StoredTensor,
         rhs: StoredTensor,
         out: ElemType,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let (lhs, rhs, shape) = Self::beside_packed_inputs(client, lhs, rhs)?;
         let (tensor, bound) = PlainTensor::empty(client, shape.into(), out);
         let tensor = Some(tensor);
@@ -510,7 +510,7 @@ impl MatmulTensors {
         lhs: StoredTensor,
         rhs: StoredTensor,
         out: PlainTensor,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let (lhs, rhs, shape) = Self::beside_packed_inputs(client, lhs, rhs)?;
         if out.shape().as_slice() != shape.as_slice()
             || !MatmulInputs::VERIFIED.contains(&out.elem)
@@ -539,7 +539,7 @@ impl MatmulTensors {
         client: &Client,
         lhs: StoredTensor,
         rhs: StoredTensor,
-    ) -> Result<(StoredTensor, StoredTensor, Vec<usize>), Refusal> {
+    ) -> Result<(StoredTensor, StoredTensor, Vec<usize>), Decline> {
         let k = rhs.extent([K, N], K);
         let lhs = Self::stored_beside_packed(client, lhs, [M, K], k)?;
         let rhs = Self::stored_beside_packed(client, rhs, [K, N], k)?;
@@ -557,7 +557,7 @@ impl MatmulTensors {
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> Result<MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
+    ) -> Result<MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>, Decline> {
         match (&self.lhs, &self.rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 self.bind_float(lhs, rhs, blueprint, grid)
@@ -573,7 +573,7 @@ impl MatmulTensors {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> Result<MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
+    ) -> Result<MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>, Decline> {
         let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid)?;
         let out = launcher
             .arg(self.out.bound.binding.clone(), self.out.bound.elem)
@@ -631,7 +631,7 @@ impl MatmulTensors<Geometry> {
         lhs: StoredTensor,
         rhs: StoredTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         match (lhs, rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 Self::float(client, lhs, rhs, rows_kind)
@@ -646,7 +646,7 @@ impl MatmulTensors<Geometry> {
         lhs: PlainTensor,
         rhs: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let operands = Operands::read(client, lhs, rhs, rows_kind)?;
         let out = Geometry::row_major(&operands.sink_shape());
         Ok(Self {
@@ -661,7 +661,7 @@ impl MatmulTensors<Geometry> {
     }
 
     /// `lhs` against `rhs`, either packed, the output laid out as dense rows.
-    fn packed(client: &Client, lhs: StoredTensor, rhs: StoredTensor) -> Result<Self, Refusal> {
+    fn packed(client: &Client, lhs: StoredTensor, rhs: StoredTensor) -> Result<Self, Decline> {
         let k = rhs.extent([K, N], K);
         let lhs = MatmulTensors::stored_beside_packed(client, lhs, [M, K], k)?;
         let rhs = MatmulTensors::stored_beside_packed(client, rhs, [K, N], k)?;
@@ -684,7 +684,7 @@ impl MatmulTensors<Geometry> {
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> Result<MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
+    ) -> Result<MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>, Decline> {
         match (&self.lhs, &self.rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 self.bind_float(lhs, rhs, blueprint, grid)
@@ -700,7 +700,7 @@ impl MatmulTensors<Geometry> {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> Result<MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
+    ) -> Result<MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>, Decline> {
         let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid)?;
         let out = launcher
             .unbound(&self.out)
@@ -759,7 +759,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// refused all three.
     pub fn tma_output(&self, stage: &MatmulStage) -> TileTensorLaunch {
         // A packed product states its output over the block-split space, its rows and columns
-        // one block each where the store took it (`CubeStagedTmaStoreRefusal::BlockSplit`): the
+        // one block each where the store took it (`CubeStagedTmaStoreDecline::BlockSplit`): the
         // positions inside them, which the descriptor's rows and columns are.
         let output: [Dimension; 2] = match self.read(|view| view.blocks()) {
             None => {
@@ -1163,7 +1163,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// words through one over the rows or the tiles they are stored in
     /// ([`PackedTensor::bind_by_tma`]), its scales bound under `launcher` as `scales` says, for
     /// the copy engine to keep beside them. What a fill
-    /// [`CubeStagedTmaRefusal`](cubek_microkernel::matmul::cube::CubeStagedTmaRefusal) admits.
+    /// [`CubeStagedTmaDecline`](cubek_microkernel::matmul::cube::CubeStagedTmaDecline) admits.
     ///
     /// # Panics
     ///
@@ -1337,7 +1337,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> Result<(Launcher, [TileTensorLaunch; 2]), Refusal> {
+    ) -> Result<(Launcher, [TileTensorLaunch; 2]), Decline> {
         let partitioning = blueprint.partitioning.as_tile();
         let launcher = grid.launcher(self.client(), || {
             (
@@ -1486,7 +1486,7 @@ impl Operands {
         lhs: PlainTensor,
         rhs: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         match rows_kind {
             MatmulRowsKind::Tiled => Self::tiled(client, lhs, rhs),
             MatmulRowsKind::Whole => Self::whole(client, lhs, rhs),
@@ -1495,7 +1495,7 @@ impl Operands {
 
     /// Both operands where they lie unless they alias themselves, the output their product's
     /// shape.
-    fn tiled(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Refusal> {
+    fn tiled(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Decline> {
         let out_shape = Self::product_shape(&lhs, &rhs)?;
         if lhs.is_tiled_column_first() || rhs.is_tiled_column_first() {
             return Err(MATMUL_COLUMN_FIRST_TILES);
@@ -1513,7 +1513,7 @@ impl Operands {
 
     /// The lhs merged into `[m, k]` rows, the rhs its one `[k, n]` matrix, the output
     /// allocated as `[.., n]` and bound as `[m, n]` rows.
-    fn whole(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Refusal> {
+    fn whole(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Decline> {
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?.into_parts();
         let rhs_shape = rhs.shape();
         if rhs_shape.as_slice()[..rhs_shape.rank().saturating_sub(2)]
@@ -1604,7 +1604,7 @@ impl Operands {
     /// # Panics
     ///
     /// Operands of a rank under two, or whose contraction or batch dims do not agree.
-    fn product_shape(lhs: &PlainTensor, rhs: &PlainTensor) -> Result<Vec<usize>, Refusal> {
+    fn product_shape(lhs: &PlainTensor, rhs: &PlainTensor) -> Result<Vec<usize>, Decline> {
         let (lhs_shape, rhs_shape) = (lhs.shape(), rhs.shape());
         let rank = lhs_shape.num_dims();
         if rank != rhs_shape.num_dims() {

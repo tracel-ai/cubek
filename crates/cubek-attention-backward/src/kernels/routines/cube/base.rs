@@ -2,7 +2,7 @@
 //! they place their cubes.
 
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardWalk, WalkStages};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{Levels, Partitioning};
 use cubek_microkernel::attention::{B, KV, Q};
 use cubek_microkernel::attention_backward::key_gradient::cube::{
@@ -30,8 +30,8 @@ pub(super) fn key_walk(
     hw: &Hardware,
     problem: &AttentionBackwardProblem,
     settings: &CubeStagedKeyWalkSettings,
-    cubes: impl FnOnce(Levels) -> Result<Levels, Refusal>,
-) -> Result<CubeStagedKeyWalkBlueprint, Refusal> {
+    cubes: impl FnOnce(Levels) -> Result<Levels, Decline>,
+) -> Result<CubeStagedKeyWalkBlueprint, Decline> {
     let item = problem.work_item();
     let microkernel = CubeKeyGradientMicrokernel::best(hw, &item, &settings.microkernel)?;
     let partitioning = Partitioning::new(

@@ -3,7 +3,7 @@
 use crate::kernels::{AttentionVisibility, PackedLayout, QueryPlacement};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Space;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
@@ -217,7 +217,7 @@ impl EstimatedProblem for AttentionRoutineProblem {
 }
 
 /// What a routine that reads float keys and values declines on a packed cache.
-pub const ATTENTION_PACKED_UNREAD: Refusal = Refusal::Declined {
+pub const ATTENTION_PACKED_UNREAD: Decline = Decline::Unserved {
     why: "this attention routine reads float keys and values, not a packed cache",
 };
 
@@ -343,21 +343,19 @@ mod tests {
         let prepared = [
             fleet
                 .iter()
-                .map(|hw| assert_steps_divide(UnitAttentionRoutine, hw))
+                .map(assert_steps_divide::<_, _, UnitAttentionRoutine>)
                 .sum::<usize>(),
             fleet
                 .iter()
-                .map(|hw| assert_steps_divide(CubeStagedAttentionRoutine, hw))
+                .map(assert_steps_divide::<_, _, CubeStagedAttentionRoutine>)
                 .sum(),
             fleet
                 .iter()
-                .map(|hw| {
-                    assert_steps_divide(HypercubeLastArrivalShuffleAttentionRoutine::new(), hw)
-                })
+                .map(assert_steps_divide::<_, _, HypercubeLastArrivalShuffleAttentionRoutine>)
                 .sum(),
             fleet
                 .iter()
-                .map(|hw| assert_steps_divide(HypercubeShufflePartialAttentionRoutine::new(), hw))
+                .map(assert_steps_divide::<_, _, HypercubeShufflePartialAttentionRoutine>)
                 .sum(),
         ];
         assert!(
@@ -395,18 +393,16 @@ mod tests {
             cache: AttentionCacheLayout::Pages { page_size },
             ..dense
         };
-        let shuffle = &CubeShuffleAttentionRoutine.settings(&hw)[0];
+        let shuffle = &CubeShuffleAttentionRoutine::settings(&hw)[0];
         let page_steps = |problem: &AttentionRoutineProblem| {
-            let (blueprint, _) = CubeShuffleAttentionRoutine
-                .prepare(&hw, problem, shuffle)
+            let (blueprint, _) = CubeShuffleAttentionRoutine::prepare(&hw, problem, shuffle)
                 .expect("the decode step prepares");
             blueprint
                 .microkernel
                 .page_steps
                 .map(core::num::NonZeroUsize::get)
         };
-        let keys = CubeShuffleAttentionRoutine
-            .prepare(&hw, &dense, shuffle)
+        let keys = CubeShuffleAttentionRoutine::prepare(&hw, &dense, shuffle)
             .expect("the decode step prepares")
             .0
             .microkernel
@@ -417,11 +413,10 @@ mod tests {
         assert_eq!(page_steps(&paged(3 * keys / 2)), None);
         // The M2 as Metal reports it, offering its plane fragments their simdgroup matrix.
         let fragments = offering(hw, 8);
-        let staged = CubeStagedAttentionRoutine;
-        let staged_settings = &staged.settings(&fragments)[0];
-        let (blueprint, _) = staged
-            .prepare(&fragments, &paged(4 * keys), staged_settings)
-            .expect("the decode step prepares");
+        let staged_settings = &CubeStagedAttentionRoutine::settings(&fragments)[0];
+        let (blueprint, _) =
+            CubeStagedAttentionRoutine::prepare(&fragments, &paged(4 * keys), staged_settings)
+                .expect("the decode step prepares");
         assert_eq!(blueprint.microkernel.page_steps, None);
     }
 
@@ -430,23 +425,20 @@ mod tests {
     #[test]
     fn only_the_hypercube_shuffles_and_the_staged_cube_read_a_packed_cache() {
         fn reads<R: Routine<Problem = AttentionRoutineProblem>>(
-            routine: R,
             hw: &Hardware,
             problem: &AttentionRoutineProblem,
         ) -> bool {
-            routine
-                .settings(hw)
+            R::settings(hw)
                 .iter()
-                .any(|settings| routine.prepare(hw, problem, settings).is_ok())
+                .any(|settings| R::prepare(hw, problem, settings).is_ok())
         }
         fn declines<R: Routine<Problem = AttentionRoutineProblem>>(
-            routine: R,
             hw: &Hardware,
             problem: &AttentionRoutineProblem,
         ) {
-            for settings in routine.settings(hw) {
+            for settings in R::settings(hw) {
                 assert_eq!(
-                    routine.prepare(hw, problem, &settings).err(),
+                    R::prepare(hw, problem, &settings).err(),
                     Some(ATTENTION_PACKED_UNREAD),
                     "{settings}"
                 );
@@ -461,20 +453,16 @@ mod tests {
             cache: AttentionCacheLayout::Packed(layout),
             ..qwen(1, 4096)
         };
-        assert!(reads(
-            HypercubeLastArrivalShuffleAttentionRoutine::new(),
-            &hw,
-            &packed
+        assert!(reads::<HypercubeLastArrivalShuffleAttentionRoutine>(
+            &hw, &packed
         ));
-        assert!(reads(
-            HypercubeShufflePartialAttentionRoutine::new(),
-            &hw,
-            &packed
+        assert!(reads::<HypercubeShufflePartialAttentionRoutine>(
+            &hw, &packed
         ));
-        assert!(reads(CubeStagedAttentionRoutine, &hw, &packed));
-        declines(UnitAttentionRoutine, &hw, &packed);
-        declines(CubeShuffleAttentionRoutine, &hw, &packed);
-        declines(HypercubeFragmentPartialAttentionRoutine, &hw, &packed);
+        assert!(reads::<CubeStagedAttentionRoutine>(&hw, &packed));
+        declines::<UnitAttentionRoutine>(&hw, &packed);
+        declines::<CubeShuffleAttentionRoutine>(&hw, &packed);
+        declines::<HypercubeFragmentPartialAttentionRoutine>(&hw, &packed);
 
         // The staged cube stages its keys from one tile, which a QJL fix-up's second is not.
         use cubek_std::routine::Routine;
@@ -485,18 +473,16 @@ mod tests {
             }),
             ..packed
         };
-        for settings in CubeStagedAttentionRoutine.settings(&hw) {
+        for settings in CubeStagedAttentionRoutine::settings(&hw) {
             assert_eq!(
-                CubeStagedAttentionRoutine
-                    .prepare(&hw, &qjl, &settings)
-                    .err(),
+                CubeStagedAttentionRoutine::prepare(&hw, &qjl, &settings).err(),
                 Some(STAGED_FIXUP_UNREAD),
                 "{settings}"
             );
         }
     }
 
-    fn assert_steps_divide<M, SM, R>(routine: R, hw: &Hardware) -> usize
+    fn assert_steps_divide<M, SM, R>(hw: &Hardware) -> usize
     where
         R: Routine<
                 Problem = AttentionRoutineProblem,
@@ -506,9 +492,9 @@ mod tests {
     {
         let problems = [qwen(512, 512), qwen(1, 4096)];
         let mut prepared = 0;
-        for settings in routine.settings(hw) {
+        for settings in R::settings(hw) {
             for problem in &problems {
-                let Ok((blueprint, _)) = routine.prepare(hw, problem, &settings) else {
+                let Ok((blueprint, _)) = R::prepare(hw, problem, &settings) else {
                     continue;
                 };
                 prepared += 1;
