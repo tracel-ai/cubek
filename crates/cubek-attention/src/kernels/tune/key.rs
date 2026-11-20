@@ -53,9 +53,10 @@ use serde::{Deserialize, Serialize};
 ///   chunk after the first, so the key stands for
 ///   [`CHUNK_QUERIES`](Self::CHUNK_QUERIES) queries over [`CHUNK_PREFIX`](Self::CHUNK_PREFIX)
 ///   keys, at their buckets' extents, whatever the call brought.
-/// - **A decode step over a cache**: one query over [`CACHE_PREFIX`](Self::CACHE_PREFIX) keys,
-///   whatever the cache holds or the step attends. The attended count is a device tensor, so that
-///   the launch is identical across steps, the graph-capture precondition.
+/// - **A decode step over a cache**: one query over its sequences' share of
+///   [`DECODE_KEYS`](Self::DECODE_KEYS) ([`cache_prefix`](Self::cache_prefix)), whatever the
+///   cache holds or the step attends. The attended count is a device tensor, so that the launch
+///   is identical across steps, the graph-capture precondition.
 ///
 /// [`AttentionTuneInputs::attending_every_position`]:
 /// crate::kernels::tune::AttentionTuneInputs::attending_every_position
@@ -94,9 +95,9 @@ pub struct AttentionKey {
     /// Query positions.
     #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
     queries: usize,
-    /// Key positions: the buffers' extent where they are the call's own keys, the prefix every
-    /// key over a cache stands for otherwise ([`CACHE_PREFIX`](Self::CACHE_PREFIX)), never a
-    /// cache's capacity.
+    /// Key positions: the buffers' extent where they are the call's own keys, the prefix a key
+    /// over a cache stands for otherwise ([`CHUNK_PREFIX`](Self::CHUNK_PREFIX) for a chunk,
+    /// [`cache_prefix`](Self::cache_prefix) for a decode step), never a cache's capacity.
     #[autotune(anchor(exp(min = 1, max = 1048576, base = 2)))]
     keys: usize,
     #[autotune(anchor(exp(min = 1, max = 64, base = 2)))]
@@ -127,10 +128,33 @@ impl AttentionKey {
     /// here all the same, so its chunks run what this chunk elected.
     pub const CHUNK_QUERIES: usize = 512;
 
-    /// The attended prefix a decode step over a cache stands for: three chunks into its prompt,
-    /// deep enough that the walk outweighs the launch. A cache of any capacity, attended to any
-    /// length, is keyed here.
+    /// The shallowest prefix a decode step over a cache stands for, however many sequences it
+    /// steps: three chunks into its prompt, deep enough that the walk outweighs the launch.
     pub const CACHE_PREFIX: usize = 4 * Self::CHUNK_QUERIES;
+
+    /// The keys a decode step over a cache stands for across all its sequences: as many as a
+    /// chunk's prefix ([`CHUNK_PREFIX`](Self::CHUNK_PREFIX)), so its round reads what a chunk's
+    /// does, however many sequences it steps.
+    ///
+    /// Shallow, the routines part by less than a round can be wrong by. On an RTX PRO 6000, one
+    /// query of 32/8 heads over 2048 keys runs in 16 µs split along the keys and in 82 µs on a
+    /// cube a head, close enough for a noisy round to elect the cube a head. Deep, the two part
+    /// by a millisecond (105 against 1186 µs at 32768 keys), and the cube a head leaves the
+    /// device idle: 2356 µs at 65536 keys, 114 GB/s, against 195 µs for the split, 1.38 TB/s.
+    pub const DECODE_KEYS: usize = Self::CHUNK_PREFIX;
+
+    /// The attended prefix a decode step of `sequences` over a cache stands for: its share of
+    /// [`DECODE_KEYS`](Self::DECODE_KEYS), the sequences counted to their power of two as the
+    /// batch's bucket rounds them, and never shallower than
+    /// [`CACHE_PREFIX`](Self::CACHE_PREFIX). A cache of any capacity, attended to any length, is
+    /// keyed here.
+    ///
+    /// The share keeps the round's own cache as small as a chunk's: the round lays one cache a
+    /// sequence, and a batch of sixty-four as deep as one sequence would read eight gibibytes of
+    /// a 32/8-head cache each sample.
+    pub fn cache_prefix(sequences: usize) -> usize {
+        (Self::DECODE_KEYS / sequences.max(1).next_power_of_two()).max(Self::CACHE_PREFIX)
+    }
 
     /// The attended prefix a chunk of many queries over a cache stands for: sixty-four chunks
     /// into its prompt. A chunk's work grows with the prefix it attends, so a long prompt spends
