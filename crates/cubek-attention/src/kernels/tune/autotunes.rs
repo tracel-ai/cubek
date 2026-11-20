@@ -179,7 +179,7 @@ fn one_query(
 ) -> TunableSet<AttentionKey, AttentionTuneInputs, ()> {
     let mut autotune = AttentionAutotune::measured_on(
         AttentionTuneInputs::one_query_key,
-        "as-keyed",
+        "on-the-call",
         AttentionTuneInputs::one_query_representative,
     );
     let routines = autotune.group("microkernel", priority);
