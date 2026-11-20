@@ -656,28 +656,15 @@ impl PackedTensor {
             // it is, a `ue4m3` the `e4m3` byte with its sign clear, so a unit loads the scale it
             // uses rather than the word around it.
             BlockScales::Fields if self.packing().reads_scales_alone() => {
-                let scale = ElemType::from_scale_dtype(self.scheme.scale_dtype());
                 let scales_dimensions = tile_order::scales_dimensions(across);
-                // In the tiles tile order stores them in, where it does, stated a row a read: a
-                // statement counted in scales, which bound as bytes is counted in bytes.
-                let in_tiles = operand.tile_order().and_then(|order| {
-                    order.kernel_scales_read(self.extent(K), (across, self.extent(across)), 1)
-                });
-                let block_scales = match in_tiles {
-                    None => launcher
-                        .arg(self.per_slab(self.block_scale_bytes(rows, blocks)), scale)
-                        .gathered(
-                            self.stack_dim()
-                                .axis(scale_rows)
-                                .axis(self.dim(lined))
-                                .build()
-                                .scales_per(blocks_dimension),
-                        ),
-                    Some(stated) => launcher
-                        .arg(self.block_scales.bound_as(stated), scale)
-                        .dimensions(&scales_dimensions),
-                }
-                .vectorize(1);
+                let block_scales = self.scales_alone(
+                    launcher,
+                    rows,
+                    blocks,
+                    scale_rows,
+                    blocks_dimension,
+                    &scales_dimensions,
+                );
                 self.under_scale_bytes(words, block_scales, global)
             }
             BlockScales::Fields => {
@@ -788,6 +775,25 @@ impl PackedTensor {
                 .gathered(Self::over_whole_matrix(&words_dimensions, tiled_along))
         });
         match scales {
+            // Each scale read alone, as `bind` binds it, beside the words the engine lands.
+            BlockScales::Fields if self.packing().reads_scales_alone() => {
+                let scales_dimensions = tile_order::scales_dimensions(across);
+                let block_scales = self
+                    .scales_alone(
+                        launcher,
+                        rows,
+                        blocks,
+                        scale_rows,
+                        blocks_dimension,
+                        &scales_dimensions,
+                    )
+                    .delivery(Delivery::AsyncPerUnit)
+                    .build()
+                    .expect(ADMITTED_PLAN_RUNS)
+                    .arg();
+                self.under_global(words.scales(block_scales), global)
+                    .expect(ADMITTED_PLAN_RUNS)
+            }
             BlockScales::Fields => {
                 // In the tiles tile order stores them in, where it does, stated for the read the
                 // operand takes of them, as `bind` states them: read as rows, only a tile's first
@@ -1078,6 +1084,43 @@ impl PackedTensor {
     ) -> Result<TileTensorLaunch, Refusal> {
         let tile = words.scales(block_scales);
         self.under_global(tile, global)
+    }
+
+    /// Its block scales bound one to a read ([`Packing::by_block`]), each as the element it is, a
+    /// `ue4m3` the `e4m3` byte with its sign clear, so a unit loads the scale it uses rather than
+    /// the word around it: in the tiles tile order stores them in, where it does, stated a row a
+    /// read, counted in scales; gathered over `scale_rows` and the blocks otherwise. What every
+    /// engine that moves the words binds them as.
+    fn scales_alone<'l>(
+        &self,
+        launcher: &'l Launcher,
+        rows: usize,
+        blocks: usize,
+        scale_rows: PhysicalAxisMap,
+        blocks_dimension: Dimension,
+        scales_dimensions: &'l [Dimension],
+    ) -> Arg<'l, Labelled> {
+        let scale = ElemType::from_scale_dtype(self.scheme.scale_dtype());
+        let across = self.other_dimension(K);
+        let lined = self.operand.lined();
+        let in_tiles = self.operand.tile_order().and_then(|order| {
+            order.kernel_scales_read(self.extent(K), (across, self.extent(across)), 1)
+        });
+        match in_tiles {
+            None => launcher
+                .arg(self.per_slab(self.block_scale_bytes(rows, blocks)), scale)
+                .gathered(
+                    self.stack_dim()
+                        .axis(scale_rows)
+                        .axis(self.dim(lined))
+                        .build()
+                        .scales_per(blocks_dimension),
+                ),
+            Some(stated) => launcher
+                .arg(self.block_scales.bound_as(stated), scale)
+                .dimensions(scales_dimensions),
+        }
+        .vectorize(1)
     }
 
     /// `words` under `block_scales`, bound a byte a scale as plain `e4m3` elements, under
