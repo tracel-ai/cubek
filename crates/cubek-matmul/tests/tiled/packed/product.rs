@@ -5,15 +5,22 @@
 use std::sync::{Arc, OnceLock};
 
 use cubecl::client::Client;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::Scalar;
+use cubecl::prelude::{CubePrimitive, TensorBinding};
 use cubecl::quant::scheme::QuantStore;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::kind::Field;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
+use cubecl::zspace::Strides;
 use cubek_matmul::kernels::MatmulRoutine;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
+use cubek_matmul::tiled::storage::{StoredValues, stored_tile, tile, tile_order_on};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
+use cubek_std::layout::stored::Operand;
+use cubek_std::layout::tile_order::{self, TileWords};
 use cubek_std::matmul_dimensions::{K, N};
 use cubek_test_utils::{HostData, HostDataVec};
 use half::bf16;
@@ -35,6 +42,11 @@ pub(crate) enum Stored {
     /// framework hands a tied embedding to the vocabulary head: its words run along the view's
     /// first dimension.
     PackedViewedTransposed { format: PackedFormat, seed: usize },
+    /// A rhs `[k, n]` packed down `k` in `format`, stored in the tile order a load stores a
+    /// model's weight in on the device ([`tile_order_on`]): its words relaid through the tile DSL,
+    /// its scales in the rows the order keeps them in. As it lies in rows where the device stores
+    /// no tile for it.
+    PackedInTileOrder { format: PackedFormat, seed: usize },
 }
 
 /// `m × n`, `k` deep, of two operands stored as stated, written in `bf16`.
@@ -163,6 +175,10 @@ impl PackedProduct {
                 let matrix = PackedSlabs::new(client, self.spec(operand, format, seed)).matrix();
                 StoredTensor::Packed(Self::viewed_transposed(client, matrix, self.k))
             }
+            Stored::PackedInTileOrder { format, seed } => {
+                let matrix = PackedSlabs::new(client, self.spec(operand, format, seed)).matrix();
+                StoredTensor::Packed(self.in_tile_order(client, matrix))
+            }
         }
     }
 
@@ -180,6 +196,64 @@ impl PackedProduct {
             .expect("a transposed view of a packed matrix reads as stored")
     }
 
+    /// `matrix`, `[n, k]` packed down `k`, in the tile order a load stores a weight in on the
+    /// device against a `bf16` activation: the device's tile ([`stored_tile`]) and its order of
+    /// it ([`tile_order_on`]), the words relaid as one of the device's loads reads them, the scales
+    /// left in the rows an order laid row by row keeps them in. As it lies where the device has no
+    /// such tile, or lays its tiles block by block, which keeps its scales in tiles of their own.
+    fn in_tile_order(&self, client: &Client, matrix: PackedTensor) -> PackedTensor {
+        let hw = Hardware::from_client(client);
+        let scheme = matrix.scheme();
+        let bf16 = ElemType::Float(FloatKind::BF16);
+        let order = stored_tile(&hw, MatmulOperand::Rhs, StoredValues::Packed(scheme), bf16)
+            .and_then(|tile| {
+                tile_order_on(
+                    &hw,
+                    &scheme,
+                    (tile.extent(K), tile.extent(N)),
+                    (self.k, self.n),
+                )
+            })
+            .filter(|order| order.words() == TileWords::RowByRow);
+        let Some(order) = order else {
+            return matrix;
+        };
+        // The words as the kernel names the values, `[n, k/block, block]`, counted in values.
+        let block = order.block();
+        let words = TensorBinding {
+            shape: Shape::from(vec![self.n, self.k / block, block]),
+            strides: Strides::from(vec![self.k, block, 1]),
+            ..matrix.words().binding.clone()
+        };
+        let word = u32::elem_type_native();
+        let values = tile(
+            client,
+            words,
+            &tile_order::values_dimensions(N),
+            word,
+            Some(Field::from(scheme.value)),
+            order.values_storage(N, hw.load_values(word)),
+        )
+        .expect("the device's tile order closes the matrix in whole tiles");
+        let sized = [(K, self.k), (N, self.n)];
+        let operand = PackedTensor::read_in_tiles(
+            &hw,
+            sized,
+            Operand::of_scheme(&scheme, K, [K, N]).expect("one block along k"),
+            &tile_order::matrix_values(&values.metadata),
+        )
+        .expect("a matrix the device's tile order laid reads in its tiles");
+        let mut scales = matrix.scales().cloned();
+        PackedTensor::new(
+            PlainTensor::of_handle(values),
+            scales.next().expect("block scales"),
+            scales.next(),
+            scheme,
+            operand,
+            sized,
+        )
+    }
+
     /// The operand's values on the host.
     fn host(&self, operand: MatmulOperand, stored: Stored) -> HostOperand {
         match (stored, operand) {
@@ -194,7 +268,9 @@ impl PackedProduct {
                 k_stride: self.n,
             },
             (
-                Stored::Packed { format, seed } | Stored::PackedViewedTransposed { format, seed },
+                Stored::Packed { format, seed }
+                | Stored::PackedViewedTransposed { format, seed }
+                | Stored::PackedInTileOrder { format, seed },
                 _,
             ) => HostOperand::Packed(self.spec(operand, format, seed).dequantized()),
         }

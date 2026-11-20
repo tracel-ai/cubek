@@ -30,8 +30,8 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
         #[comptime] columns: usize,
         #[comptime] monoid: Monoid,
     ) -> Self {
-        let mut values = Shared::<[Vector<Acc, N>]>::new_slice(comptime!(planes * columns));
-        let mut indices = Shared::<[Vector<u32, N>]>::new_slice(comptime!(planes * columns));
+        let mut values = Shared::<[Vector<Acc, N>]>::new_slice(planes * columns);
+        let mut indices = Shared::<[Vector<u32, N>]>::new_slice(planes * columns);
         if stages {
             stage_plane_partial::<Acc, N>(
                 &mut values,

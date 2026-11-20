@@ -1,9 +1,9 @@
 use super::super::blueprint::hypercube_blueprint;
 use super::kernel::hypercube_last_arrival_matmul_kernel;
 use crate::kernels::{
-    CubeStagedMatmulRoutine, MATMUL_HYPERCUBE_PACKED_LHS, MATMUL_PACKED_WALK_PAST_K, MatmulBinding,
-    MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
-    MatmulTensors, MatmulView,
+    CubeStagedMatmulRoutine, MATMUL_PACKED_WALK_PAST_K, MatmulBinding, MatmulBlueprint,
+    MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem, MatmulTensors,
+    MatmulView,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
@@ -199,15 +199,9 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_unindexed()?;
-        let item = |problem| {
+        let item = |problem| -> Result<_, Decline> {
             let view = MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)?;
             let item = view.work_item();
-            if item
-                .blocks
-                .is_some_and(|blocks| blocks.packings.lhs.is_some())
-            {
-                return Err(MATMUL_HYPERCUBE_PACKED_LHS);
-            }
             let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
             Ok((view, item, microkernel))
         };
