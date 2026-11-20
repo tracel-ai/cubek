@@ -3,7 +3,8 @@
 //! split into parts; and the kernel the rule and the autotune pick.
 
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, FloatKind, IntKind};
+use cubecl::ir::features::AtomicUsage;
+use cubecl::ir::{ElemType, FloatKind, IntKind, Type};
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Refusal, StoredTileOperand, Unbound};
 use cubecl::tile::layout::ElemAlignment;
@@ -507,18 +508,36 @@ fn atomic_sums() -> Vec<Reduction> {
 }
 
 /// The atomic hypercube sums rows split into parts, each part added into the zeroed output, on
-/// [`atomic_sums`]. It must launch wherever the device adds floats atomically; a sum is the only
+/// [`atomic_sums`]. It must launch wherever [`adds_floats_atomically`]; a sum is the only
 /// operation it serves.
 #[test]
 fn the_atomic_hypercube_sums_split_rows_like_the_cpu() {
-    Routines.check_some(atomic_sums());
+    match adds_floats_atomically() {
+        true => Routines.check_some(atomic_sums()),
+        false => Routines.check(atomic_sums()),
+    }
 }
 
 /// The atomic hypercube launched unbound sums as it does bound, into an output that starts away
 /// from zero, so the zeroing before it is checked too, on [`atomic_sums`].
 #[test]
 fn the_atomic_hypercube_sums_an_unbound_input_like_the_cpu() {
-    UnboundRoutines.check_some(atomic_sums());
+    match adds_floats_atomically() {
+        true => UnboundRoutines.check_some(atomic_sums()),
+        false => UnboundRoutines.check(atomic_sums()),
+    }
+}
+
+/// Whether the test device runs the atomic hypercube's sums: a plane width it commits to, for the
+/// cube microkernel each cube runs, and an atomic add of floats. Where it does, a sum must launch;
+/// where it does not, the routine's decline is a skip.
+fn adds_floats_atomically() -> bool {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    hw.plane_dim().is_ok()
+        && hw
+            .properties
+            .atomic_type_usage(Type::atomic(F32))
+            .contains(AtomicUsage::Add)
 }
 
 /// The hypercube splits rows into parts, the last one short, and merges them: a `[2, 3, 5000]`
