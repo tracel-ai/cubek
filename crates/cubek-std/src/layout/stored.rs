@@ -7,7 +7,8 @@
 
 use crate::layout::tile_order::{TileOrder, scales_dimensions, values_dimensions};
 use crate::matmul_dimensions::{K, blocked};
-use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
+use cubecl::ir::ElemType;
+use cubecl::quant::scheme::{QuantScheme, QuantStore};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::{Run, VectorTile};
 use cubecl::tile::{Dimension, MicroTile, OperandReads, Space, kind::Field};
@@ -628,7 +629,7 @@ pub struct Packing {
 
 impl Packing {
     /// This packing read a scale block at a time: a unit loads one block of values and its one
-    /// scale. Only one-byte block scales, `ue4m3` and `ue8m0`, are read so, each a byte a unit
+    /// scale. Only one-byte block scales, as `ue4m3` and `ue8m0` are, are read so, each a byte a unit
     /// loads alone, in rows or in tile order; any other scale's word is read whole. `None` where
     /// the scheme or the operand reads no block whole.
     pub fn by_block(&self) -> Option<Packing> {
@@ -645,11 +646,11 @@ impl Packing {
         self.operand.reads_scales_alone() && self.scales_are_bytes()
     }
 
-    /// Whether its block scales are one byte each, `ue4m3` or `ue8m0`.
+    /// Whether its block scales are one byte each, as `ue4m3` and `ue8m0` are.
     fn scales_are_bytes(&self) -> bool {
-        self.scheme
-            .block_scale()
-            .is_some_and(|block| matches!(block.dtype, ScaleDtype::UE4M3 | ScaleDtype::UE8M0))
+        self.scheme.block_scale().is_some_and(|block| {
+            ElemType::from_scale_dtype(block.dtype).size_bits() == u8::BITS as usize
+        })
     }
 
     /// Bits one value holds, packed.
