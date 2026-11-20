@@ -346,6 +346,7 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
                 blueprint.microkernel.plane.orders,
                 blueprint.widths,
                 blueprint.microkernel.block_scales(),
+                blueprint.microkernel.planned_space(),
             ),
         CubeStagedDelivery::Tma => tensors.tma_operands(
             &stage,
