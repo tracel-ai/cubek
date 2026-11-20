@@ -51,6 +51,9 @@ pub(crate) enum Broadcast {
 pub(crate) struct RhsTiles {
     pub n: usize,
     pub k: usize,
+    /// Each tile's rows split at the widest read the device serves, as a load stores a weight
+    /// ([`matrix_storage`](cubek_matmul::tiled::storage::matrix_storage)).
+    pub in_reads: bool,
 }
 
 #[cfg(feature = "tiled")]
@@ -58,10 +61,13 @@ impl RhsTiles {
     /// `rhs`, `[k, n]` of `element`, copied into these tiles.
     fn store(self, client: &Client, rhs: TensorHandle, element: ElemType) -> TensorHandle {
         use cubecl::tile::Axis;
-        use cubek_matmul::tiled::storage::{StorageLevels, tile};
+        use cubek_matmul::tiled::storage::{StorageLevels, matrix_storage, tile};
         const K: Axis = Axis(0);
         const N: Axis = Axis(1);
-        let storage = StorageLevels::new(&[(N, self.n), (K, self.k)]).grid(&[N, K]);
+        let storage = match self.in_reads {
+            true => matrix_storage(client, element, [(K, self.k), (N, self.n)]),
+            false => StorageLevels::new(&[(N, self.n), (K, self.k)]).grid(&[N, K]),
+        };
         tile(client, rhs.binding(), &[K, N], element, None, storage)
             .unwrap_or_else(|why| panic!("{self:?} store no such rhs: {why}"))
     }

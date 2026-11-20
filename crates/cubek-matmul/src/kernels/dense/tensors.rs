@@ -555,12 +555,12 @@ impl MatmulTensors {
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch> {
+    ) -> Result<MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
         match (&self.lhs, &self.rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 self.bind_float(lhs, rhs, blueprint, grid)
             }
-            _ => self.bind_packed(blueprint, grid),
+            _ => Ok(self.bind_packed(blueprint, grid)),
         }
     }
 
@@ -571,8 +571,8 @@ impl MatmulTensors {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch> {
-        let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid);
+    ) -> Result<MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
+        let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid)?;
         let out = launcher
             .arg(self.out.bound.binding.clone(), self.out.bound.elem)
             .axes(&[M, N])
@@ -583,12 +583,12 @@ impl MatmulTensors {
         blueprint
             .partitioning
             .assert_masked_where_overhanging(&out.spec);
-        MatmulBinding {
+        Ok(MatmulBinding {
             launcher,
             lhs,
             rhs,
             out,
-        }
+        })
     }
 
     /// The operands bound where either input is packed, the output restated over the block-split
@@ -682,12 +682,12 @@ impl MatmulTensors<Geometry> {
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch> {
+    ) -> Result<MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
         match (&self.lhs, &self.rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 self.bind_float(lhs, rhs, blueprint, grid)
             }
-            _ => self.bind_packed(blueprint, grid),
+            _ => Ok(self.bind_packed(blueprint, grid)),
         }
     }
 
@@ -698,8 +698,8 @@ impl MatmulTensors<Geometry> {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch> {
-        let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid);
+    ) -> Result<MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
+        let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid)?;
         let out = launcher
             .unbound(&self.out)
             .axes(&[M, N])
@@ -710,12 +710,12 @@ impl MatmulTensors<Geometry> {
         blueprint
             .partitioning
             .assert_masked_where_overhanging(&out.spec);
-        MatmulBinding {
+        Ok(MatmulBinding {
             launcher,
             lhs,
             rhs,
             out,
-        }
+        })
     }
 
     /// The operands bound where either input is packed, the output stated as a buffer output is
@@ -1322,7 +1322,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> (Launcher, [TileTensorLaunch; 2]) {
+    ) -> Result<(Launcher, [TileTensorLaunch; 2]), Refusal> {
         let partitioning = blueprint.partitioning.as_tile();
         let launcher = grid.launcher(self.client(), || {
             (
@@ -1353,17 +1353,15 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             .lhs
             .applied(source(lhs, &[M, K]))
             .vectorize(widths.lhs)
-            .build()
-            .expect(ADMITTED_PLAN_RUNS);
+            .build()?;
         let rhs = orders
             .rhs
             .applied(rhs_source)
             .vectorize(widths.rhs)
-            .build()
-            .expect(ADMITTED_PLAN_RUNS);
+            .build()?;
         let lhs = self.read_through_table(MatmulOperand::Lhs, lhs.arg());
         let rhs = self.read_through_table(MatmulOperand::Rhs, rhs.arg());
-        (launcher, [lhs, rhs])
+        Ok((launcher, [lhs, rhs]))
     }
 
     /// A float input's argument under `launcher`: at its own element, or, where the stages it is
