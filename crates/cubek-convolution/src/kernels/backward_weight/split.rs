@@ -143,6 +143,7 @@ pub fn launch_accelerated<const N: usize>(
                         crate::AcceleratedTileKind::Mma => TileMatmulKind::Mma,
                     },
                     multi_rows: false,
+                    plane_tiling: None,
                 })
             },
             rows_per_split: 512,

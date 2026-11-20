@@ -59,6 +59,10 @@ pub struct SimpleArgs {
     pub tile_matmul: TileMatmulKind,
     // Uses an optimized multi rows strategy.
     pub multi_rows: bool,
+    /// The plane selector's options where the caller picks them: the row count, the k partition,
+    /// the multi-row strategy and the tiny-problem shortcut. The routine keeps its own buffering
+    /// and swizzling. Set, they take precedence over `multi_rows`.
+    pub plane_tiling: Option<PlaneTilingBlueprintOptions>,
 }
 
 impl Default for SimpleArgs {
@@ -66,6 +70,7 @@ impl Default for SimpleArgs {
         Self {
             tile_matmul: TileMatmulKind::Cmma,
             multi_rows: false,
+            plane_tiling: None,
         }
     }
 }
@@ -74,11 +79,19 @@ impl TilingArgs for SimpleArgs {
     fn set_tile_matmul(&mut self, kind: TileMatmulKind) {
         self.tile_matmul = kind;
     }
+
+    fn set_plane_tiling(&mut self, options: PlaneTilingBlueprintOptions) {
+        self.plane_tiling = Some(options);
+    }
 }
 
 impl Display for SimpleArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(if self.multi_rows { "_multi_rows" } else { "" })
+        f.write_str(if self.multi_rows { "_multi_rows" } else { "" })?;
+        match &self.plane_tiling {
+            Some(options) => write!(f, "_rows{:?}_k{:?}", options.row_count, options.partition_k),
+            None => Ok(()),
+        }
     }
 }
 
@@ -185,7 +198,8 @@ where
         let (blueprint, dtypes) = match strategy {
             BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => {
-                if strategy.multi_rows {
+                // Options the caller set win over the multi-row selector, which takes none.
+                if strategy.multi_rows && strategy.plane_tiling.is_none() {
                     infer_blueprint_multi_rows(
                         tile_matmul,
                         client,
@@ -204,9 +218,16 @@ where
                         &device_settings.vector_sizes,
                         PlaneTilingBlueprintOptions {
                             partition_buffering: Some(PartitionBuffering::Single),
-                            tiny_selection_enabled: true,
                             swizzled: tile_matmul.should_swizzle(client),
-                            ..Default::default()
+                            specialized: false,
+                            stage_buffering: 1,
+                            ..strategy
+                                .plane_tiling
+                                .clone()
+                                .unwrap_or(PlaneTilingBlueprintOptions {
+                                    tiny_selection_enabled: true,
+                                    ..Default::default()
+                                })
                         },
                     )
                 }?

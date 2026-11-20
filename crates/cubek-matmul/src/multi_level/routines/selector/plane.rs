@@ -34,7 +34,7 @@ use crate::{
 pub const NUM_SM_APPROX: u32 = 50;
 pub const NUM_TENSOR_CORES_APPROX: u32 = 4;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// Options to select the best plane matmul [selection](BatchMatmulBlueprint).
 pub struct PlaneTilingBlueprintOptions {
     pub partition_k: Option<u32>,
