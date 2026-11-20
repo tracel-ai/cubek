@@ -1,14 +1,19 @@
 use super::microkernel::{cube_staged_reduce_microkernel, cube_staged_reduce_part};
-use crate::reduce::{ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS};
-use cubecl::tile::Tile;
+use crate::reduce::{
+    REDUCED, ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS, lines_across,
+    units_across,
+};
 use cubecl::tile::launch::Vectorization;
+use cubecl::tile::{Dimension, Levels, Region, Tile};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// A row reduced by one cube: its units read consecutive lines, each accumulating every `units`-th into
 /// a partial of its own; each plane's partials meet in its instructions, then the planes' in
-/// shared memory, one slot of the carrier a plane.
+/// shared memory, one slot of the carrier a plane. Where its lines run across the reduced
+/// dimension, each plane's units lie across [`lines_across`](Self::lines_across) lines of rows
+/// instead, a column of them for each, and a slot a column a plane.
 ///
 /// It runs where the device commits to a plane width, as the plane's does.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -24,6 +29,10 @@ pub struct CubeStagedReduceMicrokernel {
     /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
     #[cube(comptime)]
     lane_slots: usize,
+    /// Lines of rows each plane's units lie across side by side
+    /// ([`across_rows`](Self::across_rows)).
+    #[cube(comptime)]
+    lines_across: usize,
 }
 
 impl CubeStagedReduceMicrokernel {
@@ -35,6 +44,44 @@ impl CubeStagedReduceMicrokernel {
             lanes,
             planes,
             lane_slots,
+            lines_across: 1,
+        }
+    }
+
+    /// This microkernel with each plane's units across as many lines of rows, `width` wide, as
+    /// one memory transaction of `hw` holds, where its lines run across the reduced dimension and
+    /// `rows` rows there are; one line of rows where its lines run along it.
+    pub fn across_rows(self, hw: &Hardware, width: usize, rows: usize) -> Self {
+        Self {
+            lines_across: lines_across(hw, &self.item, width, rows.div_ceil(width), self.lanes),
+            ..self
+        }
+    }
+
+    pub fn lines_across(&self) -> usize {
+        self.lines_across
+    }
+
+    /// The levels below its cube from `owner`, the box of rows one line wide a row's window
+    /// holds: the box, read flat by all of the cube's units, or
+    /// [`lines_across`](Self::lines_across) of them side by side, each plane's units dealt
+    /// across them and in turns along the reduced dimension, the planes after one another along
+    /// it, every step of which the cube walks.
+    pub fn levels(&self, owner: &[(Dimension, usize)]) -> Levels {
+        match self.lines_across {
+            1 => Levels::leaf(owner),
+            columns => units_across(owner, columns, self.lanes / columns)
+                .planes(&[(REDUCED, self.planes)])
+                .walk_every(&[REDUCED]),
+        }
+    }
+
+    /// The units its levels make a plane of the launch: the whole cube where they state no
+    /// plane, its planes' lanes where they deal the units to its planes.
+    pub fn launch_plane_width(&self) -> usize {
+        match self.lines_across {
+            1 => self.units(),
+            _ => self.lanes,
         }
     }
 
@@ -65,18 +112,22 @@ impl CubeStagedReduceMicrokernel {
 
 #[cube]
 impl CubeStagedReduceMicrokernel {
-    /// One cube's row of `input` reduced into `out` and `indices` (`cube_staged_reduce_microkernel`).
+    /// `cube`'s rows of `input` reduced into `out` and `indices` at the same region
+    /// (`cube_staged_reduce_microkernel`), `cube` a region of the levels
+    /// [`levels`](CubeStagedReduceMicrokernel::levels) states.
     ///
     /// # Panics
     ///
     /// Where its item writes the indices beside the values and `indices` is none.
     pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
+        cube: &Region,
         input: &Tile,
-        out: &mut Tile,
+        out: &Tile,
         indices: &ComptimeOption<Tile>,
     ) {
         cube_staged_reduce_microkernel::<In, Acc, Out, Idx, N>(
+            cube,
             input,
             out,
             indices,
@@ -84,7 +135,8 @@ impl CubeStagedReduceMicrokernel {
                 item: self.item,
                 lanes: self.lanes,
                 planes: self.planes,
-                lane_slots: self.lane_slots
+                lane_slots: self.lane_slots,
+                lines_across: self.lines_across
             }),
         )
     }
@@ -106,7 +158,8 @@ impl CubeStagedReduceMicrokernel {
                 item: self.item,
                 lanes: self.lanes,
                 planes: self.planes,
-                lane_slots: self.lane_slots
+                lane_slots: self.lane_slots,
+                lines_across: self.lines_across
             }),
         )
     }
@@ -127,14 +180,14 @@ impl CubeStagedReduceMicrokernelSettings {
 
 impl CubeStagedReduceMicrokernel {
     /// Bytes of shared memory it allocates with its lines `width` lanes wide: one slot of the
-    /// carrier a plane, which its planes meet through.
+    /// carrier a plane and a column of rows, which its planes meet through.
     pub fn shared_memory_bytes_at_width(&self, width: usize) -> usize {
         let slot = self
             .item
             .operation
             .carrier()
             .bytes(width, self.item.accumulator.size());
-        self.planes * slot
+        self.planes * self.lines_across * slot
     }
 }
 
@@ -148,8 +201,8 @@ impl core::fmt::Display for CubeStagedReduceMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "{:?} {:?} lanes={} planes={}",
-            self.item.operation, self.item.lines_along, self.lanes, self.planes
+            "{:?} {:?} lanes={} planes={} lines_across={}",
+            self.item.operation, self.item.lines_along, self.lanes, self.planes, self.lines_across
         )
     }
 }
@@ -189,6 +242,7 @@ impl Microkernel for CubeStagedReduceMicrokernel {
                 lanes: lanes as usize,
                 planes,
                 lane_slots,
+                lines_across: 1,
             })
     }
 
