@@ -15,11 +15,7 @@ use cubek_test_utils::{
     StridedLayout, TestInput, Written,
 };
 
-use cubek_reduce::eval::cpu_reference::{
-    contiguous_strides, reference_all, reference_any, reference_argmax, reference_argmin,
-    reference_argtopk, reference_max, reference_max_abs, reference_mean, reference_min,
-    reference_prod, reference_sum, reference_topk,
-};
+use cubek_reduce::eval::cpu_reference::{contiguous_strides, reference};
 
 /// The unit kernel: a unit reduces each row.
 pub const UNIT: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::Unit);
@@ -286,34 +282,20 @@ impl Op {
         }
     }
 
-    /// What each output holds, from the input's values on the host.
+    /// What each output holds, from the input's values on the host: the operation's values, and
+    /// beside them, for a reduction that writes its indices too, the indices it picked.
     fn references(self, input: &HostData, axis: usize) -> Vec<HostData> {
-        match self {
-            Op::Sum => vec![reference_sum(input, axis, None)],
-            Op::Mean => vec![reference_mean(input, axis, None)],
-            Op::Prod => vec![reference_prod(input, axis, None)],
-            Op::Min => vec![reference_min(input, axis, None)],
-            Op::Max => vec![reference_max(input, axis, None)],
-            Op::MaxAbs => vec![reference_max_abs(input, axis, None)],
-            Op::Any => vec![reference_any(input, axis, None)],
-            Op::All => vec![reference_all(input, axis, None)],
-            Op::ArgMax => vec![reference_argmax(input, axis, None)],
-            Op::ArgMin => vec![reference_argmin(input, axis, None)],
-            Op::ArgTopK(k) => vec![reference_argtopk(input, axis, k, None)],
-            Op::TopK(k) => vec![reference_topk(input, axis, k, None)],
-            Op::TopKWithIndices(k) => vec![
-                reference_topk(input, axis, k, None),
-                reference_argtopk(input, axis, k, None),
-            ],
-            Op::MinWithIndices => vec![
-                reference_min(input, axis, None),
-                reference_argmin(input, axis, None),
-            ],
-            Op::MaxWithIndices => vec![
-                reference_max(input, axis, None),
-                reference_argmax(input, axis, None),
-            ],
-        }
+        let operation = self.operation();
+        let picked = match self {
+            Op::TopKWithIndices(k) => Some(ReduceOperation::ArgTopK { k }),
+            Op::MinWithIndices => Some(ReduceOperation::ArgMin),
+            Op::MaxWithIndices => Some(ReduceOperation::ArgMax),
+            _ => None,
+        };
+        core::iter::once(operation)
+            .chain(picked)
+            .map(|operation| reference(input, axis, operation, None))
+            .collect()
     }
 
     /// The tolerance of the values: nothing for what a reduction selects or counts, and for a

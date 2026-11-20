@@ -8,7 +8,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 pub(crate) type OneIndexed<Acc> = Indexed<Acc, Const<1>>;
 
 /// `line` as `map` reads it.
-#[cube]
+#[cube(harness)]
 pub(crate) fn read_mapped<Acc: Numeric, N: Size>(
     line: Vector<Acc, N>,
     #[comptime] map: ReadMap,
@@ -86,7 +86,7 @@ pub(crate) fn accumulate_strided<
 /// The index of each lane of the line read `line_index` lines into the row, `row_lanes` of its
 /// lanes holding one row's values: along the row, consecutive values; across rows, the line's own
 /// position, each lane in its own row.
-#[cube]
+#[cube(harness)]
 pub(crate) fn lane_indices<N: Size>(
     line_index: usize,
     #[comptime] row_lanes: usize,
@@ -148,4 +148,54 @@ fn write_both<Out: Numeric, Idx: Numeric, Acc: Numeric, W: Size>(
 #[cube]
 pub(crate) fn row_values(lines: usize, #[comptime] row_lanes: usize) -> usize {
     lines * row_lanes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::TestRuntime;
+
+    /// A negative, a zero and a fraction: read as they are.
+    #[test]
+    fn as_read_keeps_every_value() {
+        let read = read_mapped::harness::<TestRuntime, f32, Const<4>>(
+            &[-2.0, 0.0, 0.5, 3.0],
+            ReadMap::AsRead,
+        );
+        assert_eq!(read, [-2.0, 0.0, 0.5, 3.0]);
+    }
+
+    /// A negative, a zero and a fraction: each read as its magnitude.
+    #[test]
+    fn abs_reads_each_magnitude() {
+        let read = read_mapped::harness::<TestRuntime, f32, Const<4>>(
+            &[-2.0, 0.0, 0.5, -0.0],
+            ReadMap::Abs,
+        );
+        assert_eq!(read, [2.0, 0.0, 0.5, 0.0]);
+    }
+
+    /// A zero, a negative, a fraction and a negative zero: one wherever the value is not zero.
+    #[test]
+    fn non_zero_reads_one_where_the_value_is_not_zero() {
+        let read = read_mapped::harness::<TestRuntime, f32, Const<4>>(
+            &[0.0, -2.0, 0.5, -0.0],
+            ReadMap::NonZero,
+        );
+        assert_eq!(read, [0.0, 1.0, 1.0, 0.0]);
+    }
+
+    /// The third line of a row whose four lanes all hold its values: the row's values 8 to 11.
+    #[test]
+    fn a_line_along_a_row_indexes_its_values() {
+        let indices = lane_indices::harness::<TestRuntime, Const<4>>(2, 4);
+        assert_eq!(indices, [8, 9, 10, 11]);
+    }
+
+    /// The third line where each lane is its own row's: every lane at its row's third value.
+    #[test]
+    fn a_line_across_rows_indexes_its_position() {
+        let indices = lane_indices::harness::<TestRuntime, Const<4>>(2, 1);
+        assert_eq!(indices, [2, 2, 2, 2]);
+    }
 }

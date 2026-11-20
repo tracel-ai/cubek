@@ -1,3 +1,4 @@
+#[macro_use]
 mod base;
 mod cube;
 mod hypercube;

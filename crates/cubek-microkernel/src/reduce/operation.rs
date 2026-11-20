@@ -179,6 +179,78 @@ impl ReduceOperation {
     }
 }
 
+/// The host's answer for each operation, the Reference Implementation every reduce kernel and
+/// microkernel is checked against.
+#[cfg(feature = "cpu-reference")]
+impl ReduceOperation {
+    /// The cells it writes for `row`, computed on the host: one value, or `k` best first for a
+    /// top-k, and an index written as a number. A NaN ranks ahead of every number and the lower
+    /// index wins a tie, so a max or a min keeps a NaN. A row shorter than `k` writes one cell a
+    /// value.
+    pub fn reference_cells(self, row: &[f32]) -> Vec<f32> {
+        match self {
+            Self::Sum => vec![row.iter().sum()],
+            Self::Prod => vec![row.iter().product()],
+            Self::Mean => vec![row.iter().sum::<f32>() / row.len() as f32],
+            Self::Max => vec![ranked(row, Rank::Largest)[0].0],
+            Self::Min => vec![ranked(row, Rank::Smallest)[0].0],
+            Self::MaxAbs => vec![ranked(&magnitudes(row), Rank::Largest)[0].0],
+            Self::Any => vec![flag(row.iter().any(|value| *value != 0.0))],
+            Self::All => vec![flag(row.iter().all(|value| *value != 0.0))],
+            Self::ArgMax => vec![ranked(row, Rank::Largest)[0].1 as f32],
+            Self::ArgMin => vec![ranked(row, Rank::Smallest)[0].1 as f32],
+            Self::TopK { k } => ranked(row, Rank::Largest)
+                .iter()
+                .take(k)
+                .map(|e| e.0)
+                .collect(),
+            Self::ArgTopK { k } => ranked(row, Rank::Largest)
+                .iter()
+                .take(k)
+                .map(|e| e.1 as f32)
+                .collect(),
+        }
+    }
+}
+
+/// Which end of a row ranks first.
+#[cfg(feature = "cpu-reference")]
+#[derive(Clone, Copy)]
+enum Rank {
+    Largest,
+    Smallest,
+}
+
+/// Every value of `row` with its index, best first under `rank`: a NaN ahead of every number,
+/// then the larger (smaller) value, then the lower index.
+#[cfg(feature = "cpu-reference")]
+fn ranked(row: &[f32], rank: Rank) -> Vec<(f32, usize)> {
+    let mut order: Vec<(f32, usize)> = row.iter().copied().zip(0..).collect();
+    order.sort_by(|a, b| {
+        let nan_first = b.0.is_nan().cmp(&a.0.is_nan());
+        let by_value = match rank {
+            Rank::Largest => b.0.partial_cmp(&a.0),
+            Rank::Smallest => a.0.partial_cmp(&b.0),
+        };
+        nan_first
+            .then(by_value.unwrap_or(core::cmp::Ordering::Equal))
+            .then(a.1.cmp(&b.1))
+    });
+    order
+}
+
+/// The magnitude of every value of `row`, in order.
+#[cfg(feature = "cpu-reference")]
+fn magnitudes(row: &[f32]) -> Vec<f32> {
+    row.iter().map(|value| value.abs()).collect()
+}
+
+/// One where `holds`, zero where not: how a reduction writes a truth.
+#[cfg(feature = "cpu-reference")]
+fn flag(holds: bool) -> f32 {
+    f32::from(u8::from(holds))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
