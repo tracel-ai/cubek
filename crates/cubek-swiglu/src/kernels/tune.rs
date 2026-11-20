@@ -37,28 +37,6 @@ pub struct SwigluKey {
     rows: usize,
 }
 
-impl SwigluKey {
-    /// What a tuning round measures for this key: dense zero rows as many as the key's bucket
-    /// stands for, the problem the key describes ([`SwigluRoutineProblem::from`]), or the call as
-    /// it came where it holds as many.
-    fn representative(&self, call: &SwigluCall) -> SwigluCall {
-        let rows = call.both.binding.shape.iter().product::<usize>() / (2 * self.dim);
-        if self.rows <= rows {
-            return call.clone();
-        }
-        let both = PlainTensor::zeros(
-            &call.client,
-            &[self.rows, 2 * self.dim],
-            [2 * self.dim, 1],
-            call.both.elem,
-        );
-        SwigluCall {
-            client: call.client.clone(),
-            both,
-        }
-    }
-}
-
 /// The key of the gate of `both`'s fused rows: what tells it apart is their element, width and
 /// count.
 impl From<&PlainTensor> for SwigluKey {
@@ -378,10 +356,8 @@ fn candidates(
     hw: Hardware,
     priority: GroupPriority,
 ) -> TunableSet<SwigluKey, SwigluCall, SwigluOutput, SwigluIdentity> {
-    let mut autotune = Autotune::<SwigluKey, SwigluCall, SwigluOutput, SwigluIdentity>::measured_on(
+    let mut autotune = Autotune::<SwigluKey, SwigluCall, SwigluOutput, SwigluIdentity>::new(
         |call: &SwigluCall| SwigluKey::from(&call.both),
-        "as-keyed",
-        SwigluKey::representative,
     );
     let tile = autotune.group("tile", priority);
     let floor = SwigluRoutineCandidate::floor(&hw);
@@ -408,6 +384,22 @@ mod tests {
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
+
+    /// **A race runs on the call's buffers.** The autotune hands its candidates the call's own
+    /// fused rows, whatever bucket the rows' count is keyed in.
+    #[test]
+    fn a_race_runs_on_the_calls_rows() {
+        let client = cubek_test_utils::client();
+        let f32 = ElemType::Float(FloatKind::F32);
+        let call = SwigluCall {
+            client: client.clone(),
+            both: PlainTensor::zeros(&client, &[3, 128], [128, 1], f32),
+        };
+        let tunables = candidates(Hardware::from_client(&client), GroupPriority::DEFAULT);
+        let raced = tunables.generate_inputs(&SwigluKey::from(&call.both), &call);
+        let memory = |tensor: &PlainTensor| tensor.binding.handle.memory.id();
+        assert_eq!(memory(&raced.both), memory(&call.both));
+    }
 
     /// On devices a dev machine cannot show, every setting prepares: the routine is the floor, so a
     /// decline would leave a key with nothing to measure.

@@ -40,30 +40,6 @@ pub struct RmsNormKey {
     rows: usize,
 }
 
-impl RmsNormKey {
-    /// What a tuning round measures for this key: the call's weight, and dense zero rows as many
-    /// as the key's bucket stands for, the problem the key describes
-    /// ([`RmsNormRoutineProblem::from`]). A weight a row scales its own
-    /// rows' count and no other, so its round measures the call as it came.
-    fn representative(&self, call: &RmsNormCall) -> RmsNormCall {
-        let rows = call.input.binding.shape.iter().product::<usize>() / self.dim;
-        let weight_a_row = call.weight.binding.shape.iter().product::<usize>() > self.dim;
-        if self.rows <= rows || weight_a_row {
-            return call.clone();
-        }
-        let input = PlainTensor::zeros(
-            &call.client,
-            &[self.rows, self.dim],
-            [self.dim, 1],
-            call.input.elem,
-        );
-        RmsNormCall {
-            input,
-            ..call.clone()
-        }
-    }
-}
-
 /// The key of the norm of `x`'s rows: what tells it apart is the rows' element, width and count.
 impl From<&PlainTensor> for RmsNormKey {
     fn from(x: &PlainTensor) -> Self {
@@ -530,12 +506,9 @@ fn candidates(
     hw: Hardware,
     priority: GroupPriority,
 ) -> TunableSet<RmsNormKey, RmsNormCall, RmsNormOutput, RmsNormIdentity> {
-    let mut autotune =
-        Autotune::<RmsNormKey, RmsNormCall, RmsNormOutput, RmsNormIdentity>::measured_on(
-            |call: &RmsNormCall| RmsNormKey::from(&call.input),
-            "as-keyed",
-            RmsNormKey::representative,
-        );
+    let mut autotune = Autotune::<RmsNormKey, RmsNormCall, RmsNormOutput, RmsNormIdentity>::new(
+        |call: &RmsNormCall| RmsNormKey::from(&call.input),
+    );
     let tile = autotune.group("tile", priority);
     let floor = RmsNormRoutineCandidate::floor(&hw);
     autotune
@@ -573,6 +546,25 @@ mod tests {
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
+
+    /// **A race runs on the call's buffers.** The autotune hands its candidates the call's own
+    /// rows and weight, whatever bucket the rows' count is keyed in.
+    #[test]
+    fn a_race_runs_on_the_calls_rows() {
+        let client = cubek_test_utils::client();
+        let f32 = ElemType::Float(FloatKind::F32);
+        let call = RmsNormCall {
+            client: client.clone(),
+            input: PlainTensor::zeros(&client, &[3, 64], [64, 1], f32),
+            weight: PlainTensor::zeros(&client, &[64], [1], f32),
+            epsilon: 1e-6,
+        };
+        let tunables = candidates(Hardware::from_client(&client), GroupPriority::DEFAULT);
+        let raced = tunables.generate_inputs(&RmsNormKey::from(&call.input), &call);
+        let memory = |tensor: &PlainTensor| tensor.binding.handle.memory.id();
+        assert_eq!(memory(&raced.input), memory(&call.input));
+        assert_eq!(memory(&raced.weight), memory(&call.weight));
+    }
 
     /// On devices a dev machine cannot show: the cube groups, this kind's floor, prepare
     /// everywhere, and a plane or cube setting is tried last exactly where it claims no launch.

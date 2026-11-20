@@ -536,18 +536,6 @@ impl AttentionTensors {
         self
     }
 
-    /// The same attention, each sequence attending as many keys as `lengths` says, every other
-    /// operand, the output among them, this one's.
-    ///
-    /// # Panics
-    ///
-    /// Lengths that are not `u32`, or that hold neither one value nor one per sequence.
-    pub fn with_lengths(mut self, lengths: PlainTensor) -> Self {
-        let sequences = self.lengths.shape()[0];
-        self.lengths = Self::one_per_sequence(lengths, sequences);
-        self
-    }
-
     /// The same attention, query `q` of head `h` of sequence `b` not seeing key `s` where
     /// `mask[b, h, q, s]` is not zero, on top of what its visibility hides. A dim the mask does
     /// not vary along is read at stride zero, so a mask broadcast over the batch or the heads is
