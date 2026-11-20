@@ -16,10 +16,17 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
         *acc = monoid.combine::<Vector<Acc, N>>(*acc, line);
     }
 
-    fn across_planes(acc: Self, #[comptime] planes: usize, #[comptime] monoid: Monoid) -> Self {
-        let mut slots = Shared::<[Vector<Acc, N>]>::new_slice(planes);
-        if UNIT_POS_PLANE == 0 {
-            slots[PLANE_POS as usize] = acc;
+    fn across_planes(
+        acc: Self,
+        column: usize,
+        stages: bool,
+        #[comptime] planes: usize,
+        #[comptime] columns: usize,
+        #[comptime] monoid: Monoid,
+    ) -> Self {
+        let mut slots = Shared::<[Vector<Acc, N>]>::new_slice(comptime!(planes * columns));
+        if stages {
+            slots[PLANE_POS as usize * columns + column] = acc;
         }
 
         sync_cube();
@@ -27,7 +34,7 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
         let mut total = Vector::<Acc, N>::identity(monoid);
         #[unroll]
         for plane in 0..planes {
-            total = monoid.combine::<Vector<Acc, N>>(total, slots[plane]);
+            total = monoid.combine::<Vector<Acc, N>>(total, slots[plane * columns + column]);
         }
 
         sync_cube();

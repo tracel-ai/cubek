@@ -1,13 +1,18 @@
 use super::microkernel::plane_shuffle_reduce_microkernel;
-use crate::reduce::{ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS};
-use cubecl::tile::Tile;
+use crate::reduce::{
+    REDUCED, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS, lines_across, units_across,
+};
 use cubecl::tile::launch::Vectorization;
+use cubecl::tile::{Dimension, Levels, Region, Tile};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// A row reduced by one plane: its lanes read consecutive lines, each accumulating every `lanes`-th
-/// into a partial of its own, and the partials meet across the plane in its instructions.
+/// into a partial of its own, and the partials meet across the plane in its instructions. Where
+/// its lines run across the reduced dimension, its units lie across
+/// [`lines_across`](Self::lines_across) lines of rows instead, a column of them for each, and
+/// each column's partials meet within it.
 ///
 /// It runs where the device commits to a plane width: the partials meet across the plane, so a
 /// plane launched wider than the device runs would leave part of the row out.
@@ -21,6 +26,9 @@ pub struct PlaneShuffleReduceMicrokernel {
     /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
     #[cube(comptime)]
     lane_slots: usize,
+    /// Lines of rows its units lie across side by side ([`across_rows`](Self::across_rows)).
+    #[cube(comptime)]
+    lines_across: usize,
 }
 
 impl PlaneShuffleReduceMicrokernel {
@@ -30,6 +38,32 @@ impl PlaneShuffleReduceMicrokernel {
             item,
             lanes,
             lane_slots,
+            lines_across: 1,
+        }
+    }
+
+    /// This microkernel with its units across as many lines of rows, `width` wide, as one memory
+    /// transaction of `hw` holds, where its lines run across the reduced dimension and `rows`
+    /// rows there are; one line of rows where its lines run along it.
+    pub fn across_rows(self, hw: &Hardware, width: usize, rows: usize) -> Self {
+        Self {
+            lines_across: lines_across(hw, &self.item, width, rows.div_ceil(width), self.lanes),
+            ..self
+        }
+    }
+
+    pub fn lines_across(&self) -> usize {
+        self.lines_across
+    }
+
+    /// The levels below its plane from `owner`, the box of rows one line wide a row's window
+    /// holds: the box, read flat, or [`lines_across`](Self::lines_across) of them side by side,
+    /// the plane's units dealt across them and in turns along the reduced dimension, every step
+    /// of which the plane walks.
+    pub fn levels(&self, owner: &[(Dimension, usize)]) -> Levels {
+        match self.lines_across {
+            1 => Levels::leaf(owner),
+            columns => units_across(owner, columns, self.lanes / columns).walk_every(&[REDUCED]),
         }
     }
 
@@ -51,25 +85,30 @@ impl PlaneShuffleReduceMicrokernel {
 
 #[cube]
 impl PlaneShuffleReduceMicrokernel {
-    /// One plane's row of `input` reduced into `out` and `indices` (`plane_shuffle_reduce_microkernel`).
+    /// `plane`'s rows of `input` reduced into `out` and `indices` at the same region
+    /// (`plane_shuffle_reduce_microkernel`), `plane` a region of the levels
+    /// [`levels`](PlaneShuffleReduceMicrokernel::levels) states.
     ///
     /// # Panics
     ///
     /// Where its item writes the indices beside the values and `indices` is none.
     pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
+        plane: &Region,
         input: &Tile,
-        out: &mut Tile,
+        out: &Tile,
         indices: &ComptimeOption<Tile>,
     ) {
         plane_shuffle_reduce_microkernel::<In, Acc, Out, Idx, N>(
+            plane,
             input,
             out,
             indices,
             comptime!(PlaneShuffleReduceMicrokernel {
                 item: self.item,
                 lanes: self.lanes,
-                lane_slots: self.lane_slots
+                lane_slots: self.lane_slots,
+                lines_across: self.lines_across
             }),
         )
     }
@@ -93,8 +132,8 @@ impl core::fmt::Display for PlaneShuffleReduceMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "{:?} {:?} lanes={}",
-            self.item.operation, self.item.lines_along, self.lanes
+            "{:?} {:?} lanes={} lines_across={}",
+            self.item.operation, self.item.lines_along, self.lanes, self.lines_across
         )
     }
 }
@@ -122,6 +161,7 @@ impl Microkernel for PlaneShuffleReduceMicrokernel {
             item: *item,
             lanes: lanes as usize,
             lane_slots: settings.lane_slots,
+            lines_across: 1,
         })
     }
 

@@ -28,11 +28,10 @@ pub(crate) fn hypercube_atomic_reduce_kernel<
     let x = I::tile::<In>(input, &partitioning);
     let o = out.tile_mut(&partitioning);
     for cube in &partitioning {
-        let mut rows_out = o.at(&cube);
-        let part = x.at(&cube);
         microkernel.runtime().execute::<In, Acc, Out, Out, N>(
-            &part,
-            &mut rows_out,
+            &cube,
+            &x,
+            &o,
             &ComptimeOption::new_None(),
         );
     }

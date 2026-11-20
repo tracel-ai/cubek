@@ -10,6 +10,7 @@
 //! is only where the partials meet.
 
 mod accumulator;
+mod columns;
 pub mod cube;
 pub mod hypercube;
 mod operand;
@@ -20,6 +21,7 @@ pub mod unit;
 mod work_item;
 
 pub use accumulator::*;
+pub(crate) use columns::*;
 pub use operand::*;
 pub use operation::*;
 pub(crate) use position::*;

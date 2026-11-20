@@ -177,6 +177,11 @@ impl ReduceLaunch {
                 LineDirection::Across => (self.width, [REDUCED, BATCH], [SLOTS, BATCH], self.width),
             };
         let leaf = Levels::leaf(&[(BATCH, owned), (REDUCED, self.reduced), (SLOTS, cells)]);
+        let owner = [(BATCH, owned), (SLOTS, cells)];
+        let hw = Hardware::from_client(client);
+        let lanes = self.plane_width as usize;
+        let plane = PlaneShuffleReduceMicrokernel::new(self.item, lanes, LANE_SLOTS)
+            .across_rows(&hw, self.width, self.rows);
         let (partitioning, cube_dim) = match self.microkernel {
             TestedMicrokernel::UnitDirect => {
                 let partitioning = Partitioning::new(
@@ -196,17 +201,25 @@ impl ReduceLaunch {
             TestedMicrokernel::PlaneShuffle => {
                 let partitioning = Partitioning::new(
                     space.clone(),
-                    leaf.launch_planes(
-                        &[BATCH],
-                        PlaneOrder::new(&[(BATCH, 1)], CubeOrder::RowMajor),
-                    )
-                    .build(),
+                    plane
+                        .levels(&owner)
+                        .launch_planes(
+                            &[BATCH],
+                            PlaneOrder::new(&[(BATCH, 1)], CubeOrder::RowMajor),
+                        )
+                        .build(),
                 );
                 let cube_dim = partitioning.cube_dim(self.plane_width);
                 (partitioning, cube_dim)
             }
             TestedMicrokernel::CubeStaged { planes } => (
-                Partitioning::new(space.clone(), leaf.cubes(&[BATCH]).build()),
+                Partitioning::new(
+                    space.clone(),
+                    self.cube(&hw, planes)
+                        .levels(&owner)
+                        .cubes(&[BATCH])
+                        .build(),
+                ),
                 CubeDim::new_2d(self.plane_width, planes as u32),
             ),
             TestedMicrokernel::HypercubeLastArrival { .. } => {
@@ -224,7 +237,6 @@ impl ReduceLaunch {
         let elements = [self.item.input, self.item.accumulator, self.out];
         let input = bound(input, self.item.input, self.width, &input_dimensions, edge);
         let out = bound(out, self.out, out_width, &out_dimensions, Boundary::Zero);
-        let lanes = self.plane_width as usize;
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles.
         unsafe {
@@ -248,7 +260,7 @@ impl ReduceLaunch {
                     input,
                     out,
                     launcher.partitioning_arg(),
-                    PlaneShuffleReduceMicrokernel::new(self.item, lanes, LANE_SLOTS),
+                    plane,
                     elements,
                 ),
                 TestedMicrokernel::CubeStaged { planes } => cube_reduce_kernel::launch_unchecked(
@@ -259,7 +271,7 @@ impl ReduceLaunch {
                     input,
                     out,
                     launcher.partitioning_arg(),
-                    CubeStagedReduceMicrokernel::new(self.item, lanes, planes, LANE_SLOTS),
+                    self.cube(&hw, planes),
                     elements,
                 ),
                 TestedMicrokernel::HypercubeLastArrival { .. } => {
@@ -268,6 +280,12 @@ impl ReduceLaunch {
             }
         }
         Ok(())
+    }
+
+    /// The cube microkernel of `planes` planes this case launches on `hw`.
+    fn cube(&self, hw: &Hardware, planes: usize) -> CubeStagedReduceMicrokernel {
+        CubeStagedReduceMicrokernel::new(self.item, self.plane_width as usize, planes, LANE_SLOTS)
+            .across_rows(hw, self.width, self.rows)
     }
 
     /// Every row split into `parts` equal parts, a cube of `planes` planes a part: the input laid
@@ -459,12 +477,10 @@ fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     let o = out.tile_mut(&partitioning);
 
     for plane in &partitioning {
-        let mut row_out = o.at(&plane);
-        let row = x.at(&plane);
-
         microkernel.runtime().execute::<In, Acc, Out, Out, N>(
-            &row,
-            &mut row_out,
+            &plane,
+            &x,
+            &o,
             &ComptimeOption::new_None(),
         );
     }
@@ -487,12 +503,10 @@ fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     let o = out.tile_mut(&partitioning);
 
     for cube in &partitioning {
-        let mut row_out = o.at(&cube);
-        let row = x.at(&cube);
-
         microkernel.runtime().execute::<In, Acc, Out, Out, N>(
-            &row,
-            &mut row_out,
+            &cube,
+            &x,
+            &o,
             &ComptimeOption::new_None(),
         );
     }
