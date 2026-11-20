@@ -158,6 +158,32 @@ impl RmsNormInputs {
         }
     }
 
+    /// The tensors of the norm of these operands into `out`, a contiguous buffer in the input's
+    /// shape.
+    ///
+    /// # Panics
+    ///
+    /// On an `out` of another shape or element than the input's.
+    fn into_contiguous(self, out: TensorHandle) -> RmsNormTensors {
+        assert!(
+            out.shape().iter().eq(self.shape.iter()),
+            "the output takes the input's shape"
+        );
+        assert_eq!(
+            out.dtype, self.input.elem,
+            "the output takes the input's element"
+        );
+        let (batch, rows, dim) = (self.batch, self.rows, self.dim);
+        let rows = PlainTensor::of_handle(out.clone())
+            .viewed(Metadata::new([batch, rows, dim], [rows * dim, dim, 1]));
+        let placement = Placement::from(&rows);
+        self.with_out(
+            RmsNormOutputBuffer { handle: out, rows },
+            placement,
+            RowStore::Plain,
+        )
+    }
+
     /// The tensors of the norm of these operands into `out`, which lies at `placement` and stores
     /// its rows as `store` says.
     fn with_out<Out>(self, out: Out, placement: Placement, store: RowStore) -> RmsNormTensors<Out> {
@@ -209,19 +235,12 @@ impl RmsNormTensors {
     /// the normalized dim, or a weight a row whose rows do not divide the input's: no norm at all.
     pub fn new(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Decline> {
         let operands = RmsNormInputs::new(client, input, weight)?;
-        let (handle, tensor) = PlainTensor::empty_contiguous(
+        let (out, _) = PlainTensor::empty_contiguous(
             client,
             operands.shape.clone().into(),
             operands.input.elem,
         );
-        let (batch, rows, dim) = (operands.batch, operands.rows, operands.dim);
-        let rows = tensor.viewed(Metadata::new([batch, rows, dim], [rows * dim, dim, 1]));
-        let placement = Placement::from(&rows);
-        Ok(operands.with_out(
-            RmsNormOutputBuffer { handle, rows },
-            placement,
-            RowStore::Plain,
-        ))
+        Ok(operands.into_contiguous(out))
     }
 
     /// The output, in the input's shape.
@@ -245,6 +264,27 @@ impl RmsNormTensors {
             weight,
             out,
         }
+    }
+}
+
+impl RmsNormTensors {
+    /// [`RmsNormTensors::new`] into `out`, a contiguous buffer in the input's shape that the
+    /// caller allocated: what an autotune's candidates all write into.
+    ///
+    /// # Errors
+    ///
+    /// As [`RmsNormTensors::new`].
+    ///
+    /// # Panics
+    ///
+    /// As [`RmsNormTensors::new`], and on an `out` of another shape or element than the input's.
+    pub(crate) fn contiguous(
+        client: &Client,
+        input: PlainTensor,
+        weight: PlainTensor,
+        out: TensorHandle,
+    ) -> Result<Self, Decline> {
+        Ok(RmsNormInputs::new(client, input, weight)?.into_contiguous(out))
     }
 }
 

@@ -149,9 +149,8 @@ impl AttentionKey {
     /// [`CACHE_PREFIX`](Self::CACHE_PREFIX). A cache of any capacity, attended to any length, is
     /// keyed here.
     ///
-    /// The share keeps the round's own cache as small as a chunk's: the round lays one cache a
-    /// sequence, and a batch of sixty-four as deep as one sequence would read eight gibibytes of
-    /// a 32/8-head cache each sample.
+    /// The share keeps a round's read as short as a chunk's: a batch of sixty-four each as deep as
+    /// one sequence would read eight gibibytes of a 32/8-head cache each sample.
     pub fn cache_prefix(sequences: usize) -> usize {
         (Self::DECODE_KEYS / sequences.max(1).next_power_of_two()).max(Self::CACHE_PREFIX)
     }
